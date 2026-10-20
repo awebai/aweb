@@ -75,17 +75,147 @@ operation by an authorized member.
   action depends on.
 - `idempotency_key` (`^[A-Za-z0-9._-]{1,128}$`) is scoped to
   `(installation_id, team_id, principal_id, key)`, as for every mutation
-  ([agent-pages.md §3](design/agent-pages.md)). The canonical request hash it
-  is stored with covers the page, the action and the operation. The same key
-  with the same request returns the first result. With a different request,
+  ([agent-pages.md §3](design/agent-pages.md)). It is stored with the
+  canonical hash of the request's identity (below). The same key with the
+  same identity returns the first result. With a different identity,
   including the same key on another page or action, it is 409
   `idempotency_conflict`.
 - `task_authorization` is required for an `intent`, and is refused for `edit`
-  and `answer`. The naapp checks that its `actor_did_key` and `certificate_id`
-  equal this request's verified signer, its `target_did` is the target
-  resolved by §2, its `action_id` is this action, and its `task_body_sha256`
-  is the task body the naapp will send. It stores the authorization with the
-  journal entry and the outbox row.
+  and `answer`. Its bindings come from the intent's preparation (§3.1), which
+  must exist: an `intent` with no preparation for its key and identity is 409
+  `preparation_required`.
+
+**Request identity.** An action request's identity is `page_id`, an
+operation constant naming this route, `action_id`, `input`,
+`expected_page_rev` and `expected_record_revs`, and for an `intent` the
+preparation's `external_request_id` and `task_body_sha256`. The task bytes
+carry the target and the proposal. `task_authorization` is not part of the
+identity. It is evidence, verified on every request that carries it, so a
+renewed authorization (new times, nonce, signature, or the same principal's
+current certificate) never conflicts with its own request. A changed input,
+precondition, task, target or proposal is a different identity.
+
+**Accepting an intent**, in one naapp transaction, after the checks every
+action gets (policy, input, revisions):
+
+1. Find the preparation by the key and the identity. The key with another
+   identity is 409 `idempotency_conflict`, and a key with no preparation is
+   409 `preparation_required`. Re-derive it from current state (§3.1); any
+   difference is 409 `preparation_stale`.
+2. Verify `task_authorization` with `verify_task_authorization`
+   ([app-task-requests.md](app-task-requests.md) §1, §3 steps 3 to 6), with
+   the preparation's bindings as `expected`. Its `actor_did_key` and
+   `certificate_id` must equal this request's verified signer, whose
+   certificate is current. A binding that differs is 403 `target_mismatch`.
+3. Commit the journal entry, the outbox row and the page revision. Store the
+   authorization exactly as received, as the request's first evidence, and the
+   receipt. Mark the preparation accepted.
+
+**A replay** is the same key with the same identity after acceptance. The
+naapp recognizes it before any other check, so a revision that the request
+itself moved does not refuse it ([agent-pages.md §3](design/agent-pages.md)).
+It re-checks the caller's current read permission, then returns the stored
+receipt and admits nothing new. When it carries an authorization not yet
+stored and the request's `delivery` is still `pending`, the naapp verifies it
+as in step 2, against the caller's current certificate and authority, and
+then appends it to the request's evidence, never overwriting earlier
+evidence. The outbox delivers with the newest stored authorization that is
+still in its time window. A failure is that check's error, and nothing is
+stored. Once `delivery` is `queued`, a replay stores nothing. An expired
+authorization never creates a missing task. It can only take part in a
+matching replay at the task service (app-task-requests.md §3 step 7).
+
+### 3.1 Preparing an intent: `POST /v1/pages/{page_id}/actions/prepare`
+
+A member cannot sign a task authorization without its bindings, and the naapp
+alone knows them: the target it resolves, the task body it will send and the
+request id it allocates. Preparing an intent fixes them before the member
+signs. It is the same team-auth v2 member request as a submit, with the
+submit's body minus `task_authorization`:
+
+```json
+{
+  "action_id": "request-cleaner",
+  "input": {"date": "2026-10-24"},
+  "expected_page_rev": 12,
+  "expected_record_revs": {"bookings/b-17": 3},
+  "idempotency_key": "k_8e1…"
+}
+```
+
+The naapp runs the submit's checks (policy, input, revisions, §2's target)
+for an `intent` action. Any other kind is 422 `schema_invalid`. Then, by the
+key and the identity (§3):
+
+- **No preparation:** it allocates `external_request_id`, an opaque
+  `act_` followed by 32 lowercase hex characters (128 random bits), never
+  derived from or equal to the idempotency key. It builds the task
+  ([app-task-requests.md](app-task-requests.md) §3) and stores the
+  preparation durably: the identity, `external_request_id`, the task bytes,
+  `task_body_sha256` and the bindings. This record is separate from the
+  action's receipt, and the key is not consumed: the submit later consumes it
+  under the same identity.
+- **A preparation with this identity:** it returns the stored preparation
+  unchanged, after re-deriving it from current state. Any difference is 409
+  `preparation_stale`, and nothing changes: the person starts again with a new
+  key.
+- **The key with another identity:** 409 `idempotency_conflict`. No second
+  `external_request_id` is allocated.
+
+Preparing creates no task, journal entry, outbox row or page revision.
+
+Re-deriving rebuilds the task and bindings from the current stored action,
+its policy, §2's target resolution and the installation's active state and
+current generation. The result must equal the stored preparation byte for
+byte. The prepared facts are never silently updated, because the member's
+signature binds them.
+
+Response 200:
+
+```json
+{
+  "status": "prepared",
+  "request_id": "act_9f2c…",
+  "task": { … },
+  "task_body_sha256": "<64 hex>",
+  "bindings": {
+    "aud": "https://app.aweb.ai", "app_origin": "https://pages.example.com",
+    "team_id": "backend:acme.com", "app_id": "pages",
+    "installation_id": "inst_01JB…", "installation_generation": 3,
+    "external_request_id": "act_9f2c…", "task_body_sha256": "<64 hex>",
+    "target_dids": ["did:aw:…"], "action_id": "request-cleaner",
+    "proposal_rev": null, "proposal_sha256": null
+  }
+}
+```
+
+`bindings` holds exactly the twelve `TASK_AUTHORIZATION_BINDINGS`
+(`aweb_naapp.runtime.task_requests`). After acceptance, a prepare with the
+same key and identity skips re-deriving, which the accepted request's own
+page revision would fail. It re-checks the caller's read permission and
+returns `"status": "accepted"` with the same `request_id`, `task`,
+`task_body_sha256` and `bindings`, plus `receipt`, the submit's 202 body.
+Those let a member renew an authorization for a request whose delivery is
+pending.
+
+**The signer** completes the payload with `v`, `type`, its own
+`actor_did_key` and current `certificate_id`, `issued_at`, `expires_at` and a
+fresh `nonce`, and signs it (app-task-requests.md §1). Before signing it
+checks, as the reference `check_prepared_intent` does, that `task_body_sha256`
+is the digest of `task`, and that the bindings agree with the task as §3 step
+5 requires:
+`target_dids`, `external_request_id`, `action_id` against `action_ref`, and
+the proposal pair. The signer also checks that `aud` is the task service it
+expects, and that the app and installation are those of the page the member
+acts on. A hosted signer shows the person the task's title, description,
+choices and fields before signing. Renewal is the same step again: prepare,
+which returns the same preparation, then sign anew.
+
+**Actor switch.** A preparation, its signature and its acceptance belong to
+the principal that prepared it. The key namespace keeps them from serving any
+other principal. A host that switches the acting member or its authority
+discards every in-flight preparation, signature and submit result of the
+previous one.
 
 Responses:
 
@@ -409,9 +539,14 @@ The codes of [app-task-requests.md](app-task-requests.md) "Errors" apply, plus:
 | 401 | `attestation_required`, `attestation_invalid` | The `member_session` caller-context check fails. |
 | 403 | `action_denied` | The action's policy refuses this member, or a requester tries to approve. |
 | 409 | `approval_changed` | The proposal digest or revision on the card is no longer current. |
+| 409 | `preparation_required` | An `intent` submit has no preparation for its key and identity (§3.1). |
+| 409 | `preparation_stale` | Current state no longer re-derives the stored preparation: the action, its policy, the target or the installation changed (§3.1). |
 
 ## Conformance vectors
 
+- `docs/vectors/page-action-prepare-v1.json`: a preparation's task, digest
+  and bindings; the signer's completion and pre-signing checks; and the
+  prepare, submit, replay and renewal sequence with its refusals.
 - `docs/vectors/page-proposal-v1.json`: `proposal_sha256` over single records
   (with non-ASCII, nested and boundary integer values), and the refusal cases.
 - `docs/vectors/approval-request-v1.json`: `request_sha256` for page

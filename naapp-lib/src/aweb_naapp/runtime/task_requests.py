@@ -418,6 +418,93 @@ def verify_task_authorization(
         raise _refuse("authorization_expired", "outside the validity window")
 
 
+# ---------------------------------------------------------------- intent preparation
+
+# The payload fields the member's signer adds to a preparation's bindings.
+SIGNER_FIELDS = frozenset({"actor_did_key", "certificate_id", "issued_at", "expires_at", "nonce"})
+# What the signer knows independently of the naapp: the task service it signs
+# for, and the app and installation of the page the member acts on.
+SIGNER_EXPECTS = frozenset({"aud", "app_origin", "team_id", "app_id", "installation_id"})
+_PREPARED_FIELDS = frozenset({"status", "request_id", "task", "task_body_sha256", "bindings"})
+_PREPARED_REQUEST_ID = re.compile(r"act_[0-9a-f]{32}")
+
+
+def check_prepared_intent(prepared: object, *, expected: Mapping[str, Any]) -> None:
+    """The signer's checks on a preparation before signing (page-actions.md §3.1).
+
+    The digest is the task's, the bindings agree with the task as the task
+    service's step 5 requires, and ``expected`` (exactly SIGNER_EXPECTS) holds
+    what the signer knows itself. Field shapes are checked when the completed
+    payload is signed. Raises TaskRequestRefused: ``schema_invalid`` for the
+    response's shape, ``target_mismatch`` for a value that disagrees.
+    """
+    if set(expected) != SIGNER_EXPECTS:
+        raise ValueError(f"expected must hold exactly {sorted(SIGNER_EXPECTS)}")
+    if not isinstance(prepared, Mapping):
+        raise _refuse("schema_invalid", "preparation is not an object")
+    fields = set(prepared)
+    status = prepared.get("status")
+    if status == "prepared":
+        allowed = _PREPARED_FIELDS
+    elif status == "accepted":
+        allowed = _PREPARED_FIELDS | {"receipt"}
+    else:
+        raise _refuse("schema_invalid", "status")
+    if fields != allowed:
+        raise _refuse("schema_invalid", "preparation fields")
+    bindings = prepared["bindings"]
+    if not isinstance(bindings, Mapping) or set(bindings) != TASK_AUTHORIZATION_BINDINGS:
+        raise _refuse("schema_invalid", "bindings")
+    task = prepared["task"]
+    validate_task(task)
+    request = task["app_request"]
+    digest = hashlib.sha256(canonical_json_bytes(dict(task))).hexdigest()
+    request_id = prepared["request_id"]
+    if not _matches(_PREPARED_REQUEST_ID, request_id):
+        raise _refuse("schema_invalid", "request_id")
+    if request["eligible_dids"] is None:
+        targets = [task["assignee_did"]]
+    else:
+        targets = request["eligible_dids"]
+    derived = {
+        "task_body_sha256": digest,
+        "external_request_id": request_id,
+        "target_dids": targets,
+        "action_id": request["action_ref"],
+        "proposal_rev": request["proposal_rev"],
+        "proposal_sha256": request["proposal_sha256"],
+    }
+    if prepared["task_body_sha256"] != digest:
+        raise _refuse("target_mismatch", "task_body_sha256")
+    if request["external_request_id"] != request_id:
+        raise _refuse("target_mismatch", "external_request_id")
+    _check_bindings(bindings, {**derived, **expected}, frozenset(derived) | SIGNER_EXPECTS)
+
+
+def complete_task_authorization(
+    bindings: Mapping[str, Any],
+    *,
+    actor_did_key: str,
+    certificate_id: str,
+    issued_at: str,
+    expires_at: str,
+    nonce: str,
+) -> dict[str, Any]:
+    """The authorization payload: a preparation's bindings plus the signer's fields."""
+    if set(bindings) != TASK_AUTHORIZATION_BINDINGS:
+        raise ValueError(f"bindings must hold exactly {sorted(TASK_AUTHORIZATION_BINDINGS)}")
+    return {
+        "v": 1,
+        "type": AUTHORIZATION_TYPE,
+        **bindings,
+        "actor_did_key": actor_did_key,
+        "certificate_id": certificate_id,
+        "issued_at": issued_at,
+        "expires_at": expires_at,
+        "nonce": nonce,
+    }
+
+
 # ---------------------------------------------------------------- stage receipt
 
 _STAGE_FIELDS = frozenset(

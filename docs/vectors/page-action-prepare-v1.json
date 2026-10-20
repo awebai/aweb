@@ -1,0 +1,2052 @@
+{
+  "version": 1,
+  "description": "Intent preparation (docs/page-actions.md §3, §3.1). `preparations` freeze a prepare response, its task digest and bindings, and the member's completed, signed payload, which verifies under app-task-authorization/1 with the bindings as `expected` at `now`. `check_cases` are the signer's pre-signing checks: `expect` null passes, otherwise the refusal code. `sequence` is the naapp's prepare, submit, replay and renewal behaviour, replayed in order against one page; request ids are allocated at run time, so steps refer to each other by name.",
+  "keys": {
+    "member": {
+      "seed_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "did_key": "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S"
+    },
+    "target": {
+      "seed_hex": "1313131313131313131313131313131313131313131313131313131313131313",
+      "did_key": "did:key:z6MkmNZGTCcVSQG2dp1cBYssQWkNEwFHBvsNmBzJs6iGY9eA",
+      "did_aw": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+    },
+    "colleague": {
+      "seed_hex": "1414141414141414141414141414141414141414141414141414141414141414",
+      "did_key": "did:key:z6MkgeAYjgfXDoaxMou4TKNEtGJ8cYHARPASB12ehQ8b13ie",
+      "did_aw": "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+    }
+  },
+  "prefix": "aweb.app-task-authorization/1\n",
+  "now": "2026-10-20T12:00:30Z",
+  "bindings": [
+    "aud",
+    "app_origin",
+    "team_id",
+    "app_id",
+    "installation_id",
+    "installation_generation",
+    "external_request_id",
+    "task_body_sha256",
+    "target_dids",
+    "action_id",
+    "proposal_rev",
+    "proposal_sha256"
+  ],
+  "signer_fields": [
+    "actor_did_key",
+    "certificate_id",
+    "expires_at",
+    "issued_at",
+    "nonce"
+  ],
+  "preparations": [
+    {
+      "name": "intent",
+      "note": "an intent for one principal",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      },
+      "signer": {
+        "key": "member",
+        "fields": {
+          "actor_did_key": "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S",
+          "certificate_id": "0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "8f14e45fceea167a5a36dedd4bea2543"
+        },
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-task-authorization",
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null,
+          "actor_did_key": "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S",
+          "certificate_id": "0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "8f14e45fceea167a5a36dedd4bea2543"
+        },
+        "signing_bytes": "aweb.app-task-authorization/1\n{\"action_id\":\"request-cleaner\",\"actor_did_key\":\"did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S\",\"app_id\":\"pages\",\"app_origin\":\"https://pages.example.com\",\"aud\":\"https://app.aweb.ai\",\"certificate_id\":\"0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11\",\"expires_at\":\"2026-10-21T12:00:00Z\",\"external_request_id\":\"act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"issued_at\":\"2026-10-20T12:00:00Z\",\"nonce\":\"8f14e45fceea167a5a36dedd4bea2543\",\"proposal_rev\":null,\"proposal_sha256\":null,\"target_dids\":[\"did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V\"],\"task_body_sha256\":\"4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf\",\"team_id\":\"backend:acme.com\",\"type\":\"aweb.app-task-authorization\",\"v\":1}",
+        "signature": "bmDx-0yR3EY3DhNJHgTqpSUPddy8gKdCH7T1C4P6qMNdVB2OFh49be63SbSejIsH62-FIJB4NlXsHWskrn4RCw"
+      }
+    },
+    {
+      "name": "decision",
+      "note": "a decision request binding its eligible set and proposal",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+        "task": {
+          "title": "Approve next week's prices",
+          "description": "Rates for 24–30 October, café terrace included.",
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "approve-price",
+            "proposal_rev": 2,
+            "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+            "choices": [
+              {
+                "value": "approve",
+                "label": "Approve the new rates"
+              },
+              {
+                "value": "reject",
+                "label": "Keep the current rates"
+              }
+            ],
+            "fields": [
+              {
+                "field": "start",
+                "label": "From",
+                "format": "date"
+              },
+              {
+                "field": "price_per_night_minor",
+                "label": "Nightly price",
+                "format": "money_minor"
+              }
+            ],
+            "eligible_dids": [
+              "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+              "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+            ],
+            "role": "pages.price-approver"
+          }
+        },
+        "task_body_sha256": "af6f70c1c449eaeddd7c61e1ba1b7598f9c2a228ad5db20e4d90c68997ffc73a",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+          "task_body_sha256": "af6f70c1c449eaeddd7c61e1ba1b7598f9c2a228ad5db20e4d90c68997ffc73a",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+            "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+          ],
+          "action_id": "approve-price",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb"
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      },
+      "signer": {
+        "key": "member",
+        "fields": {
+          "actor_did_key": "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S",
+          "certificate_id": "0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "8f14e45fceea167a5a36dedd4bea2543"
+        },
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-task-authorization",
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+          "task_body_sha256": "af6f70c1c449eaeddd7c61e1ba1b7598f9c2a228ad5db20e4d90c68997ffc73a",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+            "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+          ],
+          "action_id": "approve-price",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "actor_did_key": "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S",
+          "certificate_id": "0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "8f14e45fceea167a5a36dedd4bea2543"
+        },
+        "signing_bytes": "aweb.app-task-authorization/1\n{\"action_id\":\"approve-price\",\"actor_did_key\":\"did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S\",\"app_id\":\"pages\",\"app_origin\":\"https://pages.example.com\",\"aud\":\"https://app.aweb.ai\",\"certificate_id\":\"0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11\",\"expires_at\":\"2026-10-21T12:00:00Z\",\"external_request_id\":\"act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"issued_at\":\"2026-10-20T12:00:00Z\",\"nonce\":\"8f14e45fceea167a5a36dedd4bea2543\",\"proposal_rev\":2,\"proposal_sha256\":\"sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb\",\"target_dids\":[\"did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V\",\"did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva\"],\"task_body_sha256\":\"af6f70c1c449eaeddd7c61e1ba1b7598f9c2a228ad5db20e4d90c68997ffc73a\",\"team_id\":\"backend:acme.com\",\"type\":\"aweb.app-task-authorization\",\"v\":1}",
+        "signature": "5gtAvubOs1EmCouy4tgKHUCIE1kixw5v_Fz1Qyac9haO308-7xIpt7Y9EgsVWLvsORXUBWNyOy4EYaVoH1bmBw"
+      }
+    }
+  ],
+  "check_cases": [
+    {
+      "name": "prepared-intent",
+      "expect": null,
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "prepared-decision",
+      "expect": null,
+      "response": {
+        "status": "prepared",
+        "request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+        "task": {
+          "title": "Approve next week's prices",
+          "description": "Rates for 24–30 October, café terrace included.",
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "approve-price",
+            "proposal_rev": 2,
+            "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+            "choices": [
+              {
+                "value": "approve",
+                "label": "Approve the new rates"
+              },
+              {
+                "value": "reject",
+                "label": "Keep the current rates"
+              }
+            ],
+            "fields": [
+              {
+                "field": "start",
+                "label": "From",
+                "format": "date"
+              },
+              {
+                "field": "price_per_night_minor",
+                "label": "Nightly price",
+                "format": "money_minor"
+              }
+            ],
+            "eligible_dids": [
+              "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+              "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+            ],
+            "role": "pages.price-approver"
+          }
+        },
+        "task_body_sha256": "af6f70c1c449eaeddd7c61e1ba1b7598f9c2a228ad5db20e4d90c68997ffc73a",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+          "task_body_sha256": "af6f70c1c449eaeddd7c61e1ba1b7598f9c2a228ad5db20e4d90c68997ffc73a",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+            "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+          ],
+          "action_id": "approve-price",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb"
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "accepted-with-receipt",
+      "expect": null,
+      "response": {
+        "status": "accepted",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        },
+        "receipt": {
+          "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "page_rev": 13,
+          "delivery": "pending",
+          "execution": "not_started"
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      },
+      "note": "after acceptance a prepare returns the same preparation plus the submit's 202 body"
+    },
+    {
+      "name": "accepted-without-receipt",
+      "expect": "schema_invalid",
+      "response": {
+        "status": "accepted",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "prepared-with-receipt",
+      "expect": "schema_invalid",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        },
+        "receipt": {
+          "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "page_rev": 13,
+          "delivery": "pending",
+          "execution": "not_started"
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "unknown-status",
+      "expect": "schema_invalid",
+      "response": {
+        "status": "queued",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "extra-field",
+      "expect": "schema_invalid",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        },
+        "nonce": "8f14e45fceea167a5a36dedd4bea2543"
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      },
+      "note": "a preparation never supplies a signer field"
+    },
+    {
+      "name": "bindings-missing-aud",
+      "expect": "schema_invalid",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "bindings-with-actor",
+      "expect": "schema_invalid",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null,
+          "actor_did_key": "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S"
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "request-id-is-the-idempotency-key",
+      "expect": "schema_invalid",
+      "response": {
+        "status": "prepared",
+        "request_id": "k_8e1a",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "k_8e1a",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "26fa7dfff4fa770f94369c359c3518bcbf4568d1ec09feea6478d42a44c9757d",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "k_8e1a",
+          "task_body_sha256": "26fa7dfff4fa770f94369c359c3518bcbf4568d1ec09feea6478d42a44c9757d",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      },
+      "note": "external_request_id is allocated, act_ and 32 hex, never the raw key"
+    },
+    {
+      "name": "task-invalid",
+      "expect": "schema_invalid",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner‮ for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "def698e8ca88150176201d9ef7fa58417265bda1c3415fe097f3a8c5c0764a34",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "def698e8ca88150176201d9ef7fa58417265bda1c3415fe097f3a8c5c0764a34",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "digest-not-the-task",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "d9298a10d1b0735837dc4bd85dac641b0f3cef27a47e5d53a54f2f3f5b2fcffa",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "bound-digest-not-the-task",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "d9298a10d1b0735837dc4bd85dac641b0f3cef27a47e5d53a54f2f3f5b2fcffa",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "request-id-not-the-task",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "task-request-id-differs",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "f328a2ed5468539f25fb03cc0b1cd1fd9f1cbce211cb01f3bfca0477f0bb682f",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "f328a2ed5468539f25fb03cc0b1cd1fd9f1cbce211cb01f3bfca0477f0bb682f",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      },
+      "note": "the response and bindings agree, but the signed task carries another request id"
+    },
+    {
+      "name": "bound-request-id-differs",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "intent-targets-not-the-assignee",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "decision-targets-only-the-assignee",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+        "task": {
+          "title": "Approve next week's prices",
+          "description": "Rates for 24–30 October, café terrace included.",
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "approve-price",
+            "proposal_rev": 2,
+            "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+            "choices": [
+              {
+                "value": "approve",
+                "label": "Approve the new rates"
+              },
+              {
+                "value": "reject",
+                "label": "Keep the current rates"
+              }
+            ],
+            "fields": [
+              {
+                "field": "start",
+                "label": "From",
+                "format": "date"
+              },
+              {
+                "field": "price_per_night_minor",
+                "label": "Nightly price",
+                "format": "money_minor"
+              }
+            ],
+            "eligible_dids": [
+              "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+              "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+            ],
+            "role": "pages.price-approver"
+          }
+        },
+        "task_body_sha256": "af6f70c1c449eaeddd7c61e1ba1b7598f9c2a228ad5db20e4d90c68997ffc73a",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+          "task_body_sha256": "af6f70c1c449eaeddd7c61e1ba1b7598f9c2a228ad5db20e4d90c68997ffc73a",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "approve-price",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb"
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      },
+      "note": "a decision request binds its whole eligible set"
+    },
+    {
+      "name": "action-not-the-action-ref",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "approve-price",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "proposal-rev-differs",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+        "task": {
+          "title": "Approve next week's prices",
+          "description": "Rates for 24–30 October, café terrace included.",
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "approve-price",
+            "proposal_rev": 2,
+            "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+            "choices": [
+              {
+                "value": "approve",
+                "label": "Approve the new rates"
+              },
+              {
+                "value": "reject",
+                "label": "Keep the current rates"
+              }
+            ],
+            "fields": [
+              {
+                "field": "start",
+                "label": "From",
+                "format": "date"
+              },
+              {
+                "field": "price_per_night_minor",
+                "label": "Nightly price",
+                "format": "money_minor"
+              }
+            ],
+            "eligible_dids": [
+              "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+              "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+            ],
+            "role": "pages.price-approver"
+          }
+        },
+        "task_body_sha256": "af6f70c1c449eaeddd7c61e1ba1b7598f9c2a228ad5db20e4d90c68997ffc73a",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+          "task_body_sha256": "af6f70c1c449eaeddd7c61e1ba1b7598f9c2a228ad5db20e4d90c68997ffc73a",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+            "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+          ],
+          "action_id": "approve-price",
+          "proposal_rev": 3,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb"
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "proposal-rev-true-for-1",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+        "task": {
+          "title": "Approve next week's prices",
+          "description": "Rates for 24–30 October, café terrace included.",
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "approve-price",
+            "proposal_rev": 1,
+            "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+            "choices": [
+              {
+                "value": "approve",
+                "label": "Approve the new rates"
+              },
+              {
+                "value": "reject",
+                "label": "Keep the current rates"
+              }
+            ],
+            "fields": [
+              {
+                "field": "start",
+                "label": "From",
+                "format": "date"
+              },
+              {
+                "field": "price_per_night_minor",
+                "label": "Nightly price",
+                "format": "money_minor"
+              }
+            ],
+            "eligible_dids": [
+              "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+              "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+            ],
+            "role": "pages.price-approver"
+          }
+        },
+        "task_body_sha256": "df3c63f31e0383f5ab8418cf6008994e8108dfac4a305c7c57d570793fef6ff0",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+          "task_body_sha256": "df3c63f31e0383f5ab8418cf6008994e8108dfac4a305c7c57d570793fef6ff0",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+            "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+          ],
+          "action_id": "approve-price",
+          "proposal_rev": true,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb"
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      },
+      "note": "a boolean never equals an integer binding"
+    },
+    {
+      "name": "aud-not-the-signers-task-service",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://tasks.evil.example",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "app-origin-not-the-page-app",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.evil.example",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "installation-not-the-page's",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7R",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    },
+    {
+      "name": "team-not-the-member's",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "other:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      }
+    }
+  ],
+  "sequence": {
+    "initial": {
+      "page_rev": 12,
+      "installation_generation": 3,
+      "target_resolves_to": "target",
+      "member_certificate": "current",
+      "colleague_certificate": "current"
+    },
+    "rules": [
+      "Each `given` entry changes that state before its step and persists. `target_resolves_to` names the key whose principal the action's target role resolves to. `delivery` sets the delivery state of the request the named step accepted.",
+      "Certificates: `current` is the actor's first certificate; `renewed` is a second certificate of the same principal, its current one once a `given` says so; `revoked` is the actor's certificate after revocation.",
+      "An `authorization` is the bindings of the preparation `prepared_by` returned, completed with the actor's DID and the named certificate, the times and nonce, then any `tamper` fields, and signed with the actor's key.",
+      "`same_as`: the response equals that step's. `request_id_of`: the request id that step returned. `distinct_from`: a different request id. `receipt_same_as`: `receipt` equals that step's response. `evidence_count`: authorizations stored for the request after the step."
+    ],
+    "requests": {
+      "r1": {
+        "action_id": "request-cleaner",
+        "input": {
+          "date": "2026-10-24"
+        },
+        "expected_page_rev": 12,
+        "expected_record_revs": {
+          "bookings/b-17": 3
+        },
+        "idempotency_key": "k_8e1a"
+      },
+      "r1-changed-input": {
+        "action_id": "request-cleaner",
+        "input": {
+          "date": "2026-10-25"
+        },
+        "expected_page_rev": 12,
+        "expected_record_revs": {
+          "bookings/b-17": 3
+        },
+        "idempotency_key": "k_8e1a"
+      },
+      "r2": {
+        "action_id": "request-cleaner",
+        "input": {
+          "date": "2026-10-24"
+        },
+        "expected_page_rev": 12,
+        "expected_record_revs": {
+          "bookings/b-17": 3
+        },
+        "idempotency_key": "k_b702"
+      },
+      "r3": {
+        "action_id": "request-cleaner",
+        "input": {
+          "date": "2026-10-24"
+        },
+        "expected_page_rev": 13,
+        "expected_record_revs": {
+          "bookings/b-17": 3
+        },
+        "idempotency_key": "k_c9d4"
+      },
+      "r4": {
+        "action_id": "request-cleaner",
+        "input": {
+          "date": "2026-10-24"
+        },
+        "expected_page_rev": 13,
+        "expected_record_revs": {
+          "bookings/b-17": 3
+        },
+        "idempotency_key": "k_d15e"
+      },
+      "r5": {
+        "action_id": "request-cleaner",
+        "input": {
+          "date": "2026-10-24"
+        },
+        "expected_page_rev": 13,
+        "expected_record_revs": {
+          "bookings/b-17": 3
+        },
+        "idempotency_key": "k_e620"
+      },
+      "r6": {
+        "action_id": "request-cleaner",
+        "input": {
+          "date": "2026-10-24"
+        },
+        "expected_page_rev": 14,
+        "expected_record_revs": {
+          "bookings/b-17": 3
+        },
+        "idempotency_key": "k_f731"
+      }
+    },
+    "steps": [
+      {
+        "name": "prepare",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r1",
+        "expect": {
+          "outcome": "prepared",
+          "status": 200,
+          "page_rev": 12
+        }
+      },
+      {
+        "name": "prepare-again",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r1",
+        "expect": {
+          "outcome": "prepared",
+          "status": 200,
+          "same_as": "prepare"
+        },
+        "note": "the stored preparation, byte for byte"
+      },
+      {
+        "name": "prepare-changed-input",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r1-changed-input",
+        "expect": {
+          "outcome": "idempotency_conflict",
+          "status": 409,
+          "code": "idempotency_conflict"
+        },
+        "note": "no second external_request_id is allocated"
+      },
+      {
+        "name": "colleague-prepares-same-key",
+        "actor": "colleague",
+        "call": "prepare",
+        "request": "r1",
+        "expect": {
+          "outcome": "prepared",
+          "status": 200,
+          "distinct_from": "prepare"
+        },
+        "note": "another principal's namespace: an independent preparation with its own request id"
+      },
+      {
+        "name": "submit-unprepared",
+        "actor": "member",
+        "call": "submit",
+        "request": "r2",
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "current",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "00000000000000000000000000000001"
+        },
+        "expect": {
+          "outcome": "preparation_required",
+          "status": 409,
+          "code": "preparation_required"
+        }
+      },
+      {
+        "name": "submit-tampered-targets",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "current",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "00000000000000000000000000000002",
+          "tamper": {
+            "target_dids": [
+              "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+            ]
+          }
+        },
+        "expect": {
+          "outcome": "target_mismatch",
+          "status": 403,
+          "code": "target_mismatch"
+        },
+        "note": "signed by the member, but over targets the preparation did not bind"
+      },
+      {
+        "name": "submit-expired",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "current",
+          "issued_at": "2026-10-19T11:00:00Z",
+          "expires_at": "2026-10-20T11:00:00Z",
+          "nonce": "00000000000000000000000000000003"
+        },
+        "expect": {
+          "outcome": "authorization_expired",
+          "status": 401,
+          "code": "authorization_expired"
+        }
+      },
+      {
+        "name": "submit-changed-input",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1-changed-input",
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "current",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "00000000000000000000000000000004"
+        },
+        "expect": {
+          "outcome": "idempotency_conflict",
+          "status": 409,
+          "code": "idempotency_conflict"
+        }
+      },
+      {
+        "name": "submit",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "current",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "00000000000000000000000000000005"
+        },
+        "expect": {
+          "outcome": "accepted",
+          "status": 202,
+          "request_id_of": "prepare",
+          "page_rev": 13,
+          "delivery": "pending",
+          "evidence_count": 1
+        }
+      },
+      {
+        "name": "renew-after-lost-response",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "current",
+          "issued_at": "2026-10-20T12:00:20Z",
+          "expires_at": "2026-10-21T12:00:20Z",
+          "nonce": "00000000000000000000000000000006"
+        },
+        "expect": {
+          "outcome": "replayed",
+          "status": 202,
+          "same_as": "submit",
+          "evidence_count": 2
+        },
+        "note": "a renewed authorization over the same task bytes; appended as evidence, nothing re-admitted"
+      },
+      {
+        "name": "replay-renewed-certificate",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "given": [
+          {
+            "member_certificate": "renewed"
+          }
+        ],
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "renewed",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "00000000000000000000000000000007"
+        },
+        "expect": {
+          "outcome": "replayed",
+          "status": 202,
+          "same_as": "submit",
+          "evidence_count": 3
+        },
+        "note": "the same principal's current certificate; the identity excludes the authorization"
+      },
+      {
+        "name": "prepare-after-accept",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r1",
+        "expect": {
+          "outcome": "accepted",
+          "status": 200,
+          "request_id_of": "prepare",
+          "receipt_same_as": "submit"
+        },
+        "note": "re-derivation is skipped: the request's own page revision moved the page"
+      },
+      {
+        "name": "queued-replay",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "given": [
+          {
+            "delivery": {
+              "request_of": "submit",
+              "state": "queued"
+            }
+          }
+        ],
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "renewed",
+          "issued_at": "2026-10-20T12:00:25Z",
+          "expires_at": "2026-10-21T12:00:25Z",
+          "nonce": "00000000000000000000000000000008"
+        },
+        "expect": {
+          "outcome": "replayed",
+          "status": 202,
+          "same_as": "submit",
+          "evidence_count": 3
+        },
+        "note": "once delivery is queued a replay stores nothing"
+      },
+      {
+        "name": "prepare-r3",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r3",
+        "expect": {
+          "outcome": "prepared",
+          "status": 200
+        }
+      },
+      {
+        "name": "generation-moved",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r3",
+        "given": [
+          {
+            "installation_generation": 4
+          }
+        ],
+        "expect": {
+          "outcome": "preparation_stale",
+          "status": 409,
+          "code": "preparation_stale"
+        }
+      },
+      {
+        "name": "submit-after-generation-moved",
+        "actor": "member",
+        "call": "submit",
+        "request": "r3",
+        "authorization": {
+          "prepared_by": "prepare-r3",
+          "certificate": "renewed",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "00000000000000000000000000000009"
+        },
+        "expect": {
+          "outcome": "preparation_stale",
+          "status": 409,
+          "code": "preparation_stale"
+        }
+      },
+      {
+        "name": "prepare-r4",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r4",
+        "expect": {
+          "outcome": "prepared",
+          "status": 200
+        }
+      },
+      {
+        "name": "target-reassigned",
+        "actor": "member",
+        "call": "submit",
+        "request": "r4",
+        "given": [
+          {
+            "target_resolves_to": "colleague"
+          }
+        ],
+        "authorization": {
+          "prepared_by": "prepare-r4",
+          "certificate": "renewed",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "00000000000000000000000000000010"
+        },
+        "expect": {
+          "outcome": "preparation_stale",
+          "status": 409,
+          "code": "preparation_stale"
+        },
+        "note": "the role now resolves to another principal; the signed task is never silently changed"
+      },
+      {
+        "name": "prepare-r5",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r5",
+        "given": [
+          {
+            "target_resolves_to": "target"
+          }
+        ],
+        "expect": {
+          "outcome": "prepared",
+          "status": 200
+        }
+      },
+      {
+        "name": "page-moved",
+        "actor": "member",
+        "call": "submit",
+        "request": "r5",
+        "given": [
+          {
+            "page_rev": 14
+          }
+        ],
+        "authorization": {
+          "prepared_by": "prepare-r5",
+          "certificate": "renewed",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "00000000000000000000000000000011"
+        },
+        "expect": {
+          "outcome": "revision_conflict",
+          "status": 409,
+          "code": "revision_conflict"
+        }
+      },
+      {
+        "name": "colleague-prepares-r6",
+        "actor": "colleague",
+        "call": "prepare",
+        "request": "r6",
+        "expect": {
+          "outcome": "prepared",
+          "status": 200
+        }
+      },
+      {
+        "name": "colleague-submits-r6",
+        "actor": "colleague",
+        "call": "submit",
+        "request": "r6",
+        "authorization": {
+          "prepared_by": "colleague-prepares-r6",
+          "certificate": "current",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "00000000000000000000000000000012"
+        },
+        "expect": {
+          "outcome": "accepted",
+          "status": 202,
+          "request_id_of": "colleague-prepares-r6",
+          "page_rev": 15,
+          "delivery": "pending",
+          "evidence_count": 1
+        }
+      },
+      {
+        "name": "revoked-replay",
+        "actor": "colleague",
+        "call": "submit",
+        "request": "r6",
+        "given": [
+          {
+            "colleague_certificate": "revoked"
+          }
+        ],
+        "authorization": {
+          "prepared_by": "colleague-prepares-r6",
+          "certificate": "revoked",
+          "issued_at": "2026-10-20T12:00:20Z",
+          "expires_at": "2026-10-21T12:00:20Z",
+          "nonce": "00000000000000000000000000000013"
+        },
+        "expect": {
+          "outcome": "certificate_revoked",
+          "status": 401,
+          "code": "certificate_revoked",
+          "evidence_count": 1
+        },
+        "note": "a replay never bypasses current authority: nothing is stored"
+      }
+    ]
+  }
+}

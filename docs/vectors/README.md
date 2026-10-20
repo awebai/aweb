@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 34
+`docs/vectors/*.json` is the only public protocol-vector authority for the 35
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -238,6 +238,15 @@ answerers, stage-gate refusals, replay, reopen and conflicts) and a plain
 task, with the expected result of each. The answer digests are checked by `aweb_naapp.runtime.task_requests`; the
 sequence is for the task service. See
 [app task requests](../app-task-requests.md) §4.
+
+### `page-action-prepare-v1.json`
+
+Intent preparation (aweb-acgg.8): prepare responses with their task digests and
+authorization bindings, the member's completed and signed payload, the
+signer's pre-signing checks with their refusals, and ordered prepare, submit,
+replay and renewal steps with the expected result of each. The responses and
+checks are checked by `aweb_naapp.runtime.task_requests`; the sequence is for a
+pages naapp. See [page actions](../page-actions.md) §3.
 
 ### `page-proposal-v1.json`
 
