@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from importlib.resources import files
-from typing import Any
+from typing import Any, cast
 
 from jsonschema import Draft202012Validator, FormatChecker
 
@@ -107,30 +107,45 @@ def validate_page_bytes(raw: bytes) -> Validation:
 _SAFE_INTEGER = 2**53 - 1
 
 
-def _walk_error(page: object) -> PageError | None:
-    """The first value, in document order, past the JSON depth or number rules.
+def _walk_error(page: dict[str, Any]) -> PageError | None:
+    """The first value, in document order, past the value-count, depth or number rules.
 
     Every number in a page is a safe integer: fractional values are decimal
     strings, so a float or an integer beyond 2^53-1 is refused wherever it
-    appears, record values and inline schemas included.
+    appears, record values and inline schemas included. The walk keeps one
+    mutable path, so its cost is linear in the page and a pointer is built only
+    for the error it reports.
     """
-    stack: list[tuple[object, tuple[str | int, ...]]] = [(page, ())]
     limit = PAGE_LIMITS["max_json_depth"]
+    remaining = PAGE_LIMITS["max_values"] - 1  # the page itself is one value
+    path: list[str | int] = []
+    stack: list[Iterator[tuple[str | int, object]]] = [iter(page.items())]
     while stack:
-        node, path = stack.pop()
-        if isinstance(node, float) or (
-            isinstance(node, int) and not isinstance(node, bool) and abs(node) > _SAFE_INTEGER
-        ):
-            return PageError("limits", "unsafe_number", pointer(path))
-        if isinstance(node, dict):
-            children: list[tuple[str | int, object]] = list(node.items())
-        elif isinstance(node, list):
-            children = list(enumerate(node))
-        else:
+        try:
+            key, child = next(stack[-1])
+        except StopIteration:
+            stack.pop()
+            if path:
+                path.pop()
             continue
-        if len(path) + 1 > limit:
-            return PageError("limits", "too_deep_json", pointer(path))
-        stack.extend((child, (*path, key)) for key, child in reversed(children))
+        remaining -= 1
+        if remaining < 0:
+            return PageError("limits", "too_many_values", "")
+        kind = type(child)
+        if kind is int:
+            if not -_SAFE_INTEGER <= cast(int, child) <= _SAFE_INTEGER:
+                return PageError("limits", "unsafe_number", pointer((*path, key)))
+        elif kind is float:
+            return PageError("limits", "unsafe_number", pointer((*path, key)))
+        elif kind is dict or kind is list:
+            # the page is depth 1, so a child of the innermost open value is at len(stack) + 1
+            if len(stack) + 1 > limit:
+                return PageError("limits", "too_deep_json", pointer((*path, key)))
+            path.append(key)
+            if kind is dict:
+                stack.append(iter(cast(dict[str, Any], child).items()))
+            else:
+                stack.append(enumerate(cast(list[Any], child)))
     return None
 
 

@@ -33,8 +33,9 @@ _META_SCHEMA = Draft202012Validator(Draft202012Validator.META_SCHEMA)
 _BIDI_CONTROLS = frozenset(chr(code) for code in (*range(0x202A, 0x202F), *range(0x2066, 0x206A)))
 
 # Inline schemas (collection schemas and action input schemas) may use only
-# these 2020-12 keywords. Every sub-schema a keyword can hold is walked below,
-# so a reference can never reach a sub-schema lint has not checked.
+# these keywords: what pages need, plus the bounds the cost model requires and
+# annotations. There are no references or combinators, so the written schema is
+# the whole schema and its validation cost is computable statically.
 _ALLOWED_KEYWORDS = frozenset(
     {
         "type",
@@ -43,59 +44,56 @@ _ALLOWED_KEYWORDS = frozenset(
         "properties",
         "required",
         "additionalProperties",
-        "minProperties",
         "maxProperties",
-        "dependentRequired",
-        "propertyNames",
         "items",
-        "prefixItems",
         "minItems",
         "maxItems",
-        "uniqueItems",
-        "contains",
-        "minContains",
-        "maxContains",
         "minLength",
         "maxLength",
         "minimum",
         "maximum",
-        "exclusiveMinimum",
-        "exclusiveMaximum",
-        "multipleOf",
-        "allOf",
-        "anyOf",
-        "oneOf",
-        "not",
-        "if",
-        "then",
-        "else",
-        "$defs",
-        "$ref",
+        "format",
         "title",
         "description",
         "default",
         "examples",
-        "format",
         "$comment",
-        "deprecated",
-        "readOnly",
-        "writeOnly",
     }
 )
 _PATTERN_KEYWORDS = frozenset({"pattern", "patternProperties"})
-_SCHEMA_MAPS = ("properties", "$defs")
-_SCHEMA_LISTS = ("allOf", "anyOf", "oneOf", "prefixItems")
-_SCHEMA_SINGLES = (
-    "items",
-    "additionalProperties",
-    "propertyNames",
-    "contains",
-    "not",
-    "if",
-    "then",
-    "else",
-)
-_LOCAL_REF = re.compile(r"#/\$defs/([A-Za-z0-9_.-]+)")
+
+
+def _types(node: Mapping[str, Any]) -> set[str]:
+    declared = node.get("type")
+    if isinstance(declared, str):
+        return {declared}
+    if isinstance(declared, list):
+        return {kind for kind in declared if isinstance(kind, str)}
+    return set()
+
+
+def _is_array_schema(node: Mapping[str, Any]) -> bool:
+    return "array" in _types(node) or "items" in node or "minItems" in node
+
+
+def _is_object_schema(node: Mapping[str, Any]) -> bool:
+    return "object" in _types(node) or any(
+        key in node for key in ("properties", "required", "additionalProperties", "maxProperties")
+    )
+
+
+def _children(node: Mapping[str, Any]) -> Iterator[tuple[str | tuple[str, str], object, str]]:
+    """Each sub-schema with its key and the bound that multiplies its cost."""
+    properties = node.get("properties")
+    if isinstance(properties, dict):
+        for name, child in properties.items():
+            yield ("properties", name), child, "one"
+    additional = node.get("additionalProperties")
+    if isinstance(additional, dict):
+        yield "additionalProperties", additional, "maxProperties"
+    items = node.get("items")
+    if isinstance(items, dict):
+        yield "items", items, "maxItems"
 
 
 def _canonical(value: object) -> bytes:
@@ -136,67 +134,86 @@ def _strings(node: object, path: Path) -> Iterator[tuple[str, Path]]:
 
 
 def _inline_schema_errors(schema: object, path: Path) -> Iterator[PageError]:
-    root_defs = schema.get("$defs") if isinstance(schema, dict) else None
-    defs = root_defs if isinstance(root_defs, dict) else {}
-    # Sub-schemas as written, overall and per $defs entry, and the root's
-    # references into $defs: together they give the size once references are
-    # expanded. A $defs entry holds no $ref, so expansion is one level deep.
-    written = 0
-    def_sizes: dict[str, int] = {}
-    root_refs: list[str] = []
-    stack: list[tuple[object, Path, int, str | None]] = [(schema, path, 1, None)]
+    stack: list[tuple[object, Path, int]] = [(schema, path, 1)]
     max_depth = PAGE_LIMITS["max_inline_schema_depth"]
     while stack:
-        node, at, depth, within = stack.pop()
+        node, at, depth = stack.pop()
         if not isinstance(node, dict):
             continue
-        written += 1
-        if within is not None:
-            def_sizes[within] = def_sizes.get(within, 0) + 1
         if depth > max_depth:
             yield PageError("lint", "inline_schema_depth", pointer(at))
             continue
         for key, value in node.items():
             if key in _PATTERN_KEYWORDS:
                 yield PageError("lint", "inline_schema_pattern", pointer((*at, key)))
-            elif key not in _ALLOWED_KEYWORDS or (key == "$defs" and depth > 1):
+            elif key not in _ALLOWED_KEYWORDS:
                 yield PageError("lint", "inline_schema_keyword", pointer((*at, key)))
-            elif key == "$ref" and within is not None:
-                yield PageError("lint", "inline_schema_def_ref", pointer((*at, key)))
-            elif key == "$ref":
-                match = _LOCAL_REF.fullmatch(value) if isinstance(value, str) else None
-                if match is None or match.group(1) not in defs:
-                    yield PageError("lint", "inline_schema_ref", pointer((*at, key)))
-                else:
-                    root_refs.append(match.group(1))
             elif key == "type" and (
                 "number" == value or (isinstance(value, list) and "number" in value)
             ):
                 yield PageError("lint", "inline_schema_number", pointer((*at, key)))
-        for key in _SCHEMA_MAPS:
-            children = node.get(key)
-            if isinstance(children, dict) and not (key == "$defs" and depth > 1):
-                for name, child in children.items():
-                    owner = name if key == "$defs" else within
-                    stack.append((child, (*at, key, name), depth + 1, owner))
-        for key in _SCHEMA_LISTS:
-            children = node.get(key)
-            if isinstance(children, list):
-                stack.extend(
-                    (child, (*at, key, index), depth + 1, within)
-                    for index, child in enumerate(children)
-                )
-        for key in _SCHEMA_SINGLES:
-            child = node.get(key)
-            if isinstance(child, dict):
-                stack.append((child, (*at, key), depth + 1, within))
-    expanded = written + sum(def_sizes.get(name, 0) for name in root_refs)
-    if expanded > PAGE_LIMITS["max_inline_schema_expansion"]:
-        yield PageError("lint", "inline_schema_expansion", pointer(path))
+        unbounded = (_is_array_schema(node) and "maxItems" not in node) or (
+            _is_object_schema(node)
+            and node.get("additionalProperties", True) is not False
+            and "maxProperties" not in node
+        )
+        if unbounded:
+            yield PageError("lint", "inline_schema_unbounded", pointer(at))
+        for key, child, _ in _children(node):
+            child_at = (*at, *key) if isinstance(key, tuple) else (*at, key)
+            stack.append((child, child_at, depth + 1))
+
+
+def schema_cost(schema: object) -> int:
+    """Worst-case validation work of a checked inline schema on one value.
+
+    Each sub-schema counts 1 plus its enum length, multiplied by the declared
+    maxItems or maxProperties of every array or object applicator above it.
+    """
+    if not isinstance(schema, dict):
+        return 1
+    cost = 1 + (len(schema["enum"]) if isinstance(schema.get("enum"), list) else 0)
+    for _, child, bound in _children(schema):
+        factor = 1 if bound == "one" else int(schema.get(bound, 0))
+        cost += factor * schema_cost(child)
+    return cost
+
+
+def _within_bounds(schema: object, value: object) -> bool:
+    """Whether every array and object in the value respects its declared bounds.
+
+    Checked before the schema is applied, so applying `items` or
+    `additionalProperties` never iterates past a declared bound.
+    """
+    stack: list[tuple[object, object]] = [(schema, value)]
+    while stack:
+        node, instance = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        if isinstance(instance, list):
+            if "maxItems" in node and len(instance) > node["maxItems"]:
+                return False
+            items = node.get("items")
+            if isinstance(items, dict):
+                stack.extend((items, element) for element in instance)
+        elif isinstance(instance, dict):
+            properties = node.get("properties")
+            declared = properties if isinstance(properties, dict) else {}
+            if node.get("additionalProperties", True) is False and len(instance) > len(declared):
+                return False
+            if "maxProperties" in node and len(instance) > node["maxProperties"]:
+                return False
+            additional = node.get("additionalProperties")
+            for name, member in instance.items():
+                if name in declared:
+                    stack.append((declared[name], member))
+                elif isinstance(additional, dict):
+                    stack.append((additional, member))
+    return True
 
 
 def _checked_schema_errors(schema: object, path: Path) -> list[PageError]:
-    """The inline-schema subset first, then the 2020-12 meta-schema."""
+    """The inline-schema subset, then the 2020-12 meta-schema, then the cost budget."""
     errors = list(_inline_schema_errors(schema, path))
     if not errors:
         errors = sorted(
@@ -205,6 +222,8 @@ def _checked_schema_errors(schema: object, path: Path) -> list[PageError]:
                 for error in _META_SCHEMA.iter_errors(schema)
             }
         )
+    if not errors and schema_cost(schema) > PAGE_LIMITS["max_inline_schema_cost"]:
+        errors = [PageError("lint", "inline_schema_cost", pointer(path))]
     return errors
 
 
@@ -420,6 +439,8 @@ def _widget_errors(page: _Page) -> Iterator[PageError]:
 
 def _collection_errors(page: _Page) -> Iterator[PageError]:
     seen: set[str] = set()
+    checked: list[tuple[Path, Mapping[str, Any], bool]] = []
+    total_cost = 0
     for index, collection in enumerate(page.page["collections"]):
         at: Path = ("collections", index)
         if collection["id"] in seen:
@@ -427,14 +448,26 @@ def _collection_errors(page: _Page) -> Iterator[PageError]:
         seen.add(collection["id"])
         schema_errors = _checked_schema_errors(collection["schema"], (*at, "schema"))
         yield from schema_errors
+        if not schema_errors:
+            total_cost += len(collection["records"]) * schema_cost(collection["schema"])
+        checked.append((at, collection, not schema_errors))
+    # Records are validated only when the whole snapshot fits the page budget.
+    within_budget = total_cost <= PAGE_LIMITS["max_page_validation_cost"]
+    if not within_budget:
+        yield PageError("lint", "page_validation_cost", "/collections")
+    for at, collection, schema_ok in checked:
+        validator = Draft202012Validator(collection["schema"]) if schema_ok else None
         record_ids: set[str] = set()
-        validator = None if schema_errors else Draft202012Validator(collection["schema"])
         for record_index, record in enumerate(collection["records"]):
             record_at: Path = (*at, "records", record_index)
             if record["id"] in record_ids:
                 yield PageError("lint", "duplicate_record_id", pointer((*record_at, "id")))
             record_ids.add(record["id"])
-            if validator is not None and not validator.is_valid(record["value"]):
+            if validator is None or not within_budget:
+                continue
+            if not _within_bounds(collection["schema"], record["value"]) or not (
+                validator.is_valid(record["value"])
+            ):
                 yield PageError("lint", "record_invalid", pointer((*record_at, "value")))
 
 

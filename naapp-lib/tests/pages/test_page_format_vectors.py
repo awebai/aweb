@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,19 @@ def _patched(base: Any, patch: list[dict]) -> Any:
     return document
 
 
+def _count_values(document: Any) -> int:
+    count = 0
+    stack = [document]
+    while stack:
+        value = stack.pop()
+        count += 1
+        if isinstance(value, dict):
+            stack.extend(value.values())
+        elif isinstance(value, list):
+            stack.extend(value)
+    return count
+
+
 def _generated(spec: dict) -> dict:
     page = copy.deepcopy(VECTORS["bases"][spec["base"]])
     if spec["shape"] == "nested":
@@ -73,8 +87,15 @@ def _generated(spec: dict) -> dict:
         for _ in range(spec["depth"] - 7):
             value = {"n": value}
         collection = page["collections"][0]
-        collection["schema"]["properties"]["deep"] = {"type": "object"}
+        collection["schema"]["properties"]["deep"] = {}
         collection["records"][0]["value"]["deep"] = value
+    elif spec["shape"] == "values":
+        # pad one record so the page holds exactly the requested number of JSON values
+        collection = page["collections"][0]
+        collection["schema"]["properties"]["pad"] = {}
+        collection["records"][0]["value"]["pad"] = []
+        missing = spec["values"] - _count_values(page)
+        collection["records"][0]["value"]["pad"] = [0] * missing
     elif spec["shape"] == "padded":
         page["layout"].append(
             {
@@ -146,3 +167,25 @@ def test_validation_does_not_modify_the_page():
 @pytest.mark.parametrize("vector", VECTORS["bundle_hash"], ids=lambda vector: vector["name"])
 def test_bundle_hash(vector):
     assert bundle_sha256(vector["items"]) == vector["sha256"]
+
+
+def test_declared_bounds_are_checked_before_items_are_applied():
+    # `items` precedes `maxItems` and each element would be compared with 900
+    # enum values: applying `items` to all 500,000 elements takes minutes, so a
+    # refusal within seconds shows the bound was checked first.
+    page = copy.deepcopy(VECTORS["bases"]["fixture"])
+    collection = page["collections"][0]
+    collection["schema"]["properties"]["pad"] = {
+        "type": "array",
+        "items": {"enum": [f"v{n}" for n in range(900)]},
+        "maxItems": 10,
+    }
+    # every element is valid (the last enum value), so `items` would pass all of them
+    collection["records"][0]["value"]["pad"] = ["v899"] * 500_000
+    started = time.monotonic()
+    result = validate_page(page)
+    elapsed = time.monotonic() - started
+    assert {(error.code, error.pointer) for error in result.errors} == {
+        ("record_invalid", "/collections/0/records/0/value")
+    }
+    assert elapsed < 5

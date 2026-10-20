@@ -36,6 +36,7 @@ Checked iteratively, before any recursive validator sees the page.
 | `not_object` | The page is not a JSON object. |
 | `too_deep` | A widget is nested more than 8 deep (a top-level widget has depth 1). The pointer is the first widget past the limit. |
 | `too_many_widgets` | More than 2,000 widgets in the layout tree, containers included. Pointer `/layout`. |
+| `too_many_values` | More than 1,000,000 JSON values in the page, counting the page itself and every container and scalar. Pointer: the page. Large collections paginate. |
 | `too_deep_json` | Any value is nested more than 64 deep (the page object has depth 1). The pointer is the first value past the limit. |
 | `unsafe_number` | Any number anywhere in the page, record values and inline schemas included, is a float or an integer beyond ±(2^53−1). Fractional values are decimal strings. The pointer is the first such number in document order. |
 
@@ -70,10 +71,10 @@ need care in every implementation:
 | `state_unknown_widget` | Every `widget_state` key is the ID of a widget in the layout. |
 | `duplicate_collection_id`, `duplicate_record_id`, `duplicate_action_id` | IDs are unique within their scope. |
 | `record_invalid` | Each record's `value` satisfies its collection schema. |
-| `inline_schema_keyword` | An inline schema (a collection schema or action input schema) uses only these 2020-12 keywords: `type`, `enum`, `const`, `properties`, `required`, `additionalProperties`, `minProperties`, `maxProperties`, `dependentRequired`, `propertyNames`, `items`, `prefixItems`, `minItems`, `maxItems`, `uniqueItems`, `contains`, `minContains`, `maxContains`, `minLength`, `maxLength`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `allOf`, `anyOf`, `oneOf`, `not`, `if`, `then`, `else`, `$defs`, `$ref`, `title`, `description`, `default`, `examples`, `format`, `$comment`, `deprecated`, `readOnly` and `writeOnly`. Any other keyword is refused, so every sub-schema a reference can reach is one lint has checked. `$defs` is allowed only at the inline schema's root. |
-| `inline_schema_ref` | A `$ref` outside `$defs` is exactly `#/$defs/<name>`, naming an existing root `$defs` entry (`name` is `[A-Za-z0-9_.-]+`). Remote, file and other pointers are refused. |
-| `inline_schema_def_ref` | A `$defs` entry contains no `$ref`. So references cannot chain or cycle, and expanding them is one level deep. |
-| `inline_schema_expansion` | The inline schema has at most 1,000 sub-schemas once each reference is replaced by its `$defs` entry. Pointer: the inline schema's root. This bounds validation work per record. |
+| `inline_schema_keyword` | An inline schema (a collection schema or action input schema) uses only the keywords in the table below. Any other keyword is refused, `$ref`, `$defs`, every combinator (`allOf`, `anyOf`, `oneOf`, `not`, `if`/`then`/`else`) and `uniqueItems` included. With no references or combinators, the written schema is the whole schema, so its validation cost is computable statically. |
+| `inline_schema_unbounded` | Every array schema (`type` includes `array`, or it has `items` or `minItems`) declares `maxItems`. Every object schema whose `additionalProperties` is not `false` declares `maxProperties`. Pointer: the schema missing the bound. |
+| `inline_schema_cost` | The schema's cost is at most 10,000. Cost: each sub-schema counts 1 plus its `enum` length, multiplied by the declared `maxItems` or `maxProperties` of every `items` or `additionalProperties` applicator above it. Pointer: the inline schema's root. |
+| `page_validation_cost` | The sum over collections of (records in the snapshot × schema cost) is at most 200,000. Pointer `/collections`. No record is validated when this fails. |
 | `inline_schema_number` | `type: "number"` is refused. Float literals and unsafe integers in an inline schema are already refused as `unsafe_number`. |
 | `inline_schema_pattern` | `pattern` and `patternProperties` are refused. A regular expression's work and dialect cannot be bounded portably (JSON Schema specifies ECMA-262, and backtracking engines can take exponential time), so inline schemas use `enum`, `const`, lengths and bounds instead. A linear-time, ECMA-compatible subset would be a later, explicit addition. |
 | `inline_schema_invalid` | A collection schema or action input schema is not a valid JSON Schema 2020-12 schema (checked against the meta-schema). Pointer: the offending keyword. Checked only after the subset rules pass, and before any record is validated. |
@@ -81,8 +82,31 @@ need care in every implementation:
 | `bidi_control` | No embedding, override or isolate control (U+202A–U+202E, U+2066–U+2069) in the title, any layout string (Markdown included), any `widget_state` string or any action label. Record values are data; the renderer isolates them instead. |
 | `bundle_*` | The bundle rules in §5. |
 
+Permitted inline-schema keywords, each for a reason a page needs:
+
+| Keywords | Why |
+| --- | --- |
+| `type`, `enum`, `const`, `required` | Field types, closed choices and mandatory fields, as the base pages use. |
+| `properties`, `additionalProperties`, `maxProperties` | Record and input objects. `additionalProperties` is `false` for closed objects, or a schema for a bounded map. |
+| `items`, `minItems`, `maxItems` | Bounded lists, such as a bundle's item list. |
+| `minLength`, `maxLength`, `minimum`, `maximum` | Bounds on strings and integers. Text fields and identifiers are bounded by length, since `pattern` is refused. |
+| `format`, `title`, `description`, `default`, `examples`, `$comment` | Annotations only; none is asserted. |
+
+**Validation cost.** The schema budgets bound the work of validating one value
+to cost × a constant and a whole snapshot to 200,000 × a constant. The
+value-count limit bounds the host checks, which are linear in the page's
+values. The targets are under 50 ms per record and under 1 s per page on
+ordinary hardware. In the reference validator, the worst shapes measured about
+20 ms for one record and under 400 ms for a page at the schema budgets. A page
+at the value limit took under 300 ms, and a refused 10 MiB page under 400 ms. An implementation checks each value's arrays and objects
+against their declared `maxItems` and `maxProperties`, and an object under
+`additionalProperties: false` against its declared property count, **before**
+applying `items` or `additionalProperties`. Then applying the schema never
+iterates past a declared bound, whatever order its keywords appear in. A value
+that exceeds a bound is `record_invalid`.
+
 A record's value is validated against its collection schema only when that
-schema passes the inline-schema rules and the meta-schema. In inline schemas,
+schema passes the inline-schema rules, the meta-schema and both budgets. In inline schemas,
 `format` is an annotation only: it is never asserted, so it cannot make two
 implementations disagree.
 
@@ -153,10 +177,10 @@ A collection has `id`, `schema_version`, an inline JSON Schema `schema`,
 `mode` (`owned` or `synced`) and `records`, at most 200 per snapshot. A record
 has `id`, `rev` and `value`. A synced record also carries `source`: `system`,
 `external_id`, `version` and `synced_at`. Inline schemas (and action input
-schemas) follow the subset in the lint rules: allowlisted keywords only,
-references only from outside `$defs` into root `$defs`, a bounded expanded
-size, no `number` type, no `pattern` or `patternProperties`, bounded depth, and
-valid under the 2020-12 meta-schema.
+schemas) follow the subset in the lint rules: allowlisted keywords only (no
+references or combinators), declared bounds on every array and open object, a
+cost within budget, no `number` type, no `pattern` or `patternProperties`,
+bounded depth, and valid under the 2020-12 meta-schema.
 
 ## 5. Decision cards and bundles
 

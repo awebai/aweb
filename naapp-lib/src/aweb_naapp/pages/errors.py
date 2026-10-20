@@ -10,11 +10,13 @@ PAGE_LIMITS: Mapping[str, int] = MappingProxyType(
     {
         "max_bytes": 10 * 1024 * 1024,
         "max_json_depth": 64,
+        "max_values": 1_000_000,
         "max_depth": 8,
         "max_widgets": 2000,
         "max_bundle_items": 64,
         "max_inline_schema_depth": 16,
-        "max_inline_schema_expansion": 1000,
+        "max_inline_schema_cost": 10_000,
+        "max_page_validation_cost": 200_000,
     }
 )
 
