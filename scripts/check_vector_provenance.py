@@ -17,6 +17,7 @@ EXPECTED_VECTOR_ROOTS = {
     PurePosixPath("naapp/folio/tests/vectors"),
     PurePosixPath("naapp/library/tests/vectors"),
     PurePosixPath("naapp/library/test-vectors"),
+    PurePosixPath("naapp/secrets/vectors"),
     PurePosixPath("test-vectors"),
 }
 APP_EMIT_COPIES = (

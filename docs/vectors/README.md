@@ -27,6 +27,7 @@ The other tracked vector directories have disjoint, explicit purposes:
 | `cli/go/internal/conformance/vectors/` | Consumer-local Go fixtures plus the byte-enforced `team-auth-envelope-v2.json` package copy linked by the currently pinned naapp reference generator. |
 | `naapp/folio/tests/vectors/` | App test snapshots; `app-emit-credential-v1.json` is byte-checked against its Go consumer authority. |
 | `naapp/library/tests/vectors/` | App snapshots plus Library blueprint input/output goldens; the app-emit snapshot is byte-checked. |
+| `naapp/secrets/vectors/` | secrets' app-internal contracts: the `aweb.secrets.use-approval/1` request object under B2's prefix. Each file is consumed by a test in `naapp/secrets/tests/`. |
 | `test-vectors/` | Repository-level policy, blueprint, app-manifest, and packaging fixtures governed by their own indexes. |
 
 There is deliberately no server-local public-vector package copy. Server wheels
