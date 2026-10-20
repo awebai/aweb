@@ -20,9 +20,10 @@ ALTER TABLE {{tables.team_app_installs}}
         CHECK (state <> 'active' OR (origin_verified AND manifest_bytes IS NOT NULL));
 
 -- An uninstall may remove every installation record. Authority ordering must
--- still survive: never delete this counter as part of installation retirement.
+-- still survive: never delete this counter, even on team deletion. Reusing a
+-- team_id must not issue generations below those remembered by remote apps.
 CREATE TABLE {{tables.team_app_install_counters}} (
-    team_id TEXT NOT NULL REFERENCES {{tables.teams}}(team_id) ON DELETE CASCADE,
+    team_id TEXT NOT NULL,
     app_id TEXT NOT NULL,
     last_generation BIGINT NOT NULL CHECK (last_generation > 0),
     PRIMARY KEY (team_id, app_id)

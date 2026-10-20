@@ -259,6 +259,7 @@ IDs. A new installation ID continues the order rather than resetting it.
 value in the same registry transaction. Existing-installation writers hold the
 installation row lock and validate the caller's expected generation first.
 `team_app_install_counters` survives uninstall and removal of the installation
-row; only deletion of the whole team cascades to its counter. Every install,
+row, and also survives deletion and recreation of the team itself. Counter
+rows are never deleted, so reusing a team ID cannot reset app authority. Every install,
 update and scope change uses the allocator. A rolled-back transaction issues
 no generation. Migrated current installations and their counters start at 1.
