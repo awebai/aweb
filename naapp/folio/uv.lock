@@ -132,9 +132,10 @@ requires-dist = [
     { name = "pgdbm", marker = "extra == 'runtime'", specifier = ">=0.5.0" },
     { name = "pydantic-settings", marker = "extra == 'runtime'", specifier = ">=2.10.1" },
     { name = "pynacl", marker = "extra == 'runtime'", specifier = ">=1.6.2" },
+    { name = "pynacl", marker = "extra == 'signing-key'", specifier = ">=1.6.2" },
     { name = "webauthn", marker = "extra == 'runtime'", specifier = ">=3.0.1" },
 ]
-provides-extras = ["runtime", "outbox", "idempotency"]
+provides-extras = ["runtime", "outbox", "signing-key", "idempotency"]
 
 [package.metadata.requires-dev]
 dev = [
