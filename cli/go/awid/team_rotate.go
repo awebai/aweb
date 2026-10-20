@@ -210,6 +210,11 @@ func ResignTeamServerRecord(newTeamKey ed25519.PrivateKey, record map[string]any
 	return SignedAttestationRecord{Record: resigned, Signature: signature}, nil
 }
 
+// signedRecordsPageCap bounds the signed-records walk, as certificateListPageCap
+// does certificate listing, so a registry that keeps reporting more pages cannot
+// keep aw reading forever. At AWID's largest page it is 100,000 records.
+const signedRecordsPageCap = 500
+
 // SignedRecordItem is one record of a team's paginated signed-records read.
 // Key is nil for the team-server record.
 type SignedRecordItem struct {
@@ -234,7 +239,7 @@ func (c *RegistryClient) ListTeamSignedRecords(
 		urlPathEscape(strings.ToLower(strings.TrimSpace(name))) + "/signed-records"
 	var items []SignedRecordItem
 	cursor := ""
-	for {
+	for page := 0; page < signedRecordsPageCap; page++ {
 		query := url.Values{}
 		if pageSize > 0 {
 			query.Set("limit", strconv.Itoa(pageSize))
@@ -246,7 +251,7 @@ func (c *RegistryClient) ListTeamSignedRecords(
 		if encoded := query.Encode(); encoded != "" {
 			target += "?" + encoded
 		}
-		var page struct {
+		var pageBody struct {
 			Items []struct {
 				Kind      string          `json:"kind"`
 				Key       *string         `json:"key"`
@@ -257,10 +262,10 @@ func (c *RegistryClient) ListTeamSignedRecords(
 			NextCursor *string `json:"next_cursor"`
 		}
 		headers := optionalSignedPathHeaders(http.MethodGet, path, signingKey)
-		if err := c.requestJSON(ctx, http.MethodGet, registryURL, target, headers, nil, &page); err != nil {
+		if err := c.requestJSON(ctx, http.MethodGet, registryURL, target, headers, nil, &pageBody); err != nil {
 			return nil, err
 		}
-		for _, item := range page.Items {
+		for _, item := range pageBody.Items {
 			decoder := json.NewDecoder(bytes.NewReader(item.Record))
 			decoder.UseNumber()
 			var record map[string]any
@@ -272,12 +277,14 @@ func (c *RegistryClient) ListTeamSignedRecords(
 				SignedAttestationRecord: SignedAttestationRecord{Record: record, Signature: item.Signature},
 			})
 		}
-		if !page.HasMore {
+		if !pageBody.HasMore {
 			return items, nil
 		}
-		if page.NextCursor == nil || *page.NextCursor == "" || *page.NextCursor == cursor {
+		if pageBody.NextCursor == nil || *pageBody.NextCursor == "" || *pageBody.NextCursor == cursor {
 			return nil, fmt.Errorf("signed-records read: AWID reported more records without a new cursor")
 		}
-		cursor = *page.NextCursor
+		cursor = *pageBody.NextCursor
 	}
+	return nil, fmt.Errorf("signed-records read of %s:%s is truncated at %d records: AWID still reports more after %d pages",
+		name, domain, len(items), signedRecordsPageCap)
 }
