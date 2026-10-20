@@ -127,10 +127,13 @@ async def write_pending_bindings(
 ) -> list[HookBinding]:
     """Write one install generation's declared bindings as pending.
 
-    Runs in the install's transaction. Every earlier binding of the app in the
-    team, pending or active, is superseded first. Writing the same generation
-    again keeps its live bindings and their states; ended bindings are history,
-    so a reinstall after uninstall writes fresh pending ones. Returns the generation's
+    Runs in the install's transaction, after the install record is written:
+    the bindings must name that record's origin and digest. The install row is
+    locked first, so writes for one install run one at a time. Every earlier
+    binding of the app in the team, pending or active, is superseded. Writing
+    the same generation again keeps its live bindings and their states; ended
+    bindings are history, so a reinstall after uninstall writes fresh pending
+    ones. A generation older than the installation's live one is refused. Returns the generation's
     bindings in declaration order.
     """
 
@@ -142,12 +145,40 @@ async def write_pending_bindings(
         raise ValidationError("installation_id and generation are given together")
     validated = [_validated(declaration) for declaration in declarations]
 
+    install = await tx.fetch_one(
+        """
+        SELECT origin, digest FROM {{tables.team_app_installs}}
+        WHERE team_id = $1 AND app_id = $2
+        FOR UPDATE
+        """,
+        team_id,
+        app_id,
+    )
+    if install is None:
+        raise ValidationError("the app is not installed in this team")
+    if (install["origin"], install["digest"]) != (origin, digest):
+        raise ValidationError("hook bindings must name the install's origin and digest")
+    if installation_id is not None:
+        newer = await tx.fetch_value(
+            """
+            SELECT MAX(generation) FROM {{tables.app_hook_bindings}}
+            WHERE team_id = $1 AND app_id = $2 AND installation_id = $3
+              AND state IN ('pending', 'active')
+            """,
+            team_id,
+            app_id,
+            installation_id,
+        )
+        if newer is not None and newer > generation:
+            raise ValidationError("the installation already has a newer generation")
+
     await tx.execute(
         """
         UPDATE {{tables.app_hook_bindings}}
         SET state = 'superseded', ended_by = 'generation', revoked_at = NOW()
         WHERE team_id = $1 AND app_id = $2 AND state IN ('pending', 'active')
           AND (digest <> $3
+               OR origin <> $6
                OR COALESCE(installation_id, '') <> COALESCE($4::TEXT, '')
                OR COALESCE(generation, 0) <> COALESCE($5::INTEGER, 0))
         """,
@@ -156,6 +187,7 @@ async def write_pending_bindings(
         digest,
         installation_id,
         generation,
+        origin,
     )
     written = []
     for declaration in validated:
@@ -187,7 +219,7 @@ async def write_pending_bindings(
         row = await tx.fetch_one(
             f"""
             SELECT {_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
-            WHERE team_id = $1 AND app_id = $2 AND digest = $10 AND state IN ('pending', 'active')
+            WHERE team_id = $1 AND app_id = $2 AND digest = $10 AND origin = $11 AND state IN ('pending', 'active')
               AND COALESCE(installation_id, '') = COALESCE($3::TEXT, '')
               AND COALESCE(generation, 0) = COALESCE($4::INTEGER, 0)
               AND kind = $5 AND catalog_id = $6 AND catalog_version = $7 AND hook = $8
@@ -203,6 +235,7 @@ async def write_pending_bindings(
             declaration.hook,
             declaration.tool,
             digest,
+            origin,
         )
         written.append(_binding(row))
     return written
