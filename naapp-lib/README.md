@@ -53,3 +53,12 @@ configured key is the declared one. An app with `<PREFIX>APP_EVENTS_ORIGIN` set
 (https, or http on loopback) must hold its declared app-event key. That key may instead be given as
 `<PREFIX>APP_EMIT_KEY_SEED_HEX` with `<PREFIX>APP_EMIT_KID`, a form that signs
 app events only.
+
+The egress guard, `aweb_naapp.egress`, is for naapps that call an external
+service with their own credential. It needs only the `egress` extra,
+`aweb-naapp[egress]`, and none of the runtime. It canonicalizes and matches
+outbound URLs under the contracts in `docs/vectors/egress-url-v1.json` and
+`docs/vectors/egress-address-v1.json`, resolves names itself and refuses any
+denied address, and sends a request only to the destination it matches,
+through one pinned, verified connection. Redirects come back as responses, no proxy is read from
+the environment, and a failure is classed as not sent or of unknown outcome.

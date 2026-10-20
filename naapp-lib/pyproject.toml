@@ -51,6 +51,17 @@ idempotency = [
 pages = [
   "jsonschema>=4.23",
 ]
+# The shared egress guard, aweb_naapp.egress: URL canonicalization, its own
+# resolver and a pinned verified connection, without the naapp runtime.
+# publicsuffixlist is pinned exactly on purpose: the list decides which
+# wildcard destinations are refused, so it changes only by a reviewed bump of
+# this pin together with docs/vectors/egress-url-v1.json. Do not loosen it.
+egress = [
+  "dnspython>=2.7.0",
+  "httpcore[asyncio]>=1.0.9",
+  "idna>=3.10",
+  "publicsuffixlist==1.1.0.20261018",
+]
 
 [project.urls]
 Homepage = "https://github.com/awebai/aweb/tree/main/naapp-lib"
@@ -70,6 +81,8 @@ awid-service = { path = "../awid" }
 [dependency-groups]
 dev = [
   "aweb-naapp[runtime,pages]",
+  "aweb-naapp[egress]",
+  "cryptography>=44.0.0",
   "pytest>=9.0.0",
   "pytest-asyncio>=1.2.0",
   "httpx2>=2.9.1",
