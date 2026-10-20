@@ -22,7 +22,7 @@ from test_app_task_requests import (
 )
 from test_task_answers import _v2_request
 from test_tasks_http import _seed_team
-from nacl.signing import SigningKey
+from test_dashboard_privacy import privacy_app  # noqa: F401
 
 VECTORS = Path(__file__).resolve().parents[2] / "docs" / "vectors"
 AUTH = json.loads((VECTORS / "app-task-authorization-v1.json").read_text())

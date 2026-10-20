@@ -9,6 +9,7 @@ from fastapi import HTTPException, Request
 
 from awid.team_ids import parse_team_id
 from aweb.app_credentials import APP_REQUEST, AppCredential, verify_app_credential
+from aweb.claims import release_task_claims_on
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from aweb.task_contracts import validate_app_task
 from aweb.team_auth import parse_and_verify_certificate
@@ -95,7 +96,7 @@ async def verify_authorization_certificate(request, authorization):
     return info, certificates
 
 
-async def create_app_task_on(request: Request, tx, *, credential: AppCredential, installation: dict, body: dict):
+async def create_app_task_on(request: Request, tx, *, credential: AppCredential, installation: dict, body: dict, outcome: dict | None = None):
     if not isinstance(body, dict) or set(body) != {"task", "task_authorization"}:
         raise ValidationError("schema_invalid")
     task = validate_app_task(body["task"])
@@ -178,6 +179,14 @@ async def create_app_task_on(request: Request, tx, *, credential: AppCredential,
         credential.installation_generation, principal, metadata["external_request_id"], digest,
         json.dumps(body["task_authorization"]), json.dumps(receipt),
     )
+    if outcome is not None:
+        actor = await tx.fetch_one(
+            "SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND did_key=$2 AND deleted_at IS NULL",
+            credential.team_id, info["did_key"],
+        )
+        outcome.update(title=task["title"], actor_alias=info["alias"], assignee_alias=target.alias,
+                       actor_agent_id=str(actor["agent_id"]) if actor else "", actor_did=info["did_key"],
+                       actor_did_aw=info["member_did_aw"])
     return receipt, True
 
 
@@ -207,17 +216,20 @@ async def read_app_request_on(tx, *, credential: AppCredential, installation: di
     }}
 
 
-async def cancel_app_task_on(tx, *, team_id, task_id, external_request_id, reason):
+async def cancel_app_task_on(tx, *, team_id, task_id, external_request_id, reason, outcome: dict | None = None):
     row = await tx.fetch_one(
-        "SELECT cancellation FROM {{tables.tasks}} WHERE task_id = $1 AND team_id = $2 FOR UPDATE", task_id, team_id,
+        "SELECT cancellation,status,task_ref_suffix FROM {{tables.tasks}} WHERE task_id = $1 AND team_id = $2 FOR UPDATE", task_id, team_id,
     )
     if not row:
         raise NotFoundError("resource_not_found")
     if row["cancellation"] is not None:
+        if outcome is not None:
+            outcome["changed"] = False
         return _json(row["cancellation"])
     cancellation = {"reason": reason, "at": _time(datetime.now(timezone.utc))}
-    await tx.execute(
-        "INSERT INTO {{tables.task_comments}} (task_id, team_id, author_alias, body) VALUES ($1,$2,'app',$3)",
+    comment = await tx.fetch_one(
+        """INSERT INTO {{tables.task_comments}} (task_id, team_id, author_alias, body)
+           VALUES ($1,$2,'app',$3) RETURNING comment_id""",
         task_id, team_id, f"Request cancelled · {external_request_id}",
     )
     await tx.execute(
@@ -225,6 +237,10 @@ async def cancel_app_task_on(tx, *, team_id, task_id, external_request_id, reaso
            closed_at = COALESCE(closed_at, NOW()), updated_at = NOW() WHERE task_id = $1""",
         task_id, json.dumps(cancellation),
     )
+    task_ref = format_task_ref(_get_team_slug(team_id), row["task_ref_suffix"])
+    await release_task_claims_on(tx, team_id=team_id, task_ref=task_ref)
+    if outcome is not None:
+        outcome.update(changed=True, old_status=row["status"], task_ref=task_ref, comment_id=str(comment["comment_id"]))
     return cancellation
 
 

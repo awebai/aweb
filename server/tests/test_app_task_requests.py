@@ -5,6 +5,7 @@ installation-lock/HTTP integration is covered separately once F6 is available.
 """
 
 import base64
+import asyncio
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -15,6 +16,10 @@ import pytest
 import pytest_asyncio
 from fastapi import HTTPException
 from starlette.requests import Request
+from nacl.signing import SigningKey
+from awid.did import did_from_public_key
+from aweb.app_registry import get_installation_on
+from aweb_naapp.runtime.task_requests import app_request_credential
 
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.app_credentials import APP_REQUEST, AppCredential
@@ -26,6 +31,24 @@ from aweb.service_errors import ConflictError, ForbiddenError, ValidationError
 from aweb.task_contracts import validate_app_task, strict_json_bytes
 from test_dashboard_privacy import privacy_app, TEAM  # noqa: F401
 from test_task_answers import _v2_request
+
+
+async def _verified_install(db, *, team_id, app_id, did_key, kid="requests-1", installation_id="install-fixture", generation=1,
+                            origin="https://fixture.example.test"):
+    """Provision disposable verified registry state; F6 owns the install flow."""
+    manifest = canonical_json_bytes({"manifest_version": 2, "app": {"id": app_id, "origin": origin, "version": "1.0.0"},
+        "app_keys": [{"kid": kid, "did_key": did_key, "purposes": ["app-request"]}]})
+    digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
+    await db.execute("INSERT INTO {{tables.app_registry_apps}} (app_id,origin) VALUES ($1,$2) ON CONFLICT DO NOTHING", app_id, origin)
+    await db.execute("""INSERT INTO {{tables.app_registry_entries}} (app_id,origin,digest,app_version,manifest_version)
+        VALUES ($1,$2,$3,'1.0.0',2) ON CONFLICT DO NOTHING""", app_id, origin, digest)
+    await db.execute("""INSERT INTO {{tables.team_app_installs}}
+        (team_id,app_id,origin,digest,app_version,manifest_version,granted_scopes,installation_id,generation,state,origin_verified,manifest_bytes)
+        VALUES ($1,$2,$3,$4,'1.0.0',2,ARRAY['requests.create','requests.read'],$5,$6,'active',TRUE,$7)""",
+        team_id, app_id, origin, digest, installation_id, generation, manifest)
+    await db.execute("""INSERT INTO {{tables.team_app_keys}} (team_id,app_id,origin,digest,key_id,did_key,purposes)
+        VALUES ($1,$2,$3,$4,$5,$6,ARRAY['app-request'])""", team_id, app_id, origin, digest, kid, did_key)
+    return dict(await get_installation_on(db, team_id=team_id, app_id=app_id))
 
 
 @pytest_asyncio.fixture
@@ -40,13 +63,25 @@ async def app_request_context(privacy_app):
             member_did_aw=None, member_address=None, alias=alias, identity_scope="local",
             certificate=actor.certificate,
         )
-    installation = dict(installation_id="install-fixture", generation=1, state="active",
-                        origin="https://fixture.example.test", granted_scopes=["requests.create", "requests.read"])
+    env.app_signing_key = SigningKey.generate()
+    app_did = did_from_public_key(bytes(env.app_signing_key.verify_key))
+    installation = await _verified_install(env.db, team_id=TEAM, app_id="fixture", did_key=app_did)
     credential = AppCredential(purpose=APP_REQUEST, team_id=TEAM, app_id="fixture", kid="requests-1",
-                               did_key=env.actors["alice"].did, installation_id="install-fixture", installation_generation=1)
+                               did_key=app_did, installation_id="install-fixture", installation_generation=1)
     request = Request({"type": "http", "method": "POST", "path": "/v1/tasks/app-requests",
                        "headers": [], "app": env.app})
     return env, request, credential, installation
+
+
+async def _app_http(context, method, path, body=None):
+    env, _, credential, installation = context
+    raw = canonical_json_bytes(body) if body is not None else b""
+    headers = app_request_credential(signing_key=env.app_signing_key, aud=env.app.state.public_origin,
+        method=method, path=path, team_id=credential.team_id, app_id=credential.app_id, kid=credential.kid,
+        installation_id=installation["installation_id"], installation_generation=installation["generation"],
+        body=raw, timestamp=datetime.now(timezone.utc).isoformat())
+    headers["Content-Type"] = "application/json"
+    return await env.client.request(method, path, content=raw, headers=headers)
 
 
 def _body(env, *, request_id="action-1", expired=False):
@@ -111,8 +146,9 @@ async def test_app_request_binding_and_authorization_are_independent(app_request
     env, *_ = app_request_context
     body = _body(env)
     body["task_authorization"]["payload"]["target_did"] = env.actors["carol"].did
-    with pytest.raises(ForbiddenError, match="target_mismatch"):
+    with pytest.raises(HTTPException) as caught:
         await _create(app_request_context, _sign(env, body))
+    assert caught.value.status_code == 403 and caught.value.detail == "target_mismatch"
     body = _body(env)
     body["task_authorization"]["signature"] = "A" * 86
     with pytest.raises(HTTPException) as caught:
@@ -194,3 +230,117 @@ async def test_revoked_originator_cannot_create_or_read_by_replay(app_request_co
     with pytest.raises(HTTPException) as caught:
         await _create(app_request_context, body)
     assert caught.value.status_code == 401 and caught.value.detail == "certificate_revoked"
+
+
+@pytest.mark.asyncio
+async def test_naapp_raises_decision_member_answers_and_app_reads_receipt(app_request_context):
+    from urllib.parse import quote
+
+    env, _, credential, installation = app_request_context
+    body = _body(env)
+    created = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", body)
+    assert created.status_code == 201, created.text
+    receipt = created.json()
+    retry = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", body)
+    assert retry.status_code == 200 and retry.json() == receipt, retry.text
+    text = "D'acord — approve the proposal."
+    answer = dict(expected_task_rev=1, answer_key="real-app-answer", body_md=text,
+                  answer_sha256=hashlib.sha256(text.encode()).hexdigest(), choice="approve",
+                  proposal_rev=2, proposal_sha256="sha256:"+"d"*64)
+    path = f'/v1/tasks/{receipt["task_ref"]}/answer'
+    refused = await _app_http(app_request_context, "POST", path, answer)
+    assert refused.status_code == 401, refused.text
+    accepted = await _v2_request(env, "bob", "POST", path, answer)
+    assert accepted.status_code == 201, accepted.text
+    read = await _app_http(app_request_context, "GET", "/v1/tasks/answers/" + accepted.json()["task_answer_ref"])
+    assert read.status_code == 200 and read.json() == accepted.json(), read.text
+    reconcile_path = "/v1/tasks/app-requests/action-1?originator=" + quote(env.actors["alice"].did, safe="")
+    reconciled = await _app_http(app_request_context, "GET", reconcile_path)
+    assert reconciled.status_code == 200, reconciled.text
+    assert reconciled.json()["receipt"] == receipt
+    assert reconciled.json()["task"]["answer"] == accepted.json()
+    assert text not in reconciled.text and text not in json.dumps(env.dispatched)
+    assert "certificate" not in (await _v2_request(env, "alice", "GET", f'/v1/tasks/{receipt["task_ref"]}')).json()
+
+
+@pytest.mark.asyncio
+async def test_retirement_atomically_cancels_an_open_request(app_request_context):
+    env, *_ = app_request_context
+    made = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _body(env))
+    assert made.status_code == 201, made.text
+    task_id = UUID(made.json()["task_id"])
+    claimed = await _v2_request(env, "bob", "PATCH", f'/v1/tasks/{made.json()["task_ref"]}', {"status": "in_progress"})
+    assert claimed.status_code == 200, claimed.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_claims}} WHERE task_ref=$1", made.json()["task_ref"]) == 1
+    async with env.db.transaction() as tx:
+        installation = await get_installation_on(tx, team_id=TEAM, app_id="fixture", for_update=True)
+        assert await cancel_installation_requests_on(tx, team_id=TEAM, app_id="fixture", installation_id=installation["installation_id"]) == 1
+        await tx.execute("UPDATE {{tables.team_app_installs}} SET state='uninstalled' WHERE team_id=$1 AND app_id='fixture'", TEAM)
+        # A separate connection sees neither side of the unfinished retire.
+        assert await env.db.fetch_value("SELECT status FROM {{tables.tasks}} WHERE task_id=$1", task_id) == "in_progress"
+        assert (await get_installation_on(env.db, team_id=TEAM, app_id="fixture"))["state"] == "active"
+    row = await env.db.fetch_one("SELECT status,cancellation FROM {{tables.tasks}} WHERE task_id=$1", task_id)
+    assert row["status"] == "closed"
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_claims}} WHERE task_ref=$1", made.json()["task_ref"]) == 0
+    cancellation = json.loads(row["cancellation"]) if isinstance(row["cancellation"], str) else row["cancellation"]
+    assert cancellation["reason"] == "installation_retired"
+    refused = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _body(env, request_id="after-retire"))
+    assert refused.status_code == 403 and refused.json()["detail"] == "scope_denied", refused.text
+
+
+@pytest.mark.asyncio
+async def test_create_waits_for_retirement_lock_and_cannot_commit_after_it(app_request_context):
+    env, *_ = app_request_context
+    async with env.db.transaction() as tx:
+        await get_installation_on(tx, team_id=TEAM, app_id="fixture", for_update=True)
+        creating = asyncio.create_task(_app_http(app_request_context, "POST", "/v1/tasks/app-requests", _body(env)))
+        try:
+            await asyncio.sleep(0.05)
+            assert not creating.done()
+            assert await cancel_installation_requests_on(tx, team_id=TEAM, app_id="fixture", installation_id="install-fixture") == 0
+            await tx.execute("UPDATE {{tables.team_app_installs}} SET state='uninstalled' WHERE team_id=$1 AND app_id='fixture'", TEAM)
+        except BaseException:
+            creating.cancel()
+            await asyncio.gather(creating, return_exceptions=True)
+            raise
+    response = await asyncio.wait_for(creating, 5)
+    assert response.status_code == 403, response.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 0
+
+
+@pytest.mark.asyncio
+async def test_generation_change_renews_authority_and_reinstall_cannot_read_old_requests(app_request_context):
+    from urllib.parse import quote
+
+    env, _, credential, installation = app_request_context
+    body = _body(env)
+    made = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", body)
+    assert made.status_code == 201, made.text
+    await env.db.execute("UPDATE {{tables.team_app_installs}} SET generation=2 WHERE team_id=$1 AND app_id='fixture'", TEAM)
+    stale = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", body)
+    assert stale.status_code == 403 and stale.json()["detail"] == "scope_denied", stale.text
+    installation["generation"] = 2
+    stale_member = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", body)
+    assert stale_member.status_code == 403 and stale_member.json()["detail"] == "target_mismatch", stale_member.text
+    body["task_authorization"]["payload"]["installation_generation"] = 2
+    replay = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _sign(env, body))
+    assert replay.status_code == 200 and replay.json() == made.json(), replay.text
+    await env.db.execute("UPDATE {{tables.team_app_installs}} SET installation_id='new-installation',generation=1 WHERE team_id=$1 AND app_id='fixture'", TEAM)
+    installation.update(installation_id="new-installation", generation=1)
+    read = await _app_http(app_request_context, "GET", "/v1/tasks/app-requests/action-1?originator=" + quote(env.actors["alice"].did, safe=""))
+    assert read.status_code == 404 and read.json()["detail"] == "resource_not_found", read.text
+
+
+@pytest.mark.asyncio
+async def test_read_only_scope_cannot_create_or_cancel(app_request_context):
+    env, *_ = app_request_context
+    body = _body(env)
+    made = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", body)
+    assert made.status_code == 201, made.text
+    await env.db.execute("UPDATE {{tables.team_app_installs}} SET granted_scopes=ARRAY['requests.read'] WHERE team_id=$1 AND app_id='fixture'", TEAM)
+    replay = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", body)
+    assert replay.status_code == 200, replay.text
+    absent = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _body(env, request_id="absent"))
+    assert absent.status_code == 403 and absent.json()["detail"] == "scope_denied", absent.text
+    cancel = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests/action-1/cancel?originator=ignored")
+    assert cancel.status_code == 403, cancel.text

@@ -13,7 +13,7 @@ from aweb.coordination.app_tasks import (
     _scopes, app_request_transport_on,
     cancel_app_task_on, create_app_task_on, read_app_request_on,
 )
-from aweb.coordination.tasks_service import _answer_receipt, get_task
+from aweb.coordination.tasks_service import _answer_receipt
 
 router = APIRouter()
 
@@ -22,16 +22,15 @@ router = APIRouter()
 async def create_app_request(request: Request, db: DatabaseInfra = Depends(get_db_infra)):
     try:
         raw = await request.body()
+        outcome = {}
         async with db.get_manager("aweb").transaction() as tx:
             credential, installation = await app_request_transport_on(request, tx)
             receipt, created = await create_app_task_on(request, tx, credential=credential,
-                installation=installation, body=strict_json_bytes(raw))
+                installation=installation, body=strict_json_bytes(raw), outcome=outcome)
         if created:
-            task = await get_task(db, team_id=credential.team_id, ref=receipt["task_id"])
             await fire_mutation_hook(request, "task.created", {
                 "task_id": receipt["task_id"], "task_ref": receipt["task_ref"],
-                "team_id": credential.team_id, "actor_alias": task["created_by_alias"],
-                "title": task["title"], "assignee_alias": task["assignee_alias"],
+                "team_id": credential.team_id, **outcome,
                 "parent_task_id": None,
             })
         return JSONResponse(receipt, status_code=201 if created else 200)
@@ -67,10 +66,20 @@ async def cancel_app_request(request: Request, external_request_id: str, origina
             )
             if not row:
                 raise NotFoundError("resource_not_found")
+            outcome = {}
             await cancel_app_task_on(tx, team_id=credential.team_id, task_id=row["task_id"],
-                external_request_id=external_request_id, reason="requested")
-            return await read_app_request_on(tx, credential=credential, installation=installation,
+                external_request_id=external_request_id, reason="requested", outcome=outcome)
+            result = await read_app_request_on(tx, credential=credential, installation=installation,
                 external_request_id=external_request_id, originator=originator, required_scope="requests.create")
+        if outcome["changed"]:
+            await fire_mutation_hook(request, "task.status_changed", {
+                "task_id": str(row["task_id"]), "team_id": credential.team_id, "task_ref": outcome["task_ref"],
+                "actor_alias": credential.app_id, "old_status": outcome["old_status"], "new_status": "closed",
+            })
+            await fire_mutation_hook(request, "task.comment_added", {
+                "task_id": str(row["task_id"]), "comment_id": outcome["comment_id"],
+            })
+        return result
     except ServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 

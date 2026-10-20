@@ -96,7 +96,8 @@ async def answer_task_on(
             or not actor.certificate_id or member["certificate_id"] != actor.certificate_id):
         raise ForbiddenError("target_mismatch")
     task = await tx.fetch_one(
-        """SELECT task_id, rev, question_rev, status, assignee_did, app_request, cancellation
+        """SELECT task_id, rev, question_rev, status, assignee_did, app_request, cancellation,
+                  task_ref_suffix, title, assignee_alias
            FROM {{tables.tasks}} WHERE task_id = $1 AND team_id = $2
              AND deleted_at IS NULL FOR UPDATE""",
         task_id, team_id,
@@ -137,9 +138,9 @@ async def answer_task_on(
         task_id, task["question_rev"],
     ):
         raise ConflictError("revision_conflict")
-    await tx.execute(
+    comment = await tx.fetch_one(
         """INSERT INTO {{tables.task_comments}} (task_id, team_id, author_alias, body)
-           VALUES ($1, $2, $3, $4)""",
+           VALUES ($1, $2, $3, $4) RETURNING comment_id""",
         task_id, team_id, actor.alias, comment_body,
     )
     updated = await tx.fetch_one(
@@ -158,6 +159,9 @@ async def answer_task_on(
     )
     if outcome is not None:
         outcome["created"] = True
+        outcome["comment_id"] = str(comment["comment_id"])
+        outcome.update(task_ref=format_task_ref(_get_team_slug(team_id), task["task_ref_suffix"]),
+                       title=task["title"], assignee_alias=task["assignee_alias"])
     return _answer_receipt(row, current_question_rev=task["question_rev"])
 
 
@@ -346,6 +350,13 @@ async def create_task(
     task_ref_suffix: str | None = None
 
     async with aweb_db.transaction() as tx:
+        if created_by_did is None:
+            creator = await tx.fetch_one(
+                """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
+                   FROM {{tables.agents}} WHERE team_id=$1 AND alias=$2 AND deleted_at IS NULL FOR SHARE""",
+                team_id, created_by_alias,
+            )
+            created_by_did = creator["principal_did"] if creator else None
         assignee_did = None
         if assignee_alias:
             assignee_alias, assignee_did = await _resolve_assignee_on(

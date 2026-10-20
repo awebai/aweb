@@ -234,13 +234,16 @@ async def answer_task_route(
             receipt = await answer_task_on(tx, team_id=identity.team_id, task_id=task_id,
                 actor=identity, outcome=outcome, **payload.model_dump())
         if outcome["created"]:
-            task = await get_task(db_infra, team_id=identity.team_id, ref=ref)
             await fire_mutation_hook(request, "task.status_changed", {
                 "task_id": str(task_id), "team_id": identity.team_id,
-                "task_ref": task["task_ref"], "title": task["title"],
+                "task_ref": outcome["task_ref"], "title": outcome["title"],
                 "old_status": "open", "new_status": "closed",
                 "actor_agent_id": identity.agent_id, "actor_alias": identity.alias,
-                "actor_did_aw": identity.did_aw, "assignee_alias": identity.alias,
+                "actor_did_aw": identity.did_aw, "assignee_alias": outcome["assignee_alias"],
+            })
+            await fire_mutation_hook(request, "task.comment_added", {
+                "task_id": str(task_id), "comment_id": outcome["comment_id"],
+                "actor_agent_id": identity.agent_id, "actor_did_aw": identity.did_aw,
             })
         return JSONResponse(receipt, status_code=201 if outcome["created"] else 200)
     except ServiceError as exc:
