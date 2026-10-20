@@ -229,6 +229,7 @@ async def test_federated_sender_cannot_join_known_session_by_uuid(privacy_app):
     from test_chat_http import _federated_chat_payload
 
     env = privacy_app
+    env.app.state.public_origin = 'https://recipient.example'
     victim = await _chat(env, 'alice', ['bob'])
     assert victim.status_code == 200, victim.text
     thread = victim.json()['session_id']
