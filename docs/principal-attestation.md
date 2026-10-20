@@ -85,8 +85,13 @@ It registers a custodian and its issuer keys for one team.
   returns `{record, signature}` exactly as stored. An unknown team and an
   unknown custodian get the same `404`.
 - **Rotation of the team key** invalidates every record signed with the old
-  key. The controller re-signs them. Until it does, verifiers refuse with
-  `attestation_record_stale`.
+  key: the team's custodian records and every member-custody record, one per
+  custodial certificate, so the batch grows with the number of custodial
+  members. The rotation re-signs and publishes all of them in the same
+  operation, as it does for `aweb.team-server/1`. That applies to `aw`'s rotate
+  flow and to a custodial deployment's rotation step. Until it finishes,
+  verifiers refuse with `attestation_record_stale`, which fails closed but
+  makes every attested call fail.
 
 ## 2. Member custody record, `aweb.member-custody/1`
 
@@ -121,6 +126,10 @@ It states that a custodian holds the key of one certificate.
 - **Read:** `GET` on the same path, anonymous. An unknown team, an unknown
   certificate and a certificate without a custody record get the same `404`,
   as certificate status does.
+- **Privacy.** The anonymous read tells anyone who knows a `certificate_id`
+  whether that member's key is held by a custodian, which in practice means
+  hosted. Certificate status does not reveal that. The disclosure follows the
+  same anonymity choice as certificate status and the team-server record.
 
 ## 3. The attestation, `aweb.principal-attestation/1`
 
@@ -166,6 +175,9 @@ padding. The header is at most 4096 bytes.
 - `iat` and `exp`: `exp` is after `iat` and at most 300 s later.
 - `request_binding`: the SHA-256 of the exact team-auth signed-payload bytes
   of the request it accompanies, that is the decoded `X-AWEB-Signed-Payload`.
+  An attestation therefore applies only to team-auth v2 requests. On a request
+  without a v2 signed payload (compact v1), it is refused with
+  `attestation_binding_mismatch`, and it is never bound to anything else.
 - Unknown fields are refused.
 
 ## 4. Verification
@@ -180,22 +192,27 @@ fails closed.
 2. **Shape.** Split, decode, parse, reject duplicate keys and unknown fields,
    re-canonicalize and compare bytes, and check every field's type and range.
    Failure: `attestation_invalid`.
-3. **Request.** `team_id`, `certificate_id` and `member_did_key` equal the
-   verified certificate's. `request_binding` equals the SHA-256 of this
-   request's signed-payload bytes. Failure: `attestation_binding_mismatch`.
+3. **Request.** The request carries a v2 signed payload; a compact v1 request
+   with an attestation is refused. `team_id`, `certificate_id` and
+   `member_did_key` equal the verified certificate's. `request_binding` equals
+   the SHA-256 of this request's signed-payload bytes. Failure:
+   `attestation_binding_mismatch`.
 4. **Time.** `iat` is at most 60 s ahead of the verifier's clock, `exp` has not
    passed, and `exp - iat` is at most 300 s. Failure: `attestation_expired`.
-5. **Member custody.** Read the §2 record for `certificate_id` from the same
+5. **Signature.** Verify the attestation signature with its own
+   `issuer_did_key`. This is local and cheap, so a forged attestation never
+   causes a registry read. Failure: `attestation_invalid`.
+6. **Member custody.** Read the §2 record for `certificate_id` from the same
    registry. Require its signature under the current team key, `team_did_key`
    equal to that key, and `certificate_id`, `member_did_key` and `custodian_id`
    equal to the attestation's. Absent: `attestation_issuer_unregistered`.
    Signed with an old team key: `attestation_record_stale`.
-6. **Custodian.** Read the §1 record for `custodian_id` the same way, and
+7. **Custodian.** Read the §1 record for `custodian_id` the same way, and
    require `issuer_did_key` to be in `issuer_did_keys`. Absent, or the key not
    listed: `attestation_issuer_unregistered`. Old team key:
    `attestation_record_stale`.
-7. **Signature.** Verify the attestation signature with `issuer_did_key`.
-   Failure: `attestation_invalid`.
+
+A valid signature by a key that is not registered fails at steps 6 and 7.
 
 A registry read that fails, times out or returns anything but `200` or `404`
 refuses with `authority_unavailable`. Records are cached per
