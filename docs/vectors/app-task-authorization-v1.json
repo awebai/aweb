@@ -105,6 +105,47 @@
       },
       "signing_bytes": "aweb.app-task-authorization/1\n{\"action_id\":\"approve-price\",\"actor_did_key\":\"did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S\",\"app_id\":\"pages\",\"app_origin\":\"https://pages.example.com\",\"aud\":\"https://app.aweb.ai\",\"certificate_id\":\"0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11\",\"expires_at\":\"2026-10-21T12:00:00Z\",\"external_request_id\":\"act_77e0b3\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"issued_at\":\"2026-10-20T12:00:00Z\",\"nonce\":\"8f14e45fceea167a5a36dedd4bea2543\",\"proposal_rev\":2,\"proposal_sha256\":\"sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb\",\"target_did\":\"did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V\",\"task_body_sha256\":\"38789aea626f96e4dafc6dc1acb9ff5e63132ec3180af527a32be11c99ff1869\",\"team_id\":\"backend:acme.com\",\"type\":\"aweb.app-task-authorization\",\"v\":1}",
       "signature": "ubnNcU793Z9OQzVK_xdugLVd5PyU5L0T9Cxr9NnDQ31ZiMMWkr4wKw0k3TFZhAOnTI8_vVRPzdiswVSIGcHwAg"
+    },
+    {
+      "name": "line-and-paragraph-separators",
+      "task": {
+        "title": "Review the reply and the rate",
+        "description": "First paragraph second, with a literal \\u2028 and a \"quote\"",
+        "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+        "app_request": {
+          "external_request_id": "act_5ep001",
+          "resource_ref": "pg_4hd2",
+          "action_ref": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null,
+          "choices": null
+        }
+      },
+      "task_body_canonical": "{\"app_request\":{\"action_ref\":\"request-cleaner\",\"choices\":null,\"external_request_id\":\"act_5ep001\",\"proposal_rev\":null,\"proposal_sha256\":null,\"resource_ref\":\"pg_4hd2\"},\"assignee_did\":\"did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V\",\"description\":\"First paragraph second, with a literal \\\\u2028 and a \\\"quote\\\"\",\"title\":\"Review the reply and the rate\"}",
+      "task_body_sha256": "2c605e48146866869031de672c578346b17ac78aed3987b648531060ad53a94b",
+      "payload": {
+        "v": 1,
+        "type": "aweb.app-task-authorization",
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "installation_generation": 3,
+        "external_request_id": "act_5ep001",
+        "actor_did_key": "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S",
+        "certificate_id": "0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11",
+        "target_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+        "task_body_sha256": "2c605e48146866869031de672c578346b17ac78aed3987b648531060ad53a94b",
+        "action_id": "request-cleaner",
+        "proposal_rev": null,
+        "proposal_sha256": null,
+        "issued_at": "2026-10-20T12:00:00Z",
+        "expires_at": "2026-10-21T12:00:00Z",
+        "nonce": "8f14e45fceea167a5a36dedd4bea2543"
+      },
+      "signing_bytes": "aweb.app-task-authorization/1\n{\"action_id\":\"request-cleaner\",\"actor_did_key\":\"did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S\",\"app_id\":\"pages\",\"app_origin\":\"https://pages.example.com\",\"aud\":\"https://app.aweb.ai\",\"certificate_id\":\"0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11\",\"expires_at\":\"2026-10-21T12:00:00Z\",\"external_request_id\":\"act_5ep001\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"issued_at\":\"2026-10-20T12:00:00Z\",\"nonce\":\"8f14e45fceea167a5a36dedd4bea2543\",\"proposal_rev\":null,\"proposal_sha256\":null,\"target_did\":\"did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V\",\"task_body_sha256\":\"2c605e48146866869031de672c578346b17ac78aed3987b648531060ad53a94b\",\"team_id\":\"backend:acme.com\",\"type\":\"aweb.app-task-authorization\",\"v\":1}",
+      "signature": "w0INL3hNZ3VJKG1Wde2ZrMP6WJGEmI5C_Q4qBYYws63UipoKt9PkBCq8Rt2QUlzX6WhgIofMKanKWjNO0uBXCA"
     }
   ],
   "verification_cases": [

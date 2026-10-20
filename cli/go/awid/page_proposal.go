@@ -11,10 +11,11 @@ const PageProposalPrefix = "aweb.page-proposal/1\n"
 
 // ProposalSHA256 is the digest a decision binds for one proposal record:
 // "sha256:" and the hex SHA-256 of the prefix and the canonical JSON of
-// {collection, record_id, value}. Numbers in value must be json.Number, as
-// decoded with UseNumber, so they keep their exact integer form.
+// {collection, record_id, value}, in StrictCanonicalJSON. Decode values with
+// UseNumber, so numbers keep their exact form; a value without one canonical
+// form is refused.
 func ProposalSHA256(collection, recordID string, value any) (string, error) {
-	canonical, err := CanonicalJSONValue(map[string]any{
+	canonical, err := StrictCanonicalJSON(map[string]any{
 		"collection": collection,
 		"record_id":  recordID,
 		"value":      value,

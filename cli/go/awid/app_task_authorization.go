@@ -12,23 +12,22 @@ import (
 // one literal newline byte.
 const AppTaskAuthorizationPrefix = "aweb.app-task-authorization/1\n"
 
-// TaskBodySHA256 is the bare hex SHA-256 of the canonical JSON of a task body:
-// the value a member's task authorization binds as task_body_sha256. The task
-// must be a JSON object decoded as map[string]any (with json.Number for
-// numbers), so that its keys are sorted like Python's canonical_json_bytes.
+// TaskBodySHA256 is the bare hex SHA-256 of the canonical JSON of a task body
+// (StrictCanonicalJSON): the value a member's task authorization binds as
+// task_body_sha256. Decode the task with UseNumber.
 func TaskBodySHA256(task map[string]any) (string, error) {
-	canonical, err := CanonicalJSONValue(task)
+	canonical, err := StrictCanonicalJSON(task)
 	if err != nil {
 		return "", err
 	}
-	digest := sha256.Sum256([]byte(canonical))
+	digest := sha256.Sum256(canonical)
 	return hex.EncodeToString(digest[:]), nil
 }
 
 // AppTaskAuthorizationSigningBytes is the domain prefix followed by the
-// canonical JSON of the authorization payload.
+// canonical JSON (StrictCanonicalJSON) of the authorization payload.
 func AppTaskAuthorizationSigningBytes(payload map[string]any) ([]byte, error) {
-	canonical, err := CanonicalJSONValue(payload)
+	canonical, err := StrictCanonicalJSON(payload)
 	if err != nil {
 		return nil, err
 	}
