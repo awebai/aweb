@@ -16,17 +16,17 @@ from aweb_naapp.runtime.approvals import (
     Approvals,
     ApprovalState,
     Assurance,
+    DecidedBy,
     Decision,
     DeliveryStatus,
     DispatchOutcome,
-    Evidence,
     LinkAlreadyUsed,
     PresentationKind,
     Purpose,
     Refusal,
 )
 from aweb_naapp.runtime.links import link_verifier
-from tests.runtime.approvals.support import APPROVER, SUCCESSOR, World, policy, sign
+from tests.runtime.approvals.support import APPROVER, SCOPE, SUCCESSOR, World, policy, sign
 
 REQUEST = {
     "operation": "charge",
@@ -58,7 +58,13 @@ async def challenge(
         assurance,
         link_token=link_of(w, approval),
         task_answer_ref=task_answer_ref,
+        subject=task_subject(approval),
     )
+
+
+def task_subject(approval) -> str | None:
+    """A task presentation names the candidate deciding; a link already does."""
+    return APPROVER.subject if approval.presentation_kind is PresentationKind.TASK else None
 
 
 async def decide(w: World, approval, decision=Decision.APPROVE, assurance=Assurance.PASSKEY, **kw):
@@ -66,6 +72,7 @@ async def decide(w: World, approval, decision=Decision.APPROVE, assurance=Assura
     issued = await challenge(w, approval, decision, assurance, kw.get("task_answer_ref"))
     proof = sign(key, APPROVER.subject, issued)
     kw.setdefault("link_token", link_of(w, approval))
+    kw.setdefault("subject", task_subject(approval))
     return await w.approvals.decide(approval.approval_id, decision, assurance, proof, **kw)
 
 
@@ -89,7 +96,7 @@ async def test_mint_delivers_the_link_to_the_designated_approver_only(world: Wor
     assert view.delivery_status is DeliveryStatus.DELIVERED
     [(recipient, token)] = world.mailbox.sent
     assert recipient == APPROVER
-    assert approval.approver_subject == APPROVER.subject
+    assert [c.subject for c in approval.candidates] == [APPROVER.subject]
     assert approval.requested_by == "agent-1"
     assert token not in repr(view)
     assert token not in repr(approval)
@@ -99,7 +106,7 @@ async def test_mint_delivers_the_link_to_the_designated_approver_only(world: Wor
 async def test_mint_refuses_an_unknown_policy_or_a_missing_approver(world: World):
     assert await refusal(mint(world, policy_ref="nope")) is Refusal.POLICY_UNKNOWN
     world.directory.approver = None
-    assert await refusal(mint(world)) is Refusal.NO_APPROVER
+    assert await refusal(mint(world)) is Refusal.NO_ELIGIBLE_APPROVER
     assert world.mailbox.sent == []
 
 
@@ -107,7 +114,7 @@ async def test_mint_refuses_a_requester_who_is_the_approver(world: World):
     minted = world.approvals.mint(
         request=REQUEST, policy_ref="send-charge", requested_by=APPROVER.subject
     )
-    assert await refusal(minted) is Refusal.REQUESTER_IS_APPROVER
+    assert await refusal(minted) is Refusal.NO_ELIGIBLE_APPROVER
     assert world.mailbox.sent == []
     assert await world.audit.rows() == []
 
@@ -186,8 +193,8 @@ async def test_a_passkey_approval_records_its_evidence(world: World):
     _, approval = await mint(world)
     decided = await decide(world, approval)
     assert decided.state is ApprovalState.APPROVED
-    assert decided.authenticator is Assurance.PASSKEY
-    assert decided.auth_evidence_ref
+    assert decided.decided_by.assurance is Assurance.PASSKEY
+    assert decided.decided_by.evidence_ref
     assert "approval_decided" in (await world.audit.kinds())
 
 
@@ -196,7 +203,7 @@ async def test_a_weaker_assurance_than_the_policy_minimum_is_refused(world: Worl
     assert await refusal(challenge(world, approval, assurance=Assurance.MEMBER_SESSION)) is (
         Refusal.ASSURANCE_INSUFFICIENT
     )
-    issued = await world.session.challenge(approval, Purpose.APPROVE, None)
+    issued = await world.session.challenge(approval, approval.candidates[0], Purpose.APPROVE, None)
     proof = sign(world.approver_session_key, APPROVER.subject, issued)
     assert (
         await refusal(
@@ -216,7 +223,7 @@ async def test_a_weaker_assurance_than_the_policy_minimum_is_refused(world: Worl
 async def test_a_member_session_meets_a_member_session_policy(world: World):
     _, approval = await mint(world, policy_ref="internal-edit")
     decided = await decide(world, approval, assurance=Assurance.MEMBER_SESSION)
-    assert decided.authenticator is Assurance.MEMBER_SESSION
+    assert decided.decided_by.assurance is Assurance.MEMBER_SESSION
 
 
 async def test_only_the_designated_approver_can_decide(world: World):
@@ -280,10 +287,14 @@ async def test_a_failed_authentication_leaves_the_approval_pending(world: World)
 
 async def test_an_approval_is_decided_once_and_not_after_expiry(world: World):
     approval = await approved(world)
-    assert await refusal(decide(world, approval, Decision.REJECT)) is Refusal.NOT_PENDING
+    assert await refusal(decide(world, approval, Decision.REJECT)) is Refusal.LINK_UNAVAILABLE
     _, late = await mint(world)
     world.clock.advance(timedelta(minutes=10))
-    assert await refusal(decide(world, late)) is Refusal.EXPIRED
+    assert await refusal(decide(world, late)) is Refusal.LINK_UNAVAILABLE
+    late_task = await task_approval(world)
+    world.task_answers.record("late", late_task, Decision.APPROVE)
+    world.clock.advance(timedelta(minutes=10))
+    assert await refusal(decide(world, late_task, task_answer_ref="late")) is Refusal.EXPIRED
 
 
 async def test_a_policy_change_after_mint_requires_a_new_approval(world: World):
@@ -774,9 +785,9 @@ async def test_a_retired_approvers_pending_approval_cannot_be_decided(world: Wor
                 link_token=link_of(world, approval),
             )
         )
-        is Refusal.APPROVER_RETIRED
+        is Refusal.NO_ELIGIBLE_APPROVER
     )
-    assert await refusal(challenge(world, approval)) is Refusal.APPROVER_RETIRED
+    assert await refusal(challenge(world, approval)) is Refusal.NO_ELIGIBLE_APPROVER
     assert (await world.approvals.get(approval.approval_id)).state is ApprovalState.PENDING
 
 
@@ -788,7 +799,7 @@ async def test_a_retired_approvers_approval_is_not_admitted_and_keeps_its_histor
     )
     record = await world.approvals.get(approval.approval_id)
     assert record.state is ApprovalState.APPROVED
-    assert record.approver_subject == APPROVER.subject
+    assert record.decided_by.subject == APPROVER.subject
 
 
 async def test_retirement_stops_a_transport_retry_but_not_retrieval(world: World):
@@ -872,7 +883,7 @@ async def test_a_used_link_cannot_record_a_decision_even_through_the_store(world
         async with world.store.locked(approval.approval_id, None) as locked:
             await locked.set_decision(
                 ApprovalState.REJECTED,
-                Evidence(Assurance.PASSKEY, APPROVER.subject, "app_local", "e"),
+                DecidedBy(SCOPE, APPROVER.subject, Assurance.PASSKEY, "e"),
                 None,
                 link.link_id,
                 world.clock(),
@@ -924,6 +935,7 @@ async def test_an_authenticator_proof_is_bound_to_its_task_answer(world: World):
                 Assurance.PASSKEY,
                 proof,
                 task_answer_ref="answer-2",
+                subject=APPROVER.subject,
             )
         )
         is Refusal.AUTHENTICATION_FAILED
