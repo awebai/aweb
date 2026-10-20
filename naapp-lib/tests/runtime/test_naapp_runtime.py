@@ -64,7 +64,7 @@ async def allow_all(request: Request, principal: Principal, tool: DeclaredTool) 
 
 def _migrations(tmp_path: Path) -> Path:
     path = tmp_path / "migrations"
-    path.mkdir()
+    path.mkdir(parents=True)
     (path / "001_initial.sql").write_text(
         "CREATE TABLE {{tables.things}} (id integer PRIMARY KEY);\n"
     )
@@ -86,10 +86,6 @@ def _app(runtime: NaappRuntime, grants: InstalledTeams) -> FastAPI:
             "alias": auth.principal.alias,
             "tool": auth.tool.name,
         }
-
-    @app.post("/v1/undeclared")
-    async def undeclared(auth: Annotated[Authorization, Depends(authorized)]) -> dict[str, str]:
-        return {"tool": auth.tool.name}
 
     @app.post("/v1/whoami")
     async def whoami(actor: Annotated[Principal, Depends(runtime.principal)]) -> dict[str, str]:
@@ -180,15 +176,12 @@ async def test_a_member_without_the_grant_is_refused_and_not_recorded(
         assert await _observed(runtime) == (0, 0)
 
 
-async def test_unsigned_and_undeclared_requests_are_refused_and_not_recorded(
+async def test_an_unsigned_request_is_refused_and_not_recorded(
     registry, member: Member, app_database_url: str, tmp_path: Path
 ) -> None:
     grants = InstalledTeams({member.team_id: frozenset({"example:write"})})
     async for runtime, client in _running(registry, app_database_url, tmp_path, grants):
         assert (await client.post("/v1/things", content=b"{}")).status_code == 401
-        undeclared = await client.post("/v1/undeclared", **_signed(member, "/v1/undeclared"))
-        assert undeclared.status_code == 403
-        assert undeclared.json()["detail"]["code"] == "operation_undeclared"
         assert await _observed(runtime) == (0, 0)
 
 
@@ -210,3 +203,138 @@ async def test_the_database_is_unavailable_outside_the_lifespan(tmp_path: Path) 
         runtime.db()
     with pytest.raises(RuntimeError):
         runtime.team_cache()
+
+
+# --- Every authorized route must be exactly a declared tool ---------------------
+
+GET_THING = DeclaredTools.from_manifest(
+    {
+        "tools": [
+            {
+                "name": "get-thing",
+                "method": "GET",
+                "path": "/v1/things/{id}",
+                "scopes": ["things:read"],
+            }
+        ]
+    }
+)
+
+
+def _guarded_app(
+    tmp_path: Path, register, *, tools: DeclaredTools = GET_THING, root_path: str = ""
+) -> tuple[NaappRuntime, FastAPI]:
+    settings = ExampleSettings(_env_file=None, database_url="postgresql://localhost/unused")
+    runtime = NaappRuntime(
+        settings, module_name="example", migrations_path=_migrations(tmp_path), root_path=root_path
+    )
+    app = FastAPI(lifespan=runtime.lifespan)
+    register(app, runtime.authorized(tools=tools, grants=InstalledTeams({}), policy=allow_all))
+    return runtime, app
+
+
+def _purge_shadowing_get_thing(app: FastAPI, authorized) -> None:
+    @app.get("/v1/things/purge")
+    async def purge(auth: Annotated[Authorization, Depends(authorized)]) -> dict[str, str]:
+        return {"purged": "everything"}
+
+    @app.get("/v1/things/{id}")
+    async def get_thing(
+        id: str, auth: Annotated[Authorization, Depends(authorized)]
+    ) -> dict[str, str]:
+        return {"id": id}
+
+
+async def test_an_app_whose_route_shadows_a_declared_tool_fails_to_start(tmp_path: Path) -> None:
+    runtime, app = _guarded_app(tmp_path, _purge_shadowing_get_thing)
+    with pytest.raises(RuntimeError, match="/v1/things/purge"):
+        async with app.router.lifespan_context(app):
+            pass
+    assert runtime.connected_db() is None
+
+
+def _renamed_placeholder(app: FastAPI, authorized) -> None:
+    @app.get("/v1/things/{thing_id}")
+    async def get_thing(thing_id: str, auth: Annotated[Authorization, Depends(authorized)]) -> dict:
+        return {}
+
+
+def _route_level_dependency(app: FastAPI, authorized) -> None:
+    @app.get("/v1/things/{id}", dependencies=[Depends(authorized)])
+    async def get_thing(id: str) -> dict:
+        return {}
+
+
+def _unguarded_extra_route(app: FastAPI, authorized) -> None:
+    _renamed_placeholder(app, authorized)
+
+    @app.get("/v1/things/public/list")
+    async def listing() -> dict:
+        return {}
+
+
+@pytest.mark.parametrize(
+    "register", [_renamed_placeholder, _route_level_dependency, _unguarded_extra_route]
+)
+def test_routes_that_are_exactly_declared_tools_pass(tmp_path: Path, register) -> None:
+    runtime, app = _guarded_app(tmp_path, register)
+    runtime.check_authorized_routes(app)
+
+
+def _wrong_method(app: FastAPI, authorized) -> None:
+    @app.post("/v1/things/{id}")
+    async def change(id: str, auth: Annotated[Authorization, Depends(authorized)]) -> dict:
+        return {}
+
+
+def _extra_method(app: FastAPI, authorized) -> None:
+    @app.api_route("/v1/things/{id}", methods=["GET", "DELETE"])
+    async def either(id: str, auth: Annotated[Authorization, Depends(authorized)]) -> dict:
+        return {}
+
+
+def _path_converter(app: FastAPI, authorized) -> None:
+    @app.get("/v1/things/{id:path}")
+    async def anything(id: str, auth: Annotated[Authorization, Depends(authorized)]) -> dict:
+        return {}
+
+
+def _nested_dependency(app: FastAPI, authorized) -> None:
+    async def actor(auth: Annotated[Authorization, Depends(authorized)]) -> str:
+        return auth.principal.alias
+
+    @app.get("/v1/things/{id}/purge")
+    async def purge(id: str, who: Annotated[str, Depends(actor)]) -> dict:
+        return {}
+
+
+@pytest.mark.parametrize(
+    "register",
+    [_purge_shadowing_get_thing, _wrong_method, _extra_method, _path_converter, _nested_dependency],
+)
+def test_routes_that_are_not_exactly_declared_tools_are_refused(tmp_path: Path, register) -> None:
+    runtime, app = _guarded_app(tmp_path, register)
+    with pytest.raises(RuntimeError):
+        runtime.check_authorized_routes(app)
+
+
+def test_the_root_path_is_part_of_the_declared_path(tmp_path: Path) -> None:
+    runtime, app = _guarded_app(tmp_path / "unprefixed", _renamed_placeholder, root_path="/api")
+    with pytest.raises(RuntimeError):
+        runtime.check_authorized_routes(app)
+    prefixed = DeclaredTools.from_manifest(
+        {
+            "tools": [
+                {
+                    "name": "get-thing",
+                    "method": "GET",
+                    "path": "/api/v1/things/{id}",
+                    "scopes": ["r"],
+                }
+            ]
+        }
+    )
+    runtime, app = _guarded_app(
+        tmp_path / "prefixed", _renamed_placeholder, tools=prefixed, root_path="/api/"
+    )
+    runtime.check_authorized_routes(app)

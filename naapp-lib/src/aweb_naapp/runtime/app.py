@@ -23,7 +23,9 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.dependencies.models import Dependant
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager
 
 from aweb_naapp.css import aweb_css
@@ -35,6 +37,7 @@ from aweb_naapp.runtime.authorization import (
     DeclaredTools,
     GrantSource,
     authorize_request,
+    is_placeholder,
 )
 from aweb_naapp.runtime.db import NaappDatabase
 from aweb_naapp.runtime.health import mount_health
@@ -52,7 +55,11 @@ _NOSNIFF = {"X-Content-Type-Options": "nosniff"}
 
 
 class NaappRuntime:
-    """A naapp's database and AWID team cache, open for the app's lifespan."""
+    """A naapp's database and AWID team cache, open for the app's lifespan.
+
+    ``root_path`` is the external prefix the server serves the app under, if
+    any. Declared tool paths are external paths, so it is part of them.
+    """
 
     def __init__(
         self,
@@ -60,17 +67,22 @@ class NaappRuntime:
         *,
         module_name: str,
         migrations_path: Path,
+        root_path: str = "",
         awid_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.settings = settings
+        # The external prefix the server serves the app under (its ASGI root path).
+        self.root_path = root_path.rstrip("/")
         self.module_name = module_name
         self.migrations_path = migrations_path
         self._awid_transport = awid_transport
         self._database: NaappDatabase | None = None
         self._team_cache: AWIDTeamCache | None = None
+        self._guards: dict[Callable[..., object], DeclaredTools] = {}
 
     @asynccontextmanager
-    async def lifespan(self, _app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:
+        self.check_authorized_routes(app)
         database = NaappDatabase(
             self.settings, module_name=self.module_name, migrations_path=self.migrations_path
         )
@@ -137,7 +149,51 @@ class NaappRuntime:
             await record_observed_principal(self.db(), principal)
             return authorization
 
+        self._guards[authorized_request] = tools
         return authorized_request
+
+    def check_authorized_routes(self, app: FastAPI) -> None:
+        """Refuse to start unless every route guarded by :meth:`authorized` is
+        exactly one of its declared tools.
+
+        The route's method and external path template (``root_path`` plus the
+        route's path, placeholders compared by position, not by name) must
+        equal a declared tool's. A route that merely matches a declared template,
+        such as ``/v1/things/purge`` under a declared ``/v1/things/{id}``, would
+        otherwise run its own handler while being authorized as the declared
+        tool. Path converters are refused, because they change which requests a
+        placeholder matches. The lifespan runs this check before anything else.
+        """
+        for route in app.routes:
+            if not isinstance(route, APIRoute):
+                continue
+            for tools in self._route_guards(route.dependant):
+                path = self.root_path + route.path_format
+                if route.path != route.path_format:
+                    raise RuntimeError(
+                        f"authorized route {route.path} uses a path converter; declare it plainly"
+                    )
+                template = _template(path.split("/"))
+                for method in sorted(route.methods or ()):
+                    if not any(
+                        tool.method == method and _template(tool.segments) == template
+                        for tool in tools
+                    ):
+                        raise RuntimeError(
+                            f"authorized route {method} {path} is not exactly a declared manifest tool"
+                        )
+
+    def _route_guards(self, dependant: Dependant) -> list[DeclaredTools]:
+        guards = []
+        for dependency in dependant.dependencies:
+            if dependency.call in self._guards:
+                guards.append(self._guards[dependency.call])
+            guards.extend(self._route_guards(dependency))
+        return guards
+
+
+def _template(segments: Sequence[str]) -> tuple[str, ...]:
+    return tuple("{}" if is_placeholder(segment) else segment for segment in segments)
 
 
 def mount_naapp_routes(
