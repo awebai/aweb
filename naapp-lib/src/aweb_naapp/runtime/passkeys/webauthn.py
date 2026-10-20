@@ -66,7 +66,11 @@ def verify_assertion(
 ) -> VerifiedAssertion:
     """Verify an assertion over `challenge` at `rp` by the credential holding
     `public_key`, with user verification, whose counter has moved past
-    `sign_count` (both zero is a device that does not count)."""
+    `sign_count` (both zero is a device that does not count).
+
+    The caller binds the assertion to its subject: it takes `public_key` and
+    `sign_count` from the stored credential whose ID the proof names, after
+    checking that credential belongs to the expected subject."""
     try:
         verified = verify_authentication_response(
             credential=dict(proof),
