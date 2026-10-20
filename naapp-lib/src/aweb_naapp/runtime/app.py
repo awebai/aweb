@@ -23,6 +23,7 @@ ship them.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -39,6 +40,7 @@ from starlette.routing import BaseRoute, Host, Mount
 
 from aweb_naapp.css import FONT_NAMES, aweb_css
 from aweb_naapp.manifest import read_manifest_bytes
+from aweb_naapp.outbox import run_drain
 from aweb_naapp.robots import robots_txt
 from aweb_naapp.runtime.authorization import (
     ActionPolicy,
@@ -49,6 +51,7 @@ from aweb_naapp.runtime.authorization import (
     is_placeholder,
 )
 from aweb_naapp.runtime.db import NaappDatabase
+from aweb_naapp.runtime.event_emit import AppEvents
 from aweb_naapp.runtime.health import mount_health
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
@@ -72,7 +75,9 @@ class NaappRuntime:
     ``manifest_path`` is the app's committed manifest file. It is read here,
     once per process, for ``settings.public_origin`` (configuration, never a
     request): ``manifest_bytes`` are served verbatim, and ``manifest`` and
-    ``declared_tools`` are parsed from them.
+    ``declared_tools`` are parsed from them. The app-event key the manifest
+    declares is loaded here too, so a missing or wrong key stops the app
+    before it serves anything, and ``app_events`` emits through it.
     """
 
     def __init__(
@@ -96,6 +101,7 @@ class NaappRuntime:
         self._manifest_bytes = read_manifest_bytes(manifest_path, settings.public_origin)
         self._manifest: Mapping[str, Any] = json.loads(self._manifest_bytes)
         self._declared_tools = DeclaredTools.from_manifest(self._manifest)
+        self._app_events = AppEvents.from_settings(settings, self._manifest)
         self._guards: set[Callable[..., object]] = set()
 
     @property
@@ -113,6 +119,11 @@ class NaappRuntime:
         """The tools authorization checks against, parsed from the served bytes."""
         return self._declared_tools
 
+    @property
+    def app_events(self) -> AppEvents:
+        """The app's app-event emits, drained by the lifespan."""
+        return self._app_events
+
     @asynccontextmanager
     async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:
         self.check_authorized_routes(app)
@@ -127,9 +138,22 @@ class NaappRuntime:
             service_token=self.settings.awid_service_token,
             transport=self._awid_transport,
         )
+        stop = asyncio.Event()
+        client = httpx.AsyncClient(timeout=self.settings.app_emit_timeout_seconds)
+        app_events_drain = (
+            asyncio.create_task(
+                run_drain(database.db, stop=stop, **self._app_events.drain_options(client))
+            )
+            if self._app_events.key is not None
+            else None
+        )
         try:
             yield
         finally:
+            stop.set()
+            if app_events_drain is not None:
+                await app_events_drain
+            await client.aclose()
             self._database = None
             self._team_cache = None
             await database.disconnect()

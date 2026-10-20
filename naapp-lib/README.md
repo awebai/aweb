@@ -37,4 +37,19 @@ css_bytes = naapp.aweb_css()
 
 The docs surface is pure standard library. Request-time runtime code (the
 team-auth verifier, approvals, passkeys) lives under `aweb_naapp.runtime` and
-needs the `runtime` extra: `aweb-naapp[runtime]`.
+needs the `runtime` extra: `aweb-naapp[runtime]`. Two parts the core server
+shares import without it: the durable outbox, `aweb_naapp.outbox`
+(`aweb-naapp[outbox]`), and the signing-key reader, `aweb_naapp.signing_key`
+(`aweb-naapp[signing-key]`).
+
+### App keys
+
+An app names its signing keys by kid, as key files:
+`<PREFIX>APP_KEY_FILES='{"<kid>": "/run/secrets/<file>"}'`. A key file holds the
+32-byte Ed25519 seed as 64 hex characters, with one trailing newline allowed. It
+must be a regular file and must not be group- or world-writable. The manifest
+declares which kid signs which purpose, and the app does not start unless the
+configured key is the declared one. An app with `<PREFIX>APP_EVENTS_ORIGIN` set
+must hold its declared app-event key. That key may instead be given as
+`<PREFIX>APP_EMIT_KEY_SEED_HEX` with `<PREFIX>APP_EMIT_KID`, a form that signs
+app events only.
