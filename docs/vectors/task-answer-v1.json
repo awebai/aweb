@@ -1010,11 +1010,12 @@
       "body": "plain",
       "proposal": "task",
       "stage_receipt": "wrong_key",
+      "nonce": "n1",
       "result": {
         "status": 403,
         "code": "target_mismatch"
       },
-      "note": "signed by an app key registered only for app-event, not app-request; nothing commits"
+      "note": "signed by an app key registered only for app-event, not app-request; nothing commits, and its nonce n1 is not recorded"
     },
     {
       "step": "answer",
@@ -1032,7 +1033,7 @@
         "current": true,
         "comment": "body"
       },
-      "note": "the refused attempts above committed nothing and consumed no nonce"
+      "note": "the refused attempts above committed nothing; n1, carried by the refused wrong-key receipt, is accepted here, so it was not recorded"
     },
     {
       "step": "answer",
@@ -1253,10 +1254,10 @@
         "assignee": "assignee"
       },
       "result": {
-        "status": 201,
+        "status": 200,
         "question_rev": 1
       },
-      "note": "a task without an app_request, such as a dashboard request"
+      "note": "a task without an app_request, created with the existing POST /v1/tasks, which returns 200 as released"
     },
     {
       "step": "answer",

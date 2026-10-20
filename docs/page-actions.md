@@ -188,6 +188,11 @@ bundle, `fields` describes every item record. The host checks the chosen value
 against the task's `choices`, never the page. `decision-display-v1.json`
 pins these cases.
 
+This moves trust in labels from the page to the requester: the labels and
+formats are the ones the requesting member signed, and the audit record holds
+that signature. It cannot stop a requester from mislabelling its own question;
+nothing here claims to.
+
 Staged content with no task answer is not approved. A task answer whose
 approval is not yet decided is visibly pending and cannot dispatch. If step 3
 is lost, the naapp finds the answer through its reconciliation read of the
