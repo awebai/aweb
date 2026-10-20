@@ -197,7 +197,7 @@ the card is shown. Changing any covered value needs a new approval.
 
 - The approval is minted when the decision task is created, with
   `presentation: task` and `requested_by` set to the proposing principal's
-  DID.
+  key, derived as below.
 - It is decided only at step 3 of §5, with the receipt's `task_answer_ref`.
 - It is executable only while that receipt is `current`. A reopen therefore
   invalidates it before dispatch.
@@ -209,9 +209,15 @@ the card is shown. Changing any covered value needs a new approval.
 `requester_is_approver` when the approver's subject equals `requested_by`,
 unless the action policy sets `allow_requester_approval` (default false), which
 a policy may do only for an internal reversible action (aweb-acgh.25).
-`requested_by` and member approver subjects are both principal DIDs, so the
-comparison is exact. Until that change lands, the pages naapp makes the same
-refusal before minting.
+The comparison is of raw strings, so both sides are derived the same way,
+from the verified certificate, with `aweb_naapp.roles.principal_key`: the
+certificate's `member_did_aw` when it carries one, otherwise its
+`member_did_key`. A `member_session` approver always has a `did_aw` (§7), so a
+member whose certificate carries one cannot approve their own request under a
+different spelling of themselves. Test, on the real path: a member whose
+certificate carries a `did_aw` proposes, the designated `member_session`
+approver is that same member, and mint is refused. Until that change lands, the
+pages naapp makes the same refusal before minting.
 
 ## 7. Approval adapters and minimum assurance
 
