@@ -295,7 +295,7 @@ async def test_signed_request_to_a_public_tool_still_needs_the_grant(registry, m
     assert detail_code(response) == "scope_denied"
 
 
-@pytest.mark.parametrize("declared,matches", [("/api/v1/items", True), ("/v1/items", False)])
+@pytest.mark.parametrize("declared,matches", [("/mounted/v1/items", True), ("/v1/items", False)])
 async def test_mounted_app_matches_the_external_path_its_manifest_declares(registry, member, declared, matches):
     # A manifest path is relative to the app origin, so a mounted app declares its prefix.
     grants = InstalledGrants({TEAM_ID: fresh("fixture:read")})
@@ -303,10 +303,10 @@ async def test_mounted_app_matches_the_external_path_its_manifest_declares(regis
         {"tools": [{"name": "list", "method": "GET", "path": declared, "scopes": ["fixture:read"]}]}
     )
     async with relying_app(
-        registry, public_origin=ORIGIN, root_path="/api", on_principal=serve(grants, Policy(), tools)
+        registry, public_origin=ORIGIN, root_path="/mounted", on_principal=serve(grants, Policy(), tools)
     ) as (client, _):
-        headers = member.headers(aud=ORIGIN, method="GET", path="/api/v1/items")
-        response = await client.get("/api/v1/items", headers=headers)
+        headers = member.headers(aud=ORIGIN, method="GET", path="/mounted/v1/items")
+        response = await client.get("/mounted/v1/items", headers=headers)
     if matches:
         assert response.status_code == 200, response.text
         assert response.json()["tool"] == "list"

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -16,7 +17,16 @@ func realAWIDFixture(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Tests isolate HOME, but uv must keep the parent's populated offline cache.
+	cache := exec.Command("uv", "cache", "dir")
+	cache.Env = awTestBinary.env
+	cache.Dir = awTestBinary.sourceDir
+	cacheDir, err := cache.Output()
+	if err != nil {
+		t.Fatalf("resolve parent uv cache: %v", err)
+	}
 	cmd := exec.Command("python3", script)
+	cmd.Env = append(os.Environ(), "UV_CACHE_DIR="+strings.TrimSpace(string(cacheDir)))
 	cmd.Stderr = os.Stderr
 	input, err := cmd.StdinPipe()
 	if err != nil {
