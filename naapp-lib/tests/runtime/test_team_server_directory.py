@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from awid.dns_verify import DnsVerificationError
 from awid.signing import sign_message
 from awid.team_server_record import record_signing_bytes
 from nacl.signing import SigningKey
@@ -163,3 +164,27 @@ async def test_without_a_service_token_the_member_certificate_reads_a_private_te
     server = await directory.resolve(TEAM_ID, certificate_id="cert-1")
 
     assert server.server_url == SERVER_URL
+
+
+async def test_a_malformed_awid_registry_value_fails_closed_with_a_code(registry, team):
+    async def malformed(domain: str) -> str | None:
+        return "not a url"
+
+    assert await _refusal(_directory(registry, registry_override=malformed)) == "authority_unavailable"
+
+
+async def test_a_team_awid_does_not_know_is_reported_as_unknown(registry):
+    assert await _refusal(_directory(registry)) == "team_unknown"
+
+
+async def test_a_dns_failure_is_unavailable_and_never_falls_back_to_the_verifier_registry(registry, team):
+    await _publish(registry, _record(team, issued_at=datetime.now(UTC) - timedelta(minutes=1)))
+    calls_before = len(registry.transport.calls)
+
+    async def dns_fails(domain: str) -> str | None:
+        raise DnsVerificationError("timed out")
+
+    code = await _refusal(_directory(registry, registry_override=dns_fails))
+
+    assert code == "authority_unavailable"
+    assert len(registry.transport.calls) == calls_before

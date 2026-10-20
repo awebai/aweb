@@ -39,7 +39,8 @@ RegistryOverride = Callable[[str], Awaitable[str | None]]
 class TeamServerUnavailable(Exception):
     """The team's server cannot be established; ``code`` says why.
 
-    ``team_server_unpublished``: the team has no record (or AWID does not know it).
+    ``team_server_unpublished``: the team has no record.
+    ``team_unknown``: AWID does not know the team, or refuses its certificate status.
     ``team_server_key_mismatch``: the record is not signed by the team's current key.
     ``team_server_record_invalid``: the record is malformed or otherwise refused.
     ``registry_mismatch``: the domain names a registry other than the verifier's.
@@ -125,7 +126,14 @@ class TeamServerDirectory:
         except Exception as exc:
             logger.warning("AWID registry discovery for %s failed: %s", domain, exc)
             raise TeamServerUnavailable("authority_unavailable") from exc
-        if override is not None and canonical_server_origin(override) != self._team_cache.registry_origin:
+        if override is None:
+            return
+        try:
+            override_origin = canonical_server_origin(override)
+        except ValueError as exc:
+            logger.warning("AWID registry statement for %s is malformed", domain)
+            raise TeamServerUnavailable("authority_unavailable") from exc
+        if override_origin != self._team_cache.registry_origin:
             raise TeamServerUnavailable("registry_mismatch")
 
     async def _current_team_key(self, team_id: str, certificate_id: str | None) -> str:
@@ -133,7 +141,7 @@ class TeamServerDirectory:
             facts = await self._team_cache.get(team_id, certificate_id)
         except HTTPException as exc:
             if exc.status_code == 401:
-                raise TeamServerUnavailable("team_server_unpublished") from exc
+                raise TeamServerUnavailable("team_unknown") from exc
             raise TeamServerUnavailable("authority_unavailable") from exc
         return facts.team_did_key
 
