@@ -83,7 +83,10 @@ class HookBindingResponse(BaseModel):
     path: str | None
     digest: str
     active_from: str | None
-    keys: list[HookKeyResponse] | None = None
+
+
+class HookProductionResponse(HookBindingResponse):
+    keys: list[HookKeyResponse]
 
 
 class OwnHookBindingResponse(HookBindingResponse):
@@ -99,7 +102,7 @@ class HookResolutionResponse(BaseModel):
     team_id: str
     catalog: dict[str, str | int]
     hook: str
-    bindings: list[HookBindingResponse]
+    bindings: list[HookProductionResponse] | list[HookBindingResponse]
     as_of: str
     max_age_seconds: int
 
@@ -154,15 +157,21 @@ async def _resolve(
         selector=selector,
     ):
         raise HTTPException(status_code=403, detail=HOOK_BINDING_REQUIRED)
-    bindings = []
-    for binding in await active_bindings(db, team_id=credential.team_id, kind=kind, selector=selector):
-        fields = _binding_fields(binding)
-        if kind == PRODUCTION:
-            fields["keys"] = [
-                HookKeyResponse(kid=key.kid, did_key=key.did_key, purposes=list(key.purposes))
-                for key in await hook_keys(db, binding)
-            ]
-        bindings.append(HookBindingResponse(**fields))
+    found = await active_bindings(db, team_id=credential.team_id, kind=kind, selector=selector)
+    bindings: list[HookProductionResponse] | list[HookBindingResponse]
+    if kind == PRODUCTION:
+        bindings = [
+            HookProductionResponse(
+                **_binding_fields(binding),
+                keys=[
+                    HookKeyResponse(kid=key.kid, did_key=key.did_key, purposes=list(key.purposes))
+                    for key in await hook_keys(db, binding)
+                ],
+            )
+            for binding in found
+        ]
+    else:
+        bindings = [HookBindingResponse(**_binding_fields(binding)) for binding in found]
     return HookResolutionResponse(
         team_id=credential.team_id,
         catalog={"id": selector.catalog_id, "version": selector.catalog_version},
@@ -181,7 +190,6 @@ HookName = Annotated[str, Path(pattern=_HOOK.pattern)]
 @router.get(
     "/v1/apps/self/hooks/{catalog_id}/{catalog_version}/{hook}/registrations",
     response_model=HookResolutionResponse,
-    response_model_exclude_none=False,
 )
 async def hook_registrations_route(
     catalog_id: CatalogId,

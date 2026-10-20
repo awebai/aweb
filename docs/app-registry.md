@@ -230,6 +230,79 @@ Response:
 
 Conformance: `test-vectors/app-read-credential-v1.json`.
 
+## An app resolves its hooks
+
+```http
+GET /v1/apps/self/hooks/{catalog_id}/{catalog_version}/{hook}/registrations
+GET /v1/apps/self/hooks/{catalog_id}/{catalog_version}/{hook}/productions
+GET /v1/apps/self/hooks/bindings?binding_id=<uuid>
+GET /v1/apps/self/hooks/bindings?hook=<catalog_id>/<catalog_version>/<hook>
+Authorization: AWEB-App-Hook-Resolve DIDKey <did:key> <signature>
+```
+
+The app signs each read under the `hook-resolve` purpose, exactly as for the
+grant read (same headers, signed payload and one-encoding signature), with
+`auth` set to `hook-resolve`. The signed `path` is the request target with its
+query. The key must be registered for `hook-resolve` under the team's installed
+digest. The team and the app come from the credential.
+
+A binding is **active** by its state: activated by the team owner, not revoked,
+and of the installation's current generation. That includes a binding still
+inside its pad before `active_from`: the reader compares `active_from` with an
+event's `occurred_at`. Pending, revoked and superseded bindings are never
+listed and never authorize.
+
+- **Registrations** answer a producer: where to deliver. They are read only
+  while the caller holds an active production of that exact hook.
+- **Productions** answer a target: who may produce the hook, and with which
+  keys. They are read only while the caller holds an active registration of
+  it. Each production also carries `keys`: the producer's unrevoked keys, registered under
+  its own installed digest, that declare `hook-event` or `hook-delivery`, as
+  `{kid, did_key, purposes}`. A key with neither purpose is never listed.
+- Without the complementary binding the answer is `403 hook_binding_required`.
+  An unknown catalog, version or hook therefore also answers `403`.
+- A member's team-auth envelope is refused with `401`, like any credential
+  that is not `hook-resolve`.
+
+```json
+{
+  "team_id": "backend:acme.com",
+  "catalog": {"id": "aweb.hooks", "version": 1},
+  "hook": "post-secret-use-hook",
+  "bindings": [
+    {
+      "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+      "kind": "registration",
+      "app_id": "logs",
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "generation": 2,
+      "origin": "https://logs.example",
+      "method": "POST",
+      "path": "/hooks/ingest",
+      "digest": "sha256:4f3c000000000000000000000000000000000000000000000000000000000000",
+      "active_from": "2026-10-20T12:01:00.124Z"
+    }
+  ],
+  "as_of": "2026-10-20T12:00:00Z",
+  "max_age_seconds": 60
+}
+```
+
+**Own bindings** return the caller's own bindings in the team in every state,
+selected by exactly one of `binding_id` or `hook`, each with its `catalog`,
+`hook`, `state` (`pending`, `active`, `revoked` or `superseded`), `ended_by`
+(`owner_act`, `uninstall` or `generation`) and `activated_at`, `active_from`
+and `revoked_at`, null when they do not apply. A target confirms a delivery's
+`binding_id` this way, and records each binding's interval. Another app's
+binding id reads as no binding. A missing, doubled or malformed selector is
+`400`.
+
+Binding times are UTC to the millisecond (`YYYY-MM-DDTHH:MM:SS.mmmZ`), the hook
+event spelling; `active_from` is rounded up, so a binding never reads as active
+earlier than it is. `as_of` and `max_age_seconds` are as for the grant read.
+
+Conformance: the `hook-resolve` cases of `test-vectors/app-read-credential-v1.json`.
+
 ## The core hook producer's keys
 
 ```http

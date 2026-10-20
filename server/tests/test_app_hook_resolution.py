@@ -339,3 +339,12 @@ async def test_a_member_envelope_is_refused_like_any_other_credential(team):
     async with AsyncClient(transport=ASGITransport(app=team["app"]), base_url="http://test") as client:
         response = await client.get(path, headers={"Authorization": "DIDKey did:key:z6Mkmember sig"})
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_registrations_carry_no_keys(team):
+    await _activate(team["db"], team["production"].binding_id)
+    await _activate(team["db"], team["registration"].binding_id)
+    response = await _get(team, SECRETS, "secrets_key", _resolution("registrations"))
+    [binding] = response.json()["bindings"]
+    assert "keys" not in binding
