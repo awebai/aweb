@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from fastapi import HTTPException, Request
 
 from awid.dns_auth import enforce_timestamp_skew, require_timestamp
-from awid.log import canonical_server_origin
+from awid.log import canonical_server_origin, require_canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 
 from aweb.app_registry import get_active_app_emit_key, get_active_app_key, validate_team_id
@@ -154,11 +154,7 @@ async def verify_app_credential(request: Request, db, purpose: str, *, installat
         "timestamp": timestamp,
     }
     if purpose == APP_REQUEST:
-        if installation is None or installation["state"] != "active" or not installation.get("origin_verified", False):
-            raise HTTPException(status_code=403, detail="scope_denied")
-        expected.update(installation_id=str(installation["installation_id"]),
-                        installation_generation=installation["generation"])
-        if set(payload) != set(expected) | {"aud"}:
+        if set(payload) != set(expected) | {"aud", "installation_id", "installation_generation"}:
             raise HTTPException(status_code=401, detail="Invalid app request signed payload")
         if type(payload.get("installation_generation")) is not int or type(payload.get("v")) is not int:
             raise HTTPException(status_code=401, detail="Invalid app request signed payload")
@@ -168,7 +164,7 @@ async def verify_app_credential(request: Request, db, purpose: str, *, installat
 
     aud = str(payload.get("aud") or "").strip()
     try:
-        canonical_aud = canonical_server_origin(aud)
+        canonical_aud = require_canonical_server_origin(aud) if purpose == APP_REQUEST else canonical_server_origin(aud)
     except Exception as exc:
         raise HTTPException(status_code=401, detail=f"{label.capitalize()} signed payload audience is invalid") from exc
     if canonical_aud not in _allowed_audiences(request):
@@ -178,6 +174,12 @@ async def verify_app_credential(request: Request, db, purpose: str, *, installat
         verify_did_key_signature(did_key=did_key, payload=canonical, signature_b64=signature_b64)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=f"Invalid {label} signature") from exc
+
+    if purpose == APP_REQUEST:
+        if (installation is None or installation["state"] != "active" or not installation.get("origin_verified", False)
+                or payload["installation_id"] != str(installation["installation_id"])
+                or payload["installation_generation"] != installation["generation"]):
+            raise HTTPException(status_code=403, detail="scope_denied")
 
     row = await spec.lookup_key(db, purpose=purpose, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key)
     if row is None:

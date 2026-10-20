@@ -23,7 +23,7 @@ from aweb.coordination.app_tasks import (
     create_app_task_on, read_app_request_on,
 )
 from aweb.service_errors import ConflictError, ForbiddenError, ValidationError
-from aweb.task_contracts import AppTask, parse_contract, strict_json_bytes
+from aweb.task_contracts import validate_app_task, strict_json_bytes
 from test_dashboard_privacy import privacy_app, TEAM  # noqa: F401
 from test_task_answers import _v2_request
 
@@ -180,7 +180,7 @@ def test_app_task_titles_refuse_control_and_bidi_control_characters(control):
                 app_request=dict(external_request_id="a", resource_ref="r", action_ref="a",
                                  proposal_rev=None, proposal_sha256=None, choices=None))
     with pytest.raises(ValidationError, match="schema_invalid"):
-        parse_contract(AppTask, task)
+        validate_app_task(task)
 
 
 @pytest.mark.asyncio

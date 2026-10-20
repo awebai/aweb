@@ -241,7 +241,8 @@ async def test_app_request_is_purpose_and_installation_bound(installed):
     for changes in ({"installation_id": "previous-install"}, {"installation_generation": 2},
                     {"installation_generation": True}, {"unexpected_authority": True}):
         refused = await _post(installed["app"], path, b"{}", _signed_for(APP_REQUEST, **args, claims={**claims, **changes}))
-        assert refused.status_code == 401, refused.text
+        expected_status = 403 if "installation_id" in changes or type(changes.get("installation_generation")) is int else 401
+        assert refused.status_code == expected_status, refused.text
     wrong_purpose = await _post(installed["app"], path, b"{}", _signed_for(APP_EVENT, **args, claims=claims))
     assert wrong_purpose.status_code == 401, wrong_purpose.text
     installed["app"].state.installation_snapshot["state"] = "uninstalled"

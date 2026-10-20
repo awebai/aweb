@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
-import re
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request
 
-from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.team_ids import parse_team_id
 from aweb.app_credentials import APP_REQUEST, AppCredential, verify_app_credential
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
-from aweb.task_contracts import AppTask, TaskAuthorization, parse_contract
+from aweb.task_contracts import validate_app_task
 from aweb.team_auth import parse_and_verify_certificate
 from aweb.team_auth_deps import _get_revoked_certificates, _resolve_team_key
 from .tasks_service import (
@@ -22,7 +18,10 @@ from .tasks_service import (
     _encode_alpha_component, _get_team_slug, format_task_ref,
 )
 
-AUTHORIZATION_PREFIX = b"aweb.app-task-authorization/1\n"
+from aweb_naapp.runtime.task_requests import (
+    AUTHORIZATION_PREFIX, TaskRequestRefused, task_body_sha256,
+    verify_task_authorization as shared_verify_task_authorization,
+)
 
 
 def _json(value):
@@ -60,19 +59,17 @@ async def _current_certificates(request, team_id):
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
 
 
-async def verify_task_authorization(request, authorization):
-    payload = authorization.payload.model_dump()
-    signature = authorization.signature
+def validate_task_authorization(payload, signature, *, expected, now):
+    """Use the shared verifier; expose only C2's stable public error code."""
     try:
-        if not re.fullmatch(r"[A-Za-z0-9_-]{86}", signature):
-            raise ValueError("signature encoding")
-        decoded = base64.urlsafe_b64decode(signature + "==")
-        if base64.urlsafe_b64encode(decoded).decode().rstrip("=") != signature:
-            raise ValueError("signature encoding")
-        verify_did_key_signature(did_key=payload["actor_did_key"],
-            payload=AUTHORIZATION_PREFIX + canonical_json_bytes(payload), signature_b64=signature)
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail="signature_invalid") from exc
+        shared_verify_task_authorization(payload, signature, expected=expected, now=now)
+    except TaskRequestRefused as exc:
+        status = 403 if exc.code == "target_mismatch" else 401
+        raise HTTPException(status_code=status, detail=exc.code) from exc
+
+
+async def verify_authorization_certificate(request, authorization):
+    payload = authorization["payload"]
     try:
         team_key = await _resolve_team_key(request, payload["team_id"])
         revoked = await _get_revoked_certificates(request, payload["team_id"])
@@ -81,7 +78,7 @@ async def verify_task_authorization(request, authorization):
     if payload["certificate_id"] in revoked:
         raise HTTPException(status_code=401, detail="certificate_revoked")
     try:
-        info = parse_and_verify_certificate(authorization.certificate,
+        info = parse_and_verify_certificate(authorization["certificate"],
             request_did_key=payload["actor_did_key"],
             team_public_key_resolver=lambda _: team_key,
             revocation_checker=lambda team, cert: cert in revoked)
@@ -101,18 +98,18 @@ async def verify_task_authorization(request, authorization):
 async def create_app_task_on(request: Request, tx, *, credential: AppCredential, installation: dict, body: dict):
     if not isinstance(body, dict) or set(body) != {"task", "task_authorization"}:
         raise ValidationError("schema_invalid")
-    task = parse_contract(AppTask, body["task"]).model_dump()
+    task = validate_app_task(body["task"])
     metadata = task["app_request"]
-    try:
-        authorization = parse_contract(TaskAuthorization, body["task_authorization"])
-    except ValidationError as exc:
-        raise HTTPException(status_code=401, detail="signature_invalid") from exc
-    payload = authorization.payload.model_dump()
-    info, certificates = await verify_task_authorization(request, authorization)
-    digest = hashlib.sha256(canonical_json_bytes(task)).hexdigest()
+    authorization = body["task_authorization"]
+    if (not isinstance(authorization, dict) or set(authorization) != {"payload", "signature", "certificate"}
+            or not isinstance(authorization["certificate"], str)):
+        raise HTTPException(status_code=401, detail="signature_invalid")
+    payload = authorization["payload"]
+    digest = task_body_sha256(task)
     from aweb.app_credentials import _allowed_audiences
 
     expected = {
+        "aud": next(iter(_allowed_audiences(request))),
         "team_id": credential.team_id, "app_id": credential.app_id,
         "installation_id": credential.installation_id,
         "installation_generation": credential.installation_generation,
@@ -121,8 +118,16 @@ async def create_app_task_on(request: Request, tx, *, credential: AppCredential,
         "action_id": metadata["action_ref"], "proposal_rev": metadata["proposal_rev"],
         "proposal_sha256": metadata["proposal_sha256"],
     }
-    if payload["aud"] not in _allowed_audiences(request) or any(payload[k] != v for k, v in expected.items()):
-        raise ForbiddenError("target_mismatch")
+    expired = None
+    try:
+        validate_task_authorization(payload, authorization["signature"], expected=expected, now=datetime.now(timezone.utc))
+    except HTTPException as exc:
+        if exc.detail != "authorization_expired":
+            raise
+        expired = exc
+    # A time-only failure is eligible for replay only after CURRENT certificate
+    # authority has also passed. Shared verification checks bindings before time.
+    info, certificates = await verify_authorization_certificate(request, authorization)
     principal = info["member_did_aw"] or info["did_key"]
     existing = await tx.fetch_one(
         """SELECT r.task_body_sha256, r.receipt, t.cancellation
@@ -137,9 +142,8 @@ async def create_app_task_on(request: Request, tx, *, credential: AppCredential,
         if existing["task_body_sha256"] != digest:
             raise ConflictError("idempotency_conflict")
         return {**_json(existing["receipt"]), "cancellation": _json(existing["cancellation"])}, False
-    now = datetime.now(timezone.utc)
-    if (datetime.fromisoformat(payload["issued_at"]) - now).total_seconds() > 60 or datetime.fromisoformat(payload["expires_at"]) <= now:
-        raise HTTPException(status_code=401, detail="authorization_expired")
+    if expired is not None:
+        raise expired
     if "requests.create" not in _scopes(installation):
         raise ForbiddenError("scope_denied")
     targets = [c for c in certificates if (c.member_did_aw or c.member_did_key) == task["assignee_did"] and not c.revoked_at]
