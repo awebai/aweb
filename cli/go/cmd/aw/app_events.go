@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"sort"
 	"strings"
@@ -13,7 +14,7 @@ import (
 // local resident approval. A receipt is saved only after every requested write
 // succeeds. Failed registration can be retried with update; a partial initial
 // subscription failure is retried by repeating install.
-func registerManifestEvents(manifest appmanifest.Manifest, fetchedDigest string, previous, next *pluginProvenance, update bool) error {
+func registerManifestEvents(manifest appmanifest.Manifest, fetchedDigest string, fetchedBytes []byte, previous, next *pluginProvenance, update bool) error {
 	client, selection, err := resolveClientSelection()
 	if err != nil {
 		return fmt.Errorf("app events require a resident connected to a team: %w", err)
@@ -22,30 +23,10 @@ func registerManifestEvents(manifest appmanifest.Manifest, fetchedDigest string,
 		next.RegisteredDigest, next.RegisteredTeam, next.RegisteredServer = previous.RegisteredDigest, previous.RegisteredTeam, previous.RegisteredServer
 		return nil
 	}
-	events := make([]appmanifest.Event, len(manifest.Events))
-	copy(events, manifest.Events)
-	for i := range events {
-		events[i].Type = strings.TrimPrefix(strings.TrimSpace(events[i].Type), manifest.App.ID+"/")
-	}
-	scopes := []string{}
-	seen := map[string]bool{}
-	for _, tool := range manifest.Tools {
-		for _, scope := range tool.Scopes {
-			if !seen[scope] {
-				seen[scope] = true
-				scopes = append(scopes, scope)
-			}
-		}
-	}
-	sort.Strings(scopes)
+	events := installRegistrationEvents(manifest)
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
-	body := map[string]any{
-		"app_id": manifest.App.ID, "origin": manifest.App.Origin,
-		"app_version": manifest.App.Version, "manifest_version": manifest.ManifestVersion,
-		"digest": fetchedDigest, "granted_scopes": scopes,
-		"events": events, "event_emitters": append([]appmanifest.EventEmitter{}, manifest.EventEmitters...),
-	}
+	body := installRegistrationBody(manifest, fetchedDigest, fetchedBytes)
 	if err := client.Post(ctx, "/v1/apps/install", body, nil); err != nil {
 		return fmt.Errorf("register app events (local approval retained; retry install/update): %w", err)
 	}
@@ -63,6 +44,62 @@ func registerManifestEvents(manifest appmanifest.Manifest, fetchedDigest string,
 	}
 	next.RegisteredDigest, next.RegisteredTeam, next.RegisteredServer = fetchedDigest, selection.TeamID, selection.BaseURL
 	return nil
+}
+
+func installRegistrationEvents(manifest appmanifest.Manifest) []appmanifest.Event {
+	events := make([]appmanifest.Event, len(manifest.Events))
+	copy(events, manifest.Events)
+	for i := range events {
+		events[i].Type = strings.TrimPrefix(strings.TrimSpace(events[i].Type), manifest.App.ID+"/")
+	}
+	return events
+}
+
+// installRegistrationBody is the team install request. fetchedBytes, when
+// present, are the exact bytes that hash to fetchedDigest; the server then
+// takes declarations and keys from them and refuses fields that disagree.
+func installRegistrationBody(manifest appmanifest.Manifest, fetchedDigest string, fetchedBytes []byte) map[string]any {
+	scopes := []string{}
+	seen := map[string]bool{}
+	for _, tool := range manifest.Tools {
+		for _, scope := range tool.Scopes {
+			if !seen[scope] {
+				seen[scope] = true
+				scopes = append(scopes, scope)
+			}
+		}
+	}
+	sort.Strings(scopes)
+	body := map[string]any{
+		"app_id": manifest.App.ID, "origin": manifest.App.Origin,
+		"app_version": manifest.App.Version, "manifest_version": manifest.ManifestVersion,
+		"digest": fetchedDigest, "granted_scopes": scopes,
+		"events": installRegistrationEvents(manifest), "event_emitters": append([]appmanifest.EventEmitter{}, manifest.EventEmitters...),
+	}
+	if fetchedBytes != nil {
+		body["manifest"] = base64.StdEncoding.EncodeToString(fetchedBytes)
+	}
+	return body
+}
+
+// registrationManifestBytesFor returns the fetched bytes when the server reads
+// that manifest version and the bytes name the origin being registered. It
+// returns nil for a version the server does not read from bytes yet, and when a
+// dev-origin override registers the app at an origin its bytes do not declare;
+// the install then registers its supplied fields as before.
+func registrationManifestBytesFor(fetchedBytes []byte, manifestVersion int, declaredOrigin, registeredOrigin string) []byte {
+	if manifestVersion != 1 {
+		return nil
+	}
+	declared, err := canonicalAppOrigin(declaredOrigin)
+	if err != nil {
+		return nil
+	}
+	registered, err := canonicalAppOrigin(registeredOrigin)
+	if err != nil || declared != registered {
+		return nil
+	}
+	return fetchedBytes
 }
 
 func init() {

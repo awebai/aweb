@@ -302,7 +302,7 @@ every call exactly as it does for a CLI call. An owner who wants MCP agents to
 have less authority grants their principals less. An owner who wants the
 distinction enforced needs the attestation of §4.6.
 
-### 4.6 Proposed custody and principal attestation contract
+### 4.6 Custody and principal attestation contract
 
 Team-auth v2 tells secrets *which member signed*. It does not tell secrets who
 holds that key, or which human, if any, initiated the call (A
@@ -344,8 +344,12 @@ artifact format, the AWID custodian record and the verifier are generic AWID, OS
 and `aweb_naapp` work. Issuing the artifact is the custodial deployment's work.
 secrets only consumes it.
 
-**Until the artifact ships, any policy with `requires_attestation` refuses every
-request with `attestation_unavailable`.** Owners can configure the field now, and
+The frozen contract is [principal-attestation.md](../principal-attestation.md),
+which adds the controller-signed custody and custodian records this section
+describes, and the verifier is `aweb_naapp.runtime.attestation`.
+
+**Until custodial deployments issue the artifact, any policy with
+`requires_attestation` refuses every request without one.** Owners can configure the field now, and
 it is honestly inert. The artifact is a launch requirement (Q5, decided).
 
 ## 5. Custody backends

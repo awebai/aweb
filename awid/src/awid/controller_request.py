@@ -21,6 +21,7 @@ CONTROLLER_OPERATIONS = frozenset({
     'authorize_subdomain_registration', 'authorize_subdomain_rotation',
     'create_team', 'delete_team', 'rotate_team_key', 'set_team_visibility',
     'register_certificate', 'revoke_certificate',
+    'publish_team_custodian', 'publish_member_custody', 'publish_member_person',
     'register_address', 'update_address', 'delete_address', 'reassign_address',
 })
 logger = logging.getLogger(__name__)
