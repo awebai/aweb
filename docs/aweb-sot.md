@@ -928,6 +928,11 @@ A member key — including the old key — cannot authorize this route.
 | `GET/POST/DELETE /v1/reservations/*` | Locks |
 | `GET/POST /v1/roles/*` | Versioned roles |
 | `GET/POST /v1/instructions/*` | Versioned instructions |
+
+Role-publication POSTs and repo deletion record a structured operator audit in the
+existing `audit_log`, in the mutation transaction. Authenticated refusals are
+recorded separately after rollback. Embedding hosts supply verified actor context
+and their own authorization policy; see [operator audit](operator-audit.md).
 | `GET/POST /v1/repos/*` | Git repos |
 | `GET/POST/DELETE /v1/workspaces/*` | Workspace management |
 
