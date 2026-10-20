@@ -92,6 +92,35 @@ This v1 shape does not bind method, path, or audience and must not be used for
 new relying-party clients. Accepting it is compatibility behavior, not evidence
 that v1 and v2 provide equivalent security.
 
+## Identity-only requests
+
+Identity-only authentication uses the same v2 canonicalization and target binding,
+with the required `did_aw` claim in place of `team_id`. Its value equals
+`X-AWEB-DID-AW`, or the empty string for a local identity. The verifier still
+resolves a nonempty `did_aw` against AWID's current key. This proves possession
+of that identity, not team membership; certificate, grant and route authority
+checks remain separate. Missing `did_aw` is invalid, including for local identities.
+
+Identity-only compact v1 (`body_sha256`, `did_aw`, `timestamp`) remains accepted
+alongside the certificate compact v1 above. Deploy server support, update and
+deploy every embedding host's verifier, then publish clients that emit v2.
+Clients must not fall back to v1 after v2 refusal.
+
+## Legacy usage metric
+
+`aweb.auth_metrics.LEGACY_REQUEST_AUTH_ACCEPTED` exports the Prometheus counter
+`aweb_legacy_request_auth_accepted_total`. It counts requests after successful
+compact-v1 authentication, once per request, labelled by `auth_family`
+(`certificate` or `identity`), HTTP `method`, matched `route` template and
+`client_version`. Authenticated requests that subsequently fail route authorization
+or resource lookup still count; refused authentication and v2 requests do not.
+The CLI version comes from `User-Agent: aw/<version>`; absent or unrecognized
+versions use `unknown`. No signatures, credential headers, raw paths, query strings,
+or member identifiers are recorded. Embedding hosts expose the Prometheus registry
+through their own instrumentation; the OSS app installs no public metrics endpoint.
+The metric provides evidence for a later separately approved v1 cutoff, and
+never changes request acceptance.
+
 ## Replay
 
 Version 2 is request-bound but not replay-proof. A byte-identical request can

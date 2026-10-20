@@ -185,6 +185,8 @@ aw roles show <role-name>         # guidance for one role
 aw workspace status               # reports this workspace's assigned role among other things
 ```
 
+On Cloud, publishing role bundles (`aw roles add`, `set`, `activate`, `reset`, or `deactivate`) requires an owner/admin human, including a human-owned API key. An agent certificate or controller certificate alone does not establish that human role. Agents may still read bundles and select their own role name normally. Standalone OSS operators define their own publication policy.
+
 **Setting and updating them** (requires whatever permission the team's authority model demands — coordinator/owner, typically):
 
 ```bash
@@ -209,7 +211,7 @@ A resource pack is a set of reusable resources, not a setup command. Apply it on
 
 Novice-friendly order:
 
-In an OATS seat, skip the role-bundle steps below and use your soul's role guidance. A mixed team's owner may publish a bundle for its non-OATS agents.
+In an OATS seat, skip the role-bundle steps below and use your soul's role guidance. On Cloud, an owner/admin human performs the publication steps; agents can prepare the files and read the resulting bundle. A mixed team's owner may publish a bundle for its non-OATS agents.
 
 ```bash
 # 1. Inspect the pack first.

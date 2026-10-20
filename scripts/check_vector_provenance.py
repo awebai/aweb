@@ -66,6 +66,10 @@ ROOT_CONSUMERS = {
         "agent-activity-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "agent-activity-v1.json"',
     ),
+    PurePosixPath("awid/tests/test_controller_request_v2_http.py"): _consumer(
+        "awid-controller-request-v2.json",
+        "Path(__file__).resolve().parents[2] / 'docs' / 'vectors' / 'awid-controller-request-v2.json'",
+    ),
     PurePosixPath("awid/tests/test_certificate_status.py"): _consumer(
         "team-certificate-status-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "team-certificate-status-v1.json"',
@@ -178,6 +182,10 @@ ROOT_CONSUMERS = {
     PurePosixPath("naapp/folio/tests/test_auth_v2_envelope.py"): _consumer(
         "team-auth-envelope-v2.json",
         'aweb_path("docs", "vectors", "team-auth-envelope-v2.json")',
+    ),
+    PurePosixPath("naapp-lib/tests/runtime/test_team_auth_vectors.py"): _consumer(
+        "team-auth-envelope-v2.json",
+        'AWEB_ROOT / "docs" / "vectors" / "team-auth-envelope-v2.json"',
     ),
     PurePosixPath("cli/go/a2a/card_test.go"): _consumer(
         "a2a-v1.json",
