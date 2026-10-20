@@ -1,7 +1,8 @@
 import { messages } from "./catalogs.mjs";
-import { renderMarkdown, safeLink } from "./sanitize.mjs";
+import { renderMarkdown, inertLinks } from "./sanitize.mjs";
 import { element } from "./dom.mjs";
 import { renderCollection } from "./collections.mjs";
+export { inertLinks } from "./sanitize.mjs";
 export { createLinkConfirmation } from "./link-host.mjs";
 const collectionTypes = new Set([
   "table",
@@ -50,10 +51,7 @@ export function createPageRenderer({
   function update(page) {
     const before = current;
     current = page;
-    const generation =
-      before?.page_id !== page?.page_id || before?.rev !== page?.rev
-        ? ++epoch
-        : epoch;
+    if (before?.page_id !== page?.page_id || before?.rev !== page?.rev) ++epoch;
     const { locale, t } = messages();
     const focused = document.activeElement;
     const focusedWidget = focused?.closest("[data-widget]");
@@ -157,7 +155,10 @@ export function createPageRenderer({
             ? { ...w, children: undefined }
             : w,
         locale,
-        w.bind ? page.rev : undefined,
+        w.bind
+          ? page.collections.find((c) => c.id === w.bind.collection)
+              ?.schema_version
+          : undefined,
       ]);
       let entry = cache.get(w.id),
         box;
@@ -170,8 +171,13 @@ export function createPageRenderer({
           if (value) rememberLink(new URL(value));
         }
         displayState(box, w, state);
+        if (w.bind && entry.pageRev !== page.rev) {
+          entry.pageRev = page.rev;
+          entry.refresh?.();
+        }
         return box;
       }
+      let refresh;
       box = element(
         "section",
         null,
@@ -187,10 +193,7 @@ export function createPageRenderer({
       else if (w.type === "text") {
         const body = element("div", null, "markdown");
         renderMarkdown(body, p.markdown);
-        for (const link of body.querySelectorAll("a[href]")) {
-          const url = safeLink(link.getAttribute("href"));
-          if (url) pageLink(link, url);
-        }
+        for (const { node, url } of inertLinks(body)) pageLink(node, url);
         box.append(body);
       } else if (container) {
         box.classList.add(`gap-${p.gap || "medium"}`);
@@ -209,7 +212,12 @@ export function createPageRenderer({
           button.title = t.readOnly;
           return button;
         };
+        let controller;
         const draw = (records, projection) => {
+          if (controller) {
+            controller.updateProjection(projection);
+            return;
+          }
           content.replaceChildren();
           if (collectionTypes.has(w.type)) {
             let query = queries.get(w.id);
@@ -217,7 +225,7 @@ export function createPageRenderer({
               query = structuredClone(w.bind);
               queries.set(w.id, query);
             }
-            renderCollection({
+            controller = renderCollection({
               box: content,
               w,
               initialRecords: records,
@@ -260,39 +268,45 @@ export function createPageRenderer({
         };
         async function read(bind) {
           if (!host.read) throw Object.assign(Error(), { code: "unavailable" });
+          const snapshot = current,
+            requestEpoch = epoch;
           const result = await host.read({
-            page_id: page.page_id,
-            expected_page_rev: page.rev,
+            page_id: snapshot.page_id,
+            expected_page_rev: snapshot.rev,
             widget_id: w.id,
             bind,
           });
-          if (generation !== epoch || result.page_rev !== page.rev)
+          if (requestEpoch !== epoch || result.page_rev !== snapshot.rev)
             throw Object.assign(Error(), { code: "revision_conflict" });
           return result;
         }
         if (w.bind) {
-          content.append(element("p", t.loading));
-          read(queries.get(w.id) || w.bind)
-            .then((result) => {
-              if (generation === epoch) draw(result.records, result);
-            })
-            .catch((error) => {
-              if (generation === epoch)
-                content.replaceChildren(
-                  element(
-                    "p",
-                    error.code === "revision_conflict"
-                      ? t.conflict
-                      : t.unavailable,
-                  ),
-                );
-            });
+          let serial = 0;
+          refresh = async () => {
+            const request = ++serial;
+            if (controller) controller.beginRefresh();
+            else content.replaceChildren(element("p", t.loading));
+            try {
+              const result = await read(queries.get(w.id) || w.bind);
+              if (request === serial && box.isConnected)
+                draw(result.records, result);
+            } catch (error) {
+              if (request !== serial || !box.isConnected) return;
+              const message =
+                error.code === "revision_conflict" ? t.conflict : t.unavailable;
+              if (controller) controller.showError(message);
+              else content.replaceChildren(element("p", message));
+            }
+          };
+          refresh();
         } else draw([]);
       }
       displayState(box, w, state);
       entry = {
         signature,
         box,
+        refresh,
+        pageRev: page.rev,
         state: [...box.children].find((n) =>
           n.hasAttribute("data-widget-state"),
         ),

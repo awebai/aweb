@@ -7455,6 +7455,17 @@ function renderMarkdown(target, text3) {
   for (const inert of target.querySelectorAll("a:not([href])"))
     inert.replaceWith(...inert.childNodes);
 }
+function inertLinks(container) {
+  const accepted = [];
+  for (const node of container.querySelectorAll("a[href]")) {
+    const url = safeLink(node.getAttribute("href"));
+    for (const name of ["href", "target", "rel", "referrerpolicy"])
+      node.removeAttribute(name);
+    if (url) accepted.push({ node, url });
+    else node.replaceWith(...node.childNodes);
+  }
+  return accepted;
+}
 
 // dom.mjs
 function element(tag, text3, className) {
@@ -7663,8 +7674,10 @@ function renderCollection({
       status.textContent = error2?.code === "revision_conflict" ? t.conflict : t.unavailable;
     }
   }
+  let projectionFocusKey;
   function draw() {
-    const focusKey = region.contains(document.activeElement) ? document.activeElement.dataset.focusKey : void 0;
+    const focusKey = region.contains(document.activeElement) ? document.activeElement.dataset.focusKey : document.activeElement === document.body ? projectionFocusKey : void 0;
+    projectionFocusKey = void 0;
     region.replaceChildren();
     const visible = remote ? records : records.slice(offset, offset + limit);
     status.textContent = `${count} ${t.records}`;
@@ -7841,6 +7854,27 @@ function renderCollection({
   navigation.append(previous, next);
   box.append(navigation);
   draw();
+  return {
+    beginRefresh() {
+      projectionFocusKey = region.contains(document.activeElement) ? document.activeElement.dataset.focusKey : void 0;
+      region.replaceChildren(element("p", t.loading));
+      region.setAttribute("aria-busy", "true");
+      cursorIndex = 0;
+      cursors.splice(0, cursors.length, query.cursor);
+    },
+    updateProjection(projection) {
+      records = projection.records;
+      count = projection.count ?? records.length;
+      nextCursor = projection.next_cursor;
+      remote = true;
+      region.setAttribute("aria-busy", "false");
+      draw();
+    },
+    showError(message) {
+      region.setAttribute("aria-busy", "false");
+      region.replaceChildren(element("p", message));
+    }
+  };
 }
 
 // link-host.mjs
@@ -7920,7 +7954,7 @@ function createPageRenderer({
   function update(page) {
     const before = current;
     current = page;
-    const generation = before?.page_id !== page?.page_id || before?.rev !== page?.rev ? ++epoch : epoch;
+    if (before?.page_id !== page?.page_id || before?.rev !== page?.rev) ++epoch;
     const { locale, t } = messages();
     const focused = document.activeElement;
     const focusedWidget = focused?.closest("[data-widget]");
@@ -8013,7 +8047,7 @@ function createPageRenderer({
       const signature = JSON.stringify([
         !supported ? { id: w.id, type: w.type, fallback: w.fallback } : container ? { ...w, children: void 0 } : w,
         locale,
-        w.bind ? page.rev : void 0
+        w.bind ? page.collections.find((c) => c.id === w.bind.collection)?.schema_version : void 0
       ]);
       let entry = cache.get(w.id), box;
       if (entry?.signature === signature) {
@@ -8025,8 +8059,13 @@ function createPageRenderer({
           if (value) rememberLink(new URL(value));
         }
         displayState(box, w, state);
+        if (w.bind && entry.pageRev !== page.rev) {
+          entry.pageRev = page.rev;
+          entry.refresh?.();
+        }
         return box;
       }
+      let refresh;
       box = element(
         "section",
         null,
@@ -8042,10 +8081,7 @@ function createPageRenderer({
       else if (w.type === "text") {
         const body = element("div", null, "markdown");
         renderMarkdown(body, p.markdown);
-        for (const link2 of body.querySelectorAll("a[href]")) {
-          const url = safeLink(link2.getAttribute("href"));
-          if (url) pageLink(link2, url);
-        }
+        for (const { node, url } of inertLinks(body)) pageLink(node, url);
         box.append(body);
       } else if (container) {
         box.classList.add(`gap-${p.gap || "medium"}`);
@@ -8064,7 +8100,12 @@ function createPageRenderer({
           button.title = t.readOnly;
           return button;
         };
+        let controller;
         const draw = (records, projection) => {
+          if (controller) {
+            controller.updateProjection(projection);
+            return;
+          }
           content.replaceChildren();
           if (collectionTypes.has(w.type)) {
             let query = queries.get(w.id);
@@ -8072,7 +8113,7 @@ function createPageRenderer({
               query = structuredClone(w.bind);
               queries.set(w.id, query);
             }
-            renderCollection({
+            controller = renderCollection({
               box: content,
               w,
               initialRecords: records,
@@ -8112,35 +8153,43 @@ function createPageRenderer({
         };
         async function read(bind) {
           if (!host.read) throw Object.assign(Error(), { code: "unavailable" });
+          const snapshot = current, requestEpoch = epoch;
           const result = await host.read({
-            page_id: page.page_id,
-            expected_page_rev: page.rev,
+            page_id: snapshot.page_id,
+            expected_page_rev: snapshot.rev,
             widget_id: w.id,
             bind
           });
-          if (generation !== epoch || result.page_rev !== page.rev)
+          if (requestEpoch !== epoch || result.page_rev !== snapshot.rev)
             throw Object.assign(Error(), { code: "revision_conflict" });
           return result;
         }
         if (w.bind) {
-          content.append(element("p", t.loading));
-          read(queries.get(w.id) || w.bind).then((result) => {
-            if (generation === epoch) draw(result.records, result);
-          }).catch((error2) => {
-            if (generation === epoch)
-              content.replaceChildren(
-                element(
-                  "p",
-                  error2.code === "revision_conflict" ? t.conflict : t.unavailable
-                )
-              );
-          });
+          let serial = 0;
+          refresh = async () => {
+            const request = ++serial;
+            if (controller) controller.beginRefresh();
+            else content.replaceChildren(element("p", t.loading));
+            try {
+              const result = await read(queries.get(w.id) || w.bind);
+              if (request === serial && box.isConnected)
+                draw(result.records, result);
+            } catch (error2) {
+              if (request !== serial || !box.isConnected) return;
+              const message = error2.code === "revision_conflict" ? t.conflict : t.unavailable;
+              if (controller) controller.showError(message);
+              else content.replaceChildren(element("p", message));
+            }
+          };
+          refresh();
         } else draw([]);
       }
       displayState(box, w, state);
       entry = {
         signature,
         box,
+        refresh,
+        pageRev: page.rev,
         state: [...box.children].find(
           (n) => n.hasAttribute("data-widget-state")
         )
@@ -8190,5 +8239,6 @@ function createPageRenderer({
 }
 export {
   createLinkConfirmation,
-  createPageRenderer
+  createPageRenderer,
+  inertLinks
 };

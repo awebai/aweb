@@ -145,3 +145,48 @@ test("large stat values and their units remain on one line at tablet and desktop
     }
   }
 });
+
+test("the final navigation fence unwraps sanitizer-compatible anchors rejected by safeLink", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { inertLinks } = await import("/assets/page-renderer.js");
+    const container = document.createElement("div");
+    for (const href of [
+      "https://user:secret@evil.example/",
+      "https://x.example%2f@evil.example/",
+    ]) {
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.textContent = "Kept label";
+      container.append(anchor);
+    }
+    document.querySelector("#page").append(container);
+    return {
+      accepted: inertLinks(container).length,
+      hrefs: container.querySelectorAll("[href]").length,
+      text: container.textContent,
+    };
+  });
+  expect(result).toEqual({
+    accepted: 0,
+    hrefs: 0,
+    text: "Kept labelKept label",
+  });
+  await expect(page.locator("#page [href]")).toHaveCount(0);
+});
+
+test("a bound filter draft and its focused node survive an asynchronous projection refresh", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const table = page.locator('[data-widget="property-table"]');
+  const filter = table.getByLabel("Filter value");
+  await filter.fill("Riverside");
+  await filter.focus();
+  await page.keyboard.press("Alt+u");
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  await expect(filter).toHaveValue("Riverside");
+  await expect(filter).toBeFocused();
+});

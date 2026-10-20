@@ -80,3 +80,18 @@ export function renderMarkdown(target, text) {
   for (const inert of target.querySelectorAll("a:not([href])"))
     inert.replaceWith(...inert.childNodes);
 }
+
+// A final navigation fence independent of Markdown and sanitizer agreement.
+// No live href survives this function, including anchors a parser accepted but
+// safeLink refuses. The caller may attach host-confirmed activation only.
+export function inertLinks(container) {
+  const accepted = [];
+  for (const node of container.querySelectorAll("a[href]")) {
+    const url = safeLink(node.getAttribute("href"));
+    for (const name of ["href", "target", "rel", "referrerpolicy"])
+      node.removeAttribute(name);
+    if (url) accepted.push({ node, url });
+    else node.replaceWith(...node.childNodes);
+  }
+  return accepted;
+}

@@ -190,10 +190,14 @@ export function renderCollection({
         error?.code === "revision_conflict" ? t.conflict : t.unavailable;
     }
   }
+  let projectionFocusKey;
   function draw() {
     const focusKey = region.contains(document.activeElement)
       ? document.activeElement.dataset.focusKey
-      : undefined;
+      : document.activeElement === document.body
+        ? projectionFocusKey
+        : undefined;
+    projectionFocusKey = undefined;
     region.replaceChildren();
     const visible = remote ? records : records.slice(offset, offset + limit);
     status.textContent = `${count} ${t.records}`;
@@ -375,4 +379,27 @@ export function renderCollection({
   navigation.append(previous, next);
   box.append(navigation);
   draw();
+  return {
+    beginRefresh() {
+      projectionFocusKey = region.contains(document.activeElement)
+        ? document.activeElement.dataset.focusKey
+        : undefined;
+      region.replaceChildren(element("p", t.loading));
+      region.setAttribute("aria-busy", "true");
+      cursorIndex = 0;
+      cursors.splice(0, cursors.length, query.cursor);
+    },
+    updateProjection(projection) {
+      records = projection.records;
+      count = projection.count ?? records.length;
+      nextCursor = projection.next_cursor;
+      remote = true;
+      region.setAttribute("aria-busy", "false");
+      draw();
+    },
+    showError(message) {
+      region.setAttribute("aria-busy", "false");
+      region.replaceChildren(element("p", message));
+    },
+  };
 }
