@@ -1,0 +1,2166 @@
+{
+  "name": "hook-catalog-v1",
+  "status": "proposed (aweb-acgh.16.1); frozen once reviewed, after which any payload change is a new catalog version",
+  "catalog": {
+    "id": "aweb.hooks",
+    "version": 1
+  },
+  "scheme": {
+    "authority": "docs/hook-events.md is normative; this file is its machine-readable catalog",
+    "payload": "a flat JSON object; every value is a string, integer, boolean or list of strings; no nested objects, floats or nulls",
+    "unknown_fields": "refused, at every level of the catalog file and in every payload",
+    "integers": "JSON integers only; a boolean or a float is never an integer",
+    "lists": "lists hold unique items of one type, within the stated bounds",
+    "rules": "each rule applies when its 'when' holds: 'in' lists the matching values, 'present' matches a present field; 'require' and 'forbid' name fields, 'require_equals' names a field and its only allowed value, 'require_in' names a field and its allowed values",
+    "audit_critical": "always: every event; widening_acts: acts whose catalog direction is widening; never: no event",
+    "precedence": "a tool call whose effect a specific hook covers fires only that hook",
+    "order": "checks run in this order and report the first fault: the hook is known; for a hook with a discriminator, the discriminator's value; unknown fields; missing required fields; each value against its type, bounds and constants, in field-name order; the rules in their listed order; then the act's catalog direction (post-governance-hook) or the command class's effects (post-command-hook)",
+    "cases": "a case gives its payload as JSON ('payload'), or as JSON text ('payload_json') when the payload holds a value this file may not, such as a float",
+    "errors": [
+      "unknown_hook",
+      "unknown_field",
+      "missing_field",
+      "invalid_value",
+      "rule_violation",
+      "direction_mismatch"
+    ]
+  },
+  "types": {
+    "alias": {
+      "kind": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"
+    },
+    "app_id": {
+      "kind": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+    },
+    "app_scope": {
+      "kind": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}$"
+    },
+    "bool": {
+      "kind": "boolean"
+    },
+    "byte_count": {
+      "kind": "integer",
+      "min": 0,
+      "max": 9007199254740991
+    },
+    "command_path": {
+      "kind": "string",
+      "pattern": "^aw( [a-z][a-z0-9-]{0,31}){1,6}$"
+    },
+    "count": {
+      "kind": "integer",
+      "min": 0,
+      "max": 9007199254740991
+    },
+    "did_aw": {
+      "kind": "string",
+      "pattern": "^did:aw:[1-9A-HJ-NP-Za-km-z]{20,32}$"
+    },
+    "did_key": {
+      "kind": "string",
+      "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]{40,60}$"
+    },
+    "exit_status": {
+      "kind": "integer",
+      "min": 0,
+      "max": 255
+    },
+    "flag_name": {
+      "kind": "string",
+      "pattern": "^--[a-z][a-z0-9-]{0,63}$"
+    },
+    "hmac": {
+      "kind": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "host": {
+      "kind": "string",
+      "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$|^\\[[0-9a-f:.]{2,45}\\]$|^[0-9]{1,3}(\\.[0-9]{1,3}){3}$"
+    },
+    "http_method": {
+      "kind": "string",
+      "pattern": "^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$"
+    },
+    "http_status": {
+      "kind": "integer",
+      "min": 100,
+      "max": 599
+    },
+    "manifest_digest": {
+      "kind": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "origin": {
+      "kind": "string",
+      "pattern": "^https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?$"
+    },
+    "path_template": {
+      "kind": "string",
+      "pattern": "^/[A-Za-z0-9._~!$&'()*+,;=:/{}-]{0,255}$"
+    },
+    "port": {
+      "kind": "integer",
+      "min": 1,
+      "max": 65535
+    },
+    "priority_level": {
+      "kind": "integer",
+      "min": 0,
+      "max": 4
+    },
+    "ref": {
+      "kind": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+    },
+    "sequence": {
+      "kind": "integer",
+      "min": 1,
+      "max": 9007199254740991
+    },
+    "sha256_hex": {
+      "kind": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "task_ref": {
+      "kind": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]{0,127}$"
+    },
+    "timestamp": {
+      "kind": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{3})?Z$"
+    },
+    "token": {
+      "kind": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+    },
+    "uuid": {
+      "kind": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  },
+  "hooks": {
+    "post-secret-use-hook": {
+      "class": "server",
+      "producer_kinds": [
+        "app"
+      ],
+      "audit_critical": "always",
+      "fields": {
+        "action": {
+          "enum": [
+            "refused",
+            "approval_requested",
+            "approval_decided",
+            "admitted",
+            "dispatching",
+            "completed",
+            "not_sent",
+            "outcome_unknown",
+            "reconciled"
+          ],
+          "required": true
+        },
+        "op_kind": {
+          "enum": [
+            "broker",
+            "run_job"
+          ],
+          "required": true
+        },
+        "secret_id": {
+          "type": "ref",
+          "required": false
+        },
+        "secret_ref": {
+          "type": "ref",
+          "required": false
+        },
+        "secret_version": {
+          "type": "count",
+          "required": false
+        },
+        "secret_kind": {
+          "type": "token",
+          "required": false
+        },
+        "secret_backend": {
+          "type": "token",
+          "required": false
+        },
+        "secret_sensitivity": {
+          "type": "token",
+          "required": false
+        },
+        "target_method": {
+          "type": "http_method",
+          "required": false
+        },
+        "target_host": {
+          "type": "host",
+          "required": false
+        },
+        "target_port": {
+          "type": "port",
+          "required": false
+        },
+        "target_path_template": {
+          "type": "path_template",
+          "required": false
+        },
+        "operation_id": {
+          "type": "ref",
+          "required": false
+        },
+        "operation_digest": {
+          "type": "sha256_hex",
+          "required": false
+        },
+        "runner_id": {
+          "type": "ref",
+          "required": false
+        },
+        "job_id": {
+          "type": "ref",
+          "required": false
+        },
+        "job_digest": {
+          "type": "sha256_hex",
+          "required": false
+        },
+        "request_sha256": {
+          "type": "sha256_hex",
+          "required": false
+        },
+        "params_sha256": {
+          "type": "sha256_hex",
+          "required": false
+        },
+        "grant_id": {
+          "type": "ref",
+          "required": false
+        },
+        "policy_digest": {
+          "type": "sha256_hex",
+          "required": false
+        },
+        "approval_id": {
+          "type": "ref",
+          "required": false
+        },
+        "approval_assurance": {
+          "type": "token",
+          "required": false
+        },
+        "approver_id": {
+          "type": "ref",
+          "required": false
+        },
+        "approval_credential_id": {
+          "type": "ref",
+          "required": false
+        },
+        "approval_evidence_sha256": {
+          "type": "sha256_hex",
+          "required": false
+        },
+        "approval_decision": {
+          "enum": [
+            "approved",
+            "denied",
+            "expired",
+            "revoked"
+          ],
+          "required": false
+        },
+        "dispatch_id": {
+          "type": "ref",
+          "required": false
+        },
+        "dispatch_state": {
+          "type": "token",
+          "required": false
+        },
+        "upstream_status_code": {
+          "type": "http_status",
+          "required": false
+        },
+        "upstream_bytes": {
+          "type": "byte_count",
+          "required": false
+        },
+        "upstream_truncated": {
+          "type": "bool",
+          "required": false
+        },
+        "upstream_response_hmac": {
+          "type": "hmac",
+          "required": false
+        },
+        "returned_hmac": {
+          "type": "hmac",
+          "required": false
+        },
+        "disposition": {
+          "enum": [
+            "returned",
+            "withheld",
+            "stored_as_secret"
+          ],
+          "required": false
+        },
+        "derived_secret_id": {
+          "type": "ref",
+          "required": false
+        },
+        "undeclared_credential": {
+          "type": "bool",
+          "required": false
+        },
+        "redaction_count": {
+          "type": "count",
+          "required": false
+        },
+        "refusal_code": {
+          "enum": [
+            "grant_missing",
+            "grant_revoked",
+            "operation_not_allowed",
+            "open_request_not_allowed",
+            "policy_rate_limited",
+            "policy_window_closed",
+            "destination_not_in_scope",
+            "destination_address_denied",
+            "internal_destinations_disabled",
+            "header_not_allowed",
+            "params_invalid",
+            "token_issuing_denied",
+            "secret_disabled",
+            "installation_disabled",
+            "secret_version_changed",
+            "custody_unavailable",
+            "attestation_unavailable",
+            "approval_denied",
+            "approval_expired",
+            "approval_revoked",
+            "approval_unrenderable",
+            "distinct_approver_required",
+            "reconciliation_pending",
+            "idempotency_conflict",
+            "audit_target_unavailable",
+            "audit_delivery_stalled",
+            "runner_unavailable",
+            "job_not_allowed"
+          ],
+          "required": false
+        }
+      },
+      "rules": [
+        {
+          "when": {
+            "field": "action",
+            "in": [
+              "refused"
+            ]
+          },
+          "require": [
+            "refusal_code"
+          ]
+        },
+        {
+          "when": {
+            "field": "action",
+            "in": [
+              "approval_requested",
+              "approval_decided",
+              "admitted",
+              "dispatching",
+              "completed",
+              "not_sent",
+              "outcome_unknown",
+              "reconciled"
+            ]
+          },
+          "forbid": [
+            "refusal_code"
+          ]
+        },
+        {
+          "when": {
+            "field": "action",
+            "in": [
+              "completed"
+            ]
+          },
+          "require": [
+            "disposition",
+            "undeclared_credential"
+          ]
+        },
+        {
+          "when": {
+            "field": "action",
+            "in": [
+              "refused",
+              "approval_requested",
+              "approval_decided",
+              "admitted",
+              "dispatching",
+              "not_sent",
+              "outcome_unknown",
+              "reconciled"
+            ]
+          },
+          "forbid": [
+            "disposition",
+            "derived_secret_id",
+            "returned_hmac",
+            "undeclared_credential"
+          ]
+        },
+        {
+          "when": {
+            "field": "disposition",
+            "in": [
+              "withheld"
+            ]
+          },
+          "forbid": [
+            "returned_hmac"
+          ]
+        },
+        {
+          "when": {
+            "field": "disposition",
+            "in": [
+              "returned"
+            ]
+          },
+          "require": [
+            "returned_hmac"
+          ]
+        },
+        {
+          "when": {
+            "field": "disposition",
+            "in": [
+              "stored_as_secret"
+            ]
+          },
+          "require": [
+            "derived_secret_id"
+          ]
+        },
+        {
+          "when": {
+            "field": "disposition",
+            "in": [
+              "returned",
+              "withheld"
+            ]
+          },
+          "forbid": [
+            "derived_secret_id"
+          ]
+        },
+        {
+          "when": {
+            "field": "undeclared_credential",
+            "in": [
+              true
+            ]
+          },
+          "require_equals": {
+            "disposition": "withheld"
+          }
+        },
+        {
+          "when": {
+            "field": "action",
+            "in": [
+              "approval_decided"
+            ]
+          },
+          "require": [
+            "approval_id",
+            "approval_decision"
+          ]
+        },
+        {
+          "when": {
+            "field": "action",
+            "in": [
+              "refused",
+              "approval_requested",
+              "admitted",
+              "dispatching",
+              "completed",
+              "not_sent",
+              "outcome_unknown",
+              "reconciled"
+            ]
+          },
+          "forbid": [
+            "approval_decision"
+          ]
+        },
+        {
+          "when": {
+            "field": "op_kind",
+            "in": [
+              "broker"
+            ]
+          },
+          "forbid": [
+            "runner_id",
+            "job_id",
+            "job_digest"
+          ]
+        },
+        {
+          "when": {
+            "field": "op_kind",
+            "in": [
+              "run_job"
+            ]
+          },
+          "forbid": [
+            "target_method",
+            "target_host",
+            "target_port",
+            "target_path_template",
+            "operation_id",
+            "operation_digest"
+          ]
+        }
+      ]
+    },
+    "post-governance-hook": {
+      "class": "server",
+      "producer_kinds": [
+        "app"
+      ],
+      "audit_critical": "widening_acts",
+      "fields": {
+        "act": {
+          "enum": [
+            "role.designated",
+            "role.revoked",
+            "credential.enrolled",
+            "credential.recovered",
+            "credential.revoked",
+            "grant.created",
+            "grant.changed",
+            "grant.revoked",
+            "resource.created",
+            "resource.version_added",
+            "resource.disabled",
+            "resource.enabled",
+            "resource.replaced",
+            "policy.changed",
+            "runner.registered",
+            "runner.deregistered",
+            "installation.disabled",
+            "installation.enabled"
+          ],
+          "required": true
+        },
+        "direction": {
+          "enum": [
+            "widening",
+            "narrowing"
+          ],
+          "required": true
+        },
+        "authority": {
+          "enum": [
+            "owner_act",
+            "passkey_session",
+            "team_cert"
+          ],
+          "required": true
+        },
+        "role": {
+          "type": "token",
+          "required": false
+        },
+        "resource_type": {
+          "type": "token",
+          "required": false
+        },
+        "subject_ref": {
+          "type": "ref",
+          "required": false
+        },
+        "resource_ref": {
+          "type": "ref",
+          "required": false
+        },
+        "before_ref": {
+          "type": "ref",
+          "required": false
+        },
+        "after_ref": {
+          "type": "ref",
+          "required": false
+        },
+        "owner_act_sha256": {
+          "type": "sha256_hex",
+          "required": false
+        },
+        "approval_evidence_sha256": {
+          "type": "sha256_hex",
+          "required": false
+        },
+        "approval_id": {
+          "type": "ref",
+          "required": false
+        },
+        "policy_digest": {
+          "type": "sha256_hex",
+          "required": false
+        },
+        "reason_code": {
+          "type": "token",
+          "required": false
+        }
+      },
+      "rules": [
+        {
+          "when": {
+            "field": "authority",
+            "in": [
+              "owner_act"
+            ]
+          },
+          "require": [
+            "owner_act_sha256"
+          ]
+        },
+        {
+          "when": {
+            "field": "authority",
+            "in": [
+              "passkey_session"
+            ]
+          },
+          "require": [
+            "approval_evidence_sha256"
+          ]
+        },
+        {
+          "when": {
+            "field": "authority",
+            "in": [
+              "team_cert"
+            ]
+          },
+          "require_equals": {
+            "direction": "narrowing"
+          }
+        },
+        {
+          "when": {
+            "field": "act",
+            "in": [
+              "role.designated",
+              "role.revoked"
+            ]
+          },
+          "require": [
+            "role",
+            "subject_ref"
+          ]
+        },
+        {
+          "when": {
+            "field": "act",
+            "in": [
+              "resource.replaced"
+            ]
+          },
+          "require_in": {
+            "authority": [
+              "owner_act",
+              "passkey_session"
+            ]
+          }
+        }
+      ],
+      "act_directions": {
+        "role.designated": "widening",
+        "role.revoked": "narrowing",
+        "credential.enrolled": "widening",
+        "credential.recovered": "widening",
+        "credential.revoked": "narrowing",
+        "grant.created": "widening",
+        "grant.changed": "widening",
+        "grant.revoked": "narrowing",
+        "resource.created": "widening",
+        "resource.version_added": "widening",
+        "resource.disabled": "narrowing",
+        "resource.enabled": "widening",
+        "resource.replaced": "narrowing",
+        "policy.changed": "widening",
+        "runner.registered": "widening",
+        "runner.deregistered": "narrowing",
+        "installation.disabled": "narrowing",
+        "installation.enabled": "widening"
+      }
+    },
+    "post-manifest-command-hook": {
+      "class": "server",
+      "producer_kinds": [
+        "app"
+      ],
+      "audit_critical": "never",
+      "fields": {
+        "app_id": {
+          "type": "app_id",
+          "required": true
+        },
+        "tool": {
+          "type": "token",
+          "required": true
+        },
+        "operation_kind": {
+          "enum": [
+            "mutation",
+            "read",
+            "refusal"
+          ],
+          "required": true
+        },
+        "request_sha256": {
+          "type": "sha256_hex",
+          "required": true
+        },
+        "http_status": {
+          "type": "http_status",
+          "required": true
+        },
+        "resource_refs": {
+          "list_of": "ref",
+          "min_items": 0,
+          "max_items": 32,
+          "required": false
+        },
+        "result_ref": {
+          "type": "ref",
+          "required": false
+        }
+      },
+      "rules": [
+        {
+          "when": {
+            "field": "operation_kind",
+            "in": [
+              "refusal"
+            ]
+          },
+          "forbid": [
+            "result_ref"
+          ]
+        }
+      ]
+    },
+    "post-mutation-hook": {
+      "class": "server",
+      "producer_kinds": [
+        "core"
+      ],
+      "audit_critical": "never",
+      "fields": {
+        "mutation_type": {
+          "enum": [
+            "task.created",
+            "task.updated",
+            "task.deleted",
+            "task.comment_added",
+            "task.dependency_changed",
+            "task.answered",
+            "mail.sent",
+            "mail.acknowledged",
+            "chat.message_sent",
+            "identity_grant.minted",
+            "identity_grant.revoked",
+            "app.installed",
+            "app.updated",
+            "hook_binding.activated",
+            "hook_binding.revoked",
+            "app_key.revoked",
+            "membership.connected",
+            "membership.workspace_retired",
+            "membership.certificate_issued",
+            "membership.certificate_revoked"
+          ],
+          "required": true
+        },
+        "target_ref": {
+          "type": "ref",
+          "required": true
+        },
+        "before_ref": {
+          "type": "ref",
+          "required": false
+        },
+        "after_ref": {
+          "type": "ref",
+          "required": false
+        }
+      },
+      "rules": [],
+      "discriminator": "mutation_type",
+      "types": {
+        "task.created": {
+          "fields": {
+            "task_ref": {
+              "type": "task_ref",
+              "required": true
+            },
+            "status": {
+              "enum": [
+                "open",
+                "in_progress",
+                "closed"
+              ],
+              "required": true
+            },
+            "task_type": {
+              "enum": [
+                "task",
+                "bug",
+                "feature",
+                "epic",
+                "chore"
+              ],
+              "required": true
+            },
+            "priority": {
+              "type": "priority_level",
+              "required": true
+            },
+            "assignee_alias": {
+              "type": "alias",
+              "required": false
+            },
+            "parent_ref": {
+              "type": "ref",
+              "required": false
+            }
+          },
+          "rules": []
+        },
+        "task.updated": {
+          "fields": {
+            "task_ref": {
+              "type": "task_ref",
+              "required": true
+            },
+            "changes": {
+              "list_of_enum": [
+                "title",
+                "description",
+                "notes",
+                "status",
+                "priority",
+                "task_type",
+                "labels",
+                "assignee",
+                "parent"
+              ],
+              "min_items": 1,
+              "max_items": 9,
+              "required": true
+            },
+            "old_status": {
+              "enum": [
+                "open",
+                "in_progress",
+                "closed"
+              ],
+              "required": false
+            },
+            "new_status": {
+              "enum": [
+                "open",
+                "in_progress",
+                "closed"
+              ],
+              "required": false
+            },
+            "old_assignee_alias": {
+              "type": "alias",
+              "required": false
+            },
+            "new_assignee_alias": {
+              "type": "alias",
+              "required": false
+            },
+            "old_priority": {
+              "type": "priority_level",
+              "required": false
+            },
+            "new_priority": {
+              "type": "priority_level",
+              "required": false
+            }
+          },
+          "rules": [
+            {
+              "when": {
+                "field": "old_status",
+                "present": true
+              },
+              "require": [
+                "new_status"
+              ]
+            },
+            {
+              "when": {
+                "field": "new_status",
+                "present": true
+              },
+              "require": [
+                "old_status"
+              ]
+            },
+            {
+              "when": {
+                "field": "old_priority",
+                "present": true
+              },
+              "require": [
+                "new_priority"
+              ]
+            },
+            {
+              "when": {
+                "field": "new_priority",
+                "present": true
+              },
+              "require": [
+                "old_priority"
+              ]
+            }
+          ]
+        },
+        "task.deleted": {
+          "fields": {
+            "task_ref": {
+              "type": "task_ref",
+              "required": true
+            }
+          },
+          "rules": []
+        },
+        "task.comment_added": {
+          "fields": {
+            "task_ref": {
+              "type": "task_ref",
+              "required": true
+            },
+            "comment_ref": {
+              "type": "ref",
+              "required": true
+            }
+          },
+          "rules": []
+        },
+        "task.dependency_changed": {
+          "fields": {
+            "task_ref": {
+              "type": "task_ref",
+              "required": true
+            },
+            "change": {
+              "enum": [
+                "added",
+                "removed"
+              ],
+              "required": true
+            },
+            "depends_on_ref": {
+              "type": "ref",
+              "required": true
+            }
+          },
+          "rules": []
+        },
+        "task.answered": {
+          "fields": {
+            "task_ref": {
+              "type": "task_ref",
+              "required": true
+            },
+            "answer_ref": {
+              "type": "ref",
+              "required": true
+            }
+          },
+          "rules": []
+        },
+        "mail.sent": {
+          "fields": {
+            "conversation_ref": {
+              "type": "ref",
+              "required": true
+            },
+            "recipient_refs": {
+              "list_of": "ref",
+              "min_items": 1,
+              "max_items": 64,
+              "required": true
+            },
+            "priority": {
+              "enum": [
+                "low",
+                "normal",
+                "high",
+                "urgent"
+              ],
+              "required": true
+            },
+            "content_mode": {
+              "enum": [
+                "legacy_plaintext_v1",
+                "encrypted_v2"
+              ],
+              "required": true
+            },
+            "federated": {
+              "type": "bool",
+              "required": true
+            },
+            "attachment_count": {
+              "type": "count",
+              "required": false
+            }
+          },
+          "rules": []
+        },
+        "mail.acknowledged": {
+          "fields": {
+            "conversation_ref": {
+              "type": "ref",
+              "required": false
+            },
+            "sender_ref": {
+              "type": "ref",
+              "required": false
+            }
+          },
+          "rules": []
+        },
+        "chat.message_sent": {
+          "fields": {
+            "session_ref": {
+              "type": "ref",
+              "required": true
+            },
+            "recipient_refs": {
+              "list_of": "ref",
+              "min_items": 1,
+              "max_items": 64,
+              "required": true
+            },
+            "content_mode": {
+              "enum": [
+                "legacy_plaintext_v1",
+                "encrypted_v2"
+              ],
+              "required": true
+            },
+            "federated": {
+              "type": "bool",
+              "required": true
+            }
+          },
+          "rules": []
+        },
+        "identity_grant.minted": {
+          "fields": {
+            "grant_did_key": {
+              "type": "did_key",
+              "required": true
+            },
+            "subject_did_aw": {
+              "type": "did_aw",
+              "required": false
+            },
+            "scopes": {
+              "list_of": "token",
+              "min_items": 1,
+              "max_items": 32,
+              "required": true
+            },
+            "expires_at": {
+              "type": "timestamp",
+              "required": true
+            },
+            "issued_by_certificate_id": {
+              "type": "ref",
+              "required": false
+            }
+          },
+          "rules": []
+        },
+        "identity_grant.revoked": {
+          "fields": {
+            "grant_did_key": {
+              "type": "did_key",
+              "required": true
+            }
+          },
+          "rules": []
+        },
+        "app.installed": {
+          "fields": {
+            "app_id": {
+              "type": "app_id",
+              "required": true
+            },
+            "origin": {
+              "type": "origin",
+              "required": true
+            },
+            "digest": {
+              "type": "manifest_digest",
+              "required": true
+            },
+            "installation_id": {
+              "type": "uuid",
+              "required": false
+            },
+            "generation": {
+              "type": "sequence",
+              "required": false
+            },
+            "scopes": {
+              "list_of": "app_scope",
+              "min_items": 0,
+              "max_items": 64,
+              "required": true
+            }
+          },
+          "rules": []
+        },
+        "app.updated": {
+          "fields": {
+            "app_id": {
+              "type": "app_id",
+              "required": true
+            },
+            "origin": {
+              "type": "origin",
+              "required": true
+            },
+            "digest": {
+              "type": "manifest_digest",
+              "required": true
+            },
+            "previous_digest": {
+              "type": "manifest_digest",
+              "required": true
+            },
+            "installation_id": {
+              "type": "uuid",
+              "required": false
+            },
+            "generation": {
+              "type": "sequence",
+              "required": false
+            },
+            "scopes": {
+              "list_of": "app_scope",
+              "min_items": 0,
+              "max_items": 64,
+              "required": true
+            }
+          },
+          "rules": []
+        },
+        "hook_binding.activated": {
+          "fields": {
+            "binding_id": {
+              "type": "uuid",
+              "required": true
+            },
+            "kind": {
+              "enum": [
+                "registration",
+                "production"
+              ],
+              "required": true
+            },
+            "app_id": {
+              "type": "app_id",
+              "required": true
+            },
+            "installation_id": {
+              "type": "uuid",
+              "required": true
+            },
+            "generation": {
+              "type": "sequence",
+              "required": true
+            },
+            "catalog_id": {
+              "type": "token",
+              "required": true
+            },
+            "catalog_version": {
+              "type": "sequence",
+              "required": true
+            },
+            "hook": {
+              "type": "token",
+              "required": true
+            },
+            "active_from": {
+              "type": "timestamp",
+              "required": true
+            },
+            "owner_act_sha256": {
+              "type": "sha256_hex",
+              "required": true
+            }
+          },
+          "rules": []
+        },
+        "hook_binding.revoked": {
+          "fields": {
+            "binding_id": {
+              "type": "uuid",
+              "required": true
+            },
+            "kind": {
+              "enum": [
+                "registration",
+                "production"
+              ],
+              "required": true
+            },
+            "app_id": {
+              "type": "app_id",
+              "required": true
+            },
+            "installation_id": {
+              "type": "uuid",
+              "required": true
+            },
+            "generation": {
+              "type": "sequence",
+              "required": true
+            },
+            "catalog_id": {
+              "type": "token",
+              "required": true
+            },
+            "catalog_version": {
+              "type": "sequence",
+              "required": true
+            },
+            "hook": {
+              "type": "token",
+              "required": true
+            },
+            "reason": {
+              "enum": [
+                "owner_act",
+                "uninstalled",
+                "superseded"
+              ],
+              "required": true
+            },
+            "owner_act_sha256": {
+              "type": "sha256_hex",
+              "required": false
+            },
+            "cancelled_count": {
+              "type": "count",
+              "required": false
+            },
+            "cancelled_seq_first": {
+              "type": "sequence",
+              "required": false
+            },
+            "cancelled_seq_last": {
+              "type": "sequence",
+              "required": false
+            }
+          },
+          "rules": [
+            {
+              "when": {
+                "field": "reason",
+                "in": [
+                  "owner_act"
+                ]
+              },
+              "require": [
+                "owner_act_sha256"
+              ]
+            },
+            {
+              "when": {
+                "field": "cancelled_seq_first",
+                "present": true
+              },
+              "require": [
+                "cancelled_seq_last",
+                "cancelled_count"
+              ]
+            },
+            {
+              "when": {
+                "field": "cancelled_seq_last",
+                "present": true
+              },
+              "require": [
+                "cancelled_seq_first",
+                "cancelled_count"
+              ]
+            }
+          ]
+        },
+        "app_key.revoked": {
+          "fields": {
+            "app_id": {
+              "type": "app_id",
+              "required": true
+            },
+            "kid": {
+              "type": "ref",
+              "required": true
+            },
+            "purposes": {
+              "list_of": "token",
+              "min_items": 1,
+              "max_items": 16,
+              "required": true
+            }
+          },
+          "rules": []
+        },
+        "membership.connected": {
+          "fields": {
+            "member_alias": {
+              "type": "alias",
+              "required": true
+            },
+            "member_did_key": {
+              "type": "did_key",
+              "required": true
+            },
+            "member_did_aw": {
+              "type": "did_aw",
+              "required": false
+            },
+            "workspace_ref": {
+              "type": "ref",
+              "required": false
+            }
+          },
+          "rules": []
+        },
+        "membership.workspace_retired": {
+          "fields": {
+            "member_alias": {
+              "type": "alias",
+              "required": true
+            },
+            "workspace_ref": {
+              "type": "ref",
+              "required": true
+            }
+          },
+          "rules": []
+        },
+        "membership.certificate_issued": {
+          "fields": {
+            "certificate_id": {
+              "type": "ref",
+              "required": true
+            },
+            "certificate_sha256": {
+              "type": "sha256_hex",
+              "required": true
+            },
+            "member_did_key": {
+              "type": "did_key",
+              "required": true
+            },
+            "member_did_aw": {
+              "type": "did_aw",
+              "required": false
+            },
+            "member_alias": {
+              "type": "alias",
+              "required": true
+            },
+            "registry_origin": {
+              "type": "origin",
+              "required": true
+            },
+            "registry_recorded_at": {
+              "type": "timestamp",
+              "required": true
+            },
+            "observed": {
+              "type": "bool",
+              "const": true,
+              "required": true
+            }
+          },
+          "rules": []
+        },
+        "membership.certificate_revoked": {
+          "fields": {
+            "certificate_id": {
+              "type": "ref",
+              "required": true
+            },
+            "certificate_sha256": {
+              "type": "sha256_hex",
+              "required": true
+            },
+            "member_did_key": {
+              "type": "did_key",
+              "required": true
+            },
+            "member_did_aw": {
+              "type": "did_aw",
+              "required": false
+            },
+            "member_alias": {
+              "type": "alias",
+              "required": true
+            },
+            "registry_origin": {
+              "type": "origin",
+              "required": true
+            },
+            "registry_recorded_at": {
+              "type": "timestamp",
+              "required": true
+            },
+            "observed": {
+              "type": "bool",
+              "const": true,
+              "required": true
+            }
+          },
+          "rules": []
+        }
+      },
+      "excluded_core_events": {
+        "reservation.acquired": "Reservations are operational locks, not coordination effects.",
+        "reservation.renewed": "Reservations are operational locks, not coordination effects.",
+        "reservation.released": "Reservations are operational locks, not coordination effects.",
+        "agent.status": "Status reports are health signals, not coordination effects."
+      }
+    },
+    "post-command-hook": {
+      "class": "client",
+      "producer_kinds": [
+        "client"
+      ],
+      "audit_critical": "never",
+      "fields": {
+        "command": {
+          "type": "command_path",
+          "required": true
+        },
+        "command_class": {
+          "enum": [
+            "identity_key",
+            "team_certificate",
+            "app_approval",
+            "grant_snapshot"
+          ],
+          "required": true
+        },
+        "flags": {
+          "list_of": "flag_name",
+          "min_items": 0,
+          "max_items": 32,
+          "required": true
+        },
+        "local_effects": {
+          "list_of_enum": [
+            "identity_key_created",
+            "identity_key_rotated",
+            "team_certificate_stored",
+            "team_certificate_removed",
+            "app_approval_recorded",
+            "app_approval_revoked",
+            "grant_snapshot_stored",
+            "grant_snapshot_removed"
+          ],
+          "min_items": 1,
+          "max_items": 8,
+          "required": true
+        },
+        "exit_status": {
+          "type": "exit_status",
+          "required": true
+        }
+      },
+      "rules": [],
+      "command_classes": {
+        "identity_key": [
+          "identity_key_created",
+          "identity_key_rotated"
+        ],
+        "team_certificate": [
+          "team_certificate_stored",
+          "team_certificate_removed"
+        ],
+        "app_approval": [
+          "app_approval_recorded",
+          "app_approval_revoked"
+        ],
+        "grant_snapshot": [
+          "grant_snapshot_stored",
+          "grant_snapshot_removed"
+        ]
+      }
+    }
+  },
+  "precedence": [
+    {
+      "specific": "post-secret-use-hook",
+      "supersedes": "post-manifest-command-hook"
+    },
+    {
+      "specific": "post-governance-hook",
+      "supersedes": "post-manifest-command-hook"
+    }
+  ],
+  "positive_cases": [
+    {
+      "name": "secret_use_refused",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "refusal_code": "grant_missing",
+        "target_method": "POST",
+        "target_host": "api.example.com",
+        "target_port": 443,
+        "target_path_template": "/v1/charges",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      }
+    },
+    {
+      "name": "secret_use_completed_returned",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "secret_id": "sec_01",
+        "secret_version": 3,
+        "disposition": "returned",
+        "returned_hmac": "n4bQgYhMfWWaL-qgxVrQFaO_TxsrC4Is0V1sFbDwCgg",
+        "undeclared_credential": false,
+        "upstream_status_code": 200,
+        "upstream_bytes": 512,
+        "upstream_truncated": false,
+        "redaction_count": 0,
+        "dispatch_id": "dsp_01",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      }
+    },
+    {
+      "name": "secret_use_completed_undeclared_credential_withheld",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "withheld",
+        "undeclared_credential": true,
+        "upstream_response_hmac": "n4bQgYhMfWWaL-qgxVrQFaO_TxsrC4Is0V1sFbDwCgg"
+      }
+    },
+    {
+      "name": "secret_use_run_job_dispatching",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "dispatching",
+        "op_kind": "run_job",
+        "runner_id": "runner_a",
+        "job_id": "job_7",
+        "job_digest": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "dispatch_id": "dsp_02",
+        "dispatch_state": "dispatching"
+      }
+    },
+    {
+      "name": "secret_use_approval_decided",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "approval_decided",
+        "op_kind": "broker",
+        "approval_id": "apr_9",
+        "approval_decision": "approved",
+        "approval_assurance": "passkey",
+        "approval_evidence_sha256": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752"
+      }
+    },
+    {
+      "name": "governance_widening_owner_act",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "role.designated",
+        "direction": "widening",
+        "authority": "owner_act",
+        "role": "reader",
+        "subject_ref": "member:did:aw:3QJmnh8HnFmz4yEPm9QWkD9oQ5zA",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      }
+    },
+    {
+      "name": "governance_narrowing_team_cert",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "grant.revoked",
+        "direction": "narrowing",
+        "authority": "team_cert",
+        "resource_type": "grant",
+        "resource_ref": "grant:g_12"
+      }
+    },
+    {
+      "name": "governance_value_replaced_by_passkey",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.replaced",
+        "direction": "narrowing",
+        "authority": "passkey_session",
+        "resource_type": "secret",
+        "resource_ref": "secret:s_3",
+        "approval_evidence_sha256": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752"
+      }
+    },
+    {
+      "name": "manifest_command_mutation",
+      "hook": "post-manifest-command-hook",
+      "payload": {
+        "app_id": "folio",
+        "tool": "doc.append",
+        "operation_kind": "mutation",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "http_status": 200,
+        "resource_refs": [
+          "doc:d_4"
+        ],
+        "result_ref": "rev:r_5"
+      }
+    },
+    {
+      "name": "mutation_task_updated",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "task.updated",
+        "target_ref": "task:0192f0c4-6f1e-7c3a-9a51-3d2b8e0f4c11",
+        "task_ref": "aweb-acgh.16.1",
+        "changes": [
+          "status",
+          "title"
+        ],
+        "old_status": "open",
+        "new_status": "in_progress"
+      }
+    },
+    {
+      "name": "mutation_mail_sent",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "mail.sent",
+        "target_ref": "message:0192f0c4-6f1e-7c3a-9a51-3d2b8e0f4c11",
+        "conversation_ref": "conversation:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "recipient_refs": [
+          "alias:bond"
+        ],
+        "priority": "normal",
+        "content_mode": "encrypted_v2",
+        "federated": false
+      }
+    },
+    {
+      "name": "mutation_binding_revoked",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 4,
+        "cancelled_seq_first": 810,
+        "cancelled_seq_last": 813
+      }
+    },
+    {
+      "name": "mutation_app_installed_with_app_scopes",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "app.installed",
+        "target_ref": "app:folio",
+        "app_id": "folio",
+        "origin": "https://folio.example.com",
+        "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "scopes": [
+          "folio:write",
+          "folio:read"
+        ]
+      }
+    },
+    {
+      "name": "mutation_app_key_revoked",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "app_key.revoked",
+        "target_ref": "app_key:secrets/hook-2026-10",
+        "app_id": "secrets",
+        "kid": "hook-2026-10",
+        "purposes": [
+          "hook-event",
+          "hook-delivery"
+        ]
+      }
+    },
+    {
+      "name": "mutation_certificate_revoked_observed",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "membership.certificate_revoked",
+        "target_ref": "certificate:c_77",
+        "certificate_id": "c_77",
+        "certificate_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "member_did_key": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+        "member_alias": "bond",
+        "registry_origin": "https://api.awid.ai",
+        "registry_recorded_at": "2026-10-19T18:02:11Z",
+        "observed": true
+      }
+    },
+    {
+      "name": "client_key_rotated",
+      "hook": "post-command-hook",
+      "payload": {
+        "command": "aw id rotate-key",
+        "command_class": "identity_key",
+        "flags": [
+          "--json"
+        ],
+        "local_effects": [
+          "identity_key_rotated"
+        ],
+        "exit_status": 0
+      }
+    }
+  ],
+  "negative_cases": [
+    {
+      "name": "unknown_hook",
+      "hook": "pre-secret-use-hook",
+      "payload": {
+        "action": "refused"
+      },
+      "error": "unknown_hook"
+    },
+    {
+      "name": "unknown_field",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "refusal_code": "grant_missing",
+        "note": "free text"
+      },
+      "error": "unknown_field",
+      "field": "note"
+    },
+    {
+      "name": "missing_required_field",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "admitted"
+      },
+      "error": "missing_field",
+      "field": "op_kind"
+    },
+    {
+      "name": "enum_violation",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "returned_credential",
+        "undeclared_credential": false,
+        "returned_hmac": "n4bQgYhMfWWaL-qgxVrQFaO_TxsrC4Is0V1sFbDwCgg"
+      },
+      "error": "invalid_value",
+      "field": "disposition"
+    },
+    {
+      "name": "unknown_refusal_code",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "refusal_code": "because"
+      },
+      "error": "invalid_value",
+      "field": "refusal_code"
+    },
+    {
+      "name": "refused_without_code",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker"
+      },
+      "error": "rule_violation",
+      "field": "refusal_code"
+    },
+    {
+      "name": "withheld_with_returned_hmac",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "withheld",
+        "undeclared_credential": false,
+        "returned_hmac": "n4bQgYhMfWWaL-qgxVrQFaO_TxsrC4Is0V1sFbDwCgg"
+      },
+      "error": "rule_violation",
+      "field": "returned_hmac"
+    },
+    {
+      "name": "undeclared_credential_returned",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "returned",
+        "undeclared_credential": true,
+        "returned_hmac": "n4bQgYhMfWWaL-qgxVrQFaO_TxsrC4Is0V1sFbDwCgg"
+      },
+      "error": "rule_violation",
+      "field": "disposition"
+    },
+    {
+      "name": "job_fields_on_broker",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "admitted",
+        "op_kind": "broker",
+        "job_id": "job_7"
+      },
+      "error": "rule_violation",
+      "field": "job_id"
+    },
+    {
+      "name": "float_value",
+      "hook": "post-secret-use-hook",
+      "payload_json": "{\"action\":\"completed\",\"op_kind\":\"broker\",\"disposition\":\"withheld\",\"undeclared_credential\":false,\"upstream_bytes\":1.5}",
+      "error": "invalid_value",
+      "field": "upstream_bytes"
+    },
+    {
+      "name": "boolean_as_integer",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "withheld",
+        "undeclared_credential": false,
+        "upstream_bytes": true
+      },
+      "error": "invalid_value",
+      "field": "upstream_bytes"
+    },
+    {
+      "name": "nested_object",
+      "hook": "post-manifest-command-hook",
+      "payload": {
+        "app_id": "folio",
+        "tool": "doc.append",
+        "operation_kind": "mutation",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "http_status": 200,
+        "result_ref": {
+          "id": "r_5"
+        }
+      },
+      "error": "invalid_value",
+      "field": "result_ref"
+    },
+    {
+      "name": "free_text_in_ref",
+      "hook": "post-manifest-command-hook",
+      "payload": {
+        "app_id": "folio",
+        "tool": "doc.append",
+        "operation_kind": "mutation",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "http_status": 200,
+        "result_ref": "the quarterly numbers"
+      },
+      "error": "invalid_value",
+      "field": "result_ref"
+    },
+    {
+      "name": "email_shaped_ref",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "admitted",
+        "op_kind": "broker",
+        "secret_ref": "jane.doe@example.com"
+      },
+      "error": "invalid_value",
+      "field": "secret_ref"
+    },
+    {
+      "name": "base64_token_shaped_ref",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "grant.revoked",
+        "direction": "narrowing",
+        "authority": "team_cert",
+        "resource_ref": "dG9rZW4+c2VjcmV0PQ=="
+      },
+      "error": "invalid_value",
+      "field": "resource_ref"
+    },
+    {
+      "name": "ref_over_128_characters",
+      "hook": "post-manifest-command-hook",
+      "payload": {
+        "app_id": "folio",
+        "tool": "doc.append",
+        "operation_kind": "mutation",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "http_status": 200,
+        "result_ref": "rev:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "error": "invalid_value",
+      "field": "result_ref"
+    },
+    {
+      "name": "path_template_with_userinfo",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "admitted",
+        "op_kind": "broker",
+        "target_path_template": "/user@host/v1"
+      },
+      "error": "invalid_value",
+      "field": "target_path_template"
+    },
+    {
+      "name": "path_template_percent_encoded",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "admitted",
+        "op_kind": "broker",
+        "target_path_template": "/v1/search%3Fq%3Dx"
+      },
+      "error": "invalid_value",
+      "field": "target_path_template"
+    },
+    {
+      "name": "path_template_over_256_characters",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "admitted",
+        "op_kind": "broker",
+        "target_path_template": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "error": "invalid_value",
+      "field": "target_path_template"
+    },
+    {
+      "name": "app_scope_with_space",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "app.installed",
+        "target_ref": "app:folio",
+        "app_id": "folio",
+        "origin": "https://folio.example.com",
+        "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "scopes": [
+          "folio: write"
+        ]
+      },
+      "error": "invalid_value",
+      "field": "scopes"
+    },
+    {
+      "name": "governance_direction_mismatch",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "grant.revoked",
+        "direction": "widening",
+        "authority": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      },
+      "error": "direction_mismatch",
+      "field": "direction"
+    },
+    {
+      "name": "governance_widening_by_team_cert",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "grant.created",
+        "direction": "widening",
+        "authority": "team_cert"
+      },
+      "error": "rule_violation",
+      "field": "direction"
+    },
+    {
+      "name": "value_replacement_by_team_cert",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.replaced",
+        "direction": "narrowing",
+        "authority": "team_cert",
+        "resource_type": "secret",
+        "resource_ref": "secret:s_3"
+      },
+      "error": "rule_violation",
+      "field": "authority"
+    },
+    {
+      "name": "unknown_mutation_type",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "reservation.acquired",
+        "target_ref": "reservation:r_1"
+      },
+      "error": "invalid_value",
+      "field": "mutation_type"
+    },
+    {
+      "name": "mutation_field_of_other_type",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "task.deleted",
+        "target_ref": "task:0192f0c4-6f1e-7c3a-9a51-3d2b8e0f4c11",
+        "task_ref": "aweb-acgh.16.1",
+        "new_status": "closed"
+      },
+      "error": "unknown_field",
+      "field": "new_status"
+    },
+    {
+      "name": "mail_subject_field",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "mail.sent",
+        "target_ref": "message:m_1",
+        "conversation_ref": "conversation:c_1",
+        "recipient_refs": [
+          "alias:bond"
+        ],
+        "priority": "normal",
+        "content_mode": "encrypted_v2",
+        "federated": false,
+        "subject": "salary review"
+      },
+      "error": "unknown_field",
+      "field": "subject"
+    },
+    {
+      "name": "empty_changes",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "task.updated",
+        "target_ref": "task:0192f0c4-6f1e-7c3a-9a51-3d2b8e0f4c11",
+        "task_ref": "aweb-acgh.16.1",
+        "changes": []
+      },
+      "error": "invalid_value",
+      "field": "changes"
+    },
+    {
+      "name": "duplicate_list_item",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "task.updated",
+        "target_ref": "task:0192f0c4-6f1e-7c3a-9a51-3d2b8e0f4c11",
+        "task_ref": "aweb-acgh.16.1",
+        "changes": [
+          "status",
+          "status"
+        ],
+        "old_status": "open",
+        "new_status": "closed"
+      },
+      "error": "invalid_value",
+      "field": "changes"
+    },
+    {
+      "name": "observed_false",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "membership.certificate_issued",
+        "target_ref": "certificate:c_78",
+        "certificate_id": "c_78",
+        "certificate_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "member_did_key": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+        "member_alias": "bond",
+        "registry_origin": "https://api.awid.ai",
+        "registry_recorded_at": "2026-10-19T18:02:11Z",
+        "observed": false
+      },
+      "error": "invalid_value",
+      "field": "observed"
+    },
+    {
+      "name": "client_effect_outside_class",
+      "hook": "post-command-hook",
+      "payload": {
+        "command": "aw id rotate-key",
+        "command_class": "identity_key",
+        "flags": [],
+        "local_effects": [
+          "grant_snapshot_stored"
+        ],
+        "exit_status": 0
+      },
+      "error": "rule_violation",
+      "field": "local_effects"
+    },
+    {
+      "name": "client_flag_value",
+      "hook": "post-command-hook",
+      "payload": {
+        "command": "aw id rotate-key",
+        "command_class": "identity_key",
+        "flags": [
+          "--label=prod"
+        ],
+        "local_effects": [
+          "identity_key_rotated"
+        ],
+        "exit_status": 0
+      },
+      "error": "invalid_value",
+      "field": "flags"
+    }
+  ]
+}

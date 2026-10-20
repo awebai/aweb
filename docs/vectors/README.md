@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 23
+`docs/vectors/*.json` is the only public protocol-vector authority for the 25
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -231,6 +231,38 @@ check: message bytes built with `canonical_payload` never equal activity bytes.
 Ingress separation is the required `type` at every route. Athena and the
 protocol reviewer ACKed these bytes at `4502edac0` before either side
 implemented them; changing them needs a new version.
+
+### `hook-catalog-v1.json`
+
+The `aweb.hooks` catalog, version 1 (aweb-acgh.16.1; contract in
+[`hook-events.md`](../hook-events.md)). It names the five hooks with their
+firing class, producer kinds, audit-critical rule and precedence. It holds each
+hook's flat payload allowlist: value types with patterns and bounds, required
+fields, enums (including the 28 `post-secret-use-hook` refusal codes), the
+conditional rules, each `post-governance-hook` act's fixed direction, every
+`post-mutation-hook` type with its own fields, and the `post-command-hook`
+command classes with their local effects. Positive cases validate. Each
+negative case has one fault and its expected error and field: an unknown hook
+or field, a missing field, a bad value, a float, a nested object, free text in a
+reference, a rule violation, a direction that differs from the catalog's, and an
+effect outside its command class. A payload that this file may not hold, such
+as a float, is given as JSON text in `payload_json`. The strict reader in
+`aweb_naapp.hooks.catalog` refuses the whole file on any unknown key, duplicate
+key, float or unresolved reference. Any payload change, including an addition,
+is a new catalog version.
+
+### `hook-binding-cases-v1.json`
+
+Owner-activated hook bindings (aweb-acgh.16.1; contract in
+[`hook-events.md`](../hook-events.md)). The scheme states the binding states and
+transitions, the 60-second `active_from` pad, when an event is owed to a
+binding, the audit-critical gate and what revocation does. The cases cover an
+admin install that leaves bindings pending, an admin signer refused, owner
+activation and the pad, an unknown catalog or hook, a new generation that
+supersedes and never inherits activation, revocation's final entry and
+cancelled backlog, uninstall, and the order for switching targets. A model of
+the scheme in the naapp-lib tests replays every case, and the core binding
+registry consumes the same cases.
 
 ## Experimental and compatibility A2A fixtures
 
