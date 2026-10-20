@@ -91,7 +91,7 @@ The adapter grows with R1's widget slices. Its full shape is:
 - `decision(task_id)` returns a trusted current read, independent of page JSON:
   `{task_id, task_rev, question_rev, status, allowed, authenticator,
   collection, record_id, record_rev, proposal_sha256, operation,
-  source_version, expires_at, items?, answer?}`. `status` is `open`, `answered`,
+  source_version, expires_at, options, fields, application_state?, items?, answer?}`. `status` is `open`, `answered`,
   `pending` or `closed`. Only an open current question without a current answer
   can offer answer controls. `authenticator` is the policy-derived
   `member_session` or `passkey`, never the agent's choice. The host must enforce
@@ -106,8 +106,23 @@ The adapter grows with R1's widget slices. Its full shape is:
   substitutes for that check. The host validates raw JSON before supplying a
   snapshot: duplicate keys, non-integer numeric spellings and non-finite values
   cannot be recovered after ordinary JavaScript JSON parsing.
-  Agent-authored widget state is never authority. A recommendation is advisory
-  and no option is selected initially.
+  `options` is the stored task's signed ordered `{value, label}` list; it must
+  equal the page card's options canonically before any choices or values are
+  shown. The host checks selected membership against that task list, never the
+  page. `fields` is its signed ordered `{field, label, format}` list, with
+  `format` in `text`, `date`, `number`, `money_minor`. Only those fields appear,
+  with those labels and formats; schema titles never label a decision. Every
+  field must exist in every verified item. Decision money requires an ISO 4217
+  currency in the record and uses its scale in English; there is no symbol-less
+  fallback on a decision. Browser display cases consume the canonical
+  `decision-display-v1.json` directly.
+  Proposal values are absent until the complete trusted read validates and are
+  removed on failure. Invalid expiry is expired. A decision ignores every
+  agent-authored widget-state message, progress and busy value, including live
+  announcements. Its status comes only from the host-backed controller.
+  A recommendation is advisory and no option is selected initially.
+  Optional `application_state` is `pending`, `applied` or `failed`; only trusted
+  `applied` is shown as Applied. A recorded approval is distinct from applying it.
 - `answer({page_id, widget_id, action_id, task_id, stage}, {csrfToken}, event)`
   is the dedicated answer adapter, separate from `invoke`. The outer IDs are
   local routing context. `stage` has exactly `{expected_task_rev, choice, input,
@@ -131,7 +146,12 @@ The adapter grows with R1's widget slices. Its full shape is:
   current receipt. The renderer distinguishes a recorded task answer from
   completed approval or execution, and never dispatches the operation itself.
   Lost outcomes lock the choice; an explicit retry reuses the same answer key
-  and bytes after a fresh read. Bundle decisions are one answer for all items,
+  and bytes after a fresh read. The unresolved attempt is retained privately by
+  authority lifetime, page, task/question and proposal context across cosmetic
+  widget replacements. A replacement cannot change its choice or key, and an
+  outstanding call remains quarantined until reconciliation. `clear` or a new
+  actor/page clears this private state; a different question or proposal never
+  inherits it. Nothing is persisted in browser storage. Bundle decisions are one answer for all items,
   never per-item partial approval.
 
 Actions fail closed if the adapter or CSRF is absent. Every state-changing
@@ -174,7 +194,13 @@ an action. The browser runner uses ports 8740/8741, with `PAGE_GALLERY_PORT`
 selecting another pair.
 The gallery is a loopback fixture host with no real team credentials; its
 packaged renderer is the same artifact consumed by applications. Widgets are
-added to the gallery as their R1 slices land. Full application authorization
+added to the gallery as their R1 slices land. Decision review cases include
+`?case=decision-superseded`, `decision-reopened`, `decision-passkey-pending`,
+`decision-approved`, `decision-rejected`, `decision-applied`,
+`decision-apply-failed`, `decision-closed` and interactive `decision-unknown`.
+The task's signed display metadata produces a Nightly price in the appropriate
+currency, and `decision-options`, `decision-missing-field` and
+`decision-missing-currency` expose refusal states. Full application authorization
 and decision persistence are tested by their owners through the real Folio
 stack, rather than simulated by this gallery.
 

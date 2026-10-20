@@ -10,6 +10,14 @@ from typing import Any
 
 from aweb_naapp.pages import bundle_sha256, proposal_sha256
 
+# Separate trusted task fixture: never derive labels or membership from page props.
+TASK_OPTIONS = [{"value": "approve", "label": "Approve"}, {"value": "reject", "label": "Reject"}]
+TASK_FIELDS = [
+    {"field": "start", "label": "From", "format": "date"},
+    {"field": "end", "label": "Until", "format": "date"},
+    {"field": "price_minor", "label": "Nightly price", "format": "money_minor"},
+    {"field": "reason", "label": "Reason", "format": "text"},
+]
 EXPIRES = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
 
 
@@ -42,6 +50,13 @@ def additions(page: dict, case: str = "") -> None:
             },
         },
     ]
+    if case == "decision-missing-field":
+        del records[0]["value"]["reason"]
+    if case == "decision-missing-currency":
+        del records[0]["value"]["currency"]
+    if case == "decision-jpy":
+        for record in records:
+            record["value"]["currency"] = "JPY"
     items = [
         {
             "record_id": r["id"],
@@ -115,10 +130,7 @@ def additions(page: dict, case: str = "") -> None:
             "collection": "review-proposals" if kind == "price" else "review-bundles",
             "record_id": "price-1" if kind == "price" else "two-weeks",
             "record_rev": 1,
-            "options": [
-                {"value": "approve", "label": "Approve"},
-                {"value": "reject", "label": "Reject"},
-            ],
+            "options": copy.deepcopy(TASK_OPTIONS),
             "recommendation": "approve",
             "answer_action": f"answer-{kind}",
             "proposal_sha256": items[0]["proposal_sha256"]
@@ -136,6 +148,10 @@ def additions(page: dict, case: str = "") -> None:
         }
         if kind == "bundle":
             props.update(bundle=True, items_collection="review-proposals")
+        if case == "decision-options":
+            props["options"][0]["label"], props["options"][1]["label"] = "Reject", "Approve"
+        if case == "decision-reopened":
+            props["task_rev"] = 3
         if case == "decision-expired":
             props["expires_at"] = "2020-01-01T00:00:00Z"
         page["layout"].append({"id": f"{kind}-decision", "type": "decision_card", "props": props})
@@ -147,7 +163,11 @@ def additions(page: dict, case: str = "") -> None:
             properties={"explanation": {"type": "string"}}, required=["explanation"]
         )
     if case == "decision-denied":
-        page["widget_state"]["price-decision"] = {"message": "Approved by page data"}
+        page["widget_state"]["price-decision"] = {
+            "message": "Approved by page data",
+            "progress": 100,
+            "busy": True,
+        }
 
 
 def evidence(page: dict, task_id: str, state: dict, case: str = "") -> dict:
@@ -179,6 +199,8 @@ def evidence(page: dict, task_id: str, state: dict, case: str = "") -> dict:
     }
     result.update(
         question_rev=1,
+        options=copy.deepcopy(TASK_OPTIONS),
+        fields=copy.deepcopy(TASK_FIELDS),
         allowed=case != "decision-denied",
         authenticator="member_session",
         status="open",
@@ -203,8 +225,10 @@ def evidence(page: dict, task_id: str, state: dict, case: str = "") -> dict:
     if task_id in state.get("answers", {}):
         result.update(
             status="answered",
+            application_state=state["answers"][task_id][1].get("application_state", "pending"),
             answer=state["answers"][task_id][1],
             task_rev=state["answers"][task_id][1]["task_rev"],
+            question_rev=state["answers"][task_id][1]["question_rev"],
         )
     if case == "decision-task":
         result["task_rev"] += 1
@@ -218,12 +242,54 @@ def evidence(page: dict, task_id: str, state: dict, case: str = "") -> dict:
         result["source_version"] = "new-source-version"
     if case == "decision-item" and "items" in result:
         result["items"][0]["record_rev"] += 1
+    if task_id not in state.get("answers", {}) and case in {
+        "decision-superseded",
+        "decision-reopened",
+        "decision-approved",
+        "decision-rejected",
+        "decision-applied",
+        "decision-apply-failed",
+    }:
+        receipt = {
+            "current": case
+            in {
+                "decision-approved",
+                "decision-rejected",
+                "decision-applied",
+                "decision-apply-failed",
+            },
+            "task_id": task_id,
+            "task_rev": 2,
+            "question_rev": 1,
+            "proposal_rev": p["record_rev"],
+            "proposal_sha256": result["proposal_sha256"],
+            "choice": "reject" if case == "decision-rejected" else "approve",
+            "task_answer_ref": "fixture-read-only-answer",
+            "approval_state": "rejected" if case == "decision-rejected" else "approved",
+        }
+        if receipt["current"]:
+            result.update(
+                status="answered",
+                task_rev=2,
+                answer=receipt,
+                application_state="applied"
+                if case == "decision-applied"
+                else "failed"
+                if case == "decision-apply-failed"
+                else "pending",
+            )
+        else:
+            result.update(status="open", task_rev=3, question_rev=2, answer=receipt)
+    if case == "decision-passkey-pending":
+        result.update(authenticator="passkey", status="pending")
+    if case == "decision-closed":
+        result.update(status="closed")
     return result
 
 
-def answer(page: dict, request: dict, state: dict) -> tuple[dict, int]:
+def answer(page: dict, request: dict, state: dict, case: str = "") -> tuple[dict, int]:
     try:
-        current = evidence(page, request["task_id"], state)
+        current = evidence(page, request["task_id"], state, case)
         card = next(
             w
             for w in page["layout"]
@@ -253,13 +319,16 @@ def answer(page: dict, request: dict, state: dict) -> tuple[dict, int]:
             stage["expected_task_rev"] != current["task_rev"]
             or stage["proposal_rev"] != current["record_rev"]
             or stage["proposal_sha256"] != current["proposal_sha256"]
-            or stage["choice"] not in [o["value"] for o in card["props"]["options"]]
+            or stage["choice"] not in [o["value"] for o in current["options"]]
             or stage["input"] != {}
             or request["action_id"] != card["props"]["answer_action"]
         ):
             return {"code": "revision_conflict"}, 409
         if datetime.fromisoformat(current["expires_at"]) <= datetime.now(UTC):
             return {"code": "expired"}, 409
+        if case == "decision-unknown" and not state.get("unknown_answer_seen"):
+            state["unknown_answer_seen"] = True
+            return {"code": "unavailable"}, 503
         receipt = {
             "current": True,
             "task_id": request["task_id"],
@@ -269,7 +338,7 @@ def answer(page: dict, request: dict, state: dict) -> tuple[dict, int]:
             "proposal_sha256": stage["proposal_sha256"],
             "choice": stage["choice"],
             "task_answer_ref": "fixture-answer-" + stage["answer_key"],
-            "approval_state": "rejected" if stage["choice"] == "reject" else "pending",
+            "approval_state": "rejected" if stage["choice"] == "reject" else "approved",
         }
         state["answers"][request["task_id"]] = (canonical, receipt)
         return receipt, 200

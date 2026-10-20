@@ -8252,116 +8252,192 @@ var proposalDigest = (collection, record) => digest("aweb.page-proposal/1", {
 });
 var bundleDigest = (items) => digest("aweb.page-bundle/1", items);
 
+// decision-display.mjs
+var refuse = (code2) => {
+  throw Object.assign(new Error(code2), { code: code2 });
+};
+function decisionRows(cardOptions, evidence, value) {
+  if (!Array.isArray(evidence.options) || canonical(cardOptions) !== canonical(evidence.options))
+    refuse("options_mismatch");
+  if (!Array.isArray(evidence.fields) || evidence.fields.length < 1 || evidence.fields.length > 32)
+    refuse("fields_invalid");
+  const fields = /* @__PURE__ */ new Set(), labels = /* @__PURE__ */ new Set();
+  return evidence.fields.map(({ field, label, format: format2 }) => {
+    if (typeof field !== "string" || !field || typeof label !== "string" || !label || fields.has(field) || labels.has(label) || !["text", "date", "number", "money_minor"].includes(format2))
+      refuse("fields_invalid");
+    fields.add(field);
+    labels.add(label);
+    if (!value || !Object.hasOwn(value, field)) refuse("field_missing");
+    let currency = null;
+    if (format2 === "money_minor") {
+      currency = value.currency;
+      if (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency) || !Intl.supportedValuesOf("currency").includes(currency))
+        refuse("currency_missing");
+      if (!Number.isSafeInteger(value[field]) || Object.is(value[field], -0))
+        refuse("money_invalid");
+    }
+    return [label, value[field], format2, currency];
+  });
+}
+
 // decisions.mjs
-var changed = "This proposal changed. Ask the agent for a new decision.";
+var changed = "This proposal changed. Ask the agent for a new proposal.";
 var expired = "This proposal has expired. Ask the agent for a new proposal.";
 var fail = (message) => {
   throw Object.assign(new Error(message), { publicMessage: message });
 };
 var recordFor = (page, collection, id) => page.collections.find((c) => c.id === collection)?.records.find((r) => r.id === id);
-function createDecision({ box, w, host, actions, getPage, announce }) {
+function createDecision({
+  box,
+  w,
+  host,
+  actions,
+  attempts,
+  getPage,
+  announce
+}) {
   const p = w.props;
-  let disposed = false, serial = 0, busy = false, ready = false, answer, attempt, needsCheck = false;
+  const expiresAt = Date.parse(p.expires_at);
+  const isExpired = () => !Number.isFinite(expiresAt) || expiresAt <= Date.now();
+  let disposed = false, serial = 0, busy = false, ready = false, answer, attempt, attemptKey, trustedOptions = [], needsCheck = false;
   const heading2 = element("h2", p.operation.summary);
   const metadata = element("dl", null, "decision-metadata");
-  for (const [label, value] of [
-    ["Operation", p.operation.kind],
-    ["Destination", p.operation.destination],
-    ["Source version", p.source_version],
-    ["Expires", valueText(p.expires_at, "date-time", "en", host.timeZone)]
-  ]) {
-    const dd = element("dd");
-    dd.append(element("bdi", value));
-    metadata.append(element("dt", label), dd);
+  const destination = element(
+    "dd",
+    `${p.operation.summary} \xB7 ${p.operation.destination}`
+  );
+  const expiryLabel = element("dt", "Expires"), expiryValue = element("dd");
+  metadata.append(
+    element("dt", "What approving does"),
+    destination,
+    expiryLabel,
+    expiryValue
+  );
+  function updateExpiry() {
+    expiryLabel.textContent = isExpired() ? "Expired" : "Expires";
+    if (!Number.isFinite(expiresAt)) {
+      expiryValue.textContent = "Expiry unavailable";
+      return;
+    }
+    if (isExpired())
+      expiryValue.textContent = valueText(
+        p.expires_at,
+        "date",
+        "en",
+        host.timeZone
+      );
+    else {
+      const minutes = Math.ceil((expiresAt - Date.now()) / 6e4);
+      const unit = minutes >= 60 ? "hour" : "minute";
+      const amount = unit === "hour" ? Math.ceil(minutes / 60) : Math.max(1, minutes);
+      const relative = new Intl.RelativeTimeFormat("en").format(amount, unit);
+      const time = new Intl.DateTimeFormat("en", {
+        timeStyle: "short",
+        timeZone: host.timeZone
+      }).format(expiresAt);
+      expiryValue.textContent = `${relative} (${time})`;
+    }
   }
   const proposal = element("div", null, "decision-proposal");
   const details = element("details");
   details.append(element("summary", "Proposal details"));
   for (const text3 of [
+    `Operation: ${p.operation.kind}`,
+    `Source version: ${p.source_version}`,
     `Record: ${p.collection}/${p.record_id}`,
     `Revision: ${p.record_rev}`,
     `Digest: ${p.proposal_sha256}`
   ])
     details.append(element("p", text3, "field-description"));
-  box.append(heading2, metadata, proposal, details);
-  if (p.bundle)
-    box.append(
-      element(
-        "p",
-        "All items together \xB7 one decision for the complete bundle.",
-        "field-description"
-      )
-    );
-  if (p.recommendation) {
-    const option = p.options.find((o) => o.value === p.recommendation);
-    if (option)
-      box.append(
-        element(
-          "p",
-          `Agent recommendation: ${option.label} \xB7 advisory only`,
-          "field-description"
-        )
-      );
-  }
+  const bundleSummary = element("p", null, "field-description");
+  bundleSummary.hidden = !p.bundle;
+  const recommendation = element("p", null, "field-description");
+  recommendation.hidden = true;
   const form = element("form", null, "decision-form"), choices = element("fieldset");
   const legend = element("legend", "Your decision");
   legend.lang = "en";
   choices.append(legend);
   const radios = [];
-  for (const option of p.options) {
-    const label = element("label", null, "decision-option"), radio = element("input");
-    radio.type = "radio";
-    radio.name = `decision-${w.id}`;
-    radio.value = option.value;
-    radio.dataset.focusKey = `choice:${option.value}`;
-    label.append(radio, element("span", option.label));
-    choices.append(label);
-    radios.push(radio);
-    radio.onchange = () => paint();
+  function setOptions(options) {
+    trustedOptions = options;
+    if (!radios.length)
+      for (const option of options) {
+        const label = element("label", null, "decision-option"), radio = element("input");
+        radio.type = "radio";
+        radio.name = `decision-${w.id}`;
+        radio.value = option.value;
+        radio.dataset.focusKey = `choice:${option.value}`;
+        label.append(radio, element("span", option.label));
+        choices.append(label);
+        radios.push(radio);
+        radio.onchange = () => paint();
+      }
+    const recommended = options.find((o) => o.value === p.recommendation);
+    recommendation.hidden = !recommended;
+    recommendation.textContent = recommended ? `The agent recommends ${recommended.label}.` : "";
   }
   const submit = element("button", "Record decision", "primary-button");
   submit.type = "submit";
   submit.dataset.focusKey = "decision-submit";
   const status = element("p", "Checking decision\u2026", "decision-status");
-  status.setAttribute("role", "status");
   status.tabIndex = -1;
   const history = element("p", null, "field-description");
   history.hidden = true;
   const stepup = element("p", null, "field-description");
-  const check = element("button", "Check decision status");
+  const check = element("button", "Check again");
   check.type = "button";
   check.hidden = true;
   for (const node of [history, stepup, submit, status, check]) node.lang = "en";
-  form.append(history, choices, stepup, submit, status, check);
-  box.append(form);
-  const labelFor = (value) => p.options.find((o) => o.value === value)?.label;
-  const selected = () => p.options[radios.findIndex((r) => r.checked)]?.value;
+  const hint = element(
+    "p",
+    "Choose an option to record your decision.",
+    "field-description"
+  );
+  hint.lang = "en";
+  form.append(choices, stepup, hint, submit, check);
+  box.append(
+    heading2,
+    status,
+    history,
+    bundleSummary,
+    proposal,
+    metadata,
+    recommendation,
+    form,
+    details
+  );
+  const labelFor = (value) => trustedOptions.find((o) => o.value === value)?.label;
+  const selected = () => trustedOptions[radios.findIndex((r) => r.checked)]?.value;
   function paint() {
     if (disposed) return;
     const active = document.activeElement;
-    const isExpired = Date.parse(p.expires_at) <= Date.now();
-    if (isExpired && !answer) {
+    updateExpiry();
+    if (isExpired() && !answer) {
       ready = false;
       status.textContent = expired;
     }
     for (const radio of radios)
       radio.disabled = busy || !ready || !!answer || !!attempt;
     submit.hidden = !!answer;
-    submit.disabled = busy || !ready || !selected() || isExpired;
-    submit.textContent = attempt ? "Retry recording decision" : "Record decision";
-    check.hidden = !attempt && !needsCheck || !!answer && answer.approval_state !== "pending";
+    submit.disabled = busy || !ready || !selected() || isExpired();
+    submit.textContent = attempt ? `Record ${labelFor(attempt.stage.choice)} again` : labelFor(selected()) || "Record decision";
+    hint.hidden = !!selected() || !ready || !!answer || !!attempt;
+    status.hidden = !status.textContent;
+    check.hidden = !attempt && !needsCheck || !!answer && !needsCheck;
     check.disabled = busy;
     form.setAttribute("aria-busy", String(busy));
     if (box.contains(active) && (active.disabled || active.hidden))
       status.focus({ preventScroll: true });
   }
-  function showRecords(page) {
+  function showRecords(page, evidence) {
     const record = recordFor(page, p.collection, p.record_id);
     const items = p.bundle ? record?.value?.items : void 0;
     const records = p.bundle ? (items || []).map(
       (item) => recordFor(page, p.items_collection, item.record_id)
     ) : [record];
     proposal.replaceChildren();
+    if (p.bundle)
+      bundleSummary.textContent = records.length === 2 ? "One decision covers both items." : `One decision covers all ${records.length} items.`;
     for (const [index, item] of records.entries()) {
       if (!item) continue;
       const section = element(
@@ -8370,26 +8446,21 @@ function createDecision({ box, w, host, actions, getPage, announce }) {
         p.bundle ? "bundle-item" : "proposal-record"
       );
       if (p.bundle)
-        section.append(
-          element("h3", `Item ${index + 1} \xB7 revision ${item.rev}`)
-        );
-      const fields = element("dl"), collection = p.bundle ? p.items_collection : p.collection;
-      const schema = page.collections.find((c) => c.id === collection)?.schema;
-      for (const [field, value] of Object.entries(item.value)) {
-        const property = schema?.properties?.[field];
+        section.append(element("h3", `${index + 1} of ${records.length}`));
+      const fields = element("dl");
+      for (const [label, value, format2, currency] of decisionRows(
+        p.options,
+        evidence,
+        item.value
+      )) {
         const dd = element("dd");
         dd.append(
           element(
             "bdi",
-            valueText(
-              value,
-              ["date", "date-time"].includes(property?.format) ? property.format : typeof value === "number" ? "number" : "text",
-              "en",
-              host.timeZone
-            )
+            valueText(value, format2, "en", host.timeZone, currency)
           )
         );
-        fields.append(element("dt", property?.title || field), dd);
+        fields.append(element("dt", label), dd);
       }
       section.append(fields);
       proposal.append(section);
@@ -8431,7 +8502,18 @@ function createDecision({ box, w, host, actions, getPage, announce }) {
     } else if (await proposalDigest(p.collection, record) !== p.proposal_sha256)
       fail(changed);
     assert();
-    if (evidence.answer?.current !== true && Date.parse(p.expires_at) <= Date.now())
+    const displayRecords = p.bundle ? record.value.items.map(
+      (item) => recordFor(page, p.items_collection, item.record_id)
+    ) : [record];
+    try {
+      for (const item of displayRecords)
+        decisionRows(p.options, evidence, item.value);
+    } catch {
+      fail(
+        "This proposal's verified choices or display fields changed. Ask the agent for a new proposal."
+      );
+    }
+    if (!Number.isFinite(expiresAt) || evidence.answer?.current !== true && isExpired())
       fail(expired);
     if (!["member_session", "passkey"].includes(evidence.authenticator))
       fail("Verified approval is unavailable.");
@@ -8450,9 +8532,12 @@ function createDecision({ box, w, host, actions, getPage, announce }) {
       if (!currentReceipt(evidence.answer, evidence))
         fail("The recorded decision is unavailable. Check with the agent.");
       answer = evidence.answer;
-      needsCheck = answer.approval_state === "pending";
+      attempts.delete(attemptKey);
+      attempt = void 0;
+      const pendingVerification = evidence.authenticator === "passkey" && !["approved", "rejected"].includes(answer.approval_state);
+      needsCheck = pendingVerification || answer.choice === "approve" && !["applied", "failed"].includes(evidence.application_state);
       ready = false;
-      status.textContent = `Decision recorded: ${labelFor(answer.choice)}${answer.approval_state === "pending" ? ". Waiting for verification." : ""}`;
+      status.textContent = pendingVerification ? "Your decision was recorded. Verification is pending." : evidence.application_state === "applied" ? "Applied." : evidence.application_state === "failed" ? "Your decision was recorded. It could not be applied. Check with the agent." : answer.choice === "approve" ? "You approved this. The agent will apply it." : answer.choice === "reject" ? "You rejected this. The agent will be told." : `Your decision was recorded: ${labelFor(answer.choice)}.`;
     } else if (evidence.task_rev !== p.task_rev) {
       ready = false;
       status.textContent = changed;
@@ -8463,9 +8548,13 @@ function createDecision({ box, w, host, actions, getPage, announce }) {
     } else if (!evidence.allowed) {
       ready = false;
       status.textContent = "You cannot answer this decision.";
+    } else if (attempts.get(attemptKey)?.state === "inflight") {
+      ready = false;
+      needsCheck = true;
+      status.textContent = "Recording your decision\u2026";
     } else {
       ready = true;
-      status.textContent = attempt ? "The outcome is not confirmed. Retry only the same decision, or check its status." : "Choose an option to record your decision.";
+      status.textContent = attempt ? `Your decision wasn't recorded. Try again to record ${labelFor(attempt.stage.choice)}.` : "";
     }
     stepup.textContent = evidence.authenticator === "passkey" ? "A passkey check on the app origin is required to record this decision." : "";
     paint();
@@ -8476,8 +8565,9 @@ function createDecision({ box, w, host, actions, getPage, announce }) {
     const evidence = await host.decision(p.task_id);
     if (disposed) throw { silent: true };
     if (context) actions.assertCurrent(context);
-    if (evidence?.task_id === p.task_id) showHistory(evidence);
     await validate(page, evidence, context);
+    setOptions(evidence.options);
+    if (evidence?.task_id === p.task_id) showHistory(evidence);
     if (disposed) throw { silent: true };
     const action = page.actions.find((a) => a.id === p.answer_action);
     if (!action || action.kind !== "answer")
@@ -8486,15 +8576,38 @@ function createDecision({ box, w, host, actions, getPage, announce }) {
       fail(
         "This decision requires additional input that this page cannot collect. Ask the agent to revise it."
       );
+    attemptKey = canonical({
+      page_id: page.page_id,
+      task_id: p.task_id,
+      question_rev: evidence.question_rev,
+      collection: p.collection,
+      record_id: p.record_id,
+      record_rev: p.record_rev,
+      proposal_sha256: p.proposal_sha256,
+      operation: p.operation,
+      source_version: p.source_version,
+      expires_at: p.expires_at
+    });
+    const pending = attempts.get(attemptKey);
+    if (pending && evidence.answer?.current !== true) {
+      attempt = structuredClone(pending.request);
+      needsCheck = true;
+      if (attempt.stage.expected_task_rev !== p.task_rev || attempt.action_id !== p.answer_action || attempt.widget_id !== w.id)
+        fail(
+          "An earlier decision is awaiting confirmation. Check with the agent before answering again."
+        );
+      for (const [index, radio] of radios.entries())
+        radio.checked = trustedOptions[index].value === attempt.stage.choice;
+    }
     return { page, evidence };
   }
-  async function refresh() {
+  async function refresh(announceResult = false) {
     if (busy || disposed) return;
     const request = ++serial;
     try {
       const { page, evidence } = await inspect();
       if (request !== serial || disposed) return;
-      showRecords(page);
+      showRecords(page, evidence);
       if (evidence.allowed && evidence.task_rev === p.task_rev && evidence.status === "open" && evidence.answer?.current !== true) {
         const context = actions.capture(
           w,
@@ -8505,16 +8618,19 @@ function createDecision({ box, w, host, actions, getPage, announce }) {
         if (request !== serial || disposed) return;
       }
       applyEvidence(evidence);
+      if (announceResult) announce(status.textContent);
     } catch (error2) {
       if (disposed || request !== serial || error2?.silent) return;
+      proposal.replaceChildren();
       ready = false;
       needsCheck = true;
       status.textContent = error2?.code === "csrf_required" ? "The host could not verify this request. Refresh the page." : error2.publicMessage || "This decision is unavailable.";
       paint();
+      if (announceResult) announce(status.textContent);
     }
   }
   check.onclick = (event) => {
-    if (event.isTrusted && !busy) refresh();
+    if (event.isTrusted && !busy) refresh(true);
   };
   form.onsubmit = async (event) => {
     event.preventDefault();
@@ -8522,6 +8638,8 @@ function createDecision({ box, w, host, actions, getPage, announce }) {
     const choice = attempt?.stage.choice || selected();
     let context;
     busy = true;
+    status.textContent = "Recording your decision\u2026";
+    announce(status.textContent);
     ++serial;
     paint();
     try {
@@ -8540,7 +8658,7 @@ function createDecision({ box, w, host, actions, getPage, announce }) {
       const credential = await actions.csrf(context);
       actions.assertCurrent(context);
       if (disposed || getPage() !== inspection.page) fail(changed);
-      if (Date.parse(p.expires_at) <= Date.now()) fail(expired);
+      if (isExpired()) fail(expired);
       attempt ??= {
         page_id: context.page_id,
         widget_id: w.id,
@@ -8555,11 +8673,18 @@ function createDecision({ box, w, host, actions, getPage, announce }) {
           answer_key: crypto.randomUUID()
         }
       };
-      const receipt = await host.answer(
-        structuredClone(attempt),
-        credential,
-        event
-      );
+      const pending = { request: structuredClone(attempt), state: "inflight" };
+      attempts.set(attemptKey, pending);
+      let receipt;
+      try {
+        receipt = await host.answer(
+          structuredClone(attempt),
+          credential,
+          event
+        );
+      } finally {
+        pending.state = "unknown";
+      }
       actions.assertCurrent(context);
       if (disposed) return;
       if (currentReceipt(receipt, inspection.evidence) && receipt.choice === choice) {
@@ -8576,6 +8701,7 @@ function createDecision({ box, w, host, actions, getPage, announce }) {
       }
     } catch (error2) {
       if (disposed || error2?.silent) return;
+      proposal.replaceChildren();
       ready = false;
       needsCheck = true;
       status.textContent = attempt ? "The outcome is unknown. Check decision status before retrying." : error2.publicMessage || "This decision is unavailable. Refresh the page.";
@@ -8590,15 +8716,11 @@ function createDecision({ box, w, host, actions, getPage, announce }) {
       }
     }
   };
-  try {
-    showRecords(getPage());
-  } catch {
-    status.textContent = changed;
-  }
   paint();
   refresh();
   const timer = setInterval(() => {
-    if (ready && Date.parse(p.expires_at) <= Date.now()) {
+    updateExpiry();
+    if (ready && isExpired()) {
       paint();
       announce(status.textContent);
     }
@@ -9259,7 +9381,7 @@ function createPageRenderer({
   if (root.contains(destinations) || root.contains(announcements))
     throw new TypeError("Host chrome must be outside the page");
   let current, epoch = 0;
-  const cache = /* @__PURE__ */ new Map(), queries = /* @__PURE__ */ new Map(), links = /* @__PURE__ */ new WeakMap();
+  const cache = /* @__PURE__ */ new Map(), queries = /* @__PURE__ */ new Map(), decisionAttempts = /* @__PURE__ */ new Map(), links = /* @__PURE__ */ new WeakMap();
   const title = element("h1", null, "page-title");
   const actions = createActions({
     host,
@@ -9280,6 +9402,7 @@ function createPageRenderer({
     const scroll = [scrollX, scrollY];
     if (before?.page_id !== page?.page_id) {
       actions.clear();
+      decisionAttempts.clear();
       host.confirmLink?.clear?.();
       host.confirmAction?.clear?.();
       for (const entry of cache.values()) entry.cleanup?.();
@@ -9301,13 +9424,14 @@ function createPageRenderer({
       root.replaceChildren(panel);
       for (const entry of cache.values()) entry.cleanup?.();
       actions.clear();
+      decisionAttempts.clear();
       host.confirmLink?.clear?.();
       host.confirmAction?.clear?.();
       cache.clear();
       return;
     }
     title.textContent = page.title;
-    const domains = /* @__PURE__ */ new Set(), used = /* @__PURE__ */ new Set();
+    const domains = /* @__PURE__ */ new Set(), used = /* @__PURE__ */ new Set(), decisionWidgets = /* @__PURE__ */ new Set();
     function rememberLink(url) {
       if (!domains.has(url.host)) {
         domains.add(url.host);
@@ -9335,6 +9459,7 @@ function createPageRenderer({
       rememberLink(url);
     }
     function displayState(box, w, state) {
+      if (w.type === "decision_card") return;
       box.setAttribute("aria-busy", String(!!state.busy));
       let status = [...box.children].find(
         (node) => node.hasAttribute("data-widget-state")
@@ -9368,6 +9493,7 @@ function createPageRenderer({
     }
     function widget(w) {
       used.add(w.id);
+      if (w.type === "decision_card") decisionWidgets.add(w.id);
       const supported = known.has(w.type), p = supported ? w.props : {}, state = page.widget_state?.[w.id] || {};
       const container = w.type === "stack" || w.type === "grid";
       const signature = JSON.stringify([
@@ -9420,6 +9546,7 @@ function createPageRenderer({
           w,
           host,
           actions,
+          attempts: decisionAttempts,
           getPage: () => current,
           announce: (text3) => {
             announcements.textContent = text3;
@@ -9575,6 +9702,7 @@ function createPageRenderer({
         ...Object.keys(before.widget_state || {}),
         ...Object.keys(page.widget_state || {})
       ])) {
+        if (decisionWidgets.has(id)) continue;
         const state = page.widget_state?.[id] || {};
         if (JSON.stringify(state) !== JSON.stringify(before.widget_state?.[id] || {}))
           changes.push(state.message || (state.busy ? t.busy : t.updated));
@@ -9589,6 +9717,7 @@ function createPageRenderer({
       host.confirmLink?.clear?.();
       host.confirmAction?.clear?.();
       actions.clear();
+      decisionAttempts.clear();
       for (const entry of cache.values()) entry.cleanup?.();
       ++epoch;
       current = null;

@@ -271,7 +271,10 @@ def fixture(query: dict) -> dict:
         )
     if query.get("case") == ["empty"]:
         for collection in page["collections"]:
-            collection["records"] = []
+            # Decision/bundle snapshots require their exact proposal records;
+            # independent collection widgets still exercise the empty state.
+            if collection["id"] not in {"review-proposals", "review-bundles"}:
+                collection["records"] = []
     validation = validate_page(page)
     if not validation.valid:
         raise ValueError(validation.errors)
@@ -315,7 +318,8 @@ class Handler(BaseHTTPRequestHandler):
     asset_origin = "https://127.0.0.1:8735"
 
     def do_POST(self) -> None:
-        post(self, urlsplit(self.path).path, fixture({}))
+        url = urlsplit(self.path)
+        post(self, url.path, fixture(parse_qs(url.query)))
 
     def do_GET(self) -> None:
         url = urlsplit(self.path)

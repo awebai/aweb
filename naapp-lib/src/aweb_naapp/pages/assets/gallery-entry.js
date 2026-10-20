@@ -36,7 +36,7 @@ const host = {
     consequential: action === "request-visit",
   }),
   invoke: (request, credential) => send("/api/invoke", request, credential),
-  answer: (request, credential) => send("/api/answer", request, credential),
+  answer: (request, credential) => send("/api/answer?" + query, request, credential),
   decision: async (task_id) => {
     const params = new URLSearchParams(query);
     params.set("task_id", task_id);

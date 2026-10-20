@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 29
+`docs/vectors/*.json` is the only public protocol-vector authority for the 30
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -220,6 +220,15 @@ digests over a record's collection, id and value, a bundle built from item
 digests, and value refusals. The reference consumers are `aweb_naapp.pages` in
 `naapp-lib/tests/pages/` and `cli/go/awid/`. See
 [the page format](../page-format.md) §5.
+
+### `decision-display-v1.json`
+
+What a decision card shows (aweb-acgg.8): the host's evidence carries the
+task's signed `options` and `fields`, and each case gives a card's options and
+a record value with the expected display, in bound order with bound labels and
+formats, or the reason the card is refused (options differ, a bound field is
+missing, a money field has no ISO 4217 currency). It is for the shared
+renderer and its host. See [page actions](../page-actions.md) §5.
 
 ### `agent-status-v1.json`
 

@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
 from typing import cast
+from urllib.parse import parse_qs, urlsplit
 
 from jsonschema import Draft202012Validator
 
@@ -243,7 +244,8 @@ def post(handler: BaseHTTPRequestHandler, path: str, page: dict) -> None:
         if path == "/api/answer":
             from aweb_naapp.pages.gallery_decisions import answer
 
-            body, status = answer(page, request, state)
+            query = parse_qs(urlsplit(handler.path).query)
+            body, status = answer(page, request, state, query.get("case", [""])[0])
             json_response(handler, body, status)
             return
         key = request.get("idempotency_key")

@@ -61,6 +61,7 @@ export function createPageRenderer({
     epoch = 0;
   const cache = new Map(),
     queries = new Map(),
+    decisionAttempts = new Map(),
     links = new WeakMap();
   const title = element("h1", null, "page-title");
   const actions = createActions({
@@ -84,6 +85,7 @@ export function createPageRenderer({
     const scroll = [scrollX, scrollY];
     if (before?.page_id !== page?.page_id) {
       actions.clear();
+      decisionAttempts.clear();
       host.confirmLink?.clear?.();
       host.confirmAction?.clear?.();
       for (const entry of cache.values()) entry.cleanup?.();
@@ -105,6 +107,7 @@ export function createPageRenderer({
       root.replaceChildren(panel);
       for (const entry of cache.values()) entry.cleanup?.();
       actions.clear();
+      decisionAttempts.clear();
       host.confirmLink?.clear?.();
       host.confirmAction?.clear?.();
       cache.clear();
@@ -112,7 +115,8 @@ export function createPageRenderer({
     }
     title.textContent = page.title;
     const domains = new Set(),
-      used = new Set();
+      used = new Set(),
+      decisionWidgets = new Set();
     function rememberLink(url) {
       if (!domains.has(url.host)) {
         domains.add(url.host);
@@ -142,6 +146,7 @@ export function createPageRenderer({
       rememberLink(url);
     }
     function displayState(box, w, state) {
+      if (w.type === "decision_card") return;
       box.setAttribute("aria-busy", String(!!state.busy));
       let status = [...box.children].find((node) =>
         node.hasAttribute("data-widget-state"),
@@ -175,6 +180,7 @@ export function createPageRenderer({
     }
     function widget(w) {
       used.add(w.id);
+      if (w.type === "decision_card") decisionWidgets.add(w.id);
       const supported = known.has(w.type),
         p = supported ? w.props : {},
         state = page.widget_state?.[w.id] || {};
@@ -240,6 +246,7 @@ export function createPageRenderer({
           w,
           host,
           actions,
+          attempts: decisionAttempts,
           getPage: () => current,
           announce: (text) => {
             announcements.textContent = text;
@@ -408,6 +415,7 @@ export function createPageRenderer({
         ...Object.keys(before.widget_state || {}),
         ...Object.keys(page.widget_state || {}),
       ])) {
+        if (decisionWidgets.has(id)) continue;
         const state = page.widget_state?.[id] || {};
         if (
           JSON.stringify(state) !==
@@ -425,6 +433,7 @@ export function createPageRenderer({
       host.confirmLink?.clear?.();
       host.confirmAction?.clear?.();
       actions.clear();
+      decisionAttempts.clear();
       for (const entry of cache.values()) entry.cleanup?.();
       ++epoch;
       current = null;

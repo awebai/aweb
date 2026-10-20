@@ -203,6 +203,10 @@ ROOT_CONSUMERS = {
         "principal-attestation-v1.json",
         '(Path(__file__).parents[3] / "docs" / "vectors" / "principal-attestation-v1.json")',
     ),
+    PurePosixPath("naapp-lib/renderer/tests/decision-display.test.mjs"): _consumer(
+        "decision-display-v1.json",
+        '"../../../docs/vectors/decision-display-v1.json"',
+    ),
     PurePosixPath("naapp-lib/renderer/tests/digests.test.mjs"): _consumer(
         ("page-format-v1.json", "page-proposal-v1.json"),
         '"../../../docs/vectors/page-format-v1.json"',
