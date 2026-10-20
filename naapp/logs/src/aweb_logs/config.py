@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+from aweb_naapp.runtime.settings import NaappSettings
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
-
-from aweb_naapp.runtime.settings import NaappSettings
 
 
 class LogsSettings(NaappSettings):
