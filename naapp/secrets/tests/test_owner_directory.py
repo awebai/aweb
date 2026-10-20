@@ -56,12 +56,14 @@ OTHER_INSTALLATION = "6f9619ff-8b86-4011-b42d-00c04fc964ff"
 @dataclass
 class Contacts:
     inbox: dict[str, list[str]] = field(default_factory=dict)
+    notices: dict[str, list[Notice]] = field(default_factory=dict)
 
     async def deliver_enrolment_link(self, approver: Approver, link_token: str) -> DeliveryStatus:
         self.inbox.setdefault(approver.contact, []).append(link_token)
         return DeliveryStatus.DELIVERED
 
     async def deliver_notice(self, contact: str, notice: Notice) -> DeliveryStatus:
+        self.notices.setdefault(contact, []).append(notice)
         return DeliveryStatus.DELIVERED
 
 
