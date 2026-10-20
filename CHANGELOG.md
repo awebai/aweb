@@ -16,6 +16,13 @@ Server changes are since `server-v1.27.28`. No CLI change; aw stays 1.36.43.
   human-only role/repo writes. Cloud applies that admin policy before mounted
   OSS routes, including certificate and API-key callers; standalone OSS keeps
   its own publication policy. Publish this server package before the Cloud pin.
+- Accept target-bound v2 request envelopes for certificate and identity-only
+  authentication. Signatures bind the configured public audience, HTTP method,
+  external raw path and query, and body hash; identity-only proofs confer no
+  team membership. Legacy compact v1 remains accepted and is counted by auth
+  family, route template and aw client version. Deploy this server support and
+  Cloud's verifiers before publishing the aw client that emits v2; clients must
+  not fall back to v1 after a v2 refusal.
 
 ### Release preparation: aw 1.36.43
 
