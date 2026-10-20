@@ -104,11 +104,24 @@ def validate_page_bytes(raw: bytes) -> Validation:
     return validate_page(page)
 
 
-def _json_depth_error(page: object) -> str | None:
+_SAFE_INTEGER = 2**53 - 1
+
+
+def _walk_error(page: object) -> PageError | None:
+    """The first value, in document order, past the JSON depth or number rules.
+
+    Every number in a page is a safe integer: fractional values are decimal
+    strings, so a float or an integer beyond 2^53-1 is refused wherever it
+    appears, record values and inline schemas included.
+    """
     stack: list[tuple[object, tuple[str | int, ...]]] = [(page, ())]
     limit = PAGE_LIMITS["max_json_depth"]
     while stack:
         node, path = stack.pop()
+        if isinstance(node, float) or (
+            isinstance(node, int) and not isinstance(node, bool) and abs(node) > _SAFE_INTEGER
+        ):
+            return PageError("limits", "unsafe_number", pointer(path))
         if isinstance(node, dict):
             children: list[tuple[str | int, object]] = list(node.items())
         elif isinstance(node, list):
@@ -116,7 +129,7 @@ def _json_depth_error(page: object) -> str | None:
         else:
             continue
         if len(path) + 1 > limit:
-            return pointer(path)
+            return PageError("limits", "too_deep_json", pointer(path))
         stack.extend((child, (*path, key)) for key, child in reversed(children))
     return None
 
@@ -155,9 +168,9 @@ def _limit_errors(page: object) -> Validation | None:
     widget_error = _widget_errors(page.get("layout"))
     if widget_error is not None:
         return Validation((widget_error,))
-    too_deep_json = _json_depth_error(page)
-    if too_deep_json is not None:
-        return _refused("too_deep_json", too_deep_json)
+    walk_error = _walk_error(page)
+    if walk_error is not None:
+        return Validation((walk_error,))
     try:
         size = len(
             json.dumps(page, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode(

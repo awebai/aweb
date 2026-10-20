@@ -37,6 +37,7 @@ Checked iteratively, before any recursive validator sees the page.
 | `too_deep` | A widget is nested more than 8 deep (a top-level widget has depth 1). The pointer is the first widget past the limit. |
 | `too_many_widgets` | More than 2,000 widgets in the layout tree, containers included. Pointer `/layout`. |
 | `too_deep_json` | Any value is nested more than 64 deep (the page object has depth 1). The pointer is the first value past the limit. |
+| `unsafe_number` | Any number anywhere in the page, record values and inline schemas included, is a float or an integer beyond ±(2^53−1). Fractional values are decimal strings. The pointer is the first such number in document order. |
 
 The widget limits are checked before the general depth limit.
 
@@ -70,9 +71,10 @@ need care in every implementation:
 | `duplicate_collection_id`, `duplicate_record_id`, `duplicate_action_id` | IDs are unique within their scope. |
 | `record_invalid` | Each record's `value` satisfies its collection schema. |
 | `inline_schema_keyword` | An inline schema (a collection schema or action input schema) uses only these 2020-12 keywords: `type`, `enum`, `const`, `properties`, `required`, `additionalProperties`, `minProperties`, `maxProperties`, `dependentRequired`, `propertyNames`, `items`, `prefixItems`, `minItems`, `maxItems`, `uniqueItems`, `contains`, `minContains`, `maxContains`, `minLength`, `maxLength`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `allOf`, `anyOf`, `oneOf`, `not`, `if`, `then`, `else`, `$defs`, `$ref`, `title`, `description`, `default`, `examples`, `format`, `$comment`, `deprecated`, `readOnly` and `writeOnly`. Any other keyword is refused, so every sub-schema a reference can reach is one lint has checked. `$defs` is allowed only at the inline schema's root. |
-| `inline_schema_ref` | A `$ref` is exactly `#/$defs/<name>`, naming an existing root `$defs` entry (`name` is `[A-Za-z0-9_.-]+`). Remote, file and other pointers are refused. |
-| `inline_schema_ref_cycle` | References between `$defs` entries form no cycle, self-reference included. Pointer: each `$ref` on a cycle. |
-| `inline_schema_number` | `type: "number"` and float literals anywhere in an inline schema (`enum`, `const`, bounds, defaults, examples) are refused. Integers are safe integers; fractional quantities are decimal strings. |
+| `inline_schema_ref` | A `$ref` outside `$defs` is exactly `#/$defs/<name>`, naming an existing root `$defs` entry (`name` is `[A-Za-z0-9_.-]+`). Remote, file and other pointers are refused. |
+| `inline_schema_def_ref` | A `$defs` entry contains no `$ref`. So references cannot chain or cycle, and expanding them is one level deep. |
+| `inline_schema_expansion` | The inline schema has at most 1,000 sub-schemas once each reference is replaced by its `$defs` entry. Pointer: the inline schema's root. This bounds validation work per record. |
+| `inline_schema_number` | `type: "number"` is refused. Float literals and unsafe integers in an inline schema are already refused as `unsafe_number`. |
 | `inline_schema_pattern` | `pattern` and `patternProperties` are refused. A regular expression's work and dialect cannot be bounded portably (JSON Schema specifies ECMA-262, and backtracking engines can take exponential time), so inline schemas use `enum`, `const`, lengths and bounds instead. A linear-time, ECMA-compatible subset would be a later, explicit addition. |
 | `inline_schema_invalid` | A collection schema or action input schema is not a valid JSON Schema 2020-12 schema (checked against the meta-schema). Pointer: the offending keyword. Checked only after the subset rules pass, and before any record is validated. |
 | `inline_schema_depth` | Inline schemas nest at most 16 sub-schemas deep. Pointer: the first sub-schema past the limit. |
@@ -101,9 +103,10 @@ A page is an object with exactly these fields:
 | `widget_state` | Display overrides by widget ID: `message`, `progress` (0–100) and `busy`. State never changes bindings, actions, policy or input schemas. |
 | `actions` | Action definitions: `id`, `kind` (`edit`, `intent` or `answer`), `label`, `input_schema`, `policy_ref`, and optionally `target`, `operation` and `requires_approval`. Layout references actions; it never carries policy. |
 
-Unknown fields are refused in every known object. Revisions, versions and
-other integers are safe integers (at most 2^53−1 in magnitude). Fractional
-values are decimal strings. A stat `value` and a binding filter `value` are a
+Unknown fields are refused in every known object. Every number in a page, in
+any field, record value or inline schema, is a safe integer (at most 2^53−1 in
+magnitude); fractional values are decimal strings. The limits layer enforces
+this page-wide (`unsafe_number`). A stat `value` and a binding filter `value` are a
 string, a safe integer, a boolean or null, or for `in` a list of at most 50 of
 those.
 
@@ -151,9 +154,9 @@ A collection has `id`, `schema_version`, an inline JSON Schema `schema`,
 has `id`, `rev` and `value`. A synced record also carries `source`: `system`,
 `external_id`, `version` and `synced_at`. Inline schemas (and action input
 schemas) follow the subset in the lint rules: allowlisted keywords only,
-acyclic references to root `$defs`, no `number` type or float literal, no
-`pattern` or `patternProperties`, bounded depth, and valid under the 2020-12
-meta-schema.
+references only from outside `$defs` into root `$defs`, a bounded expanded
+size, no `number` type, no `pattern` or `patternProperties`, bounded depth, and
+valid under the 2020-12 meta-schema.
 
 ## 5. Decision cards and bundles
 

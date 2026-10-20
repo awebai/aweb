@@ -9,7 +9,8 @@
     "max_depth": 8,
     "max_widgets": 2000,
     "max_bundle_items": 64,
-    "max_inline_schema_depth": 16
+    "max_inline_schema_depth": 16,
+    "max_inline_schema_expansion": 1000
   },
   "render_expectations": {
     "link_inert": "the link renders without an active destination; no navigation or script runs",
@@ -1379,8 +1380,8 @@
         "valid": false,
         "errors": [
           {
-            "layer": "schema",
-            "code": "schema",
+            "layer": "limits",
+            "code": "unsafe_number",
             "pointer": "/layout_version"
           }
         ]
@@ -1432,8 +1433,8 @@
         "valid": false,
         "errors": [
           {
-            "layer": "schema",
-            "code": "schema",
+            "layer": "limits",
+            "code": "unsafe_number",
             "pointer": "/layout/2/props/value"
           }
         ]
@@ -1722,8 +1723,8 @@
         "valid": false,
         "errors": [
           {
-            "layer": "schema",
-            "code": "schema",
+            "layer": "limits",
+            "code": "unsafe_number",
             "pointer": "/layout/1/bind/all/0/value"
           }
         ]
@@ -2964,7 +2965,7 @@
         "errors": [
           {
             "layer": "lint",
-            "code": "inline_schema_ref",
+            "code": "inline_schema_def_ref",
             "pointer": "/collections/0/schema/$defs/r/$ref"
           }
         ]
@@ -3023,7 +3024,7 @@
         "errors": [
           {
             "layer": "lint",
-            "code": "inline_schema_ref_cycle",
+            "code": "inline_schema_def_ref",
             "pointer": "/collections/0/schema/$defs/a/$ref"
           }
         ]
@@ -3068,12 +3069,12 @@
         "errors": [
           {
             "layer": "lint",
-            "code": "inline_schema_ref_cycle",
+            "code": "inline_schema_def_ref",
             "pointer": "/collections/0/schema/$defs/a/properties/b/$ref"
           },
           {
             "layer": "lint",
-            "code": "inline_schema_ref_cycle",
+            "code": "inline_schema_def_ref",
             "pointer": "/collections/0/schema/$defs/b/items/$ref"
           }
         ]
@@ -3100,9 +3101,814 @@
         "valid": false,
         "errors": [
           {
-            "layer": "lint",
-            "code": "inline_schema_number",
+            "layer": "limits",
+            "code": "unsafe_number",
             "pointer": "/collections/0/schema/properties/extra/enum/0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-ref-fan-out-chain",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/$defs",
+            "value": {
+              "d0": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d1"
+                  },
+                  {
+                    "$ref": "#/$defs/d1"
+                  }
+                ]
+              },
+              "d1": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d2"
+                  },
+                  {
+                    "$ref": "#/$defs/d2"
+                  }
+                ]
+              },
+              "d2": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d3"
+                  },
+                  {
+                    "$ref": "#/$defs/d3"
+                  }
+                ]
+              },
+              "d3": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d4"
+                  },
+                  {
+                    "$ref": "#/$defs/d4"
+                  }
+                ]
+              },
+              "d4": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d5"
+                  },
+                  {
+                    "$ref": "#/$defs/d5"
+                  }
+                ]
+              },
+              "d5": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d6"
+                  },
+                  {
+                    "$ref": "#/$defs/d6"
+                  }
+                ]
+              },
+              "d6": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d7"
+                  },
+                  {
+                    "$ref": "#/$defs/d7"
+                  }
+                ]
+              },
+              "d7": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d8"
+                  },
+                  {
+                    "$ref": "#/$defs/d8"
+                  }
+                ]
+              },
+              "d8": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d9"
+                  },
+                  {
+                    "$ref": "#/$defs/d9"
+                  }
+                ]
+              },
+              "d9": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d10"
+                  },
+                  {
+                    "$ref": "#/$defs/d10"
+                  }
+                ]
+              },
+              "d10": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d11"
+                  },
+                  {
+                    "$ref": "#/$defs/d11"
+                  }
+                ]
+              },
+              "d11": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d12"
+                  },
+                  {
+                    "$ref": "#/$defs/d12"
+                  }
+                ]
+              },
+              "d12": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d13"
+                  },
+                  {
+                    "$ref": "#/$defs/d13"
+                  }
+                ]
+              },
+              "d13": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d14"
+                  },
+                  {
+                    "$ref": "#/$defs/d14"
+                  }
+                ]
+              },
+              "d14": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d15"
+                  },
+                  {
+                    "$ref": "#/$defs/d15"
+                  }
+                ]
+              },
+              "d15": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d16"
+                  },
+                  {
+                    "$ref": "#/$defs/d16"
+                  }
+                ]
+              },
+              "d16": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d17"
+                  },
+                  {
+                    "$ref": "#/$defs/d17"
+                  }
+                ]
+              },
+              "d17": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d18"
+                  },
+                  {
+                    "$ref": "#/$defs/d18"
+                  }
+                ]
+              },
+              "d18": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d19"
+                  },
+                  {
+                    "$ref": "#/$defs/d19"
+                  }
+                ]
+              },
+              "d19": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d20"
+                  },
+                  {
+                    "$ref": "#/$defs/d20"
+                  }
+                ]
+              },
+              "d20": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "$ref": "#/$defs/d0"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_def_ref",
+            "pointer": "/collections/0/schema/$defs/d0/allOf/0/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-ref-expansion-over-limit",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/$defs",
+            "value": {
+              "big": {
+                "type": "object",
+                "properties": {
+                  "p0": {
+                    "type": "string"
+                  },
+                  "p1": {
+                    "type": "string"
+                  },
+                  "p2": {
+                    "type": "string"
+                  },
+                  "p3": {
+                    "type": "string"
+                  },
+                  "p4": {
+                    "type": "string"
+                  },
+                  "p5": {
+                    "type": "string"
+                  },
+                  "p6": {
+                    "type": "string"
+                  },
+                  "p7": {
+                    "type": "string"
+                  },
+                  "p8": {
+                    "type": "string"
+                  },
+                  "p9": {
+                    "type": "string"
+                  },
+                  "p10": {
+                    "type": "string"
+                  },
+                  "p11": {
+                    "type": "string"
+                  },
+                  "p12": {
+                    "type": "string"
+                  },
+                  "p13": {
+                    "type": "string"
+                  },
+                  "p14": {
+                    "type": "string"
+                  },
+                  "p15": {
+                    "type": "string"
+                  },
+                  "p16": {
+                    "type": "string"
+                  },
+                  "p17": {
+                    "type": "string"
+                  },
+                  "p18": {
+                    "type": "string"
+                  },
+                  "p19": {
+                    "type": "string"
+                  },
+                  "p20": {
+                    "type": "string"
+                  },
+                  "p21": {
+                    "type": "string"
+                  },
+                  "p22": {
+                    "type": "string"
+                  },
+                  "p23": {
+                    "type": "string"
+                  },
+                  "p24": {
+                    "type": "string"
+                  },
+                  "p25": {
+                    "type": "string"
+                  },
+                  "p26": {
+                    "type": "string"
+                  },
+                  "p27": {
+                    "type": "string"
+                  },
+                  "p28": {
+                    "type": "string"
+                  },
+                  "p29": {
+                    "type": "string"
+                  },
+                  "p30": {
+                    "type": "string"
+                  },
+                  "p31": {
+                    "type": "string"
+                  },
+                  "p32": {
+                    "type": "string"
+                  },
+                  "p33": {
+                    "type": "string"
+                  },
+                  "p34": {
+                    "type": "string"
+                  },
+                  "p35": {
+                    "type": "string"
+                  },
+                  "p36": {
+                    "type": "string"
+                  },
+                  "p37": {
+                    "type": "string"
+                  },
+                  "p38": {
+                    "type": "string"
+                  },
+                  "p39": {
+                    "type": "string"
+                  },
+                  "p40": {
+                    "type": "string"
+                  },
+                  "p41": {
+                    "type": "string"
+                  },
+                  "p42": {
+                    "type": "string"
+                  },
+                  "p43": {
+                    "type": "string"
+                  },
+                  "p44": {
+                    "type": "string"
+                  },
+                  "p45": {
+                    "type": "string"
+                  },
+                  "p46": {
+                    "type": "string"
+                  },
+                  "p47": {
+                    "type": "string"
+                  },
+                  "p48": {
+                    "type": "string"
+                  },
+                  "p49": {
+                    "type": "string"
+                  },
+                  "p50": {
+                    "type": "string"
+                  },
+                  "p51": {
+                    "type": "string"
+                  },
+                  "p52": {
+                    "type": "string"
+                  },
+                  "p53": {
+                    "type": "string"
+                  },
+                  "p54": {
+                    "type": "string"
+                  },
+                  "p55": {
+                    "type": "string"
+                  },
+                  "p56": {
+                    "type": "string"
+                  },
+                  "p57": {
+                    "type": "string"
+                  },
+                  "p58": {
+                    "type": "string"
+                  },
+                  "p59": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "object",
+              "properties": {
+                "r0": {
+                  "$ref": "#/$defs/big"
+                },
+                "r1": {
+                  "$ref": "#/$defs/big"
+                },
+                "r2": {
+                  "$ref": "#/$defs/big"
+                },
+                "r3": {
+                  "$ref": "#/$defs/big"
+                },
+                "r4": {
+                  "$ref": "#/$defs/big"
+                },
+                "r5": {
+                  "$ref": "#/$defs/big"
+                },
+                "r6": {
+                  "$ref": "#/$defs/big"
+                },
+                "r7": {
+                  "$ref": "#/$defs/big"
+                },
+                "r8": {
+                  "$ref": "#/$defs/big"
+                },
+                "r9": {
+                  "$ref": "#/$defs/big"
+                },
+                "r10": {
+                  "$ref": "#/$defs/big"
+                },
+                "r11": {
+                  "$ref": "#/$defs/big"
+                },
+                "r12": {
+                  "$ref": "#/$defs/big"
+                },
+                "r13": {
+                  "$ref": "#/$defs/big"
+                },
+                "r14": {
+                  "$ref": "#/$defs/big"
+                },
+                "r15": {
+                  "$ref": "#/$defs/big"
+                },
+                "r16": {
+                  "$ref": "#/$defs/big"
+                },
+                "r17": {
+                  "$ref": "#/$defs/big"
+                },
+                "r18": {
+                  "$ref": "#/$defs/big"
+                },
+                "r19": {
+                  "$ref": "#/$defs/big"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_expansion",
+            "pointer": "/collections/0/schema"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-ref-expansion-within-limit",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/$defs",
+            "value": {
+              "big": {
+                "type": "object",
+                "properties": {
+                  "p0": {
+                    "type": "string"
+                  },
+                  "p1": {
+                    "type": "string"
+                  },
+                  "p2": {
+                    "type": "string"
+                  },
+                  "p3": {
+                    "type": "string"
+                  },
+                  "p4": {
+                    "type": "string"
+                  },
+                  "p5": {
+                    "type": "string"
+                  },
+                  "p6": {
+                    "type": "string"
+                  },
+                  "p7": {
+                    "type": "string"
+                  },
+                  "p8": {
+                    "type": "string"
+                  },
+                  "p9": {
+                    "type": "string"
+                  },
+                  "p10": {
+                    "type": "string"
+                  },
+                  "p11": {
+                    "type": "string"
+                  },
+                  "p12": {
+                    "type": "string"
+                  },
+                  "p13": {
+                    "type": "string"
+                  },
+                  "p14": {
+                    "type": "string"
+                  },
+                  "p15": {
+                    "type": "string"
+                  },
+                  "p16": {
+                    "type": "string"
+                  },
+                  "p17": {
+                    "type": "string"
+                  },
+                  "p18": {
+                    "type": "string"
+                  },
+                  "p19": {
+                    "type": "string"
+                  },
+                  "p20": {
+                    "type": "string"
+                  },
+                  "p21": {
+                    "type": "string"
+                  },
+                  "p22": {
+                    "type": "string"
+                  },
+                  "p23": {
+                    "type": "string"
+                  },
+                  "p24": {
+                    "type": "string"
+                  },
+                  "p25": {
+                    "type": "string"
+                  },
+                  "p26": {
+                    "type": "string"
+                  },
+                  "p27": {
+                    "type": "string"
+                  },
+                  "p28": {
+                    "type": "string"
+                  },
+                  "p29": {
+                    "type": "string"
+                  },
+                  "p30": {
+                    "type": "string"
+                  },
+                  "p31": {
+                    "type": "string"
+                  },
+                  "p32": {
+                    "type": "string"
+                  },
+                  "p33": {
+                    "type": "string"
+                  },
+                  "p34": {
+                    "type": "string"
+                  },
+                  "p35": {
+                    "type": "string"
+                  },
+                  "p36": {
+                    "type": "string"
+                  },
+                  "p37": {
+                    "type": "string"
+                  },
+                  "p38": {
+                    "type": "string"
+                  },
+                  "p39": {
+                    "type": "string"
+                  },
+                  "p40": {
+                    "type": "string"
+                  },
+                  "p41": {
+                    "type": "string"
+                  },
+                  "p42": {
+                    "type": "string"
+                  },
+                  "p43": {
+                    "type": "string"
+                  },
+                  "p44": {
+                    "type": "string"
+                  },
+                  "p45": {
+                    "type": "string"
+                  },
+                  "p46": {
+                    "type": "string"
+                  },
+                  "p47": {
+                    "type": "string"
+                  },
+                  "p48": {
+                    "type": "string"
+                  },
+                  "p49": {
+                    "type": "string"
+                  },
+                  "p50": {
+                    "type": "string"
+                  },
+                  "p51": {
+                    "type": "string"
+                  },
+                  "p52": {
+                    "type": "string"
+                  },
+                  "p53": {
+                    "type": "string"
+                  },
+                  "p54": {
+                    "type": "string"
+                  },
+                  "p55": {
+                    "type": "string"
+                  },
+                  "p56": {
+                    "type": "string"
+                  },
+                  "p57": {
+                    "type": "string"
+                  },
+                  "p58": {
+                    "type": "string"
+                  },
+                  "p59": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "object",
+              "properties": {
+                "r0": {
+                  "$ref": "#/$defs/big"
+                },
+                "r1": {
+                  "$ref": "#/$defs/big"
+                },
+                "r2": {
+                  "$ref": "#/$defs/big"
+                },
+                "r3": {
+                  "$ref": "#/$defs/big"
+                },
+                "r4": {
+                  "$ref": "#/$defs/big"
+                },
+                "r5": {
+                  "$ref": "#/$defs/big"
+                },
+                "r6": {
+                  "$ref": "#/$defs/big"
+                },
+                "r7": {
+                  "$ref": "#/$defs/big"
+                },
+                "r8": {
+                  "$ref": "#/$defs/big"
+                },
+                "r9": {
+                  "$ref": "#/$defs/big"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "collection-unsafe-integer-const",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "const": 9007199254740993
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "unsafe_number",
+            "pointer": "/collections/0/schema/properties/extra/const"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-unsafe-integer-bound",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "integer",
+              "maximum": 1152921504606846976
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "unsafe_number",
+            "pointer": "/collections/0/schema/properties/extra/maximum"
           }
         ]
       }
@@ -3333,7 +4139,7 @@
         "errors": [
           {
             "layer": "lint",
-            "code": "inline_schema_ref",
+            "code": "inline_schema_def_ref",
             "pointer": "/actions/0/input_schema/$defs/r/$ref"
           }
         ]
@@ -3392,7 +4198,7 @@
         "errors": [
           {
             "layer": "lint",
-            "code": "inline_schema_ref_cycle",
+            "code": "inline_schema_def_ref",
             "pointer": "/actions/0/input_schema/$defs/a/$ref"
           }
         ]
@@ -3437,12 +4243,12 @@
         "errors": [
           {
             "layer": "lint",
-            "code": "inline_schema_ref_cycle",
+            "code": "inline_schema_def_ref",
             "pointer": "/actions/0/input_schema/$defs/a/properties/b/$ref"
           },
           {
             "layer": "lint",
-            "code": "inline_schema_ref_cycle",
+            "code": "inline_schema_def_ref",
             "pointer": "/actions/0/input_schema/$defs/b/items/$ref"
           }
         ]
@@ -3469,9 +4275,814 @@
         "valid": false,
         "errors": [
           {
-            "layer": "lint",
-            "code": "inline_schema_number",
+            "layer": "limits",
+            "code": "unsafe_number",
             "pointer": "/actions/0/input_schema/properties/extra/enum/0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-ref-fan-out-chain",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/$defs",
+            "value": {
+              "d0": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d1"
+                  },
+                  {
+                    "$ref": "#/$defs/d1"
+                  }
+                ]
+              },
+              "d1": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d2"
+                  },
+                  {
+                    "$ref": "#/$defs/d2"
+                  }
+                ]
+              },
+              "d2": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d3"
+                  },
+                  {
+                    "$ref": "#/$defs/d3"
+                  }
+                ]
+              },
+              "d3": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d4"
+                  },
+                  {
+                    "$ref": "#/$defs/d4"
+                  }
+                ]
+              },
+              "d4": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d5"
+                  },
+                  {
+                    "$ref": "#/$defs/d5"
+                  }
+                ]
+              },
+              "d5": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d6"
+                  },
+                  {
+                    "$ref": "#/$defs/d6"
+                  }
+                ]
+              },
+              "d6": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d7"
+                  },
+                  {
+                    "$ref": "#/$defs/d7"
+                  }
+                ]
+              },
+              "d7": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d8"
+                  },
+                  {
+                    "$ref": "#/$defs/d8"
+                  }
+                ]
+              },
+              "d8": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d9"
+                  },
+                  {
+                    "$ref": "#/$defs/d9"
+                  }
+                ]
+              },
+              "d9": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d10"
+                  },
+                  {
+                    "$ref": "#/$defs/d10"
+                  }
+                ]
+              },
+              "d10": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d11"
+                  },
+                  {
+                    "$ref": "#/$defs/d11"
+                  }
+                ]
+              },
+              "d11": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d12"
+                  },
+                  {
+                    "$ref": "#/$defs/d12"
+                  }
+                ]
+              },
+              "d12": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d13"
+                  },
+                  {
+                    "$ref": "#/$defs/d13"
+                  }
+                ]
+              },
+              "d13": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d14"
+                  },
+                  {
+                    "$ref": "#/$defs/d14"
+                  }
+                ]
+              },
+              "d14": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d15"
+                  },
+                  {
+                    "$ref": "#/$defs/d15"
+                  }
+                ]
+              },
+              "d15": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d16"
+                  },
+                  {
+                    "$ref": "#/$defs/d16"
+                  }
+                ]
+              },
+              "d16": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d17"
+                  },
+                  {
+                    "$ref": "#/$defs/d17"
+                  }
+                ]
+              },
+              "d17": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d18"
+                  },
+                  {
+                    "$ref": "#/$defs/d18"
+                  }
+                ]
+              },
+              "d18": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d19"
+                  },
+                  {
+                    "$ref": "#/$defs/d19"
+                  }
+                ]
+              },
+              "d19": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/d20"
+                  },
+                  {
+                    "$ref": "#/$defs/d20"
+                  }
+                ]
+              },
+              "d20": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "$ref": "#/$defs/d0"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_def_ref",
+            "pointer": "/actions/0/input_schema/$defs/d0/allOf/0/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-ref-expansion-over-limit",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/$defs",
+            "value": {
+              "big": {
+                "type": "object",
+                "properties": {
+                  "p0": {
+                    "type": "string"
+                  },
+                  "p1": {
+                    "type": "string"
+                  },
+                  "p2": {
+                    "type": "string"
+                  },
+                  "p3": {
+                    "type": "string"
+                  },
+                  "p4": {
+                    "type": "string"
+                  },
+                  "p5": {
+                    "type": "string"
+                  },
+                  "p6": {
+                    "type": "string"
+                  },
+                  "p7": {
+                    "type": "string"
+                  },
+                  "p8": {
+                    "type": "string"
+                  },
+                  "p9": {
+                    "type": "string"
+                  },
+                  "p10": {
+                    "type": "string"
+                  },
+                  "p11": {
+                    "type": "string"
+                  },
+                  "p12": {
+                    "type": "string"
+                  },
+                  "p13": {
+                    "type": "string"
+                  },
+                  "p14": {
+                    "type": "string"
+                  },
+                  "p15": {
+                    "type": "string"
+                  },
+                  "p16": {
+                    "type": "string"
+                  },
+                  "p17": {
+                    "type": "string"
+                  },
+                  "p18": {
+                    "type": "string"
+                  },
+                  "p19": {
+                    "type": "string"
+                  },
+                  "p20": {
+                    "type": "string"
+                  },
+                  "p21": {
+                    "type": "string"
+                  },
+                  "p22": {
+                    "type": "string"
+                  },
+                  "p23": {
+                    "type": "string"
+                  },
+                  "p24": {
+                    "type": "string"
+                  },
+                  "p25": {
+                    "type": "string"
+                  },
+                  "p26": {
+                    "type": "string"
+                  },
+                  "p27": {
+                    "type": "string"
+                  },
+                  "p28": {
+                    "type": "string"
+                  },
+                  "p29": {
+                    "type": "string"
+                  },
+                  "p30": {
+                    "type": "string"
+                  },
+                  "p31": {
+                    "type": "string"
+                  },
+                  "p32": {
+                    "type": "string"
+                  },
+                  "p33": {
+                    "type": "string"
+                  },
+                  "p34": {
+                    "type": "string"
+                  },
+                  "p35": {
+                    "type": "string"
+                  },
+                  "p36": {
+                    "type": "string"
+                  },
+                  "p37": {
+                    "type": "string"
+                  },
+                  "p38": {
+                    "type": "string"
+                  },
+                  "p39": {
+                    "type": "string"
+                  },
+                  "p40": {
+                    "type": "string"
+                  },
+                  "p41": {
+                    "type": "string"
+                  },
+                  "p42": {
+                    "type": "string"
+                  },
+                  "p43": {
+                    "type": "string"
+                  },
+                  "p44": {
+                    "type": "string"
+                  },
+                  "p45": {
+                    "type": "string"
+                  },
+                  "p46": {
+                    "type": "string"
+                  },
+                  "p47": {
+                    "type": "string"
+                  },
+                  "p48": {
+                    "type": "string"
+                  },
+                  "p49": {
+                    "type": "string"
+                  },
+                  "p50": {
+                    "type": "string"
+                  },
+                  "p51": {
+                    "type": "string"
+                  },
+                  "p52": {
+                    "type": "string"
+                  },
+                  "p53": {
+                    "type": "string"
+                  },
+                  "p54": {
+                    "type": "string"
+                  },
+                  "p55": {
+                    "type": "string"
+                  },
+                  "p56": {
+                    "type": "string"
+                  },
+                  "p57": {
+                    "type": "string"
+                  },
+                  "p58": {
+                    "type": "string"
+                  },
+                  "p59": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "type": "object",
+              "properties": {
+                "r0": {
+                  "$ref": "#/$defs/big"
+                },
+                "r1": {
+                  "$ref": "#/$defs/big"
+                },
+                "r2": {
+                  "$ref": "#/$defs/big"
+                },
+                "r3": {
+                  "$ref": "#/$defs/big"
+                },
+                "r4": {
+                  "$ref": "#/$defs/big"
+                },
+                "r5": {
+                  "$ref": "#/$defs/big"
+                },
+                "r6": {
+                  "$ref": "#/$defs/big"
+                },
+                "r7": {
+                  "$ref": "#/$defs/big"
+                },
+                "r8": {
+                  "$ref": "#/$defs/big"
+                },
+                "r9": {
+                  "$ref": "#/$defs/big"
+                },
+                "r10": {
+                  "$ref": "#/$defs/big"
+                },
+                "r11": {
+                  "$ref": "#/$defs/big"
+                },
+                "r12": {
+                  "$ref": "#/$defs/big"
+                },
+                "r13": {
+                  "$ref": "#/$defs/big"
+                },
+                "r14": {
+                  "$ref": "#/$defs/big"
+                },
+                "r15": {
+                  "$ref": "#/$defs/big"
+                },
+                "r16": {
+                  "$ref": "#/$defs/big"
+                },
+                "r17": {
+                  "$ref": "#/$defs/big"
+                },
+                "r18": {
+                  "$ref": "#/$defs/big"
+                },
+                "r19": {
+                  "$ref": "#/$defs/big"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_expansion",
+            "pointer": "/actions/0/input_schema"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-ref-expansion-within-limit",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/$defs",
+            "value": {
+              "big": {
+                "type": "object",
+                "properties": {
+                  "p0": {
+                    "type": "string"
+                  },
+                  "p1": {
+                    "type": "string"
+                  },
+                  "p2": {
+                    "type": "string"
+                  },
+                  "p3": {
+                    "type": "string"
+                  },
+                  "p4": {
+                    "type": "string"
+                  },
+                  "p5": {
+                    "type": "string"
+                  },
+                  "p6": {
+                    "type": "string"
+                  },
+                  "p7": {
+                    "type": "string"
+                  },
+                  "p8": {
+                    "type": "string"
+                  },
+                  "p9": {
+                    "type": "string"
+                  },
+                  "p10": {
+                    "type": "string"
+                  },
+                  "p11": {
+                    "type": "string"
+                  },
+                  "p12": {
+                    "type": "string"
+                  },
+                  "p13": {
+                    "type": "string"
+                  },
+                  "p14": {
+                    "type": "string"
+                  },
+                  "p15": {
+                    "type": "string"
+                  },
+                  "p16": {
+                    "type": "string"
+                  },
+                  "p17": {
+                    "type": "string"
+                  },
+                  "p18": {
+                    "type": "string"
+                  },
+                  "p19": {
+                    "type": "string"
+                  },
+                  "p20": {
+                    "type": "string"
+                  },
+                  "p21": {
+                    "type": "string"
+                  },
+                  "p22": {
+                    "type": "string"
+                  },
+                  "p23": {
+                    "type": "string"
+                  },
+                  "p24": {
+                    "type": "string"
+                  },
+                  "p25": {
+                    "type": "string"
+                  },
+                  "p26": {
+                    "type": "string"
+                  },
+                  "p27": {
+                    "type": "string"
+                  },
+                  "p28": {
+                    "type": "string"
+                  },
+                  "p29": {
+                    "type": "string"
+                  },
+                  "p30": {
+                    "type": "string"
+                  },
+                  "p31": {
+                    "type": "string"
+                  },
+                  "p32": {
+                    "type": "string"
+                  },
+                  "p33": {
+                    "type": "string"
+                  },
+                  "p34": {
+                    "type": "string"
+                  },
+                  "p35": {
+                    "type": "string"
+                  },
+                  "p36": {
+                    "type": "string"
+                  },
+                  "p37": {
+                    "type": "string"
+                  },
+                  "p38": {
+                    "type": "string"
+                  },
+                  "p39": {
+                    "type": "string"
+                  },
+                  "p40": {
+                    "type": "string"
+                  },
+                  "p41": {
+                    "type": "string"
+                  },
+                  "p42": {
+                    "type": "string"
+                  },
+                  "p43": {
+                    "type": "string"
+                  },
+                  "p44": {
+                    "type": "string"
+                  },
+                  "p45": {
+                    "type": "string"
+                  },
+                  "p46": {
+                    "type": "string"
+                  },
+                  "p47": {
+                    "type": "string"
+                  },
+                  "p48": {
+                    "type": "string"
+                  },
+                  "p49": {
+                    "type": "string"
+                  },
+                  "p50": {
+                    "type": "string"
+                  },
+                  "p51": {
+                    "type": "string"
+                  },
+                  "p52": {
+                    "type": "string"
+                  },
+                  "p53": {
+                    "type": "string"
+                  },
+                  "p54": {
+                    "type": "string"
+                  },
+                  "p55": {
+                    "type": "string"
+                  },
+                  "p56": {
+                    "type": "string"
+                  },
+                  "p57": {
+                    "type": "string"
+                  },
+                  "p58": {
+                    "type": "string"
+                  },
+                  "p59": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "type": "object",
+              "properties": {
+                "r0": {
+                  "$ref": "#/$defs/big"
+                },
+                "r1": {
+                  "$ref": "#/$defs/big"
+                },
+                "r2": {
+                  "$ref": "#/$defs/big"
+                },
+                "r3": {
+                  "$ref": "#/$defs/big"
+                },
+                "r4": {
+                  "$ref": "#/$defs/big"
+                },
+                "r5": {
+                  "$ref": "#/$defs/big"
+                },
+                "r6": {
+                  "$ref": "#/$defs/big"
+                },
+                "r7": {
+                  "$ref": "#/$defs/big"
+                },
+                "r8": {
+                  "$ref": "#/$defs/big"
+                },
+                "r9": {
+                  "$ref": "#/$defs/big"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "action-unsafe-integer-const",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "const": 9007199254740993
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "unsafe_number",
+            "pointer": "/actions/0/input_schema/properties/extra/const"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-unsafe-integer-bound",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "type": "integer",
+              "maximum": 1152921504606846976
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "unsafe_number",
+            "pointer": "/actions/0/input_schema/properties/extra/maximum"
           }
         ]
       }
@@ -3580,11 +5191,93 @@
         "valid": false,
         "errors": [
           {
-            "layer": "lint",
-            "code": "inline_schema_number",
+            "layer": "limits",
+            "code": "unsafe_number",
             "pointer": "/collections/0/schema/properties/extra/minimum"
           }
         ]
+      }
+    },
+    {
+      "name": "record-value-unsafe-integer",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "integer"
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/records/0/value/extra",
+            "value": 1152921504606846976
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "unsafe_number",
+            "pointer": "/collections/0/records/0/value/extra"
+          }
+        ]
+      }
+    },
+    {
+      "name": "record-value-float",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {}
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/records/0/value/extra",
+            "value": 0.5
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "unsafe_number",
+            "pointer": "/collections/0/records/0/value/extra"
+          }
+        ]
+      }
+    },
+    {
+      "name": "record-value-largest-safe-integer",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "integer"
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/records/0/value/extra",
+            "value": -9007199254740991
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
       }
     },
     {
@@ -4439,9 +6132,9 @@
         "valid": false,
         "errors": [
           {
-            "layer": "lint",
-            "code": "bundle_record_shape",
-            "pointer": "/collections/1/records/0/value"
+            "layer": "limits",
+            "code": "unsafe_number",
+            "pointer": "/collections/1/records/0/value/items/0/record_rev"
           }
         ]
       }

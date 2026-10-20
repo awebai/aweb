@@ -135,29 +135,24 @@ def _strings(node: object, path: Path) -> Iterator[tuple[str, Path]]:
             stack.extend((child, (*at, index)) for index, child in enumerate(value))
 
 
-def _float_errors(schema: object, path: Path) -> Iterator[PageError]:
-    """Fractional numbers are decimal strings, so no inline schema holds a float."""
-    stack: list[tuple[object, Path]] = [(schema, path)]
-    while stack:
-        node, at = stack.pop()
-        if isinstance(node, float):
-            yield PageError("lint", "inline_schema_number", pointer(at))
-        elif isinstance(node, dict):
-            stack.extend((child, (*at, key)) for key, child in node.items())
-        elif isinstance(node, list):
-            stack.extend((child, (*at, index)) for index, child in enumerate(node))
-
-
 def _inline_schema_errors(schema: object, path: Path) -> Iterator[PageError]:
     root_defs = schema.get("$defs") if isinstance(schema, dict) else None
     defs = root_defs if isinstance(root_defs, dict) else {}
-    refs: dict[str, list[tuple[str, Path]]] = {}
+    # Sub-schemas as written, overall and per $defs entry, and the root's
+    # references into $defs: together they give the size once references are
+    # expanded. A $defs entry holds no $ref, so expansion is one level deep.
+    written = 0
+    def_sizes: dict[str, int] = {}
+    root_refs: list[str] = []
     stack: list[tuple[object, Path, int, str | None]] = [(schema, path, 1, None)]
     max_depth = PAGE_LIMITS["max_inline_schema_depth"]
     while stack:
         node, at, depth, within = stack.pop()
         if not isinstance(node, dict):
             continue
+        written += 1
+        if within is not None:
+            def_sizes[within] = def_sizes.get(within, 0) + 1
         if depth > max_depth:
             yield PageError("lint", "inline_schema_depth", pointer(at))
             continue
@@ -166,12 +161,14 @@ def _inline_schema_errors(schema: object, path: Path) -> Iterator[PageError]:
                 yield PageError("lint", "inline_schema_pattern", pointer((*at, key)))
             elif key not in _ALLOWED_KEYWORDS or (key == "$defs" and depth > 1):
                 yield PageError("lint", "inline_schema_keyword", pointer((*at, key)))
+            elif key == "$ref" and within is not None:
+                yield PageError("lint", "inline_schema_def_ref", pointer((*at, key)))
             elif key == "$ref":
                 match = _LOCAL_REF.fullmatch(value) if isinstance(value, str) else None
                 if match is None or match.group(1) not in defs:
                     yield PageError("lint", "inline_schema_ref", pointer((*at, key)))
-                elif within is not None:
-                    refs.setdefault(within, []).append((match.group(1), (*at, key)))
+                else:
+                    root_refs.append(match.group(1))
             elif key == "type" and (
                 "number" == value or (isinstance(value, list) and "number" in value)
             ):
@@ -193,30 +190,9 @@ def _inline_schema_errors(schema: object, path: Path) -> Iterator[PageError]:
             child = node.get(key)
             if isinstance(child, dict):
                 stack.append((child, (*at, key), depth + 1, within))
-    yield from _float_errors(schema, path)
-    yield from _cycle_errors(refs)
-
-
-def _cycle_errors(refs: Mapping[str, list[tuple[str, Path]]]) -> Iterator[PageError]:
-    """A reference between $defs entries that lies on a cycle is refused."""
-
-    def reaches(start: str, goal: str) -> bool:
-        seen: set[str] = set()
-        stack = [start]
-        while stack:
-            name = stack.pop()
-            if name == goal:
-                return True
-            if name in seen:
-                continue
-            seen.add(name)
-            stack.extend(target for target, _ in refs.get(name, []))
-        return False
-
-    for owner, edges in refs.items():
-        for target, at in edges:
-            if reaches(target, owner):
-                yield PageError("lint", "inline_schema_ref_cycle", pointer(at))
+    expanded = written + sum(def_sizes.get(name, 0) for name in root_refs)
+    if expanded > PAGE_LIMITS["max_inline_schema_expansion"]:
+        yield PageError("lint", "inline_schema_expansion", pointer(path))
 
 
 def _checked_schema_errors(schema: object, path: Path) -> list[PageError]:

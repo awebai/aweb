@@ -14,6 +14,7 @@ PAGE_LIMITS: Mapping[str, int] = MappingProxyType(
         "max_widgets": 2000,
         "max_bundle_items": 64,
         "max_inline_schema_depth": 16,
+        "max_inline_schema_expansion": 1000,
     }
 )
 
