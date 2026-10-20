@@ -129,6 +129,7 @@ class NaappRuntime:
             public_origin=self.settings.public_origin,
             team_cache=self.team_cache(),
             timestamp_skew_seconds=self.settings.timestamp_skew_seconds,
+            did_aw_profile=self.settings.did_aw_profile,
         )
 
     def authorized(
