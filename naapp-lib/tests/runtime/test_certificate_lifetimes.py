@@ -138,3 +138,39 @@ def test_shared_lifetime_vectors_at_relying_app():
         except CertificateValidationError as exc:
             outcome = exc.code
         assert outcome == item['expected'], item['name']
+
+
+async def test_proactive_outage_keeps_valid_certificate_and_bounds_attempts(registry, caplog):
+    import asyncio
+    from awid.certificates import CertificateValidationError
+    now = datetime.now(UTC)
+    member = Member(team_id='ops:example.com', extra_cert_fields={
+        'version':2, 'validity_class':'member',
+        'issued_at':utc_timestamp(now-timedelta(hours=1)),
+        'expires_at':utc_timestamp(now+timedelta(seconds=3)),
+    })
+    old = member.certificate()
+    await registry.add_team(member.team_id,member.team_did_key)
+    await registry.add_certificate(old)
+    sdk = RegistryClient('https://registry.example', transport=registry.transport)
+    def outage(request, response):
+        if '/members/' in request.url.path:
+            response.status_code = 503  # After the real registry handled it.
+    registry.transport.fault = outage
+    async def install(cert):
+        pytest.fail('An outage must not install a certificate')
+    try:
+        async with relying_app(registry,public_origin=ORIGIN) as (http,_):
+            client = TeamCertificateHTTPClient(http,origin=ORIGIN,certificate=old,
+                member_signing_key=bytes(member.member_key),registry=sdk,install=install)
+            assert (await client.request('GET','/v1/items')).status_code == 200
+            assert (await client.request('GET','/v1/items')).status_code == 200
+            assert sum('/members/' in request.url.path for request in registry.transport.calls) == 1
+            assert 'still-valid certificate' in caplog.text
+            expiry = datetime.fromisoformat(old['expires_at'].replace('Z','+00:00'))
+            await asyncio.sleep(max(0,(expiry-datetime.now(UTC)).total_seconds())+.02)
+            with pytest.raises(CertificateValidationError) as error:
+                await client.request('GET','/v1/items')
+            assert error.value.code == 'certificate_expired'
+    finally:
+        await sdk.aclose()

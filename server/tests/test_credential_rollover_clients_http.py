@@ -229,6 +229,7 @@ async def test_controller_lifetimes_cli_sets_shows_and_repairs_stranded_policy(p
     path.parent.mkdir(parents=True)
     _pem(path, 'ED25519 PRIVATE KEY', env.team_sk)
     async with registry_listener(env) as (registry, origin):
+        env.registry_app.state.awid_public_origins = (origin,)
         async def call(action, *extra, expected=0):
             process = await asyncio.create_subprocess_exec(os.environ['AW_TEST_CLI_BINARY'],
                 'id','team','lifetimes',action,'--team',name,'--namespace','example.test',
@@ -258,3 +259,64 @@ async def test_controller_lifetimes_cli_sets_shows_and_repairs_stranded_policy(p
         assert repaired['revision'] == 2 and repaired['team_did_key'] == bob.did
         assert repaired['identity_grant'] == 3600
         assert await env.registry_db.fetch_value('SELECT count(*) FROM {{tables.team_credential_policy_audit}}') == 2
+
+
+@pytest.mark.usefixtures('source_cli_binary')
+@pytest.mark.asyncio
+@pytest.mark.parametrize('runtime', ['aw', 'channel-core'])
+async def test_proactive_registry_outage_keeps_valid_certificate_until_expiry(privacy_app, tmp_path, monkeypatch, runtime):
+    import socket
+    from datetime import datetime, timedelta, timezone
+    env = privacy_app
+    monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED', 'true')
+    actor = env.actors['alice']
+    cert = json.loads(base64.b64decode(actor.certificate))
+    cert.pop('signature')
+    expiry = datetime.now(timezone.utc) + timedelta(seconds=4)
+    cert.update(version=2, validity_class='member', issued_at=(expiry-timedelta(hours=1)).isoformat(), expires_at=expiry.isoformat())
+    cert['signature'] = sign_message(env.team_sk, canonical_json_bytes(cert))
+    home = tmp_path / 'member' / '.aw'
+    home.mkdir(parents=True)
+    _pem(home / 'signing.key', 'ED25519 PRIVATE KEY', actor.sk)
+    (home / 'identity.yaml').write_text(json.dumps(dict(did=actor.did, custody='self', identity_scope='local')))
+    (home / 'certificate.json').write_text(json.dumps(cert))
+    membership = dict(team_id=TEAM, alias='alice', cert_path='certificate.json')
+    (home / 'teams.yaml').write_text(json.dumps(dict(active_team=TEAM, memberships=[membership])))
+    (home / 'workspace.yaml').write_text(json.dumps(dict(aweb_url=str(env.client.base_url), memberships=[dict(membership, workspace_id=str(actor.workspace))])))
+    unavailable = socket.socket()
+    unavailable.bind(('127.0.0.1',0))  # Reserved, but deliberately not listening.
+    dead_origin = 'http://127.0.0.1:' + str(unavailable.getsockname()[1])
+    try:
+        async with registry_listener(env) as (registry, origin):
+            env.registry_app.state.awid_public_origins = (origin,)
+            await _register(env, registry, cert)
+            child = _child_env(tmp_path, dead_origin)
+            if runtime == 'aw':
+                command = (os.environ['AW_TEST_CLI_BINARY'],'--identity-home',str(home),'id','grant','list','--json')
+                result = await _process(*command,cwd=tmp_path,env=child)
+                assert 'still-valid certificate' in result and '"grants":[]' in result.replace(' ','')
+                await asyncio.sleep(max(0,(expiry-datetime.now(timezone.utc)).total_seconds())+.02)
+                process = await asyncio.create_subprocess_exec(*command,cwd=tmp_path,env=child,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
+                stdout,stderr = await asyncio.wait_for(process.communicate(),15)
+                assert process.returncode != 0 and b'certificate_expired' in stdout+stderr
+            else:
+                script = tmp_path / 'outage.mjs'
+                script.write_text("""import assert from 'node:assert/strict';
+const {resolveConfig} = await import(process.env.CORE_CONFIG);
+const {APIClient} = await import(process.env.CORE_CLIENT);
+let fetches=0; const nativeFetch=globalThis.fetch;
+globalThis.fetch=(...args)=>{fetches++;return nativeFetch(...args);};
+const config=await resolveConfig(process.env.MEMBER_WORKDIR);
+assert.deepEqual((await new APIClient(config.baseURL,config).get('/v1/identity-grants')).grants,[]);
+await resolveConfig(process.env.MEMBER_WORKDIR);
+assert.equal(fetches,1,'proactive outage attempted only once per process');
+await new Promise(resolve=>setTimeout(resolve,Math.max(0,Date.parse(process.env.EXPIRY)-Date.now())+20));
+await assert.rejects(resolveConfig(process.env.MEMBER_WORKDIR),/certificate_expired/);
+console.log('kept-valid-until-expiry');
+""")
+                core=Path(__file__).resolve().parents[2]/'channel-core/dist'
+                child.update(CORE_CONFIG=(core/'config.js').as_uri(),CORE_CLIENT=(core/'api/client.js').as_uri(),MEMBER_WORKDIR=str(home.parent),EXPIRY=expiry.isoformat())
+                assert 'kept-valid-until-expiry' in await _process('node',script,cwd=tmp_path,env=child)
+            assert json.loads((home/'certificate.json').read_text()) == cert
+    finally:
+        unavailable.close()
