@@ -55,11 +55,10 @@ It is a draft that Juan has not approved.
 
 Juan's private specs are cited by name and section and never quoted: the secrets
 SOT (with §14 read as amendments), the hooks SOT, the audit-logs SOT, and the
-naapp-specs README for the self-contained naapp model. Juan corrected on
-2026-10-19 that there is no "zero Cloud changes" rule. The working principle is one
-generic architecture, built once in `aweb_naapp`, the OSS server and Cloud. Cloud
-changes are proposed plainly in this design, and the secrets coordinator routes
-them to the hosted-product team (§17).
+naapp-specs README for the self-contained naapp model. The working principle is
+one generic architecture, built once in shared code. Anything this design needs
+from a hosted operator is stated as a generic requirement on a custodial
+deployment (§17).
 
 | Fact at A | Evidence |
 | --- | --- |
@@ -88,7 +87,7 @@ them to the hosted-product team (§17).
   first owner. Every later change that widens authority needs an enrolled owner
   passkey on secrets' own origin (§6.3). Narrowing changes never need a passkey
   (§12).
-- **What a host or transport may do.** Cloud's hosted MCP (L2) signs team-auth
+- **What a host or transport may do.** A hosted operator's MCP endpoint (D1 L2) signs team-auth
   as a custodial member. It can therefore exercise exactly that member's grants
   and nothing more. Listing a tool through L2 grants nothing (§4.5). No host or
   transport can approve, because approval is a passkey assertion made on
@@ -101,7 +100,7 @@ them to the hosted-product team (§17).
   - The runner verifies job assignments against secrets' pinned service key.
   - Hook targets (logs) verify secrets' provenance signature on each event.
 
-Neither a domain string nor a working Cloud credential establishes membership or
+Neither a domain string nor a working hosted-operator credential establishes membership or
 any secrets role. secrets never creates, joins, recovers or reassigns an identity.
 
 ## 2. Positioning
@@ -129,7 +128,7 @@ things together:
 flowchart LR
   subgraph Agent side (untrusted planner)
     A[aw CLI agent] -->|team-auth v2| API
-    M[MCP agent] --> L2[Cloud L2 hosted MCP] -->|team-auth v2 as member| API
+    M[MCP agent] --> L2[Hosted MCP endpoint, D1 L2] -->|team-auth v2 as member| API
   end
   subgraph secrets (naapp/secrets)
     API[Agent API] --> ADM[Admission: verify, grant, policy, approval]
@@ -279,7 +278,7 @@ economic limits.
 
 ### 4.5 L2 exposure grants nothing
 
-Hosted MCP users never run `aw`. They reach secrets only through Cloud L2, which
+Hosted MCP users never run `aw`. They reach secrets only through a hosted operator's MCP endpoint (D1 L2), which
 signs as the member (D1 L2, aweb-abzo). secrets cannot see that a request came
 through L2, because what it verifies is the member's own signature. Exposure through L2 is
 therefore a host listing, not an authorization. secrets applies its grant table to
@@ -294,8 +293,8 @@ holds that key, or which human, if any, initiated the call (A
 `docs/product-authority-sot.md:114`–`:130`). This design proposes a generic,
 optional companion artifact, `aweb.principal-attestation/1`:
 
-- **Issuer.** The custodian that signed the request. Cloud would be the issuer
-  for its custodial members and for L2.
+- **Issuer.** The custodian that signed the request: the custodial deployment,
+  for its custodial members and for its L2 endpoint.
 - **Issuer key.** It is registered as a custodian of that member in AWID, by a
   controller-signed record. A custodian's say-so alone is not enough.
 - **Claims.**
@@ -321,12 +320,13 @@ What this artifact can and cannot prove:
 - An unknown issuer, an expired artifact or a binding mismatch makes a policy
   that requires the attestation refuse.
 
-**Proposed Cloud change.** Cloud issues this attestation for every request it
-signs as a custodial member: L2 hosted MCP calls (`channel: mcp_l2`, with the
-OAuth human handle) and dashboard calls. It registers its issuer key as custodian
-through the AWID record above. The artifact format, the AWID custodian record and
-the verifier are generic AWID, OSS and `aweb_naapp` work. Issuing it is Cloud
-work, which the hosted-product team builds. secrets only consumes it.
+**Requirement on a custodial deployment.** The deployment issues this
+attestation for every request it signs as a custodial member, covering both L2
+MCP calls (`channel: mcp_l2`, with the OAuth human handle) and dashboard calls.
+It registers its issuer key as custodian through the AWID record above. The
+artifact format, the AWID custodian record and the verifier are generic AWID, OSS
+and `aweb_naapp` work. Issuing the artifact is the custodial deployment's work.
+secrets only consumes it.
 
 **Until the artifact ships, any policy with `requires_attestation` refuses every
 request with `attestation_unavailable`.** Owners can configure the field now, and
@@ -424,8 +424,8 @@ A value enters only in one of two ways:
 - directly in the customer's vault (1Password).
 
 No manifest tool carries a value in any context, including `surface`. There is a
-reason ingress is not a surface tool rendered by Cloud: a D1 surface renders on
-the host and calls tools through Cloud as the member, so Cloud would see the
+reason ingress is not a surface tool rendered by a host: a D1 surface renders on
+the host and calls tools through the host as the member, so the host would see the
 plaintext in transit. The manifest surface therefore offers a **link-out** to the
 console (§13.2). Typing, pasting or uploading the value happens browser-to-secrets
 over TLS. This is the design's reading of TASK's `invocation_contexts: surface`
@@ -480,7 +480,7 @@ console.
 
 Because the confirmation is a passkey assertion on secrets' origin, holding the
 owner principal's team-auth key is not enough to widen anything. That includes
-Cloud custody of an owner member.
+a hosted operator's custody of an owner member.
 
 ## 7. The brokered URI path
 
@@ -1181,7 +1181,7 @@ clear) and to revisit it if users ask (Q12).
 Injecting a value into a process the agent chooses is a value read under another
 name (secrets SOT §1). Offering it through an agent-context tool would contradict
 "no get-value, ever". Offering it to MCP agents would put the value into the
-model provider's context and into Cloud in transit. Legacy local tools have two
+model provider's context and into the hosting operator in transit. Legacy local tools have two
 better paths:
 
 - a pinned runner job with `delivery: short_lived` (§9.5);
@@ -1208,7 +1208,7 @@ If Juan wants it anyway (Q8), the minimum shape is:
 | --- | --- | --- | --- |
 | T1 | Requesting agent, including a prompt-injected one | nothing beyond its grants | It may use every grant it holds, within policy. secrets limits *what* it can do, not *why*. |
 | T2 | Model provider (MCP) | nothing | Responses enter its context. Hence projection, redaction and default-deny (§7.6). |
-| T3 | Cloud L2 / custodial host | custody of its custodial members' keys | It can sign as those members and so exercise their grants. It sees their parameters and responses in transit. It cannot read values, approve, widen policy or reach the console. **Consequence: an MCP agent's grants are only as strong as Cloud custody.** Grant MCP-used principals narrowly. Until §4.6 exists, secrets cannot require "not via Cloud". |
+| T3 | Custodial deployment and its L2 endpoint | custody of its custodial members' keys | It can sign as those members and so exercise their grants. It sees their parameters and responses in transit. It cannot read values, approve, widen policy or reach the console. **Consequence: an MCP agent's grants are only as strong as the operator's custody.** Grant MCP-used principals narrowly. Until §4.6 exists, secrets cannot require "not via the custodial host". |
 | T4 | secrets service and its production operators | executing policy; transient plaintext | An operator able to run code as the service, with KMS decrypt or the 1Password token, can read values. Mitigations: KMS policy, KMS and 1Password independent logs, Make-only operations (§15). Not zero-knowledge. |
 | T5 | KMS provider | key custody | as for any KMS user |
 | T6 | 1Password | custody for that backend | the vault's own model |
@@ -1239,7 +1239,7 @@ all under T1–T13.
 - that nothing derived from a credential can ever end up with an agent;
 - that redaction proves confidentiality;
 - that a passkey identifies a natural person;
-- that an MCP agent's use is distinguishable from Cloud acting as that member;
+- that an MCP agent's use is distinguishable from the custodial host acting as that member;
 - that an upstream side effect is exactly-once;
 - that runner jobs are confidential from the runner host;
 - replay protection beyond `request_id` deduplication.
@@ -1363,19 +1363,20 @@ draft; the TASK states they are D1's to own, so those requests go to the D1 lead
 | Hook envelope, catalog, provenance purpose, producer outbox, delivery | hooks seat; B4 for the shared code | §11.5. secrets owns its payload fields and its enqueue points. |
 | Usage reporting `aweb.usage/1` | D1 C5 | secrets reports `uses_admitted`, `dispatches`, `approvals_requested` and `job_runs` under the same rules. |
 | The *proposed* `aweb_naapp` components in §3.1 | secrets coordinator to assign | Mainly the egress guard, auth injectors, response handling, dispatch state machine, idempotency store, KMS sealing and console session. Pages' A2 adapter needs most of them. |
-| Principal attestation (§4.6) | generic AWID/OSS work, with Cloud as issuer | Q5. Policy that requires it refuses until it exists. |
+| Principal attestation (§4.6) | generic AWID/OSS work, with the custodial deployment as issuer | Q5. Policy that requires it refuses until it exists. |
 
-**Cloud changes this design proposes.** The secrets coordinator routes them to
-the hosted-product team:
+**Requirements on a hosted operator or custodial deployment.** These are stated
+generically. Any deployment that hosts custodial members, an L2 endpoint or a
+surface host must meet them:
 
-1. **Principal attestation issuance** (§4.6). This covers L2 and dashboard calls
-   signed under Cloud custody, plus registering the custodian key.
-2. **L2 exposure that follows manifest v2 `invocation_contexts`.** L2 must expose
-   `agent` tools only, and never list `surface`-only tools to MCP clients. It
-   attaches the attestation from item 1. Exposure still grants nothing (§4.5).
-3. **Dashboard rendering of the secrets surface.** This covers the read-only views,
-   containment and `propose-change` forms, and the link-out to the console (§6.1,
-   §13.2), through D1's generic surface host.
+1. **Issue principal attestations** (§4.6) for L2 and dashboard calls signed under
+   its custody, and register its custodian key.
+2. **Make L2 exposure follow manifest v2 `invocation_contexts`.** Expose only
+   `agent` tools, never list `surface`-only tools to MCP clients, and attach the
+   attestation from item 1. Exposure still grants nothing (§4.5).
+3. **Render the secrets surface through D1's generic surface host.** That covers
+   the read-only views, containment and `propose-change` forms, and the link-out
+   to the console (§6.1, §13.2).
 
 No secrets-specific branch in aw-core is needed. Everything else is either
 secrets-local or generic.
@@ -1394,8 +1395,8 @@ These are recommendations; Juan decides. No item below removes scope.
    1Password's own mediation: now, later, or not at all.
 4. **Q4. 1Password read caching.** None at launch, unless rate limits force a
    cache of at most 60 s in memory.
-5. **Q5. Principal attestation.** Adopt the §4.6 contract, with Cloud issuing
-   it for L2 and dashboard calls (§17). Recommendation: make it a launch
+5. **Q5. Principal attestation.** Adopt the §4.6 contract, with the custodial
+   deployment issuing it for L2 and dashboard calls (§17). Recommendation: make it a launch
    requirement, because it is the only way for an owner to treat MCP use
    differently. Until it ships, policy that requires it refuses.
 6. **Q6. Launch auth schemes.** bearer, basic, header, query, OAuth2 client
