@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -33,12 +34,24 @@ class Source:
     def __init__(self, current):
         self.current = current
         self.calls = 0
+        self.state = "active"
+        self.app_id = APP
 
     async def grant_for(self, team_id):
         self.calls += 1
         if isinstance(self.current, Exception):
             raise self.current
         return self.current
+
+    async def status_for(self, team_id):
+        current = await self.grant_for(team_id)
+        if current is None:
+            return None
+        return SimpleNamespace(
+            team_id=current.team_id, app_id=self.app_id, state=self.state,
+            installation_id=current.installation_id, generation=current.generation,
+            granted_scopes=current.scopes, fresh_until=current.fresh_until,
+        )
 
 
 @pytest.fixture
@@ -131,7 +144,7 @@ async def test_dispatch_stops_at_the_source_freshness_bound_before_refresh(db, s
         "SELECT extract(epoch FROM fresh_until - clock_timestamp()) FROM {{tables.installation_fences}}"
     )
     assert 0 < remaining <= 60
-    source.current = None
+    source.state = "uninstalled"
     await db.execute(
         "UPDATE {{tables.installation_fences}} SET fresh_until = clock_timestamp() - interval '1 second'"
     )
@@ -167,7 +180,7 @@ async def test_observed_generation_stops_old_dispatch_and_stale_admission(db, se
 async def test_uninstall_is_observed_without_any_new_admission(db, setup):
     fence, source = setup
     admitted = await admit(db, fence, source.current)
-    source.current = None
+    source.state = "uninstalled"
     await fence.refresh(TEAM)
     with pytest.raises(InstallationRefused) as exc:
         await check(db, fence, admitted)
@@ -179,7 +192,7 @@ async def test_uninstall_is_observed_without_any_new_admission(db, setup):
 async def test_reinstall_cannot_revive_old_identity(db, setup):
     fence, source = setup
     old = await admit(db, fence, source.current)
-    source.current = grant("installation-2")
+    source.current = grant("installation-2", generation=2)
     await fence.refresh(TEAM)
     current = await admit(db, fence, source.current)
     await check(db, fence, current)
@@ -197,7 +210,9 @@ async def test_a_new_generation_can_recover_after_an_old_digest_key_was_denied(d
     # GrantSource's None also means app_key_not_registered: a new manifest's
     # digest-scoped key can replace the old read key without a reinstall.
     source.current = None
-    await fence.refresh(TEAM)
+    with pytest.raises(InstallationRefused) as exc:
+        await fence.refresh(TEAM)
+    assert exc.value.code == "installation_inactive"
     source.current = grant(generation=2)
     await fence.refresh(TEAM)
     current = await admit(db, fence, source.current)
@@ -205,6 +220,41 @@ async def test_a_new_generation_can_recover_after_an_old_digest_key_was_denied(d
     with pytest.raises(InstallationRefused) as exc:
         await check(db, fence, old)
     assert exc.value.code == "generation_superseded"
+
+
+async def test_an_old_replica_key_denial_cannot_permanently_disable_the_current_generation(db, setup):
+    old_fence, old_source = setup
+    await admit(db, old_fence, old_source.current)
+    current_source = Source(grant(generation=2))
+    current_fence = InstallationFence(db, app_id=APP, grants=current_source)
+    current = await admit(db, current_fence, current_source.current)
+    # During an ordinary rolling update the old digest's key is denied after
+    # the new replica already observed generation 2 in the shared database.
+    old_source.current = None
+    for _ in range(3):
+        with pytest.raises(InstallationRefused) as exc:
+            await old_fence.refresh(TEAM)
+        assert exc.value.code == "installation_inactive"
+        # No refresh by the healthy replica is needed to restore shared state.
+        await check(db, current_fence, current)
+    await check(db, current_fence, current)
+
+
+async def test_late_cached_observation_of_an_unseen_old_id_cannot_retire_the_new_id(db, setup):
+    # The old replica fetched before uninstall/reinstall, but its observation
+    # reaches the shared fence after the new installation was first recorded.
+    old_source = Source(grant("unseen-old-installation"))
+    old_fence = InstallationFence(db, app_id=APP, grants=old_source)
+    fence, source = setup
+    source.current = grant("current-installation", generation=2)
+    await fence.refresh(TEAM)
+    admitted = await admit(db, fence, source.current)
+    with pytest.raises(InstallationRefused) as exc:
+        await old_fence.refresh(TEAM)
+    assert exc.value.code == "generation_superseded"
+    # Bounded remote staleness must not permanently tombstone the healthy ID.
+    await fence.refresh(TEAM)
+    await check(db, fence, admitted)
 
 
 async def test_refresh_failure_invalidates_local_authority_and_recovers(db, setup):
@@ -308,3 +358,181 @@ async def test_app_fences_do_not_share_installations(db, setup):
     await check(db, fence, admitted)
     with pytest.raises(InstallationRefused):
         await check(db, other, admitted)
+
+
+@pytest.fixture
+async def hooked(db):
+    # An app-owned authority hook with real transactional effects. The actual
+    # roles.purge_team integration is checked separately once S5 lands.
+    await db.execute("CREATE TABLE fixture_authority (team_id TEXT NOT NULL)")
+    await db.execute("CREATE TABLE fixture_retirements (old_id TEXT)")
+
+    async def on_retire(tx, team_id):
+        old_id = await tx.fetch_value(
+            "SELECT active_installation_id FROM {{tables.installation_fences}} WHERE team_id = $1 AND app_id = $2", team_id, APP,
+        )
+        await tx.execute("INSERT INTO fixture_retirements VALUES ($1)", old_id)
+        await tx.execute("DELETE FROM fixture_authority WHERE team_id = $1", team_id)
+
+    source = Source(grant())
+    fence = InstallationFence(db, app_id=APP, grants=source, on_retire=on_retire)
+    return fence, source, on_retire
+
+
+async def test_confirmed_uninstall_retires_and_invokes_the_hook_once(db, hooked):
+    fence, source, _ = hooked
+    await admit(db, fence, source.current)
+    await db.execute("INSERT INTO fixture_authority VALUES ($1)", TEAM)
+    source.state = "uninstalled"
+    await fence.refresh(TEAM)
+    await fence.refresh(TEAM)
+    assert await db.fetch_value("SELECT count(*) FROM fixture_authority") == 0
+    assert await db.fetch_value("SELECT count(*) FROM fixture_retirements") == 1
+    for generation in (1, 2, 99):
+        source.state = "active"
+        source.current = grant(generation=generation)
+        with pytest.raises(InstallationRefused) as exc:
+            await fence.refresh(TEAM)
+        assert exc.value.code == "installation_inactive"
+
+
+async def test_confirmed_uninstall_purges_authority_even_without_a_local_fence_row(db, hooked):
+    fence, source, _ = hooked
+    await db.execute("INSERT INTO fixture_authority VALUES ($1)", TEAM)
+    source.state = "uninstalled"
+    await fence.refresh(TEAM)
+    assert await db.fetch_value("SELECT count(*) FROM fixture_authority") == 0
+    assert await db.fetch_value("SELECT count(*) FROM fixture_retirements") == 1
+    with pytest.raises(InstallationRefused) as exc:
+        await admit(db, fence, source.current)
+    assert exc.value.code == "installation_inactive"
+
+
+async def test_a_down_app_retires_old_authority_before_admitting_a_reinstall(db, hooked):
+    fence, source, hook = hooked
+    await admit(db, fence, source.current)
+    await db.execute("INSERT INTO fixture_authority VALUES ($1)", TEAM)
+    # A restarted replica never observed the remote uninstall, but shares the
+    # durable prior ID. Retirement and hook effects precede the new admission.
+    restarted = InstallationFence(db, app_id=APP, grants=source, on_retire=hook)
+    new = await admit(db, restarted, grant("installation-2", generation=2))
+    assert new.installation_id == "installation-2"
+    assert await db.fetch_value("SELECT count(*) FROM fixture_authority") == 0
+    assert await db.fetch_value("SELECT old_id FROM fixture_retirements") == "installation-1"
+
+
+async def test_retirement_hook_failure_rolls_back_both_authority_and_new_identity(db, hooked):
+    fence, source, hook = hooked
+    await admit(db, fence, source.current)
+    await db.execute("INSERT INTO fixture_authority VALUES ($1)", TEAM)
+
+    async def failing_hook(tx, team_id):
+        await hook(tx, team_id)
+        raise RuntimeError("authority cleanup failed")
+
+    failing = InstallationFence(db, app_id=APP, grants=source, on_retire=failing_hook)
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        await admit(db, failing, grant("installation-2", generation=2))
+    assert await db.fetch_value("SELECT installation_id FROM {{tables.installation_fences}}") == "installation-1"
+    assert await db.fetch_value("SELECT count(*) FROM fixture_authority") == 1
+    assert await db.fetch_value("SELECT count(*) FROM fixture_retirements") == 0
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.retired_installation_fences}}") == 0
+
+
+@pytest.mark.parametrize("state", ["pending_origin_verification", "unknown_future_state"])
+async def test_nonterminal_inactive_state_keeps_authority_and_recovers_same_generation(db, hooked, state):
+    fence, source, _ = hooked
+    admitted = await admit(db, fence, source.current)
+    await db.execute("INSERT INTO fixture_authority VALUES ($1)", TEAM)
+    source.state = state
+    await fence.refresh(TEAM)
+    with pytest.raises(InstallationRefused) as exc:
+        await check(db, fence, admitted)
+    assert exc.value.code == "installation_inactive"
+    assert await db.fetch_value("SELECT count(*) FROM fixture_authority") == 1
+    assert await db.fetch_value("SELECT count(*) FROM fixture_retirements") == 0
+    source.state = "active"
+    await fence.refresh(TEAM)
+    await check(db, fence, admitted)
+
+
+async def test_denied_replica_key_never_runs_the_retirement_hook_or_accepts_lower_generation(db, hooked):
+    fence, source, _ = hooked
+    await admit(db, fence, grant(generation=2))
+    await db.execute("INSERT INTO fixture_authority VALUES ($1)", TEAM)
+    source.current = None
+    with pytest.raises(InstallationRefused) as exc:
+        await fence.refresh(TEAM)
+    assert exc.value.code == "installation_inactive"
+    assert await db.fetch_value("SELECT count(*) FROM fixture_authority") == 1
+    assert await db.fetch_value("SELECT count(*) FROM fixture_retirements") == 0
+    source.current = grant(generation=1)
+    with pytest.raises(InstallationRefused) as exc:
+        await fence.refresh(TEAM)
+    assert exc.value.code == "generation_superseded"
+
+
+async def test_delayed_uninstall_of_a_retired_id_cannot_purge_the_new_installations_authority(db, hooked):
+    fence, source, _ = hooked
+    await admit(db, fence, source.current)
+    new = await admit(db, fence, grant("installation-2", generation=2))
+    await db.execute("INSERT INTO fixture_authority VALUES ($1)", TEAM)
+    source.state = "uninstalled"  # A delayed observation of installation-1.
+    with pytest.raises(InstallationRefused) as exc:
+        await fence.refresh(TEAM)
+    assert exc.value.code == "generation_superseded"
+    assert await db.fetch_value("SELECT count(*) FROM fixture_authority") == 1
+    assert await db.fetch_value("SELECT count(*) FROM fixture_retirements") == 1
+    await check(db, fence, new)
+
+
+@pytest.mark.parametrize("state", ["pending_origin_verification", "unknown_future_state"])
+async def test_higher_generation_pending_replacement_keeps_old_authority_until_active(db, hooked, state):
+    fence, source, _ = hooked
+    await admit(db, fence, source.current)
+    await db.execute("INSERT INTO fixture_authority VALUES ($1)", TEAM)
+    source.current = grant("installation-2", generation=2)
+    source.state = state
+    await fence.refresh(TEAM)
+    assert await db.fetch_value("SELECT count(*) FROM fixture_authority") == 1
+    assert await db.fetch_value("SELECT count(*) FROM fixture_retirements") == 0
+    with pytest.raises(InstallationRefused) as exc:
+        await admit(db, fence, grant())
+    assert exc.value.code == "generation_superseded"
+    source.state = "active"
+    await fence.refresh(TEAM)
+    assert await db.fetch_value("SELECT count(*) FROM fixture_authority") == 0
+    assert await db.fetch_value("SELECT old_id FROM fixture_retirements") == "installation-1"
+    await check(db, fence, await admit(db, fence, source.current))
+
+
+async def test_equal_generation_with_a_different_id_is_an_authority_error_without_writes(db, hooked):
+    fence, source, _ = hooked
+    admitted = await admit(db, fence, source.current)
+    before = dict(await db.fetch_one("SELECT * FROM {{tables.installation_fences}}"))
+    source.current = grant("inconsistent-id", generation=1)
+    for state in ("active", "pending_origin_verification", "uninstalled"):
+        source.state = state
+        with pytest.raises(InstallationRefused) as exc:
+            await fence.refresh(TEAM)
+        assert (exc.value.code, exc.value.status) == ("authority_unavailable", 503)
+        assert dict(await db.fetch_one("SELECT * FROM {{tables.installation_fences}}")) == before
+        assert await db.fetch_value("SELECT count(*) FROM fixture_retirements") == 0
+        await check(db, fence, admitted)
+
+
+@pytest.mark.parametrize("state", ["active", "pending_origin_verification", "unknown_future_state", "uninstalled"])
+async def test_lower_generation_observation_has_no_shared_effects(db, hooked, state):
+    fence, source, _ = hooked
+    admitted = await admit(db, fence, grant("current-installation", generation=2))
+    await db.execute("INSERT INTO fixture_authority VALUES ($1)", TEAM)
+    before = dict(await db.fetch_one("SELECT * FROM {{tables.installation_fences}}"))
+    source.current = grant("unseen-old-installation", generation=1)
+    source.state = state
+    with pytest.raises(InstallationRefused) as exc:
+        await fence.refresh(TEAM)
+    assert (exc.value.code, exc.value.status) == ("generation_superseded", 409)
+    assert dict(await db.fetch_one("SELECT * FROM {{tables.installation_fences}}")) == before
+    assert await db.fetch_value("SELECT count(*) FROM fixture_authority") == 1
+    assert await db.fetch_value("SELECT count(*) FROM fixture_retirements") == 0
+    await check(db, fence, admitted)

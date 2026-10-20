@@ -10,9 +10,10 @@ There is no cross-server lease and no rollback of already committed work.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
@@ -22,6 +23,38 @@ from aweb_naapp.runtime.authorization import Grant, GrantSource, GrantUnavailabl
 MIGRATIONS_PATH = Path(__file__).parent / "installation_migrations"
 MIGRATIONS_MODULE = "aweb_naapp_installation"
 MAX_FRESHNESS_SECONDS = 60.0
+
+
+class InstallationStatus(Protocol):
+    """Structural view of G1's GrantStatus; the source owns its concrete type."""
+
+    @property
+    def team_id(self) -> str: ...
+    @property
+    def app_id(self) -> str: ...
+    @property
+    def state(self) -> str: ...
+    @property
+    def installation_id(self) -> str | None: ...
+    @property
+    def generation(self) -> int | None: ...
+    @property
+    def fresh_until(self) -> float: ...
+    @property
+    def granted_scopes(self) -> frozenset[str]: ...
+
+
+class InstallationGrantSource(GrantSource, Protocol):
+    async def status_for(self, team_id: str) -> InstallationStatus | None:
+        """Fresh typed status; None denies this caller's key, never an uninstall.
+
+        Shares grant_for's cache and timeout, and raises GrantUnavailable on an
+        outage. Only state == 'uninstalled' confirms terminal retirement.
+        """
+        ...
+
+
+RetirementHook = Callable[[TransactionManager, str], Awaitable[object]]
 
 
 class InstallationRefused(Exception):
@@ -86,7 +119,8 @@ class InstallationFence:
         db: AsyncDatabaseManager,
         *,
         app_id: str,
-        grants: GrantSource,
+        grants: InstallationGrantSource,
+        on_retire: RetirementHook | None = None,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         if not app_id:
@@ -94,6 +128,7 @@ class InstallationFence:
         self.db = db
         self.app_id = app_id
         self.grants = grants
+        self.on_retire = on_retire
         self.monotonic = monotonic
 
     def for_installation(self, admitted: AdmittedInstallation) -> InstallationDispatchFence:
@@ -139,19 +174,31 @@ class InstallationFence:
             self.app_id, team_id,
         )
         return await tx.fetch_one(
-            """SELECT installation_id, generation, state, clock_timestamp() AS observed_at
+            """SELECT installation_id, generation, active_installation_id, state,
+                      clock_timestamp() AS observed_at
                FROM {{tables.installation_fences}}
                WHERE app_id = $1 AND team_id = $2 FOR UPDATE""",
             self.app_id, team_id,
         )
 
+    def _order(self, row, grant: Grant) -> None:
+        # Generation orders ALL IDs for this (app, team), including an ID that
+        # this app never saw before. Freshness cannot order cached observations.
+        if row["generation"] is not None:
+            if row["generation"] > grant.generation:
+                raise InstallationRefused("generation_superseded", 409, "A newer generation was observed")
+            if row["generation"] == grant.generation and row["installation_id"] != grant.installation_id:
+                raise _unavailable("The authority assigned one generation to different installations")
+
     async def _retire(self, tx: TransactionManager, team_id: str, installation_id: str | None) -> None:
         if installation_id is not None:
-            await tx.execute(
+            retired = await tx.fetch_value(
                 """INSERT INTO {{tables.retired_installation_fences}} (app_id, team_id, installation_id)
-                   VALUES ($1, $2, $3) ON CONFLICT DO NOTHING""",
+                   VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING installation_id""",
                 self.app_id, team_id, installation_id,
             )
+            if retired is not None and self.on_retire is not None:
+                await self.on_retire(tx, team_id)
 
     async def admit(self, tx: TransactionManager, grant: Grant) -> AdmittedInstallation:
         """Bind admission to B1's fresh grant in the caller's transaction.
@@ -162,28 +209,23 @@ class InstallationFence:
         """
         self._remaining(grant)
         row = await self._slot(tx, grant.team_id)
+        self._order(row, grant)
         retired = await tx.fetch_value(
             """SELECT EXISTS (SELECT 1 FROM {{tables.retired_installation_fences}}
                WHERE app_id = $1 AND team_id = $2 AND installation_id = $3)""",
             self.app_id, grant.team_id, grant.installation_id,
         )
-        if retired or (
-            row["installation_id"] == grant.installation_id
-            and row["state"] == "inactive"
-            and grant.generation <= row["generation"]
-        ):
+        if retired:
             raise InstallationRefused("installation_inactive", 403, "The installation is inactive")
-        if row["installation_id"] == grant.installation_id:
-            if row["generation"] > grant.generation:
-                raise InstallationRefused("generation_superseded", 409, "A newer generation was observed")
-        else:
-            await self._retire(tx, grant.team_id, row["installation_id"])
+        if row["active_installation_id"] != grant.installation_id:
+            await self._retire(tx, grant.team_id, row["active_installation_id"])
         # Re-evaluate after waiting for the row lock: lock waits never extend
         # the source's freshness. The DB deadline survives process restarts.
         remaining = self._remaining(grant)
         await tx.execute(
             """UPDATE {{tables.installation_fences}}
                SET installation_id = $3, generation = $4, state = 'active',
+                   active_installation_id = $3,
                    fresh_until = $5::timestamptz + $6 * interval '1 second'
                WHERE app_id = $1 AND team_id = $2""",
             self.app_id, grant.team_id, grant.installation_id, grant.generation,
@@ -202,33 +244,51 @@ class InstallationFence:
     async def refresh(self, team_id: str) -> None:
         """Observe authority BEFORE the dispatch transaction/intent row lock.
 
-        Uses ordinary ``grant_for`` cache semantics, never a forced refresh.
+        Uses ordinary ``status_for`` cache semantics, never a forced refresh.
         An outage invalidates local freshness and raises; callers must stop.
-        A definitive negative disables the observed generation. ``None`` also
-        covers a key denial, so a fresh higher generation may recover the same
-        ID after a key update. Only an observed replacement ID retires an ID.
+        None is a caller-specific key denial: refuse it without shared writes.
+        Pending/unknown states disable shared use but may recover at the same
+        generation. Only confirmed uninstall or replacement retires an ID and
+        invokes on_retire inside the observation transaction.
         """
         try:
-            grant = await self.grants.grant_for(team_id)
-            if grant is not None:
-                if grant.team_id != team_id:
+            status = await self.grants.status_for(team_id)
+            if status is not None:
+                if status.team_id != team_id or status.app_id != self.app_id:
                     raise _unavailable("The authority returned another team's installation")
+                grant = Grant(
+                    team_id=status.team_id, scopes=status.granted_scopes,
+                    installation_id=status.installation_id, generation=status.generation,
+                    fresh_until=status.fresh_until,
+                )
                 self._remaining(grant)
         except (GrantUnavailable, InstallationRefused) as exc:
             await self._invalidate(team_id)
             if isinstance(exc, InstallationRefused):
                 raise
             raise _unavailable("The installation authority cannot be reached") from exc
+        if status is None:
+            # A stale replica's denied key says nothing about the healthy
+            # replica's installed generation in the shared database.
+            raise InstallationRefused("installation_inactive", 403, "This caller's app key is not registered")
         async with self.db.transaction() as tx:
-            if grant is not None:
+            if status.state == "active":
                 await self.admit(tx, grant)
             else:
-                await self._slot(tx, team_id)
+                row = await self._slot(tx, team_id)
+                self._remaining(grant)
+                self._order(row, grant)
+                if status.state == "uninstalled":
+                    await self._retire(tx, team_id, row["active_installation_id"])
+                    await self._retire(tx, team_id, status.installation_id)
                 await tx.execute(
                     """UPDATE {{tables.installation_fences}}
-                       SET state = 'inactive', fresh_until = NULL
+                       SET installation_id = $3, generation = $4,
+                           state = 'inactive', fresh_until = NULL,
+                           active_installation_id = CASE WHEN $5 THEN NULL ELSE active_installation_id END
                        WHERE app_id = $1 AND team_id = $2""",
-                    self.app_id, team_id,
+                    self.app_id, team_id, status.installation_id, status.generation,
+                    status.state == "uninstalled",
                 )
 
     async def check(self, tx: TransactionManager, admitted: AdmittedInstallation) -> None:
