@@ -21,6 +21,7 @@ GRANT_TERMINAL_DETAILS = {
     "grant_revoked": "identity grant revoked",
     "grant_subject_inactive": "identity grant subject inactive",
     "grant_issuer_revoked": "identity grant issuer revoked",
+    "grant_lifetime_exceeded": "identity grant exceeds current lifetime policy",
 }
 
 
@@ -47,7 +48,8 @@ async def require_valid_stream_grant(request: Request, db, identity: TeamIdentit
     """Check before constructing StreamingResponse, while HTTP errors are legal."""
     reason = await grant_terminal_reason(request, db, identity)
     if reason:
-        raise HTTPException(status_code=403, detail=GRANT_TERMINAL_DETAILS[reason])
+        status = 401 if reason in ("grant_expired", "grant_lifetime_exceeded") else 403
+        raise HTTPException(status_code=status, detail={"code": reason, "message": GRANT_TERMINAL_DETAILS[reason]})
 
 
 async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) -> str | None:
@@ -55,9 +57,6 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
     if grant is None:
         return None
     now = datetime.now(timezone.utc)
-    if not grant.never_expires and _as_utc(grant.expires_at) <= now:
-        return "grant_expired"
-
     aweb_db = _aweb_db(db)
     row = await aweb_db.fetch_one(
         """
@@ -74,8 +73,6 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
         return "grant_revoked"
     if row["revoked_at"] is not None:
         return "grant_revoked"
-    if not never_expires(row.get("issued_at"), row["expires_at"]) and _as_utc(row["expires_at"]) <= now:
-        return "grant_expired"
     if str(row["agent_id"]) != str(identity.agent_id) or row["status"] != "active" or row["deleted_at"] is not None:
         return "grant_subject_inactive"
 
@@ -94,12 +91,16 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
                 return "grant_issuer_revoked"
     from aweb.credential_policy import team_credential_policy
     parent_expiry = row.get('issued_by_certificate_expires_at')
-    if parent_expiry is not None and parent_expiry <= now:
+    if (parent_expiry is not None and parent_expiry <= now) or (
+        not never_expires(row.get("issued_at"), row["expires_at"]) and _as_utc(row["expires_at"]) <= now
+    ):
         return 'grant_expired'
     policy = await team_credential_policy(request, row['team_id'])
     maximum = policy['identity_grant'] if policy else None
     if maximum is not None and (never_expires(row.get('issued_at'), row['expires_at']) or (row['expires_at'] - row['issued_at']).total_seconds() > maximum):
-        return 'grant_expired'
+        return 'grant_lifetime_exceeded'
+    if parent_expiry is not None and row['expires_at'] > parent_expiry:
+        return 'grant_lifetime_exceeded'
     return None
 
 
@@ -156,7 +157,11 @@ def status_event_allowed(identity: TeamIdentity, event: dict[str, Any]) -> bool:
 
 
 class NeverGrantStreamGuard:
-    """Retain finite-stream behavior; never grants revalidate at most every 30s."""
+    """Recheck every grant, including finite grants, against current authority.
+
+    The historical class name remains for existing consumers. A finite grant
+    can also be invalidated by a shorter team policy while its stream is open.
+    """
     def __init__(self, request, db, identity, expiry_reason=grant_expiry_reason):
         self.request, self.db, self.identity = request, db, identity
         self.expiry_reason = expiry_reason
@@ -164,8 +169,10 @@ class NeverGrantStreamGuard:
 
     async def reason(self):
         grant = self.identity.grant
-        if grant is None or not grant.never_expires:
+        if grant is None:
             return self.expiry_reason(self.identity)
+        if reason := self.expiry_reason(self.identity):
+            return reason
         now = time.monotonic()
         if now - self.checked_at < GRANT_STREAM_RECHECK_SECONDS:
             return None
@@ -173,5 +180,5 @@ class NeverGrantStreamGuard:
         try:
             return await grant_terminal_reason(self.request, self.db, self.identity)
         except Exception:
-            logging.getLogger(__name__).warning("Never-grant stream revalidation failed", exc_info=True)
+            logging.getLogger(__name__).warning("Grant stream revalidation failed", exc_info=True)
             return "verification_unavailable"

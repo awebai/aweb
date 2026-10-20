@@ -288,7 +288,7 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     # revoked certificate keeps its revocation verdict. See
     # aweb.config.require_registered_certificates for the activation
     # contract; when OFF this adds zero registry reads.
-    if require_registered_certificates():
+    if require_registered_certificates() and certificate_status is None:
         registered_certs = await _get_registered_certificates(request, cert_team_id)
         presented_certificate_id = (cert_info.get("certificate_id") or "").strip()
         if presented_certificate_id not in registered_certs:

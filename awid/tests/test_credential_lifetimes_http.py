@@ -158,3 +158,60 @@ async def test_rollover_refuses_foreign_controller_and_changed_membership(contro
     different = certificate_body(env)
     assert (await rollover(env, old['certificate_id'], different)).status_code == 409
     assert await env.db.fetch_value('SELECT count(*) FROM {{tables.team_certificates}} WHERE revoked_at IS NULL') == 1
+
+
+@pytest.mark.asyncio
+async def test_policy_is_part_of_atomic_team_key_rotation(controller_app):
+    env = controller_app
+    record = policy_body(env, identity_grant=3600)
+    assert (await set_policy(env, record)).status_code == 200
+    next_key = keypair()
+    path = '/v1/namespaces/local/teams/base/rotate'
+    claims = dict(operation='rotate_team_key', domain='local', name='base', new_team_did_key=next_key[1])
+    # Omitting any stored signed record refuses the whole rotation.
+    refused = await send(env, 'POST', path, claims, dict(new_team_did_key=next_key[1], resigned_records={}), signer=env.team)
+    assert refused.status_code == 409, refused.text
+    assert refused.json()['detail']['missing']['team_credential_policy'] is True
+    assert await env.db.fetch_value("SELECT team_did_key FROM {{tables.teams}} WHERE name='base'") == env.team[1]
+    fresh = dict(record['record'], team_did_key=next_key[1],
+        issued_at=(datetime.now(timezone.utc) + timedelta(seconds=1)).strftime('%Y-%m-%dT%H:%M:%SZ'))
+    signature = sign_message(next_key[0], policy_signing_bytes(fresh))
+    changed = dict(fresh, identity_grant=1)
+    refused = await send(env, 'POST', path, claims, dict(new_team_did_key=next_key[1], resigned_records={
+        'team_credential_policy': dict(record=changed, signature=sign_message(next_key[0], policy_signing_bytes(changed))),
+    }), signer=env.team)
+    assert refused.status_code == 409, refused.text
+    accepted = await send(env, 'POST', path, claims, dict(new_team_did_key=next_key[1], resigned_records={
+        'team_credential_policy': dict(record=fresh, signature=signature),
+    }), signer=env.team)
+    assert accepted.status_code == 200, accepted.text
+    client = RegistryClient(ORIGIN, transport=httpx.ASGITransport(app=env.app))
+    try:
+        assert await client.get_team_credential_policy('local', 'base') == fresh
+    finally:
+        await client.aclose()
+    assert await env.db.fetch_value('SELECT count(*) FROM {{tables.team_credential_policy_audit}}') == 1
+
+
+@pytest.mark.asyncio
+async def test_policy_cache_refuses_stale_wrong_key_or_unavailable_record(controller_app):
+    env = controller_app
+    body = policy_body(env, identity_grant=3600)
+    assert (await set_policy(env, body)).status_code == 200
+    client = RegistryClient(ORIGIN, transport=httpx.ASGITransport(app=env.app))
+    try:
+        assert await client.get_team_credential_policy('local', 'base') == body['record']
+        # A genuine authority failure cannot become an absent-policy fallback.
+        await env.db.execute('UPDATE {{tables.team_credential_policies}} SET signature=$1', 'bad-signature')
+        assert await client.get_team_credential_policy('local', 'base') == body['record']
+        client._credential_policy_cache.clear()  # End this client's bounded reuse.
+        with pytest.raises(Exception, match='signature'):
+            await client.get_team_credential_policy('local', 'base')
+        assert not client._credential_policy_cache
+        await env.db.execute('UPDATE {{tables.team_credential_policies}} SET signature=$1', body['signature'])
+        await env.db.execute('UPDATE {{tables.teams}} SET team_did_key=$1', keypair()[1])
+        with pytest.raises(Exception):
+            await client.get_team_credential_policy('local', 'base')
+        assert not client._credential_policy_cache
+    finally:
+        await client.aclose()

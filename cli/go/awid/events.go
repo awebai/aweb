@@ -394,7 +394,7 @@ func (e *AgentEventStreamClosedError) Retryable() bool {
 
 func isGrantTerminalAgentEvent(eventName string) bool {
 	switch strings.TrimSpace(eventName) {
-	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "verification_unavailable":
+	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "grant_lifetime_exceeded", "verification_unavailable":
 		return true
 	default:
 		return false

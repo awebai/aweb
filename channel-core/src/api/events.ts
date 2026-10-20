@@ -274,7 +274,7 @@ const KNOWN_TYPES: Set<string> = new Set([
 class GrantStreamError extends Error {}
 
 const GRANT_TERMINAL_TYPES = new Set([
-  "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked",
+  "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "grant_lifetime_exceeded",
   "verification_unavailable",
 ]);
 

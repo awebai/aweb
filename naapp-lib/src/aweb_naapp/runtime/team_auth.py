@@ -159,6 +159,8 @@ class AWIDTeamCache:
         now = time.monotonic()
         cached = self._cache.get(team_id)
         if cached and cached.expires_at > now:
+            if certificate_id in cached.revoked_certificate_ids:
+                return await self._get_certificate_status(team_id, certificate_id)
             return cached
 
         domain, team_name = parse_team_id(team_id)
@@ -237,6 +239,8 @@ class AWIDTeamCache:
             expires_at=now + self.ttl_seconds,
         )
         self._cache[team_id] = facts
+        if certificate_id in facts.revoked_certificate_ids:
+            return await self._get_certificate_status(team_id, certificate_id)
         return facts
 
     async def _get_certificate_status(
@@ -269,6 +273,12 @@ class AWIDTeamCache:
                 raise ValueError("Malformed AWID certificate status")
             public_key_from_did(payload["team_did_key"])
             revoked_at = payload["revoked_at"]
+            replacement_id = payload.get('replaced_by_certificate_id')
+            if replacement_id is not None and (
+                not isinstance(replacement_id, str) or not replacement_id.strip()
+                or replacement_id == certificate_id or payload['status'] != 'revoked'
+            ):
+                raise ValueError("Malformed AWID certificate replacement link")
             if payload["status"] == "active":
                 if revoked_at is not None:
                     raise ValueError("Active certificate has revocation timestamp")

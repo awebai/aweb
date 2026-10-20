@@ -110,7 +110,7 @@ func streamToChannel(ctx context.Context, stream *awid.SSEStream) (<-chan sseRes
 // parseSSEEvent converts an SSE event to a chat Event.
 func isGrantTerminalEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
-	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "verification_unavailable":
+	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "grant_lifetime_exceeded", "verification_unavailable":
 		return true
 	default:
 		return false
