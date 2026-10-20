@@ -277,13 +277,14 @@ func assertLockPrincipalRequest(t *testing.T, r *http.Request, body []byte, kind
 		t.Errorf("wrong principal signature: %v", parts)
 		return
 	}
-	payload, err := awid.CanonicalJSONValue(map[string]string{"body_sha256": hex.EncodeToString(hash[:]), "team_id": teamID, "timestamp": r.Header.Get("X-AWEB-Timestamp")})
-	if err != nil {
-		t.Error(err)
-		return
+	payload := requestSigningPayloadForTest(t, r, body)
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil || claims["team_id"] != teamID {
+		t.Errorf("wrong team claims: %s", payload)
 	}
+
 	sig, err := base64.RawStdEncoding.DecodeString(parts[2])
-	if err != nil || !ed25519.Verify(pub, []byte(payload), sig) {
+	if err != nil || !ed25519.Verify(pub, payload, sig) {
 		t.Error("invalid selected-principal signature")
 	}
 }

@@ -533,10 +533,12 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		return nil, err
 	}
 	fetchedDigest := digest
+	fetchedBytes := manifestBytes
 	var manifest appmanifest.Manifest
 	if err := appmanifest.DecodeSingleJSONStrict(manifestBytes, &manifest); err != nil {
 		return nil, fmt.Errorf("decode manifest: %w", err)
 	}
+	declaredOrigin := manifest.App.Origin
 	reserved := reservedRootCommandNames()
 	if err := appmanifest.Validate(manifest, reserved); err != nil {
 		return nil, err
@@ -634,7 +636,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		}
 	}
 	if policy.registerEvents && policy.residentHome != "" && (len(manifest.Events) > 0 || (update && previous != nil && previous.RegisteredDigest != "")) {
-		if err := registerManifestEvents(manifest, fetchedDigest, previous, &provenance, update); err != nil {
+		if err := registerManifestEvents(manifest, fetchedDigest, registrationManifestBytesFor(fetchedBytes, manifest.ManifestVersion, declaredOrigin, manifest.App.Origin), previous, &provenance, update); err != nil {
 			return nil, err
 		}
 	}

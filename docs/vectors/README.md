@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 25
+`docs/vectors/*.json` is the only public protocol-vector authority for the 28
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -69,6 +69,15 @@ and AWID status (missing prefix, non-current key, team mismatch, far-future
 `issued_at`, not newer than the stored record, plain http outside loopback).
 Seeds are public test material. The AWID real-route tests consume these
 bytes. See [the team contract](../awid-sot.md#teams).
+
+### `principal-attestation-v1.json`
+
+Signed bytes and signatures of the team-key-signed `aweb.team-custodian/1`,
+`aweb.member-custody/1` and `aweb.member-person/1` records, record refusals, the
+`aweb.principal-attestation/1` header, and the verification cases of
+[principal attestation](../principal-attestation.md) §4 with their refusal
+codes. Keys are fixed seeds, so every signature can be recomputed. The AWID
+codec and the `aweb_naapp` verifier consume these bytes.
 
 ### `message-signing-v1.json`
 
@@ -188,6 +197,20 @@ transfer. These bytes authorize no storage, ingress, migration, or activation
 behavior by themselves.
 
 ## Agreed fixtures ahead of implementation
+
+### `page-format-v1.json`
+
+The frozen `aweb.page/1` page format (aweb-acgg.7): the host limits, named base
+pages, and positive and negative cases, each given as a base page plus a small
+patch, raw bytes, or a generated tree. Every case expects a verdict and, when
+invalid, at least the listed errors, each a layer (`limits`, `schema`, `lint`),
+a stable code and a JSON pointer. Limits run before the schema and the schema
+before lint, so a case reports only its first failing layer. Hostile-corpus
+cases that are structurally valid carry a `render` expectation for the shared
+renderer, which this file names but does not test. `bundle_hash` pins the
+bundle decision-card digest across languages. The reference consumer is
+`aweb_naapp.pages` in `naapp-lib/tests/pages/`. See
+[the page format](../page-format.md).
 
 ### `agent-status-v1.json`
 

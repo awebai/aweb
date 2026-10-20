@@ -58,6 +58,7 @@ func TestExternalIdentityHomeTaskAndWorkCommandsUseSelectedPrincipal(t *testing.
 			requestMu.Lock()
 			signedRequests = append(signedRequests, messagingSignedRequest{
 				authorization: r.Header.Get("Authorization"),
+				payload:       requestSigningPayloadForTest(t, r, body),
 				timestamp:     r.Header.Get("X-AWEB-Timestamp"),
 				method:        r.Method,
 				path:          r.URL.Path,

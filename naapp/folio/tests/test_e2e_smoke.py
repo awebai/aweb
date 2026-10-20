@@ -356,9 +356,7 @@ def folio_origin(folio: RunningFolio) -> str:
 def aw_workspace_env(*, home: Path) -> dict[str, str]:
     """Environment for a disposable aw workspace, free of the caller's own aw identity
     and config selection."""
-    env = os.environ.copy()
-    env.pop("AWEB_IDENTITY_HOME", None)
-    env.pop("AW_HOME", None)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AW_"))}
     env.update(
         {
             "HOME": str(home),
