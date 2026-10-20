@@ -74,7 +74,7 @@ The verifier must not trust request headers such as `Host` or
 `X-Forwarded-Host` for `aud`. Public origins are configuration, not caller
 input.
 
-## Compatibility: compact v1
+## Compatibility: deprecated compact v1
 
 Version 2 above is the current protocol for new clients. When
 `X-AWEB-Signed-Payload` is absent, current aweb verifiers retain a bounded
@@ -121,17 +121,95 @@ through their own instrumentation; the OSS app installs no public metrics endpoi
 The metric provides evidence for a later separately approved v1 cutoff, and
 never changes request acceptance.
 
-## Replay
+## Nonce extension and replay protection
 
-Version 2 is request-bound but not replay-proof. A byte-identical request can
-be replayed inside the accepted timestamp skew window if an attacker can capture
-the signed request. Product copy and protocol docs must not claim replay
-protection.
+This additive extension is staged: verifiers must implement the rules below
+before clients emit nonces. A deployed verifier without this extension provides
+request binding, not replay protection. The nonce-free aw 1.36.45 release does
+not depend on this extension.
 
-A future nonce-bearing protocol revision must define nonce scope and lifetime,
-use a shared deduplication store, and specify fail-closed behavior when that
-store is unavailable. Until clients and relying services implement that complete
-contract, the timestamp window above is the replay limit.
+A v2 payload may include `nonce`, encoded as exactly 16 random bytes in canonical
+unpadded base64url (22 characters). A present value must be a string, decode to
+exactly 16 bytes, and equal its unpadded base64url re-encoding; otherwise refuse
+with 401. Empty values, padding, alternate alphabets and noncanonical trailing
+bits are invalid. Absence remains valid for released clients. Other signed
+operation-specific fields remain supported as described above.
+
+Once every verifier accepts this extension, the shared request signer in each
+language generates a fresh nonce with its CSPRNG for every outgoing root request,
+including SSE reconnects and retries. `nonce` is reserved alongside the existing
+authoritative fields: caller custom JSON cannot supply or replace it. There is
+no downgrade after a refusal. A new request, even to the same target in the same
+second, receives a new nonce and signature.
+
+After signature, timestamp and current identity/certificate authority checks
+succeed, the relying service atomically claims a replay key derived from the
+signer's `did:key` and the **decoded signature bytes**. Use an unambiguous encoding
+of that pair before hashing; different textual base64 representations must not
+create distinct replay keys. The key expires at the signed timestamp plus
+300 seconds. Because the accepted window is plus or minus 300 seconds, a
+future-dated request can require retention for nearly 600 seconds after receipt.
+A later authorization or resource error does not make the proof reusable.
+
+For a nonce-bearing request:
+
+- A previously unclaimed key is accepted and recorded exactly once.
+- An already claimed key is refused with 401 and distinct code
+  `request_replayed`.
+- An unavailable replay store returns 503; it never disables enforcement or
+  silently switches to a process-local store.
+
+For a nonce-free v2 request, record nonce-free usage and repeated signatures,
+labelled by authentication family, method, route template and client version.
+Duplicates remain accepted. If the store is unavailable, omit the duplicate
+count and preserve existing availability. This compatibility path has no replay
+protection. Compact v1 remains accepted and measured separately as above.
+
+Cloud and other multiprocess deployments use a shared Redis store with an atomic
+claim and expiry. An explicit in-memory mode is permitted only for a documented
+single-process self-hosted service; it cannot protect multiple workers or retain
+claims across a restart. A configured Redis failure must never select that mode.
+Only hashes and expiry are retained, with no credential or signature logging.
+
+A bridge and downstream dependency authenticating the **same incoming request**
+must share its claim result, so one request consumes one replay entry. This
+memoization is local to that request; a separate request carrying identical
+headers must consult the shared store and receive the replay refusal.
+
+The deployment sequence is server verifier support, then every embedding host
+(including Cloud), then naapp-lib verifier support, then nonce-generating Go,
+Python and TypeScript clients and the rebuilt channel, Pi and wake artifacts.
+Do not require nonce presence during this sequence. Retirement of compact v1
+and nonce-free v2 is a separate, explicitly approved operator cutoff based on
+the measured usage. This extension does not set or activate that cutoff.
+
+## Onboarding key-possession requests
+
+Onboarding HTTP DIDKey proofs use the identity-only v2 envelope above, with
+`did_aw` equal to the claimed stable identity or empty when only a key is being
+proved. This envelope proves key possession only: existing route-specific
+checks still authorize creation, joining, reuse or recovery. A new key proof
+cannot create team membership or controller authority by itself.
+
+Normal DIDKey authentication carries the standard headers above. When another
+credential occupies `Authorization`, the proof uses
+`X-AWEB-DIDKey-Signature`, `X-AWEB-DIDKey-Timestamp` and the new
+`X-AWEB-DIDKey-Signed-Payload`; that last header carries the same canonical v2
+payload bytes. The verifier compares the stable identity claim with the route's
+expected claim and applies current-key resolution where that route requires it.
+The external audience, raw target/query and exact body remain bound.
+
+Verifiers add v2 acceptance and old-form usage counting before onboarding
+clients switch to the shared signer. The historical method/path/body/timestamp
+proof remains accepted and counted until its separately approved cutoff; it
+lacks audience binding. A malformed presented v2 proof never falls back to that
+old form. Nonce validation and replay behavior are the same as above. Registry
+controller operations and DID-log artifacts keep their distinct purposes and
+are governed by the registry contract; they are not team-member requests.
+
+Embedding hosts may pass `legacy_path` to `verify_http_didkey_proof` to preserve
+their historical v1 path spelling. It defaults to `request.url.path` and applies
+only to the old proof; v2 always verifies the external raw target and query.
 
 ## Conformance vectors
 
