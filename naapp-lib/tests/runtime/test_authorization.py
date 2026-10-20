@@ -10,8 +10,9 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException, Request
 
 from aweb_naapp.runtime.authorization import (
     DeclaredTools,
@@ -19,7 +20,8 @@ from aweb_naapp.runtime.authorization import (
     GrantUnavailable,
     authorize_request,
 )
-from tests.runtime.conftest import Member, relying_app
+from aweb_naapp.runtime.team_auth import AWIDTeamCache, authenticate_request
+from tests.runtime.conftest import REGISTRY_URL, Member, relying_app
 
 ORIGIN = "https://app.example.com"
 TEAM_ID = "backend:example.com"
@@ -191,9 +193,100 @@ async def test_scope_names_are_compared_exactly(registry, member):
     assert detail_code(response) == "scope_denied"
 
 
-async def test_raw_path_segments_are_matched_without_decoding(registry, member):
+@pytest.mark.parametrize("path", [
+    "/v1/items/a%2Fb", "/v1/items/a%2fb", "/v1/items/a%5Cb", "/v1/items/a%5cb", "/v1/items/a%00",
+    "/v1/items/%2E", "/v1/items/%2e%2E",
+])
+async def test_non_canonical_target_is_refused_before_matching(registry, member, path):
+    grants = InstalledGrants({TEAM_ID: fresh("fixture:read", "fixture:write")})
+    policy = Policy()
+    response = await call(registry, member, grants, policy, "GET", path)
+    assert response.status_code == 400, response.text
+    assert detail_code(response) == "target_not_canonical"
+    assert grants.asked == [] and policy.seen == []
+
+
+async def asgi_get(app: FastAPI, raw_path: bytes, headers: dict[str, str]) -> tuple[int, bytes]:
+    """Deliver one request with this exact raw path, as a proxy may; clients normalize dot segments away."""
+    sent: list[dict] = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET", "scheme": "https",
+             "server": ("app.example.com", 443), "client": ("127.0.0.1", 1), "root_path": "",
+             "path": raw_path.decode(), "raw_path": raw_path, "query_string": b"",
+             "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()]}
+    await app(scope, receive, send)
+    return sent[0]["status"], b"".join(m.get("body", b"") for m in sent[1:])
+
+
+@pytest.mark.parametrize("path", ["/v1/items/.", "/v1/items/..", "/v1/./items", "/v1/items/abc/../x"])
+async def test_raw_dot_segments_are_refused_before_matching(registry, member, path):
+    grants = InstalledGrants({TEAM_ID: fresh("fixture:read", "fixture:write")})
+    tools = DeclaredTools.from_manifest(MANIFEST)
+    cache = AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, transport=registry.transport)
+    app = FastAPI()
+
+    @app.get("/{route:path}")
+    async def anything(route: str, request: Request):
+        principal = await authenticate_request(request, public_origin=ORIGIN, team_cache=cache)
+        await authorize_request(request, principal=principal, tools=tools, grants=grants, policy=Policy())
+        return {}
+
+    status, body = await asgi_get(app, path.encode(), member.headers(aud=ORIGIN, method="GET", path=path))
+    assert status == 400, body
+    assert b"target_not_canonical" in body
+    assert grants.asked == []
+
+
+async def test_ordinary_percent_encoding_in_a_segment_is_still_authorized(registry, member):
     grants = InstalledGrants({TEAM_ID: fresh("fixture:read")})
-    assert (await call(registry, member, grants, Policy(), "GET", "/v1/items/a%2Fb")).status_code == 200
+    response = await call(registry, member, grants, Policy(), "GET", "/v1/items/caf%C3%A9")
+    assert response.status_code == 200, response.text
+    assert response.json()["tool"] == "get"
+
+
+async def test_encoded_slash_cannot_reach_a_second_declared_route(registry, member):
+    """Real per-route dispatch: the tool that is checked is the route that runs."""
+    tools = DeclaredTools.from_manifest({"tools": [
+        {"name": "get-thing", "method": "GET", "path": "/v1/things/{id}", "scopes": ["things:read"]},
+        {"name": "get-secret", "method": "GET", "path": "/v1/things/{id}/secret", "scopes": ["things:admin"]},
+    ]})
+    grants = InstalledGrants({TEAM_ID: fresh("things:read")})
+    cache = AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, transport=registry.transport)
+    app = FastAPI()
+    ran: list[str] = []
+
+    async def admit(request: Request) -> str:
+        principal = await authenticate_request(request, public_origin=ORIGIN, team_cache=cache)
+        authorization = await authorize_request(request, principal=principal, tools=tools, grants=grants,
+                                                policy=Policy())
+        return authorization.tool.name
+
+    @app.get("/v1/things/{id}")
+    async def get_thing(id: str, request: Request):
+        ran.append("get-thing")
+        return {"checked": await admit(request)}
+
+    @app.get("/v1/things/{id}/secret")
+    async def get_secret(id: str, request: Request):
+        ran.append("get-secret")
+        return {"checked": await admit(request)}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as client:
+        async def get(path):
+            return await client.get(path, headers=member.headers(aud=ORIGIN, method="GET", path=path))
+
+        assert (await get("/v1/things/x")).json() == {"checked": "get-thing"}
+        assert detail_code(await get("/v1/things/x/secret")) == "scope_denied"
+        encoded = await get("/v1/things/x%2Fsecret")
+    assert encoded.status_code == 400
+    assert detail_code(encoded) == "target_not_canonical"
+    assert ran == ["get-thing", "get-secret", "get-secret"]
 
 
 async def test_signed_request_to_a_public_tool_still_needs_the_grant(registry, member):

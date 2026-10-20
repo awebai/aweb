@@ -77,6 +77,20 @@ async def test_history_finds_the_certificate_beyond_the_first_page(registry, tea
     assert cache._cache[TEAM_ID].revoked_certificate_ids == (frozenset({"target"}) if revoked else frozenset())
 
 
+async def test_history_refuses_a_certificate_awid_never_published(registry, team):
+    unpublished = Member(team_id=TEAM_ID, team_key=team.team_key, certificate_id="unpublished", alias="ghost")
+    async with relying_app(registry, public_origin=ORIGIN, cache=history_cache(registry)) as (client, _):
+        assert (await client.get("/v1/items", headers=get_items(unpublished))).status_code == 401
+        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
+
+
+async def test_history_facts_are_reused_for_at_most_a_minute(registry, team):
+    cache = AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=600, service_token=SERVICE_TOKEN,
+                          transport=registry.transport)
+    await cache.get(TEAM_ID, "target")
+    assert 0 < cache._cache[TEAM_ID].expires_at - time.monotonic() <= 60
+
+
 async def test_history_page_bound_fails_closed_without_caching_partial_facts(registry, team):
     cache = history_cache(registry)
     await add_filler_certificates(registry, team, 201, 20000)
