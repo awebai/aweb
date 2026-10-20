@@ -33,10 +33,13 @@ from test_task_answers import _v2_request
 
 
 async def _verified_install(db, *, team_id, app_id, did_key, kid="requests-1", installation_id="install-fixture", generation=1,
-                            origin="https://fixture.example.test"):
+                            origin="https://fixture.example.test", event_did=None):
     """Provision disposable verified registry state; F6 owns the install flow."""
+    app_keys = [{"kid": kid, "did_key": did_key, "purposes": ["app-request"]}]
+    if event_did:
+        app_keys.append({"kid": "event-only", "did_key": event_did, "purposes": ["app-event"]})
     manifest = canonical_json_bytes({"manifest_version": 2, "app": {"id": app_id, "origin": origin, "version": "1.0.0"},
-        "app_keys": [{"kid": kid, "did_key": did_key, "purposes": ["app-request"]}]})
+        "app_keys": app_keys})
     digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
     await db.execute("INSERT INTO {{tables.app_registry_apps}} (app_id,origin) VALUES ($1,$2) ON CONFLICT DO NOTHING", app_id, origin)
     await db.execute("""INSERT INTO {{tables.app_registry_entries}} (app_id,origin,digest,app_version,manifest_version)
@@ -47,6 +50,9 @@ async def _verified_install(db, *, team_id, app_id, did_key, kid="requests-1", i
         team_id, app_id, origin, digest, installation_id, generation, manifest)
     await db.execute("""INSERT INTO {{tables.team_app_keys}} (team_id,app_id,origin,digest,key_id,did_key,purposes)
         VALUES ($1,$2,$3,$4,$5,$6,ARRAY['app-request'])""", team_id, app_id, origin, digest, kid, did_key)
+    if event_did:
+        await db.execute("""INSERT INTO {{tables.team_app_keys}} (team_id,app_id,origin,digest,key_id,did_key,purposes)
+            VALUES ($1,$2,$3,$4,'event-only',$5,ARRAY['app-event'])""", team_id, app_id, origin, digest, event_did)
     return dict(await get_installation_on(db, team_id=team_id, app_id=app_id))
 
 
@@ -54,6 +60,17 @@ async def _verified_install(db, *, team_id, app_id, did_key, kid="requests-1", i
 async def app_request_context(privacy_app):
     env = privacy_app
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
+    from types import SimpleNamespace
+    from test_messages_http import _make_keypair, _make_certificate, _encode_certificate
+    sk, _, did = _make_keypair()
+    agent_id, workspace_id = uuid4(), uuid4()
+    await env.db.execute("""INSERT INTO {{tables.agents}} (agent_id,team_id,did_key,alias,identity_scope,inbound_mode)
+        VALUES ($1,$2,$3,'dave','local','open')""", agent_id, TEAM, did)
+    await env.db.execute("""INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias)
+        VALUES ($1,$2,$3,'dave')""", workspace_id, TEAM, agent_id)
+    env.actors["dave"] = SimpleNamespace(sk=sk, did=did, id=agent_id, workspace=workspace_id,
+        certificate=_encode_certificate(_make_certificate(env.team_sk, env.team_did, did, team_id=TEAM,
+            alias="dave", identity_scope="local", certificate_id="privacy-dave")))
     for alias, actor in env.actors.items():
         cert = json.loads(base64.b64decode(actor.certificate))
         await env.app.state.awid_registry_client.register_team_certificate(
@@ -63,8 +80,10 @@ async def app_request_context(privacy_app):
             certificate=actor.certificate,
         )
     env.app_signing_key = SigningKey.generate()
+    env.event_signing_key = SigningKey.generate()
     app_did = did_from_public_key(bytes(env.app_signing_key.verify_key))
-    installation = await _verified_install(env.db, team_id=TEAM, app_id="fixture", did_key=app_did)
+    installation = await _verified_install(env.db, team_id=TEAM, app_id="fixture", did_key=app_did,
+        event_did=did_from_public_key(bytes(env.event_signing_key.verify_key)))
     credential = AppCredential(purpose=APP_REQUEST, team_id=TEAM, app_id="fixture", kid="requests-1",
                                did_key=app_did, installation_id="install-fixture", installation_generation=1)
     request = Request({"type": "http", "method": "POST", "path": "/v1/tasks/app-requests",
@@ -108,8 +127,8 @@ async def _answer_http(context, actor, path, answer):
 def _body(env, *, request_id="action-1", expired=False):
     task = dict(title="Review a page request", description=None, assignee_did=env.actors["bob"].did,
         app_request=dict(external_request_id=request_id, resource_ref="opaque-page", action_ref="decide",
-                         proposal_rev=2, proposal_sha256="sha256:" + "d" * 64, choices=["approve", "reject"],
-                         eligible_dids=[env.actors["bob"].did], role=None))
+                         proposal_rev=2, proposal_sha256="sha256:" + "d" * 64, choices=[{"value": "approve", "label": "Approve"}, {"value": "reject", "label": "Reject"}],
+                         eligible_dids=[env.actors["bob"].did], role=None, fields=[{"field": "price", "label": "Price", "format": "number"}]))
     now = datetime.now(timezone.utc).replace(microsecond=0)
     if expired:
         now -= timedelta(days=2)
@@ -237,7 +256,7 @@ def test_c2_json_rejects_ambiguous_and_noncanonical_values(body):
 def test_app_task_titles_refuse_control_and_bidi_control_characters(control):
     task = dict(title="Review" + control, description=None, assignee_did="did:key:example",
                 app_request=dict(external_request_id="a", resource_ref="r", action_ref="a",
-                                 proposal_rev=None, proposal_sha256=None, choices=None, eligible_dids=None, role=None))
+                                 proposal_rev=None, proposal_sha256=None, choices=None, eligible_dids=None, role=None, fields=None))
     with pytest.raises(ValidationError, match="schema_invalid"):
         validate_app_task(task)
 
@@ -397,7 +416,7 @@ async def cached_app_request_context(app_request_context, monkeypatch):
         # and Redis. Revoke through another client so the old cache survives.
         assert await cached.get_team_public_key("example.test", team_name) == env.team_did
         assert await cached.get_team_revocations("example.test", team_name) == set()
-        assert len(await cached.list_team_certificates("example.test", team_name)) == 3
+        assert len(await cached.list_team_certificates("example.test", team_name)) == 4
         yield app_request_context, uncached, clock, unavailable
     finally:
         await asyncio.gather(*list(cached._refresh_tasks.values()), return_exceptions=True)
@@ -441,6 +460,38 @@ async def test_c2_cached_authority_observes_revocation(cached_app_request_contex
     response = await _app_http(context, "POST", "/v1/tasks/app-requests", body)
     assert response.status_code == 401 and response.json()["detail"] == "certificate_revoked", response.text
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replay", [False, True])
+@pytest.mark.parametrize("authority", ["revoked", "unavailable"])
+async def test_answer_requires_fresh_member_authority_even_for_replay(cached_app_request_context, replay, authority):
+    context, uncached, clock, unavailable = cached_app_request_context
+    env, *_ = context
+    made = await _app_http(context, "POST", "/v1/tasks/app-requests", _body(env))
+    assert made.status_code == 201, made.text
+    ref = f'/v1/tasks/{made.json()["task_ref"]}'
+    task = (await _v2_request(env, "bob", "GET", ref)).json()
+    text = "Approve"
+    answer = dict(expected_task_rev=task["rev"], answer_key="fresh-authority", body_md=text,
+        answer_sha256=hashlib.sha256(text.encode()).hexdigest(), choice="approve",
+        proposal_rev=2, proposal_sha256="sha256:"+"d"*64)
+    answer["stage_receipt"] = _stage(context, task, "bob", answer)
+    if replay:
+        accepted = await _v2_request(env, "bob", "POST", ref+"/answer", answer)
+        assert accepted.status_code == 201, accepted.text
+    team_name = TEAM.split(":", 1)[0]
+    if authority == "revoked":
+        await uncached.revoke_team_certificate("example.test", team_name,
+            team_controller_signing_key=env.team_sk, certificate_id="privacy-bob")
+    else:
+        unavailable[0] = f"/v1/namespaces/example.test/teams/{team_name}/revocations"
+    clock[0] += 61
+    refused = await _v2_request(env, "bob", "POST", ref+"/answer", answer)
+    assert refused.status_code == (401 if authority == "revoked" else 503), refused.text
+    assert refused.json()["detail"] == ("certificate_revoked" if authority == "revoked" else "authority_unavailable")
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_answers}}") == int(replay)
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_answer_stage_nonces}}") == int(replay)
 
 
 @pytest.mark.asyncio

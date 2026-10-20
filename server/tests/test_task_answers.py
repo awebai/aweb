@@ -223,7 +223,7 @@ async def _decision_question(db):
     outsider = replace(owner, agent_id=str(outsider_id), alias="outsider", did_key=f"did:key:{outsider_id}", certificate_id="cert-outsider")
     metadata = {"eligible_dids": sorted([owner.did_key, backup.did_key]),
                 "external_request_id": "decision-set", "resource_ref": "page-1", "action_ref": "decide",
-                "proposal_rev": 2, "proposal_sha256": "sha256:" + "d" * 64, "choices": ["approve", "reject"], "role": None}
+                "proposal_rev": 2, "proposal_sha256": "sha256:" + "d" * 64, "choices": [{"value": "approve", "label": "Approve"}, {"value": "reject", "label": "Reject"}], "role": None, "fields": [{"field": "price", "label": "Price", "format": "number"}]}
     # Seed immutable request metadata at INSERT. Signed ingress shape/authority
     # is tested separately against the shared contract's HTTP vectors.
     row = await db.fetch_one(

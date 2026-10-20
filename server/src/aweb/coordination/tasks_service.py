@@ -156,13 +156,14 @@ async def answer_task_on(
             task=task, principal=principal, answer_key=answer_key, answer_sha256=answer_sha256,
             choice=choice, proposal_rev=proposal_rev, proposal_sha256=proposal_sha256)
     elif stage_receipt is not None:
-        raise ForbiddenError("target_mismatch")
+        raise ValidationError("schema_invalid")
     if task["rev"] != expected_task_rev or task["status"] != "open" or task["cancellation"] is not None:
         raise ConflictError("revision_conflict")
     if proposal_rev != metadata.get("proposal_rev") or proposal_sha256 != metadata.get("proposal_sha256"):
         raise ConflictError("approval_changed")
     choices = metadata.get("choices")
-    if (choices is not None and choice not in choices) or (choices is None and choice is not None):
+    choice_values = [entry["value"] for entry in choices] if choices is not None else None
+    if (choice_values is not None and choice not in choice_values) or (choices is None and choice is not None):
         raise ValidationError("schema_invalid")
     receipt_id = uuid4()
     if await tx.fetch_value(

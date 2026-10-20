@@ -3,6 +3,8 @@
 import base64
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from awid.did import did_from_public_key
+from aweb_naapp.runtime.task_requests import sign_stage_receipt
 import hashlib
 import json
 from pathlib import Path
@@ -18,7 +20,7 @@ from aweb.coordination.tasks_service import answer_comment_projection
 from aweb.service_errors import ValidationError, ForbiddenError
 from aweb.task_contracts import strict_json_bytes, validate_app_task
 from test_app_task_requests import (
-    _app_http, _answer_http, _body, _sign, _verified_install, app_request_context,  # noqa: F401
+    _app_http, _body, _sign, _stage, _verified_install, app_request_context,  # noqa: F401
 )
 from test_task_answers import _v2_request
 from test_tasks_http import _seed_team
@@ -138,23 +140,28 @@ async def test_server_app_credential_vectors(aweb_cloud_db, monkeypatch, case):
 
 
 @pytest.mark.asyncio
-async def test_task_answer_vector_sequence_over_real_signed_http(app_request_context):
+@pytest.mark.parametrize("sequence_name", ["sequence", "plain_sequence"])
+async def test_task_answer_vector_sequence_over_real_signed_http(app_request_context, sequence_name):
     env, *_ = app_request_context
     bodies = {c["name"]: c for c in ANSWERS["bodies"]}
     receipts = {}
     task = None
     expected_comments = []
-    proposal = ANSWERS["sequence"][0]["task"]
-    for index, step in enumerate(ANSWERS["sequence"]):
+    actors = {"assignee": "bob", "colleague": "carol", "former_holder": "alice", "other_member": "dave"}
+    proposal = ANSWERS[sequence_name][0]["task"]
+    for index, step in enumerate(ANSWERS[sequence_name]):
         expected = step["result"]
         if step["step"] == "create":
-            body = _body(env)
-            body["task"]["app_request"].update({k:v for k,v in proposal.items() if k != "eligible"})
-            body["task"]["app_request"]["eligible_dids"] = sorted(env.actors["bob" if x == "assignee" else "carol"].did for x in proposal["eligible"])
-            body["task_authorization"]["payload"].update(
-                proposal_rev=proposal["proposal_rev"], proposal_sha256=proposal["proposal_sha256"],
-                target_dids=body["task"]["app_request"]["eligible_dids"], task_body_sha256=hashlib.sha256(canonical_json_bytes(body["task"])).hexdigest())
-            response = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _sign(env, body))
+            if sequence_name == "plain_sequence":
+                response = await _v2_request(env, "alice", "POST", "/v1/tasks", {"title": "Plain question", "assignee_alias": "bob"})
+            else:
+                body = _body(env)
+                body["task"]["app_request"].update({k:v for k,v in proposal.items() if k != "eligible"})
+                body["task"]["app_request"]["eligible_dids"] = sorted(env.actors[actors[x]].did for x in proposal["eligible"])
+                body["task_authorization"]["payload"].update(
+                    proposal_rev=proposal["proposal_rev"], proposal_sha256=proposal["proposal_sha256"],
+                    target_dids=body["task"]["app_request"]["eligible_dids"], task_body_sha256=hashlib.sha256(canonical_json_bytes(body["task"])).hexdigest())
+                response = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _sign(env, body))
             assert response.status_code == expected["status"], (index, response.text)
             task = response.json()
             current = await _v2_request(env, "alice", "GET", f'/v1/tasks/{task["task_ref"]}')
@@ -169,15 +176,34 @@ async def test_task_answer_vector_sequence_over_real_signed_http(app_request_con
         else:
             text = bodies[step["body"]]
             body = dict(answer_key=step["answer_key"], choice=step["choice"], body_md=text["body_md"],
-                answer_sha256=text["answer_sha256"], proposal_rev=proposal["proposal_rev"], proposal_sha256=proposal["proposal_sha256"])
+                answer_sha256=text["answer_sha256"], proposal_rev=proposal.get("proposal_rev"), proposal_sha256=proposal.get("proposal_sha256"))
             if step["expected_task_rev"] != "missing":
                 body["expected_task_rev"] = current.json()["rev"] if step["expected_task_rev"] == "current" else 1
             if step["proposal"] == "changed":
                 body["proposal_sha256"] = "sha256:" + "0"*64
             if step.get("answer_sha256") == "mismatch":
                 body["answer_sha256"] = "0"*64
-            actor = {"assignee": "bob", "colleague": "carol", "someone_else": "alice", "other": "alice"}.get(step["as"], "alice")
-            response = await _answer_http(app_request_context, actor, ref+"/answer", body)
+            actor = actors[step["as"]]
+            stage_kind = step.get("stage_receipt", "valid")
+            if stage_kind not in {"missing", "not_issued"}:
+                overrides = {}
+                if "nonce" in step:
+                    overrides["nonce"] = hashlib.sha256(step["nonce"].encode()).hexdigest()[:32]
+                if stage_kind == "expired":
+                    old = datetime.now(timezone.utc).replace(microsecond=0)-timedelta(minutes=10)
+                    overrides.update(issued_at=old.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        expires_at=(old+timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+                proof = _stage(app_request_context, current.json(), actor, body, **overrides)
+                if stage_kind == "wrong_key":
+                    proof["payload"].update(kid="event-only", did_key=did_from_public_key(bytes(env.event_signing_key.verify_key)))
+                    proof["signature"] = sign_stage_receipt(proof["payload"], env.event_signing_key)
+                body["stage_receipt"] = proof
+            before_nonces = await env.db.fetch_value("SELECT count(*) FROM {{tables.task_answer_stage_nonces}}")
+            response = await _v2_request(env, actor, "POST", ref+"/answer", body)
+            if response.status_code >= 400:
+                after = await _v2_request(env, "alice", "GET", ref)
+                assert after.json()["rev"] == current.json()["rev"], (index, after.text)
+                assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_answer_stage_nonces}}") == before_nonces
             if response.status_code == 201:
                 expected_comments.append(text["body_md"])
         assert response.status_code == expected["status"], (index, step, response.text)
@@ -188,6 +214,8 @@ async def test_task_answer_vector_sequence_over_real_signed_http(app_request_con
             for key in ("question_rev", "current"):
                 if key in expected:
                     assert result[key] == expected[key], (index, result)
+            if "answered_by" in expected:
+                assert result["answered_by"]["principal_did"] == env.actors[actors[expected["answered_by"]]].did
             if "same_receipt_as" in expected:
                 original = receipts[expected["same_receipt_as"]]
                 assert result == {**original, "current": expected.get("current", original["current"])}, index
