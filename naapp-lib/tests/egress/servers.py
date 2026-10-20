@@ -38,22 +38,34 @@ def local_address() -> str:
     """This host's own non-loopback IPv4 address.
 
     The guard refuses loopback for every destination, internal ones included,
-    so the TLS server listens on the address of the host's outbound
-    interface. Connecting a UDP socket sends nothing; it only picks the route.
+    so the TLS server listens on one of the host's own addresses: the one its
+    outbound route uses, or, on a network with no route out (the gate's
+    isolated runner), one its own name resolves to locally. Connecting a UDP
+    socket sends nothing; it only picks the route.
     """
+    for address in _route_address(), *_named_addresses():
+        if address is not None and not ipaddress.ip_address(address).is_loopback:
+            return address
+    raise RuntimeError("the egress network tests need a non-loopback IPv4 address on this host")
+
+
+def _route_address() -> str | None:
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         probe.connect(("192.0.2.1", 9))
-        address = probe.getsockname()[0]
-    except OSError as error:
-        raise RuntimeError(
-            "the egress network tests need a non-loopback IPv4 address on this host"
-        ) from error
+        return str(probe.getsockname()[0])
+    except OSError:
+        return None
     finally:
         probe.close()
-    if ipaddress.ip_address(address).is_loopback:
-        raise RuntimeError("the egress network tests need a non-loopback IPv4 address")
-    return address
+
+
+def _named_addresses() -> list[str]:
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+    except OSError:
+        return []
+    return [str(info[4][0]) for info in infos]
 
 
 @dataclass
