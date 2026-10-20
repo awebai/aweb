@@ -2,15 +2,17 @@
 
 Login itself is B3's passkey assertion; here a test route opens the session
 the way the login route does once B3 has verified the assertion.
-"""
 
-from __future__ import annotations
+The routes are built inside a function, so their annotations are evaluated
+eagerly (no postponed annotations) for FastAPI to see the session dependency.
+"""
 
 import asyncio
 import hashlib
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from http.cookies import SimpleCookie
+from typing import Annotated
 
 import httpx
 import pytest
@@ -44,16 +46,20 @@ def _app(sessions: ConsoleSessions) -> FastAPI:
         return {"csrf": issued.csrf_token}
 
     @router.get("/whoami")
-    async def whoami(session: ConsoleSession = Depends(sessions.current)) -> dict[str, str]:
+    async def whoami(
+        session: Annotated[ConsoleSession, Depends(sessions.current)],
+    ) -> dict[str, str]:
         return {"subject": session.subject, "scope": session.scope}
 
     @router.post("/change")
-    async def change(session: ConsoleSession = Depends(sessions.current)) -> dict[str, bool]:
+    async def change(
+        session: Annotated[ConsoleSession, Depends(sessions.current)],
+    ) -> dict[str, bool]:
         return {"changed": True}
 
     @router.post("/logout")
     async def logout(
-        response: Response, session: ConsoleSession = Depends(sessions.current)
+        response: Response, session: Annotated[ConsoleSession, Depends(sessions.current)]
     ) -> dict[str, bool]:
         await sessions.close(session)
         sessions.clear_cookie(response)

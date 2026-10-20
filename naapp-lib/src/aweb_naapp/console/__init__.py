@@ -19,10 +19,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -166,7 +167,7 @@ def _carries_team_auth(request: Request) -> bool:
 class ConsoleRoute(APIRoute):
     """A route on the console origin: console headers, and no team-auth."""
 
-    def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         handler = super().get_route_handler()
 
         async def console_handler(request: Request) -> Response:
