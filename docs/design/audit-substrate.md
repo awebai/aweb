@@ -63,7 +63,7 @@ deployment" (§2, §B4, §A9).
 | --- | --- |
 | The only hook seam is the in-process `on_mutation` callback. It is awaited after the route's state change, outside its transaction, and its exceptions are swallowed. It can be missed if the process dies between commit and callback. | `server/src/aweb/hooks.py:15`–`:27`; `docs/aw-hooks-sot.md:42`–`:50` |
 | `on_mutation` call sites are pinned by a source-derived inventory of 23 rows. A build guard rejects added, removed or non-literal sites. | `docs/vectors/mutation-hook-call-sites-v1.json`; `scripts/check-extension-docs.py:134`, `:275`, `:544`–`:553` |
-| Several catalogued mutations are not transactional. Mail send is autocommit unless attachments are present. Ack, task comment, dependency and `connect` are bare statements. | `server/src/aweb/messaging/messages.py:353`; `server/src/aweb/messaging/attachment_service.py:89`–`:112`; `server/src/aweb/coordination/tasks_service.py:1201`–`:1213`; `server/src/aweb/routes/connect.py:357` |
+| Several catalogued mutations are not transactional. Mail send is autocommit unless attachments are present. Ack, task comment, dependency and `connect` are bare statements. | `server/src/aweb/messaging/messages.py:353`; `server/src/aweb/attachment_service.py:89`–`:112`; `server/src/aweb/coordination/tasks_service.py:1201`–`:1213`; `server/src/aweb/routes/connect.py:357` |
 | Task create and update are transactional, and the hook fires after the transaction. | `server/src/aweb/coordination/tasks_service.py:205`; `server/src/aweb/coordination/routes/tasks.py:118` |
 | MCP task tools fire no mutation hook. MCP mail and chat do. | `server/src/aweb/mcp/tools/tasks.py:20`–`:196`; `server/src/aweb/mcp/tools/mail.py:176`; `server/src/aweb/mcp/tools/chat.py:864` |
 | A transactional outbox precedent exists. Lifecycle side effects are inserted in the cascade transaction, drained with `SKIP LOCKED`, retried with backoff and documented as at-least-once. | `server/src/aweb/migrations/aweb/013_lifecycle_side_effect_outbox.sql`; `server/src/aweb/lifecycle.py:896`, `:969`–`:1091` |
@@ -594,7 +594,7 @@ The two are deliberately separate:
   autocommit today (mail send without attachments, ack, comment, dependency,
   `connect`) must become transactional to carry it. That is implementation
   work, flagged here so it is not mistaken for a one-line hook call.
-- **Vector.** A new `docs/vectors/post-mutation-hook-sites-v1.json` lists
+- **Vector.** A new docs/vectors/post-mutation-hook-sites-v1.json lists
   `{source, function, mutation_type}` for each enqueue call. The existing
   checker gains a second scan: literal `mutation_type`, the call lexically
   inside a transaction block, and counts matching in both directions. The
@@ -642,7 +642,7 @@ Python tests:
 
 | Vector | Covers |
 | --- | --- |
-| `docs/vectors/hook-catalog-v1.json` | Hooks, class, producer kinds, audit-critical flag, precedence, the flat payload allowlists (including `post-secret-use-hook`, the `post-governance-hook` act/direction table, and the per-type fields of each §A10 mutation type, such as `app_key.revoked`), client command classes. |
+| docs/vectors/hook-catalog-v1.json | Hooks, class, producer kinds, audit-critical flag, precedence, the flat payload allowlists (including `post-secret-use-hook`, the `post-governance-hook` act/direction table, and the per-type fields of each §A10 mutation type, such as `app_key.revoked`), client command classes. |
 | `hook-event-envelope-v1.json` | Seeds, canonical bytes, signatures. Negatives: wrong prefix, non-canonical bytes, float, duplicate key, unknown payload field, team mismatch, client-signed server hook, a client event whose actor is not its signer, unknown catalog version. Secret digests: `request_sha256` over the pre-injection request, with a negative where the digest covers injected credential bytes. |
 | `hook-delivery-credential-v1.json` | `hook-delivery`. Negatives: an app-event or `hook-resolve` credential at a hook target, cross-audience, tampered body, wrong binding, stale timestamp. (`hook-resolve` vectors belong to acgh.7.) |
 | `owner-act-v1.json` | Activate and revoke, plus each logs act. Negatives: admin signer, rotated-out team key, expired, nonce reuse, subject/generation mismatch, a valid act of the wrong type or audience, a team certificate presented as an owner act. |
