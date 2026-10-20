@@ -99,7 +99,10 @@ that artefact's purpose.
 
 The signing bytes are `aweb.logs-receipt/1\n` followed by its canonical JSON.
 Logs returns a receipt for every event it appends, and returns the same receipt
-again for a duplicate delivery. A receipt commits to the whole chain prefix up
+again for a duplicate delivery: the same `event_id` with the same bytes. Other
+bytes under a known `event_id` append nothing and are kept as a conflict fault
+(the digest of the refused bytes, never the bytes). A purged event's bytes are
+gone, so a redelivery of it cannot be compared and returns its receipt. A receipt commits to the whole chain prefix up
 to its event, so every producer that keeps one is an independent witness of
 the chain.
 

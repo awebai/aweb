@@ -131,11 +131,14 @@ _TEMPLATES = {
 }
 
 
-def signed_event(kind: str, *, event_id: str | None = None, seq: int = 1) -> tuple[bytes, str]:
+def signed_event(
+    kind: str, *, event_id: str | None = None, seq: int = 1, team_id: str = TEAM_ID
+) -> tuple[bytes, str]:
     """A real envelope from a ``core``, ``app`` or ``client`` producer, signed by
     that producer's test key: its signing bytes and signature."""
     template, key_seed = _TEMPLATES[kind]
     event = copy.deepcopy(template)
+    event["team_id"] = team_id
     if event_id is not None:
         event["event_id"] = event_id
     if kind != "client":
