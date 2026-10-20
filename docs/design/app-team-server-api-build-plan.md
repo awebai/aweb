@@ -230,8 +230,11 @@ Hosted-side item H1, on the board as L6 (aweb-acgg.31).
 
 ### G1-c1: one app-key loader
 
-- **Repo/paths:** `naapp-lib/src/aweb_naapp/runtime/` (an `app_keys` module),
-  `runtime/settings.py`.
+- **Repo/paths:** a dependency-light `aweb_naapp` module outside `runtime`
+  (for example `aweb_naapp.keys`), importable with the standard library and
+  `pynacl` only, as the outbox is, because core loads its own hook-producer
+  key with it (aweb-acgh.1 build). `runtime/settings.py` only wires
+  configuration to it.
 - **Contents:** decision 10.
   - Configuration maps kid → key file.
   - Which purposes a kid may sign comes from the pinned manifest's
@@ -246,7 +249,9 @@ Hosted-side item H1, on the board as L6 (aweb-acgg.31).
   - each refusal is tested;
   - a test proves the key material is absent from captured logs, error text
     and repr;
-  - Folio's released variable still loads its emit key.
+  - Folio's released variable still loads its emit key;
+  - a guard test proves the module imports without the `runtime` extra
+    (stdlib and `pynacl` only), as the docs-surface guard does.
 - **Done-signal:** SHA ACKed, landed.
 - **Depends on:** nothing. The runtime seat proposed building it with the
   outbox emit piece (aweb-acgh.6).
