@@ -25,6 +25,7 @@ BODY = {
     },
     "operations": [{"operation_id": "refund", "digest": OPERATION_DIGEST}],
     "open_request": False,
+    "request": {"max_bytes": 1048576},
     "result": {"max_bytes": 65536},
     "requires_attestation": None,
     "distinct_approver": "required",
@@ -98,6 +99,9 @@ def test_the_canonical_body_round_trips_to_the_same_digest() -> None:
         {"requires_attestation": {"channels": ["fax"]}},
         {"requires_attestation": {}},
         {"result": {"max_bytes": 0}},
+        {"request": {"max_bytes": 1048577}},
+        {"request": {"max_bytes": 0}},
+        {"request": {}},
         {"surprise": 1},
     ],
 )

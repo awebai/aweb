@@ -27,6 +27,7 @@ CHANNELS = ("mcp_l2", "dashboard", "api")
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 MAX_APPROVAL_TTL_S = 86_400
 MAX_RESULT_BYTES = 16 * 1024 * 1024
+MAX_REQUEST_BYTES = 1024 * 1024
 
 FIELDS = frozenset(
     {
@@ -37,6 +38,7 @@ FIELDS = frozenset(
         "windows",
         "operations",
         "open_request",
+        "request",
         "result",
         "requires_attestation",
         "distinct_approver",
@@ -204,6 +206,11 @@ def _check(body: Any) -> None:
     _check_windows(body["windows"])
     _check_operations(body["operations"])
     _require(isinstance(body["open_request"], bool), "open_request is a boolean")
+    request = _exact_keys(body["request"], frozenset({"max_bytes"}), "request")
+    _require(
+        _is_int(request["max_bytes"]) and 1 <= request["max_bytes"] <= MAX_REQUEST_BYTES,
+        "request.max_bytes is 1 byte to 1 MiB",
+    )
     result = _exact_keys(body["result"], frozenset({"max_bytes"}), "result")
     _require(
         _is_int(result["max_bytes"]) and 1 <= result["max_bytes"] <= MAX_RESULT_BYTES,
