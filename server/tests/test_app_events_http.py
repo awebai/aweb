@@ -20,6 +20,7 @@ from aweb.app_events import current_app_events_for_agent
 from aweb.app_registry import AppEmitKey, AppEventType, install_app
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.routes.events import router as events_router
+from aweb.service_errors import ConflictError
 from aweb.team_auth_deps import TeamIdentity
 
 TEAM_ID = "backend:acme.com"
@@ -434,3 +435,150 @@ async def test_subscription_get_accepts_internal_gateway_auth(aweb_cloud_db, mon
     assert created.status_code == 200, created.text
     assert listed.status_code == 200, listed.text
     assert listed.json()["subscriptions"][0]["type"] == "folio/doc.changed"
+
+
+async def _emit_doc_changed(app, *, signing_key: bytes, did_key: str, team_id: str, kid: str):
+    body = json.dumps(
+        {"type": "folio/doc.changed", "resource_ref": "pitch", "payload": {}},
+        separators=(",", ":"),
+    ).encode()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        return await client.post(
+            "/v1/events/app",
+            content=body,
+            headers=_signed_app_headers(
+                signing_key=signing_key, did_key=did_key, body=body, team_id=team_id, kid=kid
+            ),
+        )
+
+
+OTHER_TEAM_ID = "frontend:acme.com"
+
+
+@pytest.mark.asyncio
+async def test_emit_keys_are_scoped_to_the_installing_team(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    app = _build_events_app(db)
+    await _seed_team_and_agent(db)
+    await _seed_team_and_agent(db, team_id=OTHER_TEAM_ID)
+    team_key, team_did = _make_app_keypair()
+    other_key, other_did = _make_app_keypair()
+    await _install_folio(db, did_key=team_did, kid="emit-1")
+    await _install_folio(db, team_id=OTHER_TEAM_ID, did_key=other_did, kid="emit-2")
+
+    other_key_in_team = await _emit_doc_changed(
+        app, signing_key=other_key, did_key=other_did, team_id=TEAM_ID, kid="emit-2"
+    )
+    own_key_in_team = await _emit_doc_changed(
+        app, signing_key=team_key, did_key=team_did, team_id=TEAM_ID, kid="emit-1"
+    )
+    other_key_in_other_team = await _emit_doc_changed(
+        app, signing_key=other_key, did_key=other_did, team_id=OTHER_TEAM_ID, kid="emit-2"
+    )
+
+    assert other_key_in_team.status_code == 403, other_key_in_team.text
+    assert own_key_in_team.status_code == 200, own_key_in_team.text
+    assert other_key_in_other_team.status_code == 200, other_key_in_other_team.text
+
+
+@pytest.mark.asyncio
+async def test_another_team_reusing_a_key_id_leaves_the_registered_key_in_place(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    app = _build_events_app(db)
+    await _seed_team_and_agent(db)
+    await _seed_team_and_agent(db, team_id=OTHER_TEAM_ID)
+    team_key, team_did = _make_app_keypair()
+    other_key, other_did = _make_app_keypair()
+    await _install_folio(db, did_key=team_did, kid="emit-1")
+    await _install_folio(db, team_id=OTHER_TEAM_ID, did_key=other_did, kid="emit-1")
+
+    registered = await _emit_doc_changed(
+        app, signing_key=team_key, did_key=team_did, team_id=TEAM_ID, kid="emit-1"
+    )
+    replacement = await _emit_doc_changed(
+        app, signing_key=other_key, did_key=other_did, team_id=TEAM_ID, kid="emit-1"
+    )
+
+    assert registered.status_code == 200, registered.text
+    assert replacement.status_code == 403, replacement.text
+
+
+@pytest.mark.asyncio
+async def test_install_refuses_a_different_key_for_a_registered_key_id(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    app = _build_events_app(db)
+    await _seed_team_and_agent(db)
+    team_key, team_did = _make_app_keypair()
+    _, replacement_did = _make_app_keypair()
+    await _install_folio(db, did_key=team_did, kid="emit-1")
+
+    with pytest.raises(ConflictError):
+        await _install_folio(db, did_key=replacement_did, kid="emit-1")
+    with pytest.raises(ConflictError):
+        await _install_folio(db, did_key=replacement_did, kid="emit-1", digest="sha256:" + "d" * 64)
+
+    still_registered = await _emit_doc_changed(
+        app, signing_key=team_key, did_key=team_did, team_id=TEAM_ID, kid="emit-1"
+    )
+    assert still_registered.status_code == 200, still_registered.text
+
+
+@pytest.mark.asyncio
+async def test_reinstall_with_the_same_key_is_accepted(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    app = _build_events_app(db)
+    await _seed_team_and_agent(db)
+    team_key, team_did = _make_app_keypair()
+    await _install_folio(db, did_key=team_did, kid="emit-1")
+    await _install_folio(db, did_key=team_did, kid="emit-1")
+
+    resp = await _emit_doc_changed(
+        app, signing_key=team_key, did_key=team_did, team_id=TEAM_ID, kid="emit-1"
+    )
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_reinstall_does_not_reactivate_a_revoked_emit_key(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    app = _build_events_app(db)
+    await _seed_team_and_agent(db)
+    team_key, team_did = _make_app_keypair()
+    await _install_folio(db, did_key=team_did, kid="emit-1")
+    await db.execute(
+        """
+        UPDATE {{tables.team_app_emit_keys}} SET revoked_at = NOW()
+        WHERE team_id = $1 AND app_id = 'folio' AND key_id = 'emit-1'
+        """,
+        TEAM_ID,
+    )
+
+    await _install_folio(db, did_key=team_did, kid="emit-1")
+
+    resp = await _emit_doc_changed(
+        app, signing_key=team_key, did_key=team_did, team_id=TEAM_ID, kid="emit-1"
+    )
+    assert resp.status_code == 403, resp.text
+
+
+@pytest.mark.asyncio
+async def test_registry_entry_emit_keys_are_not_active_for_a_team(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    app = _build_events_app(db)
+    await _seed_team_and_agent(db)
+    _, team_did = _make_app_keypair()
+    entry_key, entry_did = _make_app_keypair()
+    await _install_folio(db, did_key=team_did, kid="emit-1")
+    await db.execute(
+        """
+        INSERT INTO {{tables.app_registry_emit_keys}} (app_id, origin, digest, key_id, did_key)
+        VALUES ('folio', 'https://folio.aweb.ai', $1, 'emit-entry', $2)
+        """,
+        DIGEST,
+        entry_did,
+    )
+
+    resp = await _emit_doc_changed(
+        app, signing_key=entry_key, did_key=entry_did, team_id=TEAM_ID, kid="emit-entry"
+    )
+    assert resp.status_code == 403, resp.text

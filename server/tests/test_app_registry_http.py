@@ -338,3 +338,36 @@ async def test_reinstall_same_origin_repins_digest_and_scopes(aweb_cloud_db, mon
             "granted_scopes": ["folio:read", "folio:write"],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_install_refuses_a_different_key_for_a_registered_emit_key_id(aweb_cloud_db, monkeypatch):
+    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
+    app = _build_apps_app(aweb_cloud_db.aweb_db)
+    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
+
+    def _install_body(digest: str, did_key: str) -> dict:
+        return {
+            "app_id": "folio",
+            "origin": "https://folio.aweb.ai",
+            "app_version": "1.x",
+            "manifest_version": 1,
+            "digest": digest,
+            "granted_scopes": ["folio:read"],
+            "event_emitters": [{"kid": "emit-1", "did_key": did_key}],
+        }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/apps/install",
+            json=_install_body(DIGEST_1, "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"),
+        )
+        conflicting = await client.post(
+            "/v1/apps/install",
+            json=_install_body(DIGEST_2, "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"),
+        )
+        listed = await client.get("/v1/apps/installed", params={"team_id": TEAM_ID})
+
+    assert first.status_code == 200, first.text
+    assert conflicting.status_code == 409, conflicting.text
+    assert listed.json()["apps"][0]["digest"] == DIGEST_1

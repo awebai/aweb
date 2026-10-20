@@ -608,6 +608,7 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `agent_status_hosts`
 - `agent_status`
 - `message_attachments`
+- `team_app_emit_keys`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 ---

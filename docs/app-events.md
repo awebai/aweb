@@ -91,8 +91,8 @@ name sent to the server. The server never fetches the manifest itself.
 The install route in [`app-registry.md`](app-registry.md) records those values
 under the supplied manifest digest. The full emitted type is
 `<app_id>/<local_type>`, for example `folio/doc.changed`. A key is accepted only
-when its `(app_id, origin, digest, kid, did_key)` row is active for the team's
-currently installed digest.
+when its `(team_id, app_id, origin, digest, kid, did_key)` row, registered by
+that team's own install, is active for the team's currently installed digest.
 
 The app owns the emit private key. A team agent, a team controller, and an
 embedding host must not reuse their signing keys as app emit keys.

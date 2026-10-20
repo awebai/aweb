@@ -368,15 +368,31 @@ async def install_app(
                 event_type.default_delivery_intent,
                 event_type.description,
             )
+        # The install row upsert above locks (team_id, app_id), so concurrent
+        # installs of one app in one team check and write keys one at a time.
         for emit_key in emit_keys:
+            conflicting = await tx.fetch_one(
+                """
+                SELECT 1 FROM {{tables.team_app_emit_keys}}
+                WHERE team_id = $1 AND app_id = $2 AND key_id = $3 AND did_key <> $4
+                LIMIT 1
+                """,
+                team_id,
+                app_id,
+                emit_key.kid,
+                emit_key.did_key,
+            )
+            if conflicting:
+                raise ConflictError("emit key id is already registered with a different key")
             await tx.execute(
                 """
-                INSERT INTO {{tables.app_registry_emit_keys}} (app_id, origin, digest, key_id, did_key)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (app_id, origin, digest, key_id) DO UPDATE SET
-                    did_key = EXCLUDED.did_key,
-                    revoked_at = NULL
+                INSERT INTO {{tables.team_app_emit_keys}} (
+                    team_id, app_id, origin, digest, key_id, did_key
+                )
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (team_id, app_id, origin, digest, key_id) DO NOTHING
                 """,
+                team_id,
                 app_id,
                 origin,
                 digest,
@@ -475,8 +491,9 @@ async def get_active_app_emit_key(
         """
         SELECT k.app_id, k.origin, k.digest, k.key_id, k.did_key
         FROM {{tables.team_app_installs}} AS i
-        JOIN {{tables.app_registry_emit_keys}} AS k
-          ON k.app_id = i.app_id
+        JOIN {{tables.team_app_emit_keys}} AS k
+          ON k.team_id = i.team_id
+         AND k.app_id = i.app_id
          AND k.origin = i.origin
          AND k.digest = i.digest
         WHERE i.team_id = $1

@@ -82,9 +82,15 @@ Current rules:
   fragment. Production operators should require HTTPS at their policy boundary;
   the experimental OSS route permits HTTP for local deployments.
 - Reinstalling the same team/app/origin explicitly replaces its digest,
-  app-version projection, scopes, event declarations, and active emit-key rows
-  supplied for the new digest. Publishing new bytes at the origin does not
-  silently update an installation.
+  app-version projection, scopes and event declarations, and registers the
+  supplied emit keys for the new digest. Publishing new bytes at the origin
+  does not silently update an installation.
+- Emit keys belong to the installing team. A key registered by one team is
+  never active for another team's install of the same app and digest. Within
+  a team, a key id keeps the `did_key` it was first registered with: an install
+  supplying a different `did_key` for a registered key id is refused with
+  `409`, and the install is not applied. Rotate a key under a new key id.
+  Reinstalling never reactivates a revoked key.
 - Scopes are normalized and stored. The server does not fetch the manifest to
   prove that the requested scopes are the union of `tools[].scopes`.
 - Event declarations are app-local names. Emit keys are public `did:key`
