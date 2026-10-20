@@ -218,8 +218,6 @@
       {"name": "amz_undeclared", "header_allow": ["X-Amz-Date"], "headers": [["X-Amz-Date", "20261020T000000Z"]], "code": "header_not_allowed"},
       {"name": "amz_target_undeclared", "header_allow": ["X-Amz-Target"], "headers": [["X-Amz-Target", "a"]], "code": "header_not_allowed"},
       {"name": "amz_security_token_declared", "header_allow": [], "amz_allowed": ["X-Amz-Security-Token"], "headers": [["X-Amz-Security-Token", "a"]], "code": "header_not_allowed"},
-      {"name": "injected_name", "header_allow": ["X-Vendor-Key"], "injected": ["X-Vendor-Key"], "headers": [["x-vendor-key", "a"]], "code": "header_not_allowed"},
-      {"name": "injected_name_exact_case", "header_allow": ["X-Vendor-Key"], "injected": ["X-Vendor-Key"], "headers": [["X-Vendor-Key", "a"]], "code": "header_not_allowed"},
       {"name": "control_soh_value", "header_allow": [], "headers": [["Accept", "a\u0001b"]], "code": "header_not_allowed"},
       {"name": "control_del_value", "header_allow": [], "headers": [["Accept", "ab"]], "code": "header_not_allowed"},
       {"name": "non_latin1_value", "header_allow": [], "headers": [["Accept", "a☃"]], "code": "header_not_allowed"},
@@ -227,8 +225,12 @@
       {"name": "allowlisted_name_with_trailing_newline", "header_allow": ["X-Vendor\n"], "headers": [["X-Vendor\n", "a"]], "code": "header_not_allowed"}
     ],
     "injected": {
-      "rules": "the headers the caller's credential handling sets are sent after the caller's headers and skip the allowlist and the credential detector; each name must be one the caller declares as injected, compared case-insensitively, and appear at most once; a name the guard sets is refused even when declared; the name must be an RFC 9110 token and the value latin-1 with no control character other than tab; a refusal names the header and never carries its value",
+      "rules": "the headers the caller's credential handling sets are sent after the caller's headers and skip the allowlist and the credential detector; each name must be one the caller declares as injected, compared case-insensitively, and appear at most once; a name the guard sets is refused even when declared; the name must be an RFC 9110 token and the value latin-1 with no control character other than tab; a refusal names the header and never carries its value; a caller header with a declared injected name is refused in any case, even when the destination allows the name",
       "guard_set": ["Host", "User-Agent", "Accept-Encoding", "Connection", "Content-Length", "Transfer-Encoding"],
+      "caller_refused": [
+        {"name": "caller_sends_declared_name", "header_allow": ["X-Vendor-Key"], "declared": ["X-Vendor-Key"], "headers": [["X-Vendor-Key", "a"]], "code": "header_not_allowed"},
+        {"name": "caller_sends_declared_name_other_case", "header_allow": ["X-Vendor-Key"], "declared": ["X-Vendor-Key"], "headers": [["x-vendor-key", "a"]], "code": "header_not_allowed"}
+      ],
       "allowed": [
         {"name": "declared_bearer", "declared": ["Authorization"], "headers": [["Authorization", "Bearer x"]]},
         {"name": "declared_case_insensitive", "declared": ["X-Vendor-Key"], "headers": [["x-vendor-key", "k"]]},

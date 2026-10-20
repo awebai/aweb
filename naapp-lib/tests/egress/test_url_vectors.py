@@ -198,6 +198,17 @@ def test_injected_refused(case: dict) -> None:
         assert value not in str(refused.value)
 
 
+@pytest.mark.parametrize("case", _named(INJECTED["caller_refused"]))
+def test_a_caller_header_with_a_declared_injected_name_is_refused(case: dict) -> None:
+    with pytest.raises(EgressRefused) as refused:
+        check_headers(
+            [tuple(pair) for pair in case["headers"]],
+            header_allow=case["header_allow"],
+            rules=_declared(case),
+        )
+    assert refused.value.code == case["code"]
+
+
 def test_every_guard_set_header_is_refused_even_when_declared() -> None:
     for name in INJECTED["guard_set"]:
         for spelling in (name, name.lower(), name.upper()):
