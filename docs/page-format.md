@@ -207,6 +207,13 @@ record in `collection` whose value is exactly:
   where `\n` is a literal newline and `C` is canonical JSON: sorted keys, no
   insignificant whitespace, UTF-8 without escaping non-ASCII, safe integers
   and no floats. `bundle_hash` vectors pin it.
+- A proposal's own digest, a single card's `proposal_sha256` and each bundle
+  item's, binds the record's identity and exact value:
+  `"sha256:" + hex(SHA-256(b"aweb.page-proposal/1\n" + C({"collection": <collection id>, "record_id": <record id>, "value": <record value>})))`,
+  with the same `C`. The record's `rev` is not hashed; it is bound next to the
+  digest as `record_rev`. The host computes the digest from the member-signed
+  read and refuses the card when it differs. `page-proposal-v1.json` vectors
+  pin it.
 - Each item's `record_id` is an identifier, its `record_rev` a safe
   non-negative integer and its `proposal_sha256` `sha256:` plus 64 lowercase
   hex digits. A record appears at most once.
