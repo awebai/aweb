@@ -211,9 +211,24 @@ record in `collection` whose value is exactly:
 ```
 
 - The card's `proposal_sha256` is `"sha256:" + hex(SHA-256(b"aweb.page-bundle/1\n" + C(items)))`,
-  where `\n` is a literal newline and `C` is canonical JSON: sorted keys, no
-  insignificant whitespace, UTF-8 without escaping non-ASCII, safe integers
-  and no floats. `bundle_hash` vectors pin it.
+  where `\n` is a literal newline and `C` is canonical JSON: keys sorted by
+  code point, no insignificant whitespace, UTF-8 with only the quotation
+  mark, reverse solidus and C0 control characters escaped (U+2028 and U+2029
+  stay raw), safe integers and no floats. `bundle_hash` vectors pin it.
+- A proposal's own digest, a single card's `proposal_sha256` and each bundle
+  item's, binds the record's identity and exact value:
+  `"sha256:" + hex(SHA-256(b"aweb.page-proposal/1\n" + C({"collection": <collection id>, "record_id": <record id>, "value": <record value>})))`,
+  with the same `C`. The record's `rev` is not hashed; it is bound next to the
+  digest as `record_rev`. The host computes the digest from the member-signed
+  read and refuses the card when it differs. `page-proposal-v1.json` vectors
+  pin it.
+- An approval binds `record_rev` together with `proposal_sha256`: the
+  approver's signed answer and the approval request both carry the pair. The
+  host that applies the approved operation re-reads the record at apply time,
+  not only when it shows the card, and requires its current `rev` and
+  recomputed digest to equal the approved pair. So an edit that returns a
+  record to an earlier value (A, then B, then A again) cannot reuse an
+  approval given at another revision.
 - Each item's `record_id` is an identifier, its `record_rev` a safe
   non-negative integer and its `proposal_sha256` `sha256:` plus 64 lowercase
   hex digits. A record appears at most once.

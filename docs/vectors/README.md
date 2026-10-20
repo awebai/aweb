@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 34
+`docs/vectors/*.json` is the only public protocol-vector authority for the 36
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -228,6 +228,14 @@ renderer, which this file names but does not test. `bundle_hash` pins the
 bundle decision-card digest across languages. The reference consumer is
 `aweb_naapp.pages` in `naapp-lib/tests/pages/`. See
 [the page format](../page-format.md).
+
+### `page-proposal-v1.json`
+
+`proposal_sha256` for page proposals (aweb-acgg.8): canonical bytes and
+digests over a record's collection, id and value, a bundle built from item
+digests, and value refusals. The reference consumers are `aweb_naapp.pages` in
+`naapp-lib/tests/pages/` and `cli/go/awid/`. See
+[the page format](../page-format.md) §5.
 
 ### `agent-status-v1.json`
 

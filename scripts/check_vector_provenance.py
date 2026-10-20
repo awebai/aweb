@@ -47,6 +47,10 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("cli/go/awid/page_proposal_test.go"): _consumer(
+        "page-proposal-v1.json",
+        '"../../../docs/vectors/page-proposal-v1.json"',
+    ),
     PurePosixPath("cli/go/cmd/aw/agent_status_test.go"): _consumer(
         "agent-status-v1.json",
         '"../../../../docs/vectors/agent-status-v1.json"',
@@ -219,6 +223,10 @@ ROOT_CONSUMERS = {
     PurePosixPath("naapp-lib/tests/pages/test_page_format_vectors.py"): _consumer(
         "page-format-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "page-format-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/pages/test_page_proposal_vectors.py"): _consumer(
+        "page-proposal-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "page-proposal-v1.json"',
     ),
     PurePosixPath("naapp-lib/tests/runtime/test_team_auth_vectors.py"): _consumer(
         "team-auth-envelope-v2.json",
