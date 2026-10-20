@@ -219,8 +219,9 @@ async def test_a_moved_install_fails_closed_not_empty(team):
     resolver = await team["resolver_for"](SECRETS)
     moved = {**SECRETS, "digest": "sha256:" + "3" * 64}
     await _install(team["db"], moved, "inst-secrets", [SECRET_USE])
-    with pytest.raises(HookResolutionUnavailable):
+    with pytest.raises(HookResolutionUnavailable) as caught:
         await resolver.registrations(TEAM, *HOOK)
+    assert caught.value.code == "server_status_403"
 
 
 @pytest.mark.asyncio
@@ -328,3 +329,176 @@ async def test_an_answer_past_the_size_bound_is_not_read(team):
     with pytest.raises(HookResolutionUnavailable) as caught:
         await resolver.registrations(TEAM, *HOOK)
     assert caught.value.code == "answer_too_large"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "hook",
+    [
+        ("aweb.hooks", 1, "../registrations"),
+        ("aweb.hooks", 1, "post?x=1"),
+        ("aweb.hooks", 1, "post#x"),
+        ("aweb.hooks", 1, "post\nx"),
+        ("aweb.hooks", 1, "Post-secret-use-hook"),
+        ("aweb.hooks", 1, "h" * 65),
+        ("..", 1, "post-secret-use-hook"),
+        ("a" * 65, 1, "post-secret-use-hook"),
+        ("aweb.hooks", True, "post-secret-use-hook"),
+        ("aweb.hooks", 0, "post-secret-use-hook"),
+        ("aweb.hooks", 10**9, "post-secret-use-hook"),
+        ("aweb.hooks", "1", "post-secret-use-hook"),
+    ],
+)
+async def test_a_hook_no_binding_could_name_is_refused_before_anything_is_sent(team, hook):
+    resolver = await team["resolver_for"](SECRETS)
+    calls = _aweb_calls(team)
+    with pytest.raises(HookBindingRequired):
+        await resolver.registrations(TEAM, *hook)
+    with pytest.raises(HookBindingRequired):
+        await resolver.productions(TEAM, *hook)
+    with pytest.raises(ValueError):
+        await resolver.own_bindings(TEAM, hook=hook)
+    assert _aweb_calls(team) == calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda body: body["keys"][0].update(note="x"),
+        lambda body: body["keys"][0].update(valid_from="2026-10-01T00:00:00.000Z"),
+        lambda body: body["keys"][0].pop("valid_until"),
+        lambda body: body["keys"][0].update(kid=""),
+        lambda body: body.update(max_age_seconds=True),
+    ],
+)
+async def test_a_malformed_producer_keys_answer_fails_closed(team, monkeypatch, change):
+    monkeypatch.setenv(
+        "AWEB_HOOK_PRODUCER_KEYS",
+        json.dumps([{"kid": "hook-1", "did_key": did_from_public_key(bytes(SigningKey.generate().verify_key)),
+                     "valid_from": "2026-10-01T00:00:00Z", "valid_until": None}]),
+    )
+    resolver = await team["resolver_for"](LOGS)
+    team["stack"].aweb.fault = _rewrite(change)
+    with pytest.raises(HookResolutionUnavailable):
+        await resolver.core_producer_keys(TEAM)
+
+
+@pytest.mark.asyncio
+async def test_producer_keys_fail_closed_with_the_server_down(team):
+    resolver = await team["resolver_for"](LOGS)
+    team["stack"].aweb.down = True
+    with pytest.raises(HookResolutionUnavailable):
+        await resolver.core_producer_keys(TEAM)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda body: body.update(team_id="other:resolve.example"),
+        lambda body: body.update(catalog={"id": "other.hooks", "version": 1}),
+        lambda body: body.update(catalog={"id": "aweb.hooks", "version": True}),
+        lambda body: body.update(hook="post-governance-hook"),
+        lambda body: body["bindings"][0].update(kind="registration"),
+        lambda body: body.update(max_age_seconds=True),
+        lambda body: body["bindings"][0].update(binding_id=body["bindings"][0]["binding_id"].upper()),
+    ],
+)
+async def test_a_malformed_productions_answer_fails_closed(team, change):
+    await _key(team["db"], SECRETS, kid="hook-1", purposes=["hook-event"])
+    resolver = await team["resolver_for"](LOGS)
+    team["stack"].aweb.fault = _rewrite(change)
+    with pytest.raises(HookResolutionUnavailable):
+        await resolver.productions(TEAM, *HOOK)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda body: body["bindings"][0].update(keys=[]),
+        lambda body: body.update(catalog={"id": "aweb.hooks", "version": True}),
+    ],
+)
+async def test_a_registration_with_keys_or_a_bool_version_fails_closed(team, change):
+    resolver = await team["resolver_for"](SECRETS)
+    team["stack"].aweb.fault = _rewrite(change)
+    with pytest.raises(HookResolutionUnavailable):
+        await resolver.registrations(TEAM, *HOOK)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda body: body["bindings"][0]["catalog"].update(version="1"),
+        lambda body: body["bindings"][0]["catalog"].update(version=True),
+        lambda body: body["bindings"][0]["catalog"].update(version=0),
+    ],
+)
+async def test_an_own_binding_with_a_malformed_catalog_version_fails_closed(team, change):
+    resolver = await team["resolver_for"](LOGS)
+    team["stack"].aweb.fault = _rewrite(change)
+    with pytest.raises(HookResolutionUnavailable):
+        await resolver.own_bindings(TEAM, binding_id=team["registration"].binding_id)
+    with pytest.raises(HookResolutionUnavailable):
+        await resolver.own_bindings(TEAM, hook=HOOK)
+
+
+@pytest.mark.asyncio
+async def test_an_own_answer_must_answer_its_selector(team):
+    resolver = await team["resolver_for"](LOGS)
+    team["stack"].aweb.fault = _rewrite(
+        lambda body: body["bindings"][0].update(binding_id="00000000-0000-4000-8000-000000000000")
+    )
+    with pytest.raises(HookResolutionUnavailable):
+        await resolver.own_bindings(TEAM, binding_id=team["registration"].binding_id)
+    team["stack"].aweb.fault = _rewrite(lambda body: body["bindings"][0].update(hook="post-governance-hook"))
+    with pytest.raises(HookResolutionUnavailable):
+        await resolver.own_bindings(TEAM, hook=HOOK)
+
+
+@pytest.mark.asyncio
+async def test_each_selection_has_its_own_answer(team):
+    db = team["db"]
+    relay = {"app_id": "relay", "origin": "https://relay.example", "digest": "sha256:" + "6" * 64}
+    relay_ingest = HookBindingDeclaration(
+        kind=REGISTRATION, catalog_id="aweb.hooks", catalog_version=1, hook=HOOK[2],
+        tool="relay-ingest", method="POST", path="/hooks/relay", scopes=("relay:ingest",),
+    )
+    bindings = await _install(db, relay, "inst-relay", [relay_ingest, SECRET_USE])
+    await _activate(db, bindings[REGISTRATION].binding_id)
+    await _activate(db, bindings[PRODUCTION].binding_id)
+    resolver = await team["resolver_for"](relay)
+
+    registrations = await resolver.registrations(TEAM, *HOOK)
+    productions = await resolver.productions(TEAM, *HOOK)
+    assert {b.app_id for b in registrations.items} == {"logs", "relay"}
+    assert {b.app_id for b in productions.items} == {"secrets", "relay"}
+
+    calls = _aweb_calls(team)
+    with pytest.raises(HookBindingRequired):
+        await resolver.registrations(TEAM, "aweb.hooks", 1, "post-governance-hook")
+    assert _aweb_calls(team) == calls + 1
+
+    by_id = await resolver.own_bindings(TEAM, binding_id=bindings[REGISTRATION].binding_id)
+    by_hook = await resolver.own_bindings(TEAM, hook=HOOK)
+    assert len(by_id.items) == 1 and len(by_hook.items) == 2
+    assert _aweb_calls(team) == calls + 3
+
+
+@pytest.mark.asyncio
+async def test_an_unpublished_team_or_a_down_registry_fails_closed(team):
+    unpublished = "quiet:resolve.example"
+    await team["stack"].add_team(unpublished)
+    resolver = await team["resolver_for"](SECRETS)
+    with pytest.raises(HookResolutionUnavailable) as caught:
+        await resolver.registrations(unpublished, *HOOK)
+    assert caught.value.code == "team_server_unpublished"
+
+    team["stack"].awid.down = True
+    fresh_resolver = await team["resolver_for"](LOGS)
+    with pytest.raises(HookResolutionUnavailable) as caught:
+        await fresh_resolver.registrations(TEAM, *HOOK)
+    assert caught.value.code == "authority_unavailable"

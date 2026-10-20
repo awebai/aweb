@@ -33,6 +33,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote, urlencode
 from uuid import UUID
 
 import httpx
@@ -59,6 +60,36 @@ _BINDING_TIME_SHAPE = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z"
 )
 _KEY_TIME_SHAPE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+
+
+# The names a binding can carry, as the server reads them.
+_CATALOG_ID = re.compile(r"[a-z][a-z0-9.-]{0,63}")
+_HOOK = re.compile(r"[a-z][a-z0-9-]{0,63}")
+MAX_CATALOG_VERSION = 999_999_999
+
+
+def _is_count(value: object, *, maximum: int | None = None) -> bool:
+    """A whole number from 1, never a bool."""
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and value >= 1
+        and (maximum is None or value <= maximum)
+    )
+
+
+def _names_a_hook(catalog_id: object, catalog_version: object, hook: object) -> bool:
+    return (
+        isinstance(catalog_id, str)
+        and bool(_CATALOG_ID.fullmatch(catalog_id))
+        and _is_count(catalog_version, maximum=MAX_CATALOG_VERSION)
+        and isinstance(hook, str)
+        and bool(_HOOK.fullmatch(hook))
+    )
+
+
+def _segments(catalog_id: str, catalog_version: int, hook: str) -> str:
+    return "/".join(quote(str(part), safe="") for part in (catalog_id, catalog_version, hook))
 
 
 class HookResolutionUnavailable(Exception):
@@ -162,30 +193,28 @@ class HookResolver:
         self, team_id: str, catalog_id: str, catalog_version: int, hook: str
     ) -> Resolution[HookBinding]:
         """Where to deliver: the team's active registrations of the hook."""
-        path = f"/v1/apps/self/hooks/{catalog_id}/{catalog_version}/{hook}/registrations"
-        return await self._read(
-            team_id,
-            ("registrations", catalog_id, catalog_version, hook),
-            path,
-            signed=True,
-            parse=lambda body: _list_answer(
-                body, team_id, catalog_id, catalog_version, hook, "registration"
-            ),
-        )
+        return await self._list("registration", team_id, catalog_id, catalog_version, hook)
 
     async def productions(
         self, team_id: str, catalog_id: str, catalog_version: int, hook: str
     ) -> Resolution[HookProduction]:
         """Who may produce: the team's active productions of the hook, with their hook keys."""
-        path = f"/v1/apps/self/hooks/{catalog_id}/{catalog_version}/{hook}/productions"
+        return await self._list("production", team_id, catalog_id, catalog_version, hook)
+
+    async def _list(
+        self, kind: str, team_id: str, catalog_id: str, catalog_version: int, hook: str
+    ) -> Resolution[Any]:
+        # A hook no binding could name has no binding to hold: the server's
+        # answer would be hook_binding_required, so nothing is sent.
+        if not _names_a_hook(catalog_id, catalog_version, hook):
+            raise HookBindingRequired()
+        path = f"/v1/apps/self/hooks/{_segments(catalog_id, catalog_version, hook)}/{kind}s"
         return await self._read(
             team_id,
-            ("productions", catalog_id, catalog_version, hook),
+            (f"{kind}s", catalog_id, catalog_version, hook),
             path,
             signed=True,
-            parse=lambda body: _list_answer(
-                body, team_id, catalog_id, catalog_version, hook, "production"
-            ),
+            parse=lambda body: _list_answer(body, team_id, catalog_id, catalog_version, hook, kind),
         )
 
     async def own_bindings(
@@ -195,21 +224,37 @@ class HookResolver:
         binding_id: UUID | None = None,
         hook: tuple[str, int, str] | None = None,
     ) -> Resolution[OwnHookBinding]:
-        """This app's own bindings in the team, in every state, by id or by hook."""
+        """This app's own bindings in the team, in every state, by id or by hook.
+
+        A hook no binding could name is refused with ValueError before anything
+        is sent."""
         if (binding_id is None) == (hook is None):
             raise ValueError("select own bindings by exactly one of binding_id or hook")
         key: tuple[Any, ...]
         if binding_id is not None:
-            query, key = f"binding_id={binding_id}", ("own", str(binding_id))
+            if not isinstance(binding_id, UUID):
+                raise ValueError("binding_id is a UUID")
+            query, key = urlencode({"binding_id": str(binding_id)}), ("own", str(binding_id))
         else:
             assert hook is not None
-            query, key = f"hook={hook[0]}/{hook[1]}/{hook[2]}", ("own", hook)
+            if not _names_a_hook(*hook):
+                raise ValueError(
+                    "hook is (catalog_id, catalog_version, hook) as a binding names it"
+                )
+            query, key = urlencode({"hook": f"{hook[0]}/{hook[1]}/{hook[2]}"}), ("own", hook)
         return await self._read(
             team_id,
             key,
             f"/v1/apps/self/hooks/bindings?{query}",
             signed=True,
-            parse=lambda body: _own_answer(body, team_id, self._signer.app_id, self._app_origin),
+            parse=lambda body: _own_answer(
+                body,
+                team_id,
+                self._signer.app_id,
+                self._app_origin,
+                binding_id=binding_id,
+                hook=hook,
+            ),
         )
 
     async def core_producer_keys(self, team_id: str) -> Resolution[CoreProducerKey]:
@@ -275,7 +320,7 @@ class HookResolver:
             async with httpx.AsyncClient(**options) as client:
                 async with client.stream("GET", url, headers=headers) as response:
                     content = await _bounded_body(response)
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, httpx.InvalidURL) as exc:
             raise HookResolutionUnavailable("server_unreachable") from exc
         if response.status_code == 403 and _detail(content) == HOOK_BINDING_REQUIRED:
             raise HookBindingRequired()
@@ -309,8 +354,7 @@ def _detail(content: bytes) -> object:
 
 def _max_age(body: dict[str, Any]) -> int:
     value = body["max_age_seconds"]
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise _Malformed("max_age_seconds")
+    _require(_is_count(value), "max_age_seconds")
     return value
 
 
@@ -335,6 +379,13 @@ def _time(
     return datetime.strptime(value, layout).replace(tzinfo=UTC)  # type: ignore[arg-type]
 
 
+def _uuid(value: object) -> UUID:
+    """A UUID in its one canonical spelling."""
+    parsed = UUID(_text(value, "binding_id"))
+    _require(str(parsed) == value, "binding_id")
+    return parsed
+
+
 def _binding_fields(item: object, kind: str) -> dict[str, Any]:
     _require(isinstance(item, dict), "binding")
     assert isinstance(item, dict)
@@ -345,7 +396,7 @@ def _binding_fields(item: object, kind: str) -> dict[str, Any]:
         "generation",
     )
     fields = {
-        "binding_id": UUID(_text(item["binding_id"], "binding_id")),
+        "binding_id": _uuid(item["binding_id"]),
         "kind": kind,
         "app_id": _text(item["app_id"], "app_id"),
         "installation_id": _text(item["installation_id"], "installation_id", optional=True),
@@ -367,7 +418,10 @@ def _list_answer(
     body: dict[str, Any], team_id: str, catalog_id: str, catalog_version: int, hook: str, kind: str
 ) -> tuple[Any, ...]:
     _require(body["team_id"] == team_id, "team_id")
-    _require(body["catalog"] == {"id": catalog_id, "version": catalog_version}, "catalog")
+    catalog = body["catalog"]
+    _require(isinstance(catalog, dict) and set(catalog) == {"id", "version"}, "catalog")
+    _require(catalog["id"] == catalog_id and _is_count(catalog["version"]), "catalog")
+    _require(catalog["version"] == catalog_version, "catalog")
     _require(body["hook"] == hook, "hook")
     _require(isinstance(body["bindings"], list), "bindings")
     items: list[Any] = []
@@ -400,7 +454,13 @@ def _list_answer(
 
 
 def _own_answer(
-    body: dict[str, Any], team_id: str, app_id: str, app_origin: str
+    body: dict[str, Any],
+    team_id: str,
+    app_id: str,
+    app_origin: str,
+    *,
+    binding_id: UUID | None,
+    hook: tuple[str, int, str] | None,
 ) -> tuple[Any, ...]:
     _require(body["team_id"] == team_id, "team_id")
     _require(isinstance(body["bindings"], list), "bindings")
@@ -414,6 +474,12 @@ def _own_answer(
         _require(fields["origin"] == app_origin, "origin")
         catalog = item["catalog"]
         _require(isinstance(catalog, dict) and set(catalog) == {"id", "version"}, "catalog")
+        _require(_names_a_hook(catalog["id"], catalog["version"], item["hook"]), "catalog")
+        # Every binding answers the selector it was asked for.
+        if binding_id is not None:
+            _require(fields["binding_id"] == binding_id, "binding_id")
+        else:
+            _require((catalog["id"], catalog["version"], item["hook"]) == hook, "hook")
         _require(item["state"] in STATES, "state")
         _require(item["ended_by"] is None or item["ended_by"] in ENDED_BY, "ended_by")
         items.append(
