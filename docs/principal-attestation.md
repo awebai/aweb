@@ -88,8 +88,8 @@ It registers a custodian and its issuer keys for one team.
   key: the team's custodian records and every member-custody record, one per
   custodial certificate, so the batch grows with the number of custodial
   members. The rotation re-signs and publishes all of them in the same
-  operation, as it does for `aweb.team-server/1`. That applies to `aw`'s rotate
-  flow and to a custodial deployment's rotation step. Until it finishes,
+  operation, as it does for `aweb.team-server/1`. This is a requirement on
+  `aw`'s rotate flow and on custodial deployments (HO2, aweb-acgg.21). Until it finishes,
   verifiers refuse with `attestation_record_stale`, which fails closed but
   makes every attested call fail.
 
@@ -129,7 +129,8 @@ It states that a custodian holds the key of one certificate.
 - **Privacy.** The anonymous read tells anyone who knows a `certificate_id`
   whether that member's key is held by a custodian, which in practice means
   hosted. Certificate status does not reveal that. The disclosure follows the
-  same anonymity choice as certificate status and the team-server record.
+  same anonymity choice as certificate status and the team-server record, and
+  the secrets coordinator accepted it under Juan's delegation.
 
 ## 3. The attestation, `aweb.principal-attestation/1`
 
