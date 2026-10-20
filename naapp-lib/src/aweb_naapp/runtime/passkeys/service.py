@@ -83,6 +83,7 @@ MIGRATION_MODULE = "aweb_naapp_passkeys"
 SUBJECT_TYPE = "app_local"
 ENROLMENT_PREFIX = b"aweb.passkey-enrolment/1\n"
 CONTACT_CHANGE_PREFIX = b"aweb.passkey-contact-change/1\n"
+LOGIN_PREFIX = b"aweb.passkey-login/1\n"
 TRUST_ON_FIRST_USE = "trust_on_first_use"
 
 
@@ -176,6 +177,16 @@ class Designation:
 
 
 @dataclass(frozen=True)
+class PasskeyLogin:
+    """A verified login by a scope's in-effect approver. What the login opens,
+    a session or anything else, is the caller's."""
+
+    subject: str
+    contact: str
+    evidence_ref: str
+
+
+@dataclass(frozen=True)
 class PasskeyEvidence:
     """The restricted record behind an `auth_evidence_ref`."""
 
@@ -208,6 +219,11 @@ def _client_challenge(credential: Mapping[str, Any]) -> bytes:
 def _enrolment_challenge(enrolment_id: str, subject: str, nonce: bytes) -> bytes:
     fields = {"enrolment_id": enrolment_id, "nonce": nonce.hex(), "subject": subject}
     return hashlib.sha256(ENROLMENT_PREFIX + canonical_json_bytes(fields)).digest()
+
+
+def _login_challenge(scope: str, subject: str, nonce: bytes) -> bytes:
+    fields = {"nonce": nonce.hex(), "scope": scope, "subject": subject}
+    return hashlib.sha256(LOGIN_PREFIX + canonical_json_bytes(fields)).digest()
 
 
 def _contact_change_challenge(subject: str, new_contact_sha256: str, nonce: bytes) -> bytes:
@@ -638,9 +654,11 @@ class Passkeys:
         purpose: Purpose | str,
         approval: Approval | None = None,
         task_answer_ref: str | None = None,
+        audit: tuple[AuditKind, dict[str, str]] | None = None,
     ) -> str:
         """Verify an assertion of `subject`'s current passkey over `challenge`,
-        advance its counter and record the evidence. Return the evidence ref."""
+        advance its counter and record the evidence, with `audit`'s event in
+        the same transaction. Return the evidence ref."""
         try:
             credential_id = base64url_to_bytes(proof["rawId"])
         except (KeyError, TypeError, ValueError) as exc:
@@ -696,6 +714,18 @@ class Passkeys:
                 verified.new_sign_count,
                 self._clock(),
             )
+            if audit is not None:
+                kind, details = audit
+                await self._audit.emit(
+                    AuditEvent(
+                        kind=kind,
+                        actor=subject,
+                        subject=subject,
+                        occurred_at=self._clock(),
+                        details={**details, "evidence_ref": evidence_ref},
+                    ),
+                    tx,
+                )
         return evidence_ref
 
     async def approval_options(
@@ -745,6 +775,45 @@ class Passkeys:
             subject=approval.approver_subject,
             subject_type=SUBJECT_TYPE,
             evidence_ref=evidence_ref,
+        )
+
+    # Login
+
+    async def login_options(self, scope: str) -> Mapping[str, Any]:
+        """Assertion options for the scope's in-effect approver to log in."""
+        approver = await self._current_approver(scope)
+        if not await self._active_credentials(approver["subject"]):
+            raise AuthenticationFailed("approver has no current passkey")
+        nonce = secrets.token_bytes(32)
+        challenge = _login_challenge(scope, approver["subject"], nonce)
+        await self._issue_challenge(challenge, "login", approver["subject"], nonce)
+        return await self._assertion_options(approver["subject"], challenge)
+
+    async def verify_login(self, scope: str, proof: Mapping[str, Any]) -> PasskeyLogin:
+        """Verify the in-effect approver's login assertion for `scope`, under the
+        same user-verification, origin, single-use and counter rules as every
+        other assertion."""
+        approver = await self._current_approver(scope)
+        try:
+            challenge = _client_challenge(proof)
+        except (KeyError, TypeError, ValueError, WebAuthnException) as exc:
+            raise AuthenticationFailed("malformed assertion") from exc
+        issued = await self._take_challenge(challenge, "login")
+        if (
+            issued is None
+            or issued["subject"] != approver["subject"]
+            or _login_challenge(scope, approver["subject"], issued["nonce"]) != challenge
+        ):
+            raise AuthenticationFailed("assertion does not answer this login")
+        evidence_ref = await self._verify_assertion(
+            approver["subject"],
+            challenge,
+            proof,
+            "login",
+            audit=(AuditKind.APPROVER_LOGGED_IN, {"scope": scope}),
+        )
+        return PasskeyLogin(
+            subject=approver["subject"], contact=approver["contact"], evidence_ref=evidence_ref
         )
 
     # The approver's own contact

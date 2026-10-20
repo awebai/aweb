@@ -7,6 +7,7 @@ with real attestations and assertions, and py_webauthn verifies them.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -42,7 +43,7 @@ from aweb_naapp.runtime.passkeys import (
     RelyingParty,
     contact_sha256,
 )
-from tests.runtime.approvals.soft_authenticator import SoftAuthenticator
+from tests.runtime.approvals.soft_authenticator import SoftAuthenticator, b64url
 from tests.runtime.approvals.support import SCOPE, AuditOutbox, Clock, Policies, TaskAnswers, policy
 
 ORIGIN = "https://app.example.com"
@@ -673,3 +674,105 @@ async def test_a_passkey_task_decision_needs_its_task_answer_verified(pw):
     decided = await task_decide(await task_ceremony())
     assert decided.state is ApprovalState.APPROVED
     assert (await pw.passkeys.evidence(decided.auth_evidence_ref)).task_answer_ref == "answer-1"
+
+
+# Login
+
+
+async def login(pw, device, scope=SCOPE, **device_kw):
+    options = await pw.passkeys.login_options(scope)
+    return await pw.passkeys.verify_login(scope, device.get(dict(options), **device_kw))
+
+
+async def test_the_in_effect_approver_logs_in_with_its_passkey(pw):
+    approver, device = await enrol(pw)
+    session = await login(pw, device)
+    assert (session.subject, session.contact) == (approver.subject, approver.contact)
+    assert (await pw.passkeys.evidence(session.evidence_ref)).purpose == "login"
+    [logged_in] = [row for row in await pw.audit.rows() if row["kind"] == "approver_logged_in"]
+    assert logged_in["subject"] == approver.subject
+    assert json.loads(logged_in["details"])["evidence_ref"] == session.evidence_ref
+
+
+async def test_a_role_style_scope_logs_in_its_own_designee(pw):
+    pw.designated.add("secrets:owner")
+    await pw.passkeys.designate(
+        scope="secrets:owner",
+        contact="owner@example.com",
+        owner_act=owner_act(OwnerActKind.DESIGNATE, "owner@example.com", scope="secrets:owner"),
+    )
+    token = pw.contacts.last("owner@example.com")
+    device = SoftAuthenticator(ORIGIN)
+    await pw.passkeys.complete_enrolment(
+        token, device.create(await pw.passkeys.enrolment_options(token))
+    )
+    assert (await login(pw, device, scope="secrets:owner")).contact == "owner@example.com"
+    with pytest.raises(AuthenticationFailed):
+        await pw.passkeys.login_options(SCOPE)
+
+
+async def test_login_needs_an_enrolled_in_effect_approver(pw):
+    await designate(pw, "human@example.com")
+    with pytest.raises(AuthenticationFailed):
+        await pw.passkeys.login_options(SCOPE)
+
+
+async def test_nobody_logs_in_during_a_recovery_cooling_off(pw):
+    _, old_device = await enrol(pw, "human@example.com")
+    await designate(pw, "new-phone@example.com")
+    with pytest.raises(AuthenticationFailed):
+        await pw.passkeys.login_options(SCOPE)
+
+
+@pytest.mark.parametrize(
+    "device_kw", [{"origin": "https://evil.example.com"}, {"user_verified": False}]
+)
+async def test_login_must_come_from_the_app_origin_with_user_verification(pw, device_kw):
+    _, device = await enrol(pw)
+    with pytest.raises(AuthenticationFailed):
+        await login(pw, device, **device_kw)
+    assert "approver_logged_in" not in await pw.audit.kinds()
+
+
+async def test_a_login_assertion_is_single_use_and_counted(pw):
+    _, device = await enrol(pw)
+    twin = device.clone()
+    options = await pw.passkeys.login_options(SCOPE)
+    proof = device.get(dict(options))
+    await pw.passkeys.verify_login(SCOPE, proof)
+    with pytest.raises(AuthenticationFailed):
+        await pw.passkeys.verify_login(SCOPE, proof)
+    with pytest.raises(AuthenticationFailed):
+        await login(pw, twin)
+
+
+async def test_a_stranger_cannot_log_in(pw):
+    await enrol(pw)
+    stranger = SoftAuthenticator(ORIGIN)
+    stranger.create(await _foreign_registration_options(pw))
+    with pytest.raises(AuthenticationFailed):
+        await login(pw, stranger)
+
+
+async def test_a_login_proof_cannot_decide_an_approval(pw):
+    _, device = await enrol(pw)
+    approval = await mint(pw)
+    proof = device.get(dict(await pw.passkeys.login_options(SCOPE)))
+    assert await refusal(decide(pw, approval, proof)) is Refusal.AUTHENTICATION_FAILED
+    assert (await pw.approvals.get(approval.approval_id)).state is ApprovalState.PENDING
+
+
+async def test_a_login_answers_only_a_challenge_the_server_issued(pw):
+    _, device = await enrol(pw)
+    options = dict(await pw.passkeys.login_options(SCOPE))
+    options["challenge"] = b64url(os.urandom(32))
+    with pytest.raises(AuthenticationFailed):
+        await pw.passkeys.verify_login(SCOPE, device.get(options))
+
+
+async def test_an_approval_assertion_cannot_log_in(pw):
+    _, device = await enrol(pw)
+    approval = await mint(pw)
+    proof = await ceremony(pw, approval, device)
+    with pytest.raises(AuthenticationFailed):
+        await pw.passkeys.verify_login(SCOPE, proof)

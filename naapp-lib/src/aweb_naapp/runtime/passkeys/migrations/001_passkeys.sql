@@ -50,11 +50,12 @@ CREATE TABLE IF NOT EXISTS {{tables.passkey_credentials}} (
 
 -- Server-held challenge state. An enrolment challenge binds its enrolment; an
 -- approval challenge binds the approval, purpose, task answer and nonce it was
--- derived from; a contact-change challenge binds the new contact's digest.
+-- derived from; a contact-change challenge binds the new contact's digest; a
+-- login challenge binds the scope and subject it was issued for.
 CREATE TABLE IF NOT EXISTS {{tables.passkey_challenges}} (
     challenge BYTEA PRIMARY KEY,
     purpose TEXT NOT NULL
-        CHECK (purpose IN ('enrolment', 'approve', 'reject', 'view', 'contact_change')),
+        CHECK (purpose IN ('enrolment', 'approve', 'reject', 'view', 'contact_change', 'login')),
     subject TEXT NOT NULL REFERENCES {{tables.passkey_approvers}}(subject),
     enrolment_id TEXT REFERENCES {{tables.passkey_enrolments}}(enrolment_id),
     approval_id TEXT,
@@ -75,7 +76,8 @@ CREATE TABLE IF NOT EXISTS {{tables.passkey_assertions}} (
     evidence_ref TEXT PRIMARY KEY,
     subject TEXT NOT NULL REFERENCES {{tables.passkey_approvers}}(subject),
     credential_id BYTEA NOT NULL REFERENCES {{tables.passkey_credentials}}(credential_id),
-    purpose TEXT NOT NULL CHECK (purpose IN ('approve', 'reject', 'view', 'contact_change')),
+    purpose TEXT NOT NULL
+        CHECK (purpose IN ('approve', 'reject', 'view', 'contact_change', 'login')),
     approval_id TEXT,
     request_sha256 TEXT,
     policy_ref TEXT,

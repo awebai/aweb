@@ -15,6 +15,7 @@ from aweb_naapp.runtime.passkeys.service import (
     PasskeyAuthenticator,
     PasskeyDelivery,
     PasskeyEvidence,
+    PasskeyLogin,
     Passkeys,
     contact_sha256,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "PasskeyAuthenticator",
     "PasskeyDelivery",
     "PasskeyEvidence",
+    "PasskeyLogin",
     "Passkeys",
     "RelyingParty",
     "contact_sha256",
