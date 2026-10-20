@@ -276,7 +276,8 @@ test-naapp:
 	set -e; for package in $(NAAPP_PACKAGES); do \
 		echo "=== test $$package ==="; \
 		UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --project $$package; \
-		UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) $(MAKE) -C $$package test; \
+		UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache \
+			NAAPP_REQUIRE_TEST_DATABASE=1 LIBRARY_REQUIRE_TEST_DATABASE=1 $(TEST_EGRESS_RUNNER) $(MAKE) -C $$package test; \
 		git diff --exit-code -- $$package/uv.lock; \
 	done
 
