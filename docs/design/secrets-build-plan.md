@@ -94,7 +94,7 @@ These are owned elsewhere. secrets tasks list them by ID.
 
 | ID | What secrets needs | Owner | State on 2026-10-19 |
 | --- | --- | --- | --- |
-| X1 | **Hook contract.** Catalog v1 vector with the `post-secret-use-hook` action enum, payload allowlist and `refusal_code` enum, and the `post-governance-hook` act and direction table; envelope `aweb.hook-event/1` and its vectors; `aweb.owner-act/1` and its vector; binding cases with the `active_from` pad. | hooks lane (aweb-acgh.1) | Design at 98c1aa21. secrets asks that `returned_credential` leave the `disposition` enum before the vector freezes, because Q8 removed `return`. |
+| X1 | **Hook contract.** Catalog v1 vector with the `post-secret-use-hook` action enum, payload allowlist and `refusal_code` enum, and the `post-governance-hook` act and direction table; envelope `aweb.hook-event/1` and its vectors; `aweb.owner-act/1` and its vector; binding cases with the `active_from` pad. | hooks lane (aweb-acgh.1) | Design at 31206a4d, whose `disposition` enum matches Q8. H1 freezes the catalog from it. |
 | X2 | **Hook kit in `aweb_naapp`** behind its own extra: envelope signing, producer outbox with enqueue inside the effecting transaction and `event_id` minted once, drain and delivery client, hook-delivery credential. | hooks lane with B4 (aweb-acgh.6) | The generic outbox is on main. The hook kit is not. |
 | X3 | **Owner-act verifier** in `aweb_naapp`, and acgh.10: `Passkeys.designate()` accepts only the verifier's type. | hooks lane; aweb-acgh.10 | Open. No production app may expose owner-gated designation before it. |
 | X4 | **B1 verifier** with scope enforcement, the policy hook and `Principal.did_aw`. | aweb-acgh.3 | Closed. `did_aw` is in the principal output on main. |

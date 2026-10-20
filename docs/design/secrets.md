@@ -1201,9 +1201,9 @@ the `secret_*`, `request_sha256`/`params_sha256`, `approval_*`, `dispatch_*` and
   the raw response fills `upstream_response_hmac`.
 - **`refusal_code`.** It takes values from the §A2 enum. secrets proposed every
   code there, and each one is a refusal this design defines.
-- **`disposition`.** secrets never emits `returned_credential`, because
-  `return` does not exist (Q8). The value should leave the §A2 enum before the
-  catalog vector freezes.
+- **`disposition`.** It takes `returned`, `withheld` or `stored_as_secret`
+  (§A2 at hooks head 31206a4d). There is no value for a returned credential,
+  because `return` does not exist (Q8).
 
 **Governance acts** go on the generic `post-governance-hook` (audit-substrate §A2).
 The catalog fixes its act enum and fixes each act's direction:
