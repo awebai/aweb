@@ -26,9 +26,11 @@ def run(args, **kw):
         raise AssertionError(f'{args[:4]} failed: {result.stderr}\n{result.stdout}')
     return result.stdout
 
-def configure_manifest(version, events=True):
+def configure_manifest(version, events=True, manifest_version=1):
     # Configure the real Folio served file for this disposable deployment and
-    # public test emitter. No substitute HTTP server or auth bypass.
+    # public test emitter. No substitute HTTP server or auth bypass. Version 2
+    # declares the emitter as an app-event app key and adds a hook-only tool,
+    # whose scope install must not grant.
     code = '''import json
 from folio.aweb_manifest import MANIFEST_PATH, MANIFEST
 from awid.did import did_from_public_key
@@ -40,8 +42,13 @@ m['app']['version']=VERSION
 if not EVENTS: m['events']=[]
 key=Ed25519PrivateKey.from_private_bytes(bytes.fromhex('01'*32))
 m['event_emitters']=[{'kid':'folio:emit-test','did_key':did_from_public_key(key.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw))}]
+if MANIFEST_VERSION == 2:
+    m['manifest_version']=2
+    m['app_keys']=[dict(m.pop('event_emitters')[0], purposes=['app-event'])]
+    m['tools'].append({'name':'audit-ingest','description':'Hook-only audit ingest.','method':'POST','path':'/v1/hooks/audit','input_schema':{'type':'object','properties':{}},'params':[],'body':{'mode':'json'},'scopes':['folio:hook-ingest'],'mutation':True,'invocation_contexts':['hook']})
+    m['hooks']={'registration_version':1,'registrations':[{'catalog':{'id':'folio.hooks','version':1},'hook':'folio.after-write','tool':'audit-ingest','scopes':['folio:hook-ingest']}]}
 MANIFEST_PATH.write_text(json.dumps(m))
-'''.replace('VERSION', repr(version)).replace('EVENTS', repr(events))
+'''.replace('VERSION', repr(version)).replace('EVENTS', repr(events)).replace('MANIFEST_VERSION', repr(manifest_version))
     run(COMPOSE + ['exec', '-T', '-u', 'root', 'folio', '/app/.venv/bin/python', '-c', code])
 
 with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
@@ -274,3 +281,23 @@ except urllib.error.HTTPError as exc:
     aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'fifth')
     assert any(e['kind'] == 'app' and e['meta']['resource_ref'] == 'wake-proof' for e in events(a))
     print('PASS operator reseed restores keys and declarations from origin bytes, keeps subscriptions, reports conflicts', flush=True)
+
+    # A version 2 manifest registers against the real server: aw sends no bytes
+    # for it, grants only the scopes of agent and surface tools, takes its
+    # emitter from the app-event app key, and refuses its hook-only verb.
+    configure_manifest('0.2.0', manifest_version=2)
+    raw = urllib.request.urlopen(FOLIO + '/.well-known/aweb-app.json').read()
+    assert json.loads(raw)['manifest_version'] == 2
+    aw('alice', 'plugin', 'update', 'folio')
+    apps = get('alice', '/v1/apps/installed?team_id=' + team)['apps']
+    assert len(apps) == 1, apps
+    assert apps[0]['manifest_version'] == 2 and apps[0]['app_version'] == '0.2.0', apps[0]
+    assert apps[0]['digest'] == 'sha256:' + hashlib.sha256(raw).hexdigest()
+    assert apps[0]['granted_scopes'] == ['folio:read', 'folio:write'], apps[0]['granted_scopes']
+    assert psql("SELECT registered_from_manifest_bytes FROM aweb.team_app_installs WHERE team_id='" + team + "'").strip() == 'f'
+    hook_only = aw('alice', 'folio', 'audit-ingest', check=False)
+    assert hook_only.returncode != 0 and 'tool_context_denied' in hook_only.stderr, hook_only.stderr
+    a = stream('alice')
+    aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'sixth')
+    assert any(e['kind'] == 'app' and e['meta']['resource_ref'] == 'wake-proof' for e in events(a))
+    print('PASS v2 manifest registers without bytes, grants only agent and surface scopes, emits through its app-event key, refuses its hook-only verb', flush=True)
