@@ -82,9 +82,10 @@ def test_app_usage_credential():
     assert signed == CREDENTIAL["canonical_payload"].encode("utf-8")
 
 
-def test_the_largest_valid_batch_fits_under_the_body_limit():
-    """§3's field bounds keep every valid batch's canonical JSON under 1 MiB, so
-    the collector's raw-body limit never refuses a valid batch."""
+def test_a_large_valid_batch_fits_under_the_body_limit():
+    """A full 1,000-entry batch with long identifiers and maximal quantities is
+    valid and still fits a single request body. Validity alone does not bound a
+    batch's size; the collector's raw-body limit does."""
     long_id = "a" * 128
     entries = [
         {

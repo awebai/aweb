@@ -26,8 +26,7 @@ USAGE_FORMAT = "aweb.usage/1"
 METRIC_VERSION = 1
 REPORT_PREFIX = b"aweb.usage-report/1\n"
 MAX_ENTRIES = 1000
-# The collector's limit on a raw request body, checked before parsing. The
-# field bounds keep every valid batch's canonical JSON below it.
+# The collector's limit on a raw request body, checked before parsing.
 MAX_BODY_BYTES = 1 << 20
 SAFE_INTEGER = 2**53 - 1
 

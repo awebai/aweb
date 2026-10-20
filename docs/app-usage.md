@@ -121,9 +121,9 @@ The app sends its ledger in batches, oldest first:
 | `inventory` | Optional: every gauge of §1, each a safe non-negative integer, and `at_seq`, the sequence the gauges are true after, with `first_seq ≤ at_seq ≤ last_seq`. |
 
 Unknown fields are refused at every level. The collector refuses a request
-body over 1 MiB (1,048,576 bytes) before parsing it (413). The field bounds
-above keep every valid batch's canonical JSON below that: the largest one
-possible is 876,901 bytes. Its digest, `report_sha256`, is the bare hex SHA-256 of
+body over 1 MiB (1,048,576 bytes) before parsing it (413), whatever its shape:
+a batch can be valid by these rules and still be too large to send, and the
+app then splits it into smaller reports. Its digest, `report_sha256`, is the bare hex SHA-256 of
 `"aweb.usage-report/1\n" || canonical_json(batch)`.
 
 ## 4. Credential, purpose `app-usage`
