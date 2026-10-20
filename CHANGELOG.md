@@ -39,6 +39,12 @@ Publishes PyPI `awid-service` 0.5.29 and the `awid` image 0.5.29.
 
 Server changes are since `server-v1.27.28`. Prepared alongside aw 1.36.44.
 
+- **Security:** a caller-supplied chat `session_id` is a locator, never
+  membership. Reusing an existing session requires the caller to be an active
+  stored participant; an id that names a mail conversation, or a chat the caller
+  is not in, is refused with 409 and nothing is written. Participants are never
+  added through session create, and a concurrent create that collides is a 409,
+  never a silent join. Fresh signed session ids remain supported.
 - Add an operator audit trail for role publication and repo deletion: verified
   actor, principal, authentication mode, target, outcome and request ID, without
   message or playbook content. Successful writes and audit records commit
