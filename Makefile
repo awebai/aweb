@@ -641,3 +641,9 @@ test-isolated:
 .PHONY: test-egress-controls
 test-egress-controls:
 	python3 -m unittest discover -s scripts/test-egress -p test_native.py -v
+
+# The shared page renderer is packaged in the Python wheel. Rebuild from its
+# exact npm lock and compare without rewriting committed bytes.
+.PHONY: check-page-renderer-bundle
+check-page-renderer-bundle:
+	cd naapp-lib/renderer && npm ci --ignore-scripts && node build.mjs --check

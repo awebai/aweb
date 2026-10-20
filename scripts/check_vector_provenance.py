@@ -220,6 +220,18 @@ ROOT_CONSUMERS = {
         "secrets-runner-protocol-v1.json",
         'ROOT / "docs" / "vectors" / "secrets-runner-protocol-v1.json"',
     ),
+    PurePosixPath("naapp-lib/renderer/tests/render.spec.mjs"): _consumer(
+        "page-format-v1.json",
+        '"../../../docs/vectors/page-format-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/src/aweb_naapp/pages/gallery.py"): _consumer(
+        "page-format-v1.json",
+        'Path(__file__).resolve().parents[4] / "docs/vectors/page-format-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/page_store/test_store.py"): _consumer(
+        "page-format-v1.json",
+        'FIXTURE.parents[3] / "vectors/page-format-v1.json"',
+    ),
     PurePosixPath("naapp-lib/tests/pages/test_page_format_vectors.py"): _consumer(
         "page-format-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "page-format-v1.json"',
