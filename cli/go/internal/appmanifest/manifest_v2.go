@@ -801,8 +801,8 @@ func answerTools(surfaces Surfaces) map[string]bool {
 }
 
 // validateAnswerRoutes refuses an agent-visible tool that can reach a surface
-// answer_tool's route: the same method, and a path whose segments are equal
-// or a placeholder on either side.
+// answer_tool's route: the same method, and a path whose non-empty segments
+// are equal or a placeholder on either side.
 func validateAnswerRoutes(m Manifest, tools map[string]*Tool) error {
 	for name := range answerTools(m.Surfaces) {
 		answer := tools[name]
@@ -828,7 +828,7 @@ func routesOverlap(a, b *Tool) bool {
 	if errA != nil || errB != nil {
 		return false
 	}
-	segmentsA, segmentsB := strings.Split(pathA, "/"), strings.Split(pathB, "/")
+	segmentsA, segmentsB := routeSegments(pathA), routeSegments(pathB)
 	if len(segmentsA) != len(segmentsB) {
 		return false
 	}
@@ -838,6 +838,12 @@ func routesOverlap(a, b *Tool) bool {
 		}
 	}
 	return true
+}
+
+// routeSegments splits a path into its non-empty segments, so trailing and
+// repeated slashes do not make a different route.
+func routeSegments(path string) []string {
+	return strings.FieldsFunc(path, func(r rune) bool { return r == '/' })
 }
 
 func isPlaceholderSegment(segment string) bool {

@@ -15,7 +15,7 @@
     "surface_invalid": "A surface field value, bound, input binding or event binding is invalid.",
     "surface_tool_invalid": "A surface tool is unresolved, lacks the surface context, is public, or has the wrong method or mutation flag.",
     "answer_tool_contexts_invalid": "A surface answer_tool does not declare invocation_contexts exactly [\"surface\"]. Checked before surface_tool_invalid for the answer tool.",
-    "answer_route_agent_visible": "A v2 tool whose contexts include agent has the method of a surface answer_tool and a path that can match the same requests (segments equal, or either a placeholder).",
+    "answer_route_agent_visible": "A v2 tool whose contexts include agent has the method of a surface answer_tool and a path that can match the same requests: after dropping empty segments (trailing and repeated slashes), segments are equal or either is a placeholder.",
     "answer_input_forbidden": "A v2 tool other than a surface answer_tool declares an answer property, top-level or in an object body parameter's schema; or a surface names its invoke_tool as its answer_tool.",
     "usage_invalid": "usage format is missing or invalid, or its snapshot tool is unresolved, public or a mutation.",
     "lifecycle_invalid": "lifecycle is empty, or a lifecycle tool is unresolved, public, or has the wrong mutation flag.",
@@ -2626,6 +2626,102 @@
             "name": "answer-literal",
             "method": "POST",
             "path": "/v1/workspaces/w1/answers",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "request": {
+                  "type": "object"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "request",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "fixture:write"
+            ],
+            "mutation": true,
+            "invocation_contexts": [
+              "agent"
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "answer_route_agent_visible"
+      }
+    },
+    {
+      "name": "agent_tool_on_answer_route_trailing_slash",
+      "description": "A trailing slash and repeated slashes do not make a different route.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/-",
+          "value": {
+            "name": "answer-slash",
+            "method": "POST",
+            "path": "/v1/workspaces/{page_id}/answers/",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "page_id": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                },
+                "request": {
+                  "type": "object"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "page_id",
+                "in": "path"
+              },
+              {
+                "name": "request",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "fixture:write"
+            ],
+            "mutation": true,
+            "invocation_contexts": [
+              "agent"
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "answer_route_agent_visible"
+      }
+    },
+    {
+      "name": "agent_tool_on_answer_route_repeated_slash",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/-",
+          "value": {
+            "name": "answer-slashes",
+            "method": "POST",
+            "path": "/v1//workspaces/w1/answers",
             "input_schema": {
               "type": "object",
               "properties": {

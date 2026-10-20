@@ -744,7 +744,8 @@ def _answer_tools(surfaces: list[dict[str, Any]] | tuple[Mapping[str, Any], ...]
 
 
 def _route(tool: _Tool) -> tuple[str, list[str]]:
-    return _go_trim(tool.method).upper(), _relative_path(tool.path, tool.name).split("/")
+    segments = [segment for segment in _relative_path(tool.path, tool.name).split("/") if segment]
+    return _go_trim(tool.method).upper(), segments
 
 
 def _is_placeholder(segment: str) -> bool:
@@ -760,7 +761,8 @@ def _routes_overlap(a: _Tool, b: _Tool) -> bool:
 
 def _validate_answer_routes(d: dict[str, Any], tools: dict[str, _Tool]) -> None:
     """No agent-visible tool may reach a surface answer_tool's route: the same
-    method, and a path whose segments are equal or a placeholder on either side."""
+    method, and a path whose non-empty segments are equal or a placeholder on
+    either side, so trailing and repeated slashes do not make a different route."""
     for name in _answer_tools(d["surfaces"]):
         for tool in d["tools"]:
             if _go_trim(tool.name) != name and AGENT in tool.effective_contexts and _routes_overlap(tool, tools[name]):

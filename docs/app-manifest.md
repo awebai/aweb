@@ -436,8 +436,9 @@ path is agent-visible is refused at install:
 - the answer tool itself declares other contexts
   (`answer_tool_contexts_invalid`);
 - another tool whose contexts include `agent` can reach the answer tool's
-  route: the same method, and a path whose segments are equal or a
-  placeholder on either side (`answer_route_agent_visible`);
+  route: the same method, and a path whose segments, ignoring trailing and
+  repeated slashes, are equal or a placeholder on either side
+  (`answer_route_agent_visible`);
 - another tool, the `invoke_tool` included, declares an `answer` input,
   top-level or inside an object body parameter (`answer_input_forbidden`).
 
