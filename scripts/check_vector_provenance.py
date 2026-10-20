@@ -221,6 +221,10 @@ ROOT_CONSUMERS = {
         'AWEB_ROOT / "docs" / "vectors" / "app-request-credential-v1.json"',
         'AWEB_ROOT / "docs" / "vectors" / "task-answer-v1.json"',
     ),
+    PurePosixPath("naapp-lib/tests/runtime/test_prepare_vectors.py"): _consumer(
+        "page-action-prepare-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "page-action-prepare-v1.json"',
+    ),
     PurePosixPath("naapp-lib/tests/runtime/test_team_auth_vectors.py"): _consumer(
         "team-auth-envelope-v2.json",
         'AWEB_ROOT / "docs" / "vectors" / "team-auth-envelope-v2.json"',

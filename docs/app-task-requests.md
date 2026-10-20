@@ -83,7 +83,7 @@ A field never accepts the other spelling.
 | `app_origin` | The installed app's origin, in the same canonical form. |
 | `team_id`, `app_id` | The team and the installed app. |
 | `installation_id`, `installation_generation` | The installation and its generation at signing (F6). The generation is a safe positive integer. |
-| `external_request_id` | `^[A-Za-z0-9._-]{1,128}$`, chosen by the app, unique per originating member within the installation. |
+| `external_request_id` | `^[A-Za-z0-9._-]{1,128}$`, chosen by the app, unique per originating member within the installation. A pages naapp allocates it when it prepares the intent ([page-actions.md](page-actions.md) §3.1). |
 | `actor_did_key` | The signing member's `did:key`. It equals the certificate's `member_did_key`. |
 | `certificate_id` | The signing member's team certificate. |
 | `target_dids` | The principals who may answer (§3): for a decision request, the task's `eligible_dids`; otherwise `[assignee_did]`. 1–16 distinct principal DIDs, sorted. The member's signature binds the whole set. |
