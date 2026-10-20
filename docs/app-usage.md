@@ -56,7 +56,8 @@ attribute to its installation is counted as a call with that outcome.
 Unattributable hostile traffic is security telemetry, never team usage.
 
 **Sources.** Each entry carries one `source`: `cli`, `mcp`, `surface`, `link`,
-`sync`, `background` or `hook`.
+`sync`, `background`, `hook` or `lifecycle`. `lifecycle` is deletion and
+export work the installation's lifecycle tools perform.
 
 **What never appears in usage.** No record content, title, file name, query,
 capability, token, link secret or actor name. Operation and attempt IDs are
@@ -138,10 +139,20 @@ and `timestamp`, exactly as for `app-request`. An `app-event` or
 `app-usage` credential passes no other. A revoked or replaced key is refused;
 there is no grace period.
 
-**After uninstall**, the installation's lifecycle reporting grant accepts only
-reports whose entries all have `outcome: "committed"` from deletion and
-export work, and terminal inventory snapshots, until disposal completes. It
-never restores normal app or event authority.
+**After uninstall** the retired installation keeps a lifecycle reporting grant,
+and nothing else:
+
+- The signer is the retired installation's own `app-usage` key, accepted only
+  for reports naming that installation and its last generation.
+- Every entry has `source: "lifecycle"`, `outcome: "committed"`, and deltas
+  only in `calls`, `pages_deleted` and `records_deleted`. A batch may carry a
+  terminal inventory snapshot. The collector refuses any other entry from a
+  retired installation, and the whole batch with it (403 `scope_denied`).
+- The grant lasts until 7 days after the installation's lifecycle status
+  reports its deletion and export work complete, so that a report in retry at
+  completion still lands. After that the collector refuses the installation's
+  reports (403 `scope_denied`).
+- It never restores normal app, event or request authority.
 
 ## 5. Collector: `POST /v1/apps/usage/reports`
 
