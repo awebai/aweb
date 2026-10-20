@@ -4114,6 +4114,208 @@
       "expect": "schema_invalid"
     },
     {
+      "name": "fields-format-array",
+      "task": {
+        "title": "Approve next week's prices",
+        "description": "Rates for 24–30 October, café terrace included.",
+        "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+        "app_request": {
+          "external_request_id": "act_77e0b3",
+          "resource_ref": "pg_4hd2",
+          "action_ref": "approve-price",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "choices": [
+            {
+              "value": "approve",
+              "label": "Approve the new rates"
+            },
+            {
+              "value": "reject",
+              "label": "Keep the current rates"
+            }
+          ],
+          "fields": [
+            {
+              "field": "price",
+              "label": "Price",
+              "format": [
+                "text"
+              ]
+            }
+          ],
+          "eligible_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+            "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+          ],
+          "role": "pages.price-approver"
+        }
+      },
+      "expect": "schema_invalid"
+    },
+    {
+      "name": "fields-format-object",
+      "task": {
+        "title": "Approve next week's prices",
+        "description": "Rates for 24–30 October, café terrace included.",
+        "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+        "app_request": {
+          "external_request_id": "act_77e0b3",
+          "resource_ref": "pg_4hd2",
+          "action_ref": "approve-price",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "choices": [
+            {
+              "value": "approve",
+              "label": "Approve the new rates"
+            },
+            {
+              "value": "reject",
+              "label": "Keep the current rates"
+            }
+          ],
+          "fields": [
+            {
+              "field": "price",
+              "label": "Price",
+              "format": {
+                "kind": "text"
+              }
+            }
+          ],
+          "eligible_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+            "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+          ],
+          "role": "pages.price-approver"
+        }
+      },
+      "expect": "schema_invalid"
+    },
+    {
+      "name": "fields-label-array",
+      "task": {
+        "title": "Approve next week's prices",
+        "description": "Rates for 24–30 October, café terrace included.",
+        "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+        "app_request": {
+          "external_request_id": "act_77e0b3",
+          "resource_ref": "pg_4hd2",
+          "action_ref": "approve-price",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "choices": [
+            {
+              "value": "approve",
+              "label": "Approve the new rates"
+            },
+            {
+              "value": "reject",
+              "label": "Keep the current rates"
+            }
+          ],
+          "fields": [
+            {
+              "field": "price",
+              "label": [
+                "Price"
+              ],
+              "format": "text"
+            }
+          ],
+          "eligible_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+            "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+          ],
+          "role": "pages.price-approver"
+        }
+      },
+      "expect": "schema_invalid"
+    },
+    {
+      "name": "choices-value-object",
+      "task": {
+        "title": "Find a cleaner for Saturday",
+        "description": null,
+        "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+        "app_request": {
+          "external_request_id": "act_9f2c41",
+          "resource_ref": "pg_4hd2",
+          "action_ref": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null,
+          "choices": [
+            {
+              "value": {
+                "v": 1
+              },
+              "label": "Approve"
+            }
+          ],
+          "fields": null,
+          "eligible_dids": null,
+          "role": null
+        }
+      },
+      "expect": "schema_invalid"
+    },
+    {
+      "name": "role-array",
+      "task": {
+        "title": "Approve next week's prices",
+        "description": "Rates for 24–30 October, café terrace included.",
+        "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+        "app_request": {
+          "external_request_id": "act_77e0b3",
+          "resource_ref": "pg_4hd2",
+          "action_ref": "approve-price",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "choices": [
+            {
+              "value": "approve",
+              "label": "Approve the new rates"
+            },
+            {
+              "value": "reject",
+              "label": "Keep the current rates"
+            }
+          ],
+          "fields": [
+            {
+              "field": "start",
+              "label": "From",
+              "format": "date"
+            },
+            {
+              "field": "end",
+              "label": "Until",
+              "format": "date"
+            },
+            {
+              "field": "price_per_night_minor",
+              "label": "Nightly price",
+              "format": "money_minor"
+            },
+            {
+              "field": "reason",
+              "label": "Reason",
+              "format": "text"
+            }
+          ],
+          "eligible_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+            "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+          ],
+          "role": [
+            "pages.price-approver"
+          ]
+        }
+      },
+      "expect": "schema_invalid"
+    },
+    {
       "name": "fields-label-bidi",
       "task": {
         "title": "Approve next week's prices",

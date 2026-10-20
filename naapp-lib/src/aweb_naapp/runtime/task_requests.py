@@ -235,7 +235,12 @@ def _check_fields(fields: object) -> None:
         field = entry["field"]
         if not isinstance(field, str) or not 1 <= len(field) <= 128:
             raise _refuse("schema_invalid", "fields")
-        if not _clean_text(entry["label"], 200) or entry["format"] not in FIELD_FORMATS:
+        fmt = entry["format"]
+        if (
+            not _clean_text(entry["label"], 200)
+            or not isinstance(fmt, str)
+            or fmt not in FIELD_FORMATS
+        ):
             raise _refuse("schema_invalid", "fields")
     names = [entry["field"] for entry in fields]
     labels = [entry["label"] for entry in fields]
