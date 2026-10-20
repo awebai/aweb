@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## Release preparations
+
+### Release preparation: aw 1.36.44
+
+CLI changes are since `aw-v1.36.43`. Prepared alongside server 1.27.29 and AWID 0.5.29.
+
 - **Security:** `aw id sign` now signs only domain-separated user data, using
   `aweb.user-signature/1\n` before canonical JSON. Its signatures cannot authorize
   protocol operations. Internal protocol credentials retain their established
@@ -13,8 +19,6 @@
 - `aw chat history <recipient>` applies its limit and unread filter before
   custody decryption, skips unrelated pending previews during session lookup,
   and uses individual request timeouts rather than one budget for the whole page.
-
-## Release preparations
 
 ### Release preparation: AWID 0.5.29
 
@@ -33,7 +37,7 @@ Publishes PyPI `awid-service` 0.5.29 and the `awid` image 0.5.29.
 
 ### Release preparation: server 1.27.29
 
-Server changes are since `server-v1.27.28`. No CLI change; aw stays 1.36.43.
+Server changes are since `server-v1.27.28`. Prepared alongside aw 1.36.44.
 
 - Add an operator audit trail for role publication and repo deletion: verified
   actor, principal, authentication mode, target, outcome and request ID, without
