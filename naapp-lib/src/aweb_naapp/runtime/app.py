@@ -51,6 +51,7 @@ from aweb_naapp.runtime.attestation import (
     caller_context,
 )
 from aweb_naapp.runtime.authorization import (
+    ActionKind,
     ActionPolicy,
     Authorization,
     DeclaredTools,
@@ -205,14 +206,17 @@ class NaappRuntime:
         )
 
     def authorized(
-        self, *, grants: GrantSource, policy: ActionPolicy
+        self, *, grants: GrantSource, policy: ActionPolicy, action_kind: ActionKind | None = None
     ) -> Callable[[Request], Awaitable[Authorization]]:
         """A FastAPI dependency admitting only authorized member requests.
 
         It authenticates the request, resolves the caller's invocation
         context from its principal attestation (none means an agent), then
         authorizes it against the tools of the served manifest, the team's
-        grant from ``grants`` and the app's ``policy``. An attestation that does
+        grant from ``grants`` and the app's ``policy``. ``action_kind``
+        resolves the page action a request performs, so that answers reach the
+        app only through a surface's answer tool; without it, a surface's
+        invoke tool admits nothing. An attestation that does
         not verify refuses the request with its code (``503`` when the registry
         cannot be read). Only an admitted member is recorded as observed, so
         refused requests never write to the app's database.
@@ -228,6 +232,7 @@ class NaappRuntime:
                 tools=self.declared_tools,
                 grants=grants,
                 policy=policy,
+                action_kind=action_kind,
             )
             await record_observed_principal(self.db(), principal)
             return authorization

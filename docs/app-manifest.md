@@ -463,15 +463,25 @@ action whose page definition has `kind: "answer"` (D1 §4, C1). The naapp's
 own invoke handler refuses any request whose action, resolved from the
 page's action definitions, is `answer`-kind, whatever manifest validation
 and host filtering did. Only the naapp can resolve that; a manifest cannot
-express it. The shared naapp runtime (`aweb_naapp`) is to enforce it in
-`authorize_request` once the runtime loads its served manifest with
-`load_manifest`; that is not shipped yet. Its acceptance case is an
-answer-kind `action_id` submitted through the invoke tool and refused.
+express it. The shared naapp runtime (`aweb_naapp`) enforces it in
+`authorize_request`, through the app's `action_kind`, which resolves the
+kind of the page action a request performs. An `answer`-kind action is
+refused on every tool except the surface's `answer_tool`
+(`answer_action_refused`). On the `invoke_tool`, an action whose kind does
+not resolve is refused (`action_unresolved`), and so is every invoke request
+of an app that supplies no `action_kind`.
 
 As an additional cheap guard, a request body for any v2 tool except a
 surface `answer_tool` that carries a member named `answer`, top-level or in
 a top-level object member, is refused (`answer_payload_refused`). This guard
-does not recognise an answer-kind action, so it is not the guarantee.
+does not recognise an answer-kind action, so it is not the guarantee. The
+naapp runtime applies it to JSON bodies; a `raw` body is opaque bytes.
+
+The naapp runtime also enforces invocation contexts at call time: a request
+calls as an agent unless its principal attestation verifies and names the
+dashboard channel, which makes it a surface caller. A tool outside the
+caller's context is refused (`tool_context_denied`). No team-auth request
+calls in the `hook` context.
 
 ### Hooks slot
 

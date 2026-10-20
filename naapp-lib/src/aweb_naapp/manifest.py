@@ -993,6 +993,11 @@ class Manifest:
             "hooks": copy.deepcopy(self.hooks),
         }
 
+    def tools_by_name(self) -> dict[str, Mapping[str, Any]]:
+        """Each declared tool as the manifest declares it, keyed by the name a
+        consumer resolves it by, in manifest order."""
+        return {name: tool.raw for name, tool in self._tools.items()}
+
     def tool_contexts(self, name: str) -> frozenset[str] | None:
         """A declared tool's effective invocation contexts, ``None`` when undeclared."""
         tool = self._tools.get(_go_trim(name))
