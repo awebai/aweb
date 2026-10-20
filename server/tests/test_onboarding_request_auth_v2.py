@@ -77,3 +77,27 @@ async def test_versioned_onboarding_proof_bound_to_target_and_side_header(side_h
         keys = [key async for key in env.redis.scan_iter(match=prefix + '*')]
         if keys:
             await env.redis.delete(*keys)
+
+
+@pytest.mark.asyncio
+async def test_existing_onboarding_verifier_never_ignores_present_v2(privacy_app):
+    from awid.http_didkey import verify_http_didkey_request
+    env = privacy_app
+    actor = env.actors['alice']
+
+    @env.app.post('/onboarding-old-entry')
+    async def endpoint(request: Request):
+        return {'did_key': await verify_http_didkey_request(request)}
+
+    body = b'{}'
+    timestamp = datetime.now(timezone.utc).isoformat()
+    old = canonical_json_bytes(dict(body_sha256=hashlib.sha256(body).hexdigest(),
+                                   method='POST', path='/onboarding-old-entry', timestamp=timestamp))
+    headers = {'Authorization': f'DIDKey {actor.did} {sign_message(actor.sk, old)}',
+               'X-AWEB-Timestamp': timestamp, 'X-AWEB-Signed-Payload': 'malformed',
+               'Content-Type': 'application/json'}
+    response = await env.client.post('/onboarding-old-entry', content=body, headers=headers)
+    assert response.status_code == 401, response.text
+    del headers['X-AWEB-Signed-Payload']
+    accepted = await env.client.post('/onboarding-old-entry', content=body, headers=headers)
+    assert accepted.status_code == 200, accepted.text
