@@ -18,7 +18,7 @@ from awid.registry import CachedRegistryClient
 import awid.registry as registry_module
 import httpx
 from aweb.app_registry import get_installation_on
-from aweb_naapp.runtime.task_requests import app_request_credential
+from aweb_naapp.runtime.task_requests import app_request_credential, sign_stage_receipt
 
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.app_credentials import APP_REQUEST, AppCredential
@@ -83,17 +83,40 @@ async def _app_http(context, method, path, body=None):
     return await env.client.request(method, path, content=raw, headers=headers)
 
 
+def _stage(context, task, actor, answer, **overrides):
+    env, _, credential, installation = context
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    payload = dict(v=1, type="aweb.app-answer-stage", team_id=credential.team_id, app_id=credential.app_id,
+        installation_id=installation["installation_id"], installation_generation=installation["generation"],
+        kid=credential.kid, did_key=credential.did_key, task_id=task["task_id"], question_rev=task["question_rev"],
+        answer_key=answer["answer_key"], answer_sha256=answer["answer_sha256"], answerer_did=env.actors[actor].did,
+        choice=answer.get("choice"), proposal_rev=answer.get("proposal_rev"), proposal_sha256=answer.get("proposal_sha256"),
+        issued_at=now.strftime("%Y-%m-%dT%H:%M:%SZ"), expires_at=(now+timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        nonce=uuid4().hex)
+    payload.update(overrides)
+    return {"payload": payload, "signature": sign_stage_receipt(payload, env.app_signing_key)}
+
+
+async def _answer_http(context, actor, path, answer):
+    env, *_ = context
+    current = await _v2_request(env, "alice", "GET", path.removesuffix("/answer"))
+    assert current.status_code == 200, current.text
+    return await _v2_request(env, actor, "POST", path,
+        {**answer, "stage_receipt": _stage(context, current.json(), actor, answer)})
+
+
 def _body(env, *, request_id="action-1", expired=False):
     task = dict(title="Review a page request", description=None, assignee_did=env.actors["bob"].did,
         app_request=dict(external_request_id=request_id, resource_ref="opaque-page", action_ref="decide",
-                         proposal_rev=2, proposal_sha256="sha256:" + "d" * 64, choices=["approve", "reject"]))
+                         proposal_rev=2, proposal_sha256="sha256:" + "d" * 64, choices=["approve", "reject"],
+                         eligible_dids=[env.actors["bob"].did], role=None))
     now = datetime.now(timezone.utc).replace(microsecond=0)
     if expired:
         now -= timedelta(days=2)
     payload = dict(v=1, type="aweb.app-task-authorization", aud=env.app.state.public_origin,
         app_origin="https://fixture.example.test", team_id=TEAM, app_id="fixture",
         installation_id="install-fixture", installation_generation=1, external_request_id=request_id,
-        actor_did_key=env.actors["alice"].did, certificate_id="privacy-alice", target_did=task["assignee_did"],
+        actor_did_key=env.actors["alice"].did, certificate_id="privacy-alice", target_dids=task["app_request"]["eligible_dids"],
         task_body_sha256=hashlib.sha256(canonical_json_bytes(task)).hexdigest(), action_id="decide",
         proposal_rev=2, proposal_sha256=task["app_request"]["proposal_sha256"],
         issued_at=now.strftime("%Y-%m-%dT%H:%M:%SZ"), expires_at=(now+timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"), nonce="1"*32)
@@ -145,7 +168,7 @@ async def test_app_create_replay_expiry_and_lost_receipt_reconcile(app_request_c
 async def test_app_request_binding_and_authorization_are_independent(app_request_context):
     env, *_ = app_request_context
     body = _body(env)
-    body["task_authorization"]["payload"]["target_did"] = env.actors["carol"].did
+    body["task_authorization"]["payload"]["target_dids"] = [env.actors["carol"].did]
     with pytest.raises(HTTPException) as caught:
         await _create(app_request_context, _sign(env, body))
     assert caught.value.status_code == 403 and caught.value.detail == "target_mismatch"
@@ -171,11 +194,11 @@ async def test_app_decision_answer_checks_proposal_and_choice_then_cancellation(
     answer = dict(expected_task_rev=1, answer_key="decision-1", body_md=text,
                   answer_sha256=hashlib.sha256(text.encode()).hexdigest(), choice="approve",
                   proposal_rev=2, proposal_sha256="sha256:"+"d"*64)
-    changed = await _v2_request(env, "bob", "POST", path, {**answer, "proposal_sha256": "sha256:"+"e"*64})
+    changed = await _answer_http(app_request_context, "bob", path, {**answer, "proposal_sha256": "sha256:"+"e"*64})
     assert changed.status_code == 409 and changed.json()["detail"] == "approval_changed", changed.text
-    invalid = await _v2_request(env, "bob", "POST", path, {**answer, "choice": "not-an-option"})
+    invalid = await _answer_http(app_request_context, "bob", path, {**answer, "choice": "not-an-option"})
     assert invalid.status_code == 422, invalid.text
-    accepted = await _v2_request(env, "bob", "POST", path, answer)
+    accepted = await _answer_http(app_request_context, "bob", path, answer)
     assert accepted.status_code == 201, accepted.text
     async with env.db.transaction() as tx:
         state = await read_app_request_on(tx, credential=credential, installation=installation,
@@ -183,7 +206,7 @@ async def test_app_decision_answer_checks_proposal_and_choice_then_cancellation(
         assert state["task"]["answer"] == accepted.json()
         cancellation = await cancel_app_task_on(tx, team_id=TEAM, task_id=UUID(receipt["task_id"]), external_request_id="action-1", reason="requested")
         assert await cancel_app_task_on(tx, team_id=TEAM, task_id=UUID(receipt["task_id"]), external_request_id="action-1", reason="requested") == cancellation
-    historical = await _v2_request(env, "bob", "POST", path, answer)
+    historical = await _answer_http(app_request_context, "bob", path, answer)
     assert historical.status_code == 200 and historical.json()["current"] is False, historical.text
     comments = await _v2_request(env, "alice", "GET", f'/v1/tasks/{receipt["task_ref"]}/comments')
     assert [c["body"] for c in comments.json()["comments"]] == [text, "Request cancelled · action-1"]
@@ -214,7 +237,7 @@ def test_c2_json_rejects_ambiguous_and_noncanonical_values(body):
 def test_app_task_titles_refuse_control_and_bidi_control_characters(control):
     task = dict(title="Review" + control, description=None, assignee_did="did:key:example",
                 app_request=dict(external_request_id="a", resource_ref="r", action_ref="a",
-                                 proposal_rev=None, proposal_sha256=None, choices=None))
+                                 proposal_rev=None, proposal_sha256=None, choices=None, eligible_dids=None, role=None))
     with pytest.raises(ValidationError, match="schema_invalid"):
         validate_app_task(task)
 
@@ -251,7 +274,7 @@ async def test_naapp_raises_decision_member_answers_and_app_reads_receipt(app_re
     path = f'/v1/tasks/{receipt["task_ref"]}/answer'
     refused = await _app_http(app_request_context, "POST", path, answer)
     assert refused.status_code == 401, refused.text
-    accepted = await _v2_request(env, "bob", "POST", path, answer)
+    accepted = await _answer_http(app_request_context, "bob", path, answer)
     assert accepted.status_code == 201, accepted.text
     read = await _app_http(app_request_context, "GET", "/v1/tasks/answers/" + accepted.json()["task_answer_ref"])
     assert read.status_code == 200 and read.json() == accepted.json(), read.text
@@ -456,3 +479,115 @@ async def test_read_only_scope_cannot_create_or_cancel(app_request_context):
     assert absent.status_code == 403 and absent.json()["detail"] == "scope_denied", absent.text
     cancel = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests/action-1/cancel?originator=ignored")
     assert cancel.status_code == 403, cancel.text
+
+
+@pytest.mark.asyncio
+async def test_decision_candidates_need_current_app_staging_and_share_one_answer(app_request_context):
+    env, *_ = app_request_context
+    body = _body(env)
+    body["task"]["app_request"]["eligible_dids"] = sorted([env.actors["bob"].did, env.actors["carol"].did])
+    body["task_authorization"]["payload"].update(target_dids=body["task"]["app_request"]["eligible_dids"],
+        task_body_sha256=hashlib.sha256(canonical_json_bytes(body["task"])).hexdigest())
+    made = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _sign(env, body))
+    assert made.status_code == 201, made.text
+    path = f'/v1/tasks/{made.json()["task_ref"]}/answer'
+    text = "Approve prices"
+    answer = dict(expected_task_rev=1, answer_key="eligible-answer", body_md=text,
+        answer_sha256=hashlib.sha256(text.encode()).hexdigest(), choice="approve", proposal_rev=2, proposal_sha256="sha256:"+"d"*64)
+    # The app owns role checks. Withholding its stage proof must refuse both
+    # still-current members without closing the question for another candidate.
+    for actor in ("bob", "carol"):
+        refused = await _v2_request(env, actor, "POST", path, answer)
+        assert refused.status_code == 403 and refused.json()["detail"] == "target_mismatch", refused.text
+    accepted = await _answer_http(app_request_context, "carol", path, answer)
+    assert accepted.status_code == 201, accepted.text
+    assert accepted.json()["answered_by"]["principal_did"] == env.actors["carol"].did
+    loser = await _answer_http(app_request_context, "bob", path, {**answer, "answer_key": "another-candidate"})
+    assert loser.status_code == 409 and loser.json()["detail"] == "revision_conflict", loser.text
+    from urllib.parse import quote
+    listed = await _v2_request(env, "bob", "GET", "/v1/tasks?eligible_did=" + quote(env.actors["bob"].did, safe="") + "&status=closed")
+    assert [t["task_id"] for t in listed.json()["tasks"]] == [made.json()["task_id"]]
+    read = await _v2_request(env, "bob", "GET", path + "?answer_key=eligible-answer")
+    assert read.status_code == 200 and read.json() == accepted.json()
+
+
+@pytest.mark.asyncio
+async def test_stage_expiry_nonce_generation_and_replay(app_request_context):
+    env, _, _, installation = app_request_context
+    made = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _body(env))
+    assert made.status_code == 201, made.text
+    ref = f'/v1/tasks/{made.json()["task_ref"]}'
+    task = (await _v2_request(env, "bob", "GET", ref)).json()
+    text = "Approve"
+    answer = dict(expected_task_rev=task["rev"], answer_key="staged", body_md=text,
+        answer_sha256=hashlib.sha256(text.encode()).hexdigest(), choice="approve", proposal_rev=2, proposal_sha256="sha256:"+"d"*64)
+    old = datetime.now(timezone.utc).replace(microsecond=0)-timedelta(minutes=10)
+    expired = _stage(app_request_context, task, "bob", answer, issued_at=old.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        expires_at=(old+timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    refused = await _v2_request(env, "bob", "POST", ref+"/answer", {**answer, "stage_receipt": expired})
+    assert refused.status_code == 401 and refused.json()["detail"] == "authorization_expired", refused.text
+    stale = _stage(app_request_context, task, "bob", answer)
+    await env.db.execute("UPDATE {{tables.team_app_installs}} SET generation=2 WHERE team_id=$1 AND app_id='fixture'", TEAM)
+    refused = await _v2_request(env, "bob", "POST", ref+"/answer", {**answer, "stage_receipt": stale})
+    assert refused.status_code == 403 and refused.json()["detail"] == "target_mismatch", refused.text
+    installation["generation"] = 2
+    current = _stage(app_request_context, task, "bob", answer)
+    altered_choice = await _v2_request(env, "bob", "POST", ref+"/answer", {**answer, "choice": "reject", "stage_receipt": current})
+    assert altered_choice.status_code == 403, altered_choice.text
+    accepted = await _v2_request(env, "bob", "POST", ref+"/answer", {**answer, "stage_receipt": current})
+    assert accepted.status_code == 201, accepted.text
+    replay = await _v2_request(env, "bob", "POST", ref+"/answer", {**answer, "stage_receipt": expired})
+    assert replay.status_code == 200 and replay.json() == accepted.json(), replay.text
+    reopened = await _v2_request(env, "alice", "PATCH", ref, {"status": "open"})
+    assert reopened.status_code == 200, reopened.text
+    new_answer = {**answer, "expected_task_rev": reopened.json()["rev"], "answer_key": "next-question"}
+    nonce_reuse = _stage(app_request_context, reopened.json(), "bob", new_answer, nonce=current["payload"]["nonce"])
+    refused = await _v2_request(env, "bob", "POST", ref+"/answer", {**new_answer, "stage_receipt": nonce_reuse})
+    assert refused.status_code == 403 and refused.json()["detail"] == "target_mismatch", refused.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_answer_stage_nonces}}") == 1
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_answers}}") == 1
+    assert (await _v2_request(env, "bob", "GET", ref)).json()["status"] == "open"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remove_all", [False, True])
+async def test_app_role_removal_withholds_stage_while_remaining_holder_can_answer(app_request_context, shared_test_pool, remove_all):
+    from pgdbm import AsyncDatabaseManager
+    from aweb_naapp.roles import PrincipalKey, apply_roles_migrations, assign, has_role, unassign
+
+    env, *_ = app_request_context
+    app_db = AsyncDatabaseManager(pool=shared_test_pool, schema="c2_role_app")
+    await app_db.execute("CREATE SCHEMA IF NOT EXISTS c2_role_app")
+    await apply_roles_migrations(app_db)
+    role = "fixture.approver"
+    async with app_db.transaction() as tx:
+        for actor in ("bob", "carol"):
+            await assign(tx, PrincipalKey(TEAM, env.actors[actor].did), role)
+    body = _body(env)
+    body["task"]["app_request"].update(eligible_dids=sorted([env.actors["bob"].did, env.actors["carol"].did]), role=role)
+    body["task_authorization"]["payload"].update(target_dids=body["task"]["app_request"]["eligible_dids"],
+        task_body_sha256=hashlib.sha256(canonical_json_bytes(body["task"])).hexdigest())
+    made = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _sign(env, body))
+    assert made.status_code == 201, made.text
+    ref = f'/v1/tasks/{made.json()["task_ref"]}'
+    task = (await _v2_request(env, "alice", "GET", ref)).json()
+    text = "Approve prices"
+    answer = dict(expected_task_rev=task["rev"], answer_key="role-answer", body_md=text,
+        answer_sha256=hashlib.sha256(text.encode()).hexdigest(), choice="approve", proposal_rev=2, proposal_sha256="sha256:"+"d"*64)
+    async with app_db.transaction() as tx:
+        await unassign(tx, PrincipalKey(TEAM, env.actors["bob"].did), role)
+        if remove_all:
+            await unassign(tx, PrincipalKey(TEAM, env.actors["carol"].did), role)
+    responses = {}
+    for actor in ("bob", "carol"):
+        # The owning app reads S5's real role map before it signs. Core sees
+        # only the bound stage receipt, never a copy of that role store.
+        async with app_db.transaction() as tx:
+            current_holder = await has_role(tx, PrincipalKey(TEAM, env.actors[actor].did), role)
+            proof = _stage(app_request_context, task, actor, answer) if current_holder else None
+        responses[actor] = await _v2_request(env, actor, "POST", ref+"/answer", {**answer, "stage_receipt": proof})
+    assert responses["bob"].status_code == 403, responses["bob"].text
+    assert responses["carol"].status_code == (403 if remove_all else 201), responses["carol"].text
+    state = (await _v2_request(env, "alice", "GET", ref)).json()
+    assert state["status"] == ("open" if remove_all else "closed")
+    assert (state["answer"] is None) == remove_all

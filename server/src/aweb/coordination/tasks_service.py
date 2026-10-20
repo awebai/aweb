@@ -86,7 +86,7 @@ async def answer_task_on(
     tx, *, team_id: str, task_id: UUID, actor: TeamIdentity,
     expected_task_rev: int, answer_key: str, answer_sha256: str,
     body_md: str, choice: str | None = None, proposal_rev: int | None = None,
-    proposal_sha256: str | None = None, outcome: dict | None = None,
+    proposal_sha256: str | None = None, stage_receipt: dict | None = None, outcome: dict | None = None,
 ) -> dict[str, Any]:
     """Commit an answer using the caller's transaction and verified identity.
 
@@ -102,6 +102,15 @@ async def answer_task_on(
                 or not re.fullmatch(r"sha256:[0-9a-f]{64}", proposal_sha256)))):
         raise ValidationError("schema_invalid")
     comment_body = answer_comment_projection(body_md=body_md, answer_sha256=answer_sha256)
+    # Installation -> task is F6 retirement's lock order. Keep it identical
+    # here, including when the member API (rather than app transport) answers.
+    source = await tx.fetch_one(
+        "SELECT * FROM {{tables.task_app_requests}} WHERE task_id=$1 AND team_id=$2", task_id, team_id,
+    )
+    installation = None
+    if source:
+        from aweb.app_registry import get_installation_on
+        installation = await get_installation_on(tx, team_id=team_id, app_id=source["app_id"], for_update=True)
     principal = actor.did_aw or actor.did_key
     member = await tx.fetch_one(
         """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did, certificate_id
@@ -141,6 +150,13 @@ async def answer_task_on(
     answerers = [task["assignee_did"]] if eligible is None else eligible
     if not isinstance(answerers, list) or principal not in answerers:
         raise ForbiddenError("target_mismatch")
+    if metadata.get("proposal_rev") is not None:
+        from .app_tasks import verify_answer_stage_on
+        await verify_answer_stage_on(tx, stage=stage_receipt, source=source, installation=installation,
+            task=task, principal=principal, answer_key=answer_key, answer_sha256=answer_sha256,
+            choice=choice, proposal_rev=proposal_rev, proposal_sha256=proposal_sha256)
+    elif stage_receipt is not None:
+        raise ForbiddenError("target_mismatch")
     if task["rev"] != expected_task_rev or task["status"] != "open" or task["cancellation"] is not None:
         raise ConflictError("revision_conflict")
     if proposal_rev != metadata.get("proposal_rev") or proposal_sha256 != metadata.get("proposal_sha256"):
@@ -168,11 +184,17 @@ async def answer_task_on(
     row = await tx.fetch_one(
         """INSERT INTO {{tables.task_answers}}
                (task_id, question_rev, task_rev, answer_key, answer_sha256, answered_by_did, certificate_id,
-                receipt_id, choice, proposal_rev, proposal_sha256)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *""",
+                receipt_id, choice, proposal_rev, proposal_sha256, stage_receipt)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb) RETURNING *""",
         task_id, task["question_rev"], updated["rev"], answer_key, answer_sha256, principal, actor.certificate_id,
-        receipt_id, choice, proposal_rev, proposal_sha256,
+        receipt_id, choice, proposal_rev, proposal_sha256, json.dumps(stage_receipt) if stage_receipt else None,
     )
+    if stage_receipt is not None:
+        await tx.execute(
+            """INSERT INTO {{tables.task_answer_stage_nonces}} (team_id,app_id,installation_id,nonce,receipt_id)
+               VALUES ($1,$2,$3,$4,$5)""",
+            team_id, source["app_id"], source["installation_id"], stage_receipt["payload"]["nonce"], receipt_id,
+        )
     if outcome is not None:
         outcome["created"] = True
         outcome["comment_id"] = str(comment["comment_id"])

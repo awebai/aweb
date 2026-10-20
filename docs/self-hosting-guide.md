@@ -313,6 +313,7 @@ For `awid`:
 
 Successful creation and replay checks on `POST /v1/tasks/app-requests` make
 three uncached AWID reads: the team key, revocations, and current certificates.
+The public member answer route repeats these fresh checks before its transaction.
 Paginated lists can require additional HTTP calls. Account for this traffic
 when sizing AWID's per-client rate limits. Registry failures return
 `503 authority_unavailable`; these checks do not use stale authority.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError as ModelError
 from aweb_naapp.runtime.task_requests import TaskRequestRefused, parse_json, validate_task
@@ -49,6 +49,7 @@ class AnswerRequest(ContractModel):
     proposal_rev: SafeRevision | None = None
     proposal_sha256: ProposalDigest | None = None
     body_md: str = Field(min_length=1, max_length=20000)
+    stage_receipt: dict[str, Any] | None = None
 
 
 def validate_app_task(value):

@@ -13,12 +13,12 @@ from starlette.requests import Request
 
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.app_credentials import APP_REQUEST, verify_app_credential
-from aweb.coordination.app_tasks import validate_task_authorization
+from aweb.coordination.app_tasks import validate_task_authorization, validate_stage_receipt
 from aweb.coordination.tasks_service import answer_comment_projection
-from aweb.service_errors import ValidationError
+from aweb.service_errors import ValidationError, ForbiddenError
 from aweb.task_contracts import strict_json_bytes, validate_app_task
 from test_app_task_requests import (
-    _app_http, _body, _sign, _verified_install, app_request_context,  # noqa: F401
+    _app_http, _answer_http, _body, _sign, _verified_install, app_request_context,  # noqa: F401
 )
 from test_task_answers import _v2_request
 from test_tasks_http import _seed_team
@@ -40,6 +40,18 @@ def test_server_authorization_vectors(case):
             validate_task_authorization(case["payload"], case["signature"], **args)
         assert caught.value.detail == case["expect"]
         assert caught.value.status_code == (403 if case["expect"] == "target_mismatch" else 401)
+
+
+@pytest.mark.parametrize("case", ANSWERS["stage_receipt"]["verification_cases"], ids=lambda c: c["name"])
+def test_server_stage_receipt_vectors(case):
+    args = dict(expected=case["expected"], now=datetime.fromisoformat(case["now"]))
+    if case["expect"] is None:
+        validate_stage_receipt(case["payload"], case["signature"], **args)
+    else:
+        with pytest.raises((HTTPException, ForbiddenError)) as caught:
+            validate_stage_receipt(case["payload"], case["signature"], **args)
+        code = "authorization_expired" if case["expect"] == "authorization_expired" else "target_mismatch"
+        assert caught.value.detail == code
 
 
 @pytest.mark.parametrize("case", AUTH["task_body_refusals"], ids=lambda c: c["name"])
@@ -137,10 +149,11 @@ async def test_task_answer_vector_sequence_over_real_signed_http(app_request_con
         expected = step["result"]
         if step["step"] == "create":
             body = _body(env)
-            body["task"]["app_request"].update(proposal)
+            body["task"]["app_request"].update({k:v for k,v in proposal.items() if k != "eligible"})
+            body["task"]["app_request"]["eligible_dids"] = sorted(env.actors["bob" if x == "assignee" else "carol"].did for x in proposal["eligible"])
             body["task_authorization"]["payload"].update(
                 proposal_rev=proposal["proposal_rev"], proposal_sha256=proposal["proposal_sha256"],
-                task_body_sha256=hashlib.sha256(canonical_json_bytes(body["task"])).hexdigest())
+                target_dids=body["task"]["app_request"]["eligible_dids"], task_body_sha256=hashlib.sha256(canonical_json_bytes(body["task"])).hexdigest())
             response = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _sign(env, body))
             assert response.status_code == expected["status"], (index, response.text)
             task = response.json()
@@ -163,7 +176,8 @@ async def test_task_answer_vector_sequence_over_real_signed_http(app_request_con
                 body["proposal_sha256"] = "sha256:" + "0"*64
             if step.get("answer_sha256") == "mismatch":
                 body["answer_sha256"] = "0"*64
-            response = await _v2_request(env, "bob" if step["as"] == "assignee" else "carol", "POST", ref+"/answer", body)
+            actor = {"assignee": "bob", "colleague": "carol", "someone_else": "alice", "other": "alice"}.get(step["as"], "alice")
+            response = await _answer_http(app_request_context, actor, ref+"/answer", body)
             if response.status_code == 201:
                 expected_comments.append(text["body_md"])
         assert response.status_code == expected["status"], (index, step, response.text)

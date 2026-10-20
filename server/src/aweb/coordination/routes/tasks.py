@@ -26,12 +26,14 @@ from aweb.coordination.tasks_service import (
     soft_delete_task,
     update_task,
     answer_task_on,
+    answer_comment_projection,
     get_task_answer_on,
     resolve_task_ref,
 )
 
 from ...db import DatabaseInfra, get_db_infra
 from .app_tasks import router as app_tasks_router
+from aweb.coordination.app_tasks import verify_answer_actor
 
 router = APIRouter(prefix="/v1/tasks", tags=["tasks"])
 router.include_router(app_tasks_router)
@@ -230,6 +232,8 @@ async def answer_task_route(
         if isinstance(body, dict) and "expected_task_rev" not in body:
             raise HTTPException(status_code=428, detail="precondition_required")
         payload = parse_contract(AnswerRequest, body)
+        answer_comment_projection(body_md=payload.body_md, answer_sha256=payload.answer_sha256)
+        await verify_answer_actor(request, identity)
         task_id = await resolve_task_ref(db_infra, team_id=identity.team_id, ref=ref)
         outcome = {}
         async with db_infra.get_manager("aweb").transaction() as tx:

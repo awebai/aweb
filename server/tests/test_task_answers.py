@@ -171,6 +171,12 @@ async def _v2_request(env, alias, method, path, body=None):
 @pytest.mark.asyncio
 async def test_signed_answer_and_receipt_through_real_http_registry_and_database(privacy_app):
     env = privacy_app
+    for alias, actor in env.actors.items():
+        cert = json.loads(base64.b64decode(actor.certificate))
+        await env.app.state.awid_registry_client.register_team_certificate(
+            "example.test", LIVE_TEAM.split(":", 1)[0], team_controller_signing_key=env.team_sk,
+            certificate_id=cert["certificate_id"], member_did_key=actor.did,
+            member_did_aw=None, member_address=None, alias=alias, identity_scope="local", certificate=actor.certificate)
     made = await _v2_request(env, "alice", "POST", "/v1/tasks", {"title": "Decide", "assignee_alias": "bob"})
     assert made.status_code == 200, made.text
     task = made.json()
@@ -203,6 +209,12 @@ async def test_signed_answer_and_receipt_through_real_http_registry_and_database
 
 async def _decision_question(db):
     service, ordinary, owner = await _question(db)
+    from test_app_task_requests import _verified_install
+    from nacl.signing import SigningKey
+    from awid.did import did_from_public_key
+    service.stage_key = SigningKey.generate()
+    service.stage_did = did_from_public_key(bytes(service.stage_key.verify_key))
+    await _verified_install(db, team_id=TEAM_ID, app_id="fixture", did_key=service.stage_did)
     backup_id = await _member(db, "backup", human=True)
     await db.execute("UPDATE {{tables.agents}} SET certificate_id='cert-backup' WHERE agent_id=$1", backup_id)
     backup = replace(owner, agent_id=str(backup_id), alias="backup", did_key=f"did:key:{backup_id}", certificate_id="cert-backup")
@@ -211,7 +223,7 @@ async def _decision_question(db):
     outsider = replace(owner, agent_id=str(outsider_id), alias="outsider", did_key=f"did:key:{outsider_id}", certificate_id="cert-outsider")
     metadata = {"eligible_dids": sorted([owner.did_key, backup.did_key]),
                 "external_request_id": "decision-set", "resource_ref": "page-1", "action_ref": "decide",
-                "proposal_rev": 2, "proposal_sha256": "sha256:" + "d" * 64, "choices": ["approve", "reject"]}
+                "proposal_rev": 2, "proposal_sha256": "sha256:" + "d" * 64, "choices": ["approve", "reject"], "role": None}
     # Seed immutable request metadata at INSERT. Signed ingress shape/authority
     # is tested separately against the shared contract's HTTP vectors.
     row = await db.fetch_one(
@@ -221,13 +233,28 @@ async def _decision_question(db):
         TEAM_ID, await tasks_service._allocate_task_number_on(db, team_id=TEAM_ID),
         await tasks_service._allocate_root_task_seq_on(db, team_id=TEAM_ID), owner.did_key, json.dumps(metadata),
     )
+    await db.execute("""INSERT INTO {{tables.task_app_requests}}
+        (task_id,team_id,app_id,installation_id,installation_generation,originator_did,external_request_id,
+         task_body_sha256,task_authorization,receipt) VALUES ($1,$2,'fixture','install-fixture',1,$3,'decision-set',$4,'{}','{}')""",
+        row["task_id"], TEAM_ID, owner.did_key, "0"*64)
     task = await tasks_service.get_task(service, team_id=TEAM_ID, ref=str(row["task_id"]))
     return service, ordinary, task, owner, backup, outsider
 
 
-def _decision_answer(task, actor, *, key="decision-answer"):
-    return {**_answer(task, actor, key=key), "choice": "approve", "proposal_rev": 2,
-            "proposal_sha256": "sha256:" + "d" * 64}
+def _decision_answer(service, task, actor, *, key="decision-answer"):
+    from aweb_naapp.runtime.task_requests import sign_stage_receipt
+    from datetime import timedelta
+    from uuid import uuid4
+    answer = {**_answer(task, actor, key=key), "choice": "approve", "proposal_rev": 2,
+              "proposal_sha256": "sha256:" + "d" * 64}
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    payload = dict(v=1, type="aweb.app-answer-stage", team_id=TEAM_ID, app_id="fixture",
+        installation_id="install-fixture", installation_generation=1, kid="requests-1", did_key=service.stage_did,
+        task_id=task["task_id"], question_rev=task["question_rev"], answer_key=key, answer_sha256=answer["answer_sha256"],
+        answerer_did=actor.did_aw or actor.did_key, choice=answer["choice"], proposal_rev=answer["proposal_rev"],
+        proposal_sha256=answer["proposal_sha256"], issued_at=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        expires_at=(now+timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"), nonce=uuid4().hex)
+    return {**answer, "stage_receipt": {"payload": payload, "signature": sign_stage_receipt(payload, service.stage_key)}}
 
 
 @pytest.mark.asyncio
@@ -235,20 +262,20 @@ async def test_eligible_backup_answers_and_other_candidate_reads_the_winner(aweb
     db = aweb_cloud_db.aweb_db
     service, _, task, owner, backup, outsider = await _decision_question(db)
     with pytest.raises(ForbiddenError, match="target_mismatch"):
-        await _commit(db, **_decision_answer(task, outsider))
-    winner = await _commit(db, **_decision_answer(task, backup))
+        await _commit(db, **_decision_answer(service, task, outsider))
+    winner = await _commit(db, **_decision_answer(service, task, backup))
     assert winner["answered_by"]["principal_did"] == backup.did_key
     with pytest.raises(ConflictError, match="revision_conflict"):
-        await _commit(db, **_decision_answer(task, owner, key="other-answer"))
+        await _commit(db, **_decision_answer(service, task, owner, key="other-answer"))
     read = await tasks_service.get_task(service, team_id=TEAM_ID, ref=task["task_ref"])
     assert read["answer"] == winner and read["assignee_did"] == owner.did_key
     assert read["app_request"]["eligible_dids"] == task["app_request"]["eligible_dids"]
-    assert await _commit(db, **_decision_answer(task, backup)) == winner
+    assert await _commit(db, **_decision_answer(service, task, backup)) == winner
     assert len(await tasks_service.list_comments(service, team_id=TEAM_ID, ref=task["task_ref"])) == 1
     reopened = await tasks_service.update_task(service, team_id=TEAM_ID, ref=task["task_ref"], actor_alias="alice", status="open")
     assert reopened["app_request"]["eligible_dids"] == task["app_request"]["eligible_dids"]
-    assert await _commit(db, **_decision_answer(task, backup)) == {**winner, "current": False}
-    next_answer = await _commit(db, **_decision_answer(reopened, owner, key="reopened-answer"))
+    assert await _commit(db, **_decision_answer(service, task, backup)) == {**winner, "current": False}
+    next_answer = await _commit(db, **_decision_answer(service, reopened, owner, key="reopened-answer"))
     assert next_answer["question_rev"] == 2 and next_answer["answered_by"]["principal_did"] == owner.did_key
 
 
@@ -257,8 +284,8 @@ async def test_two_eligible_people_racing_commit_one_answer(aweb_cloud_db):
     db = aweb_cloud_db.aweb_db
     service, _, task, owner, backup, _ = await _decision_question(db)
     results = await asyncio.gather(
-        _commit(db, **_decision_answer(task, owner, key="owner-answer")),
-        _commit(db, **_decision_answer(task, backup, key="backup-answer")), return_exceptions=True,
+        _commit(db, **_decision_answer(service, task, owner, key="owner-answer")),
+        _commit(db, **_decision_answer(service, task, backup, key="backup-answer")), return_exceptions=True,
     )
     assert sum(isinstance(r, dict) for r in results) == 1
     assert sum(isinstance(r, ConflictError) and str(r) == "revision_conflict" for r in results) == 1
@@ -268,11 +295,11 @@ async def test_two_eligible_people_racing_commit_one_answer(aweb_cloud_db):
 @pytest.mark.asyncio
 async def test_removed_eligible_member_is_refused_and_another_can_answer(aweb_cloud_db):
     db = aweb_cloud_db.aweb_db
-    _, _, task, owner, backup, _ = await _decision_question(db)
+    service, _, task, owner, backup, _ = await _decision_question(db)
     await db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", UUID(owner.agent_id))
     with pytest.raises(ForbiddenError, match="target_mismatch"):
-        await _commit(db, **_decision_answer(task, owner))
-    assert (await _commit(db, **_decision_answer(task, backup)))["answered_by"]["principal_did"] == backup.did_key
+        await _commit(db, **_decision_answer(service, task, owner))
+    assert (await _commit(db, **_decision_answer(service, task, backup)))["answered_by"]["principal_did"] == backup.did_key
 
 
 @pytest.mark.asyncio
@@ -283,7 +310,7 @@ async def test_all_eligible_members_removed_leaves_question_unanswered(aweb_clou
                      [UUID(owner.agent_id), UUID(backup.agent_id)])
     for actor in (owner, backup):
         with pytest.raises(ForbiddenError, match="target_mismatch"):
-            await _commit(db, **_decision_answer(task, actor))
+            await _commit(db, **_decision_answer(service, task, actor))
     current = await tasks_service.get_task(service, team_id=TEAM_ID, ref=task["task_ref"])
     assert current["status"] == "open" and current["answer"] is None
     assert not await tasks_service.list_comments(service, team_id=TEAM_ID, ref=task["task_ref"])
@@ -300,7 +327,7 @@ async def test_list_by_eligible_uses_principals_and_preserves_ordinary_assignmen
         assert [t["task_id"] for t in backup_tasks] == [task["task_id"]]
         assert not await list_fn(service, team_id=TEAM_ID, eligible_did=outsider.did_key)
         assert not await list_fn(service, team_id=TEAM_ID, eligible_did="backup")
-    winner = await _commit(db, **_decision_answer(task, backup))
+    winner = await _commit(db, **_decision_answer(service, task, backup))
     assert not await tasks_service.list_tasks(service, team_id=TEAM_ID, eligible_did=backup.did_key, status="open")
     closed = await tasks_service.list_tasks(service, team_id=TEAM_ID, eligible_did=owner.did_key, status="closed")
     assert [t["task_id"] for t in closed] == [task["task_id"]]

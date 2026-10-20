@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, Request
 
 from awid.team_ids import parse_team_id
-from aweb.app_credentials import APP_REQUEST, AppCredential, verify_app_credential
+from aweb.app_credentials import APP_REQUEST, PURPOSES, AppCredential, verify_app_credential
 from aweb.claims import release_task_claims_on
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from aweb.task_contracts import validate_app_task
@@ -22,6 +22,7 @@ from .tasks_service import (
 from aweb_naapp.runtime.task_requests import (
     AUTHORIZATION_PREFIX, TaskRequestRefused, task_body_sha256,
     verify_task_authorization as shared_verify_task_authorization,
+    verify_stage_receipt as shared_verify_stage_receipt,
 )
 
 
@@ -100,6 +101,19 @@ async def verify_authorization_certificate(request, authorization):
     return info, certificates
 
 
+async def verify_answer_actor(request, actor):
+    """Fresh member authority for the public answer route, before its transaction."""
+    certificate = request.headers.get("X-AWID-Team-Certificate")
+    if not certificate:
+        raise HTTPException(status_code=401, detail="signature_invalid")
+    info, _ = await verify_authorization_certificate(request, {
+        "payload": {"team_id": actor.team_id, "certificate_id": actor.certificate_id,
+                    "actor_did_key": actor.did_key}, "certificate": certificate,
+    })
+    if (info["member_did_aw"] or info["did_key"]) != (actor.did_aw or actor.did_key):
+        raise ForbiddenError("target_mismatch")
+
+
 @dataclass(frozen=True)
 class PreparedAppTask:
     """Registry-verified request facts, collected before any DB transaction."""
@@ -133,8 +147,14 @@ async def prepare_app_task(request: Request, *, body: dict) -> PreparedAppTask:
         "aud": audience,
         "team_id": (request.headers.get("X-AWEB-Team-ID") or "").strip(),
         "app_id": (request.headers.get("X-AWEB-App-ID") or "").strip().lower(),
+        # These signed claims are verified here, then bound to the real locked
+        # installation in create_app_task_on. Registry I/O stays outside it.
+        "app_origin": payload.get("app_origin") if isinstance(payload, dict) else None,
+        "installation_id": payload.get("installation_id") if isinstance(payload, dict) else None,
+        "installation_generation": payload.get("installation_generation") if isinstance(payload, dict) else None,
         "task_body_sha256": digest,
-        "target_did": task["assignee_did"], "external_request_id": metadata["external_request_id"],
+        "target_dids": metadata["eligible_dids"] if metadata["proposal_rev"] is not None else [task["assignee_did"]],
+        "external_request_id": metadata["external_request_id"],
         "action_id": metadata["action_ref"], "proposal_rev": metadata["proposal_rev"],
         "proposal_sha256": metadata["proposal_sha256"],
     }
@@ -146,8 +166,9 @@ async def prepare_app_task(request: Request, *, body: dict) -> PreparedAppTask:
     # Even expired replay requires current authority. Every registry call is
     # completed here, before the caller opens the installation transaction.
     info, certificates = await verify_authorization_certificate(request, authorization)
-    targets = tuple(c for c in certificates
-                    if (c.member_did_aw or c.member_did_key) == task["assignee_did"] and not c.revoked_at)
+    targets = tuple(tuple(c for c in certificates
+                          if (c.member_did_aw or c.member_did_key) == did and not c.revoked_at)
+                    for did in expected["target_dids"])
     return PreparedAppTask(task, authorization, digest, expected, info, targets)
 
 
@@ -192,9 +213,10 @@ async def create_app_task_on(tx, *, credential: AppCredential, installation: dic
         raise expired
     if "requests.create" not in _scopes(installation):
         raise ForbiddenError("scope_denied")
-    if len(prepared.targets) != 1:
+    if any(len(matches) != 1 for matches in prepared.targets):
         raise ValidationError("target_unresolved")
-    target = prepared.targets[0]
+    target = next(matches[0] for matches in prepared.targets
+                  if (matches[0].member_did_aw or matches[0].member_did_key) == task["assignee_did"])
     number = await _allocate_task_number_on(tx, team_id=credential.team_id)
     root = await _allocate_root_task_seq_on(tx, team_id=credential.team_id)
     suffix = _encode_alpha_component(root)
@@ -232,6 +254,44 @@ async def create_app_task_on(tx, *, credential: AppCredential, installation: dic
                        actor_agent_id=str(actor["agent_id"]) if actor else "", actor_did=info["did_key"],
                        actor_did_aw=info["member_did_aw"])
     return receipt, True
+
+
+def validate_stage_receipt(payload, signature, *, expected, now):
+    try:
+        shared_verify_stage_receipt(payload, signature, expected=expected, now=now)
+    except TaskRequestRefused as exc:
+        if exc.code == "authorization_expired":
+            raise HTTPException(status_code=401, detail=exc.code) from exc
+        raise ForbiddenError("target_mismatch") from exc
+
+
+async def verify_answer_stage_on(tx, *, stage, source, installation, task, principal, answer_key, answer_sha256, choice, proposal_rev, proposal_sha256):
+    if (not isinstance(stage, dict) or set(stage) != {"payload", "signature"} or not source
+            or not installation or installation["state"] != "active" or not installation["origin_verified"]
+            or installation["installation_id"] != source["installation_id"]):
+        raise ForbiddenError("target_mismatch")
+    expected = {"team_id": source["team_id"], "app_id": source["app_id"],
+                "installation_id": source["installation_id"], "installation_generation": installation["generation"],
+                "task_id": str(task["task_id"]), "question_rev": task["question_rev"],
+                "answer_key": answer_key, "answer_sha256": answer_sha256, "answerer_did": principal,
+                "choice": choice, "proposal_rev": proposal_rev, "proposal_sha256": proposal_sha256}
+    try:
+        validate_stage_receipt(stage["payload"], stage["signature"], expected=expected, now=datetime.now(timezone.utc))
+    except HTTPException as exc:
+        if exc.detail != "authorization_expired":
+            raise
+        # Time alone is a distinct refusal only after current key registration
+        # and nonce authority have passed too.
+    payload = stage["payload"]
+    key = await PURPOSES[APP_REQUEST].lookup_key(tx, purpose=APP_REQUEST, team_id=source["team_id"],
+        app_id=source["app_id"], kid=payload["kid"], did_key=payload["did_key"])
+    if key is None or await tx.fetch_value(
+        """SELECT 1 FROM {{tables.task_answer_stage_nonces}}
+           WHERE team_id=$1 AND app_id=$2 AND installation_id=$3 AND nonce=$4""",
+        source["team_id"], source["app_id"], source["installation_id"], payload["nonce"],
+    ):
+        raise ForbiddenError("target_mismatch")
+    validate_stage_receipt(stage["payload"], stage["signature"], expected=expected, now=datetime.now(timezone.utc))
 
 
 async def read_app_request_on(tx, *, credential: AppCredential, installation: dict, external_request_id: str, originator: str,
