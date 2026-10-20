@@ -18,9 +18,8 @@ from nacl.signing import SigningKey
 
 from tests.runtime.conftest import Member, envelope_headers, relying_app
 
-VECTORS = json.loads(
-    (Path(__file__).resolve().parents[3] / "docs" / "vectors" / "team-auth-envelope-v2.json").read_text()
-)
+AWEB_ROOT = Path(__file__).resolve().parents[3]
+VECTORS = json.loads((AWEB_ROOT / "docs" / "vectors" / "team-auth-envelope-v2.json").read_text())
 CASES = {case["name"]: case for case in VECTORS["cases"]}
 
 
