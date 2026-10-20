@@ -4,6 +4,7 @@ import { test, expect } from "@playwright/test";
 // completion without replacing renderer code or synthesizing trusted events.
 async function mount(page, mode) {
   await page.goto("/");
+  await expect(page.locator('[data-widget="note-form"]')).toBeVisible();
   await page.evaluate(async (mode) => {
     const { createPageRenderer } = await import("/assets/page-renderer.js");
     const snapshot = await fetch("/api/page").then((r) => r.json());

@@ -199,6 +199,14 @@ ROOT_CONSUMERS = {
         "principal-attestation-v1.json",
         '(Path(__file__).parents[3] / "docs" / "vectors" / "principal-attestation-v1.json")',
     ),
+    PurePosixPath("naapp-lib/renderer/tests/render.spec.mjs"): _consumer(
+        "page-format-v1.json",
+        '"../../../docs/vectors/page-format-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/src/aweb_naapp/pages/gallery.py"): _consumer(
+        "page-format-v1.json",
+        'Path(__file__).resolve().parents[4] / "docs/vectors/page-format-v1.json"',
+    ),
     PurePosixPath("naapp-lib/tests/pages/test_page_format_vectors.py"): _consumer(
         "page-format-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "page-format-v1.json"',

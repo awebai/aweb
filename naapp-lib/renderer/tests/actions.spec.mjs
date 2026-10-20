@@ -94,13 +94,14 @@ test("bounded uploads use host CSRF and attachment IDs; unacceptable files stay 
 
 test("media uses only the separate app asset origin and video has explicit playback controls", async ({
   page,
+  baseURL,
 }) => {
   await page.goto("/");
   const image = page.locator('[data-widget="property-image"] img');
   await expect(image).toBeVisible();
   const origin = new URL(await image.getAttribute("src")).origin;
   expect(origin).not.toBe(new URL(page.url()).origin);
-  expect(origin).toBe("https://127.0.0.1:8741");
+  expect(origin).toBe(`https://127.0.0.1:${Number(new URL(baseURL).port) + 1}`);
   const video = page.locator('[data-widget="property-video"] video');
   await expect(video).toHaveAttribute("controls", "");
   await expect(video).not.toHaveAttribute("autoplay");
