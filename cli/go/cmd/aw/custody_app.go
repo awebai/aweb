@@ -107,8 +107,16 @@ func (s *custodyService) signAppRequest(ctx context.Context, req *awid.AppReques
 			return nil, fmt.Errorf("bad_request")
 		}
 	}
+	snapshotManifest := appmanifest.Manifest{ManifestVersion: app.ManifestVersion, App: app.App, Tools: []appmanifest.Tool{*tool}}
+	resolved, err := appmanifest.Resolve(snapshotManifest, reservedRootCommandNames())
+	if err != nil {
+		return nil, fmt.Errorf("app_request_not_allowed")
+	}
+	if err := resolved.CheckInvocationContext(tool.Name, nil); err != nil {
+		return nil, fmt.Errorf("app_tool_denied")
+	}
 	spec, err := appmanifest.Interpret(appmanifest.InterpretRequest{
-		Manifest:      appmanifest.Manifest{ManifestVersion: app.ManifestVersion, App: app.App, Tools: []appmanifest.Tool{*tool}},
+		Manifest:      snapshotManifest,
 		Verb:          tool.Name,
 		Args:          args,
 		RawBody:       rawBody,

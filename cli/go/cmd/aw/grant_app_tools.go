@@ -118,15 +118,13 @@ func buildGrantAppSnapshotsWithApprovals(specs map[string][]string, deniedOrigin
 			}
 			return nil, err
 		}
-		var manifest appmanifest.Manifest
-		if err := appmanifest.DecodeSingleJSONStrict(data, &manifest); err != nil {
-			return nil, fmt.Errorf("decode manifest for %s: %w", name, err)
+		resolved, err := appmanifest.Load(data, reservedRootCommandNames())
+		if err != nil {
+			return nil, fmt.Errorf("installed manifest for %s: %w", name, manifestError(err))
 		}
+		manifest := resolved.Manifest
 		if manifest.App.ID != name {
 			return nil, snapshotFailure("app_manifest_mismatch", usageError("app_manifest_mismatch: installed app id differs from %s", name))
-		}
-		if err := appmanifest.Validate(manifest, reservedRootCommandNames()); err != nil {
-			return nil, err
 		}
 		counts := map[string]int{}
 		for _, tool := range manifest.Tools {
@@ -140,9 +138,9 @@ func buildGrantAppSnapshotsWithApprovals(specs map[string][]string, deniedOrigin
 			if approved, ok := approvals[name]; !ok || approved != origin {
 				return nil, snapshotFailure("app_origin_mismatch", usageError("app_origin_mismatch: %s differs from resident approval; reinstall to approve", name))
 			}
-			for _, tool := range manifest.Tools {
-				if strings.TrimSpace(tool.Auth) != "none" {
-					verbs = append(verbs, tool.Name)
+			for _, verb := range resolved.AgentTools {
+				if tool, _ := resolved.Tool(verb); strings.TrimSpace(tool.Auth) != "none" {
+					verbs = append(verbs, verb)
 				}
 			}
 		}
@@ -157,6 +155,9 @@ func buildGrantAppSnapshotsWithApprovals(specs map[string][]string, deniedOrigin
 			}
 			if counts[verb] > 1 {
 				return nil, usageError("--app-tool %s:%s: manifest declares the tool more than once", name, verb)
+			}
+			if err := resolved.CheckInvocationContext(verb, nil); err != nil {
+				return nil, usageError("--app-tool %s:%s: %v", name, verb, manifestError(err))
 			}
 			for _, tool := range manifest.Tools {
 				if strings.TrimSpace(tool.Name) != verb {

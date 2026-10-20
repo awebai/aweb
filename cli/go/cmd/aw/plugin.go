@@ -314,7 +314,11 @@ func runPluginUpdate(cmd *cobra.Command, args []string) error {
 	if resident {
 		policy.residentHome = home.Root
 	}
-	out, err := installManagedManifestPlugin(provenance.ManifestURL, dir, true, provenance.DevOrigin, policy)
+	source := strings.TrimSpace(provenance.Source)
+	if source == "" {
+		source = provenance.ManifestURL
+	}
+	out, err := installManagedManifestPlugin(source, dir, true, provenance.DevOrigin, policy)
 	if err != nil {
 		return err
 	}
@@ -524,23 +528,22 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		}
 	}
 
-	manifestURL, err := manifestURLForSource(source)
+	base, err := manifestBaseForSource(source)
 	if err != nil {
 		return nil, err
 	}
-	manifestBytes, digest, err := fetchManifest(manifestURL)
+	variant, err := discoverManifest(base)
 	if err != nil {
-		return nil, err
+		return nil, manifestError(err)
 	}
+	manifestURL := variant.URL
+	manifestBytes, digest := variant.Bytes, variant.Digest
 	fetchedDigest := digest
-	var manifest appmanifest.Manifest
-	if err := appmanifest.DecodeSingleJSONStrict(manifestBytes, &manifest); err != nil {
-		return nil, fmt.Errorf("decode manifest: %w", err)
+	resolved, err := appmanifest.Load(manifestBytes, reservedRootCommandNames())
+	if err != nil {
+		return nil, manifestError(err)
 	}
-	reserved := reservedRootCommandNames()
-	if err := appmanifest.Validate(manifest, reserved); err != nil {
-		return nil, err
-	}
+	manifest := resolved.Manifest
 	if devOrigin != "" {
 		// Operator override: point the app at this base URL regardless of the
 		// origin the manifest declares. Rewrite the stored manifest so dispatch
@@ -558,12 +561,12 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		sum := sha256.Sum256(manifestBytes)
 		digest = "sha256:" + hex.EncodeToString(sum[:])
 	} else {
-		claimedManifestURL, err := manifestURLForSource(manifest.App.Origin)
+		claimedBase, err := manifestBaseForSource(manifest.App.Origin)
 		if err != nil {
 			return nil, err
 		}
-		if claimedManifestURL != manifestURL {
-			return nil, fmt.Errorf("manifest fetched from %s claims origin %s (expected manifest URL %s); pass --dev-origin <base-url> to install a self-hosted app at its real origin", manifestURL, manifest.App.Origin, claimedManifestURL)
+		if claimedBase != base {
+			return nil, fmt.Errorf("manifest fetched from %s claims origin %s (expected base %s); pass --dev-origin <base-url> to install a self-hosted app at its real origin", manifestURL, manifest.App.Origin, claimedBase)
 		}
 	}
 	name, err := normalizePluginName(manifest.App.ID)
@@ -668,34 +671,48 @@ func normalizeManifestDevOrigin(raw string) (string, error) {
 	return u.String(), nil
 }
 
-func manifestURLForSource(source string) (string, error) {
+// manifestBaseForSource is the app base an install source names: the source
+// URL without a well-known manifest path, query or fragment.
+func manifestBaseForSource(source string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(source))
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return "", fmt.Errorf("invalid manifest source %q", source)
 	}
-	if strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/.well-known/aweb-app.json") {
-		u.RawQuery = ""
-		u.Fragment = ""
-		return u.String(), nil
+	path := strings.TrimRight(u.Path, "/")
+	for _, wellKnown := range []string{appmanifest.LegacyManifestPath, appmanifest.DiscoveryCatalogPath} {
+		path = strings.TrimSuffix(path, wellKnown)
 	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/.well-known/aweb-app.json"
+	u.Path = strings.TrimRight(path, "/")
+	u.RawPath = ""
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String(), nil
 }
 
-func fetchManifest(manifestURL string) ([]byte, string, error) {
+// discoverManifest selects the manifest variant an app base offers this CLI.
+// The catalog and its variants are fetched without redirects; the legacy
+// manifest keeps its same-origin redirect tolerance.
+func discoverManifest(base string) (*appmanifest.Variant, error) {
+	fetch := func(path string, maxBytes int64) (int, []byte, error) {
+		return fetchManifestURL(base+path, min(maxBytes, maxManifestBytes), path == appmanifest.LegacyManifestPath)
+	}
+	return appmanifest.SelectVariant(base, appmanifest.SupportedManifestVersions, fetch)
+}
+
+// fetchManifestURL GETs one manifest document and returns its status and at
+// most maxBytes of body; a larger body is an error.
+func fetchManifestURL(rawURL string, maxBytes int64, sameOriginRedirects bool) (int, []byte, error) {
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, "", err
+		return 0, nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) == 0 {
-				return nil
+			if !sameOriginRedirects {
+				return http.ErrUseLastResponse
 			}
 			origin := via[0].URL
 			if req.URL.Scheme != origin.Scheme || req.URL.Host != origin.Host {
@@ -706,18 +723,22 @@ func fetchManifest(manifestURL string) ([]byte, string, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", fmt.Errorf("fetch manifest: HTTP %d", resp.StatusCode)
-	}
-	data, err := readAllBounded(resp.Body, maxManifestBytes)
+	data, err := readAllBounded(resp.Body, maxBytes)
 	if err != nil {
-		return nil, "", fmt.Errorf("fetch manifest: %w", err)
+		return 0, nil, fmt.Errorf("fetch manifest: %w", err)
 	}
-	sum := sha256.Sum256(data)
-	return data, "sha256:" + hex.EncodeToString(sum[:]), nil
+	return resp.StatusCode, data, nil
+}
+
+// manifestError prefixes a coded manifest error with its stable code.
+func manifestError(err error) error {
+	if code := appmanifest.ErrorCode(err); code != "" {
+		return fmt.Errorf("%s: %w", code, err)
+	}
+	return err
 }
 
 func manifestPluginDir(dir, name string) string {
@@ -1051,13 +1072,27 @@ func manifestToolParamInfos(tool *appmanifest.Tool) []manifestToolParamInfo {
 	return infos
 }
 
-func renderInstalledManifestAppHelp(name string, manifest appmanifest.Manifest) []byte {
+func renderInstalledManifestAppHelp(name string, resolved *appmanifest.Resolved) []byte {
 	var out strings.Builder
 	fmt.Fprintf(&out, "Usage:\n  aw %s <verb> [flags]\n  aw %s help [verb]\n\nAvailable verbs:\n", name, name)
-	for _, tool := range manifest.Tools {
-		fmt.Fprintf(&out, "  %-20s %s\n", strings.TrimSpace(tool.Name), strings.TrimSpace(tool.Description))
+	for _, verb := range resolved.AgentTools {
+		tool, _ := resolved.Tool(verb)
+		fmt.Fprintf(&out, "  %-20s %s\n", verb, strings.TrimSpace(tool.Description))
 	}
 	return []byte(out.String())
+}
+
+// installedAgentTool returns a declared tool an agent caller may invoke: the
+// CLI is an agent caller, so surface-only and hook-only tools are refused.
+func installedAgentTool(resolved *appmanifest.Resolved, verb string) (*appmanifest.Tool, error) {
+	tool, err := installedManifestTool(resolved.Manifest, verb)
+	if err != nil {
+		return nil, err
+	}
+	if err := resolved.CheckInvocationContext(verb, nil); err != nil {
+		return nil, manifestError(err)
+	}
+	return tool, nil
 }
 
 func renderInstalledManifestVerbHelp(name string, tool *appmanifest.Tool) []byte {
@@ -1158,19 +1193,17 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 		}
 		return nil, true, err
 	}
-	var manifest appmanifest.Manifest
-	if err := appmanifest.DecodeSingleJSONStrict(data, &manifest); err != nil {
-		return nil, true, fmt.Errorf("decode manifest %s: %w", manifestPath, err)
+	resolved, err := appmanifest.Load(data, reservedRootCommandNames())
+	if err != nil {
+		return nil, true, fmt.Errorf("installed manifest %s: %w", manifestPath, manifestError(err))
 	}
-	if err := appmanifest.Validate(manifest, reservedRootCommandNames()); err != nil {
-		return nil, true, err
-	}
+	manifest := resolved.Manifest
 	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
 		return nil, true, fmt.Errorf("missing verb for app %q; run `aw %s --help`", name, name)
 	}
 	if isManifestHelpToken(args[0]) {
 		if strings.TrimSpace(args[0]) == "help" && len(args) == 2 {
-			tool, err := installedManifestTool(manifest, args[1])
+			tool, err := installedAgentTool(resolved, args[1])
 			if err != nil {
 				return nil, true, err
 			}
@@ -1179,10 +1212,10 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 		if len(args) != 1 {
 			return nil, true, usageError("help accepts at most one verb")
 		}
-		return &installedManifestToolResult{Status: http.StatusOK, Body: renderInstalledManifestAppHelp(name, manifest)}, true, nil
+		return &installedManifestToolResult{Status: http.StatusOK, Body: renderInstalledManifestAppHelp(name, resolved)}, true, nil
 	}
 	verb := strings.TrimSpace(args[0])
-	tool, err := installedManifestTool(manifest, verb)
+	tool, err := installedAgentTool(resolved, verb)
 	if err != nil {
 		return nil, true, err
 	}
