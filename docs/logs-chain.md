@@ -5,7 +5,7 @@ aweb OSS hooks lane (aweb-acgh.16.21). This document is the source of truth for
 the bytes logs commits to and signs. Its vector is
 `docs/vectors/logs-chain-v1.json`. The Python implementation in
 `naapp/logs/src/aweb_logs/chain.py` and `verify.py` regenerates it byte for
-byte, and `aw logs verify` passes it in Go. The design and its rationale are in
+byte. The design and its rationale are in
 [the audit substrate design](design/audit-substrate.md), §B3 and §B6.
 
 ## What the chain proves, and what it does not
@@ -74,7 +74,9 @@ received_at, hook, producer_origin, content_commitment}`:
 - `hook` is the envelope's hook;
 - `producer_origin` is the envelope's `producer.origin` for a `core` or `app`
   producer, and `client:` followed by `producer.certificate_id` for a `client`
-  producer, which has no origin.
+  producer, which has no origin. Renewing a member's certificate changes its
+  id, so a renewed client appears under a new `producer_origin`: it is a new
+  credential.
 
 The link fields are the event's **skeleton**. Retention and erasure purge the
 content (signing bytes, signature and salt) and every projection, index and
@@ -127,18 +129,21 @@ receipts and checkpoints it is given, and reports:
   matches its commitment and verifies under its producer key, no event is
   missing, and no artefact given is contradicted. A purged event does not make
   the chain broken.
-- **`first_break`**: the first `team_seq` that fails, with its reason:
-  - `event_hash_mismatch`: the stored `event_hash` is not the hash of its link;
+- **`first_break`**: the first `team_seq` that fails, with its reason. Each
+  event is checked in this order, which is normative, and reports only its
+  first fault:
+  - `sequence_duplicate`: another stored event already holds this `team_seq`;
+  - `wrong_chain`: the event's `team_id` or `chain_epoch` is not the epoch's;
   - `prev_hash_mismatch`: `prev_event_hash` is not the previous event's hash
     (or `genesis_hash` at `team_seq` 1);
+  - `event_hash_mismatch`: the stored `event_hash` is not the hash of its link;
+  - `content_missing`: the content is gone but no purge act is recorded;
   - `commitment_mismatch`: the retained content does not hash to
     `content_commitment`;
   - `provenance_invalid`: the retained envelope does not verify under the
     producer key recorded with it, or belongs to another team;
   - `skeleton_mismatch`: the event's `hook` or `producer_origin` is not the
-    retained envelope's;
-  - `content_missing`: the content is gone but no purge act is recorded;
-  - `sequence_duplicate`: two stored events claim the same `team_seq`.
+    retained envelope's.
 - **`missing`**: inclusive `[from, to]` ranges of absent sequence numbers. A
   link across a gap cannot be checked, so it is not reported as a break.
 - **`purged`**: inclusive `[from, to]` ranges of events whose content is
@@ -148,10 +153,13 @@ receipts and checkpoints it is given, and reports:
   contradicts, by its position in the input, with its reason:
   `signature_invalid` (not signed by the logs key it names, or that key is not
   the expected one), `wrong_chain` (another team, epoch or logs origin),
-  `not_in_chain` (its sequence number is not present) or `hash_mismatch` (the
-  chain holds a different `event_hash` at its sequence number). A checkpoint
-  whose `previous_checkpoint_sha256` names no checkpoint given is not
-  contradicted.
+  `not_in_chain` (its sequence number is not present), `hash_mismatch` (the
+  chain holds a different `event_hash` at its sequence number) or, for a
+  receipt, `event_mismatch` (the event at its sequence number was received at
+  another time or, while its content is retained, has another `event_id`).
+  These checks run in that order, and each artefact reports its first. A
+  checkpoint whose `previous_checkpoint_sha256` names no checkpoint given is
+  not contradicted.
 
 `verify` reports the producer and hook sequence gaps inside binding intervals,
 and conflicting deliveries, from logs' records of bindings and faults. Those

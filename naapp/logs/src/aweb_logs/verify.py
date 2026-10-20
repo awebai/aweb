@@ -117,6 +117,7 @@ def verify_chain(
     missing: list[tuple[int, int]] = []
     purged: list[PurgedRange] = []
     hashes: dict[int, str] = {0: genesis_hash}
+    stored_events: dict[int, StoredEvent] = {}
     prev_hash = genesis_hash
     expected_seq = 1
 
@@ -136,6 +137,7 @@ def verify_chain(
         if event.content is None and event.purge_act is not None:
             _extend_purged(purged, seq, event.purge_act)
         hashes[seq] = event.event_hash
+        stored_events[seq] = event
         prev_hash = event.event_hash
         expected_seq = seq + 1
 
@@ -144,7 +146,7 @@ def verify_chain(
         for index, (signing, signature) in enumerate(receipts)
         if (
             reason := _contradiction(
-                signing, signature, open_receipt, receipt_keys, genesis, hashes
+                signing, signature, open_receipt, receipt_keys, genesis, hashes, stored_events
             )
         )
     ]
@@ -153,7 +155,7 @@ def verify_chain(
         for index, (signing, signature) in enumerate(checkpoints)
         if (
             reason := _contradiction(
-                signing, signature, open_checkpoint, checkpoint_keys, genesis, hashes
+                signing, signature, open_checkpoint, checkpoint_keys, genesis, hashes, stored_events
             )
         )
     ]
@@ -208,6 +210,7 @@ def _contradiction(
     keys: frozenset[str],
     genesis: Genesis,
     hashes: dict[int, str],
+    stored_events: dict[int, StoredEvent],
 ) -> str | None:
     """Why the chain contradicts one artefact, or None when it holds."""
     try:
@@ -227,4 +230,22 @@ def _contradiction(
         return "not_in_chain"
     if stored != artefact.event_hash:
         return "hash_mismatch"
+    if isinstance(artefact, Receipt) and not _receipt_names_event(
+        artefact, stored_events[artefact.team_seq]
+    ):
+        return "event_mismatch"
     return None
+
+
+def _receipt_names_event(receipt: Receipt, event: StoredEvent) -> bool:
+    """Whether a receipt names the event stored at its sequence: its receipt time
+    always, and its event id while the content is retained."""
+    if receipt.received_at != event.link.received_at:
+        return False
+    if event.content is None:
+        return True
+    try:
+        envelope = hook_envelope.open_envelope(event.content.signing_bytes)
+    except Refused:
+        return False
+    return envelope.event_id == receipt.event_id

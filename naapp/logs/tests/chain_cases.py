@@ -263,6 +263,24 @@ def cases() -> list[ChainCase]:
     )
     ahead_checkpoint = checkpoint(1, 4, chain[-1].event_hash)
 
+    def receipt_naming(**changes: Any) -> tuple[bytes, str]:
+        """A receipt for the chain's second event with some of its fields changed."""
+        fields = {
+            "team_id": TEAM_ID,
+            "event_id": EVENT_IDS[1],
+            "chain_epoch": 1,
+            "team_seq": 2,
+            "event_hash": chain[1].event_hash,
+            "received_at": chain[1].link.received_at,
+            "logs_origin": LOGS_ORIGIN,
+            "kid": LOGS_KID,
+            "did_key": LOGS_DID,
+        }
+        return sign_receipt(SigningKey(LOGS_SEED), Receipt(**{**fields, **changes}))
+
+    receipt_for_another_event = receipt_naming(event_id=EVENT_IDS[0])
+    receipt_at_another_time = receipt_naming(received_at="2026-10-20T12:00:09.500Z")
+
     return [
         ChainCase(
             "intact_chain_of_three_producers",
@@ -352,6 +370,33 @@ def cases() -> list[ChainCase]:
                 wrong_hash_checkpoint,
                 ahead_checkpoint,
             ],
+        ),
+        ChainCase(
+            "receipt_names_another_event_at_its_sequence",
+            start,
+            chain,
+            {
+                "intact": False,
+                "missing": [],
+                "purged": [],
+                "contradicted": [
+                    {"artefact": "receipt", "index": 0, "reason": "event_mismatch"},
+                    {"artefact": "receipt", "index": 1, "reason": "event_mismatch"},
+                ],
+            },
+            receipts=[receipt_for_another_event, receipt_at_another_time],
+        ),
+        ChainCase(
+            "purged_event_still_binds_its_receipt_time",
+            start,
+            purged,
+            {
+                "intact": False,
+                "missing": [],
+                "purged": [{"from": 2, "to": 2, "act": ERASE_ACT}],
+                "contradicted": [{"artefact": "receipt", "index": 1, "reason": "event_mismatch"}],
+            },
+            receipts=[receipt_for_another_event, receipt_at_another_time],
         ),
         ChainCase(
             "receipt_for_another_team",

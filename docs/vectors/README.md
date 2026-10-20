@@ -358,7 +358,9 @@ epoch recording the first, a purged stub that still verifies, altered content,
 an altered skeleton, a reorder, a rehashed reorder that its receipts and
 checkpoint contradict, a gap, a rewritten envelope and wrong key evidence
 failing provenance, content gone without an act, a duplicate sequence, an
-event of another team, forged checkpoints and a receipt for another team. The
+event of another team, forged checkpoints, a receipt for another team, and
+receipts naming another event or receipt time at their sequence number (only
+the time is bound once the event is purged). The
 Python implementation in `naapp/logs` regenerates it byte for byte.
 
 ### `owner-act-v1.json`
