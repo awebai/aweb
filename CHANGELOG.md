@@ -91,6 +91,12 @@ Publishes PyPI `awid-service` 0.5.30 and the `awid` image 0.5.30.
 - Nothing consumes these records yet: they are inputs for apps that verify
   `X-AWEB-Principal-Attestation` with the in-repo `aweb_naapp` verifier,
   which refuses an attestation whose records are not registered.
+- **Security:** a team's `aweb.team-server/1` record accepts its `issued_at`
+  only as `YYYY-MM-DDTHH:MM:SSZ` in ASCII digits, naming a real calendar date.
+  A year written with other scripts' digits, such as fullwidth digits, was
+  stored, although the Go verifier refuses it; an impossible date failed with
+  500. Both are now refused as `record_invalid`, as the Go verifier refuses
+  them. Conformance: `docs/vectors/team-server-record-v1.json`.
 - **Deploy order:** deploy this AWID, with migration 009, before anything
   publishes the records. It needs no aweb server or `aw` change.
 
