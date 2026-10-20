@@ -41,6 +41,7 @@ from urllib.parse import unquote
 from fastapi import HTTPException, Request
 
 from aweb_naapp.manifest import Manifest, ManifestError
+from aweb_naapp.runtime.attestation import VerifiedAttestation
 from aweb_naapp.runtime.team_auth import Principal, raw_request_target
 
 logger = logging.getLogger(__name__)
@@ -208,6 +209,8 @@ class Authorization:
     principal: Principal
     tool: DeclaredTool
     grant: Grant
+    # The request's verified principal attestation; None when it carries none.
+    attestation: VerifiedAttestation | None = None
 
 
 def _refuse(status_code: int, code: str, message: str) -> HTTPException:

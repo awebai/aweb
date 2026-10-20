@@ -31,6 +31,7 @@ import hashlib
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -56,7 +57,9 @@ from aweb_naapp.robots import robots_txt
 from aweb_naapp.runtime.attestation import (
     AttestationRefused,
     AWIDAttestationRecords,
+    VerifiedAttestation,
     caller_context,
+    request_attestation,
 )
 from aweb_naapp.runtime.authorization import (
     ActionKind,
@@ -241,13 +244,14 @@ class NaappRuntime:
         app only through a surface's answer tool; without it, a surface's
         invoke tool admits nothing. An attestation that does
         not verify refuses the request with its code (``503`` when the registry
-        cannot be read). Only an admitted member is recorded as observed, so
+        cannot be read); the admitted :class:`Authorization` carries the
+        verified attestation for the app's policy. Only an admitted member is recorded as observed, so
         refused requests never write to the app's database.
         """
 
         async def authorized_request(request: Request) -> Authorization:
             principal = await self.principal(request)
-            caller = await self._caller_context(request, principal)
+            attestation, caller = await self._attestation(request, principal)
             authorization = await authorize_request(
                 request,
                 principal=principal,
@@ -258,18 +262,20 @@ class NaappRuntime:
                 action_kind=action_kind,
             )
             await record_observed_principal(self.db(), principal)
-            return authorization
+            return replace(authorization, attestation=attestation)
 
         self._guards.add(authorized_request)
         return authorized_request
 
-    async def _caller_context(self, request: Request, principal: Principal) -> str:
+    async def _attestation(self, request: Request, principal: Principal) -> tuple[VerifiedAttestation | None, str]:
+        """The request's verified attestation and its caller context, or the refusal."""
         if self._attestation_records is None:
             raise RuntimeError("naapp attestation records are not initialized")
         try:
-            return await caller_context(
+            verified = await request_attestation(
                 request, principal, records=self._attestation_records, now=datetime.now(UTC)
             )
+            return verified, caller_context(verified)
         except AttestationRefused as refused:
             logger.warning("Refused attestation for team %s: %s", principal.team_id, refused.code)
             status = 503 if refused.code == "authority_unavailable" else 403

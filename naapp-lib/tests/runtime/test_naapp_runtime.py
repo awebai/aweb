@@ -528,8 +528,9 @@ async def _running_contexts(
         grants=InstalledTeams({member.team_id: frozenset({"example:write"})}), policy=allow_all
     )
 
-    async def admitted(auth: Annotated[Authorization, Depends(authorized)]) -> dict[str, str]:
-        return {"tool": auth.tool.name}
+    async def admitted(auth: Annotated[Authorization, Depends(authorized)]) -> dict[str, object]:
+        attestation = auth.attestation
+        return {"tool": auth.tool.name, "channel": None if attestation is None else attestation.channel}
 
     for tool in CONTEXT_TOOLS:
         app.add_api_route(tool["path"], admitted, methods=[tool["method"]])
@@ -614,3 +615,17 @@ async def test_an_unreadable_attestation_registry_refuses_as_unavailable(
     async for client in _running_contexts(registry, app_database_url, tmp_path, member):
         outcomes = await _outcomes(client, member, issuer=issuer, custodian_id=CUSTODIAN, channel="dashboard")
     assert set(outcomes.values()) == {(503, "authority_unavailable")}
+
+
+async def test_the_admitted_request_carries_its_verified_attestation(registry, app_database_url, tmp_path, member):
+    issuer = SigningKey.generate()
+    await registry.add_custody(member, custodian_id=CUSTODIAN, issuer=issuer)
+    async for client in _running_contexts(registry, app_database_url, tmp_path, member):
+        plain = await client.post(CREATE["path"], **_signed(member, CREATE["path"]))
+        signed = _signed(member, CREATE["path"])
+        signed["headers"] = attested(  # type: ignore[arg-type]
+            member, signed["headers"], issuer=issuer, custodian_id=CUSTODIAN, channel="dashboard"
+        )
+        dashboard = await client.post(CREATE["path"], **signed)
+    assert plain.json()["channel"] is None
+    assert dashboard.json()["channel"] == "dashboard"

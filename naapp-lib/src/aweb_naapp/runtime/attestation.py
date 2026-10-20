@@ -6,8 +6,9 @@ current team key. Every refusal raises :class:`AttestationRefused` with the
 contract's code; nothing here infers self-custody, a default channel or a person
 declaration from absence.
 
-:func:`caller_context` turns a request's attestation into the invocation
-context the app's manifest tools are checked against.
+:func:`request_attestation` verifies a request's attestation once, and
+:func:`caller_context` turns it into the invocation context the app's manifest
+tools are checked against.
 """
 
 from __future__ import annotations
@@ -46,6 +47,7 @@ __all__ = [
     "VerifiedAttestation",
     "caller_context",
     "read_member_person",
+    "request_attestation",
     "verify_principal_attestation",
 ]
 
@@ -267,17 +269,13 @@ async def read_member_person(
     return record["single_person"] is True
 
 
-async def caller_context(
+async def request_attestation(
     request: Request, principal: Principal, *, records: AttestationRecordSource, now: datetime
-) -> str:
-    """The invocation context of a request ``principal`` signed: ``agent``, or
-    ``surface`` for a verified dashboard attestation.
-
-    A request without an attestation calls as an agent. An attestation that is
-    present must verify, or the request is refused with its code. No request
-    calls in the ``hook`` context through team-auth.
-    """
-    verified = await verify_principal_attestation(
+) -> VerifiedAttestation | None:
+    """The verified principal attestation of a request ``principal`` signed, or
+    ``None`` when it carries none. An attestation that is present must verify,
+    or :class:`AttestationRefused` is raised with its code."""
+    return await verify_principal_attestation(
         header=request.headers.get(ATTESTATION_HEADER),
         signed_payload=signed_payload_bytes(request),
         team_id=principal.team_id,
@@ -287,6 +285,12 @@ async def caller_context(
         records=records,
         now=now,
     )
+
+
+def caller_context(verified: VerifiedAttestation | None) -> str:
+    """The invocation context of a request with this verified attestation:
+    ``agent`` without one, ``surface`` for the dashboard channel. No request
+    calls in the ``hook`` context through team-auth."""
     attestation = None if verified is None else Attestation(verified=True, payload={"channel": verified.channel})
     try:
         return manifest_caller_context(attestation)
