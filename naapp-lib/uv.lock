@@ -179,6 +179,7 @@ signing-key = [
 [package.dev-dependencies]
 dev = [
     { name = "aweb-naapp", extra = ["pages", "runtime"] },
+    { name = "aweb-naapp-testing" },
     { name = "httpx2" },
     { name = "mypy" },
     { name = "pytest" },
@@ -205,11 +206,27 @@ provides-extras = ["runtime", "outbox", "signing-key", "idempotency", "pages"]
 [package.metadata.requires-dev]
 dev = [
     { name = "aweb-naapp", extras = ["runtime", "pages"] },
+    { name = "aweb-naapp-testing", editable = "testing" },
     { name = "httpx2", specifier = ">=2.9.1" },
     { name = "mypy", specifier = ">=1.18.0" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
     { name = "ruff", specifier = ">=0.14.0" },
+]
+
+[[package]]
+name = "aweb-naapp-testing"
+version = "0.1.0"
+source = { editable = "testing" }
+dependencies = [
+    { name = "aweb-naapp", extra = ["runtime"] },
+    { name = "awid-service" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aweb-naapp", extras = ["runtime"], editable = "." },
+    { name = "awid-service", editable = "../awid" },
 ]
 
 [[package]]
