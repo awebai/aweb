@@ -947,6 +947,55 @@
       }
     },
     {
+      "name": "task-request-id-differs",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "f328a2ed5468539f25fb03cc0b1cd1fd9f1cbce211cb01f3bfca0477f0bb682f",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "f328a2ed5468539f25fb03cc0b1cd1fd9f1cbce211cb01f3bfca0477f0bb682f",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q"
+      },
+      "note": "the response and bindings agree, but the signed task carries another request id"
+    },
+    {
       "name": "bound-request-id-differs",
       "expect": "target_mismatch",
       "response": {

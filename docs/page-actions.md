@@ -98,8 +98,9 @@ precondition, task, target or proposal is a different identity.
 **Accepting an intent**, in one naapp transaction, after the checks every
 action gets (policy, input, revisions):
 
-1. Find the preparation by the key and the identity, or 409
-   `preparation_required`. Re-derive it from current state (§3.1); any
+1. Find the preparation by the key and the identity. The key with another
+   identity is 409 `idempotency_conflict`, and a key with no preparation is
+   409 `preparation_required`. Re-derive it from current state (§3.1); any
    difference is 409 `preparation_stale`.
 2. Verify `task_authorization` with `verify_task_authorization`
    ([app-task-requests.md](app-task-requests.md) §1, §3 steps 3 to 6), with
