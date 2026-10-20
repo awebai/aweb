@@ -1178,7 +1178,7 @@ which action, with the fields it fills:
 | approval decided (approve, deny, expire, revoke) | `approval_decided`, with `approval_evidence_sha256` when a passkey decided |
 | `admitted` | `admitted` |
 | `dispatching`, enqueued in the fence transaction before any byte is sent | `dispatching` |
-| `completed`, including a withheld result or an undeclared credential | `completed`, with `disposition` and `returned_hmac` |
+| `completed`, including a withheld result or an undeclared credential | `completed`, with `disposition`, `returned_hmac` and the boolean `undeclared_credential` |
 | `not_sent` | `not_sent` |
 | `outcome_unknown` | `outcome_unknown` |
 | `reconciled_*` | `reconciled` |
@@ -1187,7 +1187,8 @@ The fields secrets fills are:
 
 - `op_kind`: `broker` or `run_job`.
 - **Broker target.** `target_method`, `target_host`, `target_port` and
-  `target_path_template`. Concrete paths and query values are never sent.
+  `target_path_template`, plus `operation_id` and `operation_digest` for a named
+  operation. Concrete paths and query values are never sent.
 - **Job target.** `runner_id`, `job_id` and `job_digest`.
 - **Grant and policy.** `secret_version`, `grant_id` and `policy_digest`.
 - `disposition`: `returned`, `withheld`, `stored_as_secret`, or
@@ -1195,8 +1196,9 @@ The fields secrets fills are:
 - **`returned_hmac`.** This is an HMAC, keyed by secrets, over the bytes returned
   to the agent. It is not a plain hash: a plain hash of a returned credential, or
   of one that redaction missed, would be a confirmable credential digest. The
-  field is absent when the result is withheld. secrets keeps an HMAC of the raw
-  response in its own record as reconciliation evidence.
+  field is absent when the result is withheld. secrets keeps a keyed HMAC of
+  the raw response in its own record as reconciliation evidence. That HMAC
+  fills the optional `upstream_response_hmac` field.
 
 `refusal_code` is a fixed enum, proposed for the catalog vector:
 
@@ -1232,8 +1234,9 @@ How audit availability applies to governance acts:
 - **Widening acts are audit-critical.** One that cannot enqueue does not commit,
   and it is refused, like a use, when no audit target is active.
 - **Narrowing acts are never gated.** That covers every containment act in §12.
-  They are always enqueued, but never refused for audit availability, because
-  containment must not wait.
+  Each is enqueued in its own transaction. A containment act is **never**
+  refused for `audit_target_unavailable` or `audit_delivery_stalled`; it fails
+  only if its own local commit fails. Containment does not wait on logs.
 
 secrets fills `authority` with one of:
 
@@ -1259,7 +1262,9 @@ Every containment action **narrows** authority. It can therefore be done:
 - by an owner or approver through the console;
 - for an approval request, by its approver.
 
-Narrowing must never wait on a ceremony. Each action is recorded as an event.
+Narrowing must never wait on a ceremony, and never on logs. Each action is
+recorded as a `post-governance-hook` event. It is never refused for audit
+availability, only for a failed local commit (§11.5).
 
 | Action | Effect |
 | --- | --- |
