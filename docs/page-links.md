@@ -53,7 +53,6 @@ The app stores, per link, an immutable record and its mutable lifecycle:
     "assets": []
   },
   "actions": [{"action_id": "mark-cleaned", "constraints": {"record_id": "b-17"}}],
-  "answers": null,
   "intent_sponsor_did": null,
   "one_use": false,
   "created_by": {"principal_did": "did:aw:…", "certificate_id": "…"},
@@ -72,7 +71,6 @@ Lifecycle: `revoked_at`, `used_at` (one-use links) and the stored receipts.
 | `mode`, `page_rev` | `pinned` serves the page at `page_rev` only. `live` serves the current revision, and `page_rev` is `null`. |
 | `projection` | The only records, fields and assets the link can read. 1–16 collections, each with 1–200 `record_ids` (or `"*"` for every record the creator could read at mint, frozen as that list) and 1–64 `fields`. 0–64 asset IDs. |
 | `actions` | 0–16 `{action_id, constraints}`: allowed page actions of kind `edit` or `intent`, each with fixed input values the submission must equal. Empty means read-only, the default. Never an `answer`-kind action. |
-| `answers` | `null`, or the one bounded request the holder may answer, `{request_ref, input_schema}` (for example a guest reply). The answer is recorded as anonymous input. |
 | `intent_sponsor_did` | Required when `actions` contains an `intent`: the agent principal that routes the holder's intents (§5). `null` otherwise. |
 | `one_use` | `true`: the first admitted action uses the link up (§4). Reads before it consume nothing. |
 | `expires_at` | After `created_at` and at most 30 days later. |
@@ -133,8 +131,15 @@ its creator still holds at least the read projection). It then creates a link
 session:
 
 ```json
-{"session_id": "lks_01JC…", "expires_at": "2026-10-20T12:15:00Z", "link": {"page_id": "…", "mode": "pinned", "actions": ["mark-cleaned"]}}
+{"session_id": "lks_01JC…", "csrf_token": "<22 chars>", "expires_at": "2026-10-20T12:15:00Z", "link": {"page_id": "…", "mode": "pinned", "actions": ["mark-cleaned"]}}
 ```
+
+`csrf_token` is 16 random bytes, base64url without padding, bound to the
+session and stored only as its SHA-256. The host's `csrfToken()` returns it,
+from the same in-memory closure as the secret, and every state-changing link
+request carries it as `X-AWEB-CSRF`; the app compares it in constant time. It
+adds a check the session key does not replace, and is never given to the
+renderer as page data.
 
 - A session lasts at most 15 minutes and never past the link's expiry. The
   holder renews it with a fresh exchange of the same secret while the link is
@@ -200,9 +205,17 @@ accepted encoding. The app verifies, in order, failing closed:
    `idempotency_conflict`. A client retrying after a lost response signs again
    with a fresh nonce; the action's idempotency key carries the retry and
    returns the stored receipt.
-5. **Origin.** A state-changing request carries an `Origin` header equal to the
-   app's origin. Failure: 403 `action_denied`.
+5. **Origin and CSRF.** A state-changing request carries an `Origin` header
+   equal to the app's origin and the session's `X-AWEB-CSRF`. Failure: 403
+   `action_denied`.
 6. **Link lifecycle and authority**, under the link's row lock: §4.
+
+The nonce is recorded in its own committed write as soon as steps 1–3 pass,
+under a uniqueness constraint shared by every worker, before step 5 and before
+any action runs. A refused or failed action therefore leaves its nonce
+recorded, and the same signed request can never be presented again. Of two
+concurrent requests with one nonce, exactly one is recorded; the other gets
+409.
 
 The key tells a repeat browser apart from a typed-in name, not a verified
 person. A holder with the secret can always start another session. The
@@ -213,8 +226,14 @@ trust of an AWID member signature.
 ## 4. Lifecycle at every use
 
 Each read, submit, stream subscription, asset fetch and dispatch takes the
-link's row lock (`FOR UPDATE` for writes, `FOR SHARE` for reads) and, in the
-same transaction, requires:
+link's row lock (`FOR UPDATE` for writes, `FOR SHARE` for reads). Every request
+also requires its session to be unexpired. For a submit, the first step under
+the lock is the **receipt lookup**: if the link has an admitted operation with
+this idempotency key, the same body returns its stored receipt, and a
+different body is 409 `idempotency_conflict`. Nothing else below runs for a
+matching retry, so a retry gets its receipt even after the link was used up,
+revoked or expired, as long as its session is live; it never admits a second
+operation. Otherwise, in the same transaction, the request requires:
 
 - `revoked_at` is null, `expires_at` is in the future, and, for a one-use link,
   `used_at` is null;
@@ -234,8 +253,24 @@ ends it within 15 s.
 records its operation ID in the same transaction. Competing submissions block
 on the lock, and only one is admitted; the other gets 410 `link_unavailable`.
 A read, a preview, a failed signature or a refused action consumes nothing. A
-retry of the admitted action with its idempotency key returns the stored
-receipt, never a second action.
+retry of the admitted action, with a fresh nonce and the same idempotency key
+and body, returns the stored receipt through the receipt lookup above. A nonce
+replay (the same signed request again) is a different case: it is refused at
+§3 step 4, whatever happened to the action.
+
+**Assets.** The browser loads images and video natively, so those requests
+cannot carry `AWEB-Link-Request`. A signed read instead returns, for each
+asset in the projection it shows, a URL on the app's asset origin carrying an
+**asset grant**: 16 random bytes, base64url, stored only as its SHA-256, bound
+to `(link_id, session_id, asset_id)`, valid for at most 5 minutes and never
+past its session. Every request to the asset origin with a grant, each Range
+request of a video included, re-runs this section's checks for that asset
+under `FOR SHARE`; a revocation therefore stops a video at its next range
+request. A grant may be used any number of times within its window, for range
+requests and retries, and grants nothing beyond that one asset. The asset
+origin never logs query strings, sends `Cache-Control: private, no-store` and
+`Referrer-Policy: no-referrer`, and the link page's policy keeps grants out of
+referrers. A new grant needs a new signed read.
 
 Every refusal that would reveal whether a link exists is 404
 `link_unavailable`. A holder who already has a live session gets 410
@@ -258,15 +293,24 @@ Every refusal that would reveal whether a link exists is 404
   untrusted. Until then the holder sees "saved; awaiting routing". The
   sponsor's task grants no approval, and the holder never inherits the
   sponsor's key.
-- **Answer its own bounded request**, when `answers` is set: one answer,
-  validated against its input schema and recorded as anonymous input, never as
-  approval.
+- **Answer its own bounded request**, such as a guest reply: this is an
+  ordinary `intent` action the creator allowed, constrained to that request's
+  reference, submitted through the host's generic action path and recorded as
+  anonymous input. It never uses the decision answer path (the host's
+  `answer`), which is the member flow of [page-actions.md](page-actions.md)
+  §5.
 
 **Anonymous intent rule.** No external or privileged effect follows from a
 link alone. When an intent needs one, the sponsor's work raises a decision for
 an assigned member, or an owner-designated passkey approver
 ([page-actions.md](page-actions.md) §6–§7). A holder's text is data to the
 agent, never instructions that bypass that decision.
+
+**Where this runs.** The exchange, the request verifier, the nonce and receipt
+stores, the link row locks and asset grants are the capability-link runtime in
+`aweb_naapp` (D1 §7: N5 builds page action links on it, beside B2's approval
+links). The shared renderer never sees a secret, grant or key, and calls only
+its host adapter.
 
 ## 6. Rate limits
 

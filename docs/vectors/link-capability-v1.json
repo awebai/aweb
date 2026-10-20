@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Capability-link semantics (docs/page-links.md §1, §4-§6), for the app that serves links. `delegation`: a creator's current authority and a requested link, with the mint result. `use_sequence`: one link's ordered steps (b-17/b-18 bookings; projection {arrival, status}; mark-cleaned constrained to b-17), each with its expected result; same_receipt_as names a step index (0-based). `race`: orderings of concurrent transactions under the link's row lock. `lockout`: exchange rate limiting that a stranger knowing a link_id cannot use against its holder.",
+  "description": "Capability-link semantics (docs/page-links.md §1, §4-§6), for the app that serves links. `delegation`: a creator's current authority and a requested link, with the mint result. `use_sequence`: one link's ordered steps (b-17/b-18 bookings; projection {arrival, status}; mark-cleaned constrained to b-17), each with its expected result; same_receipt_as names a step index (0-based). `race`: orderings of concurrent transactions under the link's row lock. `lockout`: exchange rate limiting that a stranger knowing a link_id cannot use against its holder. `replay_cases` separate operation retries (fresh nonce, same idempotency key: the stored receipt, while the session is live) from nonce replays (refused, even after a refused action). `asset_sequence` and `grant_expiry` cover asset grants for native image and video loads. Unless a step says otherwise, writes carry the right Origin and the session's CSRF token.",
   "delegation": [
     {
       "name": "within-creator-authority",
@@ -462,6 +462,36 @@
       }
     },
     {
+      "step": "action",
+      "session": "s1",
+      "action_id": "mark-cleaned",
+      "input": {
+        "record_id": "b-17"
+      },
+      "nonce": "n5",
+      "idempotency_key": "k5",
+      "csrf": "missing",
+      "result": {
+        "status": 403,
+        "code": "action_denied"
+      }
+    },
+    {
+      "step": "action",
+      "session": "s1",
+      "action_id": "mark-cleaned",
+      "input": {
+        "record_id": "b-17"
+      },
+      "nonce": "n6",
+      "idempotency_key": "k6",
+      "csrf": "another_session",
+      "result": {
+        "status": 403,
+        "code": "action_denied"
+      }
+    },
+    {
       "step": "creator_loses_field",
       "field": "status"
     },
@@ -571,6 +601,271 @@
         "status": 404,
         "code": "link_unavailable"
       }
+    }
+  ],
+  "replay_cases": [
+    {
+      "name": "receipt-after-one-use",
+      "one_use": true,
+      "steps": [
+        {
+          "action": "k1",
+          "nonce": "n1",
+          "result": {
+            "status": 200,
+            "receipt": "r1"
+          }
+        },
+        {
+          "action": "k1",
+          "nonce": "n2",
+          "same_body": true,
+          "result": {
+            "status": 200,
+            "receipt": "r1"
+          }
+        },
+        {
+          "action": "k2",
+          "nonce": "n3",
+          "result": {
+            "status": 410,
+            "code": "link_unavailable"
+          }
+        }
+      ],
+      "note": "the stored receipt comes back after the link is used up; no second operation is admitted"
+    },
+    {
+      "name": "receipt-after-revocation-with-live-session",
+      "steps": [
+        {
+          "action": "k1",
+          "nonce": "n1",
+          "result": {
+            "status": 200,
+            "receipt": "r1"
+          }
+        },
+        {
+          "revoke": true
+        },
+        {
+          "action": "k1",
+          "nonce": "n2",
+          "same_body": true,
+          "result": {
+            "status": 200,
+            "receipt": "r1"
+          }
+        },
+        {
+          "action": "k2",
+          "nonce": "n3",
+          "result": {
+            "status": 410,
+            "code": "link_unavailable"
+          }
+        }
+      ]
+    },
+    {
+      "name": "receipt-after-link-expiry-with-live-session",
+      "steps": [
+        {
+          "action": "k1",
+          "nonce": "n1",
+          "result": {
+            "status": 200,
+            "receipt": "r1"
+          }
+        },
+        {
+          "link_expires": true
+        },
+        {
+          "action": "k1",
+          "nonce": "n2",
+          "same_body": true,
+          "result": {
+            "status": 200,
+            "receipt": "r1"
+          }
+        }
+      ]
+    },
+    {
+      "name": "no-receipt-once-the-session-expired",
+      "steps": [
+        {
+          "action": "k1",
+          "nonce": "n1",
+          "result": {
+            "status": 200,
+            "receipt": "r1"
+          }
+        },
+        {
+          "session_expires": true
+        },
+        {
+          "action": "k1",
+          "nonce": "n2",
+          "same_body": true,
+          "result": {
+            "status": 410,
+            "code": "link_unavailable"
+          }
+        }
+      ]
+    },
+    {
+      "name": "receipt-key-with-different-body",
+      "steps": [
+        {
+          "action": "k1",
+          "nonce": "n1",
+          "result": {
+            "status": 200,
+            "receipt": "r1"
+          }
+        },
+        {
+          "action": "k1",
+          "nonce": "n2",
+          "same_body": false,
+          "result": {
+            "status": 409,
+            "code": "idempotency_conflict"
+          }
+        }
+      ]
+    },
+    {
+      "name": "refused-action-keeps-its-nonce",
+      "steps": [
+        {
+          "action": "k1",
+          "nonce": "n1",
+          "violates_constraint": true,
+          "result": {
+            "status": 403,
+            "code": "action_denied"
+          }
+        },
+        {
+          "same_signed_request_again": true,
+          "result": {
+            "status": 409,
+            "code": "idempotency_conflict"
+          }
+        }
+      ],
+      "note": "the nonce is recorded in its own write, before the action runs"
+    },
+    {
+      "name": "concurrent-duplicate-nonce",
+      "steps": [
+        {
+          "concurrent": [
+            "request_a_nonce_n1",
+            "request_b_nonce_n1"
+          ],
+          "result": {
+            "one": {
+              "status": 200
+            },
+            "other": {
+              "status": 409,
+              "code": "idempotency_conflict"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "asset_sequence": [
+    {
+      "step": "read",
+      "fields": [
+        "arrival"
+      ],
+      "assets": [
+        "ast-1"
+      ],
+      "result": {
+        "status": 200,
+        "asset_grants": [
+          "g1"
+        ]
+      },
+      "note": "a signed read returns a grant per projected asset it shows"
+    },
+    {
+      "step": "asset_get",
+      "grant": "g1",
+      "range": "bytes=0-65535",
+      "result": {
+        "status": 206
+      }
+    },
+    {
+      "step": "asset_get",
+      "grant": "g1",
+      "range": "bytes=65536-131071",
+      "result": {
+        "status": 206
+      },
+      "note": "a grant serves any number of range requests within its window"
+    },
+    {
+      "step": "asset_get",
+      "grant": "g1",
+      "asset_id": "ast-2",
+      "result": {
+        "status": 403,
+        "code": "action_denied"
+      },
+      "note": "a grant names one asset"
+    },
+    {
+      "step": "revoke",
+      "result": {
+        "status": 200
+      }
+    },
+    {
+      "step": "asset_get",
+      "grant": "g1",
+      "range": "bytes=131072-196607",
+      "result": {
+        "status": 410,
+        "code": "link_unavailable"
+      },
+      "note": "revocation stops a video at its next range request"
+    }
+  ],
+  "grant_expiry": [
+    {
+      "step": "read",
+      "at": "2026-10-20T12:00:00Z",
+      "assets": [
+        "ast-1"
+      ],
+      "result": {
+        "status": 200,
+        "grant_expires_at": "2026-10-20T12:05:00Z"
+      }
+    },
+    {
+      "step": "asset_get",
+      "at": "2026-10-20T12:05:00Z",
+      "grant": "g1",
+      "result": {
+        "status": 410,
+        "code": "link_unavailable"
+      },
+      "note": "a grant lasts at most 5 minutes and never past its session"
     }
   ],
   "race": [

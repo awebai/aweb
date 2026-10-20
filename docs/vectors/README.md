@@ -225,10 +225,11 @@ in `naapp-lib/tests/runtime/`. See [page links](../page-links.md) §2–§3.
 
 Capability-link semantics (aweb-acgg.10), for the app that serves links:
 delegation against the creator's authority, one link's ordered use steps
-(projection, constraints, nonce replay and idempotent retry, Origin, narrowing
-when the creator loses authority, stream re-checks, revocation), revocation
-and one-use races under the link's row lock, and exchange rate limiting that a
-stranger cannot turn against a holder. See [page links](../page-links.md)
+(projection, constraints, nonce replay and idempotent retry, Origin and CSRF,
+narrowing when the creator loses authority, stream re-checks, revocation),
+receipt retries after use, revocation and expiry, asset grants for native
+media, revocation and one-use races under the link's row lock, and exchange
+rate limiting that a stranger cannot turn against a holder. See [page links](../page-links.md)
 §1 and §4–§6.
 
 ### `agent-status-v1.json`
