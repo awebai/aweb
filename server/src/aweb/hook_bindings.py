@@ -67,14 +67,15 @@ class HookBinding:
     revoked_at: datetime | None
 
 
-_COLUMNS = """
+BINDING_COLUMNS = """
     binding_id, kind, team_id, installation_id, generation, app_id, origin, digest,
     catalog_id, catalog_version, hook, tool, method, path, scopes, reads, state,
     ended_by, activated_at, active_from, revoked_at
 """
 
 
-def _binding(row) -> HookBinding:
+def binding_from_row(row) -> HookBinding:
+    """A HookBinding from a row selected with BINDING_COLUMNS."""
     values = dict(row)
     values["scopes"] = tuple(values["scopes"])
     values["reads"] = tuple(values["reads"])
@@ -221,7 +222,7 @@ async def write_pending_bindings(
         )
         row = await tx.fetch_one(
             f"""
-            SELECT {_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
+            SELECT {BINDING_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
             WHERE team_id = $1 AND app_id = $2 AND digest = $10 AND origin = $11 AND state IN ('pending', 'active')
               AND COALESCE(installation_id, '') = COALESCE($3::TEXT, '')
               AND COALESCE(generation, 0) = COALESCE($4::INTEGER, 0)
@@ -240,7 +241,7 @@ async def write_pending_bindings(
             digest,
             origin,
         )
-        written.append(_binding(row))
+        written.append(binding_from_row(row))
     return written
 
 
@@ -264,11 +265,11 @@ async def list_app_bindings(db, *, team_id: str, app_id: str) -> list[HookBindin
 
     rows = await db.fetch_all(
         f"""
-        SELECT {_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
+        SELECT {BINDING_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
         WHERE team_id = $1 AND app_id = $2
         ORDER BY created_at, kind DESC, catalog_id, catalog_version, hook, tool
         """,
         validate_team_id(team_id),
         normalize_app_id(app_id),
     )
-    return [_binding(row) for row in rows]
+    return [binding_from_row(row) for row in rows]

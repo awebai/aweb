@@ -68,10 +68,12 @@ def _check_refused():
 
 
 async def _make_active(db, binding_id) -> None:
+    """Activate as an owner act does: times truncated to the millisecond, active_from 60 s later."""
     await db.execute(
         """
         UPDATE {{tables.app_hook_bindings}}
-        SET state = 'active', activated_at = NOW(), active_from = NOW() + INTERVAL '60 seconds',
+        SET state = 'active', activated_at = date_trunc('milliseconds', NOW()),
+            active_from = date_trunc('milliseconds', NOW()) + INTERVAL '60 seconds',
             activation_act_sha256 = $2
         WHERE binding_id = $1
         """,
@@ -394,3 +396,5 @@ async def test_end_times_are_stored_at_millisecond_precision(db):
     assert {b.binding_id for b in ended} == {b.binding_id for b in first + second}
     for binding in ended:
         assert binding.revoked_at is not None and binding.revoked_at.microsecond % 1000 == 0
+    created = await db.fetch_all("SELECT created_at FROM {{tables.app_hook_bindings}}")
+    assert len(created) == 4 and all(row["created_at"].microsecond % 1000 == 0 for row in created)
