@@ -193,7 +193,7 @@ dev = [
 
 [[package]]
 name = "awid-service"
-version = "0.5.28"
+version = "0.5.29"
 source = { directory = "../awid" }
 dependencies = [
     { name = "base58" },
