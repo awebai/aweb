@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Real AWID fixture. Prints its loopback URL, lives until stdin closes.
 
+A second stdout line is JSON naming the fixture's storage (database URL and
+schema), for test helpers that seed state the CLI cannot publish itself.
+
 Uses the suite's PG/Redis when configured, otherwise owns disposable containers.
 No service responses are synthesized. Run uv sync --frozen in awid beforehand.
 """
+import json
 import os
 from pathlib import Path
 import socket
@@ -68,6 +72,7 @@ def main():
         else:
             raise RuntimeError('real AWID did not become ready')
         print(url, flush=True)
+        print(json.dumps({'database_url': database, 'schema': schema}), flush=True)
         sys.stdin.read()
     finally:
         if process is not None:

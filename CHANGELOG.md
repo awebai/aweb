@@ -4,6 +4,33 @@
 
 ## Release preparations
 
+### Release preparation: aw 1.36.45
+
+CLI changes are since `aw-v1.36.44`. Prepared alongside AWID 0.5.30.
+
+- `aw id team rotate-key --team <name> --namespace <domain>` rotates the team
+  controller key under the namespace controller key, on AWID's atomic path.
+  It reads every record the team key has signed at AWID: the
+  `aweb.team-server/1` record and the custodian, member-custody and
+  member-person records. It verifies each against the team's current key before
+  re-signing it with the new key, and sends them with the key change in one
+  request, so the team-server record stays valid across the rotation instead of
+  having to be republished with `aw id team set-server`.
+  - AWID serves custodian records only by exact key. A custodian with no
+    custody record is learned from AWID's `409 resigned_records_incomplete`,
+    which names it, and the rotation is retried exactly once. Any other
+    refusal, or a second one, leaves the key unchanged and exits non-zero with
+    AWID's detail.
+  - The new key is stored as pending before AWID sees it and becomes the team
+    key once AWID holds it. Running the command again after an interruption
+    resumes with the same key.
+  - Every member certificate is signed by the team key, so after a rotation all
+    of them are invalid. The command says so; re-issue each with
+    `aw id team reissue-cert`.
+- **Deploy order:** the atomic rotation needs AWID 0.5.30. An older AWID
+  refuses the request with `422`, because its rotate body forbids unknown
+  fields, and the team key stays unchanged.
+
 ### Release preparation: AWID 0.5.30
 
 Changes are since `awid-v0.5.29` / `awid-service-v0.5.29`.
