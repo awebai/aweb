@@ -500,7 +500,7 @@ source-system version and expiry. Re-editing a proposed price/reply produces a
 new proposal hash and requires a fresh answer.
 
 A `decision_card` may instead declare `bundle: true` and reference a bundle
-record. The bundle record's value is an ordered list of items, each
+record. The bundle record's value is `{"items": [...]}`, an ordered list of items, each
 `{record_id, record_rev, proposal_sha256}`, so every item binds an exact record
 revision and that proposal's own digest. The card's `proposal_sha256` is then
 SHA-256 over UTF-8 `aweb.page-bundle/1\n` (a literal newline) followed by the

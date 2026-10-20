@@ -50,8 +50,10 @@ need care in every implementation:
 - **End of input.** Patterns end with `(?![\s\S])`, not `$`. In Python `re`,
   `$` also matches before a final newline, so `"items\n"` would pass an
   identifier pattern. Vectors pin this.
-- **`date-time`.** RFC 3339 with a mandatory offset (`Z` or `±hh:mm`). A
-  validator must check the format, not merely annotate it.
+- **`date-time`.** The page schema asserts this profile, not merely annotates
+  it: `YYYY-MM-DDThh:mm:ss`, an optional fraction of 1–9 digits, then `Z` or
+  `±hh:mm`. Digits are ASCII; `T` and `Z` are uppercase; seconds are 00–59 (no
+  leap second), and the date and time must exist. Vectors pin each refusal.
 
 ### Lint (`lint`)
 
@@ -70,13 +72,16 @@ need care in every implementation:
 | `inline_schema_ref` | A `$ref` in a collection or action input schema is local (starts with `#`). Remote and file references are refused. |
 | `inline_schema_keyword` | `$id`, `$schema`, `$anchor`, `$dynamicRef`, `$dynamicAnchor`, `$recursiveRef`, `$recursiveAnchor` and `$vocabulary` are refused. |
 | `inline_schema_number` | `type: "number"` is refused. Integers are safe integers; fractional quantities are decimal strings. |
-| `inline_schema_pattern` | A `pattern` or `patternProperties` key is at most 256 characters. |
+| `inline_schema_pattern` | `pattern` and `patternProperties` are refused. A regular expression's work and dialect cannot be bounded portably (JSON Schema specifies ECMA-262, and backtracking engines can take exponential time), so inline schemas use `enum`, `const`, lengths and bounds instead. A linear-time, ECMA-compatible subset would be a later, explicit addition. |
+| `inline_schema_invalid` | A collection schema or action input schema is not a valid JSON Schema 2020-12 schema (checked against the meta-schema). Pointer: the offending keyword. Checked only after the subset rules pass, and before any record is validated. |
 | `inline_schema_depth` | Inline schemas nest at most 16 sub-schemas deep. Pointer: the first sub-schema past the limit. |
-| `bidi_control` | No embedding, override or isolate control (U+202A–U+202E, U+2066–U+2069) in the title, any layout string (Markdown included) or any action label. Record values are data; the renderer isolates them instead. |
+| `bidi_control` | No embedding, override or isolate control (U+202A–U+202E, U+2066–U+2069) in the title, any layout string (Markdown included), any `widget_state` string or any action label. Record values are data; the renderer isolates them instead. |
 | `bundle_*` | The bundle rules in §5. |
 
 A record's value is validated against its collection schema only when that
-schema passes the inline-schema rules.
+schema passes the inline-schema rules and the meta-schema. In inline schemas,
+`format` is an annotation only: it is never asserted, so it cannot make two
+implementations disagree.
 
 ## 2. Page snapshot
 
@@ -145,7 +150,8 @@ A collection has `id`, `schema_version`, an inline JSON Schema `schema`,
 has `id`, `rev` and `value`. A synced record also carries `source`: `system`,
 `external_id`, `version` and `synced_at`. Inline schemas (and action input
 schemas) follow the subset in the lint rules: local references only, no
-`number` type, bounded patterns and depth.
+`number` type, no `pattern` or `patternProperties`, bounded depth, and valid
+under the 2020-12 meta-schema.
 
 ## 5. Decision cards and bundles
 
@@ -167,8 +173,11 @@ record in `collection` whose value is exactly:
   where `\n` is a literal newline and `C` is canonical JSON: sorted keys, no
   insignificant whitespace, UTF-8 without escaping non-ASCII, safe integers
   and no floats. `bundle_hash` vectors pin it.
-- A bundle holds at most 64 items, and the snapshot carries the bundle record
-  and every item record.
+- Each item's `record_id` is an identifier, its `record_rev` a safe
+  non-negative integer and its `proposal_sha256` `sha256:` plus 64 lowercase
+  hex digits. A record appears at most once.
+- A bundle holds 1–64 items, and the snapshot carries the bundle record and
+  every item record.
 - Each item names a record in `items_collection` at its current revision.
 - Per-item accept, change or reject happens before the bundle is hashed. A
   change after hashing makes a new bundle and needs a new approval, never a
@@ -178,8 +187,10 @@ record in `collection` whose value is exactly:
 | --- | --- |
 | `bundle_record_unknown` | The bundle record is not in the snapshot. |
 | `bundle_record_mismatch` | The bundle record's revision differs from the card's `record_rev`. |
-| `bundle_record_shape` | The bundle record's value is not exactly an item list. |
+| `bundle_record_shape` | The bundle record's value is not exactly an item list of well-formed items. |
+| `bundle_empty` | The item list is empty. |
 | `bundle_too_many_items` | More than 64 items. |
+| `bundle_duplicate_item` | A record is listed more than once. Pointer: the later item. |
 | `bundle_item_unknown` | An item's record is not in `items_collection` in the snapshot. |
 | `bundle_item_mismatch` | An item's record is at a different revision than the bundle binds. |
 | `bundle_hash_mismatch` | The card's `proposal_sha256` is not the bundle hash. |

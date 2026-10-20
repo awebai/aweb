@@ -2,7 +2,8 @@
 
 Lint checks what a JSON Schema cannot: references resolve, identifiers are
 unique, records match their collection schemas, inline schemas stay inside the
-permitted subset, agent-authored layout text carries no bidi controls, and a
+permitted subset, agent-authored text (layout, widget state and action labels)
+carries no bidi controls, and a
 bundle decision card binds exactly the item revisions it renders.
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
@@ -21,10 +23,14 @@ Path = tuple[str | int, ...]
 
 BUNDLE_PREFIX = b"aweb.page-bundle/1\n"
 BUNDLE_ITEM_KEYS = frozenset({"record_id", "record_rev", "proposal_sha256"})
+_IDENTIFIER = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}")
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_SAFE_INTEGER = 2**53 - 1
+_META_SCHEMA = Draft202012Validator(Draft202012Validator.META_SCHEMA)
 
 # Embedding, override and isolate controls (Trojan Source). Marks such as LRM
 # are left alone; values bound from records are isolated by the renderer.
-_BIDI_CONTROLS = frozenset("‪‫‬‭‮⁦⁧⁨⁩")
+_BIDI_CONTROLS = frozenset(chr(code) for code in (*range(0x202A, 0x202F), *range(0x2066, 0x206A)))
 
 _REFUSED_KEYWORDS = frozenset(
     {
@@ -94,7 +100,6 @@ def _strings(node: object, path: Path) -> Iterator[tuple[str, Path]]:
 def _inline_schema_errors(schema: object, path: Path) -> Iterator[PageError]:
     stack: list[tuple[object, Path, int]] = [(schema, path, 1)]
     max_depth = PAGE_LIMITS["max_inline_schema_depth"]
-    max_pattern = PAGE_LIMITS["max_inline_schema_pattern"]
     while stack:
         node, at, depth = stack.pop()
         if not isinstance(node, dict):
@@ -111,14 +116,12 @@ def _inline_schema_errors(schema: object, path: Path) -> Iterator[PageError]:
                 "number" == value or (isinstance(value, list) and "number" in value)
             ):
                 yield PageError("lint", "inline_schema_number", pointer((*at, key)))
-            elif key == "pattern" and isinstance(value, str) and len(value) > max_pattern:
+            elif key in ("pattern", "patternProperties"):
                 yield PageError("lint", "inline_schema_pattern", pointer((*at, key)))
         for key in _SCHEMA_MAPS:
             children = node.get(key)
             if isinstance(children, dict):
                 for name, child in children.items():
-                    if key == "patternProperties" and len(name) > max_pattern:
-                        yield PageError("lint", "inline_schema_pattern", pointer((*at, key, name)))
                     stack.append((child, (*at, key, name), depth + 1))
         for key in _SCHEMA_LISTS:
             children = node.get(key)
@@ -130,6 +133,19 @@ def _inline_schema_errors(schema: object, path: Path) -> Iterator[PageError]:
             child = node.get(key)
             if isinstance(child, dict):
                 stack.append((child, (*at, key), depth + 1))
+
+
+def _checked_schema_errors(schema: object, path: Path) -> list[PageError]:
+    """The inline-schema subset first, then the 2020-12 meta-schema."""
+    errors = list(_inline_schema_errors(schema, path))
+    if not errors:
+        errors = sorted(
+            {
+                PageError("lint", "inline_schema_invalid", pointer((*path, *error.absolute_path)))
+                for error in _META_SCHEMA.iter_errors(schema)
+            }
+        )
+    return errors
 
 
 class _Page:
@@ -229,6 +245,20 @@ def _form_errors(page: _Page, widget: Mapping[str, Any], path: Path) -> Iterator
         yield PageError("lint", "form_missing_required_input", pointer((*path, "props", "fields")))
 
 
+def _is_bundle_item(item: object) -> bool:
+    return (
+        isinstance(item, dict)
+        and set(item) == BUNDLE_ITEM_KEYS
+        and isinstance(item["record_id"], str)
+        and _IDENTIFIER.fullmatch(item["record_id"]) is not None
+        and isinstance(item["record_rev"], int)
+        and not isinstance(item["record_rev"], bool)
+        and 0 <= item["record_rev"] <= _SAFE_INTEGER
+        and isinstance(item["proposal_sha256"], str)
+        and _DIGEST.fullmatch(item["proposal_sha256"]) is not None
+    )
+
+
 def _bundle_errors(page: _Page, props: Mapping[str, Any], path: Path) -> Iterator[PageError]:
     items_collection = props["items_collection"]
     if items_collection not in page.collections:
@@ -245,20 +275,20 @@ def _bundle_errors(page: _Page, props: Mapping[str, Any], path: Path) -> Iterato
         yield PageError("lint", "bundle_record_mismatch", pointer((*path, "props", "record_rev")))
     value = record["value"]
     items = value.get("items") if set(value) == {"items"} else None
-    if not isinstance(items, list) or not all(
-        isinstance(item, dict)
-        and set(item) == BUNDLE_ITEM_KEYS
-        and isinstance(item["record_id"], str)
-        and isinstance(item["record_rev"], int)
-        and not isinstance(item["record_rev"], bool)
-        and isinstance(item["proposal_sha256"], str)
-        for item in items
-    ):
+    if not isinstance(items, list) or not all(_is_bundle_item(item) for item in items):
         yield PageError("lint", "bundle_record_shape", pointer(value_path))
+        return
+    if not items:
+        yield PageError("lint", "bundle_empty", pointer((*value_path, "items")))
         return
     if len(items) > PAGE_LIMITS["max_bundle_items"]:
         yield PageError("lint", "bundle_too_many_items", pointer((*value_path, "items")))
         return
+    listed: set[str] = set()
+    for index, item in enumerate(items):
+        if item["record_id"] in listed:
+            yield PageError("lint", "bundle_duplicate_item", pointer((*value_path, "items", index)))
+        listed.add(item["record_id"])
     for index, item in enumerate(items):
         item_record = page.record(items_collection, item["record_id"])
         if item_record is None:
@@ -335,7 +365,7 @@ def _collection_errors(page: _Page) -> Iterator[PageError]:
         if collection["id"] in seen:
             yield PageError("lint", "duplicate_collection_id", pointer((*at, "id")))
         seen.add(collection["id"])
-        schema_errors = list(_inline_schema_errors(collection["schema"], (*at, "schema")))
+        schema_errors = _checked_schema_errors(collection["schema"], (*at, "schema"))
         yield from schema_errors
         record_ids: set[str] = set()
         validator = None if schema_errors else Draft202012Validator(collection["schema"])
@@ -355,13 +385,14 @@ def _action_definition_errors(page: _Page) -> Iterator[PageError]:
         if action["id"] in seen:
             yield PageError("lint", "duplicate_action_id", pointer((*at, "id")))
         seen.add(action["id"])
-        yield from _inline_schema_errors(action["input_schema"], (*at, "input_schema"))
+        yield from _checked_schema_errors(action["input_schema"], (*at, "input_schema"))
 
 
 def _bidi_errors(page: Mapping[str, Any]) -> Iterator[PageError]:
     sources: list[tuple[object, Path]] = [
         (page["title"], ("title",)),
         (page["layout"], ("layout",)),
+        (page["widget_state"], ("widget_state",)),
     ]
     sources += [
         (action["label"], ("actions", index, "label"))

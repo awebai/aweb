@@ -9,8 +9,7 @@
     "max_depth": 8,
     "max_widgets": 2000,
     "max_bundle_items": 64,
-    "max_inline_schema_depth": 16,
-    "max_inline_schema_pattern": 256
+    "max_inline_schema_depth": 16
   },
   "render_expectations": {
     "link_inert": "the link renders without an active destination; no navigation or script runs",
@@ -201,7 +200,8 @@
               },
               "proposal_digest": {
                 "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
+                "minLength": 71,
+                "maxLength": 71
               },
               "expected_task_rev": {
                 "type": "integer",
@@ -366,7 +366,8 @@
               },
               "proposal_digest": {
                 "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
+                "minLength": 71,
+                "maxLength": 71
               },
               "expected_task_rev": {
                 "type": "integer",
@@ -604,7 +605,8 @@
             "properties": {
               "record_id": {
                 "type": "string",
-                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                "minLength": 1,
+                "maxLength": 128
               }
             },
             "required": [
@@ -626,7 +628,8 @@
             "properties": {
               "record_id": {
                 "type": "string",
-                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                "minLength": 1,
+                "maxLength": 128
               }
             },
             "required": [
@@ -652,7 +655,8 @@
               },
               "booking_id": {
                 "type": "string",
-                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                "minLength": 1,
+                "maxLength": 128
               }
             },
             "required": [
@@ -755,7 +759,8 @@
             "properties": {
               "record_id": {
                 "type": "string",
-                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                "minLength": 1,
+                "maxLength": 128
               },
               "checked": {
                 "type": "boolean"
@@ -779,7 +784,8 @@
             "properties": {
               "record_id": {
                 "type": "string",
-                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                "minLength": 1,
+                "maxLength": 128
               }
             },
             "required": [
@@ -977,7 +983,8 @@
                     },
                     "proposal_sha256": {
                       "type": "string",
-                      "pattern": "^sha256:[0-9a-f]{64}$"
+                      "minLength": 71,
+                      "maxLength": 71
                     }
                   },
                   "required": [
@@ -1034,7 +1041,8 @@
               },
               "proposal_digest": {
                 "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
+                "minLength": 71,
+                "maxLength": 71
               },
               "expected_task_rev": {
                 "type": "integer",
@@ -1787,6 +1795,92 @@
             "pointer": "/layout/3/props/expires_at"
           }
         ]
+      }
+    },
+    {
+      "name": "decision-card-expiry-lowercase-t",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/3/props/expires_at",
+            "value": "2026-10-21t10:00:00Z"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/3/props/expires_at"
+          }
+        ]
+      }
+    },
+    {
+      "name": "decision-card-expiry-leap-second",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/3/props/expires_at",
+            "value": "2026-12-31T23:59:60Z"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/3/props/expires_at"
+          }
+        ]
+      }
+    },
+    {
+      "name": "decision-card-expiry-non-ascii-digits",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/3/props/expires_at",
+            "value": "٢٠٢٦-10-21T10:00:00Z"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/3/props/expires_at"
+          }
+        ]
+      }
+    },
+    {
+      "name": "decision-card-expiry-fraction-and-offset",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/3/props/expires_at",
+            "value": "2026-10-21T10:00:00.123+02:00"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
       }
     },
     {
@@ -2572,7 +2666,8 @@
                 "properties": {
                   "record_id": {
                     "type": "string",
-                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                    "minLength": 1,
+                    "maxLength": 128
                   },
                   "checked": {
                     "type": "boolean"
@@ -2754,7 +2849,7 @@
       }
     },
     {
-      "name": "inline-schema-long-pattern",
+      "name": "inline-schema-catastrophic-pattern",
       "input": {
         "base": "fixture",
         "patch": [
@@ -2763,7 +2858,8 @@
             "path": "/collections/0/schema/properties/extra",
             "value": {
               "type": "string",
-              "pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              "maxLength": 64,
+              "pattern": "^(a+)+$"
             }
           }
         ]
@@ -2777,6 +2873,264 @@
             "pointer": "/collections/0/schema/properties/extra/pattern"
           }
         ]
+      }
+    },
+    {
+      "name": "inline-schema-unbalanced-pattern",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "string",
+              "pattern": "("
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_pattern",
+            "pointer": "/collections/0/schema/properties/extra/pattern"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-input-schema-malformed-and-pattern",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/a",
+            "value": {
+              "type": "strng",
+              "pattern": "("
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_pattern",
+            "pointer": "/actions/0/input_schema/properties/a/pattern"
+          }
+        ]
+      }
+    },
+    {
+      "name": "inline-schema-end-anchor-pattern",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "string",
+              "pattern": "^[a-z]+$"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_pattern",
+            "pointer": "/collections/0/schema/properties/extra/pattern"
+          }
+        ]
+      }
+    },
+    {
+      "name": "inline-schema-digit-class-pattern",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "string",
+              "pattern": "^\\d+$"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_pattern",
+            "pointer": "/collections/0/schema/properties/extra/pattern"
+          }
+        ]
+      }
+    },
+    {
+      "name": "inline-schema-pattern-properties",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/patternProperties",
+            "value": {
+              "^x-": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_pattern",
+            "pointer": "/collections/0/schema/patternProperties"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-input-schema-pattern",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "type": "string",
+              "pattern": "^a$"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_pattern",
+            "pointer": "/actions/0/input_schema/properties/extra/pattern"
+          }
+        ]
+      }
+    },
+    {
+      "name": "inline-schema-unknown-type",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "strng"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_invalid",
+            "pointer": "/collections/0/schema/properties/extra/type"
+          }
+        ]
+      }
+    },
+    {
+      "name": "inline-schema-non-integer-bound",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "string",
+              "minLength": "x"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_invalid",
+            "pointer": "/collections/0/schema/properties/extra/minLength"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-input-schema-unknown-type",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "type": "strng"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_invalid",
+            "pointer": "/actions/0/input_schema/properties/extra/type"
+          }
+        ]
+      }
+    },
+    {
+      "name": "inline-format-is-annotation-only",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/when",
+            "value": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/records/0/value/when",
+            "value": "not-a-date"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
       }
     },
     {
@@ -2986,6 +3340,33 @@
       }
     },
     {
+      "name": "widget-state-message-bidi",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/widget_state",
+            "value": {
+              "items": {
+                "message": "ok \u202e evil"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bidi_control",
+            "pointer": "/widget_state/items/message"
+          }
+        ]
+      }
+    },
+    {
       "name": "bundle-hash-mismatch",
       "input": {
         "base": "bundle",
@@ -3153,6 +3534,240 @@
             "layer": "lint",
             "code": "bundle_record_shape",
             "pointer": "/collections/1/records/0/value"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-item-digest-not-hex",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/collections/1/records/0/value",
+            "value": {
+              "items": [
+                {
+                  "record_id": "week-43",
+                  "record_rev": 2,
+                  "proposal_sha256": "not-a-digest <&> é"
+                },
+                {
+                  "record_id": "week-44",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              ]
+            }
+          },
+          {
+            "op": "replace",
+            "path": "/collections/1/schema",
+            "value": {
+              "type": "object"
+            }
+          },
+          {
+            "op": "replace",
+            "path": "/layout/2/props/proposal_sha256",
+            "value": "sha256:b0e9c369809036d6743d406a4e63475d3d4fdc3a2e8b9f4aa01ce4b8658c3009"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bundle_record_shape",
+            "pointer": "/collections/1/records/0/value"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-item-id-not-identifier",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/collections/1/records/0/value",
+            "value": {
+              "items": [
+                {
+                  "record_id": "week 43",
+                  "record_rev": 2,
+                  "proposal_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "record_id": "week-44",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              ]
+            }
+          },
+          {
+            "op": "replace",
+            "path": "/collections/1/schema",
+            "value": {
+              "type": "object"
+            }
+          },
+          {
+            "op": "replace",
+            "path": "/layout/2/props/proposal_sha256",
+            "value": "sha256:88697f76aa4d7a997c23a232c7feeee593df97b01f5d6d1e0688266929d1da8f"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bundle_record_shape",
+            "pointer": "/collections/1/records/0/value"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-item-rev-above-safe-integer",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/collections/1/records/0/value",
+            "value": {
+              "items": [
+                {
+                  "record_id": "week-43",
+                  "record_rev": 9007199254740992,
+                  "proposal_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "record_id": "week-44",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              ]
+            }
+          },
+          {
+            "op": "replace",
+            "path": "/collections/1/schema",
+            "value": {
+              "type": "object"
+            }
+          },
+          {
+            "op": "replace",
+            "path": "/layout/2/props/proposal_sha256",
+            "value": "sha256:58ea3c7ec1dc5fea80a4ece0a77a81fe1820e6346ed957c6498c89de2cbe521f"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bundle_record_shape",
+            "pointer": "/collections/1/records/0/value"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-empty",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/collections/1/records/0/value",
+            "value": {
+              "items": []
+            }
+          },
+          {
+            "op": "replace",
+            "path": "/collections/1/schema",
+            "value": {
+              "type": "object"
+            }
+          },
+          {
+            "op": "replace",
+            "path": "/layout/2/props/proposal_sha256",
+            "value": "sha256:8d859e171eee49f33d0252ec37e5e2f26cb2fda6f9761c0c0ef223b438151ad4"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bundle_empty",
+            "pointer": "/collections/1/records/0/value/items"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-duplicate-item",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/collections/1/records/0/value",
+            "value": {
+              "items": [
+                {
+                  "record_id": "week-43",
+                  "record_rev": 2,
+                  "proposal_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "record_id": "week-44",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                },
+                {
+                  "record_id": "week-43",
+                  "record_rev": 2,
+                  "proposal_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ]
+            }
+          },
+          {
+            "op": "replace",
+            "path": "/collections/1/schema",
+            "value": {
+              "type": "object"
+            }
+          },
+          {
+            "op": "replace",
+            "path": "/layout/2/props/proposal_sha256",
+            "value": "sha256:9cc222c0ffa76a31667e08d19c869a987e4c155fbd317f9520d1f79176fd37be"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bundle_duplicate_item",
+            "pointer": "/collections/1/records/0/value/items/2"
           }
         ]
       }

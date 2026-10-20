@@ -22,7 +22,9 @@ PAGE_SCHEMA: Mapping[str, Any] = json.loads(
 
 # RFC 3339 date-time with a mandatory offset. jsonschema skips "date-time"
 # unless an optional package is installed, so the check is registered here.
-_DATE_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})")
+_DATE_TIME = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})"
+)
 
 
 @dataclass(frozen=True)
