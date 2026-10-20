@@ -360,7 +360,11 @@ checkpoint contradict, a gap, a rewritten envelope and wrong key evidence
 failing provenance, content gone without an act, a duplicate sequence, an
 event of another team, forged checkpoints, a receipt for another team, and
 receipts naming another event or receipt time at their sequence number (only
-the time is bound once the event is purged). The
+the time is bound once the event is purged), a skeleton that disagrees with its
+envelope, and the normative break order pinned pair by pair: each of those
+cases puts two adjacent faults on one event (a duplicate of another team, an
+event of another team with a broken link, a wrong event hash with its content
+gone, wrong key evidence with a changed skeleton) and expects the earlier. The
 Python implementation in `naapp/logs` regenerates it byte for byte, and the Go
 verifier in `cli/go/logschain` passes it.
 
