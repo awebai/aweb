@@ -55,7 +55,11 @@ It is a draft that Juan has not approved.
 
 Juan's private specs are cited by name and section and never quoted: the secrets
 SOT (with §14 read as amendments), the hooks SOT, the audit-logs SOT, and the
-naapp-specs README for the self-contained invariant.
+naapp-specs README for the self-contained naapp model. Juan corrected on
+2026-10-19 that there is no "zero Cloud changes" rule. The working principle is one
+generic architecture, built once in `aweb_naapp`, the OSS server and Cloud. Cloud
+changes are proposed plainly in this design, and the secrets coordinator routes
+them to the hosted-product team (§17).
 
 | Fact at A | Evidence |
 | --- | --- |
@@ -317,11 +321,16 @@ What this artifact can and cannot prove:
 - An unknown issuer, an expired artifact or a binding mismatch makes a policy
   that requires the attestation refuse.
 
-**Until this contract exists, any policy with `requires_attestation` refuses
-every request with `attestation_unavailable`.** Owners can configure the field
-now, and it is honestly inert. secrets would only consume the artifact. Adding the
-artifact is generic AWID and OSS work, but producing it is a Cloud change. Under
-the invariant that change is outside this lane, so it is Q5 for Juan.
+**Proposed Cloud change.** Cloud issues this attestation for every request it
+signs as a custodial member: L2 hosted MCP calls (`channel: mcp_l2`, with the
+OAuth human handle) and dashboard calls. It registers its issuer key as custodian
+through the AWID record above. The artifact format, the AWID custodian record and
+the verifier are generic AWID, OSS and `aweb_naapp` work. Issuing it is Cloud
+work, which the hosted-product team builds. secrets only consumes it.
+
+**Until the artifact ships, any policy with `requires_attestation` refuses every
+request with `attestation_unavailable`.** Owners can configure the field now, and
+it is honestly inert. Whether the artifact is a launch requirement is Q5.
 
 ## 5. Custody backends
 
@@ -1356,9 +1365,20 @@ draft; the TASK states they are D1's to own, so those requests go to the D1 lead
 | The *proposed* `aweb_naapp` components in §3.1 | secrets coordinator to assign | Mainly the egress guard, auth injectors, response handling, dispatch state machine, idempotency store, KMS sealing and console session. Pages' A2 adapter needs most of them. |
 | Principal attestation (§4.6) | generic AWID/OSS work, with Cloud as issuer | Q5. Policy that requires it refuses until it exists. |
 
-Invariant check: everything here is either secrets-local or generic. The one Cloud
-change, producing attestations, is not needed for launch; the corresponding policy
-refuses. No naapp-specific aw-core change is needed.
+**Cloud changes this design proposes.** The secrets coordinator routes them to
+the hosted-product team:
+
+1. **Principal attestation issuance** (§4.6). This covers L2 and dashboard calls
+   signed under Cloud custody, plus registering the custodian key.
+2. **L2 exposure that follows manifest v2 `invocation_contexts`.** L2 must expose
+   `agent` tools only, and never list `surface`-only tools to MCP clients. It
+   attaches the attestation from item 1. Exposure still grants nothing (§4.5).
+3. **Dashboard rendering of the secrets surface.** This covers the read-only views,
+   containment and `propose-change` forms, and the link-out to the console (§6.1,
+   §13.2), through D1's generic surface host.
+
+No secrets-specific branch in aw-core is needed. Everything else is either
+secrets-local or generic.
 
 ## 18. Recommendations and open questions for Juan
 
@@ -1374,9 +1394,10 @@ These are recommendations; Juan decides. No item below removes scope.
    1Password's own mediation: now, later, or not at all.
 4. **Q4. 1Password read caching.** None at launch, unless rate limits force a
    cache of at most 60 s in memory.
-5. **Q5. Principal attestation.** Adopt the §4.6 contract. Cloud producing it is
-   outside this lane's zero-AC invariant, so it needs Juan's explicit routing.
-   Until then, policy that requires it refuses.
+5. **Q5. Principal attestation.** Adopt the §4.6 contract, with Cloud issuing
+   it for L2 and dashboard calls (§17). Recommendation: make it a launch
+   requirement, because it is the only way for an owner to treat MCP use
+   differently. Until it ships, policy that requires it refuses.
 6. **Q6. Launch auth schemes.** bearer, basic, header, query, OAuth2 client
    credentials and SigV4 (default 3). Named operations are required for
    `sensitive` and `approve_only`.
