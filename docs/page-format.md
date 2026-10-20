@@ -170,13 +170,6 @@ opaque `cursor`. Fields are literal property names; there are no expressions,
 paths or queries. The naapp applies row and field ACLs before filtering,
 sorting or counting, and returns only authorized rows.
 
-**Money.** A `money_minor` column holds an integer amount in minor units. It
-renders with the currency of the same record's `currency` property, an ISO 4217
-code, and the minor-unit scale follows that currency (two decimals for EUR,
-none for JPY). A record with no `currency` property, or one that is not an ISO
-4217 code, shows the amount without a symbol at two decimals. Agents always
-include `currency` (the agent skill, N6, teaches it).
-
 **Unknown widgets.** A widget whose `type` this version does not define needs a
 `fallback`. It may carry `props` of at most 32 properties, which the renderer
 never reads, so an older renderer accepts a newer widget. It renders as an
