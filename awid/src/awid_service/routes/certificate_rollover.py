@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 
@@ -20,6 +21,8 @@ from awid_service.routes.teams import (
     _require_team_controller, _verify_certificate_blob,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix='/v1/namespaces/{domain}/teams', tags=['certificate-rollover'], route_class=ControllerAuthRoute)
 
 
@@ -34,6 +37,7 @@ async def certificate_policy_limit(tx, team, certificate: str | None):
     try:
         policy = verify_credential_policy(json.loads(row['record_json']), row['signature'], team_id=cert.get('team_id', ''), team_did_key=team['team_did_key'])
     except (CredentialPolicyError, ValueError) as exc:
+        logger.warning('Stored certificate policy failed current-key verification', exc_info=True)
         raise HTTPException(status_code=503, detail={'code': 'authority_unavailable'}) from exc
     if cert.get('version') != 2 and any(policy[key] is not None for key in ('member_certificate', 'ephemeral_certificate')):
         raise HTTPException(status_code=422, detail={'code': 'certificate_lifetime_exceeded', 'message': 'Team policy requires a v2 certificate'})

@@ -215,3 +215,20 @@ async def test_policy_cache_refuses_stale_wrong_key_or_unavailable_record(contro
         assert not client._credential_policy_cache
     finally:
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_rollover_insert_failure_rolls_back_the_old_revocation(controller_app):
+    import asyncpg
+    env = controller_app
+    old = certificate_body(env)
+    assert (await register(env, old)).status_code == 200
+    replacement = certificate_body(env, member=(None, old['member_did_key']))
+    # A real database constraint fails after the old row was updated. This
+    # distinguishes transaction rollback from validation before any write.
+    await env.db.execute(f"ALTER TABLE {{{{tables.team_certificates}}}} ADD CONSTRAINT fixture_insert_refusal CHECK (certificate_id <> '{replacement['certificate_id']}')")
+    with pytest.raises(asyncpg.CheckViolationError):
+        await rollover(env, old['certificate_id'], replacement)
+    row = await env.db.fetch_one('SELECT revoked_at,replaced_by_certificate_id FROM {{tables.team_certificates}} WHERE certificate_id=$1', old['certificate_id'])
+    assert row['revoked_at'] is None and row['replaced_by_certificate_id'] is None
+    assert await env.db.fetch_value('SELECT count(*) FROM {{tables.team_certificates}}') == 1

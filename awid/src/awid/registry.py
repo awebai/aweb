@@ -460,8 +460,10 @@ class RegistryClient:
                 return None
             if not isinstance(data, dict) or data.get('team_id') != f'{name}:{domain}' or not isinstance(data.get('team_did_key'), str):
                 raise ValueError('Malformed credential policy authority response')
+            if 'record' not in data or 'signature' not in data:
+                raise ValueError('Malformed credential policy authority response')
             if data.get('record') is None:
-                if 'record' not in data or data.get('signature') is not None:
+                if data.get('signature') is not None:
                     raise ValueError('Malformed absent credential policy')
                 value = None
             else:
@@ -508,10 +510,16 @@ class RegistryClient:
         from awid.did import public_key_from_did
         public_key_from_did(data['team_did_key'])
         replacement = data.get('replaced_by_certificate_id')
-        if replacement is not None and (not isinstance(replacement, str) or not replacement or data['status'] != 'revoked'):
+        if replacement is not None and (not isinstance(replacement, str) or not replacement.strip() or replacement == certificate_id or data['status'] != 'revoked'):
             raise ValueError('Malformed certificate replacement link')
+        if 'revoked_at' not in data:
+            raise ValueError('Malformed certificate revocation status')
         if (data['status'] == 'active' and data.get('revoked_at') is not None) or (data['status'] == 'revoked' and not isinstance(data.get('revoked_at'), str)):
             raise ValueError('Malformed certificate revocation status')
+        if data['status'] == 'revoked':
+            revoked_at = datetime.fromisoformat(data['revoked_at'].replace('Z', '+00:00'))
+            if revoked_at.tzinfo is None:
+                raise ValueError('Malformed certificate revocation timestamp')
         self._certificate_status_cache[key] = (started, dict(data))
         return dict(data)
 

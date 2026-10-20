@@ -61,6 +61,10 @@ async def test_aw_recovers_replaced_certificate_installs_and_retries(privacy_app
     monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED', 'true')
     actor = env.actors['alice']
     old = json.loads(base64.b64decode(actor.certificate))
+    old.pop('signature')
+    for field in ('member_did_aw', 'member_address'):
+        if not old.get(field): old.pop(field, None)
+    old['signature'] = sign_message(env.team_sk, canonical_json_bytes(old))
     home = tmp_path / 'member' / '.aw'
     home.mkdir(parents=True)
     _pem(home / 'signing.key', 'ED25519 PRIVATE KEY', actor.sk)
@@ -86,7 +90,8 @@ async def test_aw_recovers_replaced_certificate_installs_and_retries(privacy_app
 
 
 @pytest.mark.asyncio
-async def test_channel_core_follows_real_rollover_and_stops_after_one_retry(privacy_app, tmp_path, monkeypatch):
+@pytest.mark.parametrize('second_rollover', [False, True])
+async def test_channel_core_follows_real_rollover_and_stops_after_one_retry(privacy_app, tmp_path, monkeypatch, second_rollover):
     env = privacy_app
     monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED', 'true')
     actor = env.actors['alice']
@@ -111,12 +116,23 @@ const client = new APIClient(process.env.ORIGIN, {
   refreshCertificate: async id => {
     fetches++;
     const replacement = await fetchReplacementCertificate(old, id, key, process.env.REGISTRY);
+    if (process.env.SECOND_ROLLOVER === 'true') {
+      console.log('replacement fetched');
+      await new Promise(resolve => process.stdin.once('data', resolve));
+    }
     await installTeamCertificate(process.env.INSTALL, replacement.certificate);
     return replacement;
   }
 });
-const result = await client.get('/v1/identity-grants');
-assert.deepEqual(result.grants, []);
+try {
+  const result = await client.get('/v1/identity-grants');
+  assert.deepEqual(result.grants, []);
+  assert.equal(process.env.SECOND_ROLLOVER, 'false');
+} catch (error) {
+  if (process.env.SECOND_ROLLOVER !== 'true') throw error;
+  assert.equal(error.statusCode, 401);
+  assert.equal(JSON.parse(error.message.slice(error.message.indexOf('{'))).detail.code, 'certificate_replaced');
+}
 assert.equal(fetches, 1);
 assert.equal(JSON.parse(await fs.readFile(process.env.INSTALL, 'utf8')).certificate_id, process.env.NEW_ID);
 console.log('recovered');
@@ -124,8 +140,25 @@ console.log('recovered');
         child_env = dict(_child_env(tmp_path, origin), CORE_CLIENT=(core / 'api/client.js').as_uri(),
             CORE_CERT=(core / 'identity/certificate.js').as_uri(), OLD_CERT=json.dumps(old),
             MEMBER_SEED=base64.b64encode(actor.sk).decode(), REGISTRY=origin,
-            ORIGIN=str(env.client.base_url).rstrip('/'), INSTALL=str(tmp_path / 'installed.json'), NEW_ID=fresh['certificate_id'])
-        assert 'recovered' in await _process('node', script, cwd=tmp_path, env=child_env)
+            ORIGIN=str(env.client.base_url).rstrip('/'), INSTALL=str(tmp_path / 'installed.json'), NEW_ID=fresh['certificate_id'],
+            SECOND_ROLLOVER=str(second_rollover).lower())
+        if not second_rollover:
+            assert 'recovered' in await _process('node', script, cwd=tmp_path, env=child_env)
+        else:
+            process = await asyncio.create_subprocess_exec('node', str(script), cwd=tmp_path, env=child_env,
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            try:
+                assert await asyncio.wait_for(process.stdout.readline(), 10) == b'replacement fetched\n'
+                await _rollover(env, registry, fresh)
+                process.stdin.write(b'continue\n')
+                await process.stdin.drain()
+                data, _ = await asyncio.wait_for(process.communicate(), 15)
+                assert process.returncode == 0, data.decode()
+                assert b'recovered' in data
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
 
 
 @pytest.mark.usefixtures('source_cli_binary')
@@ -148,7 +181,7 @@ async def test_controller_batch_renewal_obeys_policy_and_preserves_revoked_tombs
         await registry.revoke_team_certificate('example.test', name, team_controller_signing_key=env.team_sk,
             certificate_id='privacy-carol')
         async def renew():
-            data = await _process(os.environ['AW_TEST_CLI_BINARY'], '--identity-home', home,
+            data = await _process(os.environ['AW_TEST_CLI_BINARY'],
                 'id', 'team', 'renew-certs', '--team', name, '--namespace', 'example.test',
                 '--registry', origin, '--json', cwd=tmp_path, env=_child_env(tmp_path, origin))
             return json.loads(data)['renewed']

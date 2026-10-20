@@ -311,7 +311,7 @@ async def test_expired_grant_is_rejected(aweb_cloud_db):
             ),
         )
     assert expired.status_code == 401
-    assert expired.json()["detail"] == "grant expired"
+    assert expired.json()["detail"]["code"] == "grant_expired"
 
 
 @pytest.mark.asyncio
@@ -982,7 +982,7 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
     assert revoked.status_code == 403
     assert revoked.json()["detail"] == "grant revoked"
     assert expired.status_code == 401
-    assert expired.json()["detail"] == "grant expired"
+    assert expired.json()["detail"]["code"] == "grant_expired"
 
 
 @pytest.mark.asyncio
@@ -1307,7 +1307,7 @@ async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_d
     stream_app.state.redis = None
     stream_registry = AsyncMock()
     stream_registry.get_team_revocations = AsyncMock(return_value=set())
-    app.state.awid_registry_client.get_team_credential_policy = AsyncMock(return_value=None)
+    stream_registry.get_team_credential_policy = AsyncMock(return_value=None)
     stream_app.state.awid_registry_client = stream_registry
 
     # Advance only this route's clock at polling; DB/auth work cannot consume
@@ -1713,7 +1713,7 @@ async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
     deny_app.state.public_origin = "http://test"
     deny_registry = AsyncMock()
     deny_registry.get_team_revocations = AsyncMock(return_value=set())
-    app.state.awid_registry_client.get_team_credential_policy = AsyncMock(return_value=None)
+    deny_registry.get_team_credential_policy = AsyncMock(return_value=None)
     deny_app.state.awid_registry_client = deny_registry
 
     @deny_app.middleware("http")
@@ -1926,7 +1926,7 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
     deny_app.state.redis = None
     deny_registry = AsyncMock()
     deny_registry.get_team_revocations = AsyncMock(return_value=set())
-    app.state.awid_registry_client.get_team_credential_policy = AsyncMock(return_value=None)
+    deny_registry.get_team_credential_policy = AsyncMock(return_value=None)
     deny_app.state.awid_registry_client = deny_registry
 
     @deny_app.middleware("http")
