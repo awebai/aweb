@@ -13,10 +13,11 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from aweb_naapp_testing import Member, envelope_headers
 from awid.signing import canonical_json_bytes, sign_message
 from nacl.signing import SigningKey
 
-from tests.runtime.conftest import Member, envelope_headers, relying_app
+from tests.runtime.conftest import relying_app
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 VECTORS = json.loads((AWEB_ROOT / "docs" / "vectors" / "team-auth-envelope-v2.json").read_text())
