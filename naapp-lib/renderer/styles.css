@@ -663,3 +663,61 @@ polyline {
   font-size: calc(var(--page-small) * 1.8);
   unicode-bidi: isolate;
 }
+
+.widget-decision_card {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--page-radius);
+  background: var(--surface);
+  padding: 1.5rem;
+}
+.decision-metadata,
+.proposal-record dl,
+.bundle-item dl {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) minmax(0, 2fr);
+  gap: 0.25rem 1rem;
+}
+.decision-metadata dd,
+.proposal-record dd,
+.bundle-item dd {
+  margin: 0 0 0.65rem;
+}
+.decision-proposal {
+  margin: 1.2rem 0;
+}
+.bundle-item {
+  border-top: 1px solid var(--line);
+  padding: 1rem 0;
+}
+.decision-form fieldset {
+  border: none;
+  padding: 0;
+  margin: 1rem 0;
+}
+.decision-form legend {
+  font-weight: 600;
+  margin-bottom: 0.8rem;
+}
+.decision-option {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.6rem 0;
+}
+.decision-option input {
+  width: 1.2rem;
+  height: 1.2rem;
+  accent-color: var(--ink);
+}
+.decision-status {
+  color: var(--muted);
+  font-size: var(--page-small);
+}
+@media (max-width: 600px) {
+  .decision-metadata,
+  .proposal-record dl,
+  .bundle-item dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}

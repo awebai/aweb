@@ -1,6 +1,7 @@
 import { messages } from "./catalogs.mjs";
 import { renderMarkdown, inertLinks } from "./sanitize.mjs";
 import { createActions } from "./actions.mjs";
+import { createDecision } from "./decisions.mjs";
 import { renderMedia, renderPresence } from "./media.mjs";
 import { safeLink } from "./sanitize.mjs";
 import { element } from "./dom.mjs";
@@ -25,6 +26,7 @@ const known = new Set([
   "stack",
   "grid",
   "form",
+  "decision_card",
   "button",
   "file_drop",
   "image",
@@ -200,7 +202,10 @@ export function createPageRenderer({
           if (value) rememberLink(new URL(value));
         }
         displayState(box, w, state);
-        if (w.bind && entry.pageRev !== page.rev) {
+        if (
+          (w.bind || w.type === "decision_card") &&
+          entry.pageRev !== page.rev
+        ) {
           entry.pageRev = page.rev;
           entry.refresh?.();
         }
@@ -229,6 +234,19 @@ export function createPageRenderer({
         box.classList.add(`gap-${p.gap || "medium"}`);
         if (w.type === "grid") box.classList.add(`columns-${p.columns}`);
         box.append(...w.children.map(widget));
+      } else if (w.type === "decision_card") {
+        const controller = createDecision({
+          box,
+          w,
+          host,
+          actions,
+          getPage: () => current,
+          announce: (text) => {
+            announcements.textContent = text;
+          },
+        });
+        refresh = controller.refresh;
+        cleanup = controller.clear;
       } else if (w.type === "form") actions.form(box, w);
       else if (w.type === "button")
         box.append(actions.actionButton(w, p.action, null, p.label));

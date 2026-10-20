@@ -14,6 +14,12 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from aweb_naapp.pages import validate_page
+from aweb_naapp.pages.gallery_decisions import (
+    additions as decision_additions,
+)
+from aweb_naapp.pages.gallery_decisions import (
+    evidence as decision_evidence,
+)
 from aweb_naapp.pages.gallery_host import (
     additions,
     asset_server,
@@ -242,6 +248,7 @@ def fixture(query: dict) -> dict:
         page["widget_state"]["occupancy"] = {"message": "Projection updated", "busy": False}
     if "vector" not in query:
         additions(page)
+        decision_additions(page, query.get("case", [""])[0])
     if query.get("case") == ["dense-table"]:
         collection = page["collections"][0]
         collection["schema"]["properties"].update(
@@ -326,6 +333,14 @@ class Handler(BaseHTTPRequestHandler):
             shell = page_shell(script_path="/assets/gallery.js", asset_origin=self.asset_origin)
             body, content_type = shell.html.encode(), "text/html; charset=utf-8"
             headers.update(shell.headers)
+        elif url.path == "/api/decision":
+            page = fixture(query)
+            _, state = session(self)
+            json_response(
+                self,
+                decision_evidence(page, query["task_id"][0], state, query.get("case", [""])[0]),
+            )
+            return
         elif url.path in ("/api/page", "/api/widget"):
             page = fixture(query)
             _, state = session(self)
@@ -343,7 +358,8 @@ class Handler(BaseHTTPRequestHandler):
             elif "vector" not in query:
                 # Independent projections: the bootstrap has definitions only.
                 for collection in page["collections"]:
-                    collection["records"] = []
+                    if collection["id"] not in {"review-proposals", "review-bundles"}:
+                        collection["records"] = []
             if url.path == "/api/page" and query.get("case") == ["unsupported"]:
                 page["page_format"] = "aweb.page/2"
             body, content_type = json.dumps(page, ensure_ascii=False).encode(), "application/json"

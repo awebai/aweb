@@ -52,7 +52,7 @@ The adapter grows with R1's widget slices. Its full shape is:
 - `read({page_id, expected_page_rev, widget_id, bind})` resolves an authorized
   independent widget projection: `{page_rev, records, next_cursor, count}`. Every initial bound widget calls this, even with empty bootstrap records.
   Each record retains `{id, rev, value}`. A response at another page revision triggers a
-  complete snapshot restart, never mixing rows across revisions. Cursors are
+  fresh full snapshot before it can be used, never mixing rows across revisions. Cursors are
   opaque; hosts bind them to actor, policy and query. Agent-defined filters, reader sorting and paging
   goes through this read; no broader collection is sent to the browser. The
   bootstrap retains only definitions and exact decision/bundle records required
@@ -71,8 +71,8 @@ The adapter grows with R1's widget slices. Its full shape is:
 - `formValues(widget_id)` optionally returns host-authorized current field values keyed by field ID. The host updates this cache before resolving `refresh()`. The renderer compares these with the edit baseline to mark fields changed concurrently, and uses them when the person discards a draft. It never infers current values from agent messages.
 - `invoke(request, {csrfToken})` invokes an allowed action. Request context
   retains page/widget/action IDs, expected page and record revisions, an
-  idempotency key, and typed input. Answer requests additionally bind exact task
-  revision, proposal record/revision/digest and selected offered option. The
+  idempotency key, and typed input. Answer-kind actions are refused on this
+  generic path; decisions use the dedicated `answer` adapter below. The
   host obtains `csrfToken` through its private adapter closure, never page JSON.
 - `upload(request, {csrfToken})` applies the same authority/CSRF context and
   MIME/size bounds, returning attachment IDs. The submitted File is captured once and used for validation, hashing, metadata and bytes, even if the selection changes. Its request contains the `File`
@@ -88,9 +88,51 @@ The adapter grows with R1's widget slices. Its full shape is:
   [agent-health](agent-health.md) meanings. Report words are escaped and shown
   verbatim. Age and expiry are recalculated; missing, expired or mismatched
   evidence says Unknown. Presence never proves execution.
-- `decision(task_id)` returns trusted current task/proposal/authority evidence
-  (the decision slice documents its fields). Agent-authored widget state is
-  never such evidence.
+- `decision(task_id)` returns a trusted current read, independent of page JSON:
+  `{task_id, task_rev, question_rev, status, allowed, authenticator,
+  collection, record_id, record_rev, proposal_sha256, operation,
+  source_version, expires_at, items?, answer?}`. `status` is `open`, `answered`,
+  `pending` or `closed`. Only an open current question without a current answer
+  can offer answer controls. `authenticator` is the policy-derived
+  `member_session` or `passkey`, never the agent's choice. The host must enforce
+  the required assurance, including passkey for external/irreversible operations.
+  Each bundle item has `{record_id, record_rev, proposal_sha256}`, recomputed
+  from the authorized current item in `items_collection`. All task/proposal,
+  operation, destination, source and expiry bindings must match. The renderer
+  also recomputes the displayed snapshot's C1 bundle/C2 proposal digests; this
+  supplements the host's mandatory recomputation from its member-signed read.
+  At apply time, the host re-checks the current proposal revision and recomputed
+  digest, including every bundle item; a successful render-time check never
+  substitutes for that check. The host validates raw JSON before supplying a
+  snapshot: duplicate keys, non-integer numeric spellings and non-finite values
+  cannot be recovered after ordinary JavaScript JSON parsing.
+  Agent-authored widget state is never authority. A recommendation is advisory
+  and no option is selected initially.
+- `answer({page_id, widget_id, action_id, task_id, stage}, {csrfToken}, event)`
+  is the dedicated answer adapter, separate from `invoke`. The outer IDs are
+  local routing context. `stage` has exactly `{expected_task_rev, choice, input,
+  proposal_rev, proposal_sha256, answer_key}` as C2 defines. It has no page
+  revision. `input` contains only additional values the person entered; a card
+  without extra controls sends `{}` and visibly refuses a schema requiring
+  fields it cannot collect. The host maps this call to the complete C2
+  stage/task-answer/confirm flow, with verified current task receipts, policy,
+  actor, exact proposal and atomic idempotency checks. A link is never approval.
+  The trusted event may start an app-origin passkey handoff; proofs, challenges,
+  links and credentials stay inside the host. Every state change requires host
+  CSRF and the host's server-side Origin/session or capability validation.
+  The callback returns the bound receipt `{task_answer_ref, task_id,
+  question_rev, task_rev, proposal_rev, proposal_sha256, current: true, choice,
+  approval_state}` only when the task answer is authoritative; `approval_state`
+  may still be `pending`. A current receipt with matching task/question and
+  proposal bindings is shown even after the task revision advances; revision
+  growth alone is not evidence of an answer. A reopened question's older receipt
+  is `current: false` and shown only as superseded. New answer controls always
+  require an exact card/task revision match. A pending ceremony must not return a fabricated
+  current receipt. The renderer distinguishes a recorded task answer from
+  completed approval or execution, and never dispatches the operation itself.
+  Lost outcomes lock the choice; an explicit retry reuses the same answer key
+  and bytes after a fresh read. Bundle decisions are one answer for all items,
+  never per-item partial approval.
 
 Actions fail closed if the adapter or CSRF is absent. Every state-changing
 callback uses the host token before any signature or dispatch. Host adapters
@@ -178,3 +220,11 @@ an expression engine or code generation. Integer input must be safe and integral
 decimal strings are sent exactly, with no binary-float or locale coercion. Table
 number formatting keeps decimal-string fractional digits. Stat string values
 are authored display text; only integer stats are localized in English.
+
+
+The local decision gallery is a disposable adapter-contract fixture, not a
+production approval authority or passkey implementation. Production hosts must
+implement C2's authenticated task-answer receipts and assurance checks. The same
+packaged renderer is used unchanged for member and capability/link surfaces;
+C4 adapters must provide the same verified reads, CSRF and answer contract,
+without exposing link secrets or treating possession as human approval.
