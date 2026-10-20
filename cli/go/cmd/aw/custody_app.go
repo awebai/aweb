@@ -15,6 +15,15 @@ import (
 	"github.com/awebai/aw/internal/appmanifest"
 )
 
+// custodyRefusal is a custody error sent as its Code. Reason names the
+// custody check that refused, for tests and logs; it never reaches the wire.
+type custodyRefusal struct {
+	Code   string
+	Reason string
+}
+
+func (e *custodyRefusal) Error() string { return e.Code }
+
 func (s *custodyService) handleSignAppRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "unsupported_operation", 405)
@@ -96,8 +105,8 @@ func (s *custodyService) signAppRequest(ctx context.Context, req *awid.AppReques
 			continue
 		}
 		value, _ := args[param.Name].(string)
-		if v := strings.TrimSpace(value); v == "" || v == "." || v == ".." {
-			return nil, fmt.Errorf("app_request_not_allowed")
+		if !appmanifest.SafePathParamValue(value) {
+			return nil, &custodyRefusal{Code: "app_request_not_allowed", Reason: "unsafe_path_param_value"}
 		}
 	}
 	var rawBody []byte

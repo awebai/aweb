@@ -532,6 +532,14 @@ func pathPlaceholders(path string) map[string]bool {
 	}
 }
 
+// SafePathParamValue reports whether a tool path parameter value may fill a
+// path segment. A blank value would leave the segment empty, and "." or ".."
+// would let the value remove a segment wherever the URL is normalized.
+func SafePathParamValue(value string) bool {
+	v := strings.TrimSpace(value)
+	return v != "" && v != "." && v != ".."
+}
+
 func substitutePath(path string, params []Param, args map[string]any) (string, error) {
 	out := path
 	pathParams := map[string]bool{}
@@ -550,10 +558,8 @@ func substitutePath(path string, params []Param, args map[string]any) (string, e
 			return "", fmt.Errorf("missing path param %q", name)
 		}
 		segment := fmt.Sprint(value)
-		// A dot segment would let a value remove a path segment wherever
-		// the URL is normalized.
-		if segment == "." || segment == ".." {
-			return "", fmt.Errorf("path param %q must not be %q", name, segment)
+		if !SafePathParamValue(segment) {
+			return "", fmt.Errorf("path param %q value %q is not a safe path segment", name, segment)
 		}
 		out = strings.ReplaceAll(out, placeholder, escapePathSegment(segment))
 	}
