@@ -294,3 +294,32 @@ async def test_under_four_eyes_a_console_drafter_is_left_out(world: World) -> No
     console_draft = {"type": "aweb.secrets.change", "drafter": {"via": "console", "scope": alice}}
     found = await world.directory.candidates(policy, console_draft)
     assert [a.principal_did for a in found] == [BOB.principal_did]
+
+
+async def test_under_four_eyes_an_approver_scope_drafter_is_left_out(world: World) -> None:
+    owner = await designate_owner(world, ALICE, "alice@acme.com")
+    finance = approver_scope(INSTALLATION_ID, TEAM, "finance")
+    subject = designation_subject(finance, "finance@acme.com")
+    prepared = await world.owner.prepare("app-role.designate", subject)
+    async with world.db.transaction() as tx:
+        act = await world.owner.consume(tx, prepared, subject)
+        designation = await world.passkeys.designate(
+            tx, scope=finance, contact="finance@acme.com", evidence=act
+        )
+    await world.passkeys.deliver(designation)
+    token = world.contacts.inbox["finance@acme.com"][-1]
+    device = SoftAuthenticator(ORIGIN)
+    await world.passkeys.complete_enrolment(
+        token, device.create(await world.passkeys.enrolment_options(token))
+    )
+    policy = ActionPolicy(
+        policy_ref="secrets.change",
+        version=1,
+        min_assurance=Assurance.PASSKEY,
+        ttl=timedelta(minutes=15),
+        approver_scopes=(owner, finance),
+        allow_requester_approval=False,
+    )
+    console_draft = {"type": "aweb.secrets.change", "drafter": {"via": "console", "scope": finance}}
+    found = await world.directory.candidates(policy, console_draft)
+    assert [a.scope for a in found] == [owner]

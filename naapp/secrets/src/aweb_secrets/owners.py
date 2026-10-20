@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +103,14 @@ async def record_owner(
     return scope
 
 
+@dataclass(frozen=True)
+class Drafter:
+    """Who drafted a change set, as far as the directory can tell."""
+
+    principal_did: str | None = None
+    scope: str | None = None
+
+
 class OwnerDirectory:
     """The approver directory secrets gives B2 (decisions 34 and 54).
 
@@ -115,16 +123,19 @@ class OwnerDirectory:
     B2 leaves the requester out by comparing ``requested_by`` with each
     candidate's subject, which for a passkey designation is never a principal.
     So when a policy does not allow the requester to approve, this directory
-    leaves out the owner who drafted the change set itself."""
+    leaves out whoever drafted the change set itself: the drafting principal,
+    and for a console draft, the scope that drafted it, owner or approver."""
 
     def __init__(self, passkeys: Passkeys, db: AsyncDatabaseManager) -> None:
         self._passkeys = passkeys
         self._db = db
 
     async def candidates(self, policy: ActionPolicy, request: Mapping[str, Any]) -> list[Approver]:
-        drafter = None if policy.allow_requester_approval else await self._drafter(request)
+        drafter = Drafter() if policy.allow_requester_approval else await self._drafter(request)
         found: list[Approver] = []
         for scope in policy.approver_scopes:
+            if scope == drafter.scope:
+                continue
             principal = await self._owner(scope)
             if is_owner_scope(scope) and principal is None:
                 continue
@@ -132,7 +143,7 @@ class OwnerDirectory:
             if approver is None:
                 continue
             if principal is not None:
-                if drafter is not None and principal.principal_did == drafter:
+                if principal.principal_did == drafter.principal_did:
                     continue
                 approver = replace(approver, principal_did=principal.principal_did)
             found.append(approver)
@@ -157,11 +168,21 @@ class OwnerDirectory:
         principal = PrincipalKey(team_id=row["team_id"], principal_did=row["principal_did"])
         return principal if await has_role(self._db, principal, OWNER_ROLE) else None
 
-    async def _drafter(self, request: Mapping[str, Any]) -> str | None:
-        """The principal that drafted a change set: a member's principal, or
-        the owner behind the console scope that drafted it."""
+    async def _drafter(self, request: Mapping[str, Any]) -> Drafter:
+        """Who drafted a change set: a member's principal, or the console scope
+        that drafted it with the owner it stands for, if it is an owner scope."""
         if request.get("type") != CHANGE_TYPE:
-            return None
+            return Drafter()
+        drafter = request.get("drafter") or {}
+        if drafter.get("via") == "team_auth":
+            return Drafter(principal_did=drafter.get("principal"))
+        if drafter.get("via") == "console":
+            scope = drafter.get("scope")
+            principal_did = await self._db.fetch_value(
+                "SELECT principal_did FROM {{tables.owner_principals}} WHERE scope = $1", scope
+            )
+            return Drafter(principal_did=principal_did, scope=scope)
+        return Drafter()
         drafter = request.get("drafter") or {}
         if drafter.get("via") == "team_auth":
             return drafter.get("principal")
