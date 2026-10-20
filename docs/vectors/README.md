@@ -303,7 +303,8 @@ verifier's own facts: its team, the current team key, its audience and
 vocabulary, its clock, the stored subject and the nonce state. Negatives refuse
 an admin signer and a rotated-out team key (`owner_required`), a claimed team
 key that an admin signed, expiry, an act issued in the future, a lifetime over
-ten minutes, a reused nonce, a subject whose generation or digest differs, an act
+ten minutes, a reused nonce, a subject whose generation or digest differs, a
+designation for another contact or naming a subject, an act
 outside the verifier's vocabulary or audience, another team, a team
 certificate presented as an owner act, an unknown act, kind-specific subject
 fields on the wrong kind, and non-canonical bytes. The Go authority in

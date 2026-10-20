@@ -42,6 +42,7 @@ var (
 	ownerTime        = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$`)
 	ownerAppID       = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	ownerDigest      = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	ownerSHA256      = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	ownerToken       = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
 	ownerAppScope    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}$`)
 	ownerRef         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`)
@@ -99,7 +100,21 @@ func bindingSubject() ownerSubject {
 	}
 }
 
-func roleSubject() ownerSubject {
+// enrolmentSubject names a role holder who does not exist yet: the app mints
+// the subject, and the act commits to the contact the enrolment link goes to by
+// its SHA-256, without carrying it.
+func enrolmentSubject() ownerSubject {
+	return ownerSubject{
+		fields: map[string]ownerField{
+			"app_id": ownerString(ownerAppID), "installation_id": ownerString(ownerUUID),
+			"role": ownerString(ownerToken), "contact_sha256": ownerString(ownerSHA256),
+		},
+		required: []string{"app_id", "installation_id", "role", "contact_sha256"},
+	}
+}
+
+// revocationSubject names an existing role holder.
+func revocationSubject() ownerSubject {
 	return ownerSubject{
 		fields: map[string]ownerField{
 			"app_id": ownerString(ownerAppID), "installation_id": ownerString(ownerUUID),
@@ -120,9 +135,9 @@ func appFields(extra map[string]ownerField) map[string]ownerField {
 var ownerSubjects = map[string]ownerSubject{
 	"hook-binding.activate":  bindingSubject(),
 	"hook-binding.revoke":    bindingSubject(),
-	"app-role.designate":     roleSubject(),
-	"app-role.revoke":        roleSubject(),
-	"app-credential.recover": roleSubject(),
+	"app-role.designate":     enrolmentSubject(),
+	"app-role.revoke":        revocationSubject(),
+	"app-credential.recover": enrolmentSubject(),
 	"logs.retention.set": {
 		fields: appFields(map[string]ownerField{
 			"event_class": ownerString(ownerEventClass), "retention": ownerEnum("keep", "days"),

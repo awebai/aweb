@@ -88,11 +88,22 @@ refused otherwise.
     and the app `scopes`;
   - when `kind` is `production`: `reads`, the tools whose reads fire
     `post-manifest-command-hook`, possibly empty.
-- **`app-role.designate`, `app-role.revoke` and `app-credential.recover`**:
-  `app_id`, `installation_id`, `role` and `subject_ref`. The first holder of an
-  owner-designated role, such as a logs reader or a secrets approver, is
-  designated this way and never by install or admin authority. Recovery after a
-  lockout uses `app-credential.recover`.
+- **`app-role.designate` and `app-credential.recover`**: `app_id`,
+  `installation_id`, `role` and `contact_sha256`. They name a role holder who
+  does not exist yet, so they carry no `subject_ref`, and one is refused: the
+  app mints the subject when it enrols the holder. `contact_sha256` is the
+  lowercase hex SHA-256 of the UTF-8 contact the enrolment link goes to. The
+  act commits to the contact without carrying it, and the app refuses to enrol
+  any other contact under it. The first holder of an owner-designated role,
+  such as a logs reader or a secrets owner, is designated this way and never by
+  install or admin authority; recovery after a lockout uses
+  `app-credential.recover`.
+- **`app-role.revoke`**: `app_id`, `installation_id`, `role` and
+  `subject_ref`, the existing holder.
+
+`role` is the app's role scope, a token such as `logs.reader`,
+`secrets.owner` or `secrets.approver.<policy>`. It is the same value the
+`post-governance-hook` `role` field carries.
 - **`logs.retention.set`**: `app_id`, `installation_id`, `event_class` (`all`
   or one hook) and `retention` (`keep`, or `days` with `retention_days` from 1
   to 36500).

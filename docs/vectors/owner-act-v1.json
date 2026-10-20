@@ -615,6 +615,48 @@
       }
     },
     {
+      "error": "subject_mismatch",
+      "name": "designation_for_another_contact",
+      "signature_b64": "ur5UHB5OD2YYMn/DS/BFPqszi2BCQWoBsgOr6VgeK8v5Yr4AtJjeeVTa6X0hCxoLzfUyspLYJ5HgkfjE9k7MAw",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vc2VjcmV0cy5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyYjJiMmIyYjJiMmIyYjJiMmIyYjJiMmIyYjJiMmIyYiIsInN1YmplY3QiOnsiYXBwX2lkIjoic2VjcmV0cyIsImNvbnRhY3Rfc2hhMjU2IjoiYzhjZDNjNjQyNzMwMWVhZjY2NjViY2NhY2Q2NWRkYjYxNDUyN2FjYzg0M2ExNTQ2M2UzZmFiYTU3MTI0YzM1MSIsImluc3RhbGxhdGlvbl9pZCI6IjFiNGUyOGJhLTJmYTEtNGQzYi1hM2Y1LWVmMTliNWE3NjMzYiIsInJvbGUiOiJzZWNyZXRzLm93bmVyIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdEZvdnpjYXBOWnlaQld6RkpwQ1hmMjZCOFhMS2RYdHdmd25YWEZlYlBnek0iLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ",
+      "verify": {
+        "acts": [
+          "app-role.designate",
+          "app-role.revoke",
+          "app-credential.recover"
+        ],
+        "audience": "https://secrets.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "secrets",
+          "contact_sha256": "7ddde008fdee507de4150307b1e0936b2fd55c9c357d07a8ccc79e5ae85b195f",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "secrets.owner"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "unknown_field",
+      "name": "designation_naming_a_subject",
+      "signature_b64": "0dr1cuighn4ON9MUkzhKLrWaRYSjO/h7Lrp0oS2dtkI/Ax2Qg5fjgYRoDa++vg9m4lwbfMcgFyllsdUYBqCRAQ",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vc2VjcmV0cy5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyYjJiMmIyYjJiMmIyYjJiMmIyYjJiMmIyYjJiMmIyYiIsInN1YmplY3QiOnsiYXBwX2lkIjoic2VjcmV0cyIsImNvbnRhY3Rfc2hhMjU2IjoiYzhjZDNjNjQyNzMwMWVhZjY2NjViY2NhY2Q2NWRkYjYxNDUyN2FjYzg0M2ExNTQ2M2UzZmFiYTU3MTI0YzM1MSIsImluc3RhbGxhdGlvbl9pZCI6IjFiNGUyOGJhLTJmYTEtNGQzYi1hM2Y1LWVmMTliNWE3NjMzYiIsInJvbGUiOiJzZWNyZXRzLm93bmVyIiwic3ViamVjdF9yZWYiOiJtZW1iZXI6Y180MSJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "app-role.designate",
+          "app-role.revoke",
+          "app-credential.recover"
+        ],
+        "audience": "https://secrets.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
       "error": "not_canonical",
       "name": "non_canonical_bytes",
       "signature_b64": "mCc97KlRPoDirlV7WWksfSrMgSuvv4hxy78DXP44yI0G8eK6FU5xOC2mIH1+dFho/lg0QbZqvcZWkrHzA2mNDw",
@@ -839,9 +881,9 @@
         "nonce": "04040404040404040404040404040404",
         "subject": {
           "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
           "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
-          "role": "reader",
-          "subject_ref": "member:c_41"
+          "role": "logs.reader"
         },
         "team_id": "demo:example.com",
         "team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
@@ -849,8 +891,8 @@
         "v": 1
       },
       "name": "designate_reader",
-      "signature_b64": "OEwge+M/iyDov6jnF8YccUiD6wZJe5vdMWfzbg2rmq24R+hTzok67Rz3FIt0xc6Ci8KrDd2y9Z1+k80SRkCMCw",
-      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNCIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImluc3RhbGxhdGlvbl9pZCI6IjFiNGUyOGJhLTJmYTEtNGQzYi1hM2Y1LWVmMTliNWE3NjMzYiIsInJvbGUiOiJyZWFkZXIiLCJzdWJqZWN0X3JlZiI6Im1lbWJlcjpjXzQxIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdEZvdnpjYXBOWnlaQld6RkpwQ1hmMjZCOFhMS2RYdHdmd25YWEZlYlBnek0iLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ",
+      "signature_b64": "VdfVobrk+t7G2S/c8s3mpQjtHVJYIx9zCPTKAAzqxTiQu5XX0kz8/j7I37h73OlVEzCg7Xdv1Rw8OG0hWHRyAQ",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNCIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImNvbnRhY3Rfc2hhMjU2IjoiZDEwOGIyNzk0MzRmZTFkNTRhYzBmMWRhNjMzNTY0NjA0YjI2YzJlMGUyMjFkMTA4YjBmYmFkYjg3YWJhMDJjMCIsImluc3RhbGxhdGlvbl9pZCI6IjFiNGUyOGJhLTJmYTEtNGQzYi1hM2Y1LWVmMTliNWE3NjMzYiIsInJvbGUiOiJsb2dzLnJlYWRlciJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
       "verify": {
         "acts": [
           "app-role.designate",
@@ -865,9 +907,9 @@
         "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
         "expected_subject": {
           "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
           "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
-          "role": "reader",
-          "subject_ref": "member:c_41"
+          "role": "logs.reader"
         },
         "nonce_used": false,
         "now": "2026-10-20T12:01:00Z",
@@ -884,7 +926,7 @@
         "subject": {
           "app_id": "logs",
           "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
-          "role": "reader",
+          "role": "logs.reader",
           "subject_ref": "member:c_41"
         },
         "team_id": "demo:example.com",
@@ -893,8 +935,8 @@
         "v": 1
       },
       "name": "revoke_reader",
-      "signature_b64": "NALaUBQ/Z7KQH79hxkNc+RtFF+862oTWHmxHY8qWGSFKsgKA29DsZdUoKZaPVvFy0B48q4W/EWSdPjlxMDMjCw",
-      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLnJldm9rZSIsImF1ZCI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImluc3RhbGxhdGlvbl9pZCI6IjFiNGUyOGJhLTJmYTEtNGQzYi1hM2Y1LWVmMTliNWE3NjMzYiIsInJvbGUiOiJyZWFkZXIiLCJzdWJqZWN0X3JlZiI6Im1lbWJlcjpjXzQxIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdEZvdnpjYXBOWnlaQld6RkpwQ1hmMjZCOFhMS2RYdHdmd25YWEZlYlBnek0iLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ",
+      "signature_b64": "auesH/69YuCIA6ghQxEyOowjMreImHmWba4i+JFw6IwUHpQaZNkiDn1m9vbJCVLaD7iGKkDWX/LK6nFYP7lUDA",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLnJldm9rZSIsImF1ZCI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImluc3RhbGxhdGlvbl9pZCI6IjFiNGUyOGJhLTJmYTEtNGQzYi1hM2Y1LWVmMTliNWE3NjMzYiIsInJvbGUiOiJsb2dzLnJlYWRlciIsInN1YmplY3RfcmVmIjoibWVtYmVyOmNfNDEifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9",
       "verify": {
         "acts": [
           "app-role.designate",
@@ -910,7 +952,7 @@
         "expected_subject": {
           "app_id": "logs",
           "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
-          "role": "reader",
+          "role": "logs.reader",
           "subject_ref": "member:c_41"
         },
         "nonce_used": false,
@@ -927,9 +969,9 @@
         "nonce": "06060606060606060606060606060606",
         "subject": {
           "app_id": "secrets",
+          "contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
           "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
-          "role": "approver",
-          "subject_ref": "member:c_41"
+          "role": "secrets.owner"
         },
         "team_id": "demo:example.com",
         "team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
@@ -937,8 +979,8 @@
         "v": 1
       },
       "name": "recover_approver_credential",
-      "signature_b64": "iXIVMf2KLXcG4k6f3aWaq3hazDJHIBI1tckTujKgcdaCTKDiRjlq3WdJlsqaguW6NnW2V1aqZEBW63yOkG7JBw",
-      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1jcmVkZW50aWFsLnJlY292ZXIiLCJhdWQiOiJodHRwczovL3NlY3JldHMuZXhhbXBsZS5jb20iLCJleHBpcmVzX2F0IjoiMjAyNi0xMC0yMFQxMjowNTowMFoiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDEyOjAwOjAwWiIsIm5vbmNlIjoiMDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYiLCJzdWJqZWN0Ijp7ImFwcF9pZCI6InNlY3JldHMiLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJyb2xlIjoiYXBwcm92ZXIiLCJzdWJqZWN0X3JlZiI6Im1lbWJlcjpjXzQxIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdEZvdnpjYXBOWnlaQld6RkpwQ1hmMjZCOFhMS2RYdHdmd25YWEZlYlBnek0iLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ",
+      "signature_b64": "iGj3TCNnrBydeXoBGGWfWC5TcNQLbXWJFGqGLQmVQZbk4mWONUMSo91+MKlCNsGDwsUvW8xorlm2774PeiJLDQ",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1jcmVkZW50aWFsLnJlY292ZXIiLCJhdWQiOiJodHRwczovL3NlY3JldHMuZXhhbXBsZS5jb20iLCJleHBpcmVzX2F0IjoiMjAyNi0xMC0yMFQxMjowNTowMFoiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDEyOjAwOjAwWiIsIm5vbmNlIjoiMDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYiLCJzdWJqZWN0Ijp7ImFwcF9pZCI6InNlY3JldHMiLCJjb250YWN0X3NoYTI1NiI6ImM4Y2QzYzY0MjczMDFlYWY2NjY1YmNjYWNkNjVkZGI2MTQ1MjdhY2M4NDNhMTU0NjNlM2ZhYmE1NzEyNGMzNTEiLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJyb2xlIjoic2VjcmV0cy5vd25lciJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
       "verify": {
         "acts": [
           "app-role.designate",
@@ -949,9 +991,9 @@
         "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
         "expected_subject": {
           "app_id": "secrets",
+          "contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
           "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
-          "role": "approver",
-          "subject_ref": "member:c_41"
+          "role": "secrets.owner"
         },
         "nonce_used": false,
         "now": "2026-10-20T12:01:00Z",

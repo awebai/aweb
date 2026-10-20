@@ -3,6 +3,7 @@ package awid
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -87,6 +88,9 @@ func ownerPositives() []ownerPositive {
 	role := func(name string) map[string]any {
 		return map[string]any{"app_id": "logs", "installation_id": ownerInstall, "role": name, "subject_ref": "member:c_41"}
 	}
+	enrol := func(app, name, contact string) map[string]any {
+		return map[string]any{"app_id": app, "installation_id": ownerInstall, "role": name, "contact_sha256": contactSHA256(contact)}
+	}
 	app := func(extra map[string]any) map[string]any {
 		subject := map[string]any{"app_id": "logs", "installation_id": ownerInstall}
 		for k, v := range extra {
@@ -102,10 +106,9 @@ func ownerPositives() []ownerPositive {
 		{"activate_registration", "hook-binding.activate", ownerCoreAud, CoreOwnerActs, registrationSubject()},
 		{"activate_production", "hook-binding.activate", ownerCoreAud, CoreOwnerActs, productionSubject()},
 		{"revoke_registration", "hook-binding.revoke", ownerCoreAud, CoreOwnerActs, registrationSubject()},
-		{"designate_reader", "app-role.designate", ownerLogsAud, logsVocabulary, role("reader")},
-		{"revoke_reader", "app-role.revoke", ownerLogsAud, logsVocabulary, role("reader")},
-		{"recover_approver_credential", "app-credential.recover", ownerAppAud, AppOwnerActs,
-			map[string]any{"app_id": "secrets", "installation_id": ownerInstall, "role": "approver", "subject_ref": "member:c_41"}},
+		{"designate_reader", "app-role.designate", ownerLogsAud, logsVocabulary, enrol("logs", "logs.reader", "reader@example.com")},
+		{"revoke_reader", "app-role.revoke", ownerLogsAud, logsVocabulary, role("logs.reader")},
+		{"recover_approver_credential", "app-credential.recover", ownerAppAud, AppOwnerActs, enrol("secrets", "secrets.owner", "owner@example.com")},
 		{"retention_keep", "logs.retention.set", ownerLogsAud, logsVocabulary, app(map[string]any{"event_class": "all", "retention": "keep"})},
 		{"retention_days", "logs.retention.set", ownerLogsAud, logsVocabulary, app(map[string]any{"event_class": "post-command-hook", "retention": "days", "retention_days": int64(90)})},
 		{"erase_actor", "logs.erase", ownerLogsAud, logsVocabulary, app(map[string]any{"erase_scope": "actor", "actor_ref": "member:c_41", "reason_code": "subject_request"})},
@@ -118,6 +121,13 @@ func ownerPositives() []ownerPositive {
 		out = append(out, ownerPositive{c.name, c.aud, c.acts, ownerAct(c.act, c.aud, c.subject, nonceFor(i))})
 	}
 	return out
+}
+
+// contactSHA256 is the hex SHA-256 of a contact's UTF-8 bytes, as the app
+// computes it from the contact it is asked to enrol.
+func contactSHA256(contact string) string {
+	sum := sha256.Sum256([]byte(contact))
+	return hex.EncodeToString(sum[:])
 }
 
 func ownerOptions(aud string, acts []string, subject map[string]any) map[string]any {
@@ -200,6 +210,10 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 		raw       []byte
 		options   map[string]any
 	}
+	designation := map[string]any{"app_id": "secrets", "installation_id": ownerInstall, "role": "secrets.owner", "contact_sha256": contactSHA256("owner@example.com")}
+	designate := ownerAct("app-role.designate", ownerAppAud, designation, nonceFor(42))
+	otherContact := map[string]any{"app_id": "secrets", "installation_id": ownerInstall, "role": "secrets.owner", "contact_sha256": contactSHA256("someone-else@example.com")}
+	designationWithRef := map[string]any{"app_id": "secrets", "installation_id": ownerInstall, "role": "secrets.owner", "contact_sha256": contactSHA256("owner@example.com"), "subject_ref": "member:c_41"}
 	production := productionSubject()
 	production["tool"] = "ingest"
 	negatives := []negative{
@@ -222,6 +236,10 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 		{name: "registration_subject_with_reads", err: "unknown_field", seed: ownerTeamSeed, act: ownerSet(base, "subject", subjectWith("reads", []any{}))},
 		{name: "production_subject_with_tool", err: "unknown_field", seed: ownerTeamSeed, act: ownerSet(base, "subject", production)},
 		{name: "registration_subject_missing_scopes", err: "missing_field", seed: ownerTeamSeed, act: ownerSet(base, "subject", subjectWith("scopes", nil))},
+		{name: "designation_for_another_contact", err: "subject_mismatch", seed: ownerTeamSeed, act: designate,
+			options: ownerOptions(ownerAppAud, AppOwnerActs, otherContact)},
+		{name: "designation_naming_a_subject", err: "unknown_field", seed: ownerTeamSeed, act: ownerSet(designate, "subject", designationWithRef),
+			options: ownerOptions(ownerAppAud, AppOwnerActs, nil)},
 		{name: "non_canonical_bytes", err: "not_canonical", seed: ownerTeamSeed,
 			raw: append([]byte(OwnerActPrefix), bytes.Replace(mustOwnerCanonical(t, base), []byte(`{"act"`), []byte(`{ "act"`), 1)...)},
 	}
