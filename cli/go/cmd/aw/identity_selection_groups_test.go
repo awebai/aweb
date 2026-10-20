@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -171,34 +172,34 @@ func TestSelectedIdentityNeverFallsBackAndInitPreservesInheritedIdentity(t *test
 	}
 }
 
-// The shipped SDK uses the legacy certificate envelope; explicit id request
-// can use request-bound v2. Verify the actual signed shape in either case.
+// Check v2 against the receiver's actual target and body before verifying keys.
 func requestSigningPayloadForTest(t *testing.T, r *http.Request, body []byte) []byte {
 	t.Helper()
-	if encoded := r.Header.Get("X-AWEB-Signed-Payload"); encoded != "" {
-		payload, err := base64.RawURLEncoding.DecodeString(encoded)
-		if err != nil {
-			t.Errorf("signed payload header: %v", err)
-		}
-		return payload
+	payload, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-AWEB-Signed-Payload"))
+	if err != nil || len(payload) == 0 {
+		t.Errorf("missing v2 payload: %v", err)
+		return nil
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Error(err)
+		return nil
 	}
 	hash := sha256.Sum256(body)
-	fields := map[string]string{"body_sha256": hex.EncodeToString(hash[:]), "timestamp": r.Header.Get("X-AWEB-Timestamp")}
-	if encoded := r.Header.Get("X-AWID-Team-Certificate"); encoded != "" {
-		cert, err := awid.DecodeTeamCertificateHeader(encoded)
-		if err != nil {
-			t.Errorf("team certificate header: %v", err)
-			return nil
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	for field, expected := range map[string]any{
+		"v": float64(2), "aud": scheme + "://" + r.Host, "method": r.Method,
+		"path": r.URL.RequestURI(), "body_sha256": hex.EncodeToString(hash[:]),
+		"timestamp": r.Header.Get("X-AWEB-Timestamp"),
+	} {
+		if claims[field] != expected {
+			t.Errorf("%s=%v, want %v", field, claims[field], expected)
 		}
-		fields["team_id"] = cert.Team
-	} else {
-		fields["did_aw"] = r.Header.Get("X-AWEB-DID-AW")
 	}
-	canonical, err := awid.CanonicalJSONValue(fields)
-	if err != nil {
-		t.Errorf("canonical request: %v", err)
-	}
-	return []byte(canonical)
+	return payload
 }
 
 func writeStandaloneSelectedIdentityForTest(t *testing.T, root string) {

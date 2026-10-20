@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +23,7 @@ import (
 )
 
 type messagingSignedRequest struct {
+	payload       []byte
 	authorization string
 	timestamp     string
 	method        string
@@ -68,7 +67,7 @@ func TestExternalIdentityHomeOutboundMessagingSignsAsPrincipal(t *testing.T) {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
 			mu.Lock()
-			observedRequests = append(observedRequests, messagingSignedRequest{authorization: auth, timestamp: r.Header.Get("X-AWEB-Timestamp"), body: body})
+			observedRequests = append(observedRequests, messagingSignedRequest{authorization: auth, timestamp: r.Header.Get("X-AWEB-Timestamp"), body: body, payload: requestSigningPayloadForTest(t, r, body)})
 			mu.Unlock()
 		}
 		switch {
@@ -260,7 +259,7 @@ func TestExternalStandaloneIdentityAuthMailUsesPrincipalMismatchContext(t *testi
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
-		request = messagingSignedRequest{authorization: r.Header.Get("Authorization"), timestamp: r.Header.Get("X-AWEB-Timestamp"), body: body}
+		request = messagingSignedRequest{authorization: r.Header.Get("Authorization"), timestamp: r.Header.Get("X-AWEB-Timestamp"), body: body, payload: requestSigningPayloadForTest(t, r, body)}
 		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "message-1", ConversationID: "conversation-1", Status: "delivered"})
 	}))
 	principalRoot := filepath.Join(root, "principal")
@@ -279,9 +278,7 @@ func TestExternalStandaloneIdentityAuthMailUsesPrincipalMismatchContext(t *testi
 	if len(parts) != 3 || parts[1] != principalDID {
 		t.Fatalf("authorization=%q want external did=%s", request.authorization, principalDID)
 	}
-	hash := sha256.Sum256(request.body)
-	payload := []byte(fmt.Sprintf(`{"body_sha256":"%s","did_aw":"%s","timestamp":"%s"}`,
-		hex.EncodeToString(hash[:]), principalStableID, request.timestamp))
+	payload := request.payload
 	signature, err := base64.RawStdEncoding.DecodeString(parts[2])
 	if err != nil {
 		t.Fatal(err)
@@ -368,7 +365,11 @@ func verifyMessagingRequestsForTest(t *testing.T, requests []messagingSignedRequ
 		if len(parts) != 3 || parts[1] != principalDID {
 			t.Fatalf("request signed under wrong identity: auth=%q want did=%s (shadow=%s)", request.authorization, principalDID, shadowDID)
 		}
-		payload := messagingCertificateAuthPayload("runtime:aweb.test", request.timestamp, request.body)
+		payload := request.payload
+		var claims map[string]any
+		if err := json.Unmarshal(payload, &claims); err != nil || claims["team_id"] != "runtime:aweb.test" {
+			t.Fatalf("wrong team claims: %s", payload)
+		}
 		signature, err := base64.RawStdEncoding.DecodeString(parts[2])
 		if err != nil {
 			t.Fatal(err)
@@ -377,12 +378,6 @@ func verifyMessagingRequestsForTest(t *testing.T, requests []messagingSignedRequ
 			t.Fatalf("request signature did not bind external principal: auth=%q", request.authorization)
 		}
 	}
-}
-
-func messagingCertificateAuthPayload(teamID, timestamp string, body []byte) []byte {
-	hash := sha256.Sum256(body)
-	return []byte(fmt.Sprintf(`{"body_sha256":"%s","team_id":"%s","timestamp":"%s"}`,
-		hex.EncodeToString(hash[:]), teamID, timestamp))
 }
 
 func writeMessagingPrincipalForTest(t *testing.T, root, serverURL, alias, did string, signingKey ed25519.PrivateKey) {

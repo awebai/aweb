@@ -9,6 +9,7 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
   run test-server
   run test-awid
   run test-cli
+  run test-cli-auth-v2
   run _candidate-unit-channel
   run test-channel-name-live-contract
   run _candidate-unit-channel-core
