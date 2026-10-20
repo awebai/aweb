@@ -185,6 +185,8 @@ _BUCKET_DEFAULTS: dict[str, tuple[int, int]] = {
     "certificate_status": (60, 60),
     "certificate_revoke": (1000, 3600),
     "revocation_list": (60, 60),
+    "attestation_record_publish": (30, 3600),
+    "attestation_record_get": (60, 60),
 }
 
 

@@ -30,6 +30,7 @@ from awid.did import public_key_from_did
 from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_with_public_key
 from awid.team_ids import build_team_id
 from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
+from awid_service.attestation_rotation import ResignedRecords, apply_resigned_records
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"], route_class=ControllerAuthRoute)
 
@@ -361,6 +362,7 @@ class TeamRotateKeyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     new_team_did_key: str = Field(..., min_length=1, max_length=256)
+    resigned_records: ResignedRecords | None = None
 
     @field_validator("new_team_did_key")
     @classmethod
@@ -765,6 +767,11 @@ async def rotate_team_key(
     body: TeamRotateKeyRequest,
     db_infra=Depends(get_db),
 ) -> TeamRotateResponse:
+    if len(await request.body()) > request.app.state.rotate_max_body_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail={"code": "rotation_too_large", "message": "The re-signed record set exceeds the rotate body limit"},
+        )
     db = db_infra.get_manager("aweb")
     await _require_namespace_controller(
         request, db, domain=domain, operation="rotate_team_key",
@@ -774,7 +781,7 @@ async def rotate_team_key(
     async with db.transaction() as tx:
         old_row = await tx.fetch_one(
             """
-            SELECT team_did_key FROM {{tables.teams}}
+            SELECT team_uuid, team_did_key FROM {{tables.teams}}
             WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
             FOR UPDATE
             """,
@@ -785,6 +792,10 @@ async def rotate_team_key(
             raise HTTPException(status_code=404, detail="Team not found")
 
         key_changed = old_row["team_did_key"] != body.new_team_did_key
+        await apply_resigned_records(
+            tx, team_uuid=old_row["team_uuid"], team_id=build_team_id(domain, name),
+            new_team_did_key=body.new_team_did_key, resigned=body.resigned_records,
+        )
         row = await tx.fetch_one(
             """
             UPDATE {{tables.teams}}
