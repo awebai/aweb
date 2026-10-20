@@ -102,7 +102,16 @@ Logs returns a receipt for every event it appends, and returns the same receipt
 again for a duplicate delivery: the same `event_id` with the same bytes. Other
 bytes under a known `event_id` append nothing and are kept as a conflict fault
 (the digest of the refused bytes, never the bytes). A purged event's bytes are
-gone, so a redelivery of it cannot be compared and returns its receipt. A receipt commits to the whole chain prefix up
+gone, so its redelivery is compared only on what the skeleton keeps, its
+`hook` and `producer_origin`: the same values return its receipt, and others
+are kept as a conflict fault. Keeping a digest of the content past erasure
+would make the erased content confirmable, so a redelivery that differs only
+in its purged content goes undetected. That is the smaller harm.
+
+Each epoch belongs to the logs origin its genesis names, and logs signs its
+receipts and checkpoints under that origin only. A move to another origin
+closes the epoch with a final checkpoint under the old origin and starts the
+next epoch under the new one. A receipt commits to the whole chain prefix up
 to its event, so every producer that keeps one is an independent witness of
 the chain.
 

@@ -18,6 +18,7 @@ from aweb_logs.ledger import (
     Appended,
     Conflicted,
     LogsSigner,
+    OriginMismatch,
     append,
     issue_checkpoint,
     load_epoch,
@@ -182,3 +183,65 @@ async def test_a_redelivery_of_a_purged_event_returns_its_receipt(
     again = await _append(db, event_id=event_id)
     assert isinstance(first, Appended) and isinstance(again, Appended)
     assert again.duplicate and again.receipt == first.receipt
+
+
+MOVED = LogsSigner(
+    logs_origin="https://logs.moved.example", kid=LOGS_KID, signing_key=SigningKey(LOGS_SEED)
+)
+
+
+async def test_an_epoch_signs_only_under_its_own_origin(db: AsyncDatabaseManager) -> None:
+    await _append(db)
+    signing, signature = signed_event("core", event_id=str(uuid.uuid4()), seq=2)
+    with pytest.raises(OriginMismatch):
+        await append(
+            db,
+            MOVED,
+            event=hook_envelope.verify(signing, signature, team_id=TEAM_ID),
+            signing_bytes=signing,
+            signature=signature,
+            key_evidence=_evidence(signing),
+            received_at=START,
+        )
+    with pytest.raises(OriginMismatch):
+        await issue_checkpoint(db, MOVED, TEAM_ID, issued_at=START)
+    with pytest.raises(OriginMismatch):
+        await open_next_epoch(db, MOVED, TEAM_ID, at=START)
+    _, events = await load_epoch(db, TEAM_ID, 1)
+    assert len(events) == 1
+
+
+async def test_a_new_epoch_can_move_to_another_origin(db: AsyncDatabaseManager) -> None:
+    await _append(db)
+    final = await open_next_epoch(
+        db, SIGNER, TEAM_ID, at=START + timedelta(minutes=1), logs_origin=MOVED.logs_origin
+    )
+    signing, signature = signed_event("core", event_id=str(uuid.uuid4()), seq=2)
+    moved = await append(
+        db,
+        MOVED,
+        event=hook_envelope.verify(signing, signature, team_id=TEAM_ID),
+        signing_bytes=signing,
+        signature=signature,
+        key_evidence=_evidence(signing),
+        received_at=START + timedelta(minutes=2),
+    )
+    assert isinstance(moved, Appended)
+    assert open_checkpoint(*final).logs_origin == LOGS_ORIGIN
+    assert open_receipt(*moved.receipt).logs_origin == MOVED.logs_origin
+    assert (await _verify(db, epoch=1, checkpoints=[final])).intact
+    assert (await _verify(db, epoch=2, receipts=[moved.receipt])).intact
+
+
+async def test_a_purged_event_still_conflicts_on_what_its_skeleton_keeps(
+    db: AsyncDatabaseManager,
+) -> None:
+    event_id = str(uuid.uuid4())
+    await _append(db, "core", event_id=event_id)
+    await db.execute(
+        "UPDATE {{tables.chain_events}} SET salt = NULL, signing_bytes = NULL, signature = NULL,"
+        " purge_act = 'logs.erase:test' WHERE event_id = $1",
+        uuid.UUID(event_id),
+    )
+    other_producer = await _append(db, "app", event_id=event_id)
+    assert other_producer == Conflicted(event_id=uuid.UUID(event_id))

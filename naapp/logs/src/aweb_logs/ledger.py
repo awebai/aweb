@@ -31,6 +31,7 @@ from aweb_logs.chain import (
     content_commitment,
     format_time,
     link_for,
+    producer_origin,
     sign_checkpoint,
     sign_receipt,
 )
@@ -67,11 +68,23 @@ class Conflicted:
     event_id: uuid.UUID
 
 
+class OriginMismatch(Exception):
+    """The signer is not the origin of the team's current epoch. Only
+    :func:`open_next_epoch` moves a team's chain to another origin."""
+
+
 @dataclass(frozen=True)
 class _Head:
     chain_epoch: int
     team_seq: int
     event_hash: str
+    logs_origin: str
+
+    def check_signer(self, signer: LogsSigner) -> None:
+        if signer.logs_origin != self.logs_origin:
+            raise OriginMismatch(
+                f"epoch {self.chain_epoch} belongs to {self.logs_origin}, not {signer.logs_origin}"
+            )
 
 
 async def append(
@@ -87,22 +100,31 @@ async def append(
     """Append a verified event to its team's chain and sign its receipt, in one
     transaction. A redelivery of the same bytes returns the original receipt.
 
-    A purged event's bytes are gone, so its redelivery cannot be compared and
-    returns the original receipt as well."""
+    A purged event's bytes are gone, so its redelivery is compared only on what
+    the skeleton keeps, its hook and producer origin."""
     event_id = uuid.UUID(event.event_id)
     async with db.transaction() as tx:
         head = await _locked_head(tx, signer, event.team_id, received_at)
+        head.check_signer(signer)
         stored = await tx.fetch_one(
-            "SELECT signing_bytes, signature, receipt_bytes, receipt_signature"
-            " FROM {{tables.chain_events}} WHERE team_id = $1 AND event_id = $2",
+            "SELECT signing_bytes, signature, hook, producer_origin, receipt_bytes,"
+            " receipt_signature FROM {{tables.chain_events}} WHERE team_id = $1 AND event_id = $2",
             event.team_id,
             event_id,
         )
         if stored is not None:
             receipt = (bytes(stored["receipt_bytes"]), stored["receipt_signature"])
-            if stored["signing_bytes"] is None or (
-                bytes(stored["signing_bytes"]) == signing_bytes and stored["signature"] == signature
-            ):
+            if stored["signing_bytes"] is None:
+                same = (stored["hook"], stored["producer_origin"]) == (
+                    event.hook,
+                    producer_origin(event),
+                )
+            else:
+                same = (
+                    bytes(stored["signing_bytes"]) == signing_bytes
+                    and stored["signature"] == signature
+                )
+            if same:
                 return Appended(receipt=receipt, duplicate=True)
             await tx.execute(
                 "INSERT INTO {{tables.chain_faults}}"
@@ -162,7 +184,9 @@ async def append(
             receipt[0],
             receipt[1],
         )
-        await _move_head(tx, event.team_id, _Head(link.chain_epoch, link.team_seq, event_hash))
+        await _move_head(
+            tx, event.team_id, _Head(link.chain_epoch, link.team_seq, event_hash, head.logs_origin)
+        )
         return Appended(receipt=receipt, duplicate=False)
 
 
@@ -175,28 +199,39 @@ async def issue_checkpoint(
         head = await _existing_head(tx, team_id)
         if head is None:
             raise LookupError(f"team {team_id} has no chain")
+        head.check_signer(signer)
         return await _checkpoint(tx, signer, team_id, head, issued_at)
 
 
 async def open_next_epoch(
-    db: AsyncDatabaseManager, signer: LogsSigner, team_id: str, *, at: datetime
+    db: AsyncDatabaseManager,
+    signer: LogsSigner,
+    team_id: str,
+    *,
+    at: datetime,
+    logs_origin: str | None = None,
 ) -> tuple[bytes, str]:
-    """Close the team's current epoch with a final checkpoint and start the next,
-    whose genesis records that checkpoint. Returns the final checkpoint."""
+    """Close the team's current epoch with a final checkpoint, signed under that
+    epoch's origin, and start the next, whose genesis records that checkpoint.
+    The next epoch belongs to ``logs_origin``, or to the signer's origin when it
+    is not given. Returns the final checkpoint."""
     async with db.transaction() as tx:
         head = await _existing_head(tx, team_id)
         if head is None:
             raise LookupError(f"team {team_id} has no chain")
+        head.check_signer(signer)
         final = await _checkpoint(tx, signer, team_id, head, at)
         genesis = Genesis(
             team_id=team_id,
             chain_epoch=head.chain_epoch + 1,
-            logs_origin=signer.logs_origin,
+            logs_origin=logs_origin or signer.logs_origin,
             created_at=format_time(at),
             previous_checkpoint_sha256=artefact_sha256(final[0]),
         )
         await _insert_epoch(tx, genesis)
-        await _move_head(tx, team_id, _Head(genesis.chain_epoch, 0, genesis.hash()))
+        await _move_head(
+            tx, team_id, _Head(genesis.chain_epoch, 0, genesis.hash(), genesis.logs_origin)
+        )
         return final
 
 
@@ -276,13 +311,15 @@ async def _locked_head(tx: Any, signer: LogsSigner, team_id: str, at: datetime) 
 
 async def _existing_head(tx: Any, team_id: str) -> _Head | None:
     row = await tx.fetch_one(
-        "SELECT chain_epoch, team_seq, event_hash FROM {{tables.chain_heads}}"
-        " WHERE team_id = $1 FOR UPDATE",
+        "SELECT h.chain_epoch, h.team_seq, h.event_hash, e.logs_origin"
+        " FROM {{tables.chain_heads}} AS h JOIN {{tables.chain_epochs}} AS e"
+        " ON e.team_id = h.team_id AND e.chain_epoch = h.chain_epoch"
+        " WHERE h.team_id = $1 FOR UPDATE OF h",
         team_id,
     )
     if row is None:
         return None
-    return _Head(row["chain_epoch"], row["team_seq"], row["event_hash"])
+    return _Head(row["chain_epoch"], row["team_seq"], row["event_hash"], row["logs_origin"])
 
 
 async def _insert_epoch(tx: Any, genesis: Genesis) -> None:
