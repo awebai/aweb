@@ -54,6 +54,16 @@ configured key is the declared one. An app with `<PREFIX>APP_EVENTS_ORIGIN` set
 `<PREFIX>APP_EMIT_KEY_SEED_HEX` with `<PREFIX>APP_EMIT_KID`, a form that signs
 app events only.
 
+### Health
+
+`/live` reports the app's id and build commit. `/health` and `/ready` also run
+the app's dependency checks and report each by name: `ready` is 503 when any
+check fails, and `health` always answers 200. The runtime checks its database
+and reports the age of its oldest undelivered outbox event
+(`NaappRuntime.health_checks()`). An app adds its own as async callables that
+return a `CheckResult`. A check that raises, or does not answer within 5 s,
+fails, and its error is logged, never served.
+
 ### Agent and human origins
 
 An app with pages for people in a browser serves them on their own origin.

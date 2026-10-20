@@ -14,6 +14,7 @@ from aweb_naapp import CSS_SHA256, aweb_css
 from aweb_naapp.css import FONT_NAMES
 from aweb_naapp.manifest import canonical_bytes, manifest_for_origin, write_manifest_file
 from aweb_naapp.runtime.app import NaappRuntime, mount_naapp_routes
+from aweb_naapp.runtime.health import CheckResult
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.skills import Skills
 
@@ -233,6 +234,19 @@ def test_without_noindex_paths_nothing_is_tagged(tmp_path: Path) -> None:
     assert "x-robots-tag" not in _client(tmp_path).get("/present/abc").headers
 
 
-def test_health_is_mounted(tmp_path: Path) -> None:
+def test_health_is_mounted_with_the_runtime_checks(tmp_path: Path) -> None:
     response = _client(tmp_path).get("/health")
-    assert response.json() == {"status": "ok", "service": "example", "build": {"git_sha": None}}
+    assert response.json() == {
+        "status": "unavailable",
+        "service": "example",
+        "build": {"git_sha": None},
+        "checks": {"database": {"ok": False}, "outbox": {"ok": False}},
+    }
+
+
+def test_health_checks_the_apps_own_dependencies(tmp_path: Path) -> None:
+    async def kms() -> CheckResult:
+        return CheckResult(ok=True, detail={"canary": "ok"})
+
+    response = _client(tmp_path, health_checks={"kms": kms}).get("/health")
+    assert response.json()["checks"]["kms"] == {"ok": True, "canary": "ok"}

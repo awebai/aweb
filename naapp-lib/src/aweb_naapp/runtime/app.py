@@ -40,7 +40,7 @@ from starlette.routing import BaseRoute, Host, Mount
 
 from aweb_naapp.css import FONT_NAMES, aweb_css
 from aweb_naapp.manifest import read_manifest_bytes
-from aweb_naapp.outbox import run_drain
+from aweb_naapp.outbox import outbox_status, run_drain
 from aweb_naapp.robots import robots_txt
 from aweb_naapp.runtime.authorization import (
     ActionPolicy,
@@ -52,7 +52,7 @@ from aweb_naapp.runtime.authorization import (
 )
 from aweb_naapp.runtime.db import NaappDatabase
 from aweb_naapp.runtime.event_emit import AppEvents
-from aweb_naapp.runtime.health import mount_health
+from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
     AWIDTeamCache,
@@ -168,6 +168,34 @@ class NaappRuntime:
         if self._database is None:
             raise RuntimeError("naapp database is not initialized")
         return self._database.db
+
+    def health_checks(self) -> dict[str, HealthCheck]:
+        """The runtime's dependencies for the health routes: the database, and
+        the age of the oldest outbox event not yet delivered (``None`` when
+        every event is delivered). Neither is healthy outside the lifespan."""
+
+        async def database() -> CheckResult:
+            db = self.connected_db()
+            if db is None:
+                return CheckResult(ok=False)
+            await db.fetch_value("SELECT 1")
+            return CheckResult(ok=True)
+
+        async def outbox() -> CheckResult:
+            db = self.connected_db()
+            if db is None:
+                return CheckResult(ok=False)
+            status = await outbox_status(db)
+            ages = [
+                target.oldest_undelivered_age_seconds
+                for target in status.targets.values()
+                if target.oldest_undelivered_age_seconds is not None
+            ] + [team.oldest_age_seconds for team in status.unmaterialized.values()]
+            return CheckResult(
+                ok=True, detail={"oldest_undelivered_age_seconds": max(ages, default=None)}
+            )
+
+        return {"database": database, "outbox": outbox}
 
     def team_cache(self) -> AWIDTeamCache:
         if self._team_cache is None:
@@ -285,6 +313,7 @@ def mount_naapp_routes(
     fonts_dir: Path,
     robots_disallow: Sequence[str] = (),
     noindex_paths: Sequence[str] = (),
+    health_checks: Mapping[str, HealthCheck] | None = None,
 ) -> None:
     """Serve the standard naapp public surface.
 
@@ -296,7 +325,8 @@ def mount_naapp_routes(
     renders the front door on each request, ``robots_disallow`` lists the paths
     crawlers must skip, and every response under ``noindex_paths`` (found or
     not) carries ``X-Robots-Tag``. The manifest routes serve the runtime's
-    ``manifest_bytes`` verbatim.
+    ``manifest_bytes`` verbatim. The health routes check the runtime's
+    dependencies plus the app's own ``health_checks``.
     """
     settings = runtime.settings
     noindex_prefixes = tuple(noindex_paths)
@@ -397,4 +427,4 @@ def mount_naapp_routes(
     async def aweb_app_manifest_route() -> Response:
         return await _manifest_response()
 
-    mount_health(app, settings)
+    mount_health(app, settings, checks={**runtime.health_checks(), **(health_checks or {})})
