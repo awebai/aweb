@@ -123,7 +123,7 @@ The app sends its ledger in batches, oldest first:
 Unknown fields are refused at every level. The collector refuses a request
 body over 1 MiB (1,048,576 bytes) before parsing it (413). The field bounds
 above keep every valid batch's canonical JSON below that: the largest one
-possible is about 0.9 MiB. Its digest, `report_sha256`, is the bare hex SHA-256 of
+possible is 876,901 bytes. Its digest, `report_sha256`, is the bare hex SHA-256 of
 `"aweb.usage-report/1\n" || canonical_json(batch)`.
 
 ## 4. Credential, purpose `app-usage`
