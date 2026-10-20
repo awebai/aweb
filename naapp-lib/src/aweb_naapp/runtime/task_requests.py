@@ -73,6 +73,39 @@ _PAYLOAD_FIELDS = frozenset(
         "nonce",
     }
 )
+# The values each verifier must be told; a caller that omits one would skip it.
+TASK_AUTHORIZATION_BINDINGS = frozenset(
+    {
+        "aud",
+        "app_origin",
+        "team_id",
+        "app_id",
+        "installation_id",
+        "installation_generation",
+        "external_request_id",
+        "task_body_sha256",
+        "target_dids",
+        "action_id",
+        "proposal_rev",
+        "proposal_sha256",
+    }
+)
+STAGE_RECEIPT_BINDINGS = frozenset(
+    {
+        "team_id",
+        "app_id",
+        "installation_id",
+        "installation_generation",
+        "task_id",
+        "question_rev",
+        "answer_key",
+        "answer_sha256",
+        "choice",
+        "proposal_rev",
+        "proposal_sha256",
+        "answerer_did",
+    }
+)
 _TASK_FIELDS = frozenset({"title", "description", "assignee_did", "app_request"})
 _APP_REQUEST_FIELDS = frozenset(
     {
@@ -292,6 +325,17 @@ def _check_payload(payload: object) -> tuple[datetime, datetime]:
     return issued, expires
 
 
+def _check_bindings(
+    payload: Mapping[str, Any], expected: Mapping[str, Any], bindings: frozenset[str]
+) -> None:
+    if set(expected) != bindings:
+        raise ValueError(f"expected must hold exactly the bindings {sorted(bindings)}")
+    for field in sorted(bindings):
+        value = expected[field]
+        if payload.get(field) != value or (_is_int(value) and not _is_int(payload.get(field))):
+            raise _refuse("target_mismatch", field)
+
+
 def _signature_bytes(signature: object) -> bytes:
     if not isinstance(signature, str) or not re.fullmatch(r"[A-Za-z0-9_-]{86}", signature):
         raise _refuse("signature_invalid", "signature encoding")
@@ -310,10 +354,12 @@ def verify_task_authorization(
 ) -> None:
     """Verify shape and signature, then bindings, then time (§3 steps 3, 5 and 6).
 
-    ``expected`` holds the values the payload must equal: the task service's
-    audience, the transport's team, app, installation and generation, the
-    installed app origin, and the body's task digest, target, request id, action
-    and proposal. Raises TaskRequestRefused with the contract's code.
+    ``expected`` holds exactly TASK_AUTHORIZATION_BINDINGS, the values the
+    payload must equal: the task service's audience, the transport's team, app,
+    installation and generation, the installed app origin, and the body's task
+    digest, targets, request id, action and proposal. A missing or extra key is
+    a ValueError, never a skipped check. Raises TaskRequestRefused with the
+    contract's code.
     """
     issued, expires = _check_payload(payload)
     raw = _signature_bytes(signature)
@@ -322,9 +368,7 @@ def verify_task_authorization(
         key.verify(task_authorization_signing_bytes(payload), raw)
     except BadSignatureError as exc:
         raise _refuse("signature_invalid", "signature does not verify") from exc
-    for field, value in expected.items():
-        if payload.get(field) != value or (_is_int(value) and not _is_int(payload.get(field))):
-            raise _refuse("target_mismatch", field)
+    _check_bindings(payload, expected, TASK_AUTHORIZATION_BINDINGS)
     # Time is checked last, so a caller that accepts an expired authorization
     # for a matching replay knows every other check passed.
     if now.tzinfo is None:
@@ -351,6 +395,9 @@ _STAGE_FIELDS = frozenset(
         "question_rev",
         "answer_key",
         "answer_sha256",
+        "choice",
+        "proposal_rev",
+        "proposal_sha256",
         "answerer_did",
         "issued_at",
         "expires_at",
@@ -388,6 +435,10 @@ def _check_stage_payload(payload: object) -> tuple[datetime, datetime]:
         raise bad("answer_sha256")
     if not _matches(_PRINCIPAL_DID, payload["answerer_did"]):
         raise bad("answerer_did")
+    if payload["choice"] is not None and not _matches(_CHOICE, payload["choice"]):
+        raise bad("choice")
+    if not _proposal_pair(payload["proposal_rev"], payload["proposal_sha256"]):
+        raise bad("proposal")
     key = payload["did_key"]
     try:
         if not isinstance(key, str) or did_from_public_key(public_key_from_did(key)) != key:
@@ -420,9 +471,10 @@ def verify_stage_receipt(
 ) -> None:
     """Verify an app's stage receipt: shape and signature, then bindings, then time.
 
-    ``expected`` holds what the receipt must equal: the creating installation
-    and its current generation, the task and its current question, the answer
-    key and digest, and the verified answerer. Whether ``did_key`` is registered
+    ``expected`` holds exactly STAGE_RECEIPT_BINDINGS: the creating
+    installation and its current generation, the task and its current
+    question, the whole answer (key, digest, choice and proposal), and the
+    verified answerer. A missing or extra key is a ValueError. Whether ``did_key`` is registered
     for the installation's app-request purpose, and whether the nonce was
     already used, are the task service's checks.
     """
@@ -434,9 +486,7 @@ def verify_stage_receipt(
         )
     except BadSignatureError as exc:
         raise _refuse("signature_invalid", "signature does not verify") from exc
-    for field, value in expected.items():
-        if payload.get(field) != value or (_is_int(value) and not _is_int(payload.get(field))):
-            raise _refuse("target_mismatch", field)
+    _check_bindings(payload, expected, STAGE_RECEIPT_BINDINGS)
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     if (
