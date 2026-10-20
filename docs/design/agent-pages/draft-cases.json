@@ -183,5 +183,13 @@
   {
     "case": "link-out-before-c1",
     "expect": "validates only through the unknown branch and renders as an inert placeholder until C1 adds it"
+  },
+  {
+    "case": "approval-from-non-individual",
+    "expect": "member_session without the host's single-person attestation fails authentication; approver subject types admit no group, role or shared subject"
+  },
+  {
+    "case": "bundle-card-partial-answer",
+    "expect": "no partial approval of a hashed bundle; changing an item makes a new bundle and needs a new approval"
   }
 ]

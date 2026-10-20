@@ -39,7 +39,7 @@ fixture app gets tools and a surface by manifest alone.
 
 Approval asks: accept the task/approval transaction extensions, manifest v2
 rollout and data-lifecycle baseline; Athena rules on link authority and rendering.
-Nactiva integration, PMS choice and customer writes require separate approval.
+Customer integration, PMS choice and customer writes require separate approval.
 
 ## 1. Evidence and governing model
 
@@ -324,7 +324,7 @@ Audit records transaction ID, old/new revisions, signer DID/certificate,
 verified member/stable identity, origin kind, server time, action/task/approval
 IDs and changed fields; restricted before/after values stay under data ACL and
 retention policy. Store request evidence for approvals while needed, separately
-from public activity text. “Updated by bond, just now” comes from this verified
+from public activity text. “Updated by the agent, just now” comes from this verified
 record, not agent-supplied display text. Link events say “anonymous, via link X”
 with capability ID and optional link-local key, never a claimed person.
 
@@ -406,7 +406,7 @@ Two stores cannot share a transaction. Required new generic task integration:
 
 1. Member signs the naapp intent or decision proposal creation. The naapp commits
    its action journal plus task-delivery outbox and returns `202`, `delivery:
-   "pending"`; the UI says “saved; sending”, not “sent to bond”.
+   "pending"`; the UI says “saved; sending”, not “sent to the agent”.
 2. Every member submission includes a nested, purpose-bound `task_authorization`
    signed by that member (Cloud custody or self-custodial CLI). It authorizes
    exactly one minimal task creation at the selected task origin. The naapp
@@ -419,7 +419,7 @@ Two stores cannot share a transaction. Required new generic task integration:
    installation and originating principal. Existing task-create shapes remain
    accepted. A retry returning the same task is safe after response loss. A
    different body for that key conflicts. The naapp records the verified task
-   receipt; only then `delivery: "queued"` means “sent to bond”.
+   receipt; only then `delivery: "queued"` means “sent to the agent”.
 4. Durable task state/answer is authoritative for the request. Naapp action state
    is execution/projection state, synchronized from authenticated task changes
    and periodically reconciled on reads/recovery. Missed wakes cannot strand it.
@@ -484,7 +484,7 @@ reconciliation after an ambiguous response. Never blindly retry an uncertain
 booking or guest message send.
 
 Offline copy comes from the signed/fresh acah honest-health status and its age:
-“bond offline since 10:02; request queued” only if those facts are known.
+“agent offline since 10:02; request queued” only if those facts are known.
 Expired/absent health says “status unavailable; request queued”. Mail read,
 stream presentation, presence and accepted task are distinct from execution
 (`A docs/agent-health.md:19`–`:57`).
@@ -495,7 +495,15 @@ For an agent proposal, create an acah.4 task assigned to the named authorized
 human. The decision card binds task ID/revision, proposal record ID/revision,
 canonical proposal digest, allowed choice, scope of external operation, destination,
 source-system version and expiry. Re-editing a proposed price/reply produces a
-new proposal hash and requires a fresh answer. Recommendation is advisory.
+new proposal hash and requires a fresh answer.
+
+A `decision_card` may instead reference a bundle record. Its `proposal_sha256`
+is then the bundle hash over the ordered items, and the host renders every item
+(at most N, bounded by policy) from the member-signed read. A bundle is
+all-or-nothing: per-item accept, change or reject happens before the bundle is
+assembled and hashed. Any later change makes a new bundle that needs a new
+approval, never a partial approval of a hashed bundle. Lint checks the item
+bound and that every item resolves. Recommendation is advisory.
 
 The naapp verifies the member-signed answer request and the conditional task
 answer receipt. It stores a scoped approval record including request digest,
@@ -562,6 +570,23 @@ is represented as protected by a not-yet-approved assurance policy.
 | App-local passkey | Naapp verifies a registered human credential and transaction-bound challenge at its own origin. It produces app-local subject/assertion evidence, never a fabricated AWID member/custody claim. Owner designates the approver and controls credential enrolment/recovery through the approver's registered contact, outside agent control. |
 | Task presentation | Pages keep the exact acah.4 task/answer ledger. Card and waiting-on-you hold only opaque approval reference/commitment and safe outcome, never token/link or private proposal. External passkey step-up returns evidence bound to the same task, proposal and owner-designated person. |
 | Link presentation | A secrets approve_only flow can use a one-use, request-bound link without task/chat coupling or any dashboard account. Link possession alone does not authenticate its approver. |
+
+An approver subject is exactly one person. Approver subject types admit only
+individual persons; there is no group, role, team, organisation or
+shared-account subject, so such an approval cannot be expressed. Designation
+names one person and one registered contact, and the owner act attests that it
+is one person. A shared account, shared credential or member identity known to
+be used by more than one person must not be designated, and the host provisions
+one member per person. A `member_session` approval from a member the host does
+not attest as a single person is refused: the `member_session` adapter (pages,
+C2) requires the host's single-person attestation and fails authentication
+without it. Whether the primitive also checks a structural field is decided
+with that adapter's design. A host's attestation is a recorded declaration by
+the owner when designating or inviting that person, carried to the app; it is
+not detection. A passkey is enrolled per person through that person's own
+contact. The primitive records the designated subject and cannot detect sharing
+itself, so this rule is enforced at designation, provisioning and in the
+adapters.
 
 Passkey ceremony and credential storage are naapp-owned; L3 opens the installed
 app origin for this transaction and consumes only verified status/receipt on
@@ -1043,6 +1068,22 @@ container. Media URLs are host-issued asset references, not arbitrary agent URLs
 provider embedding, if needed, goes through a renderer-owned restricted component,
 not page HTML. File names, chart labels and activity text are untrusted too.
 
+Page and approval chrome (built-in widget controls, decision-card and approval
+text, identity and signer chrome, the `link_out` domain notice, status, error
+and blocked states) uses the signed-in member's locale setting, else the page
+locale, else English. A stored per-member locale setting is new host work in
+L3; until it exists the host falls back to the page locale. Message catalogs
+ship in the shared renderer package. The L3 passkey hand-off passes the chrome
+locale, supplied by the host rather than page data and carrying nothing beyond
+the language tag. App-owned enrolment, ceremony, recovery, link and view pages
+and notification bodies use the same message keys and translations: from the
+catalogs when the app uses the shared renderer, or shipped alongside them when
+it renders those pages server-side. A page reached without a hand-off, such as
+an approve-only link, uses the locale recorded with the approver's designation,
+else the browser's preference, else English; the app ships Catalan and English.
+The app sets its WebAuthn relying-party name. The approval and passkey pieces of `aweb_naapp` render
+no human text: their refusals are machine codes that the host maps to localized
+text. Agent-authored content keeps its own language.
 The renderer ships Catalan and English chrome with locale-aware dates, numbers,
 time zones, accessible errors/status announcements, semantic table alternatives,
 keyboard navigation, focus-preserving updates and phone-width layouts. Agent
@@ -1163,7 +1204,7 @@ a local annotation must work while an external booking mutation remains gated.
 Nothing is sent externally without the manager's verified approval and the
 adapter's enforcement. The current brief does not establish cleaning,
 maintenance, keys or payouts; link-local `mark_cleaned` is a generic capability
-example, not a claim about Nactiva's workflow.
+example, not a claim about the customer's workflow.
 
 The [independent fixture](agent-pages/examples/fixture-page.json) is an independent
 inventory/checklist app, not another Folio implementation. It has an edit and an
