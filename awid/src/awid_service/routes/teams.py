@@ -12,7 +12,8 @@ from typing import Literal
 import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pgdbm.errors import QueryError
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 _TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
@@ -755,6 +756,29 @@ async def delete_team(
     return {"deleted": True, "team_id": build_team_id(domain, name), "domain": domain, "name": name}
 
 
+async def _bounded_rotate_body(request: Request) -> TeamRotateKeyRequest:
+    """Read the rotate body with a bound before parsing it.
+
+    The body can carry every re-signed record of the team, so it is streamed
+    and refused with 413 past the deploy limit. The bytes are kept on the
+    request so the covering controller envelope can hash the same body.
+    """
+    limit = request.app.state.rotate_max_body_bytes
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > limit:
+            raise HTTPException(
+                status_code=413,
+                detail={"code": "rotation_too_large", "message": "The re-signed record set exceeds the rotate body limit"},
+            )
+    request._body = bytes(raw)
+    try:
+        return TeamRotateKeyRequest.model_validate_json(request._body)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+
+
 @router.post(
     "/{name}/rotate",
     response_model=TeamRotateResponse,
@@ -764,14 +788,9 @@ async def rotate_team_key(
     request: Request,
     domain: str,
     name: str,
-    body: TeamRotateKeyRequest,
     db_infra=Depends(get_db),
 ) -> TeamRotateResponse:
-    if len(await request.body()) > request.app.state.rotate_max_body_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail={"code": "rotation_too_large", "message": "The re-signed record set exceeds the rotate body limit"},
-        )
+    body = await _bounded_rotate_body(request)
     db = db_infra.get_manager("aweb")
     await _require_namespace_controller(
         request, db, domain=domain, operation="rotate_team_key",

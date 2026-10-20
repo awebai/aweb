@@ -62,6 +62,20 @@ def verify_published_record(
     return canonical_json_bytes(record)
 
 
+async def _lock_team_key(tx, team) -> None:
+    """Hold the team row for the publish, serialising it with a key rotation.
+
+    rotate_team_key takes the row FOR UPDATE, so a publish verified against a
+    key that a rotation has since replaced is refused instead of writing an
+    old-key record after the atomic swap.
+    """
+    locked = await tx.fetch_one(
+        "SELECT team_did_key FROM {{tables.teams}} WHERE team_uuid = $1 FOR SHARE", team["team_uuid"],
+    )
+    if locked is None or locked["team_did_key"] != team["team_did_key"]:
+        raise _refuse(409, "team_key_changed", "The team key changed during the publish; re-sign and retry")
+
+
 def _same_publication(row, canonical: bytes, signature: str) -> bool:
     return row["record_json"] == canonical.decode("utf-8") and row["signature"] == signature
 
@@ -100,6 +114,7 @@ async def publish_team_custodian(
     if body.record["custodian_id"] != custodian_id:
         raise _refuse(422, "record_invalid", "custodian_id does not match the path")
     async with db.transaction() as tx:
+        await _lock_team_key(tx, team)
         row = await tx.fetch_one(
             """
             SELECT record_json, signature, issued_at
@@ -181,6 +196,7 @@ async def publish_member_custody(
     )
     record = body.record
     async with db.transaction() as tx:
+        await _lock_team_key(tx, team)
         _member_fields_match(record, certificate_id, await _active_certificate(tx, team["team_uuid"], certificate_id))
         custodian = await tx.fetch_one(
             """
@@ -245,6 +261,7 @@ async def publish_member_person(
     )
     record = body.record
     async with db.transaction() as tx:
+        await _lock_team_key(tx, team)
         _member_fields_match(record, certificate_id, await _active_certificate(tx, team["team_uuid"], certificate_id))
         row = await tx.fetch_one(
             """

@@ -305,21 +305,39 @@ async def test_a_rotation_without_resigned_records_still_succeeds_and_leaves_old
 
 
 @pytest.mark.asyncio
-async def test_a_publish_waits_for_a_rotation_in_progress_and_then_refuses_the_old_key(controller_app):
+@pytest.mark.parametrize("scenario", ["overwrite", "late-insert"])
+async def test_a_publish_waits_for_a_rotation_in_progress_and_then_refuses_the_old_key(controller_app, scenario):
     import asyncio
 
     env = controller_app
-    assert (await publish_custodian(env, _custodian(env, issued_at=_now(-30)))).status_code == 200
+    cert = await register_certificate(env)
+    first = _custodian(env, issued_at=_now(-30))
+    assert (await publish_custodian(env, first)).status_code == 200
+    if scenario == "overwrite":
+        path, racing = f"{BASE}/custodians/custodian.example", publish_custodian(env, _custodian(env, issued_at=_now(-1)))
+    else:
+        path, racing = f"{BASE}/certificates/{cert['certificate_id']}/person", publish_person(env, _person(env, cert))
+    before = await env.client.get(path)
     new = keypair()
     async with env.db.transaction() as tx:
         # Holds the team row the way rotate_team_key does, then swaps the key.
         await tx.fetch_one("SELECT team_uuid FROM {{tables.teams}} WHERE name = 'base' FOR UPDATE")
-        publish = asyncio.create_task(publish_custodian(env, _custodian(env, issued_at=_now(-1))))
+        publish = asyncio.create_task(racing)
         await asyncio.sleep(0.3)
         assert not publish.done(), "the publish must wait for the rotation's team lock"
         await tx.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = 'base'", new[1])
     response = await publish
     assert response.status_code == 409, response.text
     assert response.json()["detail"]["code"] == "team_key_changed"
-    stored = (await env.client.get(f"{BASE}/custodians/custodian.example")).json()["record"]
-    assert stored["issued_at"] != _custodian(env, issued_at=_now(-1))["issued_at"] or stored["team_did_key"] == new[1]
+    after = await env.client.get(path)
+    assert (after.status_code, after.content) == (before.status_code, before.content)
+
+
+@pytest.mark.asyncio
+async def test_an_oversize_rotation_is_refused_before_the_body_is_parsed(controller_app):
+    env = controller_app
+    env.app.state.rotate_max_body_bytes = 64
+    new = keypair()
+    claims = {"domain": "local", "operation": "rotate_team_key", "name": "base", "new_team_did_key": new[1]}
+    response = await send(env, "POST", f"{BASE}/rotate", claims, {"new_team_did_key": new[1], "pad": "x" * 200})
+    assert response.status_code == 413, response.text
