@@ -74,6 +74,14 @@ ROOT_CONSUMERS = {
         "team-certificate-status-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "team-certificate-status-v1.json"',
     ),
+    PurePosixPath("awid/tests/test_team_server_record.py"): _consumer(
+        "team-server-record-v1.json",
+        'Path(__file__).parents[2] / "docs" / "vectors" / "team-server-record-v1.json"',
+    ),
+    PurePosixPath("cli/go/internal/conformance/team_server_record_test.go"): _consumer(
+        "team-server-record-v1.json",
+        'readRootVector(t, "team-server-record-v1.json")',
+    ),
     PurePosixPath("awid/tests/test_a2a_publication_route.py"): _consumer(
         "a2a-awid-publication-v1.json",
         '_ROOT / "docs" / "vectors" / "a2a-awid-publication-v1.json"',
@@ -186,6 +194,14 @@ ROOT_CONSUMERS = {
     PurePosixPath("naapp-lib/tests/runtime/test_team_auth_vectors.py"): _consumer(
         "team-auth-envelope-v2.json",
         'AWEB_ROOT / "docs" / "vectors" / "team-auth-envelope-v2.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/hooks/test_catalog.py"): _consumer(
+        "hook-catalog-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/hooks/test_binding_cases.py"): _consumer(
+        "hook-binding-cases-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "hook-binding-cases-v1.json"',
     ),
     PurePosixPath("cli/go/a2a/card_test.go"): _consumer(
         "a2a-v1.json",
