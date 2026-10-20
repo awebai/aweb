@@ -470,6 +470,22 @@ class Passkeys:
             )
         )
 
+    async def can_log_in(self, scope: str, subject: str) -> bool:
+        """Whether `subject` is `scope`'s in-effect approver and still holds an
+        unrevoked passkey: what a login needs, and what a session it opened
+        keeps needing for as long as it lasts."""
+        return bool(
+            await self.db.fetch_value(
+                "SELECT EXISTS (SELECT 1 FROM {{tables.passkey_approvers}} "
+                f"WHERE subject = $1 AND {_CURRENT} AND scope = $3 AND EXISTS ("
+                "SELECT 1 FROM {{tables.passkey_credentials}} c "
+                "WHERE c.subject = $1 AND c.revoked_at IS NULL))",
+                subject,
+                self._clock(),
+                scope,
+            )
+        )
+
     # Enrolment through the link
 
     async def _usable_enrolment(self, link_token: str) -> dict[str, Any]:

@@ -141,3 +141,48 @@ async def test_attempts_from_past_windows_are_pruned(db: AsyncDatabaseManager) -
         await _codes(client, 1)
     rows = await db.fetch_value("SELECT count(*) FROM {{tables.console_login_attempts}}")
     assert rows == 1
+
+
+async def test_volume_older_than_its_retention_is_pruned(db: AsyncDatabaseManager) -> None:
+    limiter = _limiter(db, window=timedelta(seconds=1), volume_retention=timedelta(seconds=1))
+    async with _client(limiter, "203.0.113.7") as client:
+        await _codes(client, 1)
+        await asyncio.sleep(2.1)
+        await _codes(client, 1)
+    rows = await db.fetch_value("SELECT count(*) FROM {{tables.console_login_volume}}")
+    assert rows == 1
+    assert (await limiter.volume(SCOPE, since=timedelta(seconds=1))).requests == 1
+
+
+async def test_volume_is_kept_for_thirty_days_by_default(db: AsyncDatabaseManager) -> None:
+    async with _client(_limiter(db), "203.0.113.7") as client:
+        await _codes(client, 1)
+    await db.execute(
+        "UPDATE {{tables.console_login_volume}} SET window_start = NOW() - interval '29 days'"
+    )
+    async with _client(_limiter(db), "198.51.100.9") as client:
+        await _codes(client, 1)
+    assert (await limiter_volume(db, timedelta(days=30))).requests == 2
+    await db.execute(
+        "UPDATE {{tables.console_login_volume}} SET window_start = NOW() - interval '31 days'"
+        " WHERE window_start < NOW() - interval '1 day'"
+    )
+    async with _client(_limiter(db), "192.0.2.1") as client:
+        await _codes(client, 1)
+    assert (await limiter_volume(db, timedelta(days=30))).requests == 2
+
+
+async def limiter_volume(db: AsyncDatabaseManager, since: timedelta):
+    return await _limiter(db).volume(SCOPE, since=since)
+
+
+async def test_volume_retention_must_be_positive(db: AsyncDatabaseManager) -> None:
+    with pytest.raises(ValueError):
+        _limiter(db, volume_retention=timedelta(0))
+
+
+async def test_volume_cannot_be_read_past_its_retention(db: AsyncDatabaseManager) -> None:
+    limiter = _limiter(db, volume_retention=timedelta(days=7))
+    assert (await limiter.volume(SCOPE, since=timedelta(days=7))).requests == 0
+    with pytest.raises(ValueError):
+        await limiter.volume(SCOPE, since=timedelta(days=7, seconds=1))

@@ -8,16 +8,12 @@ The routes are built inside a function, so their annotations are evaluated
 eagerly (no postponed annotations) for FastAPI to see the session dependency.
 """
 
-import uuid
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from datetime import timedelta
 from typing import Annotated, Any
 
 import httpx
 import pytest
 from fastapi import APIRouter, Depends, FastAPI
-from pgdbm import AsyncDatabaseManager
 
 from aweb_naapp.console import (
     ClientIdentity,
@@ -25,65 +21,13 @@ from aweb_naapp.console import (
     ConsoleSession,
     ConsoleSessions,
     LoginLimiter,
-    apply_console_migrations,
     console_login_router,
 )
-from aweb_naapp.runtime.approvals import ApprovalRevocation, PgApprovalStore
 from aweb_naapp.runtime.origins import split_origins
-from aweb_naapp.runtime.passkeys import OwnerActKind, Passkeys, RelyingParty
+from tests.console.support import HUMAN, OWNER_A, OWNER_B, Console
 from tests.runtime.approvals.soft_authenticator import SoftAuthenticator
-from tests.runtime.approvals.support import AuditOutbox
-from tests.runtime.approvals.test_passkeys import Contacts, owner_act
 
 AGENT = "https://api.console.example"
-HUMAN = "https://console.example"
-OWNER_A = "app.owner.a"
-OWNER_B = "app.owner.b"
-
-
-@dataclass
-class Console:
-    db: AsyncDatabaseManager
-    passkeys: Passkeys
-    contacts: Contacts
-    sessions: ConsoleSessions
-    allowed: set[str]
-
-    async def enrol(self, scope: str) -> SoftAuthenticator:
-        contact = f"{scope}@example.com"
-        await self.passkeys.designate(
-            scope=scope,
-            contact=contact,
-            owner_act=owner_act(OwnerActKind.DESIGNATE, contact, scope, str(uuid.uuid4())),
-        )
-        token = self.contacts.last(contact)
-        device = SoftAuthenticator(HUMAN)
-        await self.passkeys.complete_enrolment(
-            token, device.create(dict(await self.passkeys.enrolment_options(token)))
-        )
-        return device
-
-
-@pytest.fixture
-async def console(test_db_factory) -> AsyncIterator[Console]:
-    db = await test_db_factory.create_db(suffix="naapp_console_login", schema="app")
-    audit = AuditOutbox(db)
-    await audit.create()
-    store = PgApprovalStore(db)
-    await store.migrate()
-    contacts = Contacts()
-    passkeys = Passkeys(
-        db,
-        rp=RelyingParty(origin=HUMAN, name="Console"),
-        delivery=contacts,
-        audit=audit,
-        retirement=ApprovalRevocation(store, audit),
-        enrolment_ttl=timedelta(hours=1),
-        challenge_ttl=timedelta(minutes=5),
-    )
-    await passkeys.migrate()
-    await apply_console_migrations(db)
-    yield Console(db, passkeys, contacts, ConsoleSessions(db), {OWNER_A, OWNER_B})
 
 
 def _limiter(console: Console, limit: int = 20) -> LoginLimiter:
@@ -92,25 +36,20 @@ def _limiter(console: Console, limit: int = 20) -> LoginLimiter:
     )
 
 
-def _app(console: Console, limiter: LoginLimiter, prefix: str = "") -> Any:
-    async def scopes(scope: str) -> bool:
-        return scope in console.allowed
-
+def _app(
+    console: Console,
+    limiter: LoginLimiter,
+    prefix: str = "",
+    sessions: ConsoleSessions | None = None,
+) -> Any:
+    sessions = sessions or console.sessions()
     human = FastAPI()
-    human.include_router(
-        console_login_router(
-            passkeys=console.passkeys,
-            sessions=console.sessions,
-            limiter=limiter,
-            scopes=scopes,
-            prefix=prefix,
-        )
-    )
+    human.include_router(console_login_router(sessions=sessions, limiter=limiter, prefix=prefix))
     pages = APIRouter(route_class=ConsoleRoute)
 
     @pages.get("/whoami")
     async def whoami(
-        session: Annotated[ConsoleSession, Depends(console.sessions.current)],
+        session: Annotated[ConsoleSession, Depends(sessions.current)],
     ) -> dict[str, str]:
         return {"subject": session.subject, "scope": session.scope}
 
@@ -139,7 +78,7 @@ def _cookie(response: httpx.Response) -> str:
 
 
 async def test_an_owner_logs_in_with_a_user_verified_passkey(console: Console) -> None:
-    device = await console.enrol(OWNER_A)
+    _, device = await console.enrol(OWNER_A)
     async with _client(_app(console, _limiter(console))) as client:
         response = await _login(client, device, OWNER_A)
         assert response.status_code == 200
@@ -151,7 +90,7 @@ async def test_an_owner_logs_in_with_a_user_verified_passkey(console: Console) -
 
 
 async def test_login_without_user_verification_opens_no_session(console: Console) -> None:
-    device = await console.enrol(OWNER_A)
+    _, device = await console.enrol(OWNER_A)
     async with _client(_app(console, _limiter(console))) as client:
         response = await _login(client, device, OWNER_A, user_verified=False)
     assert response.status_code == 401
@@ -160,8 +99,8 @@ async def test_login_without_user_verification_opens_no_session(console: Console
 
 
 async def test_each_owner_logs_in_only_to_their_own_scope(console: Console) -> None:
-    device_a = await console.enrol(OWNER_A)
-    device_b = await console.enrol(OWNER_B)
+    _, device_a = await console.enrol(OWNER_A)
+    _, device_b = await console.enrol(OWNER_B)
     async with _client(_app(console, _limiter(console))) as client:
         a = await _login(client, device_a, OWNER_A)
         b = await _login(client, device_b, OWNER_B)
@@ -176,7 +115,7 @@ async def test_each_owner_logs_in_only_to_their_own_scope(console: Console) -> N
 
 
 async def test_a_scope_the_app_does_not_accept_cannot_log_in(console: Console) -> None:
-    device = await console.enrol(OWNER_A)
+    _, device = await console.enrol(OWNER_A)
     async with _client(_app(console, _limiter(console))) as client:
         options = dict((await client.post("/login/options", json={"scope": OWNER_A})).json())
         console.allowed.discard(OWNER_A)
@@ -190,7 +129,7 @@ async def test_a_scope_the_app_does_not_accept_cannot_log_in(console: Console) -
 
 
 async def test_a_refused_scope_gets_the_same_answer_as_a_failed_login(console: Console) -> None:
-    device = await console.enrol(OWNER_A)
+    _, device = await console.enrol(OWNER_A)
     async with _client(_app(console, _limiter(console))) as client:
         unknown = await client.post("/login/options", json={"scope": "app.owner.nobody"})
         console.allowed.add("app.owner.nobody")
@@ -222,7 +161,7 @@ async def test_a_refused_scope_is_not_metered(console: Console) -> None:
 
 
 async def test_logout_needs_the_csrf_token_and_ends_the_session(console: Console) -> None:
-    device = await console.enrol(OWNER_A)
+    _, device = await console.enrol(OWNER_A)
     async with _client(_app(console, _limiter(console))) as client:
         response = await _login(client, device, OWNER_A)
         cookie, csrf = _cookie(response), response.json()["csrf_token"]
@@ -236,7 +175,7 @@ async def test_logout_needs_the_csrf_token_and_ends_the_session(console: Console
 
 
 async def test_the_login_routes_take_a_prefix(console: Console) -> None:
-    device = await console.enrol(OWNER_A)
+    _, device = await console.enrol(OWNER_A)
     async with _client(_app(console, _limiter(console), prefix="/console")) as client:
         response = await _login(client, device, OWNER_A, prefix="/console")
         root = await client.post("/login/options", json={"scope": OWNER_A})
@@ -255,7 +194,7 @@ async def test_the_login_routes_take_a_prefix(console: Console) -> None:
 async def test_team_auth_is_refused_on_the_console(
     console: Console, header: tuple[str, str]
 ) -> None:
-    device = await console.enrol(OWNER_A)
+    _, device = await console.enrol(OWNER_A)
     async with _client(_app(console, _limiter(console))) as client:
         options = dict((await client.post("/login/options", json={"scope": OWNER_A})).json())
         login = await client.post(
@@ -280,7 +219,7 @@ async def test_the_console_is_not_served_on_the_agent_origin(console: Console) -
 
 
 async def test_login_responses_carry_the_console_headers(console: Console) -> None:
-    device = await console.enrol(OWNER_A)
+    _, device = await console.enrol(OWNER_A)
     async with _client(_app(console, _limiter(console))) as client:
         responses = [
             await client.post("/login/options", json={"scope": OWNER_A}),
@@ -292,3 +231,44 @@ async def test_login_responses_carry_the_console_headers(console: Console) -> No
         assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
         assert response.headers["cache-control"] == "no-store"
         assert response.headers["referrer-policy"] == "no-referrer"
+
+
+async def _closed(console: Console) -> int:
+    return await console.db.fetch_value(
+        "SELECT count(*) FROM {{tables.console_sessions}} WHERE closed_at IS NOT NULL"
+    )
+
+
+async def test_a_session_ends_when_a_recovery_replaces_its_approver(console: Console) -> None:
+    _, device = await console.enrol(OWNER_A)
+    async with _client(_app(console, _limiter(console))) as client:
+        cookie = _cookie(await _login(client, device, OWNER_A))
+        assert (await client.get("/whoami", headers={"Cookie": cookie})).status_code == 200
+        await console.recover(OWNER_A, "new-phone@example.com")
+        after = await client.get("/whoami", headers={"Cookie": cookie})
+    assert after.status_code == 401
+    assert after.json() == {"detail": "console_session_required"}
+    assert await _closed(console) == 1
+
+
+async def test_a_session_ends_when_the_app_stops_admitting_its_scope(console: Console) -> None:
+    _, device = await console.enrol(OWNER_A)
+    async with _client(_app(console, _limiter(console))) as client:
+        cookie = _cookie(await _login(client, device, OWNER_A))
+        console.allowed.discard(OWNER_A)
+        refused = await client.get("/whoami", headers={"Cookie": cookie})
+        console.allowed.add(OWNER_A)
+        still_refused = await client.get("/whoami", headers={"Cookie": cookie})
+    assert refused.status_code == still_refused.status_code == 401
+    assert await _closed(console) == 1
+
+
+async def test_another_owners_session_survives_a_recovery(console: Console) -> None:
+    _, device_a = await console.enrol(OWNER_A)
+    _, device_b = await console.enrol(OWNER_B)
+    async with _client(_app(console, _limiter(console))) as client:
+        cookie_b = _cookie(await _login(client, device_b, OWNER_B))
+        await console.recover(OWNER_A, "new-phone@example.com")
+        whoami = await client.get("/whoami", headers={"Cookie": cookie_b})
+    assert whoami.status_code == 200
+    assert whoami.json()["scope"] == OWNER_B

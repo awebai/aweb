@@ -104,9 +104,6 @@ def _free_socket() -> socket.socket:
 
 
 def _human_app(passkeys: Passkeys, sessions: ConsoleSessions, limiter: LoginLimiter) -> FastAPI:
-    async def scopes(scope: str) -> bool:
-        return scope == SCOPE
-
     pages = APIRouter(route_class=ConsoleRoute)
 
     @pages.get("/")
@@ -134,9 +131,7 @@ def _human_app(passkeys: Passkeys, sessions: ConsoleSessions, limiter: LoginLimi
         return {"enrolled": True}
 
     human = FastAPI()
-    human.include_router(
-        console_login_router(passkeys=passkeys, sessions=sessions, limiter=limiter, scopes=scopes)
-    )
+    human.include_router(console_login_router(sessions=sessions, limiter=limiter))
     human.include_router(pages)
     return human
 
@@ -163,7 +158,11 @@ async def service(test_db_factory) -> AsyncIterator[Service]:
     )
     await passkeys.migrate()
     await apply_console_migrations(db)
-    sessions = ConsoleSessions(db)
+
+    async def scopes(scope: str) -> bool:
+        return scope == SCOPE
+
+    sessions = ConsoleSessions(db, passkeys=passkeys, scopes=scopes)
     limiter = LoginLimiter(
         db, client_identity=ClientIdentity(), limit=20, window=timedelta(minutes=1)
     )

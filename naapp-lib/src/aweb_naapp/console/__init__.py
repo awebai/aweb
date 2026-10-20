@@ -88,12 +88,31 @@ def _sha256(value: str) -> bytes:
     return hashlib.sha256(value.encode("utf-8")).digest()
 
 
+ScopeAdmission = Callable[[str], Awaitable[bool]]
+
+
 class ConsoleSessions:
-    def __init__(self, db: AsyncDatabaseManager, *, ttl: timedelta = MAX_SESSION) -> None:
+    """Console sessions for the scopes ``scopes`` admits, logged in through ``passkeys``.
+
+    A session lasts while its subject can still log in: on every request it is
+    refused, and closed, once the subject is no longer the scope's in-effect
+    approver with an unrevoked passkey, or the app no longer admits the scope.
+    """
+
+    def __init__(
+        self,
+        db: AsyncDatabaseManager,
+        *,
+        passkeys: Passkeys,
+        scopes: ScopeAdmission,
+        ttl: timedelta = MAX_SESSION,
+    ) -> None:
         if not timedelta(0) < ttl <= MAX_SESSION:
             raise ValueError("a console session lasts more than 0 and at most 15 minutes")
         self._db = db
         self._ttl = ttl
+        self.passkeys = passkeys
+        self.scopes = scopes
 
     async def open(self, *, subject: str, scope: str, evidence_ref: str) -> IssuedSession:
         """Open a session for a subject whose passkey login B3 has verified."""
@@ -153,6 +172,12 @@ class ConsoleSessions:
         )
         if row is None:
             raise HTTPException(status_code=401, detail="console_session_required")
+        if not (
+            await self.passkeys.can_log_in(row["scope"], row["subject"])
+            and await self.scopes(row["scope"])
+        ):
+            await self._close(bytes(row["token_sha256"]))
+            raise HTTPException(status_code=401, detail="console_session_required")
         if request.method not in SAFE_METHODS:
             supplied = request.headers.get(CSRF_HEADER, "")
             if not hmac.compare_digest(_sha256(supplied), bytes(row["csrf_sha256"])):
@@ -166,9 +191,12 @@ class ConsoleSessions:
         )
 
     async def close(self, session: ConsoleSession) -> None:
+        await self._close(session.token_sha256)
+
+    async def _close(self, token_sha256: bytes) -> None:
         await self._db.execute(
             "UPDATE {{tables.console_sessions}} SET closed_at = NOW() WHERE token_sha256 = $1",
-            session.token_sha256,
+            token_sha256,
         )
 
 
@@ -208,7 +236,8 @@ class LoginLimiter:
     Login needs no prior authentication, so without it a flood of login
     requests could keep evicting the real person's challenge. ``admit`` raises
     429 with ``Retry-After`` once a client has made ``limit`` requests in the
-    current window. Every request, throttled or not, is counted for its scope.
+    current window. Every request, throttled or not, is counted for its scope,
+    and volume older than ``volume_retention`` is dropped as new volume is written.
     """
 
     def __init__(
@@ -218,13 +247,15 @@ class LoginLimiter:
         client_identity: ClientIdentity,
         limit: int,
         window: timedelta,
+        volume_retention: timedelta = timedelta(days=30),
     ) -> None:
-        if limit <= 0 or window <= timedelta(0):
-            raise ValueError("a login limit and its window must be positive")
+        if limit <= 0 or window <= timedelta(0) or volume_retention <= timedelta(0):
+            raise ValueError("a login limit, its window and the volume retention must be positive")
         self._db = db
         self._identity = client_identity
         self._limit = limit
         self._window = window
+        self._volume_retention = volume_retention
 
     async def admit(self, request: Request, scope: str) -> None:
         client = self._identity.of(request)
@@ -253,6 +284,10 @@ class LoginLimiter:
                 raise RuntimeError("the login attempt was not counted")
             throttled = row["attempts"] > self._limit
             await tx.execute(
+                "DELETE FROM {{tables.console_login_volume}} WHERE window_start < NOW() - $1::interval",
+                self._volume_retention,
+            )
+            await tx.execute(
                 """
                 INSERT INTO {{tables.console_login_volume}} AS v
                     (scope, window_start, requests, throttled)
@@ -272,7 +307,10 @@ class LoginLimiter:
             )
 
     async def volume(self, scope: str, *, since: timedelta) -> LoginVolume:
-        """Login requests for ``scope`` in the buckets that began within ``since``."""
+        """Login requests for ``scope`` in the buckets that began within ``since``,
+        which may not reach past the volume retention."""
+        if since > self._volume_retention:
+            raise ValueError("volume is kept only for the volume retention")
         row = await self._db.fetch_one(
             """
             SELECT coalesce(sum(requests), 0) AS requests,
@@ -320,26 +358,22 @@ class LoginRequest(BaseModel):
 
 
 def console_login_router(
-    *,
-    passkeys: Passkeys,
-    sessions: ConsoleSessions,
-    limiter: LoginLimiter,
-    scopes: Callable[[str], Awaitable[bool]],
-    prefix: str = "",
+    *, sessions: ConsoleSessions, limiter: LoginLimiter, prefix: str = ""
 ) -> APIRouter:
     """The console's passkey login: ``POST /login/options``, ``POST /login`` and
     ``POST /logout``, under ``prefix``.
 
-    A login names its scope, and ``scopes`` says whether that scope may log in
-    on this console. A scope it refuses gets the same 401 as a failed login and
+    A login names its scope, and the sessions' ``scopes`` says whether that
+    scope may log in on this console. A scope it refuses gets the same 401 as a failed login and
     is neither metered nor passed to B3. An accepted scope is rate-limited per
     client, and B3 verifies the assertion with user verification required. A
     verified login opens a session for that scope and returns its CSRF token.
     """
     router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
+    passkeys = sessions.passkeys
 
     async def admit(request: Request, scope: str) -> None:
-        if not await scopes(scope):
+        if not await sessions.scopes(scope):
             raise HTTPException(status_code=401, detail=LOGIN_REFUSED)
         await limiter.admit(request, scope)
 
