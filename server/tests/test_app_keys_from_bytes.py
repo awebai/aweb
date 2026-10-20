@@ -18,6 +18,8 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
+
+import aweb.routes.apps as apps_routes
 from awid.signing import canonical_json_bytes, sign_message
 from aweb_naapp.manifest import ManifestError, load_manifest, read_manifest_bytes
 
@@ -34,6 +36,8 @@ from aweb.service_errors import ConflictError, ValidationError
 from tests.test_app_credentials import _app as _probe_app
 from tests.test_app_credentials import _post
 from tests.test_app_events_http import AGENT_ID, OTHER_TEAM_ID, TEAM_ID, _make_app_keypair, _seed_team_and_agent
+from tests.test_app_install_bytes import _install as _install_over_http
+from tests.test_app_registry_http import _build_apps_app, _fake_team_identity
 
 ROOT = Path(__file__).resolve().parents[2]
 VECTOR = json.loads((ROOT / "test-vectors" / "app-manifests" / "app-manifest-v2-v1.json").read_text(encoding="utf-8"))
@@ -226,6 +230,28 @@ async def test_a_revoked_key_stays_revoked_when_the_same_bytes_are_installed_aga
 
 
 @pytest.mark.asyncio
+async def test_a_revoked_key_stays_revoked_when_new_bytes_list_it_again(db):
+    signer, entry = _key("read-1", [APP_GRANT_READ, HOOK_RESOLVE])
+    await _install_v2(db, _v2_manifest([entry]))
+    await db.execute(
+        "UPDATE {{tables.team_app_keys}} SET revoked_at = NOW() WHERE team_id = $1 AND key_id = 'read-1'", TEAM_ID
+    )
+
+    await _install_v2(db, _v2_manifest([entry], version="0.0.1"), version="0.0.1")
+
+    app = _probe_app(db)
+    for purpose in (APP_GRANT_READ, HOOK_RESOLVE):
+        assert await get_active_app_key(
+            db, team_id=TEAM_ID, app_id=APP_ID, kid=entry["kid"], did_key=entry["did_key"], purpose=purpose
+        ) is None, purpose
+        response = await _post(
+            app, f"/probe/{purpose}", b"{}",
+            _signed_for_app(purpose, signer, entry, path=f"/probe/{purpose}", body=b"{}"),
+        )
+        assert response.status_code == 403, (purpose, response.text)
+
+
+@pytest.mark.asyncio
 async def test_another_teams_keys_are_never_active_for_this_team(db):
     signer, entry = _key("read-1", [APP_GRANT_READ])
     manifest = _v2_manifest([entry])
@@ -318,6 +344,25 @@ def _registered_keys(registration) -> list[tuple[str, str, tuple[str, ...]]]:
 VECTOR_INPUTS = [(case["name"], _case_bytes(case), case["expected"]) for case in VECTOR["cases"]] + [
     (case["name"], case["bytes"].encode(), case["expected"]) for case in VECTOR["raw_cases"]
 ]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_manifest_is_a_422_whose_detail_carries_the_readers_code(db, monkeypatch):
+    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
+    _, entry = _key("bad", [APP_GRANT_READ])
+    entry["did_key"] = "did:key:zNotAKey"
+    manifest = _v2_manifest([entry])
+    body = {
+        "app_id": APP_ID, "origin": ORIGIN, "app_version": "0.0.0", "manifest_version": 2,
+        "digest": _digest(manifest), "granted_scopes": [], "events": [], "event_emitters": [],
+        "manifest": base64.b64encode(manifest).decode(),
+    }
+
+    response = await _install_over_http(_build_apps_app(db), body)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "app_keys_invalid"
+    assert await _team_keys(db) == []
 
 
 def test_the_server_reserves_the_names_the_vector_reserves():

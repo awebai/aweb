@@ -507,12 +507,20 @@ async def _write_team_registrations(
         )
         if conflicting:
             raise ConflictError("app key id is already registered with a different key")
+        # A team's revocation of a key outlives the digest it was made under:
+        # new bytes listing the same key register it already revoked.
         await tx.execute(
             """
             INSERT INTO {{tables.team_app_keys}} (
-                team_id, app_id, origin, digest, key_id, did_key, purposes
+                team_id, app_id, origin, digest, key_id, did_key, purposes, revoked_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[])
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7::TEXT[],
+                (
+                    SELECT MIN(revoked_at) FROM {{tables.team_app_keys}}
+                    WHERE team_id = $1 AND app_id = $2 AND key_id = $5 AND did_key = $6
+                )
+            )
             ON CONFLICT (team_id, app_id, origin, digest, key_id) DO NOTHING
             """,
             team_id,
@@ -562,7 +570,7 @@ def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: 
     try:
         resolved = load_manifest(manifest, reserved_names=reserved_app_ids())
     except ManifestError as exc:
-        raise ValidationError(f"manifest is refused: {exc}") from exc
+        raise ValidationError({"code": exc.code, "message": str(exc)}) from exc
     app = resolved.document["app"]
     if normalize_app_id(str(app.get("id") or "")) != app_id:
         raise ValidationError("manifest app id does not match the install")
