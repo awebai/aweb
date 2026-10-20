@@ -1086,7 +1086,7 @@
     {
       "name": "reject_unsupported_manifest_version",
       "manifest": {
-        "manifest_version": 2,
+        "manifest_version": 3,
         "app": {
           "id": "safe",
           "version": "1",

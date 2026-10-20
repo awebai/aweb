@@ -50,14 +50,28 @@ func decodeSingleJSON(data []byte, v any, disallowUnknown bool) error {
 	return nil
 }
 
-const SupportedManifestVersion = 1
+// SupportedManifestVersions are the manifest contract versions this
+// interpreter accepts. Version 1 is tools-only; version 2 adds tool
+// invocation contexts, surfaces, usage, lifecycle, the hooks slot and
+// purpose-split app keys.
+var SupportedManifestVersions = []int{1, 2}
 
+// Manifest is one app manifest of either supported version. The fields after
+// Events exist only in version 2; Validate refuses them in version 1.
 type Manifest struct {
 	ManifestVersion int            `json:"manifest_version"`
 	App             App            `json:"app"`
 	Tools           []Tool         `json:"tools"`
 	EventEmitters   []EventEmitter `json:"event_emitters,omitempty"`
 	Events          Events         `json:"events,omitempty"`
+	AppKeys         AppKeys        `json:"app_keys,omitempty"`
+	Surfaces        Surfaces       `json:"surfaces,omitempty"`
+	Usage           *Usage         `json:"usage,omitempty"`
+	Lifecycle       *Lifecycle     `json:"lifecycle,omitempty"`
+	Hooks           *Hooks         `json:"hooks,omitempty"`
+	// members are the top-level member names of decoded bytes, so a
+	// present member is told apart from an absent one.
+	members map[string]bool
 }
 
 type App struct {
@@ -79,6 +93,8 @@ type Tool struct {
 	Scopes      []string       `json:"scopes,omitempty"`
 	Auth        string         `json:"auth,omitempty"`
 	Mutation    bool           `json:"mutation"`
+	// InvocationContexts is version 2 only. Absent means agent and surface.
+	InvocationContexts Contexts `json:"invocation_contexts,omitempty"`
 }
 
 type Param struct {
@@ -192,10 +208,24 @@ type InterpretedRequest struct {
 	Mutation   bool              `json:"mutation"`
 }
 
+// Validate checks a manifest of either supported version. Its errors carry a
+// stable code (see ErrorCode); messages are for people.
 func Validate(manifest Manifest, reservedNames map[string]bool) error {
-	if manifest.ManifestVersion != SupportedManifestVersion {
-		return fmt.Errorf("unsupported manifest_version %d", manifest.ManifestVersion)
+	switch manifest.ManifestVersion {
+	case 1, 2:
+	default:
+		return codedError(CodeManifestVersionUnsupported, fmt.Errorf("unsupported manifest_version %d", manifest.ManifestVersion))
 	}
+	if err := validateCommon(manifest, reservedNames); err != nil {
+		return codedError(CodeManifestInvalid, err)
+	}
+	if manifest.ManifestVersion == 1 {
+		return validateV1Only(manifest)
+	}
+	return validateV2(manifest)
+}
+
+func validateCommon(manifest Manifest, reservedNames map[string]bool) error {
 	appID := strings.TrimSpace(manifest.App.ID)
 	if appID == "" {
 		return fmt.Errorf("app.id is required")
