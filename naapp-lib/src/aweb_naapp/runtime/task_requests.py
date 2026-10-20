@@ -28,9 +28,13 @@ from nacl.signing import SigningKey, VerifyKey
 
 AUTHORIZATION_PREFIX = b"aweb.app-task-authorization/1\n"
 AUTHORIZATION_TYPE = "aweb.app-task-authorization"
+STAGE_RECEIPT_PREFIX = b"aweb.app-answer-stage/1\n"
+STAGE_RECEIPT_TYPE = "aweb.app-answer-stage"
+MAX_STAGE_RECEIPT_SECONDS = 300
 MAX_LIFETIME_SECONDS = 86400
 MAX_ISSUED_AT_SKEW_SECONDS = 60
 SAFE_INTEGER = 2**53 - 1
+MAX_ELIGIBLE = 16
 
 _REFERENCE = re.compile(r"[A-Za-z0-9._-]{1,128}")
 _OPAQUE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
@@ -39,6 +43,7 @@ _HEX_DIGEST = re.compile(r"[0-9a-f]{64}")
 _PREFIXED_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _NONCE = re.compile(r"[0-9a-f]{32}")
 _TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+_ROLE_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)+")
 _CHOICE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}")
 # Unicode bidi controls, marks included, the same set manifest role labels refuse.
 _BIDI_CONTROLS = frozenset(
@@ -58,7 +63,7 @@ _PAYLOAD_FIELDS = frozenset(
         "external_request_id",
         "actor_did_key",
         "certificate_id",
-        "target_did",
+        "target_dids",
         "task_body_sha256",
         "action_id",
         "proposal_rev",
@@ -77,6 +82,8 @@ _APP_REQUEST_FIELDS = frozenset(
         "proposal_rev",
         "proposal_sha256",
         "choices",
+        "eligible_dids",
+        "role",
     }
 )
 
@@ -164,6 +171,15 @@ def _canonical_origin(value: object) -> bool:
     return True
 
 
+def _principal_set(value: object) -> bool:
+    """1-16 distinct principal DIDs in sorted order: one spelling per set."""
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_ELIGIBLE:
+        return False
+    if not all(_matches(_PRINCIPAL_DID, did) for did in value):
+        return False
+    return value == sorted(set(value))
+
+
 def _proposal_pair(rev: object, digest: object) -> bool:
     if rev is None and digest is None:
         return True
@@ -191,6 +207,18 @@ def validate_task(task: object) -> None:
             raise _refuse("schema_invalid", field)
     if not _proposal_pair(request["proposal_rev"], request["proposal_sha256"]):
         raise _refuse("schema_invalid", "proposal")
+    eligible = request["eligible_dids"]
+    if request["proposal_rev"] is None:
+        if eligible is not None:
+            raise _refuse("schema_invalid", "eligible_dids on a request without a proposal")
+    elif not _principal_set(eligible) or task["assignee_did"] not in eligible:
+        raise _refuse("schema_invalid", "eligible_dids")
+    role = request["role"]
+    if request["proposal_rev"] is None:
+        if role is not None:
+            raise _refuse("schema_invalid", "role on a request without a proposal")
+    elif role is not None and not (_matches(_ROLE_NAME, role) and len(role.encode("utf-8")) <= 128):
+        raise _refuse("schema_invalid", "role")
     choices = request["choices"]
     if choices is not None:
         if not isinstance(choices, list) or not 1 <= len(choices) <= 10:
@@ -247,8 +275,8 @@ def _check_payload(payload: object) -> tuple[datetime, datetime]:
             raise bad("actor_did_key")
     except ValueError as exc:
         raise bad("actor_did_key") from exc
-    if not _matches(_PRINCIPAL_DID, payload["target_did"]):
-        raise bad("target_did")
+    if not _principal_set(payload["target_dids"]):
+        raise bad("target_dids")
     if not _matches(_HEX_DIGEST, payload["task_body_sha256"]):
         raise bad("task_body_sha256")
     if not _proposal_pair(payload["proposal_rev"], payload["proposal_sha256"]):
@@ -299,6 +327,116 @@ def verify_task_authorization(
             raise _refuse("target_mismatch", field)
     # Time is checked last, so a caller that accepts an expired authorization
     # for a matching replay knows every other check passed.
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    if (
+        issued - now.astimezone(UTC)
+    ).total_seconds() > MAX_ISSUED_AT_SKEW_SECONDS or now >= expires:
+        raise _refuse("authorization_expired", "outside the validity window")
+
+
+# ---------------------------------------------------------------- stage receipt
+
+_STAGE_FIELDS = frozenset(
+    {
+        "v",
+        "type",
+        "team_id",
+        "app_id",
+        "installation_id",
+        "installation_generation",
+        "kid",
+        "did_key",
+        "task_id",
+        "question_rev",
+        "answer_key",
+        "answer_sha256",
+        "answerer_did",
+        "issued_at",
+        "expires_at",
+        "nonce",
+    }
+)
+
+
+def stage_receipt_signing_bytes(payload: Mapping[str, Any]) -> bytes:
+    return STAGE_RECEIPT_PREFIX + canonical_json_bytes(dict(payload))
+
+
+def _check_stage_payload(payload: object) -> tuple[datetime, datetime]:
+    def bad(reason: str) -> TaskRequestRefused:
+        return _refuse("signature_invalid", reason)
+
+    if not isinstance(payload, Mapping) or set(payload) != _STAGE_FIELDS:
+        raise bad("payload fields")
+    if not (_is_int(payload["v"]) and payload["v"] == 1) or payload["type"] != STAGE_RECEIPT_TYPE:
+        raise bad("v or type")
+    try:
+        parse_team_id(payload["team_id"])
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise bad("team_id") from exc
+    for field in ("app_id", "installation_id", "kid", "task_id"):
+        if not _matches(_OPAQUE_ID, payload[field]):
+            raise bad(field)
+    if not _is_safe_int(payload["installation_generation"], 1):
+        raise bad("installation_generation")
+    if not _is_safe_int(payload["question_rev"], 1):
+        raise bad("question_rev")
+    if not _matches(_REFERENCE, payload["answer_key"]):
+        raise bad("answer_key")
+    if not _matches(_HEX_DIGEST, payload["answer_sha256"]):
+        raise bad("answer_sha256")
+    if not _matches(_PRINCIPAL_DID, payload["answerer_did"]):
+        raise bad("answerer_did")
+    key = payload["did_key"]
+    try:
+        if not isinstance(key, str) or did_from_public_key(public_key_from_did(key)) != key:
+            raise bad("did_key")
+    except ValueError as exc:
+        raise bad("did_key") from exc
+    if not _matches(_NONCE, payload["nonce"]):
+        raise bad("nonce")
+    issued, expires = _timestamp(payload["issued_at"]), _timestamp(payload["expires_at"])
+    if issued is None or expires is None:
+        raise bad("timestamps")
+    if not 0 < (expires - issued).total_seconds() <= MAX_STAGE_RECEIPT_SECONDS:
+        raise bad("lifetime")
+    return issued, expires
+
+
+def sign_stage_receipt(payload: Mapping[str, Any], signing_key: SigningKey) -> str:
+    """The app's signature over a stage receipt, base64url without padding."""
+    _check_stage_payload(payload)
+    signature = signing_key.sign(stage_receipt_signing_bytes(payload)).signature
+    return base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+
+
+def verify_stage_receipt(
+    payload: Mapping[str, Any],
+    signature: str,
+    *,
+    expected: Mapping[str, Any],
+    now: datetime,
+) -> None:
+    """Verify an app's stage receipt: shape and signature, then bindings, then time.
+
+    ``expected`` holds what the receipt must equal: the creating installation
+    and its current generation, the task and its current question, the answer
+    key and digest, and the verified answerer. Whether ``did_key`` is registered
+    for the installation's app-request purpose, and whether the nonce was
+    already used, are the task service's checks.
+    """
+    issued, expires = _check_stage_payload(payload)
+    raw = _signature_bytes(signature)
+    try:
+        VerifyKey(public_key_from_did(payload["did_key"])).verify(
+            stage_receipt_signing_bytes(payload), raw
+        )
+    except BadSignatureError as exc:
+        raise _refuse("signature_invalid", "signature does not verify") from exc
+    for field, value in expected.items():
+        if payload.get(field) != value or (_is_int(value) and not _is_int(payload.get(field))):
+            raise _refuse("target_mismatch", field)
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     if (

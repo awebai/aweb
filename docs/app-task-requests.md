@@ -65,7 +65,7 @@ A field never accepts the other spelling.
   "external_request_id": "act_9f2c…",
   "actor_did_key": "did:key:z6Mk…",
   "certificate_id": "…",
-  "target_did": "did:aw:…",
+  "target_dids": ["did:aw:…"],
   "task_body_sha256": "<64 hex>",
   "action_id": "request-cleaner",
   "proposal_rev": null,
@@ -86,7 +86,7 @@ A field never accepts the other spelling.
 | `external_request_id` | `^[A-Za-z0-9._-]{1,128}$`, chosen by the app, unique per originating member within the installation. |
 | `actor_did_key` | The signing member's `did:key`. It equals the certificate's `member_did_key`. |
 | `certificate_id` | The signing member's team certificate. |
-| `target_did` | The principal DID the task is assigned to (§3). |
+| `target_dids` | The principals who may answer (§3): for a decision request, the task's `eligible_dids`; otherwise `[assignee_did]`. 1–16 distinct principal DIDs, sorted. The member's signature binds the whole set. |
 | `task_body_sha256` | Bare hex SHA-256 of the canonical bytes of the `task` object (§3). |
 | `action_id` | The page action that produced the request, `^[A-Za-z0-9._-]{1,128}$`. |
 | `proposal_rev`, `proposal_sha256` | Both `null`, or both set: a safe non-negative integer and a `sha256:` digest. Set when the request asks a person to decide a proposal. |
@@ -171,7 +171,9 @@ current generation.
       "action_ref": "request-cleaner",
       "proposal_rev": null,
       "proposal_sha256": null,
-      "choices": null
+      "choices": null,
+      "eligible_dids": null,
+      "role": null
     }
   },
   "task_authorization": {"payload": { … }, "signature": "…", "certificate": "…"}
@@ -186,6 +188,8 @@ current generation.
 | `app_request.external_request_id` | Equals the authorization's. |
 | `resource_ref`, `action_ref` | Opaque references, `^[A-Za-z0-9._-]{1,128}$`. |
 | `proposal_rev`, `proposal_sha256` | Equal the authorization's. |
+| `eligible_dids` | Required on a **decision request** (one whose `proposal_rev` and `proposal_sha256` are set) and `null` otherwise: 1–16 distinct principal DIDs, sorted, of individually designated people, including `assignee_did`. Frozen at create: they are who may answer. |
+| `role` | On a decision request, the role name (`aweb_naapp.roles` grammar: dot-separated lowercase segments, at most 128 bytes) the eligible set was resolved from, or `null` when the target named the principals directly. `null` on any other request. The app is the installation's own; hosts show the pair (app, role). |
 | `choices` | `null`, or 1–10 distinct strings `^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$` that an answer may choose from. These are a decision card's option `value`s ([page-format.md](page-format.md) §5), copied unchanged. |
 
 Unknown fields are refused at every level. `task_body_sha256` is the hex
@@ -217,7 +221,7 @@ Each step fails closed. Nothing is written before step 8.
 5. **Binding.** `aud` is this service's public origin. `team_id`, `app_id`,
    `installation_id` and `installation_generation` equal the transport's.
    `app_origin` equals the installed app's origin. `task_body_sha256` equals
-   the digest of the body's `task`. `target_did` equals `task.assignee_did`.
+   the digest of the body's `task`. `target_dids` equals `task.app_request.eligible_dids` for a decision request and `[task.assignee_did]` otherwise.
    `external_request_id`, `proposal_rev` and `proposal_sha256` equal
    `task.app_request`'s, and `action_id` equals `action_ref`. Failure: 403
    `target_mismatch`.
@@ -241,9 +245,10 @@ Each step fails closed. Nothing is written before step 8.
 8. **Scope, installation and target.** Under the installation row lock
    (`for_update`): the installation is active, its generation is unchanged,
    and it holds the granted scope `requests.create`. Otherwise 403
-   `scope_denied`. `assignee_did` resolves to exactly one current, unrevoked
-   member of the team; otherwise 422 `target_unresolved`, with no identifiers
-   in the error.
+   `scope_denied`. Each DID in `target_dids` resolves to exactly one current,
+   unrevoked member of the team; otherwise 422 `target_unresolved`, with no
+   identifiers in the error. Role holding is the app's to check, at acceptance
+   and again at answer time (§4); the task service never reads an app's roles.
 9. **Commit.** In one transaction: create the task with `rev` 1 and
    `question_rev` 1, its `app_request`, the originator
    `{principal_did, certificate_id}`, the transporting app
@@ -329,8 +334,8 @@ A task gains:
   once. A receipt's `task_rev` is the task's `rev` after that commit.
 - `question_rev`: a safe integer, starting at 1, incremented only by a
   reopen.
-- `assignee_did`: the principal DID the task is assigned to. The alias is a
-  display projection. An alias is never answer authority, so reusing an alias
+- `assignee_did`: the principal DID the task is assigned to, its display
+  owner. The alias is a display projection. An alias is never answer authority, so reusing an alias
   after a member leaves cannot answer.
 
 Existing task-create, update and comment requests are still accepted. A task
@@ -371,6 +376,7 @@ Request:
 | `choice` | `null`, or one of the task's declared `choices`. Required when the task declares choices. |
 | `proposal_rev`, `proposal_sha256` | Required, and equal to the task's, when the task carries a proposal; otherwise both `null`. |
 | `body_md` | The answer's full text, 1–20,000 runes, Markdown. It becomes the team-visible comment. |
+| `stage_receipt` | Required on a decision task, refused elsewhere: `{payload, signature}` of an `aweb.app-answer-stage/1` (below). |
 
 The answering identity is the verified team-auth signer. For the in-process
 form, it is the verified identity the host passes. It is never a body field.
@@ -386,8 +392,13 @@ length, `answer_sha256` equal to the digest of `body_md` (otherwise 422
    - the same `answer_sha256`, `choice` and proposal fields return the
      original receipt, at any time, even after close, reopen or later answers;
    - anything else is 409 `idempotency_conflict`.
-2. **Answerer.** The answering certificate is current and derives the task's
-   `assignee_did` (principal DID, §3). Otherwise 403 `target_mismatch`.
+2. **Answerer.** The answering certificate is current (not revoked, expired
+   or replaced) and belongs to a current member of the team, and the
+   principal DID it derives is the task's `assignee_did`, or, on a decision
+   task, one of its `eligible_dids`. A decision task's answer also carries the
+   app's stage receipt (below), which must verify for this answer and this
+   answerer. Otherwise 403 `target_mismatch`. A principal removed from the role
+   gets no receipt, so the others can still answer.
 3. **Open.** The task is open, and `expected_task_rev` equals its `rev`.
    Otherwise 409 `revision_conflict`.
 4. **Proposal.** The proposal fields equal the task's. Otherwise 409
@@ -400,6 +411,49 @@ length, `answer_sha256` equal to the digest of `body_md` (otherwise 422
 7. **Commit**, in the caller's transaction: record the answer with a fresh
    opaque `task_answer_ref`; add the team-visible comment (below); close the
    task; increment `rev`. Return 201 with the receipt.
+
+### Stage receipt, `aweb.app-answer-stage/1`
+
+On a decision task, the app is the only party that knows whether a principal
+still holds the task's role, because role assignments live in the app's own
+schema (`aweb_naapp.roles`). It says so for exactly one answer, before the
+answer commits:
+
+```json
+{
+  "v": 1, "type": "aweb.app-answer-stage",
+  "team_id": "backend:acme.com", "app_id": "pages",
+  "installation_id": "inst_01JB…", "installation_generation": 3,
+  "kid": "pages-request-1", "did_key": "did:key:z6Mk…",
+  "task_id": "…", "question_rev": 1,
+  "answer_key": "ans_3c1…", "answer_sha256": "<64 hex>",
+  "answerer_did": "did:aw:…",
+  "issued_at": "2026-10-20T12:05:00Z", "expires_at": "2026-10-20T12:10:00Z",
+  "nonce": "<32 hex>"
+}
+```
+
+- The app issues it from its staging step ([page-actions.md](page-actions.md)
+  §5) only after checking, in one transaction, that the answerer is in the
+  task's frozen `eligible_dids`, currently holds its `role` when it has one,
+  and is a current approval candidate.
+- Signing bytes are `"aweb.app-answer-stage/1\n" || canonical_json(payload)`,
+  signed with the app's key declared for the `app-request` purpose; the
+  signature is base64url without padding, as in §1. The lifetime is at most
+  300 s, and `issued_at` at most 60 s ahead.
+- The coordinator verifies it before any rule that commits:
+  - `did_key` and `kid` name a key registered for `app-request` under the
+    installation that created the task, which is active at
+    `installation_generation`, its current generation;
+  - `task_id` and `question_rev` are the task's current ones; `answer_key` and
+    `answer_sha256` are this request's; `answerer_did` is the principal of the
+    verified answering certificate;
+  - the time window holds, checked after the bindings;
+  - its `nonce` is recorded with the answer, and a nonce already recorded for
+    the installation is refused, so one receipt serves one answer and its
+    replays only.
+  Any failure is 403 `target_mismatch`, or 401 `authorization_expired` for
+  time alone, and nothing commits.
 
 ### Receipt
 
@@ -421,6 +475,10 @@ answer. `current` is `true` while this answer belongs to the task's current
 
 - `GET /v1/tasks/{ref}/answer?answer_key=…` (team-auth, the answerer or a
   team member with task read) returns that answer's receipt.
+- `GET /v1/tasks?eligible_did=<principal DID>` lists the tasks that principal
+  may answer: decision tasks whose `eligible_dids` contains it, and other
+  tasks whose `assignee_did` is it, with the usual status filters. A
+  dashboard's "waiting on you" view reads it.
 - `GET /v1/tasks/answers/{task_answer_ref}` with the `app-request` transport
   and `requests.read` returns a receipt for a task the installation created.
   Anything else is 404 `resource_not_found`.
@@ -494,8 +552,10 @@ signatures or certificates.
   signatures under a fixed test key, the task body digest, and refusal cases.
 - `docs/vectors/app-request-credential-v1.json`: the transport payload and
   signature, and cross-purpose refusals.
-- `docs/vectors/task-answer-v1.json`: the answer replay, reopen and conflict
-  sequences, as ordered cases with expected results.
+- `docs/vectors/task-answer-v1.json`: answer digests, the stage receipt's
+  signing bytes, signature and verification refusals, and one decision task's
+  answer, replay, reopen, eligible-colleague and conflict steps with the
+  expected result of each.
 
 `aweb_naapp` builds and verifies the signed artifacts, and `aw` signs task
 authorizations for self-custodial members. Both run the vectors.
