@@ -5,8 +5,14 @@ from __future__ import annotations
 import copy
 
 import pytest
+from awid.did import did_from_public_key, stable_id_from_public_key
+from nacl.signing import SigningKey
 
 from aweb_secrets.grant import GrantInvalid, GrantRecord, GrantTemplate, mint_grant_id
+
+_KEY = bytes(SigningKey(b"\x01" * 32).verify_key)
+DID_AW = stable_id_from_public_key(_KEY)
+DID_KEY = did_from_public_key(_KEY)
 
 OPERATION = {"operation_id": "refund", "digest": "a" * 64}
 JOB = {"job_id": "nightly-backup", "digest": "b" * 64}
@@ -16,7 +22,7 @@ USE = {
     "v": 1,
     "grant_id": "grt_77c1aa",
     "secret_id": "sec_19ab42",
-    "subject": {"principal": "did:aw:2rMeyRyvQbWUZYjT8Jx6Kq"},
+    "subject": {"principal": DID_AW},
     "capability": "use",
     "operations": [OPERATION],
     "open_request": False,
@@ -35,7 +41,7 @@ def _grant(**changes):
     "change",
     [
         {},
-        {"subject": {"principal": "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp"}},
+        {"subject": {"principal": DID_KEY}},
         {"subject": {"role": "secrets.role.deployers"}},
         {"subject": {"role": "secrets.owner"}},
         {"operations": [], "open_request": True},
@@ -53,10 +59,12 @@ def test_well_formed_grants_round_trip(change) -> None:
         {"v": 2},
         {"grant_id": "77c1"},
         {"subject": {"principal": "alice"}},
+        {"subject": {"principal": "did:aw:2rMeyRyvQbWUZYjT8Jx6Kq"}},
+        {"subject": {"principal": DID_KEY[:-1]}},
         {"subject": {"role": "deployers"}},
         {"subject": {"role": "logs.reader"}},
         {"subject": {"role": "secrets.role.Deployers"}},
-        {"subject": {"principal": "did:aw:x", "role": "secrets.owner"}},
+        {"subject": {"principal": DID_AW, "role": "secrets.owner"}},
         {"subject": {}},
         {"capability": "read"},
         {"operations": [], "open_request": False},

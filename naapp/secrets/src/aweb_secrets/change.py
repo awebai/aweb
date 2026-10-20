@@ -24,8 +24,9 @@ from typing import Any
 
 from aweb_naapp.runtime.approvals import RequestNotCanonical, canonical_request
 from aweb_naapp.runtime.approvals.request import parse_request_json
-from awid.did import public_key_from_did, validate_stable_id
 from awid.utc_timestamps import parse_utc_seconds
+
+from aweb_secrets.principal import is_did_aw, is_did_key
 
 TYPE = "aweb.secrets.change"
 VERSION = 1
@@ -61,11 +62,6 @@ REENABLE_TARGETS = frozenset(
 # The owner role, or an owner-defined user role named in S5's segment charset.
 _ROLE = re.compile(r"secrets\.(owner|role\.[a-z0-9][a-z0-9_-]*)")
 MAX_ROLE_CHARS = 128
-# The ASCII base58btc alphabet. Matching it first keeps every DID ASCII and bounded
-# before AWID decodes it.
-_BASE58 = "[1-9A-HJ-NP-Za-km-z]"
-_DID_AW = re.compile(f"did:aw:{_BASE58}{{1,64}}")
-_DID_KEY = re.compile(f"did:key:z{_BASE58}{{1,64}}")
 
 
 class ChangeRefused(ValueError):
@@ -148,21 +144,13 @@ def _timestamp(value: Any, where: str) -> None:
 
 
 def _did_aw(value: Any, where: str) -> None:
-    if not isinstance(value, str) or not _DID_AW.fullmatch(value):
+    if not is_did_aw(value):
         raise ChangeRefused(f"{where} must be a did:aw")
-    try:
-        validate_stable_id(value)
-    except ValueError:
-        raise ChangeRefused(f"{where} must be a did:aw") from None
 
 
 def _did_key(value: Any, where: str) -> None:
-    if not isinstance(value, str) or not _DID_KEY.fullmatch(value):
+    if not is_did_key(value):
         raise ChangeRefused(f"{where} must be an Ed25519 did:key")
-    try:
-        public_key_from_did(value)
-    except ValueError:
-        raise ChangeRefused(f"{where} must be an Ed25519 did:key") from None
 
 
 def _principal(value: Any, where: str) -> None:

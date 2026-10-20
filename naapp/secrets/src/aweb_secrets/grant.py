@@ -19,6 +19,7 @@ from typing import Any
 from aweb_naapp.roles import is_role_name
 
 from aweb_secrets.policy import DIGEST, IDENTIFIER
+from aweb_secrets.principal import is_principal
 from aweb_secrets.secret import SECRET_ID
 
 CAPABILITIES = ("use", "run")
@@ -40,7 +41,6 @@ TEMPLATE_FIELDS = FIELDS - {"grant_id", "secret_id"} | {"grant_template_id"}
 
 GRANT_ID = re.compile(r"grt_[A-Za-z0-9_-]{4,64}")
 GRANT_TEMPLATE_ID = re.compile(r"gtp_[A-Za-z0-9_-]{4,64}")
-PRINCIPAL = re.compile(r"did:(aw|key):[A-Za-z0-9]{1,128}")
 SECRETS_ROLE = re.compile(r"secrets\.(owner|role\.[a-z0-9][a-z0-9_-]*)")
 
 
@@ -94,7 +94,7 @@ def _check_terms(after: Mapping[str, Any]) -> None:
         "the subject is one principal or one role",
     )
     if "principal" in subject:
-        _require(_matches(PRINCIPAL, subject["principal"]), "a principal is a did:aw or a did:key")
+        _require(is_principal(subject["principal"]), "a principal is a did:aw or a did:key")
     else:
         _require(
             isinstance(subject["role"], str) and is_secrets_role(subject["role"]),
