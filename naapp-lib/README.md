@@ -153,10 +153,21 @@ user-verification requirement as explicit arguments, which this module binds to
 the approval, decision, policy and the app's own origin.
 
 - The relying party is the app's own origin (`RelyingParty`).
-- Only a verified team owner act designates (`designate(owner_act=...)`):
-  `app-role.designate` for a scope's first approver, `app-credential.recover`
-  to replace one. The act names the scope, commits to the contact by hash and
-  is used once. `OwnerActEvidence` is the seam the owner-act verifier fills.
+- `designate(tx, scope=..., contact=..., evidence=...)` runs in the caller's
+  transaction. The evidence is a `VerifiedOwnerAct`, which the owner-act
+  verifier (`aweb_naapp.hooks.owner_act_nonces`) consumed in that same
+  transaction: `app-role.designate` for a scope's first approver,
+  `app-credential.recover` to replace one. The act names the scope, commits to
+  the contact by hash and takes effect once. For a scope the app does not count
+  as an owner scope (`Passkeys(owner_scopes=...)`, every scope by default), the
+  evidence may instead be an `OwnerApproval` from `owner_approval()`: an owner's
+  decided approval, admitted and completed through B2 in the same transaction.
+  It designates only a scope's first approver. Whether the approved request asks
+  for that designation is the app's check.
+- Nothing is sent inside the transaction. After the commit the caller sends the
+  enrolment link and any recovery notices with `deliver(designation)`. If that
+  never happens, `reissue_enrolment(tx, scope=...)` revokes the unused link and
+  issues a new one to the same contact, while the approver has not enrolled.
 - The enrolment link goes only to the designated contact. Whoever first
   completes enrolment through the link registers the passkey: this is **trust
   on first use**, and the audit event records it as such. The link is as strong
@@ -185,6 +196,6 @@ the approval, decision, policy and the app's own origin.
   in-effect approver under the same rules, returning `PasskeyLogin(subject,
   contact, evidence_ref)`. What a login opens (a console or reader session) is
   the caller's. Roles are named scopes, such as `secrets.owner`, each designated
-  through the same owner act.
+  through a team owner act.
 - A passkey proves that an app-local human holds the enrolled authenticator. It
   is not AWID membership, team identity or key custody.

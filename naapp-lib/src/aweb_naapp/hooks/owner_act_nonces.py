@@ -181,7 +181,7 @@ class OwnerActVerifier:
         )
         if inserted is None:
             raise Refused("nonce_reused", act.nonce)
-        return _verified(act)
+        return _verified(act, int(await tx.fetch_value("SELECT txid_current()")))
 
 
 def _utc_now(clock: Callable[[], datetime]) -> datetime:

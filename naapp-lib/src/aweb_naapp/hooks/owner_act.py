@@ -259,7 +259,9 @@ class VerifiedOwnerAct:
     """A fully verified owner act: signed by the team's current controller key
     for this verifier, within its lifetime, naming exactly the expected
     subject, and with its nonce consumed in the effect's transaction. Only
-    ``OwnerActVerifier.consume_in`` returns one."""
+    ``OwnerActVerifier.consume_in`` returns one. ``transaction_id`` is the
+    ``txid_current()`` of that transaction: the act is authority only there.
+    The conformance reading of the vector consumes nothing and sets it to None."""
 
     fields: dict[str, Any]
     act: str
@@ -269,6 +271,7 @@ class VerifiedOwnerAct:
     nonce: str
     issued_at: datetime
     expires_at: datetime
+    transaction_id: int | None
 
 
 def owner_act_signing_bytes(act: Mapping[str, Any]) -> bytes:
@@ -411,7 +414,7 @@ def _verify_owner_act(
     if nonce_used(act.nonce):
         raise Refused("nonce_reused", act.nonce)
     _require_subject(act, expected_subject)
-    return _verified(act)
+    return _verified(act, None)
 
 
 def _require_subject(act: _CheckedAct, expected_subject: Mapping[str, Any]) -> None:
@@ -420,7 +423,7 @@ def _require_subject(act: _CheckedAct, expected_subject: Mapping[str, Any]) -> N
         raise Refused("subject_mismatch", "the act names a different subject")
 
 
-def _verified(act: _CheckedAct) -> VerifiedOwnerAct:
+def _verified(act: _CheckedAct, transaction_id: int | None) -> VerifiedOwnerAct:
     return VerifiedOwnerAct(
         fields=act.fields,
         act=act.act,
@@ -430,6 +433,7 @@ def _verified(act: _CheckedAct) -> VerifiedOwnerAct:
         nonce=act.nonce,
         issued_at=act.issued_at,
         expires_at=act.expires_at,
+        transaction_id=transaction_id,
     )
 
 

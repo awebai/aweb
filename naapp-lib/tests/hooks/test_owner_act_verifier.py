@@ -138,6 +138,17 @@ async def test_an_act_takes_effect_once(db, registry, team_key) -> None:
     assert await effects(db) == 1
 
 
+async def test_a_verified_act_names_the_transaction_that_consumed_it(
+    db, registry, team_key
+) -> None:
+    signing, signature = owner_act(team_key, issued=datetime.now(UTC))
+    verify = verifier(registry)
+    prepared = await verify.prepare(signing, signature, team_id=TEAM_ID)
+    async with db.transaction() as tx:
+        act = await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
+        assert act.transaction_id == await tx.fetch_value("SELECT txid_current()")
+
+
 async def test_concurrent_uses_of_one_act_produce_exactly_one_effect(
     db, registry, team_key
 ) -> None:
