@@ -63,9 +63,33 @@ receipts; they do not import Telegram/Teams SDKs. C0 fixes exact method/DTO name
 in the canonical plan, with P0 agreeing the public request/result boundary.
 Adapter tests may use controlled fixtures, but D/R/F acceptance uses real providers.
 
+**Attachment seam (C0/O4, private, not a new wire descriptor):** both adapters
+extract `ChannelAttachment = {ref, filename, media_type, declared_size?,
+declared_sha256?, expires_at?}`. The opaque ref is bound to the authenticated
+`VerifiedEvent`, subject and connection; it is never a public URL or credential.
+`ChannelAdapter.fetch_attachment(ref, verified_event, limits)` supplies an
+authenticated streamed byte result with sanitized errors. Provider authentication,
+redirect/origin checks and SDK handling stay inside the adapter; the common core
+never sees provider-specific fetch logic, URLs or credentials.
+
+The core reserves quota, enforces actual streamed byte/count limits regardless of
+declarations, validates MIME/name/content and any declared digest, computes final
+length/SHA256, and stages under the existing managed acfn provider. Only acfn's
+normal immutable descriptor enters the signed public message. Apply the lowest
+of current attachment capabilities, adapter and owner-policy limits: baseline
+5 MiB/file, 4 files/20 MiB per send, 100 MiB/user/day and 200 MiB/team; retain
+existing allowed types, staging/expiry and reservation controls. Failed fetch or
+validation produces no authored-message signature, message, wake or logical-send
+charge; existing upload reservation/rate/byte accounting still applies. O4/O1
+exercise both real adapters through this same core: wrong subject/ref,
+expired/unavailable bytes, oversized declarations and streaming overflow, digest
+mismatch, quota/concurrency races and matching real byte transfer. No new OSS
+file store, schema or platform-specific public capability is added.
+
 P0 fixes versioned API/byte/vector, consumer-facing DTOs and the supported
 embedded transaction/idempotency facade implemented by P2b. Spike-dependent re-share/federation annexes are frozen
-after X-E2/X-GF before their implementation tasks; native P1/P2 work does not
+after X-E2/X-GF and Athena review at each exact annex SHA, as for P0, before
+their implementation tasks; native P1/P2 work does not
 wait for an unrelated risky annex. C resources,
 credential custody, linking and adapter qualification start before P0 finishes;
 they must not invent a second public wire shape or private insert hook. Their
@@ -143,8 +167,8 @@ first public send/checkpoint integration waits for P0 and the implementing P tas
   observe neither message nor result nor wake/charge. Retry exact bytes returns
   the original result; conflicting bytes refuse. Commit then crash before event
   publication recovers through the durable outbox with no duplicate message.
-  Cloud C2/C3 use this supported API in their live DM milestone, not a privileged
-  table/insert hook. HTTP mode is tested as idempotent recovery, not distributed
+  Cloud C2/C3 readiness implements this supported API; D supplies its joint live
+  DM acceptance, with no privileged table/insert hook. HTTP mode is tested as idempotent recovery, not distributed
   atomicity. No fake `aw` or fake database proves the integration.
 - **Staff:** `aweb-protocol-expert`. No new global human address.
 
@@ -160,8 +184,11 @@ first public send/checkpoint integration waits for P0 and the implementing P tas
 - **Acceptance/live journey:** two same-name guests have separate ACLs/routes;
   one pairwise subject is stable across intake bots within its session, with
   no automatic cross-session association. A guest has no agent/team/admin entry.
-  Real public session create/list reads distinguish native signer verification
+  Public participant DTO/verifier tests distinguish native signer verification
   from external/untrusted author assurance; wrong bridge/subject/context refuses.
+  Key-loss tests create new subjects without reassigning or merging old guests;
+  old history/contact continuity is unavailable until explicitly re-associated.
+  Live guest create/list acceptance waits for the P5 activation gate below.
 - **Staff:** `aweb-protocol-expert`. This is storage/identity foundation, not yet
   permission to enable guest traffic before P4/P5/P6.
 
@@ -174,21 +201,34 @@ first public send/checkpoint integration waits for P0 and the implementing P tas
   delegated management, admission/removal intervals, consent and owner transfer;
   existing `left_at` becomes enforced state, not a substitute turn-end flag.
 - **Dependencies:** P0/P3; public identity/key/controller boundaries unchanged.
-- **Acceptance/live journey:** three-plus native/guest participants join, remove
-  and rejoin via public operations. Inbound policy blocks a refusing cross-team
-  or federated recipient before any message/wake/wrap. All senders verify the
+- **Acceptance/live journey:** signed-chain verifier and storage tests cover
+  three-plus native/guest participants joining, leaving and rejoining; the public
+  positive new-mode journey runs only after P5 activation. Inbound policy blocks
+  a refusing cross-team or federated recipient before any message/wake/wrap. All senders verify the
   chain before wrapping; injected server-only adds cannot alter an E2EE group.
   Valid consenting owner transfer continues; absent/revoked owner freezes, while
   a narrow-only export stop remains possible. `sender_leaving` ends only a turn.
-- **Staff:** `aweb-protocol-expert`. New-mode membership is opt-in with published
-  compatible consumers; old native sessions remain readable.
+  Forked chains (two heads at one epoch), replayed older policy, a non-owner add
+  without valid delegation and stale-epoch adds each refuse before any wrap or
+  wake. A real public encrypted-session bridge admission without either the
+  required disclosure consent or bridge-readable label refuses with no effects.
+- **Activation gate (A1, gating rather than moving P5):** P4 may land storage and
+  verifiers, but new-mode membership remains unadvertised and refused by servers
+  and published consumers until P5's J9 control-history consent and whole-session
+  bridge-readable label have landed with compatible consumers. No early P4
+  feature artifact advertises admission. P5 depends on implemented P4, not its
+  activation; P5 then unlocks the integrated positive admission journey. Existing
+  accepted native sessions remain readable; this does not narrow old wire shapes.
+- **Staff:** `aweb-protocol-expert`.
 
 ### P5 — interval message history, disclosed controls and encrypted re-share
 
 - **Repo/files:** aweb chat/conversation pending/history/read/SSE authorization,
   `routes/chat.py`, `messaging/chat.py`, attachment authorization,
   `cli/go/awid/e2ee_messages.go`, `server/src/aweb/e2ee_messages.py`,
-  `docs/e2e-messaging-contract.md`; membership/history/cross-language vectors.
+  `docs/e2e-messaging-contract.md`; membership/history/cross-language vectors;
+  minimal CLI/channel-core/channel/pi/Hermes disclosure/label and refusal support
+  required for safe admission, separate from P6 full group interaction.
 - **Migrations:** M-P5 persists history grants/rejoin intervals, disclosure consent
   and explicit re-share records; no automatic historical wraps/backfill export.
 - **Dependencies:** P4 and X-E2 before committing the re-share profile.
@@ -199,7 +239,12 @@ first public send/checkpoint integration waits for P0 and the implementing P tas
   clients demonstrate future wraps excluding removed keys and authorized old
   content re-share without rewriting its original author's signature. Bridge
   membership labels the entire session not E2EE and includes its wrap on every
-  message; unknown keys/capabilities never cause plaintext fallback.
+  message; unknown keys/capabilities never cause plaintext fallback. P5 releases
+  the P4 activation gate only when both disclosures/consent and compatible client
+  labels are available. Repeat P4's positive public join/remove/rejoin journey and
+  its missing-consent/missing-label refusals against the released feature artifacts.
+  P5 includes the minimum client label/consent enforcement; activation does not
+  depend on completing P6 full group interaction, which follows P5/P7.
 - **Staff:** `aweb-protocol-expert`. Full control-history mode is the decided
   implementation; do not quietly substitute the unselected snapshot alternative.
 
@@ -242,7 +287,13 @@ first public send/checkpoint integration waits for P0 and the implementing P tas
   private activation, paginated late commits and history/control grants. An admitted
   bridge/independent revoker stops only its own stream with owner unavailable and
   no read grant; it cannot activate/widen. Historical eligible capture never
-  overrides current revoke; old native APIs/bytes remain accepted.
+  overrides current revoke; old native APIs/bytes remain accepted. Unauthorized
+  non-owner activation/widening, stale-checkpoint CAS and attempts to execute or
+  reactivate a tombstoned transition refuse. Authorized narrow-only own-stream
+  stops remain allowed; an exact authorized retry/read may recover the original
+  receipt without executing it again. No checkpoint-bound capture receipt may be
+  minted for a message committed outside that checkpoint's acceptance range;
+  concurrent boundary tests verify its sequence, generation and range.
 - **Staff:** `aweb-protocol-expert`. C binds private state only through these
   public results; no hosted callback inserted into message persistence.
 
@@ -285,25 +336,41 @@ first public send/checkpoint integration waits for P0 and the implementing P tas
 The timeboxes below are proposed staffing caps, not claims of completed work.
 Each ends in a concrete go/no-go artifact or a specific contract question; an
 inconclusive spike blocks its dependent task, never authorizes a shortcut.
+Freezing X-E2/X-GF contract annexes requires Athena review at the exact result
+SHA, just like P0. No spike may weaken consent, signature checks, explicit
+encryption, chain-verify-before-wrap, owner transfer/freeze, narrow-only stop,
+checkpoint commit order or inbound policy. An X-GF outcome that makes the owner
+chain advisory is refused.
 
 | ID / staffing cap | Repo/modules and migrations | Dependencies / real resources | Exit evidence, acceptance and staffing |
 | --- | --- | --- | --- |
 | X-E2 / 1 working day | aweb E2EE contract, Go/Python envelope/keys and vectors; migration none in spike | Decided history model; real local clients/server/keys, no platform account | Prototype one authorized historical re-share to a newcomer, preserving original signed bytes/proof and publishing a separately signed transfer/re-share. Demonstrate removed key gets no future wrap, tamper/no-key refusal and no plaintext retry. Choose the implementable artifact/key-authority model for P0/P5 before coding it; do not assume re-wrapping mutates a valid old signature. Staff `aweb-protocol-expert`. |
-| X-GF / 2 working days | aweb federation/chat policy/acceptance topology and vectors; no persistent migration in spike | Existing real local multi-service/AWID harness; proposed P0 profile | Three-service trace: creation/consent, owner chain, message/capture and peer receipt/retry/removal; resolve who serializes and how replica recovery verifies authority. Document bounded failure/partition behavior and concrete P9 schema/API needs. No pairwise-envelope UUID reuse or exactly-once tool claim. Staff `aweb-protocol-expert`. |
+| X-GF / 2 working days | aweb federation/chat policy/acceptance topology and vectors; no persistent migration in spike | Existing real local multi-service/AWID harness; proposed P0 profile | Three-service trace: creation/consent, owner chain, message/capture and peer receipt/retry/removal; resolve who serializes and how replica recovery verifies authority. Document bounded failure/partition behavior and concrete P9 schema/API needs. An advisory owner chain is a no-go outcome. No pairwise-envelope UUID reuse or exactly-once tool claim. Staff `aweb-protocol-expert`. |
 | X-MS / 1 working day | ac adapter/SDK proof module; migration none | F0 Azure bot/app plus M365 customer test tenants/installation, approved credentials | Cloud-owned: prove Agents SDK fit with Connector validation, personal/group/channel receive/send and dedicated/shared identities through C0. Installation/tenant/credential failures are evidence, not a mocked success. End with a supported package/version/config choice or precise blocker. Staff `aweb-cloud-expert`, resource setup `aweb-cloud-operations-expert`. |
 | X-TS / 1 working day | ac adapter normalization/activation fence tests; migration none | F0 real Telegram + Teams events with preserved provider timestamp evidence | Cloud-owned: classify original/edit/callback/retry timestamps, precision and replay/delay behavior; prove no pre-activation event becomes a human signature. Unsupported kinds refuse, callbacks cannot borrow an old bot-message time. No claim that timestamps defeat a compromised account. Staff `aweb-cloud-expert`. |
 
 Cloud's canonical plan owns exact X-MS/X-TS files and outcomes; these rows pin the
 cross-repository gates, not a second SDK/platform implementation.
 
+**X-TV — Telegram visibility qualification (Cloud-owned, separate from X-TS).**
+Before R-TG can pass, qualify the actual privacy/admin configuration, receiving
+Bot-to-Bot Mode plus (admin rights OR privacy disabled), and private exchange with
+both bots' modes enabled. Real basic-group, supergroup and topic journeys prove
+ordinary unmentioned human messages, bot-origin messages and topic isolation;
+missing all-message visibility visibly blocks the requested room mode. Evidence
+pins settings/API capability and one intake owner where cross-bot IDs are not
+shared. This uses the F0 Telegram resources above and `aweb-cloud-expert`; no OSS
+schema or provider-specific core code. Timestamp qualification cannot satisfy it.
+
 ## D / R integration and N / O / F OSS tasks
 
 | Task | Repo and files/modules | Migrations | Dependencies | Behaviour tests and live journey | Soul |
 | --- | --- | --- | --- | --- | --- |
-| D-OSS — native direct-message contract integration | aweb server HTTP/MCP mail/chat tests, Go CLI/custody tests and public vectors | None beyond P tasks | P1/P2/P8, C0–C3 public integration readiness | Real CLI first-contacts a linked human alias; two accounts/teams, exact reply binding, via and native suppression work; unknown bare DID/unlinked unsolicited guest DM refuses. D-TG and D-MS consume the same path; both platform journeys required, neither substitutes for the other. | `aweb-protocol-expert`; paired Cloud D owners `aweb-cloud-expert` |
-| R-OSS — public session and route integration | aweb group API/CLI/MCP/read/receipt and attachment tests | None beyond P3–P7 | P3/P4/P5/P6/P7 and both qualified full-room adapters | Two agents, linked and unlinked humans in one session; same author/session message across bots, membership/control consent, owner transfer/freeze, old message exclusion and whole-session bridge-readable status. R-TG group/topic and R-MS chat/channel thread pass against the same C0 core; group federation joins after P9, not emulated with DMs. | `aweb-protocol-expert`, Cloud R owners `aweb-cloud-expert`, dashboard `frontend-developer` |
-| N1 — durable native input/output interop | aweb generic native-chat receipt API/library, channel-core delivery/operation store, CLI/wake and packages/hermes-aweb-platform; upstream NousResearch/hermes-agent plugins/platforms/telegram/adapter.py and gateway processing callbacks if the receipt interface needs an upstream patch | Versioned local operation/effect/reply ledger; any server claim/receipt table gets a new ordered migration | P0/P6/P7/P8; N2 implements private correlation; P9 before remote-native acceptance | Real native Hermes owns a turn while bridge/shared/dedicated peers observe it; one fenced input owner, original signed native output, no guest echo. Crash before start, after an external effect before receipt, after reply commit and during send: reconcile or visibly block unknown outcomes; never blindly reexecute or silently fall back when native is down. Any upstream module needed is a named dependency, not assumed shipped by OSS registration. | `aweb-protocol-expert`; Cloud N2 `aweb-cloud-expert` |
-| O1 — public recovery, revocation and file boundary | aweb receipt/policy/history/replay API tests, attachments contract/authorization tests and real CLI recovery driver | None beyond P5/P7/P9/N1; retain receipt/revocation tombstones | P5/P7/P9/N1, Cloud O2/O3/O4 | Drop hints, delay commit, restart and page after long outage; no eligible message skipped and no old audience inferred. Revoke bridge independently: fresh old-key guest event and unsent exports refuse; incomplete scopes show blocked. Test managed files by real byte transfer, interval/quota/expiry authorization and replay, not a bearer URL. | `aweb-protocol-expert`; hosted lifecycle/files/dispatch stay with `aweb-cloud-expert` |
+| D-OSS — native direct-message contract integration | aweb server HTTP/MCP mail/chat tests, Go CLI/custody tests and public vectors | None beyond P tasks | P1/P2/P8, C0/C1 and C2-D-ready/C3-D-ready public integration readiness, D-UI | Real CLI first-contacts a linked human alias; two accounts/teams, exact reply binding, via and native suppression work; unknown bare DID/unlinked unsolicited guest DM refuses. Behavior tests and real two-account/provider journeys prove cross-user replies, privilege commands and stale lifecycle events yield no human signature, message, wake or usage effect. Unlinked/unpaired DMs through each adapter share one core refusal: no aweb message, wake, charge, stored body or agent-visible raw ID, only the pairing reply. D-TG and D-MS consume the same path; both platform journeys required, neither substitutes for the other. | `aweb-protocol-expert`; paired Cloud D owners `aweb-cloud-expert` |
+| D-OSS-label — sender confidentiality disclosure | aweb Go CLI send/read/receipt rendering, channel-core/channel/pi/Hermes send-result projections and assurance tests; Cloud D-UI owns dashboard label | None | P0/P1/P2, compatible public custody/bridge evidence; C-ready, tested jointly in D | Sender sees **“not E2EE”** for a linked-human DM through bridge or hosted custody, including encrypted-v2 to a hosted key. Authorship verification stays unchanged; via alone never establishes custody. Real CLI/runtime and D-UI journey on both providers checks label before/after send and readback; genuine native self-custodial encrypted pair remains the valid E2EE neighbor. These direct-message projections do not wait for group P6 or R-UI; D completes only with this task and D-UI. | `aweb-protocol-expert`, Cloud D-UI `frontend-developer` |
+| R-OSS — public session and route integration | aweb group API/CLI/MCP/read/receipt and attachment tests | None beyond P3–P7 | P3/P4/P5/P6/P7, C2-R-ready/C3-R-ready and both qualified full-room adapters (TG X-TV, Teams X-MS) | Two agents, linked and unlinked humans in one session; same author/session message across bots, membership/control consent, owner transfer/freeze, old message exclusion and whole-session bridge-readable status. A real guest-map key-loss/restart journey yields new session subjects, never silently inherits old guest history/contact authority, and permits continuity only by explicit authorized association. R-TG group/topic and R-MS chat/channel thread pass against the same C0 core; group federation joins after P9, not emulated with DMs. | `aweb-protocol-expert`, Cloud R owners `aweb-cloud-expert`, dashboard `frontend-developer` |
+| N1 — durable native input/output interop | aweb generic native-chat receipt API/library, channel-core delivery/operation store, CLI/wake and packages/hermes-aweb-platform; upstream NousResearch/hermes-agent plugins/platforms/telegram/adapter.py and gateway processing callbacks if the receipt interface needs an upstream patch | Versioned local operation/effect/reply ledger; any server claim/receipt table gets a new ordered migration | P0/P6/P7/P8; N2 implements private correlation; P9 before remote-native acceptance | Real native Hermes owns a turn while bridge/shared/dedicated peers observe it; one fenced input owner, original signed native output, no guest echo. Real fresh-ID bot-loop journeys hit bounded per-session/agent rate/turn budgets and a circuit breaker with visible stop and owner-authorized reset; dedup alone cannot pass. Crash before start, after an external effect before receipt, after reply commit and during send: reconcile or visibly block unknown outcomes; never blindly reexecute or silently fall back when native is down. Any upstream module needed is a named dependency, not assumed shipped by OSS registration. | `aweb-protocol-expert`; Cloud N2 `aweb-cloud-expert` |
+| O1 — public recovery, revocation and file boundary | aweb receipt/policy/history/replay API tests, attachments contract/authorization tests and real CLI recovery driver | None beyond P5/P7/P9/N1; retain receipt/revocation tombstones | P5/P7/P9/N1, Cloud O2/O3/O4 | Drop hints, delay commit, restart and page after long outage; no eligible message skipped and no old audience inferred. Revoke bridge independently: fresh old-key guest event and unsent exports refuse; incomplete scopes show blocked. Test managed files through the shared attachment descriptor/authenticated byte-fetch seam by real byte transfer, interval/quota/expiry authorization and replay, not a bearer URL. O3 live acceptance includes authenticated requester-only settings/routes export and erasure of caches, pending payloads and backups by the existing retention deadline; G-ERASURE-DEADLINE blocks O3/F2 until operations proves an existing cache/pending/backup erasure deadline or Juan chooses one. Attachment expiry (30d/24h) alone does not establish that deadline. | `aweb-protocol-expert`; hosted lifecycle/files/dispatch stay with `aweb-cloud-expert` |
 | F1 — public/released-consumer acceptance | aweb real CLI/server/AWID multi-service harness, package install/run paths and sanitized evidence under docs/evidence; release metadata only under normal coordinator flow | None; demonstrate ordered upgrades from old populated schema | P0–P9, D-OSS/R-OSS/N1/O1, N2/O2–O4 and F0; F2 combines both platforms | Run published old/new CLI, Claude channel, pi and Hermes consumers against real services; exercise local/global/self-custodial/custodial identities, grant constraints, encryption, full room membership/federation, receipts and no duplicate effects. F2 additionally proves all shared/dedicated/native presences on both real platforms, two orgs and dashboard completeness. No fake aw/provider satisfies this gate. | `aweb-protocol-expert`; F2 `aweb-cloud-expert`; staging/resources `aweb-cloud-operations-expert` |
 
 N1 is not completed by an upstream adapter assumption. Its first implementation
@@ -341,12 +408,21 @@ flowchart TD
   P6 --> N1
   P7 --> N1
   P8 --> N1
-  C[C0-C3 parallel Cloud resources/core] --> D[ D-TG AND D-MS ]
+  C[C0/C1 parallel Cloud resources/core] --> CD[C2-D-ready and C3-D-ready]
+  P1 --> CD
+  P2 --> CD
+  P8 --> CD
+  CD --> D[ D-TG AND D-MS plus D-UI and D-OSS-label ]
+  CD --> CR[C2-R-ready and C3-R-ready]
+  P5 --> CR
+  P7 --> CR
+  CR --> R[ R-TG AND R-MS ]
+  TV[X-TV Telegram visibility] --> R
   P1 --> D
   P2 --> D
   P8 --> D
   MS[X-MS / X-TS qualification] --> D
-  D --> R[ R-TG AND R-MS ]
+  D --> R
   P6 --> R
   P7 --> R
   N1 --> N[N2 Cloud native interop]
@@ -356,6 +432,7 @@ flowchart TD
   N1 --> O1
   O1 --> F1
   F0[Approved resources / staging] --> MS
+  F0 --> TV
   F0 --> R
   F1 --> F2[ F2 full joint acceptance ]
   F2 --> SWH[S/W/H after F]
@@ -370,7 +447,13 @@ coordinating their ordered numbers.
 
 The public critical path is P0 → P3 → P4 → P5 → P7 → P6/N1 and P9 → O1/F1 → F2.
 X-E2 gates P5; X-GF gates P9. In parallel, C0–C3 plus X-MS/X-TS/resources gate the
-paired D and R journeys and N2. The slower public or platform/resource branch
+paired D and R journeys and N2. C2/C3 readiness is implementation plus core
+behavior/integration tests against supported P APIs, with separate direct and
+room milestones. Neither readiness milestone requires a completed D/R live
+journey: D joins C-D-ready with both adapters and D-UI; R joins C-R-ready with
+both room adapters and R-UI. Their live acceptance belongs to D/R/F, not a
+prerequisite back into C. X-TV separately gates R-TG visibility; X-TS qualifies
+only timestamps. The slower public or platform/resource branch
 controls F2; a credential/tenant/SDK blocker can therefore dominate the schedule.
 D can prove direct journeys while group work continues, but is not the full
 product finish. Group federation stays in F; no implicit ordering decision drops
@@ -381,7 +464,7 @@ it. The canonical Cloud graph additionally names O2/O3/O4 and exact C gates.
 | Resource package (F0 owns provision/access evidence) | First blocker | Work that can proceed without it |
 | --- | --- | --- |
 | Local disposable PostgreSQL/Redis, three aweb services/AWID registries, real built/published aw and native keys | P0 old/new journey, P3–P7 database/HTTP proof, X-E2/X-GF and P9 real topology | Contract/vector drafting, C storage code and adapter fixture tests |
-| Approved Telegram shared bot, two dedicated identity bots, a separately owned native Hermes bot; linked + unlinked test humans, private chats, basic group and supergroup/topic | X-TS Telegram proof; D-TG/R-TG/N2/F2 real journeys. Do not use a native bot's token for Cloud intake | Generic P/C work and Teams qualification |
+| Approved Telegram shared bot, two dedicated identity bots, a separately owned native Hermes bot; linked + unlinked test humans, private chats, basic group and supergroup/topic | X-TS timestamp and X-TV visibility proof; D-TG/R-TG/N2/F2 real journeys. Do not use a native bot's token for Cloud intake | Generic P/C work and Teams qualification |
 | Approved Azure bot/Entra app resources, shared/dedicated and a separately operated native bot/app identity, M365 customer test tenants and admins/users; personal/group/team/channel installations | X-MS and X-TS Teams proof; D-MS/R-MS/N2/F2 real journeys. Missing tenant/install/room capability is a hard live gate | Generic P/C work and Telegram qualification |
 | Approved staging with managed custody/key storage, dashboard, public OSS package versions and cleanup permission | C custody proof, joint D/R/N/O live journeys and F2; private actor signing must be real | Local public protocol/schema work and bounded local spikes |
 | Real Claude/Codex/pi/Hermes seats and any required model access, with the native adapter/version qualified | P6 runtime proof, N1/N2 and F1/F2 model-driven journeys | Server/CLI behavior tests and deterministic operation-ledger crash tests |
