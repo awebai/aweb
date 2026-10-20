@@ -1,0 +1,65 @@
+import { test, expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+
+test('gallery renders semantic widgets, state and safe Markdown under enforced CSP', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Property overview' })).toBeVisible();
+  await expect(page.locator('[data-widget="occupancy"]')).toContainText('82');
+  await expect(page.locator('[data-widget="occupancy"] progress')).toHaveAttribute('value', '40');
+  await expect(page.locator('[data-widget="future"]')).toContainText('A future widget');
+  await expect(page.locator('[data-widget="intro"] strong')).toContainText('clear');
+  await expect(page.locator('#destinations')).toContainText('example.com');
+  await expect(page.locator('#page script, #page style, #page iframe')).toHaveCount(0);
+  expect(await page.evaluate(() => {
+    try { document.createElement('div').innerHTML = '<img src=x>'; return false; }
+    catch { return true; }
+  })).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('gallery supports phone layout, Catalan chrome and accessible semantics', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?locale=ca');
+  await expect(page.locator('#destinations')).toContainText('Destinacions');
+  await expect(page.locator('[data-widget="future"]')).toContainText('no disponible');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const result = await new AxeBuilder({ page }).analyze();
+  expect(result.violations).toEqual([]);
+});
+
+test('unknown major format gives a safe whole-page fallback', async ({ page }) => {
+  await page.goto('/?case=unsupported');
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.locator('#page [data-widget]')).toHaveCount(0);
+});
+
+// Read the canonical corpus directly: no copied vectors and no intercepted
+// HTTP calls. The fixture host validates and serves each real snapshot.
+import { readFileSync } from 'node:fs';
+const vectors = JSON.parse(readFileSync(new URL('../../../docs/vectors/page-format-v1.json', import.meta.url)));
+for (const vector of vectors.cases.filter(c => c.render && !['bidi_isolated', 'asset_origin_only'].includes(c.render))) {
+  test(`C1 ${vector.name}: ${vector.render}`, async ({ page }) => {
+    const requests = [];
+    page.on('request', request => requests.push(request.url()));
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(`/?vector=${encodeURIComponent(vector.name)}`);
+    await expect(page.locator('[data-widget]')).not.toHaveCount(0);
+    const textWidget = page.locator('[data-widget="t1"]');
+    if (vector.render === 'link_inert') await expect(textWidget.locator('[href],img,script,iframe,svg')).toHaveCount(0);
+    if (vector.render === 'html_inert') {
+      await expect(textWidget.locator('img,svg,script')).toHaveCount(0);
+      await expect(textWidget).toContainText('<');
+    }
+    if (vector.render === 'destination_domain_shown') {
+      const href = await textWidget.locator('a').getAttribute('href');
+      await expect(page.locator('#destinations')).toContainText(new URL(href).host);
+      await expect(textWidget.locator('a')).toHaveAttribute('rel', 'noopener noreferrer');
+    }
+    if (vector.render === 'text_escaped') await expect(page.getByRole('heading', { name: 'Revisiо de preus', exact: true })).toBeVisible();
+    expect(requests.every(url => url.startsWith('http://127.0.0.1:8734/'))).toBe(true);
+    expect(errors).toEqual([]);
+  });
+}
