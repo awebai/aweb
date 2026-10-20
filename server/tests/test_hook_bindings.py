@@ -30,6 +30,7 @@ from tests.test_app_events_http import _seed_team_and_agent
 TEAM = "backend:acme.com"
 OTHER_TEAM = "frontend:acme.com"
 ORIGIN = "https://logs.example"
+MOVED_ORIGIN = "https://logs.moved.example"
 
 RECORD = HookBindingDeclaration(
     kind=REGISTRATION, catalog_id="aweb.hooks", catalog_version=1, hook="post-secret-use-hook",
@@ -45,18 +46,18 @@ def _digest(label: str) -> str:
     return "sha256:" + hashlib.sha256(label.encode()).hexdigest()
 
 
-async def _install(db, *, team_id: str = TEAM, app_id: str = "logs", digest: str) -> None:
+async def _install(db, *, team_id: str = TEAM, app_id: str = "logs", digest: str, origin: str = ORIGIN) -> None:
     await install_app(
-        db, team_id=team_id, app_id=app_id, origin=ORIGIN, app_version="1.0.0",
+        db, team_id=team_id, app_id=app_id, origin=origin, app_version="1.0.0",
         manifest_version=1, digest=digest, granted_scopes=[],
     )
 
 
 async def _write(db, *, team_id=TEAM, app_id="logs", digest, installation_id="inst-1", generation=1,
-                 declarations=(RECORD, EMIT)):
+                 declarations=(RECORD, EMIT), origin=ORIGIN):
     async with db.transaction() as tx:
         return await write_pending_bindings(
-            tx, team_id=team_id, app_id=app_id, origin=ORIGIN, digest=digest,
+            tx, team_id=team_id, app_id=app_id, origin=origin, digest=digest,
             installation_id=installation_id, generation=generation, declarations=list(declarations),
         )
 
@@ -193,6 +194,80 @@ async def test_a_reinstall_after_uninstall_gets_fresh_pending_bindings(db):
 
 
 @pytest.mark.asyncio
+async def test_an_origin_change_supersedes_the_old_origins_bindings(db):
+    digest = _digest("v1")
+    await _install(db, digest=digest)
+    first = await _write(db, digest=digest, installation_id=None, generation=None)
+    await _install(db, team_id=OTHER_TEAM, digest=digest, origin=MOVED_ORIGIN)
+    await db.execute(
+        "UPDATE {{tables.team_app_installs}} SET origin = $1 WHERE team_id = $2 AND app_id = 'logs'",
+        MOVED_ORIGIN, TEAM,
+    )
+
+    second = await _write(db, digest=digest, installation_id=None, generation=None, origin=MOVED_ORIGIN)
+
+    assert {b.origin for b in second} == {MOVED_ORIGIN}
+    await _assert_fresh_pending(db, second, first, digest=digest, ended_state="superseded", ended_by="generation")
+
+
+@pytest.mark.asyncio
+async def test_an_older_generation_of_the_same_installation_is_refused(db):
+    old, new = _digest("v1"), _digest("v2")
+    await _install(db, digest=old)
+    await _write(db, digest=old)
+    await _install(db, digest=new)
+    current = await _write(db, digest=new, generation=2)
+
+    await _install(db, digest=old)
+    with pytest.raises(ValidationError, match="generation"):
+        await _write(db, digest=old, generation=1)
+
+    live = [b for b in await list_app_bindings(db, team_id=TEAM, app_id="logs") if b.state == "pending"]
+    assert live == current
+
+
+@pytest.mark.asyncio
+async def test_bindings_are_written_only_for_an_installed_app(db):
+    digest = _digest("v1")
+    await _install(db, digest=digest)
+
+    with pytest.raises(ValidationError, match="not installed"):
+        await _write(db, team_id=OTHER_TEAM, digest=digest)
+
+    assert await list_app_bindings(db, team_id=OTHER_TEAM, app_id="logs") == []
+
+
+@pytest.mark.asyncio
+async def test_bindings_must_name_the_installed_digest(db):
+    await _install(db, digest=_digest("v1"))
+    await _install(db, team_id=OTHER_TEAM, digest=_digest("v2"))
+
+    with pytest.raises(ValidationError, match="install's origin and digest"):
+        await _write(db, digest=_digest("v2"))
+
+    assert await list_app_bindings(db, team_id=TEAM, app_id="logs") == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_writes_for_one_install_wait_for_each_other(db):
+    old, new = _digest("v1"), _digest("v2")
+    await _install(db, digest=old)
+    await _install(db, team_id=OTHER_TEAM, digest=new)
+    async with db.transaction() as first:
+        await write_pending_bindings(
+            first, team_id=TEAM, app_id="logs", origin=ORIGIN, digest=old,
+            installation_id="inst-1", generation=1, declarations=[RECORD],
+        )
+        async with db.transaction() as second:
+            await second.execute("SET LOCAL lock_timeout = '200ms'")
+            with pytest.raises(asyncpg.LockNotAvailableError):
+                await write_pending_bindings(
+                    second, team_id=TEAM, app_id="logs", origin=ORIGIN, digest=new,
+                    installation_id="inst-1", generation=2, declarations=[RECORD],
+                )
+
+
+@pytest.mark.asyncio
 async def test_another_team_and_another_app_are_untouched(db):
     digest = _digest("v1")
     await _install(db, digest=digest)
@@ -266,15 +341,40 @@ async def test_a_malformed_declaration_is_refused_and_nothing_is_written(db, dec
         ("registration", "activation_act_sha256 = 'not-hex'"),
         ("registration", "state = 'active', activated_at = NOW(), activation_act_sha256 = '" + "ab" * 32 + "'"),
         ("registration", "ended_by = 'uninstall'"),
+        ("registration", "installation_id = ' '"),
+        ("active", "state = 'revoked', ended_by = 'owner_act', revoked_at = NOW()"),
+        ("active", "state = 'revoked', ended_by = 'uninstall', revoked_at = NOW(), revocation_act_sha256 = '"
+         + "cd" * 32 + "'"),
+        ("active", "state = 'revoked', ended_by = 'owner_act', revoked_at = activated_at - INTERVAL '1 second',"
+         " revocation_act_sha256 = '" + "cd" * 32 + "'"),
     ],
 )
 async def test_the_schema_refuses_rows_the_store_would_never_write(db, target, assignment):
     digest = _digest("v1")
     await _install(db, digest=digest)
     registration, production = await _write(db, digest=digest)
-    binding = registration if target == "registration" else production
+    binding = production if target == "production" else registration
+    if target == "active":
+        await _make_active(db, registration.binding_id)
 
     with _check_refused():
         await db.execute(
             "UPDATE {{tables.app_hook_bindings}} SET " + assignment + " WHERE binding_id = $1", binding.binding_id,
         )
+
+
+@pytest.mark.asyncio
+async def test_an_owner_revocation_records_its_act(db):
+    digest = _digest("v1")
+    await _install(db, digest=digest)
+    registration, _ = await _write(db, digest=digest)
+    await _make_active(db, registration.binding_id)
+
+    await db.execute(
+        "UPDATE {{tables.app_hook_bindings}} SET state = 'revoked', ended_by = 'owner_act', revoked_at = NOW(),"
+        " revocation_act_sha256 = $2 WHERE binding_id = $1",
+        registration.binding_id, "cd" * 32,
+    )
+
+    revoked = (await list_app_bindings(db, team_id=TEAM, app_id="logs"))[0]
+    assert (revoked.state, revoked.ended_by) == ("revoked", "owner_act")

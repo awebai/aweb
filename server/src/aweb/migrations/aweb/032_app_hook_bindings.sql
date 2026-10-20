@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS {{tables.app_hook_bindings}} (
     CONSTRAINT app_hook_bindings_digest_sha256 CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT app_hook_bindings_identity_together
         CHECK ((installation_id IS NULL) = (generation IS NULL)),
+    CONSTRAINT app_hook_bindings_installation_id_not_blank
+        CHECK (installation_id IS NULL OR BTRIM(installation_id) <> ''),
     CONSTRAINT app_hook_bindings_registration_target CHECK (
         kind <> 'registration'
         OR (tool IS NOT NULL AND method IS NOT NULL AND path IS NOT NULL AND cardinality(reads) = 0)
@@ -67,6 +69,9 @@ CREATE TABLE IF NOT EXISTS {{tables.app_hook_bindings}} (
             AND ended_by IN ('owner_act', 'uninstall'))
         OR (state = 'superseded' AND revoked_at IS NOT NULL AND ended_by IS NOT NULL
             AND ended_by = 'generation')
+    ),
+    CONSTRAINT app_hook_bindings_revoked_after_activation CHECK (
+        revoked_at IS NULL OR activated_at IS NULL OR revoked_at >= activated_at
     ),
     CONSTRAINT app_hook_bindings_revocation_act CHECK (
         (COALESCE(ended_by, '') = 'owner_act') = (revocation_act_sha256 IS NOT NULL)
