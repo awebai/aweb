@@ -224,8 +224,8 @@ type SignedRecordItem struct {
 }
 
 // ListTeamSignedRecords reads every team-key-signed record the team has stored,
-// page by page, signed with a same-team key (the team controller key for a
-// rotation). AWID answers any refusal as an unknown team.
+// page by page, signed with the team controller key. AWID answers any refusal
+// as an unknown team.
 func (c *RegistryClient) ListTeamSignedRecords(
 	ctx context.Context,
 	registryURL, domain, name string,

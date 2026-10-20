@@ -72,9 +72,9 @@ Publishes PyPI `awid-service` 0.5.30 and the `awid` image 0.5.30.
   keyset pages, every team-key-signed record the team has stored, including
   those of revoked certificates. A team-key rotation must re-sign all of them,
   and reading them one by one ran into the per-record read limit for any team
-  of more than about 30 certificates. The read is same-team only (team
-  controller or unrevoked member path signature, or the trusted service token),
-  whatever the team's visibility; every refusal is the 404 of an unknown team.
+  of more than about 30 certificates. Only the team key (a path signature) or
+  the trusted service token may read it, whatever the team's visibility; every
+  refusal is the 404 of an unknown team.
   It has its own `attestation_record_list` bucket.
 - Nothing consumes these records yet: they are inputs for apps that verify
   `X-AWEB-Principal-Attestation` with the in-repo `aweb_naapp` verifier,

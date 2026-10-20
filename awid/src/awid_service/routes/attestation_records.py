@@ -3,7 +3,7 @@
 Contracts: docs/principal-attestation.md (team custodian, member custody) and
 docs/member-person.md. Writes need team-controller authority in the covering
 (v2) controller envelope; reads by exact key are anonymous and return the stored
-bytes. The paginated read of all of a team's signed records is same-team only.
+bytes. The paginated read of all of a team's signed records takes the team key.
 """
 
 from __future__ import annotations
@@ -361,27 +361,20 @@ _SIGNED_RECORD_KINDS = (
 _TEAM_NOT_FOUND = "Team not found"
 
 
-async def _same_team_reader(request: Request, db, team, authorization: str | None) -> bool:
-    """The team controller, an unrevoked member, or the trusted service token."""
+def _team_key_reader(request: Request, team, authorization: str | None) -> bool:
+    """The team key's path signature, or the trusted service token.
+
+    Members are not readers: the list would show them custodian records that
+    are otherwise readable only by exact key, and rotation needs the team key.
+    """
     if _presents_trusted_service_token(request):
         return True
     if not authorization:
         return False
     try:
-        caller_did = _verify_path_signature(request, authorization)
+        return _verify_path_signature(request, authorization) == team["team_did_key"]
     except HTTPException:
         return False
-    if caller_did == team["team_did_key"]:
-        return True
-    member = await db.fetch_one(
-        """
-        SELECT 1 FROM {{tables.team_certificates}}
-        WHERE team_uuid = $1 AND member_did_key = $2 AND revoked_at IS NULL
-        LIMIT 1
-        """,
-        team["team_uuid"], caller_did,
-    )
-    return member is not None
 
 
 @router.get(
@@ -399,16 +392,16 @@ async def list_signed_records(
 ) -> dict:
     """Every record the team key has signed and AWID stores, in stable pages.
 
-    For a team-key rotation, which must re-sign all of them. Same-team only,
-    whatever the team's visibility; every refusal, including an unknown team,
-    is the same 404, so the read discloses nothing to anyone else.
+    For a team-key rotation, which must re-sign all of them. Only the team key
+    or the trusted service token may read, whatever the team's visibility;
+    every refusal, including an unknown team, is the same 404.
     """
     db = db_infra.get_manager("aweb")
     team = await db.fetch_one(
         "SELECT team_uuid, team_did_key FROM {{tables.teams}} WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
         domain, name,
     )
-    if team is None or not await _same_team_reader(request, db, team, authorization):
+    if team is None or not _team_key_reader(request, team, authorization):
         raise HTTPException(status_code=404, detail=_TEAM_NOT_FOUND)
     try:
         page_size, after = validate_pagination_params(limit, cursor)

@@ -752,10 +752,11 @@ GET    /v1/namespaces/{domain}/teams/{name}/signed-records?limit=&cursor=
        rotation that must re-sign all of them: the aweb.team-server/1 record
        and the custodian, member-custody and member-person records, including
        those of revoked certificates.
-       Auth: same-team only, whatever the team's visibility: a path signature
-       (the certificate-blob fetch scheme) by the team controller key or an
-       unrevoked member key, or the trusted service token. Anything else, an
-       unknown or deleted team included, is the identical 404
+       Auth: whatever the team's visibility, a path signature (the
+       certificate-blob fetch scheme) by the team controller key, or the
+       trusted service token. Members are not readers: the list would show
+       them custodian records otherwise readable only by exact key. Anything
+       else, an unknown or deleted team included, is the identical 404
        { "detail": "Team not found" }.
        Response: { "items": [{ "kind", "key", "record", "signature" }],
        "has_more", "next_cursor" }. kind is team_server, team_custodians,

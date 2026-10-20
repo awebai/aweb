@@ -286,8 +286,8 @@ authority) takes an optional `resigned_records` object alongside
   refused with `413`, which is distinct from `409`. Chunked rotation is future
   work.
 - The controller builds the set by reading every stored record in pages
-  (`GET /v1/namespaces/{domain}/teams/{name}/signed-records`, same-team only,
-  [awid-sot.md](awid-sot.md)). It verifies each against the current key before
+  (`GET /v1/namespaces/{domain}/teams/{name}/signed-records`, signed with the
+  team key, [awid-sot.md](awid-sot.md)). It verifies each against the current key before
   re-signing it. The `409` names anything it still missed, such as a record
   published during the rotation, so a failed rotation is diagnosable.
 

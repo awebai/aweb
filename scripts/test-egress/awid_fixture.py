@@ -60,7 +60,7 @@ def main():
                    AWID_DB_SCHEMA=schema, AWID_RATE_LIMIT_DISABLED='true', APP_ENV='test')
         if os.environ.get('AWID_FIXTURE_RATE_LIMITS') == 'production':
             env.pop('AWID_RATE_LIMIT_DISABLED')
-            env['AWEB_RATE_LIMIT_BACKEND'] = 'memory'
+            env['AWID_RATE_LIMIT_BACKEND'] = 'memory'
         process = subprocess.Popen(['uv', 'run', '--offline', '--frozen', '--project', str(ROOT / 'awid'),
                                     'uvicorn', 'awid_service.main:app', '--host', '127.0.0.1', '--port', str(port)],
                                    env=env, stdout=sys.stderr, stderr=sys.stderr)

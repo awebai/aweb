@@ -20,7 +20,7 @@ import (
 // member-person records) is re-signed by the new key and swapped with the key in
 // one transaction. A record is re-signed only after it verifies against the
 // team's current key, so the registry cannot get arbitrary content signed by the
-// new key. The records come from AWID's paginated same-team read
+// new key. The records come from AWID's paginated team-key read
 // (/signed-records), so the reads do not grow with the team. If AWID's 409 still
 // names custodian records that were not sent, such as ones published during the
 // run, those are read, verified and re-signed, and the rotation is retried
