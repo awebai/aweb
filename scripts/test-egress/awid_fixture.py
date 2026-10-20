@@ -3,6 +3,8 @@
 
 A second stdout line is JSON naming the fixture's storage (database URL and
 schema), for test helpers that seed state the CLI cannot publish itself.
+Rate limits are off unless AWID_FIXTURE_RATE_LIMITS=production, which runs the
+production bucket values on the in-memory limiter, private to this fixture.
 
 Uses the suite's PG/Redis when configured, otherwise owns disposable containers.
 No service responses are synthesized. Run uv sync --frozen in awid beforehand.
@@ -56,6 +58,9 @@ def main():
                     f"{env.get('PGPORT', '5432')}/{env.get('PGDATABASE', 'postgres')}")
         env.update(AWID_DATABASE_URL=database, AWID_REDIS_URL=env.get('REDIS_URL', 'redis://127.0.0.1:6379/0'),
                    AWID_DB_SCHEMA=schema, AWID_RATE_LIMIT_DISABLED='true', APP_ENV='test')
+        if os.environ.get('AWID_FIXTURE_RATE_LIMITS') == 'production':
+            env.pop('AWID_RATE_LIMIT_DISABLED')
+            env['AWEB_RATE_LIMIT_BACKEND'] = 'memory'
         process = subprocess.Popen(['uv', 'run', '--offline', '--frozen', '--project', str(ROOT / 'awid'),
                                     'uvicorn', 'awid_service.main:app', '--host', '127.0.0.1', '--port', str(port)],
                                    env=env, stdout=sys.stderr, stderr=sys.stderr)

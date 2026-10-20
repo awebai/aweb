@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +33,13 @@ func newRotateKeyFixture(t *testing.T, domain string) rotateKeyFixture {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AWID_SKIP_DNS_VERIFY", "1")
 	registryURL, storage := realAWIDFixtureWithStorage(t)
+	return newRotateKeyFixtureAt(t, domain, registryURL, storage)
+}
+
+// newRotateKeyFixtureAt sets up the namespace, team and two members on an
+// already running AWID.
+func newRotateKeyFixtureAt(t *testing.T, domain, registryURL string, storage realAWIDStorage) rotateKeyFixture {
+	t.Helper()
 	registry := awid.NewAWIDRegistryClient(nil, nil)
 	ctx := context.Background()
 
@@ -99,7 +108,7 @@ func (f rotateKeyFixture) seed(t *testing.T, kind string, record map[string]any,
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedAWIDAttestationRecords(t, f.storage, f.domain, f.team, []map[string]any{{"kind": kind, "record": record, "signature": signature}})
+	seedAWIDAttestationRecords(t, f.storage, f.domain, f.team, nil, []map[string]any{{"kind": kind, "record": record, "signature": signature}})
 }
 
 func (f rotateKeyFixture) custodian(t *testing.T, custodianID string, at time.Time) {
@@ -114,7 +123,7 @@ func (f rotateKeyFixture) custodian(t *testing.T, custodianID string, at time.Ti
 }
 
 // seedEveryKind stores one record of each kind plus a custodian with no
-// custody record, which aw cannot discover except from AWID's 409.
+// custody record.
 func (f rotateKeyFixture) seedEveryKind(t *testing.T, at time.Time) {
 	t.Helper()
 	ctx := context.Background()
@@ -170,7 +179,7 @@ func requireVerifiesUnder(t *testing.T, record *awid.SignedAttestationRecord, er
 	}
 }
 
-func TestRotateKeyReSignsEveryRecordAndLearnsCustodiansFromTheServer(t *testing.T) {
+func TestRotateKeyReSignsEveryRecord(t *testing.T) {
 	f := newRotateKeyFixture(t, "rotate-all.example")
 	f.seedEveryKind(t, time.Now().UTC().Add(-time.Minute))
 	ctx := context.Background()
@@ -184,8 +193,8 @@ func TestRotateKeyReSignsEveryRecordAndLearnsCustodiansFromTheServer(t *testing.
 	if newDID == f.teamDID || out.NewTeamDIDKey != newDID || out.OldTeamDIDKey != f.teamDID {
 		t.Fatalf("team key after rotation = %s, output %+v", newDID, out)
 	}
-	if strings.Join(out.LearnedCustodians, ",") != "standby.example" {
-		t.Fatalf("learned custodians = %v, want the one without custody records", out.LearnedCustodians)
+	if len(out.LearnedCustodians) != 0 {
+		t.Fatalf("learned custodians = %v, want none: the paginated read finds them all", out.LearnedCustodians)
 	}
 	if !out.ResignedTeamServer || out.ResignedCustodians != 2 || out.ResignedCustody != 1 || out.ResignedPerson != 1 {
 		t.Fatalf("re-signed counts = %+v", out)
@@ -221,11 +230,30 @@ func TestRotateKeyReSignsEveryRecordAndLearnsCustodiansFromTheServer(t *testing.
 	requireVerifiesUnder(t, person, err, newDID)
 }
 
+func TestRotateKeyLearnsACustodianPublishedDuringTheRun(t *testing.T) {
+	f := newRotateKeyFixture(t, "rotate-learn.example")
+	at := time.Now().UTC().Add(-time.Minute)
+	f.seedEveryKind(t, at)
+	opts := f.options()
+	opts.AfterRead = func() { f.custodian(t, "midrun.example", at) }
+
+	out, err := executeTeamRotateKey(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("rotate-key: %v", err)
+	}
+	if strings.Join(out.LearnedCustodians, ",") != "midrun.example" || out.ResignedCustodians != 3 {
+		t.Fatalf("output = %+v, want the custodian AWID named learned and re-signed", out)
+	}
+	record, err := f.registry.GetTeamCustodianRecord(context.Background(), f.registryURL, f.domain, f.team, "midrun.example")
+	requireVerifiesUnder(t, record, err, out.NewTeamDIDKey)
+}
+
 func TestRotateKeyRefusesWhenTheOneRetryStillFails(t *testing.T) {
 	f := newRotateKeyFixture(t, "rotate-retry.example")
 	at := time.Now().UTC().Add(-time.Minute)
 	f.seedEveryKind(t, at)
 	opts := f.options()
+	opts.AfterRead = func() { f.custodian(t, "midrun.example", at) }
 	opts.BeforeRetry = func() { f.custodian(t, "late.example", at) }
 
 	_, err := executeTeamRotateKey(context.Background(), opts)
@@ -341,5 +369,121 @@ func TestRotateKeyRefusesWhenTheLocalKeyIsNotAWIDs(t *testing.T) {
 	}
 	if f.currentTeamDID(t) != f.teamDID {
 		t.Fatal("the team key changed")
+	}
+}
+
+func TestRotateKeyReSignsRecordsOfRevokedCertificates(t *testing.T) {
+	f := newRotateKeyFixture(t, "rotate-revoked.example")
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-time.Minute)
+	f.custodian(t, "custodian.example", at)
+	alice := f.certificates[0]
+	f.seed(t, "member_custody", f.record(awid.MemberCustodyRecordType, map[string]any{
+		"certificate_id": alice.CertificateID, "member_did_key": alice.MemberDIDKey, "custodian_id": "custodian.example",
+	}, at), f.teamKey)
+	if err := f.registry.RevokeCertificate(ctx, f.registryURL, f.domain, f.team, alice.CertificateID, f.teamKey); err != nil {
+		t.Fatalf("revoke alice: %v", err)
+	}
+
+	out, err := executeTeamRotateKey(ctx, f.options())
+	if err != nil {
+		t.Fatalf("rotate-key: %v", err)
+	}
+	custody, err := f.registry.GetMemberCustodyRecord(ctx, f.registryURL, f.domain, f.team, alice.CertificateID)
+	requireVerifiesUnder(t, custody, err, out.NewTeamDIDKey)
+}
+
+// countingTransport counts real requests to AWID by path, passing each through.
+type countingTransport struct {
+	paths map[string]int
+}
+
+func (c *countingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	c.paths[request.URL.Path]++
+	return http.DefaultTransport.RoundTrip(request)
+}
+
+func TestRotateKeyUnderProductionRateLimitsReadsRecordsInPages(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AWID_SKIP_DNS_VERIFY", "1")
+	registryURL, storage := realAWIDFixtureRateLimited(t)
+	f := newRotateKeyFixtureAt(t, "rotate-many.example", registryURL, storage)
+	at := time.Now().UTC().Add(-time.Minute)
+	f.custodian(t, "custodian.example", at)
+
+	const members = 40
+	var certificates, records []map[string]any
+	for index := 0; index < members; index++ {
+		memberPub, _, err := awid.GenerateKeypair()
+		if err != nil {
+			t.Fatal(err)
+		}
+		certificateID := fmt.Sprintf("bulk-%02d", index)
+		memberDID := awid.ComputeDIDKey(memberPub)
+		certificates = append(certificates, map[string]any{"certificate_id": certificateID, "member_did_key": memberDID, "alias": certificateID})
+		custody := f.record(awid.MemberCustodyRecordType, map[string]any{
+			"certificate_id": certificateID, "member_did_key": memberDID, "custodian_id": "custodian.example",
+		}, at)
+		person := f.record(awid.MemberPersonRecordType, map[string]any{
+			"certificate_id": certificateID, "member_did_key": memberDID, "single_person": true,
+		}, at)
+		for table, record := range map[string]map[string]any{"member_custody": custody, "member_person": person} {
+			signature, err := awid.SignAttestationRecord(f.teamKey, record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			records = append(records, map[string]any{"kind": table, "record": record, "signature": signature})
+		}
+	}
+	seedAWIDAttestationRecords(t, storage, f.domain, f.team, certificates, records)
+
+	transport := &countingTransport{paths: map[string]int{}}
+	opts := f.options()
+	opts.HTTPClient = &http.Client{Transport: transport}
+	opts.PageSize = 25
+	out, err := executeTeamRotateKey(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("rotate-key under production rate limits: %v", err)
+	}
+
+	stored := 1 + 2*members
+	if out.ResignedCustodians != 1 || out.ResignedCustody != members || out.ResignedPerson != members {
+		t.Fatalf("re-signed = %+v, want every one of %d stored records", out, stored)
+	}
+	listPath := "/v1/namespaces/" + f.domain + "/teams/" + f.team + "/signed-records"
+	if pages := (stored + 24) / 25; transport.paths[listPath] != pages {
+		t.Fatalf("signed-records reads = %d, want %d pages for %d records", transport.paths[listPath], pages, stored)
+	}
+	for path, count := range transport.paths {
+		if strings.HasSuffix(path, "/custody") || strings.HasSuffix(path, "/person") || strings.Contains(path, "/custodians/") {
+			t.Fatalf("per-record read %s (%d) during rotation", path, count)
+		}
+	}
+	total := 0
+	for _, count := range transport.paths {
+		total += count
+	}
+	if total > 10 {
+		t.Fatalf("rotation made %d requests for %d members; reads must not grow with members: %v", total, members, transport.paths)
+	}
+
+	// The production limiter is on: per-record reads, two per member, would not fit.
+	limited := false
+	for attempt := 0; attempt < 61 && !limited; attempt++ {
+		_, err := f.registry.GetMemberCustodyRecord(context.Background(), f.registryURL, f.domain, f.team, "bulk-00")
+		code, _ := registryStatusCode(err)
+		limited = code == http.StatusTooManyRequests
+	}
+	if !limited {
+		t.Fatal("61 per-record reads were not rate limited; the fixture is not running the production buckets")
+	}
+}
+
+func TestRotateRefusalExplainsTheBodyLimit(t *testing.T) {
+	err := rotateRefusal("ops:big.example", &awid.RegistryError{StatusCode: http.StatusRequestEntityTooLarge, Detail: "Request body too large"})
+	for _, want := range []string{"AWID_ROTATE_MAX_BODY_BYTES", "the team key is unchanged", "ops:big.example"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("413 refusal %q does not say %q", err, want)
+		}
 	}
 }

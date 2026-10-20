@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -206,4 +208,76 @@ func ResignTeamServerRecord(newTeamKey ed25519.PrivateKey, record map[string]any
 		return SignedAttestationRecord{}, err
 	}
 	return SignedAttestationRecord{Record: resigned, Signature: signature}, nil
+}
+
+// SignedRecordItem is one record of a team's paginated signed-records read.
+// Key is nil for the team-server record.
+type SignedRecordItem struct {
+	Kind string
+	Key  *string
+	SignedAttestationRecord
+}
+
+// ListTeamSignedRecords reads every team-key-signed record the team has stored,
+// page by page, signed with a same-team key (the team controller key for a
+// rotation). AWID answers any refusal as an unknown team.
+func (c *RegistryClient) ListTeamSignedRecords(
+	ctx context.Context,
+	registryURL, domain, name string,
+	pageSize int,
+	signingKey ed25519.PrivateKey,
+) ([]SignedRecordItem, error) {
+	if signingKey == nil {
+		return nil, fmt.Errorf("team signing key is required")
+	}
+	path := "/v1/namespaces/" + urlPathEscape(canonicalizeDomain(domain)) + "/teams/" +
+		urlPathEscape(strings.ToLower(strings.TrimSpace(name))) + "/signed-records"
+	var items []SignedRecordItem
+	cursor := ""
+	for {
+		query := url.Values{}
+		if pageSize > 0 {
+			query.Set("limit", strconv.Itoa(pageSize))
+		}
+		if cursor != "" {
+			query.Set("cursor", cursor)
+		}
+		target := path
+		if encoded := query.Encode(); encoded != "" {
+			target += "?" + encoded
+		}
+		var page struct {
+			Items []struct {
+				Kind      string          `json:"kind"`
+				Key       *string         `json:"key"`
+				Record    json.RawMessage `json:"record"`
+				Signature string          `json:"signature"`
+			} `json:"items"`
+			HasMore    bool    `json:"has_more"`
+			NextCursor *string `json:"next_cursor"`
+		}
+		headers := optionalSignedPathHeaders(http.MethodGet, path, signingKey)
+		if err := c.requestJSON(ctx, http.MethodGet, registryURL, target, headers, nil, &page); err != nil {
+			return nil, err
+		}
+		for _, item := range page.Items {
+			decoder := json.NewDecoder(bytes.NewReader(item.Record))
+			decoder.UseNumber()
+			var record map[string]any
+			if err := decoder.Decode(&record); err != nil {
+				return nil, fmt.Errorf("decode signed record: %w", err)
+			}
+			items = append(items, SignedRecordItem{
+				Kind: item.Kind, Key: item.Key,
+				SignedAttestationRecord: SignedAttestationRecord{Record: record, Signature: item.Signature},
+			})
+		}
+		if !page.HasMore {
+			return items, nil
+		}
+		if page.NextCursor == nil || *page.NextCursor == "" || *page.NextCursor == cursor {
+			return nil, fmt.Errorf("signed-records read: AWID reported more records without a new cursor")
+		}
+		cursor = *page.NextCursor
+	}
 }

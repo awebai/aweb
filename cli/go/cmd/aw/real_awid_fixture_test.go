@@ -29,6 +29,18 @@ func realAWIDFixture(t *testing.T) string {
 // realAWIDFixtureWithStorage is realAWIDFixture plus the fixture's storage.
 func realAWIDFixtureWithStorage(t *testing.T) (string, realAWIDStorage) {
 	t.Helper()
+	return startRealAWIDFixture(t, false)
+}
+
+// realAWIDFixtureRateLimited runs the fixture with AWID's production rate-limit
+// buckets, on an in-memory limiter private to it.
+func realAWIDFixtureRateLimited(t *testing.T) (string, realAWIDStorage) {
+	t.Helper()
+	return startRealAWIDFixture(t, true)
+}
+
+func startRealAWIDFixture(t *testing.T, rateLimited bool) (string, realAWIDStorage) {
+	t.Helper()
 	script, err := filepath.Abs("../../../../scripts/test-egress/awid_fixture.py")
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +55,9 @@ func realAWIDFixtureWithStorage(t *testing.T) (string, realAWIDStorage) {
 	}
 	cmd := exec.Command("python3", script)
 	cmd.Env = append(os.Environ(), "UV_CACHE_DIR="+strings.TrimSpace(string(cacheDir)))
+	if rateLimited {
+		cmd.Env = append(cmd.Env, "AWID_FIXTURE_RATE_LIMITS=production")
+	}
 	cmd.Stderr = os.Stderr
 	input, err := cmd.StdinPipe()
 	if err != nil {
@@ -76,11 +91,12 @@ func realAWIDFixtureWithStorage(t *testing.T) (string, realAWIDStorage) {
 	return registryURL, storage
 }
 
-// seedAWIDAttestationRecords stores signed attestation records in the fixture's
-// database through scripts/test-egress/seed_awid_attestation_records.py. aw
-// cannot publish these records itself (their routes take the covering v2
-// controller envelope); AWID verifies them on rotation like published ones.
-func seedAWIDAttestationRecords(t *testing.T, storage realAWIDStorage, domain, name string, records []map[string]any) {
+// seedAWIDAttestationRecords stores certificates and signed attestation
+// records in the fixture's database through
+// scripts/test-egress/seed_awid_attestation_records.py. aw cannot publish these
+// records itself (their routes take the covering v2 controller envelope); AWID
+// verifies them on rotation like published ones.
+func seedAWIDAttestationRecords(t *testing.T, storage realAWIDStorage, domain, name string, certificates, records []map[string]any) {
 	t.Helper()
 	script, err := filepath.Abs("../../../../scripts/test-egress/seed_awid_attestation_records.py")
 	if err != nil {
@@ -90,7 +106,7 @@ func seedAWIDAttestationRecords(t *testing.T, storage realAWIDStorage, domain, n
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := json.Marshal(map[string]any{"domain": domain, "name": name, "records": records})
+	input, err := json.Marshal(map[string]any{"domain": domain, "name": name, "certificates": certificates, "records": records})
 	if err != nil {
 		t.Fatal(err)
 	}

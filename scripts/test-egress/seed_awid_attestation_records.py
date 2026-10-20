@@ -7,8 +7,11 @@ envelope, which the Go client does not sign. Go tests that need stored records
 records; AWID's rotation verifies them exactly as it would published ones. The
 publish routes themselves are tested in awid/tests.
 
-Input on stdin, JSON: {"domain", "name", "records": [{"kind", "record",
-"signature"}]}, where kind is team_custodians, member_custody or member_person.
+Input on stdin, JSON: {"domain", "name", "certificates": [{"certificate_id",
+"member_did_key", "alias"}], "records": [{"kind", "record", "signature"}]},
+where kind is team_custodians, member_custody or member_person. Certificates
+are optional: they let a test hold more members than the production
+certificate_register limit allows it to register.
 Environment: AWID_DATABASE_URL and AWID_DB_SCHEMA, from awid_fixture.py's
 second stdout line. Run with the awid project's environment.
 """
@@ -45,7 +48,13 @@ async def seed(payload: dict) -> None:
         )
         if team_uuid is None:
             raise SystemExit("team not found")
-        for entry in payload["records"]:
+        for certificate in payload.get("certificates") or []:
+            await conn.execute(
+                f"INSERT INTO {schema}.team_certificates (team_uuid, certificate_id, member_did_key, alias, identity_scope)"
+                " VALUES ($1, $2, $3, $4, 'local')",
+                team_uuid, certificate["certificate_id"], certificate["member_did_key"], certificate["alias"],
+            )
+        for entry in payload.get("records") or []:
             kind, record = entry["kind"], entry["record"]
             columns = KEY_COLUMNS[kind]
             names = ", ".join(("team_uuid", *columns, "record_json", "signature", "team_did_key", "issued_at"))

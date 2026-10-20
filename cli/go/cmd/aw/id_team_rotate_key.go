@@ -20,9 +20,11 @@ import (
 // member-person records) is re-signed by the new key and swapped with the key in
 // one transaction. A record is re-signed only after it verifies against the
 // team's current key, so the registry cannot get arbitrary content signed by the
-// new key. AWID serves custodian records only by exact key, so custodians
-// without custody records are learned from AWID's 409, which names the missing
-// keys; the rotation is retried exactly once with them.
+// new key. The records come from AWID's paginated same-team read
+// (/signed-records), so the reads do not grow with the team. If AWID's 409 still
+// names custodian records that were not sent, such as ones published during the
+// run, those are read, verified and re-signed, and the rotation is retried
+// exactly once.
 //
 // The new key is stored as pending before AWID sees it and promoted once AWID
 // holds it, so an interruption never loses a key AWID may already have. Member
@@ -33,6 +35,12 @@ type teamRotateKeyOptions struct {
 	Team        string
 	RegistryURL string
 	Now         func() time.Time
+	// HTTPClient, when set, carries every AWID request.
+	HTTPClient *http.Client
+	// PageSize is the signed-records page size; zero is AWID's default.
+	PageSize int
+	// AfterRead runs after the records are read and before the first attempt.
+	AfterRead func()
 	// BeforeRetry runs between the refused first attempt and the retry.
 	BeforeRetry func()
 }
@@ -120,11 +128,6 @@ func didOf(key ed25519.PrivateKey) string {
 	return awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
 }
 
-func isRegistryNotFound(err error) bool {
-	code, ok := registryStatusCode(err)
-	return ok && code == http.StatusNotFound
-}
-
 // teamRotation holds what one rotation reads, verifies and re-signs.
 type teamRotation struct {
 	registry    *awid.RegistryClient
@@ -135,8 +138,8 @@ type teamRotation struct {
 	currentDID  string
 	newKey      ed25519.PrivateKey
 	now         time.Time
+	pageSize    int
 	resigned    awid.ResignedRecords
-	custodians  map[string]bool
 }
 
 func (r *teamRotation) verifyStored(kind string, stored *awid.SignedAttestationRecord, keyField, key string) error {
@@ -162,77 +165,53 @@ func (r *teamRotation) addCustodian(ctx context.Context, custodianID string) err
 		return err
 	}
 	r.resigned.TeamCustodians = append(r.resigned.TeamCustodians, resigned)
-	r.custodians[custodianID] = true
 	return nil
 }
 
-// collect reads every stored record aw can discover, verifies it against the
-// current key and re-signs it with the new key.
+// collect reads every record the team has stored at AWID, in pages, verifies
+// each against the current key and re-signs it with the new key.
 func (r *teamRotation) collect(ctx context.Context, currentKey ed25519.PrivateKey) error {
-	server, err := r.registry.GetTeamServerRecord(ctx, r.registryURL, r.domain, r.team)
-	switch {
-	case isRegistryNotFound(err):
-	case err != nil:
-		return fmt.Errorf("read team server record: %w", err)
-	default:
-		if _, err := awid.VerifyTeamServerRecord(server.Record, server.Signature, r.teamID, r.currentDID, r.now); err != nil {
-			return fmt.Errorf("the stored team server record does not verify against the team's current key, so aw will not re-sign it: %w", err)
+	items, err := r.registry.ListTeamSignedRecords(ctx, r.registryURL, r.domain, r.team, r.pageSize, currentKey)
+	if err != nil {
+		return fmt.Errorf("read the signed records of %s: %w", r.teamID, err)
+	}
+	keyed := map[string]struct {
+		recordType string
+		keyField   string
+		into       *[]awid.SignedAttestationRecord
+	}{
+		"team_custodians": {awid.TeamCustodianRecordType, "custodian_id", &r.resigned.TeamCustodians},
+		"member_custody":  {awid.MemberCustodyRecordType, "certificate_id", &r.resigned.MemberCustody},
+		"member_person":   {awid.MemberPersonRecordType, "certificate_id", &r.resigned.MemberPerson},
+	}
+	for _, item := range items {
+		if item.Kind == "team_server" {
+			if r.resigned.TeamServer != nil {
+				return fmt.Errorf("AWID returned more than one team server record for %s", r.teamID)
+			}
+			if _, err := awid.VerifyTeamServerRecord(item.Record, item.Signature, r.teamID, r.currentDID, r.now); err != nil {
+				return fmt.Errorf("the stored team server record does not verify against the team's current key, so aw will not re-sign it: %w", err)
+			}
+			resigned, err := awid.ResignTeamServerRecord(r.newKey, item.Record, r.now)
+			if err != nil {
+				return err
+			}
+			r.resigned.TeamServer = &resigned
+			continue
 		}
-		resigned, err := awid.ResignTeamServerRecord(r.newKey, server.Record, r.now)
+		kind, ok := keyed[item.Kind]
+		if !ok || item.Key == nil {
+			return fmt.Errorf("AWID returned a signed record of unknown kind %q for %s", item.Kind, r.teamID)
+		}
+		stored := item.SignedAttestationRecord
+		if err := r.verifyStored(kind.recordType, &stored, kind.keyField, *item.Key); err != nil {
+			return err
+		}
+		resigned, err := awid.ResignAttestationRecord(r.newKey, stored.Record, r.now)
 		if err != nil {
 			return err
 		}
-		r.resigned.TeamServer = &resigned
-	}
-
-	certificates, err := r.registry.ListCertificates(ctx, r.registryURL, r.domain, r.team, false, currentKey)
-	if err != nil {
-		return fmt.Errorf("list certificates of %s: %w", r.teamID, err)
-	}
-	custodianIDs := map[string]bool{}
-	for _, certificate := range certificates {
-		id := certificate.CertificateID
-		custody, err := r.registry.GetMemberCustodyRecord(ctx, r.registryURL, r.domain, r.team, id)
-		switch {
-		case isRegistryNotFound(err):
-		case err != nil:
-			return fmt.Errorf("read custody record of certificate %s: %w", id, err)
-		default:
-			if err := r.verifyStored(awid.MemberCustodyRecordType, custody, "certificate_id", id); err != nil {
-				return err
-			}
-			resigned, err := awid.ResignAttestationRecord(r.newKey, custody.Record, r.now)
-			if err != nil {
-				return err
-			}
-			r.resigned.MemberCustody = append(r.resigned.MemberCustody, resigned)
-			custodianIDs[custody.Record["custodian_id"].(string)] = true
-		}
-		person, err := r.registry.GetMemberPersonRecord(ctx, r.registryURL, r.domain, r.team, id)
-		switch {
-		case isRegistryNotFound(err):
-		case err != nil:
-			return fmt.Errorf("read person record of certificate %s: %w", id, err)
-		default:
-			if err := r.verifyStored(awid.MemberPersonRecordType, person, "certificate_id", id); err != nil {
-				return err
-			}
-			resigned, err := awid.ResignAttestationRecord(r.newKey, person.Record, r.now)
-			if err != nil {
-				return err
-			}
-			r.resigned.MemberPerson = append(r.resigned.MemberPerson, resigned)
-		}
-	}
-	ids := make([]string, 0, len(custodianIDs))
-	for id := range custodianIDs {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		if err := r.addCustodian(ctx, id); err != nil {
-			return err
-		}
+		*kind.into = append(*kind.into, resigned)
 	}
 	return nil
 }
@@ -258,6 +237,9 @@ func executeTeamRotateKey(ctx context.Context, opts teamRotateKeyOptions) (teamR
 	})
 	if err != nil {
 		return teamRotateKeyOutput{}, err
+	}
+	if opts.HTTPClient != nil {
+		registry = awid.NewAWIDRegistryClient(opts.HTTPClient, nil)
 	}
 	teamID := awid.BuildTeamID(domain, teamName)
 	now := time.Now().UTC()
@@ -321,10 +303,13 @@ func executeTeamRotateKey(ctx context.Context, opts teamRotateKeyOptions) (teamR
 
 	rotation := &teamRotation{
 		registry: registry, registryURL: registryURL, domain: domain, team: teamName, teamID: teamID,
-		currentDID: currentDID, newKey: newKey, now: now, custodians: map[string]bool{},
+		currentDID: currentDID, newKey: newKey, now: now, pageSize: opts.PageSize,
 	}
 	if err := rotation.collect(ctx, currentKey); err != nil {
 		return teamRotateKeyOutput{}, err
+	}
+	if opts.AfterRead != nil {
+		opts.AfterRead()
 	}
 	newDID := didOf(newKey)
 	_, err = registry.RotateTeamKey(ctx, registryURL, domain, teamName, newDID, &rotation.resigned, controllerKey)
@@ -335,9 +320,6 @@ func executeTeamRotateKey(ctx context.Context, opts teamRotateKeyOptions) (teamR
 			opts.BeforeRetry()
 		}
 		for _, custodianID := range learned {
-			if rotation.custodians[custodianID] {
-				return teamRotateKeyOutput{}, rotateRefusal(teamID, err)
-			}
 			if err := rotation.addCustodian(ctx, custodianID); err != nil {
 				return teamRotateKeyOutput{}, err
 			}

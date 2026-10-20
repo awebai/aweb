@@ -10,17 +10,18 @@ CLI changes are since `aw-v1.36.44`. Prepared alongside AWID 0.5.30.
 
 - `aw id team rotate-key --team <name> --namespace <domain>` rotates the team
   controller key under the namespace controller key, on AWID's atomic path.
-  It reads every record the team key has signed at AWID: the
-  `aweb.team-server/1` record and the custodian, member-custody and
-  member-person records. It verifies each against the team's current key before
+  It reads every record the team key has signed at AWID in a few pages
+  (`/signed-records`): the `aweb.team-server/1` record and the custodian,
+  member-custody and member-person records, those of revoked certificates
+  included. It verifies each against the team's current key before
   re-signing it with the new key, and sends them with the key change in one
   request, so the team-server record stays valid across the rotation instead of
   having to be republished with `aw id team set-server`.
-  - AWID serves custodian records only by exact key. A custodian with no
-    custody record is learned from AWID's `409 resigned_records_incomplete`,
-    which names it, and the rotation is retried exactly once. Any other
-    refusal, or a second one, leaves the key unchanged and exits non-zero with
-    AWID's detail.
+  - If AWID's `409 resigned_records_incomplete` names custodian records the
+    command did not send, for example ones published during the run, it
+    fetches and verifies those and retries exactly once. Any other refusal, or
+    a second one, leaves the key unchanged and exits non-zero with AWID's
+    detail.
   - The new key is stored as pending before AWID sees it and becomes the team
     key once AWID holds it. Running the command again after an interruption
     resumes with the same key.
@@ -67,6 +68,14 @@ Publishes PyPI `awid-service` 0.5.30 and the `awid` image 0.5.30.
   before: the team's records, including its `aweb.team-server/1` record, stay
   signed by the old key and verifiers refuse them until they are published
   again under the new key. No released `aw` sends `resigned_records` yet.
+- `GET /v1/namespaces/{domain}/teams/{name}/signed-records` returns, in
+  keyset pages, every team-key-signed record the team has stored, including
+  those of revoked certificates. A team-key rotation must re-sign all of them,
+  and reading them one by one ran into the per-record read limit for any team
+  of more than about 30 certificates. The read is same-team only (team
+  controller or unrevoked member path signature, or the trusted service token),
+  whatever the team's visibility; every refusal is the 404 of an unknown team.
+  It has its own `attestation_record_list` bucket.
 - Nothing consumes these records yet: they are inputs for apps that verify
   `X-AWEB-Principal-Attestation` with the in-repo `aweb_naapp` verifier,
   which refuses an attestation whose records are not registered.
