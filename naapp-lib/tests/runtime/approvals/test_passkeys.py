@@ -47,6 +47,7 @@ from aweb_naapp.runtime.passkeys import (
 from tests.runtime.approvals.owner_acts import (
     TeamOwner,
     designation_subject,
+    revocation_subject,
     team_owner,
 )
 from tests.runtime.approvals.soft_authenticator import SoftAuthenticator, b64url
@@ -608,6 +609,154 @@ async def test_a_reissue_during_recovery_tells_the_prior_contacts_again(pw):
         reissued = await pw.passkeys.reissue_enrolment(tx, scope=SCOPE)
     await pw.passkeys.deliver(reissued)
     assert len(pw.contacts.notices["human@example.com"]) == before + 1
+
+
+# Retirement
+
+
+async def retire(pw: PasskeyWorld, scope: str = SCOPE):
+    """The owner revokes the scope's role: consume the act and retire in one
+    transaction. The scope's next designation is a first one."""
+    subject = revocation_subject(scope, "approver-1")
+    prepared = await pw.owner.prepare("app-role.revoke", subject)
+    async with pw.passkeys.db.transaction() as tx:
+        act = await pw.owner.consume(tx, prepared, subject)
+        await pw.passkeys.retire(tx, scope=scope, evidence=act)
+    pw.designated.discard(scope)
+    return act
+
+
+async def test_retiring_ends_the_designation_and_its_passkey(pw):
+    approver, device = await enrol(pw, "human@example.com")
+    await retire(pw)
+    assert await pw.passkeys.designated_approver(policy()) is None
+    assert not await pw.passkeys.is_current(approver.subject, policy())
+    assert await refusal(mint(pw)) is Refusal.NO_APPROVER
+    with pytest.raises(AuthenticationFailed):
+        await login(pw, device)
+    [retired] = [row for row in await pw.audit.rows() if row["kind"] == "approver_retired"]
+    assert retired["subject"] == approver.subject
+    assert retired["actor"] == did_key(pw.owner.team_key)
+
+
+async def test_retiring_voids_the_approvers_live_approvals(pw):
+    _, device = await enrol(pw, "human@example.com")
+    approved = await mint(pw)
+    await decide(pw, approved, await ceremony(pw, approved, device))
+    pending = await mint(pw, {**REQUEST, "executor": "runner"})
+    await retire(pw)
+    assert await refusal(pw.approvals.admit(approved.approval_id, REQUEST, "op-1")) is (
+        Refusal.REVOKED
+    )
+    assert (await pw.approvals.get(pending.approval_id)).state is ApprovalState.REVOKED
+
+
+async def test_a_re_granted_owner_enrols_again_and_the_old_passkey_stays_dead(pw):
+    _, old_device = await enrol(pw, "human@example.com")
+    await retire(pw)
+    designation = await designate(pw, "human@example.com")
+    assert designation.effective_at == pw.clock()
+    assert await pw.passkeys.designated_approver(policy()) is None
+    with pytest.raises(AuthenticationFailed):
+        await pw.passkeys.login_options(SCOPE)
+    token = pw.contacts.last("human@example.com")
+    new_device = SoftAuthenticator(ORIGIN)
+    await pw.passkeys.complete_enrolment(
+        token, new_device.create(await pw.passkeys.enrolment_options(token))
+    )
+    approval = await mint(pw)
+    assert await refusal(decide(pw, approval, await ceremony(pw, approval, old_device))) is (
+        Refusal.AUTHENTICATION_FAILED
+    )
+    with pytest.raises(AuthenticationFailed):
+        await login(pw, old_device)
+    assert (await decide(pw, approval, await ceremony(pw, approval, new_device))).state is (
+        ApprovalState.APPROVED
+    )
+
+
+async def test_retiring_during_a_recovery_ends_the_pending_approver_too(pw):
+    await enrol(pw, "human@example.com")
+    pending = await designate(pw, "new-phone@example.com")
+    token = pw.contacts.last("new-phone@example.com")
+    await retire(pw)
+    assert await pw.passkeys.recovery_pending_until(SCOPE) is None
+    with pytest.raises(EnrolmentRefused):
+        await pw.passkeys.enrolment_options(token)
+    pw.clock.now = pending.effective_at
+    assert await pw.passkeys.designated_approver(policy()) is None
+
+
+async def test_retiring_needs_a_revocation_act_for_its_scope_in_its_transaction(pw):
+    await enrol(pw, "human@example.com")
+    designating = designation_subject(SCOPE, "other@example.com")
+    prepared = await pw.owner.prepare("app-credential.recover", designating)
+    with pytest.raises(DesignationRefused):
+        async with pw.passkeys.db.transaction() as tx:
+            act = await pw.owner.consume(tx, prepared, designating)
+            await pw.passkeys.retire(tx, scope=SCOPE, evidence=act)
+    elsewhere = revocation_subject("other-scope", "approver-1")
+    prepared = await pw.owner.prepare("app-role.revoke", elsewhere)
+    with pytest.raises(DesignationRefused):
+        async with pw.passkeys.db.transaction() as tx:
+            act = await pw.owner.consume(tx, prepared, elsewhere)
+            await pw.passkeys.retire(tx, scope=SCOPE, evidence=act)
+    revoking = revocation_subject(SCOPE, "approver-1")
+    prepared = await pw.owner.prepare("app-role.revoke", revoking)
+    async with pw.passkeys.db.transaction() as tx:
+        stale = await pw.owner.consume(tx, prepared, revoking)
+    with pytest.raises(DesignationRefused):
+        async with pw.passkeys.db.transaction() as tx:
+            await pw.passkeys.retire(tx, scope=SCOPE, evidence=stale)
+    async with pw.passkeys.db.transaction() as tx:
+        with pytest.raises(TypeError):
+            await pw.passkeys.retire(tx, scope=SCOPE, evidence="owner-1")
+    assert await pw.passkeys.designated_approver(policy()) is not None
+
+
+async def test_a_revocation_act_takes_effect_once(pw):
+    await enrol(pw, "human@example.com")
+    revoking = revocation_subject(SCOPE, "approver-1")
+    designating = designation_subject(SCOPE, "human@example.com")
+    revoke = await pw.owner.prepare("app-role.revoke", revoking)
+    regrant = await pw.owner.prepare("app-role.designate", designating)
+    async with pw.passkeys.db.transaction() as tx:
+        act = await pw.owner.consume(tx, revoke, revoking)
+        await pw.passkeys.retire(tx, scope=SCOPE, evidence=act)
+        designation = await pw.passkeys.designate(
+            tx,
+            scope=SCOPE,
+            contact="human@example.com",
+            evidence=await pw.owner.consume(tx, regrant, designating),
+        )
+        with pytest.raises(DesignationRefused):
+            await pw.passkeys.retire(tx, scope=SCOPE, evidence=act)
+    assert await pw.passkeys.is_current(designation.approver.subject, policy())
+
+
+async def test_retiring_a_scope_without_an_approver_is_refused(pw):
+    with pytest.raises(DesignationRefused):
+        await retire(pw)
+
+
+async def test_a_retirement_rolled_back_with_its_transaction_leaves_the_approver(pw):
+    approver, device = await enrol(pw, "human@example.com")
+    approval = await mint(pw)
+    subject = revocation_subject(SCOPE, "approver-1")
+    prepared = await pw.owner.prepare("app-role.revoke", subject)
+
+    class Abandoned(Exception):
+        pass
+
+    with pytest.raises(Abandoned):
+        async with pw.passkeys.db.transaction() as tx:
+            act = await pw.owner.consume(tx, prepared, subject)
+            await pw.passkeys.retire(tx, scope=SCOPE, evidence=act)
+            raise Abandoned
+    assert await pw.passkeys.designated_approver(policy()) == approver
+    assert (await decide(pw, approval, await ceremony(pw, approval, device))).state is (
+        ApprovalState.APPROVED
+    )
 
 
 # Lockout protections

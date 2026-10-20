@@ -23,6 +23,7 @@ class AuditKind(StrEnum):
     APPROVER_REDESIGNATED = "approver_redesignated"
     APPROVER_ENROLLED = "approver_enrolled"
     APPROVER_ENROLMENT_REISSUED = "approver_enrolment_reissued"
+    APPROVER_RETIRED = "approver_retired"
     APPROVER_CONTACT_CHANGE_SCHEDULED = "approver_contact_change_scheduled"
     APPROVER_LOGGED_IN = "approver_logged_in"
     APPROVAL_REQUESTED = "approval_requested"

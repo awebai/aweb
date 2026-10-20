@@ -135,6 +135,12 @@ the approval, decision, policy and the app's own origin.
   the scope has no approver, and every contact previously recorded for the
   scope is notified. `recovery_pending_until` tells the app to freeze its own
   widening changes meanwhile.
+- `retire(tx, scope=..., evidence=...)` ends a scope's designation on an
+  `app-role.revoke` act consumed in the same transaction, for instance when the
+  owner role behind the scope is revoked. The current approver, or a recovery's
+  pending one, is retired with its passkeys, unused enrolment links and live
+  approvals. The scope then has no approver: its next designation is a first
+  one and enrols a new passkey, and the retired passkeys stay dead.
 - A contact change needs the approver's own passkey, takes effect after a delay
   (at least 24 h) and is notified to the old and the new contact.
 - These durations are floors. App or owner policy may lengthen them, and
