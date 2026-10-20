@@ -34,6 +34,14 @@ runtime = [
 outbox = [
   "pgdbm>=0.5.0",
 ]
+# The shared egress guard, aweb_naapp.egress: URL canonicalization, its own
+# resolver and a pinned verified connection, without the naapp runtime.
+egress = [
+  "dnspython>=2.7.0",
+  "httpcore>=1.0.9",
+  "idna>=3.10",
+  "publicsuffixlist>=1.0.2",
+]
 
 [project.urls]
 Homepage = "https://github.com/awebai/aweb-naapp"
@@ -53,6 +61,8 @@ awid-service = { path = "../awid" }
 [dependency-groups]
 dev = [
   "aweb-naapp[runtime]",
+  "aweb-naapp[egress]",
+  "cryptography>=44.0.0",
   "pytest>=9.0.0",
   "pytest-asyncio>=1.2.0",
   "httpx2>=2.9.1",
