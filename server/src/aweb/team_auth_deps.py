@@ -29,7 +29,7 @@ from aweb.awid_error_handling import (
     awid_dependency_http_exception,
     awid_registry_not_configured_exception,
 )
-from aweb.config import get_settings, require_registered_certificates
+from aweb.config import require_registered_certificates
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 from aweb.team_auth import parse_and_verify_certificate
 from awid.certificates import CertificateValidationError
@@ -46,7 +46,7 @@ def _team_auth_allowed_audiences(request: Request) -> list[str]:
     configured = str(getattr(request.app.state, "public_origin", "") or "").strip()
     if configured:
         return [configured]
-    return [get_settings().public_origin]
+    raise HTTPException(status_code=503, detail="Request authentication public origin is not configured")
 
 
 @dataclass(frozen=True)
