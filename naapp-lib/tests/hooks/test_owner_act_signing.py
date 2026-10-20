@@ -114,3 +114,10 @@ def test_a_built_subject_signs_like_the_vector() -> None:
     subject = case["act"]["subject"]
     act = {**case["act"], "subject": hook_binding_subject(**subject)}
     assert owner_act_signing_bytes(act) == _b64url(case["signing_bytes_b64url"])
+
+
+@pytest.mark.parametrize("name", ["scopes", "reads"])
+def test_the_binding_builder_refuses_a_string_for_a_list(name) -> None:
+    kind = "activate_registration_sorted_scopes" if name == "scopes" else "activate_production"
+    with pytest.raises(TypeError, match=name):
+        hook_binding_subject(**{**_binding(kind), name: "ingest"})

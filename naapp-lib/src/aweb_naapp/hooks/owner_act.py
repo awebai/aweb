@@ -328,8 +328,13 @@ def hook_binding_subject(
         if value is not None:
             subject[name] = value
     for name, values in (("scopes", scopes), ("reads", reads)):
-        if values is not None:
-            subject[name] = sorted(set(values))
+        if values is None:
+            continue
+        # A string is a sequence of its characters; taken as a list it would
+        # sign an act naming one-letter tools.
+        if isinstance(values, str):
+            raise TypeError(f"{name} must be a list of strings, not a string")
+        subject[name] = sorted(set(values))
     return subject
 
 
