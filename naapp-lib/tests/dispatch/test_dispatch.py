@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from datetime import timedelta
@@ -15,6 +16,7 @@ from pgdbm.core import TransactionManager
 from aweb_naapp.dispatch import (
     Dispatch,
     Dispatches,
+    DispatchInFlight,
     InvalidTransition,
     ReconciliationPending,
     State,
@@ -27,14 +29,16 @@ ACTION = "credential-1:create-refund"
 
 
 class Recorder:
-    """Records every transition, and fails the one named in ``fail_on``."""
+    """Records every transition, and fails the one named in ``fail_on`` or
+    any transition of a dispatch in ``fail_ids``."""
 
     def __init__(self) -> None:
         self.transitions: list[Transition] = []
         self.fail_on: State | None = None
+        self.fail_ids: set[UUID] = set()
 
     async def __call__(self, tx: TransactionManager, transition: Transition) -> None:
-        if transition.to_state is self.fail_on:
+        if transition.to_state is self.fail_on or transition.dispatch_id in self.fail_ids:
             raise EnqueueFailed(transition.to_state)
         await tx.execute("SELECT 1")
         self.transitions.append(transition)
@@ -341,11 +345,227 @@ async def test_an_unreconciled_outcome_blocks_the_same_subject_and_action(
     assert (await _state(db, machine, unknown)).result == {"by": "owner"}
 
 
-async def test_a_declared_exemption_does_not_block(
+async def test_the_exemption_is_the_new_dispatchs_own(
     db: AsyncDatabaseManager, machine: Dispatches, recorder: Recorder
 ) -> None:
     await _unknown(db, recorder, retry_exempt=True)
     await _admitted(db, machine, retry_exempt=True)
+    with pytest.raises(ReconciliationPending):
+        await _admitted(db, machine)
+
+
+async def test_an_exempt_dispatch_is_not_blocked_by_an_unknown_one(
+    db: AsyncDatabaseManager, machine: Dispatches, recorder: Recorder
+) -> None:
+    await _unknown(db, recorder)
+    await _admitted(db, machine, retry_exempt=True)
+
+
+async def _sweep_soon(recorder: Recorder) -> Dispatches:
+    return Dispatches(
+        on_transition=recorder,
+        max_dispatch=timedelta(milliseconds=50),
+        sweep_margin=timedelta(milliseconds=50),
+    )
+
+
+async def test_a_not_sent_retry_is_blocked_by_an_unknown_outcome_of_its_pair(
+    db: AsyncDatabaseManager, machine: Dispatches, recorder: Recorder
+) -> None:
+    quick = await _sweep_soon(recorder)
+    retrying = await _dispatching(db, machine)
+    async with db.transaction() as tx:
+        await machine.not_sent(tx, retrying, {"error": "connect"})
+    unknown = await _dispatching(db, quick)
+    await asyncio.sleep(0.2)
+    await quick.sweep(db)
+    with pytest.raises(ReconciliationPending):
+        async with db.transaction() as tx:
+            await machine.begin_dispatch(tx, retrying, fence=no_fence)
+    async with db.transaction() as tx:
+        await machine.reconcile(tx, unknown, State.RECONCILED_FAILED, {})
+        await machine.begin_dispatch(tx, retrying, fence=no_fence)
+
+
+async def test_a_dispatch_admitted_before_the_sweep_is_blocked_at_dispatch(
+    db: AsyncDatabaseManager, recorder: Recorder
+) -> None:
+    quick = await _sweep_soon(recorder)
+    admitted = await _admitted(db, quick)
+    exempt = await _admitted(db, quick, retry_exempt=True)
+    running = uuid.uuid4()
+    async with db.transaction() as tx:
+        await quick.create(tx, dispatch_id=running, subject=SUBJECT, action=ACTION)
+        await quick.admit(tx, running)
+        await quick.begin_dispatch(tx, running, fence=no_fence)
+    await asyncio.sleep(0.2)
+    await quick.sweep(db)
+    with pytest.raises(ReconciliationPending):
+        async with db.transaction() as tx:
+            await quick.begin_dispatch(tx, admitted, fence=no_fence)
+    async with db.transaction() as tx:
+        await quick.begin_dispatch(tx, exempt, fence=no_fence)
+
+
+async def test_a_pair_has_at_most_one_dispatch_in_flight(
+    db: AsyncDatabaseManager, machine: Dispatches
+) -> None:
+    first = await _admitted(db, machine)
+    second = await _admitted(db, machine)
+    async with db.transaction() as tx:
+        await machine.begin_dispatch(tx, first, fence=no_fence)
+    with pytest.raises(DispatchInFlight) as in_flight:
+        async with db.transaction() as tx:
+            await machine.begin_dispatch(tx, second, fence=no_fence)
+    assert in_flight.value.code == "dispatch_in_flight"
+    with pytest.raises(DispatchInFlight):
+        await _admitted(db, machine)
+    await _admitted(db, machine, subject="did:aw:other")
+    async with db.transaction() as tx:
+        await machine.complete(tx, first, {"status": 200})
+        await machine.begin_dispatch(tx, second, fence=no_fence)
+
+
+async def test_concurrent_dispatches_of_one_pair_yield_one(
+    db: AsyncDatabaseManager, machine: Dispatches
+) -> None:
+    first = await _admitted(db, machine)
+    second = await _admitted(db, machine)
+
+    async def slow_fence(tx: TransactionManager, dispatch: Dispatch) -> None:
+        await asyncio.sleep(0.2)
+
+    async def begin(dispatch_id: UUID) -> None:
+        async with db.transaction() as tx:
+            await machine.begin_dispatch(tx, dispatch_id, fence=slow_fence)
+
+    results = await asyncio.gather(begin(first), begin(second), return_exceptions=True)
+    assert sorted(type(r).__name__ for r in results) == ["DispatchInFlight", "NoneType"]
+    states = {(await _state(db, machine, d)).state for d in (first, second)}
+    assert states == {State.DISPATCHING, State.ADMITTED}
+
+
+async def test_admission_racing_the_sweep_is_refused(
+    db: AsyncDatabaseManager, recorder: Recorder
+) -> None:
+    quick = await _sweep_soon(recorder)
+    await _dispatching(db, quick)
+    await asyncio.sleep(0.2)
+    newcomer = uuid.uuid4()
+    async with db.transaction() as tx:
+        await quick.create(tx, dispatch_id=newcomer, subject=SUBJECT, action=ACTION)
+
+    async def admit() -> None:
+        async with db.transaction() as tx:
+            await quick.admit(tx, newcomer)
+
+    results = await asyncio.gather(quick.sweep(db), admit(), return_exceptions=True)
+    assert results[0] == 1
+    assert isinstance(results[1], ReconciliationPending | DispatchInFlight)
+    assert (await _state(db, quick, newcomer)).state is State.RECEIVED
+
+
+async def test_a_slow_fence_does_not_eat_the_sweep_margin(
+    db: AsyncDatabaseManager, recorder: Recorder
+) -> None:
+    machine = Dispatches(
+        on_transition=recorder,
+        max_dispatch=timedelta(milliseconds=300),
+        sweep_margin=timedelta(milliseconds=300),
+    )
+    dispatch_id = await _admitted(db, machine)
+
+    async def slow_fence(tx: TransactionManager, dispatch: Dispatch) -> None:
+        await asyncio.sleep(0.7)
+
+    async with db.transaction() as tx:
+        await machine.begin_dispatch(tx, dispatch_id, fence=slow_fence)
+    assert await machine.sweep(db) == 0
+    assert (await _state(db, machine, dispatch_id)).state is State.DISPATCHING
+
+
+async def test_one_failing_row_does_not_stop_the_sweep(
+    db: AsyncDatabaseManager, recorder: Recorder, caplog: pytest.LogCaptureFixture
+) -> None:
+    quick = await _sweep_soon(recorder)
+    bad = await _dispatching(db, quick, subject="did:aw:bad")
+    good = await _dispatching(db, quick, subject="did:aw:good")
+    await asyncio.sleep(0.2)
+    recorder.fail_ids = {bad}
+    with caplog.at_level(logging.ERROR, logger="aweb_naapp.dispatch"):
+        # Bounded, so a sweep that keeps retrying the bad row fails instead of hanging.
+        assert await asyncio.wait_for(quick.sweep(db), timeout=5) == 1
+    assert (await _state(db, quick, good)).state is State.OUTCOME_UNKNOWN
+    assert (await _state(db, quick, bad)).state is State.DISPATCHING
+    assert [r.levelno for r in caplog.records] == [logging.ERROR]
+    assert str(bad) in caplog.records[0].getMessage()
+
+
+async def test_the_sweep_skips_a_row_being_completed(
+    db: AsyncDatabaseManager, recorder: Recorder
+) -> None:
+    quick = await _sweep_soon(recorder)
+    dispatch_id = await _dispatching(db, quick)
+    await asyncio.sleep(0.2)
+    completing = asyncio.Event()
+
+    async def complete() -> None:
+        async with db.transaction() as tx:
+            await quick.complete(tx, dispatch_id, {"status": 200})
+            completing.set()
+            await asyncio.sleep(0.3)
+
+    async def sweep() -> int:
+        await completing.wait()
+        return await quick.sweep(db)
+
+    results = await asyncio.gather(complete(), sweep())
+    assert results[1] == 0
+    assert (await _state(db, quick, dispatch_id)).state is State.COMPLETED
+
+
+async def test_a_late_result_after_reconciliation_is_kept(
+    db: AsyncDatabaseManager, recorder: Recorder
+) -> None:
+    quick = await _sweep_soon(recorder)
+    dispatch_id = await _dispatching(db, quick)
+    await asyncio.sleep(0.2)
+    await quick.sweep(db)
+    async with db.transaction() as tx:
+        await quick.reconcile(tx, dispatch_id, State.RECONCILED_COMPLETED, {"by": "lookup"})
+    async with db.transaction() as tx:
+        assert await quick.complete(tx, dispatch_id, {"status": 200}) is False
+        assert await quick.not_sent(tx, dispatch_id, {"error": "reset"}) is False
+    dispatch = await _state(db, quick, dispatch_id)
+    assert dispatch.state is State.RECONCILED_COMPLETED
+    assert dispatch.result == {"by": "lookup"}
+    assert dispatch.late_results == [{"status": 200}, {"error": "reset"}]
+
+
+@pytest.mark.parametrize("ending", ["refuse", "cancel"])
+async def test_a_not_sent_dispatch_can_be_ended(
+    db: AsyncDatabaseManager, machine: Dispatches, ending: str
+) -> None:
+    dispatch_id = await _dispatching(db, machine)
+    async with db.transaction() as tx:
+        await machine.not_sent(tx, dispatch_id, {"error": "connect"})
+        if ending == "refuse":
+            await machine.refuse(tx, dispatch_id)
+        else:
+            await machine.close(tx, dispatch_id, State.CANCELLED)
+    expected = State.REFUSED if ending == "refuse" else State.CANCELLED
+    assert (await _state(db, machine, dispatch_id)).state is expected
+
+
+async def test_a_dispatching_row_always_has_a_sweep_time(
+    db: AsyncDatabaseManager, machine: Dispatches
+) -> None:
+    dispatch_id = await _admitted(db, machine)
+    with pytest.raises(Exception, match="check"):
+        await db.execute(
+            "UPDATE {{tables.dispatches}} SET state = 'dispatching' WHERE dispatch_id = $1",
+            dispatch_id,
+        )
 
 
 @pytest.mark.parametrize(

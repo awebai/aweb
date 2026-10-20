@@ -20,11 +20,12 @@ CREATE TABLE IF NOT EXISTS {{tables.dispatches}} (
     result        JSONB,
     late_results  JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (state <> 'dispatching' OR sweep_after IS NOT NULL)
 );
 
 CREATE INDEX IF NOT EXISTS idx_dispatches_sweep
     ON {{tables.dispatches}} (sweep_after) WHERE state = 'dispatching';
 
-CREATE INDEX IF NOT EXISTS idx_dispatches_unreconciled
-    ON {{tables.dispatches}} (subject, action) WHERE state = 'outcome_unknown';
+CREATE INDEX IF NOT EXISTS idx_dispatches_blocking
+    ON {{tables.dispatches}} (subject, action) WHERE state IN ('dispatching', 'outcome_unknown');

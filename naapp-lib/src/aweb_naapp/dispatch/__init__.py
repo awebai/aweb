@@ -8,11 +8,18 @@ response), ``not_sent`` (nothing reached the upstream; it may be dispatched
 again under the same id), or ``outcome_unknown``, which the sweeper writes
 when a dispatch outlives its time bound. ``completed`` and ``not_sent`` are
 compare-and-set from ``dispatching`` only, so a result that arrives after the
-sweep is kept as evidence and never overwrites it.
+sweep, or after reconciliation, is kept as evidence and never overwrites it.
 
-While a subject has an unreconciled ``outcome_unknown`` for an action, a new
-dispatch of that action for that subject is refused until it is reconciled,
-unless the caller declared the action exempt.
+A subject has at most one dispatch of an action in flight or of unknown
+outcome. Admitting or dispatching another is refused, with
+:class:`DispatchInFlight` while one is dispatching and with
+:class:`ReconciliationPending` while one awaits reconciliation, unless the
+dispatch being admitted or dispatched was declared exempt. The check runs under
+a transaction-scoped advisory lock on the (subject, action) pair, so two
+dispatches of one pair cannot both begin.
+
+A dispatch left ``admitted`` by a crash stays there until its caller closes it;
+the caller (secrets' S13 wiring) owns that cleanup.
 
 Every transition runs in the caller's transaction and calls ``on_transition``
 in that same transaction, so a failed enqueue rolls the transition back.
@@ -23,6 +30,7 @@ Imports only the standard library and pgdbm, so it needs no naapp runtime.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -36,6 +44,8 @@ from pgdbm.core import TransactionManager
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_naapp_dispatch"
+
+logger = logging.getLogger(__name__)
 
 
 class State(StrEnum):
@@ -65,7 +75,7 @@ TRANSITIONS: Mapping[State, frozenset[State]] = {
     State.AWAITING_APPROVAL: CLOSING_STATES | {State.ADMITTED},
     State.ADMITTED: frozenset({State.DISPATCHING, State.REFUSED, State.CANCELLED}),
     State.DISPATCHING: frozenset({State.COMPLETED, State.NOT_SENT, State.OUTCOME_UNKNOWN}),
-    State.NOT_SENT: frozenset({State.DISPATCHING}),
+    State.NOT_SENT: frozenset({State.DISPATCHING, State.REFUSED, State.CANCELLED}),
     State.OUTCOME_UNKNOWN: RECONCILED_STATES,
 }
 
@@ -78,6 +88,12 @@ class ReconciliationPending(Exception):
     """The subject has an unreconciled outcome for this action."""
 
     code = "reconciliation_pending"
+
+
+class DispatchInFlight(Exception):
+    """The subject already has a dispatch of this action in flight."""
+
+    code = "dispatch_in_flight"
 
 
 @dataclass(frozen=True)
@@ -147,7 +163,7 @@ class Dispatches:
             """
             INSERT INTO {{tables.dispatches}} (dispatch_id, subject, action, retry_exempt, state)
             VALUES ($1, $2, $3, $4, 'received')
-            RETURNING *, NOW() AS occurred_at
+            RETURNING *, clock_timestamp() AS occurred_at
             """,
             dispatch_id,
             subject,
@@ -188,22 +204,7 @@ class Dispatches:
         """Admit the intent, unless its subject and action await reconciliation."""
         current = await self._lock(tx, dispatch_id)
         _check(current, State.ADMITTED)
-        blocked = await tx.fetch_value(
-            """
-            SELECT EXISTS (
-                SELECT 1 FROM {{tables.dispatches}}
-                WHERE subject = $1 AND action = $2 AND state = 'outcome_unknown'
-                  AND NOT retry_exempt AND dispatch_id <> $3
-            )
-            """,
-            current.subject,
-            current.action,
-            dispatch_id,
-        )
-        if blocked:
-            raise ReconciliationPending(
-                f"{current.subject} has an unreconciled outcome for {current.action}"
-            )
+        await self._check_pair(tx, current)
         return await self._write(tx, current, State.ADMITTED)
 
     async def begin_dispatch(
@@ -216,12 +217,13 @@ class Dispatches:
         """
         current = await self._lock(tx, dispatch_id)
         _check(current, State.DISPATCHING)
+        await self._check_pair(tx, current)
         await fence(tx, current)
         return await self._write(
             tx,
             current,
             State.DISPATCHING,
-            "attempts = attempts + 1, sweep_after = NOW() + $3",
+            "attempts = attempts + 1, sweep_after = clock_timestamp() + $3",
             self._sweep_after,
         )
 
@@ -242,23 +244,40 @@ class Dispatches:
         return await self._write(tx, current, state, "result = $3::jsonb", json.dumps(result))
 
     async def sweep(self, db: AsyncDatabaseManager) -> int:
-        """Declare every dispatch past its bound ``outcome_unknown``, one per transaction."""
+        """Declare every dispatch past its bound ``outcome_unknown``, one per transaction.
+
+        A row whose transition fails is logged and left for the next sweep;
+        the others are still swept.
+        """
         swept = 0
+        tried: list[UUID] = []
         while True:
-            async with db.transaction() as tx:
-                row = await tx.fetch_one(
-                    """
-                    SELECT * FROM {{tables.dispatches}}
-                    WHERE state = 'dispatching' AND sweep_after <= NOW()
-                    ORDER BY sweep_after
-                    LIMIT 1
-                    FOR UPDATE SKIP LOCKED
-                    """
-                )
-                if row is None:
-                    return swept
-                await self._write(tx, _dispatch(row), State.OUTCOME_UNKNOWN)
+            dispatch_id: UUID | None = None
+            try:
+                async with db.transaction() as tx:
+                    row = await tx.fetch_one(
+                        """
+                        SELECT * FROM {{tables.dispatches}}
+                        WHERE state = 'dispatching' AND sweep_after <= clock_timestamp()
+                          AND NOT dispatch_id = ANY($1::uuid[])
+                        ORDER BY sweep_after
+                        LIMIT 1
+                        FOR UPDATE SKIP LOCKED
+                        """,
+                        tried,
+                    )
+                    if row is None:
+                        return swept
+                    dispatch_id = row["dispatch_id"]
+                    await self._write(tx, _dispatch(row), State.OUTCOME_UNKNOWN)
                 swept += 1
+            except Exception:
+                if dispatch_id is None:
+                    raise
+                logger.exception(
+                    "sweeping dispatch %s failed; it is left for the next sweep", dispatch_id
+                )
+                tried.append(dispatch_id)
 
     async def _settle(
         self, tx: TransactionManager, dispatch_id: UUID, state: State, result: Any
@@ -267,12 +286,12 @@ class Dispatches:
         if current.state is State.DISPATCHING:
             await self._write(tx, current, state, "result = $3::jsonb", json.dumps(result))
             return True
-        if current.state is State.OUTCOME_UNKNOWN:
+        if current.state is State.OUTCOME_UNKNOWN or current.state in RECONCILED_STATES:
             await tx.execute(
                 """
                 UPDATE {{tables.dispatches}}
                 SET late_results = late_results || jsonb_build_array($2::jsonb),
-                    updated_at = NOW()
+                    updated_at = clock_timestamp()
                 WHERE dispatch_id = $1
                 """,
                 dispatch_id,
@@ -280,6 +299,33 @@ class Dispatches:
             )
             return False
         raise InvalidTransition(f"{dispatch_id} is {current.state}, not dispatching")
+
+    async def _check_pair(self, tx: TransactionManager, current: Dispatch) -> None:
+        """Refuse a non-exempt dispatch whose pair is in flight or of unknown outcome."""
+        if current.retry_exempt:
+            return
+        await tx.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            json.dumps([current.subject, current.action]),
+        )
+        blocking = await tx.fetch_value(
+            """
+            SELECT state FROM {{tables.dispatches}}
+            WHERE subject = $1 AND action = $2 AND dispatch_id <> $3
+              AND state IN ('dispatching', 'outcome_unknown')
+            ORDER BY state = 'outcome_unknown' DESC
+            LIMIT 1
+            """,
+            current.subject,
+            current.action,
+            current.dispatch_id,
+        )
+        if blocking == State.OUTCOME_UNKNOWN:
+            raise ReconciliationPending(
+                f"{current.subject} has an unreconciled outcome for {current.action}"
+            )
+        if blocking == State.DISPATCHING:
+            raise DispatchInFlight(f"{current.subject} has {current.action} in flight")
 
     async def _move(self, tx: TransactionManager, dispatch_id: UUID, state: State) -> Dispatch:
         return await self._write(tx, await self._lock(tx, dispatch_id), state)
@@ -296,12 +342,14 @@ class Dispatches:
         self, tx: TransactionManager, current: Dispatch, state: State, changes: str = "", *args: Any
     ) -> Dispatch:
         _check(current, state)
-        assignments = ", ".join(filter(None, ["state = $2", "updated_at = NOW()", changes]))
+        assignments = ", ".join(
+            filter(None, ["state = $2", "updated_at = clock_timestamp()", changes])
+        )
         row = await tx.fetch_one(
             f"""
             UPDATE {{{{tables.dispatches}}}} SET {assignments}
             WHERE dispatch_id = $1
-            RETURNING *, NOW() AS occurred_at
+            RETURNING *, clock_timestamp() AS occurred_at
             """,
             current.dispatch_id,
             state.value,
