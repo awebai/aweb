@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 25
+`docs/vectors/*.json` is the only public protocol-vector authority for the 27
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -140,8 +140,10 @@ tests.
 ### `team-auth-envelope-v2.json`
 
 Current request-bound team-auth canonical bytes and Ed25519 signatures. It
-includes a neutral OSS task request and a hosted-route interoperability case;
-negative cases cover cross-endpoint/origin replay, body tampering, and a missing
+includes a neutral OSS task request, the same request carrying a signed
+`trace_id` member (an additive case: extra signed members are signed and
+ignored by the auth layer, which is how aw-hooks carries its trace), and a
+hosted-route interoperability case; negative cases cover cross-endpoint/origin replay, body tampering, and a missing
 protocol version. The aweb server, Go conformance suite, and public naapp
 verifiers consume it. See
 [`team-auth-envelope-v2.md`](../team-auth-envelope-v2.md).
@@ -252,6 +254,36 @@ supersedes and never inherits activation, revocation's final entry and
 cancelled backlog, uninstall, and the order for switching targets. A model of
 the scheme in the naapp-lib tests replays every case, and the core binding
 registry consumes the same cases.
+
+### `hook-event-envelope-v1.json`
+
+The signed `aweb.hook-event/1` envelope (aweb-acgh.16.2; contract in
+[`hook-events.md`](../hook-events.md)). Positive cases pin, for fixed seeds,
+the envelope, its signing bytes (the prefix and canonical JSON) and the
+detached Ed25519 signature: a core mutation, a core registry fact with a system
+actor, an app secret use by an identity-grant actor, and a client command
+signed by its own actor. Each negative carries its signing bytes and signature
+and one expected refusal. The `envelope` layer covers a wrong prefix,
+non-canonical bytes, a float, a duplicate key, a non-ASCII string, null,
+unknown and missing fields, an unknown catalog or hook, a zero trace id, a
+fired time before the occurred time, the actor rules, a nested payload value, a
+producer kind the hook does not allow, a client actor that is not its signer, a
+team mismatch and a wrong signature. The `catalog` layer passes the envelope
+checks and is refused by the catalog reader. A digest construction case shows
+`request_sha256` taken before credential injection. The Go authority in
+`cli/go/hookevent` regenerates every case byte for byte.
+
+### `hook-delivery-credential-v1.json`
+
+The `AWEB-Hook DIDKey` request credential that carries an event to one binding
+(aweb-acgh.16.2; contract in [`hook-events.md`](../hook-events.md)). Positive
+cases pin the headers, the canonical signed payload and the body for a core and
+a client producer. Negatives refuse an app-event or `hook-resolve` credential at
+a hook target, either purpose's payload under the hook scheme, a payload altered
+after signing, a cross-audience or cross-endpoint request, a tampered body, a
+stale or future timestamp, a wrong binding, a credential naming another event
+or team, and a signer that is not the event's producer. Each negative is a full
+request with the receiver's own options and one expected refusal.
 
 ## Experimental and compatibility A2A fixtures
 
