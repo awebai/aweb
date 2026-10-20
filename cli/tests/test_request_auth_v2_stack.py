@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from conftest import shared_test_pool  # noqa: F401
+from conftest import aw_cli_binary, shared_test_pool  # noqa: F401
 from awid.did import stable_id_from_did_key
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
@@ -66,3 +66,42 @@ async def test_sdk_json_and_streaming_v2_against_real_stack(privacy_app, request
         assert json.loads(stdout) == {"v2_requests": 5, "retargeted_status": 401}
     finally:
         authority.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_production_cli_connect_and_event_stream_use_v2(privacy_app, aw_cli_binary, tmp_path):
+    from aweb.auth_metrics import LEGACY_REQUEST_AUTH_ACCEPTED
+    from aweb.presence import clear_workspace_presence
+
+    env = privacy_app
+    env.app.state.public_origin = str(env.client.base_url).rstrip("/")
+    actor = env.actors["alice"]
+    home = tmp_path / ".aw"
+    (home / "team-certs").mkdir(parents=True)
+    cert = json.loads(base64.b64decode(actor.certificate))
+    for field in ("member_did_aw", "member_address", "signature"):
+        cert.pop(field, None)
+    cert["signature"] = sign_message(env.team_sk, canonical_json_bytes(cert))
+    (home / "team-certs/team.pem").write_text(json.dumps(cert))
+    membership = dict(team_id=TEAM, alias="alice", cert_path="team-certs/team.pem")
+    (home / "teams.yaml").write_text(json.dumps(dict(active_team=TEAM, memberships=[membership])))
+    (home / "workspace.yaml").write_text(json.dumps(dict(aweb_url=str(env.client.base_url), memberships=[membership])))
+    (home / "signing.key").write_text("-----BEGIN ED25519 PRIVATE KEY-----\n" + base64.b64encode(actor.sk).decode() + "\n-----END ED25519 PRIVATE KEY-----\n")
+    (home / "signing.key").chmod(0o600)
+    child = {k: v for k, v in os.environ.items() if not k.startswith(("AW", "XDG_"))}
+    child.update(HOME=str(tmp_path), AW_NO_UPDATE_CHECK="1")
+    counters = [LEGACY_REQUEST_AUTH_ACCEPTED.labels("certificate", "POST", "/v1/connect", "dev"),
+                LEGACY_REQUEST_AUTH_ACCEPTED.labels("certificate", "GET", "/v1/events/stream", "dev")]
+    before = [counter._value.get() for counter in counters]
+    try:
+        for args in (("workspace", "connect", "--service", str(env.client.base_url), "--team", TEAM, "--json"),
+                     ("events", "stream", "--timeout", "1", "--json")):
+            process = await asyncio.create_subprocess_exec(str(aw_cli_binary), *args, cwd=tmp_path, env=child,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
+            assert process.returncode == 0, stderr.decode()
+            assert stdout
+        assert [counter._value.get() for counter in counters] == before
+    finally:
+        rows = await env.db.fetch_all("SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=$1", actor.id)
+        await clear_workspace_presence(env.redis, [str(row["workspace_id"]) for row in rows])

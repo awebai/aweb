@@ -91,13 +91,14 @@ func run() error {
 	if err := client.Post(ctx, "/v1/messages", map[string]string{"to_did": a.Recipient, "subject": "bound", "body": "real SDK"}, &result); err != nil {
 		return err
 	}
-	stream, err := client.ChatStream(ctx, a.SessionID, time.Now().Add(time.Second), nil)
+	after := time.Now().Add(-time.Minute)
+	stream, err := client.ChatStream(ctx, a.SessionID, time.Now().Add(2*time.Second), &after)
 	if err != nil {
 		return err
 	}
 	if _, err := stream.Next(); err != nil {
 		stream.Close()
-		return err
+		return fmt.Errorf("chat stream read: %w", err)
 	}
 	stream.Close()
 	events, err := client.EventStream(ctx, time.Now().Add(time.Second))
