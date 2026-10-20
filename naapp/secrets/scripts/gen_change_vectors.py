@@ -13,7 +13,14 @@ from aweb_naapp.runtime.approvals import canonical_request
 from awid.did import did_from_public_key, stable_id_from_public_key
 from nacl.signing import SigningKey
 
-from aweb_secrets.change import KINDS, REENABLE_TARGETS, covered_bytes, validate_change
+from aweb_secrets.change import (
+    AFTER_SHAPES,
+    KINDS,
+    REENABLE_TARGETS,
+    covered_bytes,
+    validate_change,
+)
+from aweb_secrets.policy import Policy
 
 # Fixture identities, derived from fixed seeds the way AWID derives them.
 _KEY_A = bytes(SigningKey(b"\x01" * 32).verify_key)
@@ -153,6 +160,99 @@ POSITIVE = [
 ]
 
 
+# The records a refund operation is admitted by: the secret, its policy, a grant
+# to a principal, and a grant template for derived secrets.
+REFUND_POLICY = {
+    "approval": "per_use",
+    "approvers": ["finance-approver"],
+    "approval_ttl_s": 900,
+    "rate": [
+        {"per": "principal_secret", "capacity": 30, "window_s": 3600},
+        {"per": "secret", "capacity": 100, "window_s": 3600},
+    ],
+    "windows": {
+        "time_zone": "Europe/Madrid",
+        "ranges": [{"days": ["mon", "tue", "wed", "thu", "fri"], "from": "09:00", "to": "18:00"}],
+    },
+    "operations": [
+        {
+            "operation_id": "refund",
+            "digest": "24252d809f32328585e0e05fa02bf474df2cab5ba52b840eba6941f80c1c7fe1",
+        }
+    ],
+    "open_request": False,
+    "request": {"max_bytes": 65536},
+    "result": {"max_bytes": 65536},
+    "requires_attestation": {"channels": ["dashboard", "api"]},
+    "distinct_approver": "required",
+}
+REFUND_POLICY_DIGEST = Policy.from_body(REFUND_POLICY).digest
+REFUND_GRANT_TERMS = {
+    "capability": "use",
+    "operations": REFUND_POLICY["operations"],
+    "open_request": False,
+    "jobs": [],
+    "policy_digest": REFUND_POLICY_DIGEST,
+}
+POSITIVE.append(
+    (
+        "member-refund-records",
+        envelope(
+            "chg_7a04",
+            MEMBER,
+            [
+                {
+                    "kind": "secret",
+                    "op": "create",
+                    "ref": "payments-live",
+                    "after": {
+                        "v": 1,
+                        "secret_id": "sec_19ab42",
+                        "ref": "payments-live",
+                        "description": "Live payments API key",
+                        "kind": "header",
+                        "kind_params": {"name": "X-Api-Key", "prefix": ""},
+                        "sensitivity": "sensitive",
+                        "approve_only": True,
+                        "backend": "native",
+                    },
+                },
+                {
+                    "kind": "policy",
+                    "op": "create",
+                    "ref": REFUND_POLICY_DIGEST,
+                    "after": {"v": 1, **REFUND_POLICY},
+                },
+                {
+                    "kind": "grant",
+                    "op": "create",
+                    "ref": "grt_77c1aa",
+                    "after": {
+                        "v": 1,
+                        "grant_id": "grt_77c1aa",
+                        "secret_id": "sec_19ab42",
+                        "subject": {"principal": DID_KEY_B},
+                        **REFUND_GRANT_TERMS,
+                    },
+                },
+                {
+                    "kind": "grant_template",
+                    "op": "update",
+                    "ref": "gtp_sts-derived",
+                    "after": {
+                        "v": 1,
+                        "grant_template_id": "gtp_sts-derived",
+                        "subject": {"role": "secrets.role.deployers"},
+                        **REFUND_GRANT_TERMS,
+                    },
+                },
+            ],
+            "Set up refunds on the live payments key",
+        ),
+    )
+)
+
+
 def b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -240,36 +340,85 @@ refused = [
         "kind-without-frozen-after",
         mutated(
             lambda c: c["changes"].append(
-                {"kind": "grant", "op": "create", "ref": "grt_1", "after": {"v": 1}}
+                {"kind": "job", "op": "create", "ref": "nightly-backup", "after": {"v": 1}}
             )
         ),
     ),
 ]
+records = next(change for name, change in POSITIVE if name == "member-refund-records")
+
+
+def mutated_records(fn):
+    change = copy.deepcopy(records)
+    fn(change)
+    return json.dumps(change)
+
+
+refused_records = [
+    ("policy-ref-not-its-digest", mutated_records(setitem(["changes", 1, "ref"], "b" * 64))),
+    (
+        "policy-body-changed-under-its-digest",
+        mutated_records(setitem(["changes", 1, "after", "approval_ttl_s"], 600)),
+    ),
+    ("policy-update", mutated_records(setitem(["changes", 1, "op"], "update"))),
+    (
+        "secret-kind-not-an-auth-scheme",
+        mutated_records(setitem(["changes", 0, "after", "kind"], "api_key")),
+    ),
+    (
+        "secret-approve-only-standard",
+        mutated_records(setitem(["changes", 0, "after", "sensitivity"], "standard")),
+    ),
+    (
+        "secret-value-in-after",
+        mutated_records(setitem(["changes", 0, "after", "value"], "fixture")),
+    ),
+    (
+        "grant-subject-not-a-principal",
+        mutated_records(setitem(["changes", 2, "after", "subject"], {"principal": "did:aw:0OIl"})),
+    ),
+    (
+        "grant-named-operations-and-open-requests",
+        mutated_records(setitem(["changes", 2, "after", "open_request"], True)),
+    ),
+    ("grant-update", mutated_records(setitem(["changes", 2, "op"], "update"))),
+    (
+        "grant-template-role-outside-secrets",
+        mutated_records(setitem(["changes", 3, "after", "subject"], {"role": "logs.reader"})),
+    ),
+]
 covered_ref = base64.urlsafe_b64decode(positives[0]["covered_bytes_b64url"] + "==")
 body = covered_ref[len(b"aweb.approval-request/1\n") :]
-negatives = [
-    {"name": name, "of": "console-value-and-owner-role", "raw_json": raw, "expected": "refused"}
-    for name, raw in refused
-] + [
-    {
-        "name": "change-type-as-prefix",
-        "of": "console-value-and-owner-role",
-        "bytes_b64url": b64(b"aweb.secrets.change/1\n" + body),
-        "expected": "digest_differs",
-    },
-    {
-        "name": "no-prefix",
-        "of": "console-value-and-owner-role",
-        "bytes_b64url": b64(body),
-        "expected": "digest_differs",
-    },
-    {
-        "name": "non-canonical-encoding",
-        "of": "console-value-and-owner-role",
-        "raw_json": json.dumps({"policy": POLICY, "request": reference}, indent=2),
-        "expected": "recanonicalized",
-    },
-]
+negatives = (
+    [
+        {"name": name, "of": "console-value-and-owner-role", "raw_json": raw, "expected": "refused"}
+        for name, raw in refused
+    ]
+    + [
+        {"name": name, "of": "member-refund-records", "raw_json": raw, "expected": "refused"}
+        for name, raw in refused_records
+    ]
+    + [
+        {
+            "name": "change-type-as-prefix",
+            "of": "console-value-and-owner-role",
+            "bytes_b64url": b64(b"aweb.secrets.change/1\n" + body),
+            "expected": "digest_differs",
+        },
+        {
+            "name": "no-prefix",
+            "of": "console-value-and-owner-role",
+            "bytes_b64url": b64(body),
+            "expected": "digest_differs",
+        },
+        {
+            "name": "non-canonical-encoding",
+            "of": "console-value-and-owner-role",
+            "raw_json": json.dumps({"policy": POLICY, "request": reference}, indent=2),
+            "expected": "recanonicalized",
+        },
+    ]
+)
 CONFIRMATION_CASES = [
     ("same-installation-revision-in-time", {}, 12, "2026-10-20T12:14:59Z", "confirmable"),
     ("later-revision", {}, 13, "2026-10-20T12:05:00Z", "base_revision_stale"),
@@ -318,9 +467,11 @@ vector = {
         "never reach them: refused encodings and shapes, or other bytes. Confirmation cases "
         "fix when a change set can be confirmed: for the current installation, generation and "
         "team, at the revision it was drafted on, before it expires. A change set lives at most "
-        "seven days. Principals are exact did:aw or Ed25519 did:key strings. The after shapes of secret, destination, "
-        "operation, grant and policy are added by their owning task (S8), and those of job and "
-        "runner by S15; until then those kinds are refused. Identifiers are fixtures; DIDs are "
+        "seven days. Principals are exact did:aw or Ed25519 did:key strings. A secret, grant, "
+        "grant template or policy after is that record v1, checked whole; a policy is referenced "
+        'by the SHA-256 of "aweb.secrets.policy/1\\n" || canonical_json(after without v). The '
+        "after shapes of destination and operation are added by S8, and those of job and runner "
+        "by S15; until then those kinds are refused. Identifiers are fixtures; DIDs are "
         "derived from fixed seeds."
     ),
     "prefix": "aweb.approval-request/1\n",
@@ -328,11 +479,7 @@ vector = {
     "kinds": {kind: sorted(ops) for kind, ops in KINDS.items()},
     "reenable_targets": sorted(REENABLE_TARGETS),
     "after_shapes": {
-        "secret_value/1": ["v", "secret_ref", "version"],
-        "approver/1": ["v", "approver_ref", "contact", "covers", "principal"],
-        "approver_contact/1": ["v", "approver_ref", "contact"],
-        "role/1": ["v", "role", "principal"],
-        "reenable/1": ["v", "target_kind", "target_ref"],
+        f"{kind}/{v}": list(shape.fields) for (kind, v), shape in AFTER_SHAPES.items()
     },
     "fields": {
         "request": [

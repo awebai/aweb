@@ -26,6 +26,7 @@ from aweb_naapp.runtime.approvals import RequestNotCanonical, canonical_request
 from aweb_naapp.runtime.approvals.request import parse_request_json
 from awid.utc_timestamps import parse_utc_seconds
 
+from aweb_secrets import grant, policy, secret
 from aweb_secrets.principal import is_did_aw, is_did_key
 
 TYPE = "aweb.secrets.change"
@@ -47,6 +48,7 @@ KINDS: Mapping[str, frozenset[str]] = {
     "job": frozenset({"create", "update"}),
     "runner": frozenset({"create", "update"}),
     "grant": frozenset({"create"}),
+    "grant_template": frozenset({"create", "update"}),
     "role": frozenset({"create"}),
     "approver": frozenset({"create"}),
     "approver_contact": frozenset({"update"}),
@@ -178,17 +180,71 @@ def _fields(value: Any, where: str, shape: Mapping[str, Check]) -> None:
 @dataclass(frozen=True)
 class AfterShape:
     """One frozen ``after`` shape: its fields (``v`` included), the field the
-    item's ``ref`` must equal, and the fields that identify the changed object."""
+    item's ``ref`` must equal, and the fields that identify the changed object.
+
+    ``derived`` computes fields from the whole ``after``, such as a record's
+    digest, refusing an ``after`` that is not a valid record; ``ref_field`` and
+    ``identity`` may name them."""
 
     fields: Mapping[str, Check]
     ref_field: str
     identity: tuple[str, ...]
+    derived: Callable[[Mapping[str, Any], str], Mapping[str, Any]] | None = None
+
+
+def _record_field(value: Any, where: str) -> None:
+    """A field of a record whose whole ``after`` its record type checks, through ``derived``."""
+
+
+def _record_fields(fields: frozenset[str]) -> Mapping[str, Check]:
+    return {field: _V1 if field == "v" else _record_field for field in sorted(fields)}
+
+
+def _record(
+    parse: Callable[[Mapping[str, Any]], Any], digest: Callable[[Any], str] | None = None
+) -> Callable[[Mapping[str, Any], str], Mapping[str, Any]]:
+    def derived(after: Mapping[str, Any], where: str) -> Mapping[str, Any]:
+        try:
+            record = parse(after)
+        except ValueError as exc:
+            raise ChangeRefused(f"{where}: {exc}") from None
+        return {} if digest is None else {"digest": digest(record)}
+
+    return derived
+
+
+def _policy(after: Mapping[str, Any]) -> policy.Policy:
+    return policy.Policy.from_body({k: v for k, v in after.items() if k != "v"})
 
 
 # A shape is found by its kind and v, so v is already the shape's own version here.
 _V1: Check = _positive_int(1)
 
 AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
+    ("secret", 1): AfterShape(
+        fields=_record_fields(secret.FIELDS),
+        ref_field="ref",
+        identity=("ref",),
+        derived=_record(secret.SecretRecord.from_after),
+    ),
+    ("grant", 1): AfterShape(
+        fields=_record_fields(grant.FIELDS),
+        ref_field="grant_id",
+        identity=("grant_id",),
+        derived=_record(grant.GrantRecord.from_after),
+    ),
+    ("grant_template", 1): AfterShape(
+        fields=_record_fields(grant.TEMPLATE_FIELDS),
+        ref_field="grant_template_id",
+        identity=("grant_template_id",),
+        derived=_record(grant.GrantTemplate.from_after),
+    ),
+    ("policy", 1): AfterShape(
+        fields=_record_fields(policy.FIELDS | {"v"}),
+        ref_field="digest",
+        identity=("digest",),
+        derived=_record(_policy, lambda record: record.digest),
+    ),
     ("secret_value", 1): AfterShape(
         fields={"v": _V1, "secret_ref": _text(), "version": _positive_int(1)},
         ref_field="secret_ref",
@@ -275,9 +331,12 @@ def _item(value: Any, where: str) -> tuple[str, tuple[Any, ...]]:
     if shape is None or isinstance(version, bool):
         raise ChangeRefused(f"{where}.after.v names no frozen shape for {kind}")
     _fields(after, f"{where}.after", shape.fields)
-    if after[shape.ref_field] != ref:
+    found = dict(after)
+    if shape.derived is not None:
+        found.update(shape.derived(after, f"{where}.after"))
+    if found[shape.ref_field] != ref:
         raise ChangeRefused(f"{where}.ref must equal after.{shape.ref_field}")
-    return kind, tuple(after[field] for field in shape.identity)
+    return kind, tuple(found[field] for field in shape.identity)
 
 
 def _changes(value: Any, where: str) -> None:
