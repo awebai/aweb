@@ -100,9 +100,12 @@ exactly one dispatch of that exact request.
   reconciles `outcome_unknown`. While a dispatch of the same request digest is
   dispatching or unknown, no other approval of it is admitted. No outcome rearms
   an approval.
-- **Transactions.** `decide`, `admit`, `record_outcome`, `reconcile`, `revoke`
-  and `revoke_many` take an optional pgdbm transaction from the same database,
-  so the change commits with the app's own writes. Audit events go to the app's
+- **Transactions.** `mint`, `decide`, `admit`, `record_outcome`, `reconcile`,
+  `revoke` and `revoke_many` take an optional pgdbm transaction from the same
+  database, so the change commits with the app's own writes. Minted in a
+  transaction, an approval's links are not sent: `mint` returns a
+  `PendingApproval`, which the app passes to `deliver` after the commit, so no
+  link points at an approval that rolled back. Audit events go to the app's
   `AuditSink` inside the transaction of the change they record.
 - **Storage.** `ApprovalStore` is the interface; `PgApprovalStore(db)` keeps
   the records in the app's own pgdbm schema, and `migrate()` applies its
