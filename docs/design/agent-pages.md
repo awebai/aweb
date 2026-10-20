@@ -536,8 +536,15 @@ policy. The reason is what each proves to the app. A passkey assertion at the
 app's own origin proves a fresh, user-verified human gesture bound to this exact
 request. A member-session signature proves that the member's key, which hosted
 custody may hold, authorized the request, but not that a person acted just
-then. This changes the rental external-approval UX and is explicitly an ask to
-Juan. Both levels use the same record/consume primitive. No external execution
+then. The naapp therefore cannot tell a hosted human from that member's own
+hosted agent: both sign as the same custodial member. A `member_session`
+approval is safe only because the custodian honors `invocation_contexts`. Answer
+and approve tools are surface-only, L2 never lists or calls them, and the
+member-approval endpoint is never an MCP tool (§5). The naapp also refuses a
+`member_session` approval when the approver principal equals the requesting
+principal, unless app policy explicitly allows it for an internal reversible
+action. Passkey remains the bar for external or irreversible effects. This
+changes the rental external-approval UX and is explicitly an ask to Juan. Both levels use the same record/consume primitive. No external execution
 is represented as protected by a not-yet-approved assurance policy.
 
 | Adapter | Evidence and boundaries |
@@ -737,7 +744,13 @@ controller-signed activation artifact, verified against the current AWID team
 key, with its own domain-separated signing prefix so it can never be read as a
 certificate or another signed object. A BYOT controller signs with `aw`; a
 hosted team's controller custody signs behind L1, only for the owner's own
-gesture. This carrier is an identity-path change: the hooks lane specifies it,
+gesture. That gesture must come from an interactive owner session with a fresh
+step-up, a passkey assertion or re-authentication within minutes. An API key,
+MCP OAuth token or any other credential an agent can hold never produces it,
+and neither does a long-lived dashboard session alone. The same rule covers
+every owner-act class the hooks lane defines, not only hook activation: hook
+binding changes, app role designation and revocation, app credential recovery
+and log administration. This carrier is an identity-path change: the hooks lane specifies it,
 and adopting it needs Juan's explicit approval and Athena's review. Activation
 binds exact manifest digest, installation ID/generation, resolved receiving
 tool/origin or producer, catalog/version/hook, reads, scope grant and an
@@ -783,7 +796,17 @@ input field is added to the page catalog by this context metadata.
 
 Admin confirms exact fetched bytes/digest, app origin, requested scopes, tools,
 surfaces, app keys with their purposes and lifecycle policy. Hash exact bounded bytes before parsing;
-no redirect, origin substitution or reserialization changes the pin. Updates
+no redirect, origin substitution or reserialization changes the pin. The OSS
+server derives app keys, tool mappings, the hooks slot and requested scopes from
+the submitted manifest bytes it hashes to the pinned digest. That holds on every
+ingress path, including the mounted route and the CLI. It refuses any of those
+fields supplied separately from the bytes. At A the install route takes
+`event_emitters` directly from the request body
+(`A server/src/aweb/routes/apps.py:104`–`:133`), so a member can plant keys that
+then sign app events or app-request transport as that app. That live defect is
+aweb-acgh.8; its second step, keys derived from the hashed bytes, is this rule,
+and G1 (aweb-acgh.7) serves the same derived keys. F6's direct-route bypass
+tests include a planted-key negative. Updates
 require explicit confirmation of changed bytes/scopes and conditional previous
 generation. Existing member-wide install privilege is a security narrowing:
 F6 must name released CLI/plugin install consumers, preserve locally installed
@@ -959,12 +982,29 @@ An allowlisted local `mark_cleaned` edit can commit without an LLM if its creato
 was allowed to delegate that edit. Link intents remain “anonymous, via link X”,
 including their payload as untrusted data to the agent. Default for any external
 or privileged effect is an assigned-member approval task; a guest's note cannot
-be interpreted as instructions to bypass it. Decision-card approval as a team
-member is never available through a link. Whether a narrowly scoped outsider
-can approve a particular non-member business decision is Athena's ruling and
-Juan's scope decision, not an inference from a display name. These action links
-are in first delivery; pending security rulings block enablement, not their
-removal from scope.
+be interpreted as instructions to bypass it.
+
+Athena's ruling on link authority: link possession may read its pinned
+projection; commit allowlisted local edits the creator could delegate, under
+schema, revisions, idempotency and per-link/IP throttles; submit intents as
+anonymous journal entries for sponsor routing; and answer its own bounded
+request, such as a guest reply, recorded as anonymous input. Link possession
+never produces approval evidence, answers a member's decision task, or
+consumes or dispatches an external-effect approval. It never mints links or
+changes ACL, schema or layout. A non-member business decision-maker, such as a
+property owner, approves only as an owner-designated app-local passkey approver
+through the same B2/B3 primitive as secrets; the one-use link only locates the
+request. Outsiders can therefore decide, by passkey and never by bearer link.
+The link-write binding, nonce store, expiry/revocation race and replay vectors
+are frozen with Athena at C4. These action links are in first delivery.
+
+The prompt-injection control is structural, not instructional. External
+effects need member or passkey approval, consumed at an enforcing adapter
+(§4). A link payload reaches the agent only as bounded structured fields
+labelled anonymous and untrusted, never copied into team-visible task titles or
+comments; the sponsor's task carries opaque references only. For the rental
+pilot, external execution stays draft-only until the credential sits behind
+the adapter.
 
 Declarative data alone does not eliminate XSS or phishing. Renderer invariants:
 no raw HTML/JS/CSS, markdown parse with raw HTML disabled then strict sanitizer,
@@ -975,7 +1015,14 @@ cannot be restyled by page content. CSP permits only packaged scripts, no inline
 eval, fixed connect destinations and approved media origin. Uploaded assets are
 served from the naapp's separate asset origin with safe MIME, nosniff, restrictive
 CORS and authorization; uploaded HTML/SVG never executes in dashboard origin.
-Media URLs are host-issued asset references, not arbitrary agent URLs. Video
+Agent-authored content renders on the origin whose session makes the host sign
+as the member, so one sanitizer bug would mean custodial signing as that
+member. In addition to the invariants above: the CSP includes
+`require-trusted-types-for 'script'` with a single Trusted Types policy owned
+by the shared sanitizer, so no raw `innerHTML` sink exists. Every
+state-changing callback requires the host CSRF token, which page content
+cannot read. Host approval and identity chrome render outside the page
+container. Media URLs are host-issued asset references, not arbitrary agent URLs. Video
 provider embedding, if needed, goes through a renderer-owned restricted component,
 not page HTML. File names, chart labels and activity text are untrusted too.
 
@@ -1172,7 +1219,7 @@ No estimates. “Depends” includes contract readiness, not merely deploy order
 | B1b did:aw current-key profile | B1, Juan identity approval, Athena | The §1 global current-key profile and its compatibility rollout; local `did:key` members stay valid. Separate from B1. |
 | B2/B3 aweb-acgh.4 approval primitive and WebAuthn verifier (secrets lane) | D1 C2/C4 drafts | In `aweb_naapp`: §4 record, digest, states, atomic one-use consume and hashed one-use links; app-local passkey verifier. Generic, no app names. D1 lead checks fit. |
 | G1 aweb-acgh.7 generic app→team-server contract (secrets lane) | D1 §5 requirements; Juan's identity-path approval and Athena for its signed team-server record; F6 and the hooks binding table for hook resolution | Team-server discovery checked against AWID for hosted and BYOT, purpose-split app authentication, grant status meeting the §5 pages requirements, hook resolution. D1 lead reviews fit. |
-| C1 format/schema/vectors | D1 | Full vocabulary, typed binding/state, fallback, lint and positive/negative vectors frozen; examples validate. |
+| C1 format/schema/vectors | D1 | Full vocabulary, typed binding/state, fallback, lint and positive/negative vectors frozen; examples validate. Hostile-content corpus: encoded `javascript:`/`data:`/`vbscript:` URLs, SVG, Markdown link and autolink tricks, bidi/homoglyph labels and oversized trees. |
 | C2 actions/task integration/approval | D1,B2, acah.4 | Signed task authorization/app transport, idempotent task create, conditional answer receipt and safe content redaction; wrong actor/revision/destination denied; request/execution stores reconcile; common approval task/link and member/passkey adapters, requester cannot mint/read/consume capability, minimum assurance decision recorded. |
 | C3 manifest v2 + discovery | D1 | Strict v1 preserved, negotiated immutable v1/v2 variants, shared interpreter vectors, surfaces/lifecycle/usage references and versioned hooks slot resolved; hook-only/surface-only tools filtered and denied at call, owner-gated generation/digest targets; no hook catalog freeze. |
 | C4 link capability contract | C1,C2,B2,Athena | Explicit delegation, allowed actions/projections, key/nonce, revoke/expiry/rate limits; anonymous intent approval rule and hashed request-bound atomic one-use options frozen; authenticated approver adapter separate from possession. |
@@ -1185,10 +1232,10 @@ No estimates. “Depends” includes contract readiness, not merely deploy order
 | N5 action links/link stream | C4,B2,N3,N4 | First-delivery action links on the `aweb_naapp` capability-link module, scoped reads/assets/stream, anonymous provenance and sponsor recovery; revoked/expired links cannot act. |
 | N6 skill and rental examples | N2,N3 | Released-CLI and hosted-MCP recipes + agent text lint; synthetic rental approval, no external calls without approved adapter. |
 | N7 Folio migration/doctrine | N1,N2,N5 | Old document/version/links round-trip intact, additive reader rollback, doctrine and all agent guidance updated. |
-| R1 shared renderer | C1,C4 | Sanitizer/CSP/URLs/assets, fallback, keyboard/screen reader/phone layout, Catalan/English and conflicts; used unchanged by Cloud and link pages. |
+| R1 shared renderer | C1,C4 | Sanitizer/CSP with Trusted Types and one sanitizer-owned policy, host CSRF on every state change, chrome outside the page container, the C1 hostile corpus passing, URLs/assets, fallback, keyboard/screen reader/phone layout, Catalan/English and conflicts; used unchanged by Cloud and link pages. |
 | L1 install UI | F6,C3 | Admin exact digest/scopes diff, update/uninstall and export/delete controls; no ordinary-member bypass. |
 | L2 hosted MCP (aweb-abzo) | F5,C3 | Tools/list and calls actor/install scoped, exact signer and byte vectors, second app without an app-specific Cloud change; critical to claude.ai/ChatGPT workflows. |
-| L3 member surface | F5,C3,R1,N2,N3,B3 | Actual dashboard member signs all calls, no controller fallback, explicit provisioning/refusal, generic tool bindings and ACL cache isolation; app-origin passkey handoff binds same task/proposal/person under Juan's assurance decision, no callback-as-proof. |
+| L3 member surface | F5,C3,R1,N2,N3,B3 | Actual dashboard member signs all calls, no controller fallback, explicit provisioning/refusal, generic tool bindings and ACL cache isolation; app-origin passkey handoff binds same task/proposal/person under Juan's assurance decision, no callback-as-proof. Owner acts need fresh step-up; the C1 hostile corpus passes on the dashboard origin. |
 | L4 browser wakes | C6,N4,L3 | Two replicas, readiness barrier, reauthorization, loss/reconnect recovery; real healthy commit-to-paint target under 2 s. |
 | L5 metering | C5,N1,N3 | CLI/MCP/link/sync/error/no-op paths counted and reconciled, retained inventories and operator/admin views; reconcile old caps explicitly. |
 | A1 runtime intent delivery | C2,N3 | Claude, pi, Codex, aw run resume assigned tasks after missed wake/offline; no model acceptance inferred from transport delivery. |
@@ -1256,10 +1303,12 @@ The coordinator lands the reviewed cross-repository combination only after Juan'
   transaction credential enrolment and Folio doctrine addition are NEW joint
   recommendations for Juan, not unilateral gates or already-approved direction.
   Hook delivery/catalog/trace remain in aw-hooks' assigned lane.
-- **Await Athena:** action-link capability/key/replay design, allowed outsider
-  actions and human approval, member task authorization/answer receipt,
-  install-admin authority, approval egress and rendering/origins. These are
-  enablement gates for the relevant features, not unilateral scope cuts.
+- **Athena's rulings are recorded** (§5 owner step-up and install derivation,
+  §4 member_session dependency, §7 link authority, prompt injection and
+  rendering). Still with Athena: freezing the C4 link-write binding, nonce,
+  expiry/revocation race and replay vectors, plus implementation-delta reviews.
+  Athena recommends approval of the owner-act and team-server identity-path
+  items (once G1 derives keys from manifest bytes) and of B1b; Juan decides.
 - **Await Juan/coordinator:** acah.4 team-visible answer decision A; concrete
   retention/backup policy; treatment of actual answer mail in message allowance;
   v20 marketplace pause versus this explicit assignment (coordinator is
