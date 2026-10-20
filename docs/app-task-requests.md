@@ -228,8 +228,12 @@ Each step fails closed. Nothing is written before step 8.
    `(team_id, app_id, installation_id, originator principal DID,
    external_request_id)`, where the originator principal DID is derived from
    the certificate as for `assignee_did`.
-   - Found with the same `task_body_sha256`: return 200 with the stored
-     receipt. Steps 6 and 8 do not apply, and nothing is written.
+   - Found with the same `task_body_sha256`: the installation must be the
+     request's own, active, and currently hold `requests.create` or
+     `requests.read`; otherwise 403 `scope_denied`. Then return 200 with the
+     stored receipt. The time check of step 6 and the create checks of step 8
+     do not apply, and nothing is written. A replay is a read: once read
+     authority is gone, so is the receipt.
    - Found with a different `task_body_sha256`: 409 `idempotency_conflict`.
 8. **Scope, installation and target.** Under the installation row lock
    (`for_update`): the installation is active, its generation is unchanged,
@@ -256,7 +260,8 @@ gets the receipt, by step 7, on its retry.
   "task_body_sha256": "<64 hex>",
   "originator": {"principal_did": "did:aw:…", "certificate_id": "…"},
   "transport_app": {"app_id": "pages", "installation_id": "inst_01JB…", "installation_generation": 3, "kid": "…"},
-  "created_at": "2026-10-20T12:00:01Z"
+  "created_at": "2026-10-20T12:00:01Z",
+  "cancellation": null
 }
 ```
 
@@ -269,7 +274,7 @@ The same `app-request` transport, with the installation's `requests.read`
 scope. It returns the receipt and the current task state:
 
 ```json
-{"receipt": { … }, "task": {"status": "open", "rev": 4, "question_rev": 1, "assignee_did": "did:aw:…", "picked_up": true, "answer": null}}
+{"receipt": { … }, "task": {"status": "open", "rev": 4, "question_rev": 1, "assignee_did": "did:aw:…", "picked_up": true, "answer": null, "cancellation": null}}
 ```
 
 `answer` is the current answer receipt (§4) or `null`. An app reads only
@@ -283,14 +288,29 @@ authorization keeps the `external_request_id` and the exact task body, so if
 the first create did commit, the renewal is a matching replay and returns that
 task. A request is never re-signed by another actor.
 
-### Installation changes
+### Cancellation and installation changes
 
-- A request from an installation that is retired, or whose generation has
-  moved, is refused at step 8. A reinstalled app has a new `installation_id`
-  and cannot replay an old installation's requests.
-- A create that commits before an uninstall or cancellation keeps its task.
-  The fence returns that task's receipt and enqueues cancellation; it never
-  claims the task does not exist.
+A request's receipt and task read carry `cancellation`: `null`, or
+`{"reason": "requested" | "installation_retired", "at": <RFC 3339>}`.
+
+- **Requested.** `POST /v1/tasks/app-requests/{external_request_id}/cancel?originator=<principal DID>`,
+  with the `app-request` transport and `requests.create`, cancels the
+  request: it sets `cancellation`, closes the task if it is open, adds the
+  comment `Request cancelled · <external_request_id>`, and increments `rev`.
+  Repeating it returns the same state. An answered request can still be
+  cancelled; its answer receipt stays and is no longer `current`.
+- **Uninstall.** The transaction that retires an installation (F6) also
+  cancels, in the same transaction, every open task created by that
+  installation's requests, with reason `installation_retired`. Tasks and the
+  installation live in the same database, and creates take the installation
+  row lock (step 8), so a create either commits before the retirement and is
+  cancelled by it, or sees the retired installation and is refused. No
+  separate queue is involved, and nothing claims that a committed task does
+  not exist.
+- **Update.** A new generation cancels nothing. Authorizations signed for the
+  old generation are refused at step 8, and the member renews them. A
+  reinstalled app has a new `installation_id` and cannot replay an old
+  installation's requests.
 
 ## 4. Conditional answers
 
@@ -298,8 +318,10 @@ task. A request is never re-signed by another actor.
 
 A task gains:
 
-- `rev`: a safe integer, starting at 1, incremented by every change to the
-  task (fields, status, comments, answers).
+- `rev`: a safe integer, starting at 1, that increases with every committed
+  change to the task (fields, status, comments, answers, cancellation). It is
+  monotone, not necessarily by exactly 1: one answer may raise it more than
+  once. A receipt's `task_rev` is the task's `rev` after that commit.
 - `question_rev`: a safe integer, starting at 1, incremented only by a
   reopen.
 - `assignee_did`: the principal DID the task is assigned to. The alias is a

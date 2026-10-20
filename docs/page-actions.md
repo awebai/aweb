@@ -298,9 +298,12 @@ task mirror shows "result saved; task sync pending" and reconciles.
 
 ## 9. Designatable roles
 
-An app declares the roles a person can be designated to in its v2 manifest
-(`roles`, [app-manifest.md](app-manifest.md)). The admin approves them as part
-of the exact-digest install.
+An app declares the roles a person can be designated to in its v2 manifest:
+`roles: [{name, label, description?}]` ([app-manifest.md](app-manifest.md),
+"Designatable roles"; shared vectors `roles_*` in
+`test-vectors/app-manifests/app-manifest-v2-v1.json`). The resolved view lists
+`[{name, label, description|null}]`, empty when the manifest declares none. The
+admin approves the roles as part of the exact-digest install.
 
 - The host reads `roles` only from the installation's verified manifest
   bytes, and renders each role's `label` and `description` in its own chrome.
