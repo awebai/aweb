@@ -182,3 +182,15 @@ async def test_console_responses_carry_the_console_headers(db: AsyncDatabaseMana
         assert response.headers["referrer-policy"] == "no-referrer"
         assert response.headers["cache-control"] == "no-store"
         assert response.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_ended_sessions_are_dropped_as_new_ones_open(db: AsyncDatabaseManager) -> None:
+    async with await _client(ConsoleSessions(db, ttl=timedelta(seconds=1))) as client:
+        expired, _ = await _login(client)
+        closing, csrf = await _login(client)
+        await client.post("/logout", headers={"Cookie": closing, "X-CSRF-Token": csrf})
+        await asyncio.sleep(1.2)
+        current, _ = await _login(client)
+        assert (await client.get("/whoami", headers={"Cookie": current})).status_code == 200
+    rows = await db.fetch_value("SELECT count(*) FROM {{tables.console_sessions}}")
+    assert rows == 1

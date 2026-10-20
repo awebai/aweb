@@ -99,20 +99,28 @@ class ConsoleSessions:
         """Open a session for a subject whose passkey login B3 has verified."""
         token = secrets.token_urlsafe(32)
         csrf_token = secrets.token_urlsafe(32)
-        expires_at = await self._db.fetch_value(
-            """
-            INSERT INTO {{tables.console_sessions}}
-              (token_sha256, csrf_sha256, subject, scope, evidence_ref, expires_at)
-            VALUES ($1, $2, $3, $4, $5, NOW() + $6)
-            RETURNING expires_at
-            """,
-            _sha256(token),
-            _sha256(csrf_token),
-            subject,
-            scope,
-            evidence_ref,
-            self._ttl,
-        )
+        async with self._db.transaction() as tx:
+            # A session that has ended is refused already; dropping it bounds the table.
+            await tx.execute(
+                """
+                DELETE FROM {{tables.console_sessions}}
+                WHERE expires_at <= NOW() OR closed_at IS NOT NULL
+                """
+            )
+            expires_at = await tx.fetch_value(
+                """
+                INSERT INTO {{tables.console_sessions}}
+                  (token_sha256, csrf_sha256, subject, scope, evidence_ref, expires_at)
+                VALUES ($1, $2, $3, $4, $5, NOW() + $6)
+                RETURNING expires_at
+                """,
+                _sha256(token),
+                _sha256(csrf_token),
+                subject,
+                scope,
+                evidence_ref,
+                self._ttl,
+            )
         return IssuedSession(token, csrf_token, expires_at, int(self._ttl.total_seconds()))
 
     def set_cookie(self, response: Response, issued: IssuedSession) -> None:
