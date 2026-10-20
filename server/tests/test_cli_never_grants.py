@@ -75,17 +75,11 @@ def grant_headers(grant_home, grant_id, origin, path, method="GET"):
     }
 
 
+@pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
     env = privacy_app
-    root = Path(__file__).resolve().parents[2]
-    binary = tmp_path / "aw"
-    build = await asyncio.create_subprocess_exec(
-        "go", "build", "-o", str(binary), "./cmd/aw", cwd=root / "cli/go",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-    )
-    output, _ = await build.communicate()
-    assert build.returncode == 0, output.decode()
+    binary = Path(os.environ["AW_TEST_CLI_BINARY"])
     actor = env.actors["bob"]
     team_sk, _, team_did = _make_keypair()
     await env.db.execute("UPDATE {{tables.teams}} SET team_did_key=$1 WHERE team_id=$2", team_did, TEAM)

@@ -141,14 +141,7 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
             "published_at": now.isoformat(),
         }],
     }))
-    root = Path(__file__).resolve().parents[2]
-    binary = Path(os.environ.get("AW_TEST_CLI_BINARY", str(tmp_path / "aw")))
-    if "AW_TEST_CLI_BINARY" not in os.environ:
-        build = await asyncio.create_subprocess_exec("go", "build", "-o", str(binary), "./cmd/aw",
-                                                    cwd=root / "cli/go", stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.STDOUT)
-        output, _ = await build.communicate()
-        assert build.returncode == 0, output.decode()
+    binary = Path(os.environ["AW_TEST_CLI_BINARY"])
     child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))}
     child_env.update(AWEB_IDENTITY_HOME=str(identity_home), AWEB_URL=str(env.client.base_url),
                      HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"))
@@ -173,6 +166,7 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
             yield message_id, conversation_id, binary, command_dir, command_env, registry
 
 
+@pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("sender_retired", [False, True])
 @pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, False), (True, True)])
@@ -312,6 +306,7 @@ def _unreachable_url():
     return f"http://127.0.0.1:{port}"
 
 
+@pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("sender_retired,registry_condition,expected", [
     (False, "available", "verified"),
@@ -348,6 +343,7 @@ async def test_channel_core_runtimes_present_local_sender_e2ee_mail_trust(
             assert (*alice, 503) in runtime_lookups, registry.responses
 
 
+@pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("runtime", ["channel", "wake"])
 @pytest.mark.parametrize("grant", [False, True])
@@ -379,6 +375,7 @@ async def test_channel_core_addressless_human_mail(
             assert any(path.endswith("/key") for path in node_reads), node_reads
 
 
+@pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("plaintext", [False, True], ids=["encrypted_v2", "plaintext"])
 @pytest.mark.parametrize("runtime", ["channel", "wake"])

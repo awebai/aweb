@@ -39,6 +39,7 @@ async def _registry_http(app):
         sock.close()
 
 
+@pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, False), (True, True)])
 async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_resident, grant):
@@ -143,14 +144,7 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
             "published_at": now.isoformat(),
         }],
     }))
-    root = Path(__file__).resolve().parents[2]
-    binary = Path(os.environ.get("AW_TEST_CLI_BINARY", str(tmp_path / "aw")))
-    if "AW_TEST_CLI_BINARY" not in os.environ:
-        build = await asyncio.create_subprocess_exec("go", "build", "-o", str(binary), "./cmd/aw",
-                                                    cwd=root / "cli/go", stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.STDOUT)
-        output, _ = await build.communicate()
-        assert build.returncode == 0, output.decode()
+    binary = Path(os.environ["AW_TEST_CLI_BINARY"])
     child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))}
     child_env.update(AWEB_IDENTITY_HOME=str(identity_home), AWEB_URL=str(env.client.base_url),
                      HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"),

@@ -169,6 +169,7 @@ def test_bad_filename_refused_without_normalization(name):
         descriptors([d])
 
 
+@pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 @pytest.mark.parametrize('kind',['mail','chat'])
 async def test_actual_aw_fetches_exact_bytes_from_participant_endpoint(privacy_app, tmp_path, kind):
@@ -194,14 +195,7 @@ async def test_actual_aw_fetches_exact_bytes_from_participant_endpoint(privacy_a
             "(session_id,from_did,from_alias,body,created_at) "
             "SELECT $1,$2,'alice','later text',now()+interval '1 second' FROM generate_series(1,501)",
             UUID(cid),env.actors['alice'].did)
-    binary = Path(os.environ.get('AW_TEST_CLI_BINARY', str(tmp_path / 'aw')))
-    if 'AW_TEST_CLI_BINARY' not in os.environ:
-        repo = Path(__file__).resolve().parents[2]
-        build_env = dict(os.environ, GOMAXPROCS='2', GOFLAGS='-p=2')
-        build = await asyncio.create_subprocess_exec('go','build','-o',str(binary),'./cmd/aw',
-            cwd=repo/'cli/go',env=build_env,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.STDOUT)
-        output,_=await build.communicate()
-        assert build.returncode == 0, output.decode()
+    binary = Path(os.environ["AW_TEST_CLI_BINARY"])
     home = (tmp_path/'participant').resolve()
     aw = home/'.aw'
     (aw/'team-certs').mkdir(parents=True)

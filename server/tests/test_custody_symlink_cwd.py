@@ -12,6 +12,7 @@ from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair, _make_certificate
 
 
+@pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 async def test_local_custody_from_symlink_cwd(privacy_app, tmp_path):
     env = privacy_app
@@ -42,11 +43,7 @@ async def test_local_custody_from_symlink_cwd(privacy_app, tmp_path):
     _pem(home / "signing.key", "ED25519 PRIVATE KEY", actor.sk)
     assert not (home / "identity.yaml").exists()
 
-    binary = (tmp_path / "aw").resolve()
-    build = await asyncio.create_subprocess_exec("go", "build", "-o", str(binary), "./cmd/aw",
-        cwd=Path(__file__).resolve().parents[2] / "cli/go", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    output, _ = await build.communicate()
-    assert build.returncode == 0, output.decode()
+    binary = Path(os.environ["AW_TEST_CLI_BINARY"])
     child = {k: v for k, v in os.environ.items() if not k.startswith(("AW", "XDG_"))}
     child.update(HOME=str(physical), PWD=str(logical), XDG_CONFIG_HOME=str(physical / ".config"),
         AW_CONFIG_PATH=str(physical / ".config/aw/config.yaml"), AW_NO_UPDATE_CHECK="1",

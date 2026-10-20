@@ -13,6 +13,7 @@ from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair, _make_certificate
 
 
+@pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mail", "chat"])
 @pytest.mark.parametrize("sender_address", ["example.test/alice", ""])
@@ -59,11 +60,7 @@ async def test_cli_preserves_explicit_address_with_signed_alias(privacy_app, tmp
         child.update(HOME=str(root), PWD=str(root), XDG_CONFIG_HOME=str(root / ".config"),
             AW_NO_UPDATE_CHECK="1", AWEB_URL=str(env.client.base_url), AWID_REGISTRY_URL=str(env.client.base_url))
         homes[name] = (root, child)
-    binary = tmp_path / "aw"
-    build = await asyncio.create_subprocess_exec("go", "build", "-o", str(binary), "./cmd/aw",
-        cwd=Path(__file__).resolve().parents[2] / "cli/go", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    output, _ = await build.communicate()
-    assert build.returncode == 0, output.decode()
+    binary = Path(os.environ["AW_TEST_CLI_BINARY"])
     if kind == "mail":
         sent = await _cli(binary, *homes["alice"], "mail", "send", "--plaintext", "--to", "bob",
                           "--subject", "Explicit sender", "--body", "alias-form control", "--json")

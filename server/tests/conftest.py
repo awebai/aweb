@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import time
 from pathlib import Path
 
+import pytest
 import pytest_asyncio
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
@@ -65,3 +68,28 @@ async def aweb_cloud_db(shared_test_pool):
             self.aweb_db = aweb_db
 
     yield DatabaseManagers(aweb_db)
+
+
+@pytest.fixture(scope="session")
+def aw_cli_binary(tmp_path_factory):
+    """One current-source CLI build for the real-service tests in this run."""
+    configured = os.environ.get("AW_TEST_CLI_BINARY")
+    if configured:
+        # Preserve the explicit artifact override used by release harnesses.
+        return Path(configured)
+    binary = tmp_path_factory.mktemp("aw-cli") / ("aw.exe" if os.name == "nt" else "aw")
+    repo = Path(__file__).resolve().parents[2]
+    started = time.monotonic()
+    build = subprocess.run(
+        ["go", "build", "-o", str(binary), "./cmd/aw"],
+        cwd=repo / "cli/go", capture_output=True, text=True, timeout=120,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+    print(f"shared server-test CLI build: {time.monotonic() - started:.3f}s")
+    return binary
+
+
+@pytest.fixture
+def source_cli_binary(aw_cli_binary, monkeypatch):
+    monkeypatch.setenv("AW_TEST_CLI_BINARY", str(aw_cli_binary))
+    return aw_cli_binary

@@ -16,19 +16,13 @@ from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _make_certificate
 
 
+@pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("global_root", [False, True])
 async def test_cli_status_designation_publish_and_refusals(privacy_app, tmp_path, global_root):
     env = privacy_app
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
-    repo = Path(__file__).resolve().parents[2]
-    binary = Path(os.environ.get("AW_TEST_CLI_BINARY", str(tmp_path / "aw")))
-    if "AW_TEST_CLI_BINARY" not in os.environ:
-        build = await asyncio.create_subprocess_exec("go", "build", "-o", str(binary), "./cmd/aw",
-                                                    cwd=repo / "cli/go", stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.STDOUT)
-        output, _ = await build.communicate()
-        assert build.returncode == 0, output.decode()
+    binary = Path(os.environ["AW_TEST_CLI_BINARY"])
     homes = {}
     for name in ("alice", "bob"):
         actor = env.actors[name]
