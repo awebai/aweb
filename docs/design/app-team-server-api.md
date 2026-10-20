@@ -309,13 +309,13 @@ A team's install authority, meaning F6's admin policy, may revoke one key for
 its own team at once, without waiting for a new digest:
 `POST /v1/apps/{app_id}/keys/{kid}/revoke`, with ordinary team auth. It sets
 the team row's `revoked_at`, which is one-way, and enqueues the
-post-mutation-hook event `app_key.revoked` (`team_id`, `app_id`, `kid`,
-`purposes`, actor) in the same transaction, because which events a target
+post-mutation-hook event `app_key.revoked` (payload `app_id`, `kid`,
+`purposes`; the envelope carries `team_id` and the actor) in the same
+transaction, because which events a target
 accepts is audit-relevant (audit-substrate §A6). The hooks catalog is a strict
-allowlist, so this depends on `app_key.revoked`, with that payload, joining
-audit-substrate §A10's v1 mutation types and the hook-catalog and
-post-mutation-hook-sites vectors before they freeze; until then logs would
-refuse the event. Key rows are the team's own, so
+allowlist, so this depends on `app_key.revoked` in audit-substrate §A10's v1
+mutation types and in the hook-catalog and post-mutation-hook-sites vectors
+(added at `98c1aa217`, §A10 and §A11) staying there through their freeze. Key rows are the team's own, so
 one team can never disable an app for another. Revocation for every team is
 the app's own act: it publishes new bytes, and each team installs the new
 digest.
