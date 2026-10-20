@@ -99,12 +99,12 @@ async def member(registry) -> Member:
     return member
 
 
-def serve(grants, policy, tools=None):
+def serve(grants, policy, tools=None, caller="agent"):
     tools = tools or DeclaredTools.from_manifest(load_manifest(canonical_bytes(MANIFEST)))
 
     async def on_principal(request, principal):
         authorization = await authorize_request(
-            request, principal=principal, tools=tools, grants=grants, policy=policy,
+            request, principal=principal, caller=caller, tools=tools, grants=grants, policy=policy,
         )
         return {
             "tool": authorization.tool.name,
@@ -115,8 +115,9 @@ def serve(grants, policy, tools=None):
     return on_principal
 
 
-async def call(registry, member, grants, policy, method, path, *, tools=None):
-    async with relying_app(registry, public_origin=ORIGIN, on_principal=serve(grants, policy, tools)) as (client, _):
+async def call(registry, member, grants, policy, method, path, *, tools=None, caller="agent"):
+    on_principal = serve(grants, policy, tools, caller)
+    async with relying_app(registry, public_origin=ORIGIN, on_principal=on_principal) as (client, _):
         return await client.request(method, path, headers=member.headers(aud=ORIGIN, method=method, path=path))
 
 
@@ -250,7 +251,9 @@ async def test_raw_dot_segments_are_refused_before_matching(registry, member, pa
     @app.get("/{route:path}")
     async def anything(route: str, request: Request):
         principal = await authenticate_request(request, public_origin=ORIGIN, team_cache=cache)
-        await authorize_request(request, principal=principal, tools=tools, grants=grants, policy=Policy())
+        await authorize_request(
+            request, principal=principal, caller="agent", tools=tools, grants=grants, policy=Policy()
+        )
         return {}
 
     status, body = await asgi_get(app, path.encode(), member.headers(aud=ORIGIN, method="GET", path=path))
@@ -281,7 +284,8 @@ async def test_encoded_slash_cannot_reach_a_second_declared_route(registry, memb
 
     async def admit(request: Request) -> str:
         principal = await authenticate_request(request, public_origin=ORIGIN, team_cache=cache)
-        authorization = await authorize_request(request, principal=principal, tools=tools, grants=grants,
+        authorization = await authorize_request(request, principal=principal, caller="agent", tools=tools,
+                                                grants=grants,
                                                 policy=Policy())
         return authorization.tool.name
 
@@ -367,3 +371,26 @@ async def test_policy_http_refusal_from_the_app_propagates(registry, member):
     grants = InstalledGrants({TEAM_ID: fresh("fixture:read")})
     response = await call(registry, member, grants, refuse, "GET", "/v1/items/abc")
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize("caller,contexts,admitted", [
+    ("agent", ["agent"], True),
+    ("agent", ["surface"], False),
+    ("agent", ["hook"], False),
+    ("surface", ["surface"], True),
+    ("surface", ["agent"], False),
+    ("surface", ["hook"], False),
+])
+async def test_a_tool_admits_only_the_caller_contexts_it_declares(registry, member, caller, contexts, admitted):
+    grants = InstalledGrants({TEAM_ID: fresh("fixture:read")})
+    tools = declared(
+        {"name": "list", "method": "GET", "path": "/v1/items", "scopes": ["fixture:read"],
+         "invocation_contexts": contexts},
+        version=2,
+    )
+    response = await call(registry, member, grants, Policy(), "GET", "/v1/items", tools=tools, caller=caller)
+    if admitted:
+        assert response.status_code == 200, response.text
+    else:
+        assert detail_code(response) == "tool_context_denied"
+        assert grants.asked == []

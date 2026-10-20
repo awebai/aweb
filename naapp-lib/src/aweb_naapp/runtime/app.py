@@ -13,8 +13,9 @@ aw CLI's conformance vectors pin, so a manifest it refuses stops the app.
 
 Member operations are guarded with ``Depends(runtime.authorized(grants=...,
 policy=...))``. It admits a request only when it is signed by a team member,
-declared by the served manifest, covered by the team's installed grant, and
-allowed by the app's policy. ``Depends(runtime.principal)`` only
+declared by the served manifest for the caller's invocation context (an agent,
+or a surface when a verified principal attestation names the dashboard),
+covered by the team's installed grant, and allowed by the app's policy. ``Depends(runtime.principal)`` only
 authenticates: it says who signed the request, never that they may act, so it
 is for routes that need nothing more than the signer's identity.
 
@@ -26,8 +27,10 @@ ship them.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -42,6 +45,11 @@ from aweb_naapp.css import FONT_NAMES, aweb_css
 from aweb_naapp.manifest import Manifest, load_manifest, read_manifest_bytes
 from aweb_naapp.outbox import run_drain
 from aweb_naapp.robots import robots_txt
+from aweb_naapp.runtime.attestation import (
+    AttestationRefused,
+    AWIDAttestationRecords,
+    caller_context,
+)
 from aweb_naapp.runtime.authorization import (
     ActionPolicy,
     Authorization,
@@ -61,6 +69,8 @@ from aweb_naapp.runtime.team_auth import (
     record_observed_principal,
 )
 from aweb_naapp.skills import Skills
+
+logger = logging.getLogger(__name__)
 
 NOINDEX_ROBOTS_HEADER = "noindex, nofollow, noarchive"
 _NOSNIFF = {"X-Content-Type-Options": "nosniff"}
@@ -99,6 +109,7 @@ class NaappRuntime:
         self._awid_transport = awid_transport
         self._database: NaappDatabase | None = None
         self._team_cache: AWIDTeamCache | None = None
+        self._attestation_records: AWIDAttestationRecords | None = None
         self._manifest_bytes = read_manifest_bytes(manifest_path, settings.public_origin)
         self._manifest = load_manifest(self._manifest_bytes)
         self._declared_tools = DeclaredTools.from_manifest(self._manifest)
@@ -139,6 +150,9 @@ class NaappRuntime:
             service_token=self.settings.awid_service_token,
             transport=self._awid_transport,
         )
+        self._attestation_records = AWIDAttestationRecords(
+            registry_url=self.settings.awid_registry_url, transport=self._awid_transport
+        )
         stop = asyncio.Event()
         client = httpx.AsyncClient(timeout=self.settings.app_emit_timeout_seconds)
         app_events_drain = (
@@ -157,6 +171,7 @@ class NaappRuntime:
             await client.aclose()
             self._database = None
             self._team_cache = None
+            self._attestation_records = None
             await database.disconnect()
 
     def connected_db(self) -> AsyncDatabaseManager | None:
@@ -194,17 +209,22 @@ class NaappRuntime:
     ) -> Callable[[Request], Awaitable[Authorization]]:
         """A FastAPI dependency admitting only authorized member requests.
 
-        It authenticates the request, then authorizes it against the tools of
-        the served manifest, the team's grant from ``grants`` and the app's
-        ``policy``. Only an admitted member is recorded as observed, so
+        It authenticates the request, resolves the caller's invocation
+        context from its principal attestation (none means an agent), then
+        authorizes it against the tools of the served manifest, the team's
+        grant from ``grants`` and the app's ``policy``. An attestation that does
+        not verify refuses the request with its code (``503`` when the registry
+        cannot be read). Only an admitted member is recorded as observed, so
         refused requests never write to the app's database.
         """
 
         async def authorized_request(request: Request) -> Authorization:
             principal = await self.principal(request)
+            caller = await self._caller_context(request, principal)
             authorization = await authorize_request(
                 request,
                 principal=principal,
+                caller=caller,
                 tools=self.declared_tools,
                 grants=grants,
                 policy=policy,
@@ -214,6 +234,21 @@ class NaappRuntime:
 
         self._guards.add(authorized_request)
         return authorized_request
+
+    async def _caller_context(self, request: Request, principal: Principal) -> str:
+        if self._attestation_records is None:
+            raise RuntimeError("naapp attestation records are not initialized")
+        try:
+            return await caller_context(
+                request, principal, records=self._attestation_records, now=datetime.now(UTC)
+            )
+        except AttestationRefused as refused:
+            logger.warning("Refused attestation for team %s: %s", principal.team_id, refused.code)
+            status = 503 if refused.code == "authority_unavailable" else 403
+            raise HTTPException(
+                status_code=status,
+                detail={"code": refused.code, "message": "The request's principal attestation is refused"},
+            ) from None
 
     def check_authorized_routes(self, app: FastAPI) -> None:
         """Refuse to start unless every route guarded by :meth:`authorized` is

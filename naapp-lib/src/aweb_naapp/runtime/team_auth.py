@@ -410,6 +410,13 @@ def _decode_signed_payload_header(value: str) -> bytes:
         raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload") from exc
 
 
+def signed_payload_bytes(request: Request) -> bytes:
+    """The request's team-auth v2 signed-payload bytes, the bytes
+    :func:`authenticate_request` verified the signature over."""
+    signed_payload_header = request.headers.get("X-AWEB-Signed-Payload") or ""
+    return _decode_signed_payload_header(signed_payload_header)
+
+
 def raw_request_target(request: Request) -> str:
     raw_path_value = request.scope.get("raw_path")
     if isinstance(raw_path_value, bytes):
@@ -453,8 +460,7 @@ def _verified_signed_payload(
     team_id: str,
     body: bytes,
 ) -> dict[str, Any]:
-    signed_payload_header = request.headers.get("X-AWEB-Signed-Payload") or request.headers.get("x-aweb-signed-payload") or ""
-    canonical = _decode_signed_payload_header(signed_payload_header)
+    canonical = signed_payload_bytes(request)
     try:
         payload = json.loads(canonical)
     except Exception as exc:

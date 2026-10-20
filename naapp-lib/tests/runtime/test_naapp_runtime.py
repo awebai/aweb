@@ -12,6 +12,7 @@ from typing import Annotated
 
 import httpx
 import pytest
+from awid.attestation_records import ATTESTATION_HEADER
 from awid.did import stable_id_from_did_key
 from fastapi import Depends, FastAPI, Request
 from nacl.signing import SigningKey
@@ -24,7 +25,7 @@ from aweb_naapp.runtime.authorization import Authorization, DeclaredTool, Grant
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import Principal
 
-from .conftest import REGISTRY_URL, Member, did_key
+from .conftest import REGISTRY_URL, Member, attested, did_key
 
 ORIGIN = "https://app.example"
 
@@ -497,3 +498,119 @@ def test_the_served_manifest_and_its_tools_cannot_be_replaced(tmp_path: Path) ->
     for name in ("manifest_bytes", "manifest", "declared_tools"):
         with pytest.raises(AttributeError):
             setattr(runtime, name, getattr(runtime, name))
+
+
+# --- Invocation contexts at call time ------------------------------------------
+
+AGENT_ONLY = {"name": "agent-op", "method": "POST", "path": "/v1/agent-op", "scopes": ["example:write"],
+              "invocation_contexts": ["agent"]}
+SURFACE_ONLY = {"name": "surface-op", "method": "POST", "path": "/v1/surface-op", "scopes": ["example:write"],
+                "invocation_contexts": ["surface"]}
+HOOK_ONLY = {"name": "hook-op", "method": "POST", "path": "/v1/hook-op", "scopes": ["example:write"],
+             "invocation_contexts": ["hook"]}
+CONTEXT_TOOLS = (CREATE, AGENT_ONLY, SURFACE_ONLY, HOOK_ONLY)
+CUSTODIAN = "custodian.example"
+
+
+async def _running_contexts(
+    registry, app_database_url: str, tmp_path: Path, member: Member
+) -> AsyncIterator[httpx.AsyncClient]:
+    settings = ExampleSettings(_env_file=None, database_url=app_database_url, awid_registry_url=REGISTRY_URL)
+    runtime = NaappRuntime(
+        settings,
+        module_name="example",
+        migrations_path=_migrations(tmp_path),
+        manifest_path=_manifest(tmp_path, *CONTEXT_TOOLS, version=2),
+        awid_transport=registry.transport,
+    )
+    app = FastAPI(lifespan=runtime.lifespan)
+    authorized = runtime.authorized(
+        grants=InstalledTeams({member.team_id: frozenset({"example:write"})}), policy=allow_all
+    )
+
+    async def admitted(auth: Annotated[Authorization, Depends(authorized)]) -> dict[str, str]:
+        return {"tool": auth.tool.name}
+
+    for tool in CONTEXT_TOOLS:
+        app.add_api_route(tool["path"], admitted, methods=[tool["method"]])
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as client:
+            yield client
+
+
+async def _outcomes(client: httpx.AsyncClient, member: Member, **attestation: object) -> dict[str, object]:
+    """Each context tool's outcome for one caller: 200, or the refusal code."""
+    outcomes: dict[str, object] = {}
+    for tool in CONTEXT_TOOLS:
+        signed = _signed(member, tool["path"])
+        if attestation:
+            signed["headers"] = attested(member, signed["headers"], **attestation)  # type: ignore[arg-type]
+        response = await client.post(tool["path"], **signed)
+        outcomes[tool["name"]] = 200 if response.status_code == 200 else (
+            response.status_code, response.json()["detail"]["code"]
+        )
+    return outcomes
+
+
+DENIED = (403, "tool_context_denied")
+
+
+async def test_an_unattested_member_calls_as_an_agent(registry, app_database_url, tmp_path, member):
+    async for client in _running_contexts(registry, app_database_url, tmp_path, member):
+        assert await _outcomes(client, member) == {
+            "create": 200, "agent-op": 200, "surface-op": DENIED, "hook-op": DENIED,
+        }
+
+
+async def test_a_verified_dashboard_attestation_calls_as_a_surface(registry, app_database_url, tmp_path, member):
+    issuer = SigningKey.generate()
+    await registry.add_custody(member, custodian_id=CUSTODIAN, issuer=issuer)
+    async for client in _running_contexts(registry, app_database_url, tmp_path, member):
+        outcomes = await _outcomes(client, member, issuer=issuer, custodian_id=CUSTODIAN, channel="dashboard")
+        assert outcomes == {"create": 200, "agent-op": DENIED, "surface-op": 200, "hook-op": DENIED}
+
+
+@pytest.mark.parametrize("channel", ["mcp_l2", "api"])
+async def test_a_verified_agent_channel_attestation_calls_as_an_agent(
+    registry, app_database_url, tmp_path, member, channel
+):
+    issuer = SigningKey.generate()
+    await registry.add_custody(member, custodian_id=CUSTODIAN, issuer=issuer)
+    async for client in _running_contexts(registry, app_database_url, tmp_path, member):
+        outcomes = await _outcomes(client, member, issuer=issuer, custodian_id=CUSTODIAN, channel=channel)
+        assert outcomes == {"create": 200, "agent-op": 200, "surface-op": DENIED, "hook-op": DENIED}
+
+
+async def test_an_attestation_by_an_unregistered_issuer_is_refused_for_every_tool(
+    registry, app_database_url, tmp_path, member
+):
+    await registry.add_custody(member, custodian_id=CUSTODIAN, issuer=SigningKey.generate())
+    async for client in _running_contexts(registry, app_database_url, tmp_path, member):
+        outcomes = await _outcomes(
+            client, member, issuer=SigningKey.generate(), custodian_id=CUSTODIAN, channel="dashboard"
+        )
+        assert set(outcomes.values()) == {(403, "attestation_issuer_unregistered")}
+
+
+async def test_an_attestation_that_does_not_parse_is_refused(registry, app_database_url, tmp_path, member):
+    async for client in _running_contexts(registry, app_database_url, tmp_path, member):
+        signed = _signed(member, CREATE["path"])
+        signed["headers"] = {**signed["headers"], ATTESTATION_HEADER: "not-an-attestation"}  # type: ignore[dict-item]
+        response = await client.post(CREATE["path"], **signed)
+    assert (response.status_code, response.json()["detail"]["code"]) == (403, "attestation_invalid")
+
+
+async def test_an_unreadable_attestation_registry_refuses_as_unavailable(
+    registry, app_database_url, tmp_path, member
+):
+    issuer = SigningKey.generate()
+    await registry.add_custody(member, custodian_id=CUSTODIAN, issuer=issuer)
+
+    def custody_unavailable(request: httpx.Request, response: httpx.Response) -> None:
+        if "/custod" in request.url.path:
+            response.status_code = 503
+
+    registry.transport.fault = custody_unavailable
+    async for client in _running_contexts(registry, app_database_url, tmp_path, member):
+        outcomes = await _outcomes(client, member, issuer=issuer, custodian_id=CUSTODIAN, channel="dashboard")
+    assert set(outcomes.values()) == {(503, "authority_unavailable")}

@@ -5,6 +5,9 @@ after team-auth v2 verification, which supplies the verified certificate and the
 current team key. Every refusal raises :class:`AttestationRefused` with the
 contract's code; nothing here infers self-custody, a default channel or a person
 declaration from absence.
+
+:func:`caller_context` turns a request's attestation into the invocation
+context the app's manifest tools are checked against.
 """
 
 from __future__ import annotations
@@ -28,6 +31,11 @@ from awid.attestation_records import (
     verify_record,
 )
 from awid.team_ids import parse_team_id
+from fastapi import Request
+
+from aweb_naapp.manifest import Attestation, ManifestError
+from aweb_naapp.manifest import caller_context as manifest_caller_context
+from aweb_naapp.runtime.team_auth import Principal, signed_payload_bytes
 
 __all__ = [
     "ATTESTATION_HEADER",
@@ -36,6 +44,7 @@ __all__ = [
     "AttestationRefused",
     "SignedRecord",
     "VerifiedAttestation",
+    "caller_context",
     "read_member_person",
     "verify_principal_attestation",
 ]
@@ -256,3 +265,30 @@ async def read_member_person(
         stale_code="member_person_record_stale",
     )
     return record["single_person"] is True
+
+
+async def caller_context(
+    request: Request, principal: Principal, *, records: AttestationRecordSource, now: datetime
+) -> str:
+    """The invocation context of a request ``principal`` signed: ``agent``, or
+    ``surface`` for a verified dashboard attestation.
+
+    A request without an attestation calls as an agent. An attestation that is
+    present must verify, or the request is refused with its code. No request
+    calls in the ``hook`` context through team-auth.
+    """
+    verified = await verify_principal_attestation(
+        header=request.headers.get(ATTESTATION_HEADER),
+        signed_payload=signed_payload_bytes(request),
+        team_id=principal.team_id,
+        certificate_id=principal.certificate_id,
+        member_did_key=principal.did_key,
+        current_team_did_key=principal.team_did_key,
+        records=records,
+        now=now,
+    )
+    attestation = None if verified is None else Attestation(verified=True, payload={"channel": verified.channel})
+    try:
+        return manifest_caller_context(attestation)
+    except ManifestError as exc:
+        raise AttestationRefused(exc.code, str(exc)) from None

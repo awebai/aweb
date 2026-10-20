@@ -9,7 +9,9 @@ may perform it. After :func:`aweb_naapp.runtime.team_auth.authenticate_request`,
    no percent-encoded ``/``, ``\\`` or NUL, no dot segment raw or encoded, and the
    decoded scope path splits exactly as the raw path does;
 2. the method and raw external path match exactly one tool the app's manifest
-   declares (otherwise ``403 operation_undeclared``);
+   declares (otherwise ``403 operation_undeclared``), and the caller's context
+   (agent or surface) is one the tool declares (otherwise
+   ``403 tool_context_denied``);
 3. the app's grant source returns a fresh installed grant for the team
    (no installation: ``403 scope_denied``; stale or unreachable authority:
    ``503 authority_unavailable``, with no fallback);
@@ -191,11 +193,17 @@ async def authorize_request(
     request: Request,
     *,
     principal: Principal,
+    caller: str,
     tools: DeclaredTools,
     grants: GrantSource,
     policy: ActionPolicy,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> Authorization:
+    """Admit one authenticated request, or raise the refusal.
+
+    ``caller`` is the request's invocation context, from
+    :func:`aweb_naapp.runtime.attestation.caller_context`.
+    """
     method = request.method.upper()
     raw_path = raw_request_target(request).split("?", 1)[0]
     if not _is_canonical_target(request, raw_path):
@@ -205,6 +213,9 @@ async def authorize_request(
     if tool is None:
         logger.warning("Refused undeclared operation %s %s for team %s", method, raw_path, principal.team_id)
         raise _refuse(403, "operation_undeclared", "This operation is not declared by the app manifest")
+    if caller not in tool.contexts:
+        logger.warning("Refused %s for team %s: not available to %s callers", tool.name, principal.team_id, caller)
+        raise _refuse(403, "tool_context_denied", "This operation is not available to this caller")
 
     try:
         grant = await grants.grant_for(principal.team_id)
