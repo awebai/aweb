@@ -1,7 +1,8 @@
 """Reading a team's stored team-key-signed records in pages, for key rotation.
 
-Real AWID on PostgreSQL and Redis. The read is same-team only, whatever the
-team's visibility, and every refusal looks like an unknown team.
+Real AWID on PostgreSQL and Redis. Only the team key or the trusted service
+token may read, whatever the team's visibility, and every refusal looks like an
+unknown team.
 """
 from __future__ import annotations
 
@@ -128,11 +129,14 @@ async def test_an_unsigned_foreign_or_revoked_read_looks_like_an_unknown_team(co
 
 
 @pytest.mark.asyncio
-async def test_an_unrevoked_member_and_the_trusted_service_may_read(controller_app):
+async def test_only_the_team_key_and_the_trusted_service_may_read(controller_app):
     env = controller_app
     member = keypair()
     await _member_certificate(env, member)
-    assert (await _read(env, signer=member)).status_code == 200
+    unknown = await env.client.get("/v1/namespaces/local/teams/nobody/signed-records")
+    refused = await _read(env, signer=member)
+    assert (refused.status_code, refused.json()) == (404, unknown.json())
+    assert (await _read(env)).status_code == 200
     token = "signed-records-service-token-0123456789"
     env.app.state.awid_service_token = token
     assert (await _read(env, signer=False, headers={"X-AWID-Service-Token": token})).status_code == 200

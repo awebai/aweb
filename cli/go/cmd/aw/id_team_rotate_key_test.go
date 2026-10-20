@@ -487,3 +487,26 @@ func TestRotateRefusalExplainsTheBodyLimit(t *testing.T) {
 		}
 	}
 }
+
+// The production-limits fixture must count on its own limiter: exhausting one
+// fixture's window leaves another's untouched, which a shared Redis would not.
+func TestRateLimitedFixturesCountIndependently(t *testing.T) {
+	first, _ := realAWIDFixtureRateLimited(t)
+	second, _ := realAWIDFixtureRateLimited(t)
+	registry := awid.NewAWIDRegistryClient(nil, nil)
+	read := func(registryURL string) int {
+		_, err := registry.GetTeamCustodianRecord(context.Background(), registryURL, "independent.example", "ops", "none")
+		code, _ := registryStatusCode(err)
+		return code
+	}
+	limited := false
+	for attempt := 0; attempt < 61 && !limited; attempt++ {
+		limited = read(first) == http.StatusTooManyRequests
+	}
+	if !limited {
+		t.Fatal("61 reads did not exhaust the first fixture's attestation_record_get window")
+	}
+	if code := read(second); code == http.StatusTooManyRequests {
+		t.Fatal("the second fixture is limited by the first one's reads: the fixtures share a limiter")
+	}
+}
