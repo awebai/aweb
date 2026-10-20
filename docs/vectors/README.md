@@ -361,7 +361,8 @@ failing provenance, content gone without an act, a duplicate sequence, an
 event of another team, forged checkpoints, a receipt for another team, and
 receipts naming another event or receipt time at their sequence number (only
 the time is bound once the event is purged). The
-Python implementation in `naapp/logs` regenerates it byte for byte.
+Python implementation in `naapp/logs` regenerates it byte for byte, and the Go
+verifier in `cli/go/logschain` passes it.
 
 ### `owner-act-v1.json`
 
