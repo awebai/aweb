@@ -178,9 +178,9 @@
   ],
   "headers": {
     "default_allow": ["Accept", "Accept-Language", "Content-Type", "If-Match", "If-None-Match", "X-Request-Id"],
-    "always_rejected": ["Authorization", "Proxy-Authorization", "Cookie", "X-Api-Key", "X-Amz-Security-Token", "Host", "Content-Length", "Transfer-Encoding", "Connection", "TE", "Upgrade", "Forwarded"],
+    "always_rejected": ["Authorization", "Proxy-Authorization", "Cookie", "X-Api-Key", "X-Amz-Security-Token", "Host", "Content-Length", "Transfer-Encoding", "Connection", "TE", "Upgrade", "Forwarded", "User-Agent"],
     "always_rejected_prefixes": ["X-Forwarded-"],
-    "rules": "names compare case-insensitively; a name must be an RFC 9110 token and a value must hold no CR, LF or NUL; a header passes only if it is in default_allow or the destination's header_allow and is not always rejected, whatever header_allow says; the caller may refuse more names or values; duplicate names are refused",
+    "rules": "the guard itself sets Host, User-Agent, Connection and Content-Length; names compare case-insensitively; a name must be an RFC 9110 token and a value must hold no CR, LF or NUL; a header passes only if it is in default_allow or the destination's header_allow and is not always rejected, whatever header_allow says; the caller may refuse more names or values; duplicate names are refused",
     "allowed": [
       {"name": "accept", "header_allow": [], "headers": [["Accept", "application/json"]]},
       {"name": "case_insensitive", "header_allow": [], "headers": [["content-type", "application/json"]]},
@@ -192,6 +192,7 @@
       {"name": "cookie", "header_allow": [], "headers": [["Cookie", "a=b"]], "code": "header_not_allowed"},
       {"name": "amz_security_token", "header_allow": ["X-Amz-Security-Token"], "headers": [["X-Amz-Security-Token", "x"]], "code": "header_not_allowed"},
       {"name": "host", "header_allow": ["Host"], "headers": [["Host", "evil.example"]], "code": "header_not_allowed"},
+      {"name": "user_agent_even_if_allowed", "header_allow": ["User-Agent"], "headers": [["User-Agent", "agent/1"]], "code": "header_not_allowed"},
       {"name": "x_forwarded_for", "header_allow": ["X-Forwarded-For"], "headers": [["X-Forwarded-For", "10.0.0.1"]], "code": "header_not_allowed"},
       {"name": "unlisted", "header_allow": [], "headers": [["X-Custom", "1"]], "code": "header_not_allowed"},
       {"name": "crlf_value", "header_allow": [], "headers": [["Accept", "a\r\nX-Injected: 1"]], "code": "header_not_allowed"},

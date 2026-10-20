@@ -40,6 +40,7 @@ ALWAYS_REJECTED = frozenset(
         "TE",
         "Upgrade",
         "Forwarded",
+        "User-Agent",
     )
 )
 ALWAYS_REJECTED_PREFIXES = ("x-forwarded-",)
