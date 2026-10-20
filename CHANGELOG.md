@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- aw reads manifest version 2 as well as version 1. `aw plugin install` and
+  `aw plugin update` read an app's variant catalog first and select the
+  highest version they support. Only a missing catalog falls back to the
+  legacy manifest, and a failed update keeps the installed manifest.
+- Only agent tools of an installed app are aw verbs. aw refuses
+  surface-only and hook-only verbs (`tool_context_denied`), and grant
+  snapshots hold only agent tools.
+- aw refuses to install a manifest whose answer path is agent-visible.
+- aw and `aweb_naapp.manifest` refuse v1 manifests nested deeper than 512
+  levels, as they do for v2.
+- `aweb_naapp.manifest.load_manifest` reads manifest bytes of either
+  version and passes the same vectors as aw.
+
+### Breaking changes
+
+- aw refuses a tool path parameter value that is blank, is `.` or `..`
+  once surrounding whitespace is trimmed, or contains `/`, `\`, `%`, `?`,
+  `#`, `;` or an ASCII control character, in manifest versions 1 and 2. Each value fills exactly one path segment, even
+  where an intermediary decodes the path. Send such values in the query or
+  body. The `path_param_percent_encoding` interpretation vector no longer
+  sends a `/`, and new `reject_path_param_*` cases pin the refusal.
+
 ## Release preparations
 
 ### Release preparation: server 1.27.30

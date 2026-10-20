@@ -179,8 +179,8 @@ presented as shipped.
   `app.state.on_mutation` callback and exact current route call sites.
 - [aw-hooks: catalog, bindings and delivery](hook-events.md) — specified
   experimental contract for owner-activated named hooks, not yet shipped.
-- [App manifest v1](app-manifest.md) — current experimental manifest and
-  byte-identical CLI interpretation contract.
+- [App manifest](app-manifest.md) — current experimental manifest versions 1
+  and 2, variant discovery, and the byte-identical CLI interpretation contract.
 - [App registry and team grants](app-registry.md) — current experimental install,
   digest-pin, and grants read surface.
 - [App-emitted events and subscriptions](app-events.md) — shipped experimental
