@@ -115,8 +115,9 @@ test-shipping:
 	python3 scripts/test_shipping.py
 	python3 scripts/test_candidate_cleanup.py
 
-# Editable AWID metadata is repeated in both committed Python locks. Check both
-# without repair, then prove a missing dependent-lock dependency is rejected.
+# AWID metadata is repeated in every committed Python lock that takes the in-repo
+# awid (awid, server, naapp-lib, naapp/folio and naapp/library). Check all five
+# without repair, then prove stale and missing dependent-lock entries are rejected.
 test-python-locks:
 	bash scripts/check-python-locks.sh
 	bash scripts/check-python-locks.sh --self-test
