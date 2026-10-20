@@ -195,5 +195,17 @@
   {
     "case": "bundle-item-revised-after-hashing",
     "expect": "item record_rev or proposal_sha256 no longer matches the bundle; host refuses the card and the old approval cannot be answered; a new bundle and approval are needed"
+  },
+  {
+    "case": "answer-payload-via-invoke-handler",
+    "expect": "naapp invoke handler refuses an answer payload even if manifest validation and host filtering were bypassed"
+  },
+  {
+    "case": "installer-submitted-bytes-provenance",
+    "expect": "events from an installation whose bytes were not origin-verified carry the digest and unverified flag; host never shows them simply as the app name"
+  },
+  {
+    "case": "present-bytes-disagreeing-fields",
+    "expect": "install refused when separately supplied keys, tools, hooks or scopes disagree with the submitted bytes"
   }
 ]

@@ -560,7 +560,8 @@ custody may hold, authorized the request, but not that a person acted just
 then. The naapp therefore cannot tell a hosted human from that member's own
 hosted agent: both sign as the same custodial member. A `member_session`
 approval is safe only because the custodian honors `invocation_contexts`. Answer
-and approve tools are surface-only (the surface's `answer_tool`), L2 never
+and approve tools are surface-only (the surface's `answer_tool`; the naapp's
+invoke handler also refuses an `answer` payload server-side), L2 never
 lists or calls them, and the member-approval endpoint is never an MCP tool
 (§5). The approver≠requester refusal below is an additional check, not a
 substitute: it does not stop a member's own agent answering a task another
@@ -701,7 +702,9 @@ List/read/invoke still use the same explicit `params` mapping, schema validation
 relative targets and canonical bytes as other tools. `answer_tool` names the only tool that carries an `answer`; it must declare
 `invocation_contexts` exactly `["surface"]`, and `invoke_tool` never carries an
 `answer`. C3 rejects a manifest whose answer path is agent-visible, so hosted
-agents acting as the same custodial member cannot list or call it. Invoke gets the structured
+agents acting as the same custodial member cannot list or call it. The naapp's
+own invoke handler also refuses an `answer` payload server-side, so the rule
+does not rest only on manifest validation and the host. Invoke gets the structured
 edit or intent request in §4. Every reference must resolve to a tool in that
 same manifest; list/read are member-authenticated GETs, invoke is a
 member-authenticated mutation. Public/unsigned tools cannot serve member pages
@@ -853,7 +856,19 @@ fields supplied separately from the bytes. At A the install route takes
 then sign app events or app-request transport as that app. That live defect is
 aweb-acgh.8; its second step, keys derived from the hashed bytes, is this rule,
 and G1 (aweb-acgh.7) serves the same derived keys. F6's direct-route bypass
-tests include a planted-key negative. Updates
+tests include a planted-key negative. Released clients send no manifest bytes
+today; how install moves to requiring them is aweb-acgh.8 step 2's measured
+transition, decided there with Juan, not here. When bytes are present,
+separately supplied fields that disagree with them refuse the install.
+
+An installation records its pinned digest and whether the server fetched those
+exact bytes from the app's origin itself (origin-verified) or accepted bytes
+submitted by the installer. An installer with install authority can pin bytes of
+its own making in its own team, so app-event and wake provenance, as agents
+receive it and as the surface shows it, carries the installation's digest and
+that origin-verified flag. A host shows unverified bytes as such, never simply as
+the app's name. Hook activation already fetches from the origin and is
+unaffected. Updates
 require explicit confirmation of changed bytes/scopes and conditional previous
 generation. Existing member-wide install privilege is a security narrowing:
 F6 must name released CLI/plugin install consumers, preserve locally installed
@@ -1291,20 +1306,20 @@ No estimates. “Depends” includes contract readiness, not merely deploy order
 | F4a aweb-abrg Folio emit key registered per team | F1,F3,aweb-acgh.8 step 1 | Emit key registered through a supported install path on team-scoped or first-writer-immutable key rows; no 403 noise. |
 | F4b durable emit outbox | aweb-acgh.6 | The shared `aweb_naapp` emitter and outbox (one primitive for app events and hook producer delivery) replace Folio's swallowed emit loss; failure observable and retried. |
 | F5 aweb-acgg.4 Folio onto shared `aweb_naapp` runtime | F0,F3,F6,B1,B4,G1 | Folio switches to each extracted `aweb_naapp` piece and deletes its copy, behaviour unchanged except deliberate improvements. Through B1, CLI/MCP/member/link paths cannot bypass current install/scope/ACL; bounded grant freshness, lifecycle lane and admission fence tested. |
-| F6 aweb-acgg.5 admin/digest/update/uninstall | C3 | Generic authoritative admin policy, exact bytes, conditional generation, mounted-route bypass denial; old CLI compatibility transition enumerated. Owns installation identity: a new ordered registry migration adds `installation_id`, a monotone generation and install state, which G1 grant status reports; uninstall revokes through it. |
+| F6 aweb-acgg.5 admin/digest/update/uninstall | C3 | Generic authoritative admin policy, exact bytes, conditional generation, mounted-route bypass denial; old CLI compatibility transition enumerated. Owns installation identity: a new ordered registry migration adds `installation_id`, a monotone generation and install state, which G1 grant status reports; uninstall revokes through it. Records origin-verified per installation; separately supplied fields that disagree with present bytes refuse. |
 | B1 aweb-acgh.3 shared verifier (secrets lane) | F3 | In `aweb_naapp`: today's team-auth v2 acceptance unchanged, plus explicit grant source, declared-tool route mapping, scope and app policy enforcement with the codes in §1; no copied auth or custody selector. D1 lead checks fit. |
 | B1b did:aw current-key profile | B1, Juan identity approval, Athena | The §1 global current-key profile and its compatibility rollout; local `did:key` members stay valid. Separate from B1. |
 | B2/B3 aweb-acgh.4 approval primitive and WebAuthn verifier (secrets lane) | D1 C2/C4 drafts | In `aweb_naapp`: §4 record, digest, states, atomic one-use consume and hashed one-use links; app-local passkey verifier. Generic, no app names. D1 lead checks fit. |
 | G1 aweb-acgh.7 generic app→team-server contract (secrets lane) | D1 §5 requirements; Juan's identity-path approval and Athena for its signed team-server record; F6 and the hooks binding table for hook resolution | Team-server discovery checked against AWID for hosted and BYOT, purpose-split app authentication, grant status meeting the §5 pages requirements, hook resolution. D1 lead reviews fit. |
 | C1 format/schema/vectors | D1 | Full vocabulary, typed binding/state, fallback, lint and positive/negative vectors frozen; examples validate. Hostile-content corpus: encoded `javascript:`/`data:`/`vbscript:` URLs, SVG, Markdown link and autolink tricks, bidi/homoglyph labels and oversized trees. Settles the recorded C1 schema items: depth/widget-count limits, typed values, decision-card fields, MIME/byte bounds, select options, widget-state key pattern, `link_out` and inline-schema `$ref`/regex limits. Also settles the bundle record shape, hash input and item bound. |
 | C2 actions/task integration/approval | D1,B2, acah.4 | Signed task authorization/app transport, idempotent task create, conditional answer receipt and safe content redaction; wrong actor/revision/destination denied; request/execution stores reconcile; common approval task/link and member/passkey adapters, requester cannot mint/read/consume capability, minimum assurance decision recorded. The `member_session` adapter refuses a member without the host's single-person attestation (fails authentication). |
-| C3 manifest v2 + discovery | D1 | Strict v1 preserved, negotiated immutable v1/v2 variants, shared interpreter vectors, surfaces/lifecycle/usage references and versioned hooks slot resolved; hook-only/surface-only tools filtered and denied at call, owner-gated generation/digest targets; no hook catalog freeze. Answer tool exactly `["surface"]`, `invoke_tool` never carries `answer`, agent-visible answer paths rejected at install. |
+| C3 manifest v2 + discovery | D1 | Strict v1 preserved, negotiated immutable v1/v2 variants, shared interpreter vectors, surfaces/lifecycle/usage references and versioned hooks slot resolved; hook-only/surface-only tools filtered and denied at call, owner-gated generation/digest targets; no hook catalog freeze. Answer tool exactly `["surface"]`, `invoke_tool` never carries `answer`, agent-visible answer paths rejected at install. The naapp invoke handler refuses an `answer` payload server-side. |
 | C4 link capability contract | C1,C2,B2,Athena | Explicit delegation, allowed actions/projections, key/nonce, revoke/expiry/rate limits; anonymous intent approval rule and hashed request-bound atomic one-use options frozen; authenticated approver adapter separate from possession. |
 | C5 usage contract | C3 | Every metric/unit, dedicated auth, batch dedup/gaps/snapshots/terminal reporting; admin export; no economic enforcement. |
-| C6 new generic app-event observer | D1,F4b,aweb-acgh.8 step 1 | Post-commit verified metadata only; host failure cannot corrupt mutation, catch-up/reconciliation demonstrated without synthetic member. |
+| C6 new generic app-event observer | D1,F4b,aweb-acgh.8 step 1 | Post-commit verified metadata only; host failure cannot corrupt mutation, catch-up/reconciliation demonstrated without synthetic member. Provenance carries the installation digest and origin-verified flag. |
 | N1 collections/records/data lifecycle | C1,F2,F3 | Owned/synced schemas, revisions, atomic audit/outbox, export/delete/retention/backup restore-tombstone proof. |
 | N2 layout/state/lint | C1,N1 | Stable widget IDs, immutable layout, safe state allowlist, text lint, unknown widget; unrelated draft/focus preserved. |
-| N3 actions | C2,N1,F5 | Durable acceptance through browser/client crash, target/policy/idempotency, atomic resolve plus outbox; stale patches cause no partial success. |
+| N3 actions | C2,N1,F5 | Durable acceptance through browser/client crash, target/policy/idempotency, atomic resolve plus outbox; stale patches cause no partial success. Invoke refuses an `answer` payload server-side; answers arrive only through the surface answer tool. |
 | N4 all-mutation wakes | F4b,N1,N2,N3,C6 | Every mutation including human/ACL/delete/action emits content-free revision; duplicate/reorder/retry correct. |
 | N5 action links/link stream | C4,B2,N3,N4 | First-delivery action links on the `aweb_naapp` capability-link module, scoped reads/assets/stream, anonymous provenance and sponsor recovery; revoked/expired links cannot act. |
 | N6 skill and rental examples | N2,N3 | Released-CLI and hosted-MCP recipes + agent text lint; synthetic rental approval, no external calls without approved adapter. |
@@ -1313,7 +1328,7 @@ No estimates. “Depends” includes contract readiness, not merely deploy order
 | L1 install UI | F6,C3 | Admin exact digest/scopes diff, update/uninstall and export/delete controls; no ordinary-member bypass. Owner single-person declaration at approver designation or invitation, and the attestation carrier that brings it to the app; `member_session` approvals stay unavailable until it exists. |
 | L2 hosted MCP (aweb-abzo) | F5,C3 | Tools/list and calls actor/install scoped, exact signer and byte vectors, second app without an app-specific Cloud change; critical to claude.ai/ChatGPT workflows. |
 | L3 member surface | F5,C3,R1,N2,N3,B3,L1 | Actual dashboard member signs all calls, no controller fallback, explicit provisioning/refusal, generic tool bindings and ACL cache isolation; app-origin passkey handoff binds same task/proposal/person under Juan's assurance decision, no callback-as-proof. Owner acts need fresh step-up; the C1 hostile corpus passes on the dashboard origin. Stored per-member locale setting; the hand-off locale (member setting, else designation locale, else English, never the page locale). Depends on L1, which records the owner's single-person declaration that `member_session` approvals need, together with the approver's designation. |
-| L4 browser wakes | C6,N4,L3 | Two replicas, readiness barrier, reauthorization, loss/reconnect recovery; real healthy commit-to-paint target under 2 s. |
+| L4 browser wakes | C6,N4,L3 | Two replicas, readiness barrier, reauthorization, loss/reconnect recovery; real healthy commit-to-paint target under 2 s. Wake provenance shows the installation digest and origin-verified flag; unverified bytes shown as such. |
 | L5 metering | C5,N1,N3 | CLI/MCP/link/sync/error/no-op paths counted and reconciled, retained inventories and operator/admin views; reconcile old caps explicitly. |
 | A1 runtime intent delivery | C2,N3 | Claude, pi, Codex, aw run resume assigned tasks after missed wake/offline; no model acceptance inferred from transport delivery. |
 | A2 new enforcing external adapter | C2,N3,provider decision, shared effect components | Only usable external credentials behind approval check; payload/source version/operation fenced; ambiguous outcome lookup before retry. Built on the shared `aweb_naapp` egress guard, auth injectors, response redaction, dispatch state machine and idempotency store proposed in the secrets lane, once assigned, with the §3 idempotency rules; pages builds no copy. No customer change without separate go. |
