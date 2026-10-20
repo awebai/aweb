@@ -13,6 +13,7 @@ from fastapi import Request
 
 from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes
+from awid.request_auth import validate_request_nonce, sign_request_credential
 
 TEAM_AUTH_ENVELOPE_V2 = 2
 
@@ -129,6 +130,8 @@ def _request_auth_signature_payload(
 
     if payload.get("v") != TEAM_AUTH_ENVELOPE_V2:
         raise ValueError("unsupported team-auth envelope version")
+
+    validate_request_nonce(payload)
 
     audiences = canonical_audiences(allowed_audiences)
     if not audiences:

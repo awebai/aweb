@@ -15,6 +15,7 @@ from aweb.awid_error_handling import (
 )
 from aweb.auth_context import GrantContext
 from aweb.auth_metrics import count_legacy_request_auth
+from aweb.request_auth_replay import admit_verified_request
 from aweb.team_auth_envelope import identity_auth_signature_payload
 from aweb.config import require_registered_certificates
 from aweb.deps import get_db
@@ -95,6 +96,8 @@ async def resolve_identity_auth(request: Request) -> IdentityAuth:
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature") from exc
 
     if not did_aw:
+        await admit_verified_request(request, envelope=envelope, did_key=did_key,
+                                     signature_b64=signature_b64, family="identity")
         if envelope.version == 1:
             count_legacy_request_auth(request, "identity")
         return IdentityAuth(did_key=did_key, did_aw=None, address=None)
@@ -120,6 +123,9 @@ async def resolve_identity_auth(request: Request) -> IdentityAuth:
 
     if not resolution or resolution.current_did_key != did_key:
         raise HTTPException(status_code=401, detail="did:aw does not match Authorization did:key")
+
+    await admit_verified_request(request, envelope=envelope, did_key=did_key,
+                                 signature_b64=signature_b64, family="identity")
 
     address = None
     try:

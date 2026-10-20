@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request
 
 from aweb.auth_metrics import count_legacy_request_auth
+from aweb.request_auth_replay import admit_verified_request
 from aweb.audit import AuditActor, is_operator_audit_request, set_verified_audit_actor
 from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
 
@@ -254,6 +255,9 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
                 status_code=403,
                 detail=f"Certificate not registered: {presented_certificate_id}",
             )
+
+    await admit_verified_request(request, envelope=envelope, did_key=did_key,
+                                 signature_b64=signature_b64, family="certificate")
 
     # Include the registry-resolved team key (not the certificate's claim)
     cert_info["verified_team_did_key"] = team_did_key

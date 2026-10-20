@@ -8,6 +8,8 @@ import socket
 
 import httpx
 import pytest
+import pytest_asyncio
+from uuid import uuid4
 from redis.asyncio import Redis
 from starlette.requests import Request
 
@@ -18,6 +20,20 @@ from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 
 
 ABSENT = object()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def isolated_replay_store(privacy_app):
+    from aweb.request_auth_replay import RedisRequestReplayStore
+    prefix = f'aweb:test:request-replay:{uuid4().hex}:'
+    privacy_app.app.state.request_auth_replay_store = RedisRequestReplayStore(
+        privacy_app.redis, key_prefix=prefix)
+    try:
+        yield
+    finally:
+        keys = [key async for key in privacy_app.redis.scan_iter(match=prefix + '*')]
+        if keys:
+            await privacy_app.redis.delete(*keys)
 
 
 async def _headers(env, family, *, nonce=ABSENT, timestamp=None):
@@ -153,3 +169,17 @@ async def test_bridge_and_dependency_share_one_incoming_claim(privacy_app):
                 assert replay.status_code == 401, replay.text
             finally:
                 env.client = original
+
+
+@pytest.mark.asyncio
+async def test_alternate_signature_encoding_is_the_same_replay(privacy_app):
+    env = privacy_app
+    headers = await _headers(env, 'identity-local', nonce=_nonce())
+    first = await env.client.get('/v1/messages/inbox', headers=headers)
+    assert first.status_code == 200, first.text
+    scheme, did, signature = headers['Authorization'].split(' ')
+    alternate = signature.replace('+', '-').replace('/', '_') + '=='
+    headers['Authorization'] = f'{scheme} {did} {alternate}'
+    replay = await env.client.get('/v1/messages/inbox', headers=headers)
+    assert replay.status_code == 401, replay.text
+    assert replay.json()['detail']['code'] == 'request_replayed'
