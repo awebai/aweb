@@ -114,11 +114,11 @@ path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 pattern = re.compile(
     r'(?ms)(^\[\[package\]\]\nname = "awid-service"\nversion = ")[^"]+'
-    r'("\nsource = \{ directory = "\.\./awid" \})'
+    r'("\nsource = \{ editable = "\.\./awid" \})'
 )
 stale, count = pattern.subn(r'\g<1>0.0.0\2', text)
 if count != 1:
-    raise SystemExit(f"expected one directory awid-service lock entry, found {count}")
+    raise SystemExit(f"expected one editable awid-service lock entry, found {count}")
 path.write_text(stale, encoding="utf-8")
 PY
 
