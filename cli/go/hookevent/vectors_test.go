@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/strictjson"
 )
 
 const (
@@ -147,7 +148,7 @@ func TestEnvelopeVectorCases(t *testing.T) {
 			_, err = Verify(signing, c.Signature, VerifyOptions{TeamID: c.TeamID})
 			switch c.Layer {
 			case "envelope":
-				if Code(err) != c.Error {
+				if strictjson.Code(err) != c.Error {
 					t.Fatalf("got %v, want %s", err, c.Error)
 				}
 			case "catalog":
@@ -239,7 +240,7 @@ func TestDeliveryVectorCases(t *testing.T) {
 	for _, c := range v.Negative {
 		t.Run(c.Name, func(t *testing.T) {
 			_, err := VerifyDelivery(c.Method, c.Path, c.Headers, []byte(c.Body), c.Receive.options(t))
-			if Code(err) != c.Error {
+			if strictjson.Code(err) != c.Error {
 				t.Fatalf("got %v, want %s", err, c.Error)
 			}
 		})
@@ -276,7 +277,7 @@ func TestHookTableMatchesCatalogVector(t *testing.T) {
 // values the strict reader produces.
 func toStrictValues(value map[string]any) map[string]any {
 	data, _ := json.Marshal(value)
-	parsed, err := ParseStrict(data)
+	parsed, err := strictjson.ParseStrict(data)
 	if err != nil {
 		panic(err)
 	}

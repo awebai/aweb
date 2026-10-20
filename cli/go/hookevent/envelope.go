@@ -1,3 +1,8 @@
+// Package hookevent signs and verifies aw-hooks events: the aweb.hook-event/1
+// envelope and the hook-delivery request credential that carries it.
+//
+// docs/hook-events.md is the contract, and the public hook vectors pin the
+// bytes.
 package hookevent
 
 import (
@@ -8,6 +13,7 @@ import (
 	"sort"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/strictjson"
 )
 
 // EnvelopePrefix domain-separates hook event signatures from every other
@@ -82,11 +88,11 @@ type Envelope struct {
 // SigningBytes validates an envelope and returns the bytes its producer
 // signs: the prefix followed by the envelope's canonical JSON.
 func SigningBytes(envelope map[string]any) ([]byte, error) {
-	canonical, err := Canonical(envelope)
+	canonical, err := strictjson.Canonical(envelope)
 	if err != nil {
 		return nil, err
 	}
-	parsed, err := parseCanonicalObject(canonical)
+	parsed, err := strictjson.ParseCanonicalObject(canonical)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +112,7 @@ func Sign(key ed25519.PrivateKey, envelope map[string]any) ([]byte, string, erro
 	}
 	producer, _ := envelope["producer"].(map[string]any)
 	if didKey, _ := producer["did_key"].(string); didKey != awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) {
-		return nil, "", refuse("signer_mismatch", "the key is not the producer's did_key")
+		return nil, "", strictjson.Refuse("signer_mismatch", "the key is not the producer's did_key")
 	}
 	return signing, base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, signing)), nil
 }
@@ -121,9 +127,9 @@ type VerifyOptions struct {
 // states, and returns the verified envelope or the first refusal.
 func Verify(signing []byte, signature string, opts VerifyOptions) (*Envelope, error) {
 	if !bytes.HasPrefix(signing, []byte(EnvelopePrefix)) {
-		return nil, refuse("wrong_prefix", "signing bytes do not start with %q", EnvelopePrefix)
+		return nil, strictjson.Refuse("wrong_prefix", "signing bytes do not start with %q", EnvelopePrefix)
 	}
-	fields, err := parseCanonicalObject(signing[len(EnvelopePrefix):])
+	fields, err := strictjson.ParseCanonicalObject(signing[len(EnvelopePrefix):])
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +138,7 @@ func Verify(signing []byte, signature string, opts VerifyOptions) (*Envelope, er
 		return nil, err
 	}
 	if opts.TeamID != "" && env.TeamID != opts.TeamID {
-		return nil, refuse("team_mismatch", "event team %s, expected %s", env.TeamID, opts.TeamID)
+		return nil, strictjson.Refuse("team_mismatch", "event team %s, expected %s", env.TeamID, opts.TeamID)
 	}
 	if err := verifySignature(env.ProducerDIDKey, signing, signature); err != nil {
 		return nil, err
@@ -143,14 +149,14 @@ func Verify(signing []byte, signature string, opts VerifyOptions) (*Envelope, er
 func verifySignature(didKey string, message []byte, signature string) error {
 	public, err := awid.ExtractPublicKey(didKey)
 	if err != nil {
-		return refuse("bad_signature", "did:key does not decode")
+		return strictjson.Refuse("bad_signature", "did:key does not decode")
 	}
 	sig, err := base64.RawStdEncoding.DecodeString(signature)
 	if err != nil || len(sig) != ed25519.SignatureSize {
-		return refuse("bad_signature", "signature is not 64 bytes of unpadded standard base64")
+		return strictjson.Refuse("bad_signature", "signature is not 64 bytes of unpadded standard base64")
 	}
 	if !ed25519.Verify(public, message, sig) {
-		return refuse("bad_signature", "signature does not verify")
+		return strictjson.Refuse("bad_signature", "signature does not verify")
 	}
 	return nil
 }
@@ -163,10 +169,10 @@ func checkEnvelope(f map[string]any) (*Envelope, error) {
 		return nil, err
 	}
 	if v, ok := f["v"].(int64); !ok || v != 1 {
-		return nil, refuse("invalid_value", "v")
+		return nil, strictjson.Refuse("invalid_value", "v")
 	}
 	if f["type"] != "aweb.hook-event" {
-		return nil, refuse("invalid_value", "type")
+		return nil, strictjson.Refuse("invalid_value", "type")
 	}
 
 	catalog, err := object(f, "catalog")
@@ -177,12 +183,12 @@ func checkEnvelope(f map[string]any) (*Envelope, error) {
 		return nil, err
 	}
 	if version, ok := catalog["version"].(int64); catalog["id"] != CatalogID || !ok || version != CatalogVersion {
-		return nil, refuse("unknown_catalog", "%v version %v", catalog["id"], catalog["version"])
+		return nil, strictjson.Refuse("unknown_catalog", "%v version %v", catalog["id"], catalog["version"])
 	}
 	hook, _ := f["hook"].(string)
 	spec, known := Hooks[hook]
 	if !known {
-		return nil, refuse("unknown_hook", "%v", f["hook"])
+		return nil, strictjson.Refuse("unknown_hook", "%v", f["hook"])
 	}
 
 	if err := match(f, "event_id", uuidPattern); err != nil {
@@ -196,7 +202,7 @@ func checkEnvelope(f map[string]any) (*Envelope, error) {
 		return nil, err
 	}
 	if id, _ := trace["id"].(string); !traceIDPattern.MatchString(id) || id == "00000000000000000000000000000000" {
-		return nil, refuse("invalid_value", "trace.id")
+		return nil, strictjson.Refuse("invalid_value", "trace.id")
 	}
 	if err := oneOf(trace, "origin", "trace.", []string{"signed_request", "producer"}); err != nil {
 		return nil, err
@@ -227,7 +233,7 @@ func checkEnvelope(f map[string]any) (*Envelope, error) {
 		}
 	}
 	if f["fired_at"].(string) < f["occurred_at"].(string) {
-		return nil, refuse("invalid_value", "fired_at precedes occurred_at")
+		return nil, strictjson.Refuse("invalid_value", "fired_at precedes occurred_at")
 	}
 	if err := oneOf(f, "result_status", "", resultStatuses); err != nil {
 		return nil, err
@@ -237,11 +243,11 @@ func checkEnvelope(f map[string]any) (*Envelope, error) {
 	}
 
 	if !contains(spec.producers, env.ProducerKind) {
-		return nil, refuse("producer_not_allowed", "%s may not sign %s", env.ProducerKind, hook)
+		return nil, strictjson.Refuse("producer_not_allowed", "%s may not sign %s", env.ProducerKind, hook)
 	}
 	if env.ProducerKind == "client" {
 		if actor["did_key"] != producer["did_key"] || actor["certificate_id"] != producer["certificate_id"] {
-			return nil, refuse("actor_not_signer", "a client event's actor is its signer")
+			return nil, strictjson.Refuse("actor_not_signer", "a client event's actor is its signer")
 		}
 	}
 	return env, nil
@@ -280,7 +286,7 @@ func checkProducer(p map[string]any, env *Envelope) error {
 		}
 		env.Producer = "client:" + p["certificate_id"].(string)
 	default:
-		return refuse("invalid_value", "producer.kind")
+		return strictjson.Refuse("invalid_value", "producer.kind")
 	}
 	if kind != "client" {
 		if err := match(p, "origin", originPattern); err != nil {
@@ -315,15 +321,15 @@ func checkActor(a map[string]any) error {
 	if mode == "system" {
 		for _, name := range identity {
 			if _, present := a[name]; present {
-				return refuse("invalid_value", "actor.%s: a system actor has no identity", name)
+				return strictjson.Refuse("invalid_value", "actor.%s: a system actor has no identity", name)
 			}
 		}
 	} else if _, present := a["did_key"]; !present {
-		return refuse("missing_field", "actor.did_key")
+		return strictjson.Refuse("missing_field", "actor.did_key")
 	}
 	_, hasGrant := a["grant_id"]
 	if (mode == "identity_grant") != hasGrant {
-		return refuse("invalid_value", "actor.grant_id belongs to identity_grant authority only")
+		return strictjson.Refuse("invalid_value", "actor.grant_id belongs to identity_grant authority only")
 	}
 	checks := map[string]*regexp.Regexp{
 		"did_key": didKeyPattern, "did_aw": didAWPattern, "certificate_id": certIDPattern,
@@ -338,12 +344,12 @@ func checkActor(a map[string]any) error {
 	}
 	list, ok := a["attestations"].([]any)
 	if !ok || len(list) > maxAttestations {
-		return refuse("invalid_value", "actor.attestations")
+		return strictjson.Refuse("invalid_value", "actor.attestations")
 	}
 	for _, item := range list {
 		s, ok := item.(string)
 		if !ok || len(s) > maxAttestationBytes || !attestationShape.MatchString(s) {
-			return refuse("invalid_value", "actor.attestations")
+			return strictjson.Refuse("invalid_value", "actor.attestations")
 		}
 	}
 	return nil
@@ -355,7 +361,7 @@ func checkActor(a map[string]any) error {
 func checkPayloadShape(value any) error {
 	payload, ok := value.(map[string]any)
 	if !ok {
-		return refuse("invalid_value", "payload is not an object")
+		return strictjson.Refuse("invalid_value", "payload is not an object")
 	}
 	for _, name := range sortedKeys(payload) {
 		switch v := payload[name].(type) {
@@ -363,11 +369,11 @@ func checkPayloadShape(value any) error {
 		case []any:
 			for _, item := range v {
 				if _, ok := item.(string); !ok {
-					return refuse("invalid_value", "payload.%s", name)
+					return strictjson.Refuse("invalid_value", "payload.%s", name)
 				}
 			}
 		default:
-			return refuse("invalid_value", "payload.%s", name)
+			return strictjson.Refuse("invalid_value", "payload.%s", name)
 		}
 	}
 	return nil
@@ -380,14 +386,14 @@ func checkKeys(object map[string]any, prefix string, required, optional []string
 	}
 	for _, name := range sortedKeys(object) {
 		if !allowed[name] {
-			return refuse("unknown_field", "%s%s", prefix, name)
+			return strictjson.Refuse("unknown_field", "%s%s", prefix, name)
 		}
 	}
 	sorted := append([]string{}, required...)
 	sort.Strings(sorted)
 	for _, name := range sorted {
 		if _, present := object[name]; !present {
-			return refuse("missing_field", "%s%s", prefix, name)
+			return strictjson.Refuse("missing_field", "%s%s", prefix, name)
 		}
 	}
 	return nil
@@ -396,7 +402,7 @@ func checkKeys(object map[string]any, prefix string, required, optional []string
 func object(f map[string]any, name string) (map[string]any, error) {
 	value, ok := f[name].(map[string]any)
 	if !ok {
-		return nil, refuse("invalid_value", "%s is not an object", name)
+		return nil, strictjson.Refuse("invalid_value", "%s is not an object", name)
 	}
 	return value, nil
 }
@@ -408,7 +414,7 @@ func match(f map[string]any, name string, pattern *regexp.Regexp) error {
 func matchPrefixed(f map[string]any, name, prefix string, pattern *regexp.Regexp) error {
 	value, ok := f[name].(string)
 	if !ok || !pattern.MatchString(value) {
-		return refuse("invalid_value", "%s%s", prefix, name)
+		return strictjson.Refuse("invalid_value", "%s%s", prefix, name)
 	}
 	return nil
 }
@@ -416,7 +422,7 @@ func matchPrefixed(f map[string]any, name, prefix string, pattern *regexp.Regexp
 func positive(f map[string]any, name string) error {
 	value, ok := f[name].(int64)
 	if !ok || value < 1 {
-		return refuse("invalid_value", "%s", name)
+		return strictjson.Refuse("invalid_value", "%s", name)
 	}
 	return nil
 }
@@ -424,7 +430,7 @@ func positive(f map[string]any, name string) error {
 func oneOf(f map[string]any, name, prefix string, options []string) error {
 	value, ok := f[name].(string)
 	if !ok || !contains(options, value) {
-		return refuse("invalid_value", "%s%s", prefix, name)
+		return strictjson.Refuse("invalid_value", "%s%s", prefix, name)
 	}
 	return nil
 }

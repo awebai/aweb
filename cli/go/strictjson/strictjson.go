@@ -1,9 +1,8 @@
-// Package hookevent signs and verifies aw-hooks events: the aweb.hook-event/1
-// envelope and the hook-delivery request credential that carries it.
-//
-// docs/hook-events.md is the contract, and the public hook vectors pin the
-// bytes.
-package hookevent
+// Package strictjson reads and writes the strict canonical JSON that aweb's
+// domain-separated signatures cover: hook events, hook deliveries and owner
+// acts. Every value it accepts encodes to the same bytes in Go and in
+// Python's json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False).
+package strictjson
 
 import (
 	"bytes"
@@ -33,7 +32,8 @@ func (e *Error) Error() string {
 	return e.Code + ": " + e.Detail
 }
 
-func refuse(code, format string, args ...any) error {
+// Refuse returns a refusal with a stable code.
+func Refuse(code, format string, args ...any) error {
 	return &Error{Code: code, Detail: fmt.Sprintf(format, args...)}
 }
 
@@ -60,7 +60,7 @@ func ParseStrict(data []byte) (any, error) {
 		return nil, err
 	}
 	if _, err := dec.Token(); err != io.EOF {
-		return nil, refuse("invalid_json", "trailing data")
+		return nil, Refuse("invalid_json", "trailing data")
 	}
 	return value, nil
 }
@@ -68,7 +68,7 @@ func ParseStrict(data []byte) (any, error) {
 func parseValue(dec *json.Decoder) (any, error) {
 	token, err := dec.Token()
 	if err != nil {
-		return nil, refuse("invalid_json", "%v", err)
+		return nil, Refuse("invalid_json", "%v", err)
 	}
 	return parseToken(dec, token)
 }
@@ -82,17 +82,17 @@ func parseToken(dec *json.Decoder, token json.Token) (any, error) {
 			for dec.More() {
 				keyToken, err := dec.Token()
 				if err != nil {
-					return nil, refuse("invalid_json", "%v", err)
+					return nil, Refuse("invalid_json", "%v", err)
 				}
 				key, ok := keyToken.(string)
 				if !ok {
-					return nil, refuse("invalid_json", "object key is not a string")
+					return nil, Refuse("invalid_json", "object key is not a string")
 				}
 				if err := checkASCII(key); err != nil {
 					return nil, err
 				}
 				if _, exists := object[key]; exists {
-					return nil, refuse("duplicate_key", "%s", key)
+					return nil, Refuse("duplicate_key", "%s", key)
 				}
 				value, err := parseValue(dec)
 				if err != nil {
@@ -101,7 +101,7 @@ func parseToken(dec *json.Decoder, token json.Token) (any, error) {
 				object[key] = value
 			}
 			if _, err := dec.Token(); err != nil {
-				return nil, refuse("invalid_json", "%v", err)
+				return nil, Refuse("invalid_json", "%v", err)
 			}
 			return object, nil
 		case '[':
@@ -114,19 +114,19 @@ func parseToken(dec *json.Decoder, token json.Token) (any, error) {
 				list = append(list, value)
 			}
 			if _, err := dec.Token(); err != nil {
-				return nil, refuse("invalid_json", "%v", err)
+				return nil, Refuse("invalid_json", "%v", err)
 			}
 			return list, nil
 		}
-		return nil, refuse("invalid_json", "unexpected %v", t)
+		return nil, Refuse("invalid_json", "unexpected %v", t)
 	case json.Number:
 		text := t.String()
 		if !integerText.MatchString(text) {
-			return nil, refuse("float_value", "%s", text)
+			return nil, Refuse("float_value", "%s", text)
 		}
 		n, err := strconv.ParseInt(text, 10, 64)
 		if err != nil || n > MaxSafeInteger || n < -MaxSafeInteger {
-			return nil, refuse("invalid_value", "integer outside the safe range: %s", text)
+			return nil, Refuse("invalid_value", "integer outside the safe range: %s", text)
 		}
 		return n, nil
 	case string:
@@ -137,15 +137,15 @@ func parseToken(dec *json.Decoder, token json.Token) (any, error) {
 	case bool:
 		return t, nil
 	case nil:
-		return nil, refuse("null_value", "null is never a value")
+		return nil, Refuse("null_value", "null is never a value")
 	}
-	return nil, refuse("invalid_json", "unexpected token %v", token)
+	return nil, Refuse("invalid_json", "unexpected token %v", token)
 }
 
 func checkASCII(s string) error {
 	for i := 0; i < len(s); i++ {
 		if s[i] < 0x20 || s[i] > 0x7e {
-			return refuse("string_not_ascii", "character 0x%02x", s[i])
+			return Refuse("string_not_ascii", "character 0x%02x", s[i])
 		}
 	}
 	return nil
@@ -215,13 +215,13 @@ func writeCanonical(buf *bytes.Buffer, value any) error {
 		return writeCanonical(buf, int64(v))
 	case int64:
 		if v > MaxSafeInteger || v < -MaxSafeInteger {
-			return refuse("invalid_value", "integer outside the safe range: %d", v)
+			return Refuse("invalid_value", "integer outside the safe range: %d", v)
 		}
 		buf.WriteString(strconv.FormatInt(v, 10))
 	case nil:
-		return refuse("null_value", "null is never a value")
+		return Refuse("null_value", "null is never a value")
 	default:
-		return refuse("invalid_value", "unsupported value %T", value)
+		return Refuse("invalid_value", "unsupported value %T", value)
 	}
 	return nil
 }
@@ -241,23 +241,23 @@ func writeString(buf *bytes.Buffer, s string) error {
 	return nil
 }
 
-// parseCanonicalObject parses data strictly and requires it to be a JSON
+// ParseCanonicalObject parses data strictly and requires it to be a JSON
 // object whose canonical encoding is exactly data.
-func parseCanonicalObject(data []byte) (map[string]any, error) {
+func ParseCanonicalObject(data []byte) (map[string]any, error) {
 	value, err := ParseStrict(data)
 	if err != nil {
 		return nil, err
 	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return nil, refuse("invalid_value", "not a JSON object")
+		return nil, Refuse("invalid_value", "not a JSON object")
 	}
 	canonical, err := Canonical(object)
 	if err != nil {
 		return nil, err
 	}
 	if !bytes.Equal(canonical, data) {
-		return nil, refuse("not_canonical", "bytes are not the canonical encoding")
+		return nil, Refuse("not_canonical", "bytes are not the canonical encoding")
 	}
 	return object, nil
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/strictjson"
 )
 
 // The definitions below are the source of the two hook vectors. Each key is
@@ -137,7 +138,7 @@ func with(env map[string]any, path string, value any) map[string]any {
 
 func mustCanonical(t *testing.T, value map[string]any) []byte {
 	t.Helper()
-	data, err := Canonical(value)
+	data, err := strictjson.Canonical(value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +317,7 @@ func buildDeliveryVector(t *testing.T) map[string]any {
 		}
 	}
 	basePayload := func() map[string]any {
-		parsed, err := parseCanonicalObject(base.SignedPayload)
+		parsed, err := strictjson.ParseCanonicalObject(base.SignedPayload)
 		if err != nil {
 			t.Fatal(err)
 		}

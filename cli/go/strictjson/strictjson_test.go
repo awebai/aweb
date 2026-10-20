@@ -1,4 +1,4 @@
-package hookevent
+package strictjson
 
 import "testing"
 
@@ -51,11 +51,11 @@ func TestParseStrictRefusals(t *testing.T) {
 }
 
 func TestParseCanonicalObjectRequiresExactBytes(t *testing.T) {
-	if _, err := parseCanonicalObject([]byte(`{"a":1,"b":2}`)); err != nil {
+	if _, err := ParseCanonicalObject([]byte(`{"a":1,"b":2}`)); err != nil {
 		t.Fatal(err)
 	}
 	for _, input := range []string{`{"b":2,"a":1}`, `{"a": 1}`, "{\"a\":\"\\u0041\"}"} {
-		if _, err := parseCanonicalObject([]byte(input)); Code(err) != "not_canonical" {
+		if _, err := ParseCanonicalObject([]byte(input)); Code(err) != "not_canonical" {
 			t.Errorf("%s: got %v, want not_canonical", input, err)
 		}
 	}

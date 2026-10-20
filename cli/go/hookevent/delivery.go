@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/strictjson"
 )
 
 // AuthScheme prefixes the Authorization header of a hook delivery.
@@ -49,15 +50,15 @@ func SignDelivery(key ed25519.PrivateKey, method string, target *url.URL, bindin
 	}
 	didKey := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
 	if didKey != env.ProducerDIDKey {
-		return nil, refuse("signer_mismatch", "the key is not the event's producer key")
+		return nil, strictjson.Refuse("signer_mismatch", "the key is not the event's producer key")
 	}
 	if target == nil || target.Scheme != "https" || target.Host == "" {
-		return nil, refuse("invalid_value", "target must be an https URL")
+		return nil, strictjson.Refuse("invalid_value", "target must be an https URL")
 	}
 	if !uuidPattern.MatchString(bindingID) {
-		return nil, refuse("invalid_value", "binding_id")
+		return nil, strictjson.Refuse("invalid_value", "binding_id")
 	}
-	body, err := Canonical(map[string]any{
+	body, err := strictjson.Canonical(map[string]any{
 		"hook_event": base64.RawURLEncoding.EncodeToString(signing),
 		"signature":  signature,
 	})
@@ -66,7 +67,7 @@ func SignDelivery(key ed25519.PrivateKey, method string, target *url.URL, bindin
 	}
 	sum := sha256.Sum256(body)
 	path := requestPath(target)
-	payload, err := Canonical(map[string]any{
+	payload, err := strictjson.Canonical(map[string]any{
 		"v":           int64(1),
 		"auth":        "hook-delivery",
 		"aud":         "https://" + target.Host,
@@ -118,74 +119,74 @@ type Received struct {
 func VerifyDelivery(method, path string, headers map[string]string, body []byte, opts ReceiveOptions) (*Received, error) {
 	authorization := header(headers, "Authorization")
 	if !strings.HasPrefix(authorization, AuthScheme) {
-		return nil, refuse("wrong_scheme", "not an AWEB-Hook credential")
+		return nil, strictjson.Refuse("wrong_scheme", "not an AWEB-Hook credential")
 	}
 	parts := strings.Split(strings.TrimPrefix(authorization, AuthScheme), " ")
 	if len(parts) != 2 {
-		return nil, refuse("wrong_scheme", "malformed AWEB-Hook credential")
+		return nil, strictjson.Refuse("wrong_scheme", "malformed AWEB-Hook credential")
 	}
 	headerDIDKey, authSignature := parts[0], parts[1]
 
 	encoded := header(headers, SignedPayloadHeader)
 	signedPayload, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
-		return nil, refuse("invalid_value", "signed payload is not unpadded base64url")
+		return nil, strictjson.Refuse("invalid_value", "signed payload is not unpadded base64url")
 	}
-	payload, err := parseCanonicalObject(signedPayload)
+	payload, err := strictjson.ParseCanonicalObject(signedPayload)
 	if err != nil {
 		return nil, err
 	}
 	if !didKeyPattern.MatchString(headerDIDKey) {
-		return nil, refuse("bad_signature", "malformed did:key")
+		return nil, strictjson.Refuse("bad_signature", "malformed did:key")
 	}
 	if err := verifySignature(headerDIDKey, signedPayload, authSignature); err != nil {
 		return nil, err
 	}
 	if payload["auth"] != "hook-delivery" {
-		return nil, refuse("wrong_auth", "%v", payload["auth"])
+		return nil, strictjson.Refuse("wrong_auth", "%v", payload["auth"])
 	}
 	if err := checkKeys(payload, "", deliveryPayloadKeys, nil); err != nil {
 		return nil, err
 	}
 	if payload["did_key"] != headerDIDKey {
-		return nil, refuse("signer_mismatch", "payload did_key differs from the header")
+		return nil, strictjson.Refuse("signer_mismatch", "payload did_key differs from the header")
 	}
 	if v, ok := payload["v"].(int64); !ok || v != 1 {
-		return nil, refuse("invalid_value", "v")
+		return nil, strictjson.Refuse("invalid_value", "v")
 	}
 	if payload["aud"] != opts.Audience {
-		return nil, refuse("audience_mismatch", "%v", payload["aud"])
+		return nil, strictjson.Refuse("audience_mismatch", "%v", payload["aud"])
 	}
 	if payload["method"] != strings.ToUpper(method) || payload["path"] != path {
-		return nil, refuse("request_mismatch", "signed for %v %v", payload["method"], payload["path"])
+		return nil, strictjson.Refuse("request_mismatch", "signed for %v %v", payload["method"], payload["path"])
 	}
 	sum := sha256.Sum256(body)
 	if payload["body_sha256"] != hex.EncodeToString(sum[:]) {
-		return nil, refuse("body_mismatch", "body_sha256")
+		return nil, strictjson.Refuse("body_mismatch", "body_sha256")
 	}
 	stamp, _ := payload["timestamp"].(string)
 	signedAt, err := time.Parse(deliveryTimeLayout, stamp)
 	if err != nil {
-		return nil, refuse("invalid_value", "timestamp")
+		return nil, strictjson.Refuse("invalid_value", "timestamp")
 	}
 	if skew := opts.Now.Sub(signedAt); skew > ReplayWindow || skew < -ReplayWindow {
-		return nil, refuse("timestamp_outside_window", "%s", stamp)
+		return nil, strictjson.Refuse("timestamp_outside_window", "%s", stamp)
 	}
 	if payload["binding_id"] != opts.BindingID {
-		return nil, refuse("binding_mismatch", "%v", payload["binding_id"])
+		return nil, strictjson.Refuse("binding_mismatch", "%v", payload["binding_id"])
 	}
 
-	bodyObject, err := parseCanonicalObject(body)
+	bodyObject, err := strictjson.ParseCanonicalObject(body)
 	if err != nil {
-		return nil, refuse("invalid_body", "%v", err)
+		return nil, strictjson.Refuse("invalid_body", "%v", err)
 	}
 	if err := checkKeys(bodyObject, "body.", []string{"hook_event", "signature"}, nil); err != nil {
-		return nil, refuse("invalid_body", "%v", err)
+		return nil, strictjson.Refuse("invalid_body", "%v", err)
 	}
 	eventText, _ := bodyObject["hook_event"].(string)
 	signing, err := base64.RawURLEncoding.DecodeString(eventText)
 	if err != nil {
-		return nil, refuse("invalid_body", "hook_event is not unpadded base64url")
+		return nil, strictjson.Refuse("invalid_body", "hook_event is not unpadded base64url")
 	}
 	signature, _ := bodyObject["signature"].(string)
 	teamID, _ := payload["team_id"].(string)
@@ -194,10 +195,10 @@ func VerifyDelivery(method, path string, headers map[string]string, body []byte,
 		return nil, err
 	}
 	if payload["event_id"] != env.EventID {
-		return nil, refuse("event_mismatch", "credential names %v, body carries %s", payload["event_id"], env.EventID)
+		return nil, strictjson.Refuse("event_mismatch", "credential names %v, body carries %s", payload["event_id"], env.EventID)
 	}
 	if payload["producer"] != env.Producer || payload["did_key"] != env.ProducerDIDKey || payload["kid"] != credentialKID(env) {
-		return nil, refuse("producer_mismatch", "the credential's signer is not the event's producer")
+		return nil, strictjson.Refuse("producer_mismatch", "the credential's signer is not the event's producer")
 	}
 	return &Received{Payload: payload, Envelope: env}, nil
 }
