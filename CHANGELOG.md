@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `aw chat history <recipient>` applies its limit and unread filter before
+  custody decryption, skips unrelated pending previews during session lookup,
+  and uses individual request timeouts rather than one budget for the whole page.
+
 ## Release preparations
 
 ### Release preparation: server 1.27.29
