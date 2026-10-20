@@ -22,6 +22,20 @@
     }
   },
   "prefix": "aweb.app-task-authorization/1\n",
+  "bindings": [
+    "aud",
+    "app_origin",
+    "team_id",
+    "app_id",
+    "installation_id",
+    "installation_generation",
+    "external_request_id",
+    "task_body_sha256",
+    "target_dids",
+    "action_id",
+    "proposal_rev",
+    "proposal_sha256"
+  ],
   "max_lifetime_seconds": 86400,
   "max_issued_at_skew_seconds": 60,
   "now": "2026-10-20T12:00:30Z",

@@ -171,3 +171,26 @@ def test_stage_receipt_verification_cases(case):
     with pytest.raises(TaskRequestRefused) as refused:
         verify()
     assert refused.value.code == case["expect"]
+
+
+@pytest.mark.parametrize("missing", STAGE["bindings"])
+def test_stage_receipt_refuses_incomplete_bindings(missing):
+    valid = STAGE["valid"]
+    expected = {key: valid["payload"][key] for key in STAGE["bindings"] if key != missing}
+    with pytest.raises(ValueError, match="bindings"):
+        verify_stage_receipt(
+            valid["payload"],
+            valid["signature"],
+            expected=expected,
+            now=at(STAGE["verification_cases"][0]["now"]),
+        )
+
+
+@pytest.mark.parametrize("missing", AUTH["bindings"])
+def test_task_authorization_refuses_incomplete_bindings(missing):
+    case = AUTH["valid"][0]
+    expected = {key: case["payload"][key] for key in AUTH["bindings"] if key != missing}
+    with pytest.raises(ValueError, match="bindings"):
+        verify_task_authorization(
+            case["payload"], case["signature"], expected=expected, now=at(AUTH["now"])
+        )

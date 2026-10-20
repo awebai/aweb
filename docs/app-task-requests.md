@@ -427,6 +427,7 @@ answer commits:
   "kid": "pages-request-1", "did_key": "did:key:z6Mk…",
   "task_id": "…", "question_rev": 1,
   "answer_key": "ans_3c1…", "answer_sha256": "<64 hex>",
+  "choice": "approve", "proposal_rev": 2, "proposal_sha256": "sha256:<64 hex>",
   "answerer_did": "did:aw:…",
   "issued_at": "2026-10-20T12:05:00Z", "expires_at": "2026-10-20T12:10:00Z",
   "nonce": "<32 hex>"
@@ -445,15 +446,24 @@ answer commits:
   - `did_key` and `kid` name a key registered for `app-request` under the
     installation that created the task, which is active at
     `installation_generation`, its current generation;
-  - `task_id` and `question_rev` are the task's current ones; `answer_key` and
-    `answer_sha256` are this request's; `answerer_did` is the principal of the
+  - `task_id` and `question_rev` are the task's current ones; `answer_key`,
+    `answer_sha256`, `choice`, `proposal_rev` and `proposal_sha256` are this
+    request's, so the receipt covers the whole answer and a client cannot stage
+    one choice and commit another; `answerer_did` is the principal of the
     verified answering certificate;
   - the time window holds, checked after the bindings;
   - its `nonce` is recorded with the answer, and a nonce already recorded for
     the installation is refused, so one receipt serves one answer and its
     replays only.
   Any failure is 403 `target_mismatch`, or 401 `authorization_expired` for
-  time alone, and nothing commits.
+  time alone, and nothing commits. A replay of an existing answer (rule 1)
+  does not re-verify the receipt: it returns the original receipt even after
+  the stage receipt has expired.
+- A verifier compares the full binding set: `team_id`, `app_id`,
+  `installation_id`, `installation_generation`, `task_id`, `question_rev`,
+  `answer_key`, `answer_sha256`, `choice`, `proposal_rev`, `proposal_sha256`
+  and `answerer_did`. `aweb_naapp.runtime.task_requests.verify_stage_receipt`
+  refuses to run with any of them missing, rather than skipping a check.
 
 ### Receipt
 
