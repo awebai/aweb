@@ -736,8 +736,11 @@ async def test_cached_registry_client_can_invalidate_team_certificate_reads():
 
 @pytest.mark.asyncio
 async def test_cached_registry_client_scan_outage_does_not_block_certificate_registration():
+    from test_certificates import _signed_certificate_blob
     redis = ScanUnavailableRedis()
     controller_key, _ = generate_keypair()
+    member_key, _ = generate_keypair()
+    member_did = registry_module._did_key_from_signing_key(member_key)
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> Response:
@@ -755,11 +758,16 @@ async def test_cached_registry_client_scan_outage_does_not_block_certificate_reg
             "backend",
             team_controller_signing_key=controller_key,
             certificate_id="cert-1",
-            member_did_key="did:key:z6MkMember",
+            member_did_key=member_did,
             member_did_aw=None,
             member_address=None,
             alias="member",
             identity_scope="local",
+            certificate=_signed_certificate_blob(
+                controller_key, certificate_id="cert-1", team_id="backend:example.com",
+                team_did_key=registry_module._did_key_from_signing_key(controller_key),
+                member_did_key=member_did, alias="member", lifetime="local",
+            ),
         )
     finally:
         await registry.aclose()

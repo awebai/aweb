@@ -2983,12 +2983,32 @@ func verifyCanonicalRegistryAuth(t *testing.T, r *http.Request, fields map[strin
 	if len(parts) != 3 || parts[0] != "DIDKey" {
 		t.Fatalf("unexpected Authorization header %q", auth)
 	}
-	fields = cloneStringMap(fields)
-	fields["timestamp"] = timestamp
-	payload, err := json.Marshal(fields)
+	payload, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-AWEB-Signed-Payload"))
 	if err != nil {
-		t.Fatalf("marshal payload: %v", err)
+		t.Fatal(err)
 	}
+	var envelope map[string]any
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range fields {
+		if envelope[key] != value {
+			t.Fatalf("claim %s=%v want %s", key, envelope[key], value)
+		}
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body = io.NopCloser(strings.NewReader(string(body)))
+	hash := sha256.Sum256(body)
+	if envelope["v"] != float64(2) || envelope["type"] != "aweb.awid-controller-request" ||
+		envelope["method"] != r.Method || envelope["path"] != r.URL.RequestURI() ||
+		envelope["body_sha256"] != hex.EncodeToString(hash[:]) || envelope["timestamp"] != timestamp ||
+		envelope["aud"] != "http://"+r.Host {
+		t.Fatalf("covering request mismatch: %s", payload)
+	}
+
 	sig, err := base64.RawStdEncoding.DecodeString(parts[2])
 	if err != nil {
 		t.Fatalf("decode signature: %v", err)
@@ -3009,14 +3029,6 @@ func didFromRegistryAuthHeader(t *testing.T, r *http.Request) string {
 		t.Fatalf("unexpected Authorization header %q", auth)
 	}
 	return parts[1]
-}
-
-func cloneStringMap(src map[string]string) map[string]string {
-	out := make(map[string]string, len(src))
-	for key, value := range src {
-		out[key] = value
-	}
-	return out
 }
 
 func writeLocalIdentityWorkspaceForIDTest(t *testing.T, workingDir, serverURL, teamID, alias string, signingKey ed25519.PrivateKey) string {

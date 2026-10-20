@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -184,24 +183,5 @@ func verifyRegistrySignatureForTest(t *testing.T, r *http.Request, pub ed25519.P
 		t.Fatalf("authorization DID=%s want %s", parts[1], awid.ComputeDIDKey(pub))
 	}
 
-	timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-	if timestamp == "" {
-		t.Fatal("missing X-AWEB-Timestamp")
-	}
-	payload := make(map[string]string, len(fields)+1)
-	for key, value := range fields {
-		payload[key] = value
-	}
-	payload["timestamp"] = timestamp
-	canonical, err := awid.CanonicalJSONValue(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sig, err := base64.RawStdEncoding.DecodeString(parts[2])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ed25519.Verify(pub, []byte(canonical), sig) {
-		t.Fatalf("invalid signature for payload %s", canonical)
-	}
+	verifyCanonicalRegistryAuth(t, r, fields)
 }

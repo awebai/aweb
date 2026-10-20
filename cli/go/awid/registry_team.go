@@ -159,12 +159,12 @@ func (c *RegistryClient) CreateTeam(
 
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams"
 	var out RegistryTeam
-	if err := c.requestJSON(
+	if err := c.requestControllerJSON(
 		ctx,
 		http.MethodPost,
 		registryURL,
 		path,
-		signedNamespaceHeaders(domain, "create_team", controllerKey, map[string]string{
+		namespaceControllerAuth(domain, "create_team", controllerKey, map[string]string{
 			"name": name,
 		}),
 		teamCreateRequest{
@@ -208,12 +208,12 @@ func (c *RegistryClient) SetTeamVisibility(
 
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/visibility"
 	var out RegistryTeam
-	if err := c.requestJSON(
+	if err := c.requestControllerJSON(
 		ctx,
 		http.MethodPost,
 		registryURL,
 		path,
-		signedNamespaceHeaders(domain, "set_team_visibility", teamKey, map[string]string{
+		namespaceControllerAuth(domain, "set_team_visibility", teamKey, map[string]string{
 			"team_name":  name,
 			"visibility": visibility,
 		}),
@@ -276,12 +276,12 @@ func (c *RegistryClient) DeleteTeam(
 	if strings.TrimSpace(reason) != "" {
 		body = deleteReasonRequest{Reason: strings.TrimSpace(reason)}
 	}
-	return c.requestJSON(
+	return c.requestControllerJSON(
 		ctx,
 		http.MethodDelete,
 		registryURL,
 		path,
-		signedNamespaceHeaders(domain, "delete_team", controllerKey, map[string]string{
+		namespaceControllerAuth(domain, "delete_team", controllerKey, map[string]string{
 			"team_name": name,
 		}),
 		body,
@@ -301,8 +301,8 @@ func (c *RegistryClient) RegisterCertificate(
 ) error {
 	domain = canonicalizeDomain(domain)
 	name = strings.TrimSpace(name)
-	if cert == nil {
-		return fmt.Errorf("certificate is required")
+	if cert == nil || strings.TrimSpace(cert.Signature) == "" {
+		return fmt.Errorf("team-signed certificate blob is required")
 	}
 	if teamKey == nil {
 		return fmt.Errorf("team signing key is required")
@@ -313,12 +313,12 @@ func (c *RegistryClient) RegisterCertificate(
 	}
 
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/certificates"
-	if err := c.requestJSON(
+	if err := c.requestControllerJSON(
 		ctx,
 		http.MethodPost,
 		registryURL,
 		path,
-		signedNamespaceHeaders(domain, "register_certificate", teamKey, map[string]string{
+		namespaceControllerAuth(domain, "register_certificate", teamKey, map[string]string{
 			"team_name":      name,
 			"certificate_id": cert.CertificateID,
 		}),
@@ -510,12 +510,12 @@ func (c *RegistryClient) RevokeCertificate(
 	}
 
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/certificates/revoke"
-	return c.requestJSON(
+	return c.requestControllerJSON(
 		ctx,
 		http.MethodPost,
 		registryURL,
 		path,
-		signedNamespaceHeaders(domain, "revoke_certificate", teamKey, map[string]string{
+		namespaceControllerAuth(domain, "revoke_certificate", teamKey, map[string]string{
 			"team_name":      name,
 			"certificate_id": certificateID,
 		}),

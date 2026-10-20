@@ -21,6 +21,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from awid.contract import normalize_identity_scope
+from awid.controller_signing import ControllerSigner, controller_request_headers, sign_controller_request
 from awid.did import did_from_public_key, stable_id_from_did_key
 from awid.log import (
     canonical_server_origin,
@@ -271,6 +272,15 @@ class AddressAlreadyBoundError(RegistryError):
         )
 
 
+@dataclass(repr=False)
+class _ControllerAuth:
+    signing_key: bytes | None
+    claims: dict[str, str]
+    parent: _ControllerAuth | None = None
+    controller_did_key: str | None = None
+    signer: ControllerSigner | None = None
+
+
 @dataclass(frozen=True)
 class RegistryClient:
     registry_url: str
@@ -335,13 +345,15 @@ class RegistryClient:
         method: str,
         path: str,
         *,
-        headers: dict[str, str] | None = None,
+        headers: dict[str, str] | _ControllerAuth | None = None,
         json: dict[str, Any] | None = None,
         registry_url: str | None = None,
     ) -> dict[str, Any]:
+        controller_auth = headers if isinstance(headers, _ControllerAuth) else None
+        plain_headers = {} if controller_auth else headers
         request_headers = {
             key: value
-            for key, value in (headers or {}).items()
+            for key, value in (plain_headers or {}).items()
             if key.strip().lower() != "accept-encoding"
         }
         request_headers["Accept-Encoding"] = "identity"
@@ -351,19 +363,37 @@ class RegistryClient:
             == canonical_server_origin(self.registry_url)
         ):
             request_headers[AWID_SERVICE_TOKEN_HEADER] = self.service_token
+        request = self._http_client.build_request(
+            method, f"{self._resolved_base_url(registry_url=registry_url)}{path}",
+            headers=request_headers, json=json,
+        )
+        if controller_auth:
+            for auth, parent in ((controller_auth, False), (controller_auth.parent, True)):
+                if auth is None:
+                    continue
+                if auth.signer is not None and auth.controller_did_key:
+                    signed = await sign_controller_request(
+                        request, controller_did_key=auth.controller_did_key,
+                        signer=auth.signer, claims=auth.claims, parent=parent,
+                    )
+                elif auth.signing_key is not None:
+                    signed = controller_request_headers(
+                        request, signing_key=auth.signing_key, claims=auth.claims, parent=parent,
+                    )
+                else:
+                    raise ValueError("controller signing authority is required")
+                request.headers.update(signed)
         async with asyncio.timeout(self.timeout_seconds):
-            async with self._http_client.stream(
-                method,
-                f"{self._resolved_base_url(registry_url=registry_url)}{path}",
-                headers=request_headers,
-                json=json,
-            ) as response:
+            response = await self._http_client.send(request, stream=True, follow_redirects=False)
+            try:
                 max_bytes = (
                     MAX_REGISTRY_RESPONSE_BYTES
                     if 200 <= response.status_code < 300
                     else MAX_REGISTRY_ERROR_BYTES
                 )
                 content = await _read_bounded_response(response, max_bytes)
+            finally:
+                await response.aclose()
         if not 200 <= response.status_code < 300:
             detail = None
             try:
@@ -568,19 +598,17 @@ class RegistryClient:
             if default_delivery_origin is not None
             else None
         )
-        headers = self._signed_namespace_headers(
+        headers = self._namespace_auth(
             domain=domain,
             operation="register",
             signing_key=controller_signing_key,
             extra_payload=extra_payload,
         )
         if parent_signing_key is not None:
-            headers.update(
-                self._signed_parent_namespace_registration_headers(
-                    parent_signing_key=parent_signing_key,
-                    child_domain=domain,
-                    controller_did=controller_did,
-                )
+            headers.parent = self._parent_namespace_registration_auth(
+                parent_signing_key=parent_signing_key,
+                child_domain=domain,
+                controller_did=controller_did,
             )
         return _namespace_from_json(
             await self._request_json(
@@ -599,6 +627,36 @@ class RegistryClient:
                 registry_url=registry_url,
             )
         )
+
+    async def delete_namespace(self, domain: str, controller_signing_key: bytes) -> dict[str, Any]:
+        """Delete with namespace authority, preserving active-certificate refusal."""
+        registry_url = await self._registry_url_for_domain(domain)
+        return await self.controller_request(
+            "DELETE", f"/v1/namespaces/{domain}", signing_key=controller_signing_key,
+            claims={"domain": domain, "operation": "delete_namespace"}, registry_url=registry_url,
+        )
+
+    async def controller_request(
+        self, method: str, path: str, *, claims: dict[str, str],
+        body: dict[str, Any] | None = None, registry_url: str | None = None,
+        signing_key: bytes | None = None, controller_did_key: str | None = None,
+        signer: ControllerSigner | None = None, parent_claims: dict[str, str] | None = None,
+        parent_controller_did_key: str | None = None, parent_signer: ControllerSigner | None = None,
+    ) -> dict[str, Any]:
+        """Send a covering mutation using local authority or a policy-bound signer.
+
+        The SDK owns body serialization and verifies external signatures before
+        sending. Parent authorization uses its own signer and operation. Call
+        outside database transactions; callbacks may perform network I/O.
+        """
+        if (signer is None) != (controller_did_key is None) or (signer is not None and signing_key is not None):
+            raise ValueError("choose one controller signing authority")
+        auth = _ControllerAuth(signing_key, claims, controller_did_key=controller_did_key, signer=signer)
+        if any(value is not None for value in (parent_claims, parent_controller_did_key, parent_signer)):
+            if parent_claims is None or parent_controller_did_key is None or parent_signer is None:
+                raise ValueError("complete parent signing authority is required")
+            auth.parent = _ControllerAuth(None, parent_claims, controller_did_key=parent_controller_did_key, signer=parent_signer)
+        return await self._request_json(method, path, headers=auth, json=body, registry_url=registry_url)
 
     async def get_namespace(self, domain: str) -> Namespace | None:
         data = await self._request_optional_json(
@@ -625,7 +683,7 @@ class RegistryClient:
             await self._request_json(
                 "PATCH",
                 f"/v1/namespaces/{domain}",
-                headers=self._signed_namespace_headers(
+                headers=self._namespace_auth(
                     domain=domain,
                     operation="update_namespace",
                     signing_key=controller_signing_key,
@@ -651,7 +709,7 @@ class RegistryClient:
             await self._request_json(
                 "POST",
                 f"/v1/namespaces/{domain}/teams",
-                headers=self._signed_team_headers(
+                headers=self._team_auth(
                     domain=domain,
                     name=name,
                     operation="create_team",
@@ -680,7 +738,7 @@ class RegistryClient:
             await self._request_json(
                 "POST",
                 f"/v1/namespaces/{domain}/teams/{name}/visibility",
-                headers=self._signed_namespace_headers(
+                headers=self._namespace_auth(
                     domain=domain,
                     operation="set_team_visibility",
                     signing_key=team_controller_signing_key,
@@ -702,7 +760,7 @@ class RegistryClient:
         return await self._request_json(
             "DELETE",
             f"/v1/namespaces/{domain}/teams/{name}",
-            headers=self._signed_namespace_headers(
+            headers=self._namespace_auth(
                 domain=domain,
                 operation="delete_team",
                 signing_key=namespace_controller_signing_key,
@@ -720,19 +778,17 @@ class RegistryClient:
     ) -> Namespace:
         registry_url = await self._registry_url_for_domain(domain)
         _assert_signing_key_matches(new_controller_did, new_controller_signing_key)
-        headers = self._signed_namespace_headers(
+        headers = self._namespace_auth(
             domain=domain,
             operation="rotate_controller",
             signing_key=new_controller_signing_key,
             extra_payload={"new_controller_did": new_controller_did},
         )
         if parent_signing_key is not None:
-            headers.update(
-                self._signed_parent_namespace_headers(
-                    parent_signing_key=parent_signing_key,
-                    child_domain=domain,
-                    new_controller_did=new_controller_did,
-                )
+            headers.parent = self._parent_namespace_auth(
+                parent_signing_key=parent_signing_key,
+                child_domain=domain,
+                new_controller_did=new_controller_did,
             )
         return _namespace_from_json(
             await self._request_json(
@@ -760,7 +816,7 @@ class RegistryClient:
             await self._request_json(
                 "POST",
                 f"/v1/namespaces/{domain}/addresses",
-                headers=self._signed_address_headers(
+                headers=self._address_auth(
                     domain=domain,
                     name=name,
                     operation="register_address",
@@ -979,6 +1035,8 @@ class RegistryClient:
         certificate: str | None = None,
         lifetime: str | None = None,
     ) -> None:
+        if not certificate or not certificate.strip():
+            raise ValueError("team-signed certificate blob is required")
         registry_url = await self._registry_url_for_domain(domain)
         scope_input = identity_scope if identity_scope is not None else lifetime
         scope = normalize_identity_scope(scope_input or "global")
@@ -995,7 +1053,7 @@ class RegistryClient:
         await self._request_json(
             "POST",
             f"/v1/namespaces/{domain}/teams/{name}/certificates",
-            headers=self._signed_namespace_headers(
+            headers=self._namespace_auth(
                 domain=domain,
                 operation="register_certificate",
                 signing_key=team_controller_signing_key,
@@ -1020,7 +1078,7 @@ class RegistryClient:
         await self._request_json(
             "POST",
             f"/v1/namespaces/{domain}/teams/{name}/certificates/revoke",
-            headers=self._signed_namespace_headers(
+            headers=self._namespace_auth(
                 domain=domain,
                 operation="revoke_certificate",
                 signing_key=team_controller_signing_key,
@@ -1048,7 +1106,7 @@ class RegistryClient:
             await self._request_json(
                 "PUT",
                 f"/v1/namespaces/{domain}/addresses/{name}",
-                headers=self._signed_address_headers(
+                headers=self._address_auth(
                     domain=domain,
                     name=name,
                     operation="update_address",
@@ -1069,7 +1127,7 @@ class RegistryClient:
         await self._request_json(
             "DELETE",
             f"/v1/namespaces/{domain}/addresses/{name}",
-            headers=self._signed_address_headers(
+            headers=self._address_auth(
                 domain=domain,
                 name=name,
                 operation="delete_address",
@@ -1095,7 +1153,7 @@ class RegistryClient:
             await self._request_json(
                 "POST",
                 f"/v1/namespaces/{domain}/addresses/{name}/reassign",
-                headers=self._signed_address_headers(
+                headers=self._address_auth(
                     domain=domain,
                     name=name,
                     operation="reassign_address",
@@ -1117,121 +1175,41 @@ class RegistryClient:
             "X-AWEB-Timestamp": timestamp,
         }
 
-    def _signed_namespace_headers(
-        self,
-        *,
-        domain: str,
-        operation: str,
-        signing_key: bytes,
-        extra_payload: dict[str, Any] | None = None,
-    ) -> dict[str, str]:
-        timestamp = _utc_timestamp()
-        payload_dict: dict[str, Any] = {
-            "domain": domain,
-            "operation": operation,
-            "timestamp": timestamp,
-        }
-        if extra_payload:
-            payload_dict.update(extra_payload)
-        payload = canonical_json_bytes(payload_dict)
-        return {
-            "Authorization": f"DIDKey {_did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
-            "X-AWEB-Timestamp": timestamp,
-        }
+    def _namespace_auth(
+        self, *, domain: str, operation: str, signing_key: bytes,
+        extra_payload: dict[str, str] | None = None,
+    ) -> _ControllerAuth:
+        return _ControllerAuth(signing_key, {
+            "domain": domain, "operation": operation, **(extra_payload or {}),
+        })
 
-    def _signed_address_headers(
-        self,
-        *,
-        domain: str,
-        name: str,
-        operation: str,
-        signing_key: bytes,
-    ) -> dict[str, str]:
-        timestamp = _utc_timestamp()
-        payload = canonical_json_bytes(
-            {
-                "domain": domain,
-                "name": name,
-                "operation": operation,
-                "timestamp": timestamp,
-            }
+    def _address_auth(
+        self, *, domain: str, name: str, operation: str, signing_key: bytes,
+    ) -> _ControllerAuth:
+        return self._namespace_auth(
+            domain=domain, operation=operation, signing_key=signing_key, extra_payload={"name": name},
         )
-        return {
-            "Authorization": f"DIDKey {_did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
-            "X-AWEB-Timestamp": timestamp,
-        }
 
-    def _signed_team_headers(
-        self,
-        *,
-        domain: str,
-        name: str,
-        operation: str,
-        signing_key: bytes,
-    ) -> dict[str, str]:
-        timestamp = _utc_timestamp()
-        payload = canonical_json_bytes(
-            {
-                "domain": domain,
-                "name": name,
-                "operation": operation,
-                "timestamp": timestamp,
-            }
-        )
-        return {
-            "Authorization": f"DIDKey {_did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
-            "X-AWEB-Timestamp": timestamp,
-        }
+    def _team_auth(
+        self, *, domain: str, name: str, operation: str, signing_key: bytes,
+    ) -> _ControllerAuth:
+        return self._address_auth(domain=domain, name=name, operation=operation, signing_key=signing_key)
 
-    def _signed_parent_namespace_headers(
-        self,
-        *,
-        parent_signing_key: bytes,
-        child_domain: str,
-        new_controller_did: str,
-    ) -> dict[str, str]:
-        timestamp = _utc_timestamp()
-        payload = canonical_json_bytes(
-            {
-                "domain": child_domain,
-                "child_domain": child_domain,
-                "new_controller_did": new_controller_did,
-                "operation": "authorize_subdomain_rotation",
-                "timestamp": timestamp,
-            }
+    def _parent_namespace_auth(
+        self, *, parent_signing_key: bytes, child_domain: str, new_controller_did: str,
+    ) -> _ControllerAuth:
+        return self._namespace_auth(
+            domain=child_domain, operation="authorize_subdomain_rotation", signing_key=parent_signing_key,
+            extra_payload={"child_domain": child_domain, "new_controller_did": new_controller_did},
         )
-        return {
-            "X-AWEB-Parent-Authorization": (
-                f"DIDKey {_did_key_from_signing_key(parent_signing_key)} "
-                f"{sign_message(parent_signing_key, payload)}"
-            ),
-            "X-AWEB-Parent-Timestamp": timestamp,
-        }
 
-    def _signed_parent_namespace_registration_headers(
-        self,
-        *,
-        parent_signing_key: bytes,
-        child_domain: str,
-        controller_did: str,
-    ) -> dict[str, str]:
-        timestamp = _utc_timestamp()
-        payload = canonical_json_bytes(
-            {
-                "domain": child_domain,
-                "child_domain": child_domain,
-                "controller_did": controller_did,
-                "operation": "authorize_subdomain_registration",
-                "timestamp": timestamp,
-            }
+    def _parent_namespace_registration_auth(
+        self, *, parent_signing_key: bytes, child_domain: str, controller_did: str,
+    ) -> _ControllerAuth:
+        return self._namespace_auth(
+            domain=child_domain, operation="authorize_subdomain_registration", signing_key=parent_signing_key,
+            extra_payload={"child_domain": child_domain, "controller_did": controller_did},
         )
-        return {
-            "X-AWEB-Parent-Authorization": (
-                f"DIDKey {_did_key_from_signing_key(parent_signing_key)} "
-                f"{sign_message(parent_signing_key, payload)}"
-            ),
-            "X-AWEB-Parent-Timestamp": timestamp,
-        }
 
 
 class CachedRegistryClient(RegistryClient):

@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 )
@@ -210,12 +209,12 @@ func (c *RegistryClient) RegisterNamespaceWithDeliveryOriginAt(
 	}
 
 	var out RegistryNamespace
-	if err := c.requestJSON(
+	if err := c.requestControllerJSON(
 		ctx,
 		http.MethodPost,
 		registryURL,
 		"/v1/namespaces",
-		signedNamespaceHeaders(domain, "register", signingKey, extraPayload),
+		namespaceControllerAuth(domain, "register", signingKey, extraPayload),
 		namespaceRegisterRequest{
 			Domain:                domain,
 			ControllerDID:         controllerDID,
@@ -262,12 +261,12 @@ func (c *RegistryClient) UpdateNamespaceDeliveryOriginAt(
 	}
 
 	var out RegistryNamespace
-	if err := c.requestJSON(
+	if err := c.requestControllerJSON(
 		ctx,
 		http.MethodPatch,
 		registryURL,
 		"/v1/namespaces/"+urlPathEscape(domain),
-		signedNamespaceHeaders(
+		namespaceControllerAuth(
 			domain,
 			"update_namespace",
 			controllerSigningKey,
@@ -314,12 +313,12 @@ func (c *RegistryClient) DeleteNamespaceAt(
 	if strings.TrimSpace(reason) != "" {
 		body = deleteReasonRequest{Reason: strings.TrimSpace(reason)}
 	}
-	return c.requestJSON(
+	return c.requestControllerJSON(
 		ctx,
 		http.MethodDelete,
 		registryURL,
 		path,
-		signedNamespaceHeaders(domain, "delete_namespace", controllerSigningKey, nil),
+		namespaceControllerAuth(domain, "delete_namespace", controllerSigningKey, nil),
 		body,
 		nil,
 	)
@@ -397,12 +396,12 @@ func (c *RegistryClient) RegisterAddressAt(
 
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/addresses"
 	var out RegistryAddress
-	if err := c.requestJSON(
+	if err := c.requestControllerJSON(
 		ctx,
 		http.MethodPost,
 		registryURL,
 		path,
-		signedAddressHeaders(domain, name, "register_address", controllerSigningKey),
+		addressControllerAuth(domain, name, "register_address", controllerSigningKey),
 		addressRegisterRequest{
 			Name:          name,
 			DIDAW:         didAW,
@@ -607,12 +606,12 @@ func (c *RegistryClient) DeleteAddressAt(
 	if strings.TrimSpace(reason) != "" {
 		body = deleteReasonRequest{Reason: strings.TrimSpace(reason)}
 	}
-	return c.requestJSON(
+	return c.requestControllerJSON(
 		ctx,
 		http.MethodDelete,
 		registryURL,
 		path,
-		signedAddressHeaders(domain, name, "delete_address", controllerSigningKey),
+		addressControllerAuth(domain, name, "delete_address", controllerSigningKey),
 		body,
 		nil,
 	)
@@ -649,12 +648,12 @@ func (c *RegistryClient) DeleteAddressIfMatchesAt(
 		"expected_did_aw":          expectedDIDAW,
 		"expected_current_did_key": expectedCurrentDIDKey,
 	}
-	return c.requestJSON(
+	return c.requestControllerJSON(
 		ctx,
 		http.MethodDelete,
 		registryURL,
 		"/v1/namespaces/"+urlPathEscape(domain)+"/addresses/"+urlPathEscape(name),
-		signedAddressHeadersWithFields(domain, name, "delete_address", controllerSigningKey, preconditions),
+		addressControllerAuthWithFields(domain, name, "delete_address", controllerSigningKey, preconditions),
 		conditionalAddressDeleteRequest{
 			Reason:                strings.TrimSpace(reason),
 			ExpectedAddressID:     expectedAddressID,
@@ -676,82 +675,22 @@ func requireSigningKeyMatchesDID(signingKey ed25519.PrivateKey, expectedDID stri
 	return nil
 }
 
-func signedNamespaceHeaders(
-	domain string,
-	operation string,
-	signingKey ed25519.PrivateKey,
-	extraPayload map[string]string,
-) map[string]string {
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	fields := map[string]string{
-		"domain":    canonicalizeDomain(domain),
-		"operation": strings.TrimSpace(operation),
-		"timestamp": timestamp,
-	}
+func namespaceControllerAuth(domain, operation string, signingKey ed25519.PrivateKey, extraPayload map[string]string) controllerRequestAuth {
+	fields := map[string]string{"domain": canonicalizeDomain(domain), "operation": strings.TrimSpace(operation)}
 	for key, value := range extraPayload {
 		fields[key] = strings.TrimSpace(value)
 	}
-	return signedCanonicalHeaders(fields, signingKey, timestamp)
+	return controllerRequestAuth{signingKey, fields}
 }
 
-func signedAddressHeaders(
-	domain string,
-	name string,
-	operation string,
-	signingKey ed25519.PrivateKey,
-) map[string]string {
-	return signedAddressHeadersWithFields(domain, name, operation, signingKey, nil)
+func addressControllerAuth(domain, name, operation string, signingKey ed25519.PrivateKey) controllerRequestAuth {
+	return addressControllerAuthWithFields(domain, name, operation, signingKey, nil)
 }
 
-func signedAddressHeadersWithFields(
-	domain string,
-	name string,
-	operation string,
-	signingKey ed25519.PrivateKey,
-	extra map[string]string,
-) map[string]string {
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	fields := map[string]string{
-		"domain":    canonicalizeDomain(domain),
-		"name":      strings.TrimSpace(name),
-		"operation": strings.TrimSpace(operation),
-		"timestamp": timestamp,
-	}
+func addressControllerAuthWithFields(domain, name, operation string, signingKey ed25519.PrivateKey, extra map[string]string) controllerRequestAuth {
+	fields := map[string]string{"name": strings.TrimSpace(name)}
 	for key, value := range extra {
 		fields[key] = strings.TrimSpace(value)
 	}
-	return signedCanonicalHeaders(fields, signingKey, timestamp)
-}
-
-func signedCanonicalHeaders(fields map[string]string, signingKey ed25519.PrivateKey, timestamp string) map[string]string {
-	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
-	payload := canonicalRegistryJSON(fields)
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, []byte(payload)))
-	return map[string]string{
-		"Authorization":    fmt.Sprintf("DIDKey %s %s", did, signature),
-		"X-AWEB-Timestamp": timestamp,
-	}
-}
-
-func canonicalRegistryJSON(fields map[string]string) string {
-	keys := make([]string, 0, len(fields))
-	for key := range fields {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	var b strings.Builder
-	b.WriteByte('{')
-	for idx, key := range keys {
-		if idx > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteByte('"')
-		b.WriteString(key)
-		b.WriteString(`":"`)
-		writeEscapedString(&b, fields[key])
-		b.WriteByte('"')
-	}
-	b.WriteByte('}')
-	return b.String()
+	return namespaceControllerAuth(domain, operation, signingKey, fields)
 }
