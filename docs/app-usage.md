@@ -136,22 +136,36 @@ The signed payload binds `aud`, `method`, raw `path`, `team_id`, `app_id`,
 `kid`, `did_key`, `installation_id`, `installation_generation`, `body_sha256`
 and `timestamp`, exactly as for `app-request`. An `app-event` or
 `app-request` credential never passes the `app-usage` verifier, and an
-`app-usage` credential passes no other. A revoked or replaced key is refused;
+`app-usage` credential passes no other: the verifier requires both the signed
+`auth` value and the `AWEB-App-Usage` prefix. One key may declare several
+purposes in `app_keys`; the credential, not the key, carries the purpose. A
+key whose `app_keys` entry does not declare `app-usage` is refused. A revoked or replaced key is refused;
 there is no grace period.
 
 **After uninstall** the retired installation keeps a lifecycle reporting grant,
 and nothing else:
 
-- The signer is the retired installation's own `app-usage` key, accepted only
-  for reports naming that installation and its last generation.
-- Every entry has `source: "lifecycle"`, `outcome: "committed"`, and deltas
-  only in `calls`, `pages_deleted` and `records_deleted`. A batch may carry a
-  terminal inventory snapshot. The collector refuses any other entry from a
-  retired installation, and the whole batch with it (403 `scope_denied`).
-- The grant lasts until 7 days after the installation's lifecycle status
-  reports its deletion and export work complete, so that a report in retry at
-  completion still lands. After that the collector refuses the installation's
-  reports (403 `scope_denied`).
+- **Which key.** Only an `app-usage` key that was registered, and not revoked,
+  under that exact `installation_id` and generation when the installation was
+  retired. No key can be registered for a retired installation, and a
+  revocation still ends a key at once. The collector finds these keys through
+  a lookup that serves retired installations for this purpose only; the live
+  installation lookup never does.
+- **Which installation.** A report names the retired installation's exact id
+  and last generation. If the team reinstalls the app, the new installation
+  never accepts the old generation's reports, and the old one reports only
+  through its own grant.
+- **What it may report.** Every entry has `source: "lifecycle"`, `outcome:
+  "committed"`, and deltas only in `calls`, `pages_deleted` and
+  `records_deleted`. A batch may carry a terminal inventory snapshot. The
+  collector refuses any other entry from a retired installation, and the
+  whole batch with it (403 `scope_denied`).
+- **When it ends.** At the earlier of 7 days after the installation's
+  lifecycle status reports its deletion and export work complete, so that a
+  report still in retry at completion lands, and 30 days after the
+  installation was retired, so that a disposal that never completes cannot
+  keep a credential alive. After that the collector refuses the
+  installation's reports (403 `scope_denied`).
 - It never restores normal app, event or request authority.
 
 ## 5. Collector: `POST /v1/apps/usage/reports`
