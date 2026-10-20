@@ -181,6 +181,8 @@ presented as shipped.
   `app.state.on_mutation` callback and exact current route call sites.
 - [aw-hooks: catalog, bindings and delivery](hook-events.md) — specified
   experimental contract for owner-activated named hooks, not yet shipped.
+- [Owner act](owner-act.md) — specified experimental controller-signed artifact
+  for owner-only governance acts, not yet shipped.
 - [App manifest v1](app-manifest.md) — current experimental manifest and
   byte-identical CLI interpretation contract.
 - [App registry and team grants](app-registry.md) — current experimental install,

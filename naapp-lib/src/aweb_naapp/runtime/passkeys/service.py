@@ -1,9 +1,14 @@
 """App-local passkey approvers, verified with py_webauthn at the app's own origin.
 
-Only a verified team owner act designates an approver: `app-role.designate`
-for the first approver of a scope, `app-credential.recover` to replace one.
-The act names the scope and commits to the approver's contact by hash, and it
-is used once. The enrolment link goes only to that contact, and whoever first
+A team owner act designates an approver: `app-role.designate` for the first
+approver of a scope, `app-credential.recover` to replace one. The act is a
+`VerifiedOwnerAct` that the owner-act verifier consumed in the caller's
+transaction; it names the scope and commits to the approver's contact by hash,
+and it takes effect once. For a scope the app does not count as an owner
+scope, an owner's decided approval, admitted in the same transaction, may
+designate the scope's first approver instead. Designation runs in the
+caller's transaction, and its link and notices go out only when the caller
+delivers them after the commit. The enrolment link goes only to that contact, and whoever first
 completes enrolment through it registers the passkey: trust on first use,
 recorded as such in the audit event.
 
@@ -30,13 +35,12 @@ import logging
 import secrets
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol
 
-import asyncpg
 from awid.signing import canonical_json_bytes
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
@@ -60,14 +64,17 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
+from aweb_naapp.hooks.owner_act import VerifiedOwnerAct
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
     Approval,
+    Approvals,
     Approver,
     ApproverRetirement,
     Assurance,
     AuthenticationFailed,
     DeliveryStatus,
+    DispatchOutcome,
     Evidence,
     Purpose,
     challenge_binding,
@@ -99,27 +106,23 @@ class DesignationRefused(Exception):
     """The owner act does not authorise this designation."""
 
 
-class OwnerActKind(StrEnum):
-    DESIGNATE = "app-role.designate"
-    RECOVER = "app-credential.recover"
+DESIGNATE_ACT = "app-role.designate"
+RECOVER_ACT = "app-credential.recover"
 
 
-@runtime_checkable
-class OwnerActEvidence(Protocol):
-    """A verified team owner act (`aweb.owner-act/1`).
+@dataclass(frozen=True)
+class OwnerApproval:
+    """An owner's decided approval, admitted and completed in one transaction.
 
-    Only the owner-act verifier produces these; until it exists this protocol
-    is the seam it will fill. Member or admin authority never satisfies it.
-    OwnerActEvidence is a structural placeholder until acgh.1's owner-act
-    verifier lands. No production app may expose designate() as owner-gated
-    until it is replaced by the verifier's concrete type.
-    """
+    Only :meth:`Passkeys.owner_approval` returns one, and it is evidence only in
+    the transaction it was admitted in. Whether the approved request asks for
+    a given designation is the app's to check: only the app can read its own
+    request."""
 
-    act_id: str
-    kind: OwnerActKind
-    signer: str
-    scope: str
-    contact_sha256: str
+    approval_id: str
+    approver_subject: str
+    approver_scope: str
+    transaction_id: int
 
 
 # The shortest protections any deployment may run with. Deploy configuration can
@@ -175,9 +178,14 @@ class PasskeyDelivery(Protocol):
 
 @dataclass(frozen=True)
 class Designation:
+    """A committed designation's approver, and what is still to be sent: its
+    enrolment link and, for a recovery, the notices to earlier contacts. The
+    caller sends them with :meth:`Passkeys.deliver` after the commit."""
+
     approver: Approver
-    delivery_status: DeliveryStatus
     effective_at: datetime
+    notices: tuple[tuple[str, Notice], ...] = ()
+    link_token: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True)
@@ -205,6 +213,10 @@ class PasskeyEvidence:
     task_answer_ref: str | None
     sign_count: int
     verified_at: datetime
+
+
+async def _transaction_id(tx: TransactionManager) -> int:
+    return int(await tx.fetch_value("SELECT txid_current()"))
 
 
 def _utcnow() -> datetime:
@@ -263,10 +275,13 @@ class Passkeys:
         lockout: LockoutPolicy | None = None,
         lockout_floor: LockoutPolicy | None = None,
         clock: Callable[[], datetime] = _utcnow,
+        owner_scopes: Callable[[str], bool] = lambda scope: True,
     ) -> None:
         """`lockout` is the app's or owner's policy; `lockout_floor` is the
         deployment's, at or above the module floors. The policy must meet the
-        deployment floor."""
+        deployment floor. `owner_scopes` says which scopes are owner scopes:
+        their approvers are designated only by a team owner act, and only their
+        approvers' decisions are owner approvals. By default every scope is."""
         self.db = db
         self.rp = rp
         self._delivery = delivery
@@ -274,6 +289,7 @@ class Passkeys:
         self._retirement = retirement
         self._enrolment_ttl = enrolment_ttl
         self._challenge_ttl = challenge_ttl
+        self._owner_scopes = owner_scopes
         floor = lockout_floor or LockoutPolicy()
         self._lockout = lockout or floor
         self._lockout.require_at_least(
@@ -292,107 +308,238 @@ class Passkeys:
     # The owner
 
     async def designate(
-        self, *, scope: str, contact: str, owner_act: OwnerActEvidence
+        self,
+        tx: TransactionManager,
+        *,
+        scope: str,
+        contact: str,
+        evidence: VerifiedOwnerAct | OwnerApproval,
     ) -> Designation:
-        """Designate the approver of `scope` on the strength of a verified owner
-        act, and send its enrolment link to `contact`.
+        """Designate the approver of `scope` in the caller's transaction.
 
-        `app-role.designate` designates the first approver; it takes effect at
-        once. `app-credential.recover` replaces the current one after a
-        lockout; it takes effect after the cooling-off period.
+        A `VerifiedOwnerAct` consumed in this transaction is evidence for any
+        scope: `app-role.designate` designates the first approver, at once;
+        `app-credential.recover` replaces the current one after the cooling-off.
+        An `OwnerApproval` admitted in this transaction designates only the
+        first approver of a scope that is not an owner scope. Each act takes
+        effect once, and an approval once per scope. Nothing is sent: deliver
+        the returned designation after the commit.
         """
-        if not isinstance(owner_act, OwnerActEvidence):
-            raise TypeError("designation needs verified owner-act evidence")
-        if owner_act.scope != scope or owner_act.contact_sha256 != contact_sha256(contact):
-            raise DesignationRefused("owner act names another scope or contact")
+        if isinstance(evidence, VerifiedOwnerAct):
+            if evidence.act not in (DESIGNATE_ACT, RECOVER_ACT):
+                raise DesignationRefused(f"{evidence.act} designates nobody")
+            if evidence.subject.get("role") != scope or evidence.subject.get(
+                "contact_sha256"
+            ) != contact_sha256(contact):
+                raise DesignationRefused("owner act names another scope or contact")
+            if evidence.transaction_id != await _transaction_id(tx):
+                raise DesignationRefused("the owner act was consumed in another transaction")
+            kind = evidence.act
+            act_id = f"{evidence.team_id}:{evidence.nonce}"
+            actor = str(evidence.fields["team_key_did"])
+        elif isinstance(evidence, OwnerApproval):
+            if self._owner_scopes(scope):
+                raise DesignationRefused("an owner scope's approver needs a team owner act")
+            if evidence.transaction_id != await _transaction_id(tx):
+                raise DesignationRefused("the owner approval was admitted in another transaction")
+            kind = DESIGNATE_ACT
+            act_id = f"approval:{evidence.approval_id}:{scope}"
+            actor = evidence.approver_subject
+        else:
+            raise TypeError("designation needs a verified owner act or an owner approval")
+        if await tx.fetch_value(
+            "SELECT 1 FROM {{tables.passkey_owner_acts}} WHERE act_id = $1", act_id
+        ):
+            raise DesignationRefused("this evidence has already taken effect")
         now = self._clock()
-        approver = Approver(subject=str(uuid.uuid4()), subject_type=SUBJECT_TYPE, contact=contact)
-        token, verifier = new_link_token()
-        try:
-            async with self.db.transaction() as tx:
-                previous = await tx.fetch_one(
-                    "SELECT subject FROM {{tables.passkey_approvers}} "
-                    "WHERE scope = $1 AND superseded_at IS NULL FOR UPDATE",
-                    scope,
-                )
-                if previous is None and owner_act.kind is not OwnerActKind.DESIGNATE:
-                    raise DesignationRefused("the first approver needs app-role.designate")
-                if previous is not None and owner_act.kind is not OwnerActKind.RECOVER:
-                    raise DesignationRefused("replacing an approver needs app-credential.recover")
-                effective_at = now
-                notified: list[str] = []
-                if previous is not None:
-                    effective_at = now + self._lockout.recovery_cooling_off
-                    notified = await self._recorded_contacts(tx, scope)
-                    await self._retire(tx, previous["subject"], owner_act.signer, now)
-                await tx.execute(
-                    "INSERT INTO {{tables.passkey_approvers}} (subject, scope, contact, "
-                    "designated_by, designated_at, effective_at) VALUES ($1, $2, $3, $4, $5, $6)",
-                    approver.subject,
-                    scope,
-                    contact,
-                    owner_act.signer,
-                    now,
-                    effective_at,
-                )
-                await tx.execute(
-                    "INSERT INTO {{tables.passkey_owner_acts}} "
-                    "(act_id, kind, signer, scope, subject, used_at) "
-                    "VALUES ($1, $2, $3, $4, $5, $6)",
-                    owner_act.act_id,
-                    owner_act.kind.value,
-                    owner_act.signer,
-                    scope,
-                    approver.subject,
-                    now,
-                )
-                await tx.execute(
-                    "INSERT INTO {{tables.passkey_enrolments}} "
-                    "(enrolment_id, subject, verifier_sha256, created_at, expires_at) "
-                    "VALUES ($1, $2, $3, $4, $5)",
-                    str(uuid.uuid4()),
-                    approver.subject,
-                    verifier,
-                    now,
-                    now + self._enrolment_ttl,
-                )
-                details = {
-                    "scope": scope,
-                    "owner_act_id": owner_act.act_id,
-                    "owner_act_kind": owner_act.kind.value,
-                    "effective_at": effective_at.isoformat(),
-                }
-                if previous is not None:
-                    details["previous_subject"] = previous["subject"]
-                await self._audit.emit(
-                    AuditEvent(
-                        kind=AuditKind.APPROVER_REDESIGNATED
-                        if previous is not None
-                        else AuditKind.APPROVER_DESIGNATED,
-                        actor=owner_act.signer,
-                        subject=approver.subject,
-                        occurred_at=now,
-                        details=details,
-                    ),
-                    tx,
-                )
-        except asyncpg.exceptions.UniqueViolationError as exc:
-            if await self._act_used(owner_act.act_id):
-                raise DesignationRefused("owner act already used") from exc
-            raise
-        status = await self._send(self._delivery.deliver_enrolment_link(approver, token))
-        notice = Notice(NoticeKind.RECOVERY_STARTED, scope, effective_at)
-        for recorded in notified:
-            await self._send(self._delivery.deliver_notice(recorded, notice))
-        return Designation(approver=approver, delivery_status=status, effective_at=effective_at)
-
-    async def _act_used(self, act_id: str) -> bool:
-        return bool(
-            await self.db.fetch_value(
-                "SELECT EXISTS (SELECT 1 FROM {{tables.passkey_owner_acts}} WHERE act_id = $1)",
-                act_id,
-            )
+        previous = await tx.fetch_one(
+            "SELECT subject FROM {{tables.passkey_approvers}} "
+            "WHERE scope = $1 AND superseded_at IS NULL FOR UPDATE",
+            scope,
         )
+        if previous is None and kind != DESIGNATE_ACT:
+            raise DesignationRefused("the first approver needs app-role.designate")
+        if previous is not None and kind != RECOVER_ACT:
+            raise DesignationRefused("replacing an approver needs app-credential.recover")
+        approver = Approver(subject=str(uuid.uuid4()), subject_type=SUBJECT_TYPE, contact=contact)
+        effective_at = now
+        notified: list[str] = []
+        if previous is not None:
+            effective_at = now + self._lockout.recovery_cooling_off
+            notified = await self._recorded_contacts(tx, scope)
+            await self._retire(tx, previous["subject"], actor, now)
+        await tx.execute(
+            "INSERT INTO {{tables.passkey_approvers}} (subject, scope, contact, "
+            "designated_by, designated_at, effective_at) VALUES ($1, $2, $3, $4, $5, $6)",
+            approver.subject,
+            scope,
+            contact,
+            actor,
+            now,
+            effective_at,
+        )
+        await tx.execute(
+            "INSERT INTO {{tables.passkey_owner_acts}} "
+            "(act_id, kind, signer, scope, subject, used_at) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
+            act_id,
+            kind,
+            actor,
+            scope,
+            approver.subject,
+            now,
+        )
+        token = await self._issue_enrolment(tx, approver.subject, now)
+        details = {
+            "scope": scope,
+            "owner_act_id": act_id,
+            "owner_act_kind": kind,
+            "effective_at": effective_at.isoformat(),
+        }
+        if previous is not None:
+            details["previous_subject"] = previous["subject"]
+        await self._audit.emit(
+            AuditEvent(
+                kind=AuditKind.APPROVER_REDESIGNATED
+                if previous is not None
+                else AuditKind.APPROVER_DESIGNATED,
+                actor=actor,
+                subject=approver.subject,
+                occurred_at=now,
+                details=details,
+            ),
+            tx,
+        )
+        notice = Notice(NoticeKind.RECOVERY_STARTED, scope, effective_at)
+        return Designation(
+            approver=approver,
+            effective_at=effective_at,
+            notices=tuple((recorded, notice) for recorded in notified),
+            link_token=token,
+        )
+
+    async def owner_approval(
+        self,
+        tx: TransactionManager,
+        approvals: Approvals,
+        *,
+        approval_id: str,
+        request: Mapping[str, Any],
+        operation_id: str,
+    ) -> OwnerApproval:
+        """Admit an owner's decided approval of `request` in `tx` as designation evidence.
+
+        B2 admits it once, checking its bytes, its current approver and its
+        assurance; the admission is completed in the same transaction, since
+        the designations it authorises happen there. Only an approval decided
+        by an owner scope's approver is owner evidence.
+        """
+        admission = await approvals.admit(approval_id, request, operation_id, tx=tx)
+        if not admission.first:
+            raise DesignationRefused("the owner approval has already been used")
+        approval = await approvals.get(approval_id)
+        assert approval is not None
+        scope = await tx.fetch_value(
+            "SELECT scope FROM {{tables.passkey_approvers}} WHERE subject = $1",
+            approval.approver_subject,
+        )
+        if scope is None or not self._owner_scopes(scope):
+            raise DesignationRefused("the approval was not decided by an owner")
+        await approvals.record_outcome(
+            approval_id,
+            operation_id,
+            DispatchOutcome.COMPLETED,
+            response_status="designation",
+            tx=tx,
+        )
+        return OwnerApproval(
+            approval_id=approval_id,
+            approver_subject=approval.approver_subject,
+            approver_scope=scope,
+            transaction_id=await _transaction_id(tx),
+        )
+
+    async def reissue_enrolment(self, tx: TransactionManager, *, scope: str) -> Designation:
+        """A new enrolment link for the scope's current approver, while it has
+        not enrolled, revoking any earlier link; during a recovery, the notices
+        to earlier contacts again. It changes nothing about who the approver is,
+        so it needs no owner evidence. Deliver it after the commit."""
+        now = self._clock()
+        current = await tx.fetch_one(
+            "SELECT subject, contact, effective_at FROM {{tables.passkey_approvers}} "
+            "WHERE scope = $1 AND superseded_at IS NULL FOR UPDATE",
+            scope,
+        )
+        if current is None:
+            raise EnrolmentRefused("the scope has no approver")
+        if await tx.fetch_value(
+            "SELECT 1 FROM {{tables.passkey_credentials}} "
+            "WHERE subject = $1 AND revoked_at IS NULL",
+            current["subject"],
+        ):
+            raise EnrolmentRefused("the approver has already enrolled")
+        await tx.execute(
+            "UPDATE {{tables.passkey_enrolments}} SET revoked_at = $2 "
+            "WHERE subject = $1 AND revoked_at IS NULL AND used_at IS NULL",
+            current["subject"],
+            now,
+        )
+        token = await self._issue_enrolment(tx, current["subject"], now)
+        await self._audit.emit(
+            AuditEvent(
+                kind=AuditKind.APPROVER_ENROLMENT_REISSUED,
+                actor=current["subject"],
+                subject=current["subject"],
+                occurred_at=now,
+                details={"scope": scope},
+            ),
+            tx,
+        )
+        notices: tuple[tuple[str, Notice], ...] = ()
+        if current["effective_at"] > now:
+            rows = await tx.fetch_all(
+                "SELECT contact FROM {{tables.passkey_approvers}} "
+                "WHERE scope = $1 AND subject <> $2 "
+                "UNION SELECT pending_contact FROM {{tables.passkey_approvers}} "
+                "WHERE scope = $1 AND subject <> $2 AND pending_contact IS NOT NULL",
+                scope,
+                current["subject"],
+            )
+            notice = Notice(NoticeKind.RECOVERY_STARTED, scope, current["effective_at"])
+            notices = tuple((contact, notice) for contact in sorted({r["contact"] for r in rows}))
+        approver = Approver(
+            subject=current["subject"], subject_type=SUBJECT_TYPE, contact=current["contact"]
+        )
+        return Designation(
+            approver=approver,
+            effective_at=current["effective_at"],
+            notices=notices,
+            link_token=token,
+        )
+
+    async def deliver(self, designation: Designation) -> DeliveryStatus:
+        """Send a committed designation's enrolment link and notices. Returns
+        how the link's delivery went."""
+        status = await self._send(
+            self._delivery.deliver_enrolment_link(designation.approver, designation.link_token)
+        )
+        for contact, notice in designation.notices:
+            await self._send(self._delivery.deliver_notice(contact, notice))
+        return status
+
+    async def _issue_enrolment(self, tx: TransactionManager, subject: str, now: datetime) -> str:
+        token, verifier = new_link_token()
+        await tx.execute(
+            "INSERT INTO {{tables.passkey_enrolments}} "
+            "(enrolment_id, subject, verifier_sha256, created_at, expires_at) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            str(uuid.uuid4()),
+            subject,
+            verifier,
+            now,
+            now + self._enrolment_ttl,
+        )
+        return token
 
     async def _send(self, sending: Any) -> DeliveryStatus:
         try:
