@@ -17,6 +17,15 @@ from pathlib import Path
 
 _ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
+# The font files the stylesheet loads from /fonts/. The app supplies them.
+FONT_NAMES = frozenset(
+    {
+        "BerkeleyMono-Light.woff2",
+        "BerkeleyMono-Regular.woff2",
+        "BerkeleyMono-SemiBold.woff2",
+    }
+)
+
 # Hash of layer 1 only: the vendored ac SOT stylesheet at
 # src/aweb_naapp/assets/aweb.css. This must stay byte-identical to
 # ac/site/static/css/aweb.css and is intentionally separate from CSS_SHA256.

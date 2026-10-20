@@ -16,8 +16,9 @@ allowed by the app's policy. ``Depends(runtime.principal)`` only
 authenticates: it says who signed the request, never that they may act, so it
 is for routes that need nothing more than the signer's identity.
 
-The ``/fonts/`` route is not part of the shared surface yet: it waits on
-whether the font files may ship inside this package.
+The font files under ``/fonts/`` are the app's: this package names the fonts
+its stylesheet loads and serves them from the app's directory, but does not
+ship them.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager
 from starlette.routing import BaseRoute, Host, Mount
 
-from aweb_naapp.css import aweb_css
+from aweb_naapp.css import FONT_NAMES, aweb_css
 from aweb_naapp.manifest import read_manifest_bytes
 from aweb_naapp.robots import robots_txt
 from aweb_naapp.runtime.authorization import (
@@ -256,10 +257,15 @@ def mount_naapp_routes(
     reference_html: str,
     llms_txt: str,
     og_card_png: bytes,
+    fonts_dir: Path,
     robots_disallow: Sequence[str] = (),
     noindex_paths: Sequence[str] = (),
 ) -> None:
     """Serve the standard naapp public surface.
+
+    ``fonts_dir`` holds the app's copies of the fonts the stylesheet loads
+    (``FONT_NAMES``); only those names are served, and a directory missing one
+    is refused here.
 
     The landing page, robots rules and noindex paths are the app's: ``landing``
     renders the front door on each request, ``robots_disallow`` lists the paths
@@ -302,6 +308,19 @@ def mount_naapp_routes(
     @app.get("/css/aweb.{fingerprint}.css")
     async def aweb_css_fingerprinted_route(fingerprint: str) -> Response:
         return _aweb_css_response(immutable=True)
+
+    fonts = {name: (fonts_dir / name).read_bytes() for name in sorted(FONT_NAMES)}
+
+    @app.get("/fonts/{font_name}")
+    async def font_route(font_name: str) -> Response:
+        font = fonts.get(font_name)
+        if font is None:
+            raise HTTPException(status_code=404, detail="Font not found")
+        return Response(
+            content=font,
+            media_type="font/woff2",
+            headers={**_NOSNIFF, "Cache-Control": "public, max-age=31536000, immutable"},
+        )
 
     @app.get("/og-card.png")
     async def og_card_route() -> Response:
