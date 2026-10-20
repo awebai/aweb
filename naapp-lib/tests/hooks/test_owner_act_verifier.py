@@ -235,12 +235,13 @@ async def test_an_act_prepared_by_another_verifier_is_refused(db, registry, team
 
 
 async def test_a_prepared_act_past_its_expiry_is_not_consumed(db, registry, team_key) -> None:
-    issued = datetime.now(UTC)
-    moment = [issued]
+    issued = datetime.now(UTC).replace(microsecond=0)
+    expires = issued + timedelta(minutes=5)
+    moment = [expires - timedelta(seconds=30)]
     verify = verifier(registry, clock=lambda: moment[0])
     signing, signature = owner_act(team_key, issued=issued)
     prepared = await verify.prepare(signing, signature, team_id=TEAM_ID)
-    moment[0] = issued + timedelta(minutes=5, seconds=1)
+    moment[0] = expires + timedelta(seconds=1)
     async with db.transaction() as tx:
         with pytest.raises(Refused) as refused:
             await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
@@ -258,7 +259,26 @@ async def test_a_pruned_act_cannot_be_consumed_again(db, registry, team_key) -> 
         await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
     moment[0] = issued + timedelta(minutes=5, seconds=61)
     assert await prune_owner_act_nonces(db, now=moment[0]) == 1
+    # Held minutes after prepare, the act no longer proves the current team
+    # key, and it has expired too: the first of those refusals applies.
     async with db.transaction() as tx:
         with pytest.raises(Refused) as refused:
             await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
-    assert refused.value.code == "expired"
+    assert refused.value.code == "owner_required"
+
+
+async def test_a_prepared_act_older_than_the_key_bound_is_refused(db, registry, team_key) -> None:
+    issued = datetime.now(UTC)
+    moment = [issued]
+    verify = verifier(registry, clock=lambda: moment[0])
+    signing, signature = owner_act(team_key, issued=issued)
+    prepared = await verify.prepare(signing, signature, team_id=TEAM_ID)
+    moment[0] = issued + timedelta(seconds=61)
+    async with db.transaction() as tx:
+        with pytest.raises(Refused) as refused:
+            await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
+    assert refused.value.code == "owner_required"
+    assert await effects(db) == 0
+    moment[0] = issued + timedelta(seconds=60)
+    async with db.transaction() as tx:
+        await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
