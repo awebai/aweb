@@ -35,4 +35,6 @@ landing_html = naapp.page(site, body_html, include_copy_llms=True)
 css_bytes = naapp.aweb_css()
 ```
 
-Pure standard library; no runtime dependencies.
+The docs surface is pure standard library. Request-time runtime code (the
+team-auth verifier, approvals, passkeys) lives under `aweb_naapp.runtime` and
+needs the `runtime` extra: `aweb-naapp[runtime]`.

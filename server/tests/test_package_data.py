@@ -57,7 +57,7 @@ def test_server_distributions_ship_reserved_app_ids_without_vector_copies(tmp_pa
     with zipfile.ZipFile(wheels[0]) as wheel:
         names = wheel.namelist()
         assert "aweb/data/reserved-app-ids-v1.json" in names
-        for attachment_path in ("attachments.py", "attachment_service.py", "migrations/aweb/022_message_attachments.sql"):
+        for attachment_path in ("attachments.py", "attachment_service.py", "migrations/aweb/022_message_attachments.sql", "audit.py", "migrations/aweb/023_operator_audit.sql"):
             assert f"aweb/{attachment_path}" in names
         assert not any("/docs/vectors/" in name or name.startswith("docs/vectors/") for name in names)
 
@@ -66,7 +66,7 @@ def test_server_distributions_ship_reserved_app_ids_without_vector_copies(tmp_pa
     with tarfile.open(sdists[0]) as sdist:
         names = sdist.getnames()
         assert any(name.endswith("/src/aweb/data/reserved-app-ids-v1.json") for name in names)
-        for attachment_path in ("attachments.py", "attachment_service.py", "migrations/aweb/022_message_attachments.sql"):
+        for attachment_path in ("attachments.py", "attachment_service.py", "migrations/aweb/022_message_attachments.sql", "audit.py", "migrations/aweb/023_operator_audit.sql"):
             assert any(name.endswith(f"/src/aweb/{attachment_path}") for name in names)
         assert not any("/docs/vectors/" in name for name in names)
 
@@ -124,6 +124,7 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "020_agent_status_hosts.sql",
         "021_agent_status.sql",
         "022_message_attachments.sql",
+        "023_operator_audit.sql",
     ]
 
 
