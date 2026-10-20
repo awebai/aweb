@@ -43,6 +43,10 @@ signing-key = [
 idempotency = [
   "pgdbm>=0.5.0",
 ]
+# Shared role assignments, aweb_naapp.roles: pgdbm only.
+roles = [
+  "pgdbm>=0.5.0",
+]
 # The shared page-format validator, aweb_naapp.pages: JSON Schema only, no I/O.
 pages = [
   "jsonschema>=4.23",
