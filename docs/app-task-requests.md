@@ -191,12 +191,11 @@ current generation.
 Unknown fields are refused at every level. `task_body_sha256` is the hex
 SHA-256 of `canonical_json(task)`.
 
-**Content rule.** Task metadata is team-visible. `title`, `description` and
-the references carry no guest message, booking detail, capability, token or
-private proposal content. Use generic titles and opaque references. The task
-service cannot detect a violation; the app is responsible for it. Assignment
-grants no access to the app's resources: the assignee reads them with its own
-credentials.
+**Content rule.** A task is team-visible, like everything else the team works
+on. No task field carries a capability, token or link: not the title, the
+description, the references or an answer. The task service cannot detect a
+violation; the app is responsible for it. Assignment grants no access to the
+app's resources: the assignee reads them with its own credentials.
 
 ### Verification, in order
 
