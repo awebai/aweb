@@ -341,3 +341,56 @@ async def test_an_oversize_rotation_is_refused_before_the_body_is_parsed(control
     claims = {"domain": "local", "operation": "rotate_team_key", "name": "base", "new_team_did_key": new[1]}
     response = await send(env, "POST", f"{BASE}/rotate", claims, {"new_team_did_key": new[1], "pad": "x" * 200})
     assert response.status_code == 413, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["team", "namespace"])
+async def test_a_team_or_namespace_holding_every_record_kind_can_be_deleted(controller_app, scope):
+    env = controller_app
+    _, custody, _ = await _team_with_records(env)
+    certificate_id = custody["certificate_id"]
+    revoked = await send(env, "POST", f"{BASE}/certificates/revoke",
+                         {"domain": "local", "operation": "revoke_certificate", "team_name": "base",
+                          "certificate_id": certificate_id},
+                         {"certificate_id": certificate_id}, signer=env.team)
+    assert revoked.status_code == 200, revoked.text
+    if scope == "team":
+        deleted = await send(env, "DELETE", BASE, {"domain": "local", "operation": "delete_team", "team_name": "base"})
+    else:
+        deleted = await send(env, "DELETE", "/v1/namespaces/local", {"domain": "local", "operation": "delete_namespace"})
+    assert deleted.status_code == 200, deleted.text
+    for path in (f"{BASE}/custodians/custodian.example", f"{BASE}/certificates/{certificate_id}/custody",
+                 f"{BASE}/certificates/{certificate_id}/person"):
+        assert (await env.client.get(path)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_record_publishes_are_limited_per_team_only_after_authentication(controller_app, monkeypatch):
+    from awid import ratelimit
+
+    env = controller_app
+    monkeypatch.setitem(ratelimit._BUCKET_DEFAULTS, "attestation_record_publish_team", (2, 3600))
+    for _ in range(3):
+        assert (await publish_custodian(env, _custodian(env), signer=keypair())).status_code == 403
+    cert = await register_certificate(env)
+    assert (await publish_custodian(env, _custodian(env, issued_at=_now(-10)))).status_code == 200
+    assert (await publish_person(env, _person(env, cert))).status_code == 200
+    limited = await publish_custodian(env, _custodian(env))
+    assert limited.status_code == 429, limited.text
+
+
+@pytest.mark.asyncio
+async def test_the_service_token_is_exempt_from_the_team_publish_limit(controller_app, monkeypatch):
+    from awid import ratelimit
+
+    env = controller_app
+    monkeypatch.setitem(ratelimit._BUCKET_DEFAULTS, "attestation_record_publish_team", (1, 3600))
+    token = "attestation-test-service-token-0123456789"
+    env.app.state.awid_service_token = token
+    original = env.client.headers.copy()
+    env.client.headers["X-AWID-Service-Token"] = token
+    try:
+        for offset in (-20, -10, -1):
+            assert (await publish_custodian(env, _custodian(env, issued_at=_now(offset)))).status_code == 200
+    finally:
+        env.client.headers = original

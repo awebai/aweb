@@ -226,3 +226,26 @@ async def test_member_person_refusals():
     with pytest.raises(AttestationRefused) as mismatch:
         await _read_person(_signed(other_member, "team"))
     assert mismatch.value.code == "member_person_invalid"
+
+
+async def test_now_in_another_time_zone_means_the_same_instant():
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    los_angeles = ZoneInfo("America/Los_Angeles")
+    certificate = VALID["certificate"]
+    kwargs = dict(
+        header=VALID["header"], signed_payload=_bytes(VALID["request"]["signed_payload_b64url"]),
+        team_id=certificate["team_id"], certificate_id=certificate["certificate_id"],
+        member_did_key=certificate["member_did_key"],
+        current_team_did_key=VALID["registry"]["current_team_did_key"],
+        records=DeclaredRecords(VALID["registry"]),
+    )
+    verified = await verify_principal_attestation(now=_at(VALID["now"]).astimezone(los_angeles), **kwargs)
+    assert verified.channel == "mcp_l2"
+    later = (_at(VALID["now"]) + timedelta(hours=1)).astimezone(los_angeles)
+    with pytest.raises(AttestationRefused) as expired:
+        await verify_principal_attestation(now=later, **kwargs)
+    assert expired.value.code == "attestation_expired"
+    with pytest.raises(ValueError):
+        await verify_principal_attestation(now=_at(VALID["now"]).replace(tzinfo=None), **kwargs)

@@ -11,7 +11,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from awid.attestation_records import (
     MEMBER_CUSTODY,
@@ -21,12 +21,12 @@ from awid.attestation_records import (
     verify_record,
 )
 from awid.controller_request import ControllerAuthRoute
-from awid.ratelimit import rate_limit_dep
+from awid.ratelimit import enforce_rate_limit, rate_limit_dep
 from awid.signing import canonical_json_bytes
 from awid.team_ids import build_team_id
 from awid_service.attestation_rotation import MAX_FUTURE_ISSUED_AT, SignedRecord, issued_at_of
 from awid_service.deps import get_db
-from awid_service.routes.teams import _require_team_controller
+from awid_service.routes.teams import _presents_trusted_service_token, _require_team_controller
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["attestation-records"], route_class=ControllerAuthRoute)
 
@@ -60,6 +60,20 @@ def verify_published_record(
     if issued_at_of(record) > now + MAX_FUTURE_ISSUED_AT:
         raise _refuse(422, "issued_at_in_future", "issued_at is more than five minutes ahead")
     return canonical_json_bytes(record)
+
+
+async def _charge_team_publish(request: Request, response: Response, team) -> None:
+    """Count an authenticated publish against the team's own allowance.
+
+    Charged only after the controller signature verified, so unauthenticated
+    traffic cannot exhaust a team's allowance; the per-IP bucket bounds that.
+    The trusted service token (a custodial deployment's backfill) is exempt.
+    """
+    if _presents_trusted_service_token(request):
+        return
+    await enforce_rate_limit(
+        request, response, bucket="attestation_record_publish_team", key=str(team["team_uuid"]),
+    )
 
 
 async def _lock_team_key(tx, team) -> None:
@@ -100,13 +114,15 @@ async def _active_certificate(tx, team_uuid, certificate_id: str):
     dependencies=[Depends(rate_limit_dep("attestation_record_publish", allow_trusted_service=True))],
 )
 async def publish_team_custodian(
-    request: Request, domain: str, name: str, custodian_id: str, body: SignedRecord, db_infra=Depends(get_db),
+    request: Request, response: Response, domain: str, name: str, custodian_id: str, body: SignedRecord,
+    db_infra=Depends(get_db),
 ) -> dict:
     _require_covering_envelope(request)
     db = db_infra.get_manager("aweb")
     _, team = await _require_team_controller(
         request, db, domain=domain, name=name, operation="publish_team_custodian", custodian_id=custodian_id,
     )
+    await _charge_team_publish(request, response, team)
     canonical = verify_published_record(
         body, record_type=TEAM_CUSTODIAN, team_id=build_team_id(domain, name),
         team_did_key=team["team_did_key"], now=datetime.now(timezone.utc),
@@ -183,13 +199,15 @@ def _without(record: dict[str, Any], *fields: str) -> dict[str, Any]:
     dependencies=[Depends(rate_limit_dep("attestation_record_publish", allow_trusted_service=True))],
 )
 async def publish_member_custody(
-    request: Request, domain: str, name: str, certificate_id: str, body: SignedRecord, db_infra=Depends(get_db),
+    request: Request, response: Response, domain: str, name: str, certificate_id: str, body: SignedRecord,
+    db_infra=Depends(get_db),
 ) -> dict:
     _require_covering_envelope(request)
     db = db_infra.get_manager("aweb")
     _, team = await _require_team_controller(
         request, db, domain=domain, name=name, operation="publish_member_custody", certificate_id=certificate_id,
     )
+    await _charge_team_publish(request, response, team)
     canonical = verify_published_record(
         body, record_type=MEMBER_CUSTODY, team_id=build_team_id(domain, name),
         team_did_key=team["team_did_key"], now=datetime.now(timezone.utc),
@@ -248,13 +266,15 @@ async def publish_member_custody(
     dependencies=[Depends(rate_limit_dep("attestation_record_publish", allow_trusted_service=True))],
 )
 async def publish_member_person(
-    request: Request, domain: str, name: str, certificate_id: str, body: SignedRecord, db_infra=Depends(get_db),
+    request: Request, response: Response, domain: str, name: str, certificate_id: str, body: SignedRecord,
+    db_infra=Depends(get_db),
 ) -> dict:
     _require_covering_envelope(request)
     db = db_infra.get_manager("aweb")
     _, team = await _require_team_controller(
         request, db, domain=domain, name=name, operation="publish_member_person", certificate_id=certificate_id,
     )
+    await _charge_team_publish(request, response, team)
     canonical = verify_published_record(
         body, record_type=MEMBER_PERSON, team_id=build_team_id(domain, name),
         team_did_key=team["team_did_key"], now=datetime.now(timezone.utc),

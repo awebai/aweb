@@ -54,7 +54,13 @@ parsed payload and require the exact bytes they received. Each payload carries
 its own `type` and `v`, and every prefix differs from a team certificate,
 `aweb.team-server/1` and `aweb.owner-act/1`, so no artifact verifies as another.
 
-Timestamps are RFC 3339 UTC strings with a `Z` suffix and second precision.
+Signatures are the 64-byte Ed25519 signature in base64url without padding.
+Each value has exactly one accepted encoding: a verifier decodes, re-encodes and
+requires the same string, so unused trailing bits must be zero. This family
+uses base64url, unlike the standard base64 of `aweb.team-server/1`.
+
+Timestamps are RFC 3339 UTC strings with a `Z` suffix, second precision and
+ASCII digits only.
 
 ## 1. Team custodian record, `aweb.team-custodian/1`
 

@@ -204,8 +204,7 @@ def test_attestation_header_has_a_size_bound_and_no_padding():
         {"custody": "self"},
         {"human_principal": "alice@example.com"},
         {"session_id": ""},
-        {"exp": "2026-10-20T12:05:01Z"},
-        {"exp": "2026-10-20T11:59:59Z"},
+        {"iat": "٢٠٢٦-10-20T12:00:00Z"},
         {"request_binding": "A" * 64},
         {"unknown": "x"},
     ],
@@ -219,3 +218,37 @@ def test_human_principal_is_optional():
     payload = _attestation()
     del payload["human_principal"]
     validate_attestation(payload)
+
+
+def test_the_lifetime_is_checked_by_the_verifier_not_the_codec():
+    validate_attestation(_attestation(exp="2026-10-20T12:05:01Z"))
+    validate_attestation(_attestation(exp="2026-10-20T11:59:59Z"))
+
+
+def test_record_timestamps_are_ascii_digits_only():
+    with pytest.raises(RecordError):
+        validate_member_custody(_custody(issued_at="٢٠٢٦-10-20T12:00:00Z"))
+
+
+def _flip_tail(value: str) -> str:
+    # The final base64url character of a 64-byte signature carries 4 unused bits.
+    last = value[-1]
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    index = alphabet.index(last)
+    return value[:-1] + alphabet[index ^ 1]
+
+
+def test_each_value_has_exactly_one_base64url_encoding():
+    header = encode_attestation_header(ISSUER_KEY, _attestation())
+    payload_part, sig_part = header.split(".")
+    with pytest.raises(AttestationError):
+        decode_attestation_header(f"{payload_part}.{_flip_tail(sig_part)}")
+    record = _custody()
+    signature = sign_record(TEAM_KEY, record)
+    with pytest.raises(RecordError):
+        verify_record(record, _flip_tail(signature), team_did_key=TEAM_DID)
+
+
+def test_a_lone_surrogate_is_refused_not_a_crash():
+    with pytest.raises(AttestationError):
+        decode_attestation_header(_header(b'{"a":"\\ud800"}'))

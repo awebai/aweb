@@ -32,7 +32,7 @@ ATTESTATION_HEADER_MAX_BYTES = 4096
 ATTESTATION_MAX_LIFETIME_SECONDS = 300
 CHANNELS = frozenset({"mcp_l2", "dashboard", "api"})
 
-_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 _CUSTODIAN_ID = re.compile(r"^[a-z0-9.-]{1,128}$")
 _CERTIFICATE_ID = re.compile(r"^[A-Za-z0-9-]{1,128}$")
 _HANDLE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -58,12 +58,16 @@ def _b64url(data: bytes) -> str:
 
 
 def _from_b64url(value: str, error: type[ValueError]) -> bytes:
+    """Decode base64url without padding, accepting exactly one encoding per value."""
     if not isinstance(value, str) or not _B64URL.fullmatch(value):
         raise error("invalid base64url")
     try:
-        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
     except (binascii.Error, ValueError) as exc:
         raise error("invalid base64url") from exc
+    if _b64url(decoded) != value:
+        raise error("non-canonical base64url")
+    return decoded
 
 
 def sign_record(signing_key: bytes, payload: dict[str, Any]) -> str:
@@ -208,11 +212,9 @@ def validate_attestation(payload: Any) -> None:
     for field in ("session_id", "human_principal"):
         if field in payload and (not isinstance(payload[field], str) or not _HANDLE.fullmatch(payload[field])):
             raise AttestationError(f"invalid {field}")
-    iat = _parse_timestamp(payload["iat"], AttestationError)
-    exp = _parse_timestamp(payload["exp"], AttestationError)
-    lifetime = (exp - iat).total_seconds()
-    if lifetime <= 0 or lifetime > ATTESTATION_MAX_LIFETIME_SECONDS:
-        raise AttestationError("exp must be after iat and at most 300 s later")
+    # The lifetime rule is a time check (attestation_expired), made by the verifier.
+    _parse_timestamp(payload["iat"], AttestationError)
+    _parse_timestamp(payload["exp"], AttestationError)
     if not isinstance(payload["request_binding"], str) or not _SHA256_HEX.fullmatch(payload["request_binding"]):
         raise AttestationError("request_binding must be 64 lowercase hex")
 
@@ -240,7 +242,11 @@ def _strict_object(raw: bytes) -> dict[str, Any]:
         raise AttestationError("payload is not JSON") from exc
     if not isinstance(value, dict):
         raise AttestationError("payload is not an object")
-    if canonical_json_bytes(value) != raw:
+    try:
+        canonical = canonical_json_bytes(value)
+    except UnicodeEncodeError as exc:
+        raise AttestationError("payload is not valid Unicode") from exc
+    if canonical != raw:
         raise AttestationError("payload bytes are not canonical")
     return value
 
@@ -270,6 +276,11 @@ def decode_attestation_header(value: str) -> tuple[dict[str, Any], bytes]:
     payload = _strict_object(raw)
     validate_attestation(payload)
     return payload, signature
+
+
+def parse_attestation_time(value: str) -> datetime:
+    """An attestation's ``iat`` or ``exp`` as an aware UTC datetime."""
+    return _parse_timestamp(value, AttestationError)
 
 
 def verify_attestation_signature(payload: dict[str, Any], signature: bytes) -> None:

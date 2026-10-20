@@ -28,7 +28,8 @@ controller signs it with its own team key.
 
 It uses the signed-bytes form of [principal-attestation.md](principal-attestation.md):
 `"aweb.member-person/1\n" || canonical_json(record)`, signed with the team
-key.
+key. The signature is base64url without padding, with exactly one accepted
+encoding, as that document's "Signed bytes" section states.
 
 ```json
 {

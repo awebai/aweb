@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from urllib.parse import quote
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol, TypedDict
@@ -18,9 +19,11 @@ from typing import Any, Protocol, TypedDict
 import httpx
 from awid.attestation_records import (
     ATTESTATION_HEADER,
+    ATTESTATION_MAX_LIFETIME_SECONDS,
     AttestationError,
     RecordError,
     decode_attestation_header,
+    parse_attestation_time,
     verify_attestation_signature,
     verify_record,
 )
@@ -120,16 +123,16 @@ class AWIDAttestationRecords:
     @staticmethod
     def _team_path(team_id: str) -> str:
         domain, name = parse_team_id(team_id)
-        return f"/v1/namespaces/{domain}/teams/{name}"
+        return f"/v1/namespaces/{quote(domain, safe='')}/teams/{quote(name, safe='')}"
 
     async def member_custody(self, team_id: str, certificate_id: str) -> SignedRecord | None:
-        return await self._get(f"{self._team_path(team_id)}/certificates/{certificate_id}/custody")
+        return await self._get(f"{self._team_path(team_id)}/certificates/{quote(certificate_id, safe='')}/custody")
 
     async def team_custodian(self, team_id: str, custodian_id: str) -> SignedRecord | None:
-        return await self._get(f"{self._team_path(team_id)}/custodians/{custodian_id}")
+        return await self._get(f"{self._team_path(team_id)}/custodians/{quote(custodian_id, safe='')}")
 
     async def member_person(self, team_id: str, certificate_id: str) -> SignedRecord | None:
-        return await self._get(f"{self._team_path(team_id)}/certificates/{certificate_id}/person")
+        return await self._get(f"{self._team_path(team_id)}/certificates/{quote(certificate_id, safe='')}/person")
 
 
 def _registered(
@@ -173,6 +176,8 @@ async def verify_principal_attestation(
     verification of the same request: its signed-payload bytes (``None`` for a
     compact v1 request), the verified certificate and the current team key.
     """
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
     if header is None:
         return None
     try:
@@ -188,8 +193,11 @@ async def verify_principal_attestation(
         or payload["request_binding"] != hashlib.sha256(signed_payload).hexdigest()
     ):
         raise AttestationRefused("attestation_binding_mismatch", "attestation is for another request")
-    iat = datetime.strptime(payload["iat"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=now.tzinfo)
-    exp = datetime.strptime(payload["exp"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=now.tzinfo)
+    iat = parse_attestation_time(payload["iat"])
+    exp = parse_attestation_time(payload["exp"])
+    lifetime = (exp - iat).total_seconds()
+    if lifetime <= 0 or lifetime > ATTESTATION_MAX_LIFETIME_SECONDS:
+        raise AttestationRefused("attestation_expired", "exp must be after iat and at most 300 s later")
     if iat > now + MAX_IAT_AHEAD or exp <= now:
         raise AttestationRefused("attestation_expired", "attestation is outside its validity window")
     try:

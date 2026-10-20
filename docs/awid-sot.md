@@ -126,10 +126,10 @@ uses constant-time comparison. A matching credential is a confidential
 same-operator read capability: it may read and enumerate private-team metadata,
 certificate history, member references, and revocations so the aweb server can
 verify and reconcile memberships without holding every member key. It also
-exempts all 17 registry GET read buckets from public-IP rate limits: DID key,
+exempts all 18 registry GET read buckets from public-IP rate limits: DID key,
 addresses, head, full and log; namespace get/list; address get/list; A2A
-publication get; team get/list and member lookup; certificate list/fetch/status; and
-revocations. The exemption does not change identity-private or certificate-blob
+publication get; team get/list and member lookup; certificate list/fetch/status;
+attestation record get; and revocations. The exemption does not change identity-private or certificate-blob
 authentication. The same credential also exempts exactly six provisioning
 write buckets from public-IP rate limits: `did_register` (POST `/v1/did`),
 `namespace_register` (POST `/v1/namespaces`), `did_encryption_key_publish`
@@ -148,12 +148,21 @@ exempts three controller-signed team writes: `team_update`
 (POST `/v1/namespaces/{domain}/teams/{name}/certificates/revoke`). Visibility
 changes and revocation retain team-controller authorization; deletion retains
 namespace-controller authorization and its refusal while active certificates
-remain. All other write buckets remain rate-limited even with a matching token.
+remain. It also exempts the principal-attestation record publishes (PUT
+`/v1/namespaces/{domain}/teams/{name}/custodians/{custodian_id}` and
+`…/certificates/{certificate_id}/custody|person`) from both their buckets, so a
+custodial deployment's backfill is not throttled; the team-controller signature
+is still required. All other write buckets remain rate-limited even with a
+matching token.
 Public callers keep the existing 10/hour DID, namespace and team creation
 limits and 30/hour encryption-key, certificate and address registration limits.
 Visibility changes and team deletion allow 300/hour and certificate revocation
 1000/hour per IP: each already needs a controller signature, so the public
-budget only stops a runaway client.
+budget only stops a runaway client. Principal-attestation record publishes
+allow 3000/hour per IP before authentication, and 2500/hour per team, charged
+only after the team-controller signature verifies, so unauthenticated traffic
+cannot spend a team's allowance. A 1,000-certificate backfill, about 2,000
+records, fits within one hour.
 It never authorizes a write, and must not be shared with
 clients or sent to a discovered external registry. Missing credentials use the
 normal visibility and public-IP rules. A wrong presented credential grants no

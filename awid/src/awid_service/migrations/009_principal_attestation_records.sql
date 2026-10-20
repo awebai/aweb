@@ -1,10 +1,11 @@
 -- 009_principal_attestation_records.sql
 -- Team-key-signed records for principal attestation (docs/principal-attestation.md)
 -- and the member person declaration (docs/member-person.md). Each row stores the
--- record's canonical JSON and signature exactly as published.
+-- record's canonical JSON and signature exactly as published. Records go with
+-- their certificate or team: deleting either deletes them.
 
 CREATE TABLE IF NOT EXISTS {{tables.team_custodians}} (
-    team_uuid       UUID NOT NULL REFERENCES {{tables.teams}}(team_uuid),
+    team_uuid       UUID NOT NULL REFERENCES {{tables.teams}}(team_uuid) ON DELETE CASCADE,
     custodian_id    TEXT NOT NULL,
     record_json     TEXT NOT NULL,
     signature       TEXT NOT NULL,
@@ -27,7 +28,7 @@ CREATE TABLE IF NOT EXISTS {{tables.member_custody}} (
 
     PRIMARY KEY (team_uuid, certificate_id),
     FOREIGN KEY (team_uuid, certificate_id)
-        REFERENCES {{tables.team_certificates}}(team_uuid, certificate_id)
+        REFERENCES {{tables.team_certificates}}(team_uuid, certificate_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS {{tables.member_person}} (
@@ -42,5 +43,5 @@ CREATE TABLE IF NOT EXISTS {{tables.member_person}} (
 
     PRIMARY KEY (team_uuid, certificate_id),
     FOREIGN KEY (team_uuid, certificate_id)
-        REFERENCES {{tables.team_certificates}}(team_uuid, certificate_id)
+        REFERENCES {{tables.team_certificates}}(team_uuid, certificate_id) ON DELETE CASCADE
 );
