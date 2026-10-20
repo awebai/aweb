@@ -227,14 +227,18 @@ name = "aweb-naapp-testing"
 version = "0.1.0"
 source = { editable = "testing" }
 dependencies = [
-    { name = "aweb-naapp", extra = ["runtime"] },
+    { name = "aweb-naapp", extra = ["hooks", "runtime"] },
     { name = "awid-service" },
+    { name = "cbor2" },
+    { name = "cryptography" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "aweb-naapp", extras = ["runtime"], editable = "." },
+    { name = "aweb-naapp", extras = ["hooks", "runtime"], editable = "." },
     { name = "awid-service", editable = "../awid" },
+    { name = "cbor2", specifier = ">=5.6.0" },
+    { name = "cryptography", specifier = ">=46.0.0" },
 ]
 
 [[package]]
