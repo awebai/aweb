@@ -73,9 +73,13 @@ operation by an authorized member.
 - `expected_page_rev` is required: missing is 428 `precondition_required`.
   `expected_record_revs` maps `<collection>/<record_id>` to revisions the
   action depends on.
-- `idempotency_key` (`^[A-Za-z0-9._-]{1,128}$`) is scoped to the signing
-  member and the page. The same key with the same body returns the first
-  result. With a different body it is 409 `idempotency_conflict`.
+- `idempotency_key` (`^[A-Za-z0-9._-]{1,128}$`) is scoped to
+  `(installation_id, team_id, principal_id, key)`, as for every mutation
+  ([agent-pages.md §3](design/agent-pages.md)). The canonical request hash it
+  is stored with covers the page, the action and the operation. The same key
+  with the same request returns the first result. With a different request,
+  including the same key on another page or action, it is 409
+  `idempotency_conflict`.
 - `task_authorization` is required for an `intent`, and is refused for `edit`
   and `answer`. The naapp checks that its `actor_did_key` and `certificate_id`
   equal this request's verified signer, its `target_did` is the target
