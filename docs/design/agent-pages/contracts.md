@@ -236,8 +236,8 @@ consumes cannot both succeed. Reads/previews/failed challenges do not consume.
 Matching retries only retrieve the prior result. Store token verifier hashes,
 never raw bearer tokens. Approval-purpose links are issued/delivered outside
 requester authority; agent tool output is `{request_id,delivery_status}` with no
-link/token/capability. Safe task metadata contains opaque approval ref/commitment
-and outcome only. Other delegated read/action capabilities do not become human
+link/token/capability. Task metadata refers to an approval by its opaque reference
+and never carries its link, token or capability. Other delegated read/action capabilities do not become human
 approval capabilities.
 
 For the task adapter, earlier conditional-answer and exact-member-proof rules
