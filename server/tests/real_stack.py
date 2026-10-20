@@ -43,7 +43,8 @@ from tests.test_app_events_http import _build_events_app, _seed_team_and_agent
 REGISTRY_URL = "https://registry.example"
 AWEB_URL = "https://aweb.example"
 
-ResponseFault = Callable[[httpx.Request, httpx.Response], None]
+# Changes the real response in place, or returns a response to send instead.
+ResponseFault = Callable[[httpx.Request, httpx.Response], httpx.Response | None]
 
 
 class ServiceTransport(httpx.AsyncBaseTransport):
@@ -66,8 +67,8 @@ class ServiceTransport(httpx.AsyncBaseTransport):
         if self.fault is None:
             return response
         await response.aread()
-        self.fault(request, response)
-        return response
+        replacement = self.fault(request, response)
+        return response if replacement is None else replacement
 
 
 @dataclass

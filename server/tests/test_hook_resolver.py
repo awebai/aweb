@@ -311,3 +311,20 @@ async def test_an_answer_that_is_not_json_fails_closed(team):
     team["stack"].aweb.fault = not_json
     with pytest.raises(HookResolutionUnavailable):
         await resolver.registrations(TEAM, *HOOK)
+
+
+@pytest.mark.asyncio
+async def test_an_answer_past_the_size_bound_is_not_read(team):
+    import httpx
+
+    from aweb_naapp.runtime.hook_resolver import MAX_ANSWER_BYTES
+
+    resolver = await team["resolver_for"](SECRETS)
+
+    def oversized(request, response):
+        return httpx.Response(200, stream=httpx.ByteStream(b" " * (MAX_ANSWER_BYTES + 1)))
+
+    team["stack"].aweb.fault = oversized
+    with pytest.raises(HookResolutionUnavailable) as caught:
+        await resolver.registrations(TEAM, *HOOK)
+    assert caught.value.code == "answer_too_large"

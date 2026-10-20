@@ -26,6 +26,7 @@ Errors fail closed:
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections.abc import Callable
@@ -49,6 +50,8 @@ HOOK_KEY_PURPOSES = frozenset({"hook-event", "hook-delivery"})
 STATES = ("pending", "active", "revoked", "superseded")
 ENDED_BY = ("owner_act", "uninstall", "generation")
 REQUEST_TIMEOUT_SECONDS = 5.0
+# Far more than any resolution answer holds; a server sending more is not read.
+MAX_ANSWER_BYTES = 4 << 20
 
 _BINDING_TIME = "%Y-%m-%dT%H:%M:%S.%fZ"
 _KEY_TIME = "%Y-%m-%dT%H:%M:%SZ"
@@ -270,15 +273,16 @@ class HookResolver:
             options["transport"] = self._transport
         try:
             async with httpx.AsyncClient(**options) as client:
-                response = await client.get(url, headers=headers)
+                async with client.stream("GET", url, headers=headers) as response:
+                    content = await _bounded_body(response)
         except httpx.HTTPError as exc:
             raise HookResolutionUnavailable("server_unreachable") from exc
-        if response.status_code == 403 and _detail(response) == HOOK_BINDING_REQUIRED:
+        if response.status_code == 403 and _detail(content) == HOOK_BINDING_REQUIRED:
             raise HookBindingRequired()
         if response.status_code != 200:
             raise HookResolutionUnavailable(f"server_status_{response.status_code}")
         try:
-            body = response.json()
+            body = json.loads(content)
         except ValueError as exc:
             raise HookResolutionUnavailable("answer_malformed") from exc
         if not isinstance(body, dict):
@@ -286,9 +290,19 @@ class HookResolver:
         return body
 
 
-def _detail(response: httpx.Response) -> object:
+async def _bounded_body(response: httpx.Response) -> bytes:
+    """The response body, refused unread past MAX_ANSWER_BYTES."""
+    content = bytearray()
+    async for chunk in response.aiter_bytes():
+        content += chunk
+        if len(content) > MAX_ANSWER_BYTES:
+            raise HookResolutionUnavailable("answer_too_large")
+    return bytes(content)
+
+
+def _detail(content: bytes) -> object:
     try:
-        return response.json().get("detail")
+        return json.loads(content).get("detail")
     except (ValueError, AttributeError):
         return None
 
