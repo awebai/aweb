@@ -5,8 +5,7 @@ from uuid import UUID
 
 from aweb_layout import (
     aweb_candidate_roots,
-    aweb_naapp_local_source_candidates,
-    existing_local_sources,
+    aweb_path,
     is_aweb_root,
     searched_roots,
     shadowing_local_source,
@@ -29,38 +28,37 @@ def _override_db_for_path(app, path: str) -> None:
     app.dependency_overrides[db_dependency] = lambda: object()
 
 
-def test_aweb_naapp_import_resolves_from_the_pinned_package_not_a_local_source_tree() -> None:
+def test_aweb_naapp_imports_from_this_checkouts_naapp_lib() -> None:
     import aweb_naapp
 
-    candidates = aweb_naapp_local_source_candidates()
-    local_sources = existing_local_sources(candidates)
-
-    # A guard whose subject does not exist cannot fail, and this one nearly stopped being
-    # able to. It named only the sibling aweb-naapp checkout, so once the naapp move puts
-    # folio at aweb/naapp/folio the path it looks for can never exist and the assertion
-    # below passes without testing anything - at the same moment aweb-naapp's source
-    # arrives in the tree at aweb/naapp-lib and makes the hazard real. So require that a
-    # local source tree was actually found: no subject means this test reports that it
-    # cannot do its job, rather than reporting success.
-    assert local_sources, (
-        "no local aweb-naapp source tree exists, so an import from one could not be "
-        "detected and this guard would pass vacuously. Looked in: "
-        + ", ".join(str(candidate) for candidate in candidates)
+    source = aweb_path("naapp-lib", "src")
+    assert shadowing_local_source(aweb_naapp.__file__, [source]) == source, (
+        f"aweb_naapp was imported from {Path(aweb_naapp.__file__).resolve()}, not from this "
+        f"checkout's naapp-lib ({source})"
     )
 
-    shadowing = shadowing_local_source(aweb_naapp.__file__, local_sources)
-    assert shadowing is None, (
-        f"aweb_naapp was imported from the local source tree at {shadowing} rather than "
-        f"from the pinned package ({Path(aweb_naapp.__file__).resolve()})"
+
+def test_awid_imports_from_this_checkouts_awid() -> None:
+    import awid
+
+    source = aweb_path("awid", "src")
+    assert shadowing_local_source(awid.__file__, [source]) == source, (
+        f"awid was imported from {Path(awid.__file__).resolve()}, not from this "
+        f"checkout's awid ({source})"
     )
+
+
+def test_the_lock_fetches_no_dependency_from_git() -> None:
+    lock = (Path(__file__).resolve().parents[1] / "uv.lock").read_text(encoding="utf-8")
+    git_sources = [line.strip() for line in lock.splitlines() if "source = { git" in line]
+    assert not git_sources, "folio's lock fetches from git:\n  " + "\n  ".join(git_sources)
 
 
 def test_the_local_source_guard_can_detect_a_shadowing_import(tmp_path: Path) -> None:
-    """Negative control for the guard above, which cannot fail on its own inputs.
+    """Negative control for the source checks above, constructed in both directions.
 
-    The real import resolves from the pinned package, so the guard's failing case never
-    occurs while everything is correct - which is how it went unnoticed that the guard had
-    stopped being able to fail at all. Both directions are constructed here instead.
+    The real imports resolve from this checkout, so the case where a package comes from
+    somewhere else never occurs while everything is correct. It is built here instead.
     """
     local_source = tmp_path / "naapp-lib" / "src"
     shadowed = local_source / "aweb_naapp" / "__init__.py"
