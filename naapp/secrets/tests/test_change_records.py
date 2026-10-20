@@ -154,3 +154,18 @@ def test_the_same_record_twice_in_one_change_set_is_refused() -> None:
         validate_change(_change(ITEMS["grant"], ITEMS["grant"]))
     with pytest.raises(ChangeRefused):
         validate_change(_change(ITEMS["policy"], ITEMS["policy"]))
+
+
+def test_a_derived_field_never_shadows_an_after_field(monkeypatch) -> None:
+    from aweb_secrets import change
+
+    shape = change.AFTER_SHAPES[("grant", 1)]
+    shadowing = change.AfterShape(
+        fields=shape.fields,
+        ref_field=shape.ref_field,
+        identity=shape.identity,
+        derived=lambda after, where: {"capability": "run"},
+    )
+    monkeypatch.setitem(change.AFTER_SHAPES, ("grant", 1), shadowing)
+    with pytest.raises(ChangeRefused):
+        validate_change(_change(ITEMS["grant"]))

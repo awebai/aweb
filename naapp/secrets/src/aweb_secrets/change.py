@@ -333,7 +333,10 @@ def _item(value: Any, where: str) -> tuple[str, tuple[Any, ...]]:
     _fields(after, f"{where}.after", shape.fields)
     found = dict(after)
     if shape.derived is not None:
-        found.update(shape.derived(after, f"{where}.after"))
+        derived = shape.derived(after, f"{where}.after")
+        if set(derived) & set(after):
+            raise ChangeRefused(f"{where}.after: a derived field shadows an after field")
+        found.update(derived)
     if found[shape.ref_field] != ref:
         raise ChangeRefused(f"{where}.ref must equal after.{shape.ref_field}")
     return kind, tuple(found[field] for field in shape.identity)
