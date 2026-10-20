@@ -266,7 +266,10 @@ class Approvals:
         approval = self._check_pending(await self._store.get(approval_id))
         await self._presented(approval, link_token, None)
         authenticator = await self._authenticator(approval, assurance)
-        return await authenticator.challenge(approval, decision)
+        try:
+            return await authenticator.challenge(approval, decision)
+        except AuthenticationFailed as exc:
+            raise ApprovalRefused(Refusal.AUTHENTICATION_FAILED) from exc
 
     async def decide(
         self,
