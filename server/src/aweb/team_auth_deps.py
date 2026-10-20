@@ -214,7 +214,7 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     # -- Step 4: Resolve team public key from awid --
     certificate_status = None
     unregistered_certificate = False
-    if cert_data.get('version') == 2 or not getattr(request.app.state.awid_registry_client, 'service_token', None):
+    if cert_data.get('version') == 2 or getattr(request.app.state.awid_registry_client, 'service_token', True) is None:
         try:
             domain, name = parse_team_id(cert_team_id)
             certificate_status = await request.app.state.awid_registry_client.get_team_certificate_status(domain, name, cert_data.get('certificate_id', ''))

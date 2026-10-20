@@ -542,6 +542,15 @@ class RegistryClient:
         await self.invalidate_team_certificate_cache(domain, name)
         return result
 
+    async def fetch_current_member_certificate(self, domain: str, name: str, alias: str, member_signing_key: bytes) -> dict[str, Any]:
+        """Resolve an own-key replacement without presenting the old certificate."""
+        origin = await self._registry_url_for_domain(domain)
+        path = f'/v1/namespaces/{domain}/teams/{name}/members/{quote(alias, safe="")}'
+        member = await self._request_json('GET', path, headers=self._signed_path_headers('GET', path, member_signing_key), registry_url=origin)
+        if not isinstance(member, dict) or member.get('member_did_key') != _did_key_from_signing_key(member_signing_key) or not isinstance(member.get('certificate_id'), str) or not member['certificate_id']:
+            raise ValueError('Current member certificate binding mismatch')
+        return await self.fetch_team_certificate(domain, name, member['certificate_id'], member_signing_key)
+
     async def fetch_team_certificate(self, domain: str, name: str, certificate_id: str, member_signing_key: bytes) -> dict[str, Any]:
         """Fetch an own-key artifact and verify the current registry team key."""
         import base64

@@ -78,7 +78,7 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
 
     issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
     if issuing_certificate_id:
-        public_status = row.get('issued_by_certificate_version', 1) == 2 or not getattr(request.app.state.awid_registry_client, 'service_token', None)
+        public_status = row.get('issued_by_certificate_version', 1) == 2 or getattr(request.app.state.awid_registry_client, 'service_token', True) is None
         if public_status:
             from aweb.credential_policy import v2_issuer_revoked
             revoked_certs = {issuing_certificate_id} if await v2_issuer_revoked(request, row['team_id'], issuing_certificate_id) else set()

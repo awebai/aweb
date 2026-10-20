@@ -256,7 +256,8 @@ class AWIDTeamCache:
             async with self._client() as client:
                 response = await client.get(
                     f"{self.registry_url}/v1/namespaces/{quote(domain, safe='')}/teams/"
-                    f"{quote(team_name, safe='')}/certificates/{quote(certificate_id, safe='')}/status?include_replacement=true"
+                    f"{quote(team_name, safe='')}/certificates/{quote(certificate_id, safe='')}/status?include_replacement=true",
+                    headers=self._headers,
                 )
                 if response.status_code == 404:
                     raise HTTPException(status_code=401, detail="Unknown AWID certificate")

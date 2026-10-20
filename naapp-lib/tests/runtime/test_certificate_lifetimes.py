@@ -82,3 +82,39 @@ async def test_rollover_member_follows_installs_and_retries_once(registry, monke
             assert refused.status_code == 401
     finally:
         await sdk.aclose()
+
+
+async def test_finite_member_proactively_fetches_controller_replacement(registry, monkeypatch, tmp_path):
+    monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED', 'true')
+    now = datetime.now(UTC)
+    member = Member(team_id='ops:example.com', extra_cert_fields={
+        'version': 2, 'validity_class': 'member',
+        'issued_at': utc_timestamp(now - timedelta(hours=1)),
+        'expires_at': utc_timestamp(now + timedelta(minutes=1)),
+    })
+    old = member.certificate()
+    await registry.add_team(member.team_id, member.team_did_key, visibility='private')
+    await registry.add_certificate(old)
+    fresh = {key: value for key, value in old.items() if key not in ('signature', 'expires_at', 'lifetime')}
+    fresh.update(certificate_id=str(uuid4()), issued_at=utc_timestamp(now), identity_scope='global')
+    fresh['signature'] = sign_message(bytes(member.team_key), canonical_json_bytes(fresh))
+    sdk = RegistryClient('https://registry.example', transport=registry.transport)
+    try:
+        await sdk.rollover_team_certificate('example.com', 'ops', old['certificate_id'], {
+            'certificate_id': fresh['certificate_id'], 'member_did_key': member.did_key,
+            'alias': member.alias, 'identity_scope': 'global',
+            'certificate': base64.b64encode(json.dumps(fresh).encode()).decode(),
+        }, signing_key=bytes(member.team_key))
+        installed = []
+        async def install(cert):
+            installed.append(cert)
+        async with relying_app(registry, public_origin=ORIGIN) as (http, _):
+            client = TeamCertificateHTTPClient(http, origin=ORIGIN, certificate=old,
+                member_signing_key=bytes(member.member_key), registry=sdk, install=install)
+            response = await client.request('GET', '/v1/items')
+            assert response.status_code == 200, response.text
+            assert response.json()['certificate_id'] == fresh['certificate_id']
+            assert installed == [fresh]
+            assert any(request.url.path.endswith('/members/' + member.alias) for request in registry.transport.calls)
+    finally:
+        await sdk.aclose()
