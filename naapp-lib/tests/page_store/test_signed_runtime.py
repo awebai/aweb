@@ -8,39 +8,40 @@ import httpx
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from aweb_naapp.manifest import write_manifest_file
 from aweb_naapp.page_store import Access, PageStore, Scope, StoreError, apply_page_store_migrations
 from aweb_naapp.runtime.app import NaappRuntime
-from aweb_naapp.runtime.authorization import Authorization, DeclaredTools, Grant
+from aweb_naapp.runtime.authorization import Authorization, Grant
 from aweb_naapp.runtime.settings import NaappSettings
 from tests.page_store.test_store import POLICY, page
 from tests.runtime.conftest import REGISTRY_URL, Member
 
 ORIGIN = "https://fixture.example"
-TOOLS = DeclaredTools.from_manifest(
-    {
-        "tools": [
-            {"name": "fixture_read", "method": "GET", "path": "/fixture", "scopes": ["page:read"]},
-            {
-                "name": "fixture_query",
-                "method": "POST",
-                "path": "/fixture/query",
-                "scopes": ["page:read"],
-            },
-            {
-                "name": "fixture_create",
-                "method": "POST",
-                "path": "/fixture",
-                "scopes": ["page:write"],
-            },
-            {
-                "name": "fixture_edit",
-                "method": "POST",
-                "path": "/fixture/edit",
-                "scopes": ["page:write"],
-            },
-        ]
-    }
-)
+MANIFEST = {
+    "manifest_version": 1,
+    "app": {"id": "fixture", "origin": ORIGIN},
+    "tools": [
+        {"name": "fixture_read", "method": "GET", "path": "/fixture", "scopes": ["page:read"]},
+        {
+            "name": "fixture_query",
+            "method": "POST",
+            "path": "/fixture/query",
+            "scopes": ["page:read"],
+        },
+        {
+            "name": "fixture_create",
+            "method": "POST",
+            "path": "/fixture",
+            "scopes": ["page:write"],
+        },
+        {
+            "name": "fixture_edit",
+            "method": "POST",
+            "path": "/fixture/edit",
+            "scopes": ["page:write"],
+        },
+    ],
+}
 
 
 class InstalledGrant:
@@ -82,6 +83,8 @@ async def test_signed_member_operations_and_revoked_install_cannot_bypass_acl(
     (migrations / "001_fixture.sql").write_text(
         "CREATE TABLE {{tables.fixture_versions}} (version int);\n"
     )
+    manifest_path = tmp_path / "aweb-app.json"
+    write_manifest_file(manifest_path, MANIFEST)
     runtime = NaappRuntime(
         NaappSettings(
             _env_file=None,
@@ -92,10 +95,11 @@ async def test_signed_member_operations_and_revoked_install_cannot_bypass_acl(
         ),
         module_name="signed_page_fixture",
         migrations_path=migrations,
+        manifest_path=manifest_path,
         awid_transport=registry.transport,
     )
     grants = InstalledGrant(owner.team_id)
-    authorized = runtime.authorized(tools=TOOLS, grants=grants, policy=page_policy)
+    authorized = runtime.authorized(grants=grants, policy=page_policy)
     app = FastAPI(lifespan=runtime.lifespan)
     scope = Scope("fixture-install", owner.team_id, "fixture", "fixture-home")
 
