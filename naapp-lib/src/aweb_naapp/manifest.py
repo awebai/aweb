@@ -8,7 +8,9 @@ the manifest never drift.
 
 from __future__ import annotations
 
+import copy
 import json
+from pathlib import Path
 from typing import Any
 
 
@@ -19,6 +21,36 @@ def canonical_bytes(obj: Any) -> bytes:
     any consumer's serialization are byte-identical.
     """
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def write_manifest_file(path: Path, manifest: dict[str, Any]) -> None:
+    """Write an app's committed manifest file: the canonical bytes of its authoring
+    manifest, whose ``app.origin`` is the hosted origin."""
+    path.write_bytes(canonical_bytes(manifest))
+
+
+def manifest_for_origin(manifest: dict[str, Any], public_origin: str) -> dict[str, Any]:
+    """A copy of the manifest with ``app.origin`` set to this deployment's origin."""
+    retargeted = copy.deepcopy(manifest)
+    retargeted["app"]["origin"] = public_origin.rstrip("/")
+    return retargeted
+
+
+def read_manifest_bytes(path: Path, public_origin: str | None = None) -> bytes:
+    """The manifest bytes to serve for a deployment origin.
+
+    The committed file's own origin (the hosted one) gets the committed bytes
+    verbatim, never re-serialized. Any other origin, such as a self-hosted
+    deployment, gets the same manifest in canonical form with only ``app.origin``
+    changed.
+    """
+    committed = path.read_bytes()
+    if public_origin is None:
+        return committed
+    manifest = json.loads(committed)
+    if public_origin.rstrip("/") == manifest["app"]["origin"]:
+        return committed
+    return canonical_bytes(manifest_for_origin(manifest, public_origin))
 
 
 def public_tools(manifest: dict[str, Any]) -> list[dict[str, Any]]:
