@@ -193,6 +193,8 @@ Every event has `mutation_type` and `target_ref`, and optional `before_ref` and
 | `membership.workspace_retired` | `member_alias`, `workspace_ref` |
 | `membership.certificate_issued`, `membership.certificate_revoked` | `certificate_id`, `certificate_sha256`, `member_did_key`, `member_alias`, `registry_origin`, `registry_recorded_at`, `observed: true`; optional `member_did_aw` |
 
+App `scopes` use the app registry's scope pattern, such as `folio:write`;
+identity-grant `scopes` are grant scope tokens, such as `mail.send`.
 `task.answered` fires once the conditional task answer exists in core.
 `membership.certificate_*` events are registry facts that core **observes** at
 the team's registry; it does not effect them. They carry the registry's own
