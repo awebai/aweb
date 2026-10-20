@@ -43,3 +43,16 @@ def test_hook_catalog_loads_the_standard_library_alone() -> None:
 
 def test_envelope_and_delivery_load_no_runtime_dependency() -> None:
     assert _loaded("aweb_naapp.hooks.delivery", RUNTIME) == ""
+
+
+def test_owner_act_verifier_loads_no_database_or_runtime() -> None:
+    assert _loaded("aweb_naapp.hooks.owner_act", RUNTIME) == ""
+
+
+def test_owner_act_nonces_load_only_pgdbm_beyond_the_verifier() -> None:
+    # pgdbm brings pydantic with it, as the outbox does; nothing else may load.
+    allowed = ("pgdbm", "pydantic")
+    assert (
+        _loaded("aweb_naapp.hooks.owner_act_nonces", tuple(m for m in RUNTIME if m not in allowed))
+        == ""
+    )
