@@ -29,6 +29,11 @@ runtime = [
   "pynacl>=1.6.2",
   "webauthn>=3.0.1",
 ]
+# The shared durable outbox, aweb_naapp.outbox: pgdbm only, so the core server
+# can use it without the naapp runtime.
+outbox = [
+  "pgdbm>=0.5.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/awebai/aweb-naapp"
