@@ -4,13 +4,17 @@ A valid team-auth signature proves who signed one request, not that the signer
 may perform it. After :func:`aweb_naapp.runtime.team_auth.authenticate_request`,
 :func:`authorize_request` admits the request only when all of these hold:
 
-1. the method and raw external path match exactly one tool the app's manifest
+1. the raw external path is canonical, so the segments matched here are the
+   segments the app's router dispatches on (otherwise ``400 target_not_canonical``):
+   no percent-encoded ``/``, ``\\`` or NUL, no dot segment raw or encoded, and the
+   decoded scope path splits exactly as the raw path does;
+2. the method and raw external path match exactly one tool the app's manifest
    declares (otherwise ``403 operation_undeclared``);
-2. the app's grant source returns a fresh installed grant for the team
+3. the app's grant source returns a fresh installed grant for the team
    (no installation: ``403 scope_denied``; stale or unreachable authority:
    ``503 authority_unavailable``, with no fallback);
-3. the grant contains every scope the tool declares (``403 scope_denied``);
-4. the app's resource/action policy allows this principal to act
+4. the grant contains every scope the tool declares (``403 scope_denied``);
+5. the app's resource/action policy allows this principal to act
    (``403 action_denied``).
 """
 
@@ -22,6 +26,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
+from urllib.parse import unquote
 
 from fastapi import HTTPException, Request
 
@@ -31,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 MANIFEST_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 _PLACEHOLDER = re.compile(r"^\{[^{}/]+\}$")
+_ENCODED_SEPARATOR = re.compile(r"%(2f|5c|00)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -153,6 +159,17 @@ def _refuse(status_code: int, code: str, message: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
+def _is_canonical_target(request: Request, raw_path: str) -> bool:
+    raw_segments = raw_path.split("/")
+    for segment in raw_segments:
+        if _ENCODED_SEPARATOR.search(segment) or unquote(segment) in (".", ".."):
+            return False
+    decoded = "/".join(unquote(segment) for segment in raw_segments)
+    scope_path = str(request.scope.get("path") or "")
+    root_path = str(request.scope.get("root_path") or "")
+    return decoded in (scope_path, root_path + scope_path)
+
+
 async def authorize_request(
     request: Request,
     *,
@@ -164,6 +181,9 @@ async def authorize_request(
 ) -> Authorization:
     method = request.method.upper()
     raw_path = raw_request_target(request).split("?", 1)[0]
+    if not _is_canonical_target(request, raw_path):
+        logger.warning("Refused non-canonical target %r for team %s", raw_path, principal.team_id)
+        raise _refuse(400, "target_not_canonical", "The request path is not in canonical form")
     tool = tools.match(method, raw_path)
     if tool is None:
         logger.warning("Refused undeclared operation %s %s for team %s", method, raw_path, principal.team_id)

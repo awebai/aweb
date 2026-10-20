@@ -43,7 +43,10 @@ MAX_CERTIFICATE_PAGES = 100
 CERTIFICATE_PAGE_SIZE = 200
 
 TEAM_AUTH_ENVELOPE_V2 = 2
-DEFAULT_TIMESTAMP_SKEW_SECONDS = 300
+# The envelope contract allows at most five minutes; a larger configured window is clamped.
+MAX_TIMESTAMP_SKEW_SECONDS = 300
+# AWID team facts are reused for at most a minute; a longer configured TTL is clamped.
+MAX_TEAM_FACTS_TTL_SECONDS = 60
 _B64URL_NO_PADDING = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -61,6 +64,7 @@ class Principal:
 @dataclass(frozen=True)
 class CachedTeamFacts:
     team_did_key: str
+    published_certificate_ids: frozenset[str]
     revoked_certificate_ids: frozenset[str]
     expires_at: float
 
@@ -95,7 +99,7 @@ class AWIDTeamCache:
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.registry_url = registry_url.rstrip("/")
-        self.ttl_seconds = ttl_seconds
+        self.ttl_seconds = min(ttl_seconds, MAX_TEAM_FACTS_TTL_SECONDS)
         self._headers = (
             {"X-AWID-Service-Token": service_token.strip()}
             if service_token and service_token.strip()
@@ -138,6 +142,7 @@ class AWIDTeamCache:
                 if not team_did_key:
                     raise HTTPException(status_code=503, detail="AWID team response missing team_did_key")
 
+                published: set[str] = set()
                 revoked: set[str] = set()
                 cursor: str | None = None
                 seen_cursors: set[str] = set()
@@ -170,6 +175,7 @@ class AWIDTeamCache:
                         )
                     ):
                         raise HTTPException(status_code=503, detail="AWID certificate revocation response is incomplete")
+                    published.update(item["certificate_id"] for item in page)
                     revoked.update(item["certificate_id"] for item in page if item["revoked_at"] is not None)
                     if not has_more:
                         break
@@ -189,6 +195,7 @@ class AWIDTeamCache:
 
         facts = CachedTeamFacts(
             team_did_key=team_did_key,
+            published_certificate_ids=frozenset(published),
             revoked_certificate_ids=frozenset(revoked),
             expires_at=now + self.ttl_seconds,
         )
@@ -244,8 +251,9 @@ class AWIDTeamCache:
             ) from exc
         facts = CachedTeamFacts(
             team_did_key=payload["team_did_key"],
+            published_certificate_ids=frozenset({certificate_id}),
             revoked_certificate_ids=revoked,
-            expires_at=now + min(self.ttl_seconds, 60),
+            expires_at=now + self.ttl_seconds,
         )
         self._certificate_cache[cache_key] = facts
         return facts
@@ -300,7 +308,10 @@ def _decode_signed_payload_header(value: str) -> bytes:
 def raw_request_target(request: Request) -> str:
     raw_path_value = request.scope.get("raw_path")
     if isinstance(raw_path_value, bytes):
-        path = raw_path_value.decode("ascii")
+        try:
+            path = raw_path_value.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="Request target is not ASCII") from exc
     elif raw_path_value:
         path = str(raw_path_value)
     else:
@@ -316,7 +327,10 @@ def raw_request_target(request: Request) -> str:
 
     query_string = request.scope.get("query_string") or b""
     if isinstance(query_string, bytes):
-        query = query_string.decode("ascii")
+        try:
+            query = query_string.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="Request target is not ASCII") from exc
     else:
         query = str(query_string)
     if query:
@@ -391,7 +405,7 @@ async def authenticate_request(
     *,
     public_origin: str,
     team_cache: AWIDTeamCache,
-    timestamp_skew_seconds: int = DEFAULT_TIMESTAMP_SKEW_SECONDS,
+    timestamp_skew_seconds: int = MAX_TIMESTAMP_SKEW_SECONDS,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> Principal:
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization") or ""
@@ -402,7 +416,7 @@ async def authenticate_request(
         raise HTTPException(status_code=401, detail="Missing X-AWEB-Timestamp")
     parsed_timestamp = _parse_rfc3339_utc(timestamp)
     skew = abs((now() - parsed_timestamp).total_seconds())
-    if skew > timestamp_skew_seconds:
+    if skew > min(timestamp_skew_seconds, MAX_TIMESTAMP_SKEW_SECONDS):
         raise HTTPException(status_code=401, detail="X-AWEB-Timestamp outside allowed clock skew")
 
     cert_header = request.headers.get("X-AWID-Team-Certificate") or request.headers.get("x-awid-team-certificate") or ""
@@ -436,6 +450,8 @@ async def authenticate_request(
         facts = await team_cache.get(team_id, certificate_id)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid AWID team id") from exc
+    if certificate_id not in facts.published_certificate_ids:
+        raise HTTPException(status_code=401, detail="Unknown AWID certificate")
     if certificate_id in facts.revoked_certificate_ids:
         raise HTTPException(status_code=401, detail="Team certificate has been revoked")
     _verify_certificate_signature(cert, facts.team_did_key)

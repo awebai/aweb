@@ -200,6 +200,7 @@ async def relying_app(
     public_origin: str,
     cache: AWIDTeamCache | None = None,
     now: Callable[[], datetime] | None = None,
+    timestamp_skew_seconds: int | None = None,
     root_path: str = "",
     on_principal: Callable[[Request, Principal], Any] | None = None,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, AWIDTeamCache]]:
@@ -209,7 +210,9 @@ async def relying_app(
 
     @app.api_route("/{route:path}", methods=["GET", "POST", "PUT", "DELETE"])
     async def relying(request: Request):
-        kwargs = {"now": now} if now is not None else {}
+        kwargs: dict[str, Any] = {"now": now} if now is not None else {}
+        if timestamp_skew_seconds is not None:
+            kwargs["timestamp_skew_seconds"] = timestamp_skew_seconds
         principal = await authenticate_request(request, public_origin=public_origin, team_cache=cache, **kwargs)
         if on_principal is not None:
             return await on_principal(request, principal)
