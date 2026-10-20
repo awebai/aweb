@@ -302,3 +302,24 @@ async def test_a_rotation_without_resigned_records_still_succeeds_and_leaves_old
     assert response.status_code == 200, response.text
     stored = (await env.client.get(f"{BASE}/custodians/{custodian['custodian_id']}")).json()
     assert stored["record"]["team_did_key"] == env.team[1]
+
+
+@pytest.mark.asyncio
+async def test_a_publish_waits_for_a_rotation_in_progress_and_then_refuses_the_old_key(controller_app):
+    import asyncio
+
+    env = controller_app
+    assert (await publish_custodian(env, _custodian(env, issued_at=_now(-30)))).status_code == 200
+    new = keypair()
+    async with env.db.transaction() as tx:
+        # Holds the team row the way rotate_team_key does, then swaps the key.
+        await tx.fetch_one("SELECT team_uuid FROM {{tables.teams}} WHERE name = 'base' FOR UPDATE")
+        publish = asyncio.create_task(publish_custodian(env, _custodian(env, issued_at=_now(-1))))
+        await asyncio.sleep(0.3)
+        assert not publish.done(), "the publish must wait for the rotation's team lock"
+        await tx.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = 'base'", new[1])
+    response = await publish
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "team_key_changed"
+    stored = (await env.client.get(f"{BASE}/custodians/custodian.example")).json()["record"]
+    assert stored["issued_at"] != _custodian(env, issued_at=_now(-1))["issued_at"] or stored["team_did_key"] == new[1]
