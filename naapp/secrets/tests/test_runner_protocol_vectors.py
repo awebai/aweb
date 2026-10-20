@@ -59,6 +59,10 @@ ASSIGNMENT_FIELDS = {
 }
 BODY_FIELDS = {"assignment", "signature", "params", "credentials"}
 SKEW = timedelta(seconds=120)
+MAX_ASSIGNMENT_LIFETIME = timedelta(seconds=300)
+# At least 16 CSPRNG bytes in unpadded base64url after the kind prefix.
+RUNNER_ID = re.compile(r"rnr_[A-Za-z0-9_-]{22,}")
+DISPATCH_ID = re.compile(r"dsp_[A-Za-z0-9_-]{22,}")
 HEX64 = re.compile(r"[0-9a-f]{64}")
 TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 SUITE = hpke.Suite(hpke.KEM.X25519, hpke.KDF.HKDF_SHA256, hpke.AEAD.CHACHA20_POLY1305)
@@ -150,6 +154,8 @@ def verify_request(case: dict[str, Any]) -> dict[str, Any]:
         raise Refused(code)
     if len(from_b64u(payload["nonce"], code)) != 16 or not HEX64.fullmatch(payload["body_sha256"]):
         raise Refused(code)
+    if not RUNNER_ID.fullmatch(payload["runner_id"]):
+        raise Refused(code)
     sent_at = timestamp(payload["timestamp"], code)
 
     if deployment["runners"].get(payload["runner_id"]) != payload["kid"]:
@@ -191,6 +197,10 @@ def verify_assignment(case: dict[str, Any]) -> dict[str, Any]:
         HEX64.fullmatch(payload[f]) for f in ("job_digest", "params_sha256", "credentials_sha256")
     ):
         raise Refused(code)
+    if not RUNNER_ID.fullmatch(payload["runner_id"]) or not DISPATCH_ID.fullmatch(
+        payload["dispatch_id"]
+    ):
+        raise Refused(code)
     issued_at = timestamp(payload["issued_at"], code)
     expires_at = timestamp(payload["expires_at"], code)
     signature = from_b64u(body["signature"], code)
@@ -208,7 +218,12 @@ def verify_assignment(case: dict[str, Any]) -> dict[str, Any]:
     ):
         raise Refused("assignment_binding_mismatch")
     now = at(case["now"])
-    if not issued_at < expires_at or now >= expires_at or issued_at - now > SKEW:
+    if (
+        not issued_at < expires_at
+        or expires_at - issued_at > MAX_ASSIGNMENT_LIFETIME
+        or now >= expires_at
+        or issued_at - now > SKEW
+    ):
         raise Refused("assignment_expired")
     if payload["dispatch_id"] in runner["journal"]:
         raise Refused("assignment_replayed")

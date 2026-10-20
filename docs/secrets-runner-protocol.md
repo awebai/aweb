@@ -21,6 +21,12 @@ It receives its `runner_id` and pins two values: the deployment's **origin**
 (`https://` scheme, host and optional port, as in the registration command) and
 its **service signing key**, an Ed25519 `did:key`.
 
+**Identifiers.** `runner_id` is `rnr_` and `dispatch_id` is `dsp_`, each
+followed by at least 16 bytes of CSPRNG output in base64url. secrets answers an
+unknown runner with its own code (`runner_unknown`, before the signature check)
+for operators' sake. Guessing an identifier of this size is not a practical way
+to probe for runners.
+
 Traffic flows one way at the network level: the runner connects out and opens
 no port. Authority flows both ways. The runner signs every request to secrets,
 and secrets signs every assignment it hands the runner.
@@ -63,7 +69,7 @@ X-AWEB-Secrets-Runner-Request: b64url(payload bytes) "." b64url(signature)
   "v": 1,
   "type": "aweb.secrets.runner-request",
   "origin": "https://secrets.example",
-  "runner_id": "rnr_7c1f0d2a",
+  "runner_id": "rnr_Unqp9DFTnajhUdVDTR1eYQ",
   "kid": "did:key:z6Mk...",
   "method": "POST",
   "path": "/runner/v1/claim",
@@ -85,7 +91,8 @@ secrets verifies in this order and refuses with the first code that applies:
 
 1. **Shape** (`runner_request_invalid`): the header has two parts, each a
    canonical base64url string; the payload is canonical JSON with exactly the
-   fields above, `v` 1, the right `type`, a 16-byte nonce and a valid timestamp.
+   fields above, `v` 1, the right `type`, a well-formed `runner_id`, a 16-byte
+   nonce and a valid timestamp.
 2. **Runner** (`runner_unknown`): `runner_id` names an active runner of this
    deployment, and `kid` is its registered signing key.
 3. **Signature** (`runner_request_invalid`): the signature verifies under that
@@ -96,8 +103,10 @@ secrets verifies in this order and refuses with the first code that applies:
 5. **Time** (`runner_request_stale`): the timestamp is within 120 seconds of
    secrets' clock, either way.
 6. **Replay** (`runner_request_replayed`): the pair (`runner_id`, `nonce`) has
-   not been seen. secrets stores it, in the same transaction as the request's
-   effect, until 120 seconds after the timestamp.
+   not been seen. secrets stores every pair it accepts, including those of
+   requests with no effect, such as an empty claim or a poll, until 120 seconds
+   after the timestamp. For a request that has an effect, it stores the pair in
+   the same transaction as that effect.
 
 ## 2. Runner assignment, `aweb.secrets.runner-assignment/1`
 
@@ -120,8 +129,8 @@ The payload has exactly these fields:
   "type": "aweb.secrets.runner-assignment",
   "origin": "https://secrets.example",
   "service_kid": "did:key:z6Mk...",
-  "runner_id": "rnr_7c1f0d2a",
-  "dispatch_id": "dsp_4b8e2c19",
+  "runner_id": "rnr_Unqp9DFTnajhUdVDTR1eYQ",
+  "dispatch_id": "dsp_240bbWTk7JDOszX8Q0TnVw",
   "job_id": "nightly-backup",
   "job_digest": "<64 lowercase hex>",
   "params_sha256": "<64 lowercase hex>",
@@ -141,18 +150,22 @@ The runner verifies in this order and refuses with the first code that applies.
 It reports nothing it refused as started.
 
 1. **Shape** (`assignment_invalid`): the body and payload have exactly the
-   fields above, canonical and well-typed.
+   fields above, canonical and well-typed, with a well-formed `runner_id` and
+   `dispatch_id`.
 2. **Signature** (`assignment_invalid`): `service_kid` is the service key the
    runner pinned, and the signature verifies under it over the prefixed bytes.
 3. **Audience** (`assignment_wrong_runner`): `runner_id` is the runner's own and
    `origin` is the origin it pinned.
 4. **Binding** (`assignment_binding_mismatch`): `params_sha256` and
    `credentials_sha256` match the `params` and `credentials` received.
-5. **Time** (`assignment_expired`): `expires_at` is after `issued_at`, the
-   runner's clock is before `expires_at`, and `issued_at` is not more than
-   120 seconds ahead of it.
+5. **Time** (`assignment_expired`): `expires_at` is after `issued_at` and at
+   most 300 seconds after it, the runner's clock is before `expires_at`, and
+   `issued_at` is not more than 120 seconds ahead of the runner's clock.
 6. **Replay** (`assignment_replayed`): `dispatch_id` is not in the runner's
-   local journal. The runner records it there before it starts the job.
+   local journal. The runner records it there before it starts the job and keeps
+   it at least until the assignment's `expires_at`. Steps 5 and 6 together
+   refuse every replay: a replay before `expires_at` meets the journal, and one
+   after it is expired.
 
 The runner then applies its own two-key pinning and file checks (§9.4) before
 running anything.
@@ -189,8 +202,11 @@ credentials with the recipient key, and refusal cases for every step above:
 - a non-canonical payload;
 - a duplicate key;
 - a float;
+- a timestamp with non-ASCII digits;
+- a short identifier;
+- another method, path, body or origin;
 - an assignment for another runner;
-- an expired assignment;
+- an expired assignment, and one whose lifetime exceeds 300 seconds;
 - a replay;
 - a credential opened under another dispatch.
 
