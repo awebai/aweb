@@ -2824,6 +2824,770 @@
       }
     },
     {
+      "name": "collection-ref-to-unknown-keyword-catastrophic-pattern",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/x-hidden",
+            "value": {
+              "type": "string",
+              "pattern": "^(a+)+$"
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "$ref": "#/x-hidden"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_keyword",
+            "pointer": "/collections/0/schema/x-hidden"
+          },
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref",
+            "pointer": "/collections/0/schema/properties/extra/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-ref-to-unknown-keyword-end-anchor-pattern",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/x-hidden",
+            "value": {
+              "type": "string",
+              "pattern": "^[a-z]+$"
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "$ref": "#/x-hidden"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_keyword",
+            "pointer": "/collections/0/schema/x-hidden"
+          },
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref",
+            "pointer": "/collections/0/schema/properties/extra/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-ref-to-unknown-keyword-number",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/x-hidden",
+            "value": {
+              "type": "number"
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "$ref": "#/x-hidden"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_keyword",
+            "pointer": "/collections/0/schema/x-hidden"
+          },
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref",
+            "pointer": "/collections/0/schema/properties/extra/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-def-with-remote-ref",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/$defs",
+            "value": {
+              "r": {
+                "$ref": "https://example.com/s.json"
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "$ref": "#/$defs/r"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref",
+            "pointer": "/collections/0/schema/$defs/r/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-ref-to-missing-def",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "$ref": "#/$defs/missing"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref",
+            "pointer": "/collections/0/schema/properties/extra/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-self-recursive-def",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/$defs",
+            "value": {
+              "a": {
+                "$ref": "#/$defs/a"
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "$ref": "#/$defs/a"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref_cycle",
+            "pointer": "/collections/0/schema/$defs/a/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-mutually-recursive-defs",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/$defs",
+            "value": {
+              "a": {
+                "type": "object",
+                "properties": {
+                  "b": {
+                    "$ref": "#/$defs/b"
+                  }
+                }
+              },
+              "b": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/a"
+                }
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "$ref": "#/$defs/a"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref_cycle",
+            "pointer": "/collections/0/schema/$defs/a/properties/b/$ref"
+          },
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref_cycle",
+            "pointer": "/collections/0/schema/$defs/b/items/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-float-in-enum",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "enum": [
+                0.5,
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_number",
+            "pointer": "/collections/0/schema/properties/extra/enum/0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-nested-defs",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "$defs": {
+                "x": {
+                  "type": "string"
+                }
+              },
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_keyword",
+            "pointer": "/collections/0/schema/properties/extra/$defs"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-unknown-keyword",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "string",
+              "x-ui": "wide"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_keyword",
+            "pointer": "/collections/0/schema/properties/extra/x-ui"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-local-ref-to-def",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/$defs",
+            "value": {
+              "label": {
+                "type": "string",
+                "maxLength": 64
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "$ref": "#/$defs/label"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "action-ref-to-unknown-keyword-catastrophic-pattern",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/x-hidden",
+            "value": {
+              "type": "string",
+              "pattern": "^(a+)+$"
+            }
+          },
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "$ref": "#/x-hidden"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_keyword",
+            "pointer": "/actions/0/input_schema/x-hidden"
+          },
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref",
+            "pointer": "/actions/0/input_schema/properties/extra/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-ref-to-unknown-keyword-end-anchor-pattern",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/x-hidden",
+            "value": {
+              "type": "string",
+              "pattern": "^[a-z]+$"
+            }
+          },
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "$ref": "#/x-hidden"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_keyword",
+            "pointer": "/actions/0/input_schema/x-hidden"
+          },
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref",
+            "pointer": "/actions/0/input_schema/properties/extra/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-ref-to-unknown-keyword-number",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/x-hidden",
+            "value": {
+              "type": "number"
+            }
+          },
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "$ref": "#/x-hidden"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_keyword",
+            "pointer": "/actions/0/input_schema/x-hidden"
+          },
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref",
+            "pointer": "/actions/0/input_schema/properties/extra/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-def-with-remote-ref",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/$defs",
+            "value": {
+              "r": {
+                "$ref": "https://example.com/s.json"
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "$ref": "#/$defs/r"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref",
+            "pointer": "/actions/0/input_schema/$defs/r/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-ref-to-missing-def",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "$ref": "#/$defs/missing"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref",
+            "pointer": "/actions/0/input_schema/properties/extra/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-self-recursive-def",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/$defs",
+            "value": {
+              "a": {
+                "$ref": "#/$defs/a"
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "$ref": "#/$defs/a"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref_cycle",
+            "pointer": "/actions/0/input_schema/$defs/a/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-mutually-recursive-defs",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/$defs",
+            "value": {
+              "a": {
+                "type": "object",
+                "properties": {
+                  "b": {
+                    "$ref": "#/$defs/b"
+                  }
+                }
+              },
+              "b": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/a"
+                }
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "$ref": "#/$defs/a"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref_cycle",
+            "pointer": "/actions/0/input_schema/$defs/a/properties/b/$ref"
+          },
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref_cycle",
+            "pointer": "/actions/0/input_schema/$defs/b/items/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-float-in-enum",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "enum": [
+                0.5,
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_number",
+            "pointer": "/actions/0/input_schema/properties/extra/enum/0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-nested-defs",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "$defs": {
+                "x": {
+                  "type": "string"
+                }
+              },
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_keyword",
+            "pointer": "/actions/0/input_schema/properties/extra/$defs"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-unknown-keyword",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "type": "string",
+              "x-ui": "wide"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_keyword",
+            "pointer": "/actions/0/input_schema/properties/extra/x-ui"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-local-ref-to-def",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/$defs",
+            "value": {
+              "label": {
+                "type": "string",
+                "maxLength": 64
+              }
+            }
+          },
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "$ref": "#/$defs/label"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "inline-schema-float-bound",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "integer",
+              "minimum": 0.5
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_number",
+            "pointer": "/collections/0/schema/properties/extra/minimum"
+          }
+        ]
+      }
+    },
+    {
       "name": "inline-schema-number-type",
       "input": {
         "base": "fixture",

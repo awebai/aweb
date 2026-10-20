@@ -32,32 +32,70 @@ _META_SCHEMA = Draft202012Validator(Draft202012Validator.META_SCHEMA)
 # are left alone; values bound from records are isolated by the renderer.
 _BIDI_CONTROLS = frozenset(chr(code) for code in (*range(0x202A, 0x202F), *range(0x2066, 0x206A)))
 
-_REFUSED_KEYWORDS = frozenset(
+# Inline schemas (collection schemas and action input schemas) may use only
+# these 2020-12 keywords. Every sub-schema a keyword can hold is walked below,
+# so a reference can never reach a sub-schema lint has not checked.
+_ALLOWED_KEYWORDS = frozenset(
     {
-        "$id",
-        "$schema",
-        "$anchor",
-        "$dynamicRef",
-        "$dynamicAnchor",
-        "$recursiveRef",
-        "$recursiveAnchor",
-        "$vocabulary",
+        "type",
+        "enum",
+        "const",
+        "properties",
+        "required",
+        "additionalProperties",
+        "minProperties",
+        "maxProperties",
+        "dependentRequired",
+        "propertyNames",
+        "items",
+        "prefixItems",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "contains",
+        "minContains",
+        "maxContains",
+        "minLength",
+        "maxLength",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "not",
+        "if",
+        "then",
+        "else",
+        "$defs",
+        "$ref",
+        "title",
+        "description",
+        "default",
+        "examples",
+        "format",
+        "$comment",
+        "deprecated",
+        "readOnly",
+        "writeOnly",
     }
 )
-_SCHEMA_MAPS = ("properties", "patternProperties", "$defs", "definitions", "dependentSchemas")
+_PATTERN_KEYWORDS = frozenset({"pattern", "patternProperties"})
+_SCHEMA_MAPS = ("properties", "$defs")
 _SCHEMA_LISTS = ("allOf", "anyOf", "oneOf", "prefixItems")
 _SCHEMA_SINGLES = (
     "items",
     "additionalProperties",
+    "propertyNames",
+    "contains",
     "not",
     "if",
     "then",
     "else",
-    "contains",
-    "propertyNames",
-    "unevaluatedItems",
-    "unevaluatedProperties",
 )
+_LOCAL_REF = re.compile(r"#/\$defs/([A-Za-z0-9_.-]+)")
 
 
 def _canonical(value: object) -> bytes:
@@ -97,42 +135,88 @@ def _strings(node: object, path: Path) -> Iterator[tuple[str, Path]]:
             stack.extend((child, (*at, index)) for index, child in enumerate(value))
 
 
+def _float_errors(schema: object, path: Path) -> Iterator[PageError]:
+    """Fractional numbers are decimal strings, so no inline schema holds a float."""
+    stack: list[tuple[object, Path]] = [(schema, path)]
+    while stack:
+        node, at = stack.pop()
+        if isinstance(node, float):
+            yield PageError("lint", "inline_schema_number", pointer(at))
+        elif isinstance(node, dict):
+            stack.extend((child, (*at, key)) for key, child in node.items())
+        elif isinstance(node, list):
+            stack.extend((child, (*at, index)) for index, child in enumerate(node))
+
+
 def _inline_schema_errors(schema: object, path: Path) -> Iterator[PageError]:
-    stack: list[tuple[object, Path, int]] = [(schema, path, 1)]
+    root_defs = schema.get("$defs") if isinstance(schema, dict) else None
+    defs = root_defs if isinstance(root_defs, dict) else {}
+    refs: dict[str, list[tuple[str, Path]]] = {}
+    stack: list[tuple[object, Path, int, str | None]] = [(schema, path, 1, None)]
     max_depth = PAGE_LIMITS["max_inline_schema_depth"]
     while stack:
-        node, at, depth = stack.pop()
+        node, at, depth, within = stack.pop()
         if not isinstance(node, dict):
             continue
         if depth > max_depth:
             yield PageError("lint", "inline_schema_depth", pointer(at))
             continue
         for key, value in node.items():
-            if key in _REFUSED_KEYWORDS:
+            if key in _PATTERN_KEYWORDS:
+                yield PageError("lint", "inline_schema_pattern", pointer((*at, key)))
+            elif key not in _ALLOWED_KEYWORDS or (key == "$defs" and depth > 1):
                 yield PageError("lint", "inline_schema_keyword", pointer((*at, key)))
-            elif key == "$ref" and not (isinstance(value, str) and value.startswith("#")):
-                yield PageError("lint", "inline_schema_ref", pointer((*at, key)))
+            elif key == "$ref":
+                match = _LOCAL_REF.fullmatch(value) if isinstance(value, str) else None
+                if match is None or match.group(1) not in defs:
+                    yield PageError("lint", "inline_schema_ref", pointer((*at, key)))
+                elif within is not None:
+                    refs.setdefault(within, []).append((match.group(1), (*at, key)))
             elif key == "type" and (
                 "number" == value or (isinstance(value, list) and "number" in value)
             ):
                 yield PageError("lint", "inline_schema_number", pointer((*at, key)))
-            elif key in ("pattern", "patternProperties"):
-                yield PageError("lint", "inline_schema_pattern", pointer((*at, key)))
         for key in _SCHEMA_MAPS:
             children = node.get(key)
-            if isinstance(children, dict):
+            if isinstance(children, dict) and not (key == "$defs" and depth > 1):
                 for name, child in children.items():
-                    stack.append((child, (*at, key, name), depth + 1))
+                    owner = name if key == "$defs" else within
+                    stack.append((child, (*at, key, name), depth + 1, owner))
         for key in _SCHEMA_LISTS:
             children = node.get(key)
             if isinstance(children, list):
                 stack.extend(
-                    (child, (*at, key, index), depth + 1) for index, child in enumerate(children)
+                    (child, (*at, key, index), depth + 1, within)
+                    for index, child in enumerate(children)
                 )
         for key in _SCHEMA_SINGLES:
             child = node.get(key)
             if isinstance(child, dict):
-                stack.append((child, (*at, key), depth + 1))
+                stack.append((child, (*at, key), depth + 1, within))
+    yield from _float_errors(schema, path)
+    yield from _cycle_errors(refs)
+
+
+def _cycle_errors(refs: Mapping[str, list[tuple[str, Path]]]) -> Iterator[PageError]:
+    """A reference between $defs entries that lies on a cycle is refused."""
+
+    def reaches(start: str, goal: str) -> bool:
+        seen: set[str] = set()
+        stack = [start]
+        while stack:
+            name = stack.pop()
+            if name == goal:
+                return True
+            if name in seen:
+                continue
+            seen.add(name)
+            stack.extend(target for target, _ in refs.get(name, []))
+        return False
+
+    for owner, edges in refs.items():
+        for target, at in edges:
+            if reaches(target, owner):
+                yield PageError("lint", "inline_schema_ref_cycle", pointer(at))
 
 
 def _checked_schema_errors(schema: object, path: Path) -> list[PageError]:

@@ -69,9 +69,10 @@ need care in every implementation:
 | `state_unknown_widget` | Every `widget_state` key is the ID of a widget in the layout. |
 | `duplicate_collection_id`, `duplicate_record_id`, `duplicate_action_id` | IDs are unique within their scope. |
 | `record_invalid` | Each record's `value` satisfies its collection schema. |
-| `inline_schema_ref` | A `$ref` in a collection or action input schema is local (starts with `#`). Remote and file references are refused. |
-| `inline_schema_keyword` | `$id`, `$schema`, `$anchor`, `$dynamicRef`, `$dynamicAnchor`, `$recursiveRef`, `$recursiveAnchor` and `$vocabulary` are refused. |
-| `inline_schema_number` | `type: "number"` is refused. Integers are safe integers; fractional quantities are decimal strings. |
+| `inline_schema_keyword` | An inline schema (a collection schema or action input schema) uses only these 2020-12 keywords: `type`, `enum`, `const`, `properties`, `required`, `additionalProperties`, `minProperties`, `maxProperties`, `dependentRequired`, `propertyNames`, `items`, `prefixItems`, `minItems`, `maxItems`, `uniqueItems`, `contains`, `minContains`, `maxContains`, `minLength`, `maxLength`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `allOf`, `anyOf`, `oneOf`, `not`, `if`, `then`, `else`, `$defs`, `$ref`, `title`, `description`, `default`, `examples`, `format`, `$comment`, `deprecated`, `readOnly` and `writeOnly`. Any other keyword is refused, so every sub-schema a reference can reach is one lint has checked. `$defs` is allowed only at the inline schema's root. |
+| `inline_schema_ref` | A `$ref` is exactly `#/$defs/<name>`, naming an existing root `$defs` entry (`name` is `[A-Za-z0-9_.-]+`). Remote, file and other pointers are refused. |
+| `inline_schema_ref_cycle` | References between `$defs` entries form no cycle, self-reference included. Pointer: each `$ref` on a cycle. |
+| `inline_schema_number` | `type: "number"` and float literals anywhere in an inline schema (`enum`, `const`, bounds, defaults, examples) are refused. Integers are safe integers; fractional quantities are decimal strings. |
 | `inline_schema_pattern` | `pattern` and `patternProperties` are refused. A regular expression's work and dialect cannot be bounded portably (JSON Schema specifies ECMA-262, and backtracking engines can take exponential time), so inline schemas use `enum`, `const`, lengths and bounds instead. A linear-time, ECMA-compatible subset would be a later, explicit addition. |
 | `inline_schema_invalid` | A collection schema or action input schema is not a valid JSON Schema 2020-12 schema (checked against the meta-schema). Pointer: the offending keyword. Checked only after the subset rules pass, and before any record is validated. |
 | `inline_schema_depth` | Inline schemas nest at most 16 sub-schemas deep. Pointer: the first sub-schema past the limit. |
@@ -149,9 +150,10 @@ A collection has `id`, `schema_version`, an inline JSON Schema `schema`,
 `mode` (`owned` or `synced`) and `records`, at most 200 per snapshot. A record
 has `id`, `rev` and `value`. A synced record also carries `source`: `system`,
 `external_id`, `version` and `synced_at`. Inline schemas (and action input
-schemas) follow the subset in the lint rules: local references only, no
-`number` type, no `pattern` or `patternProperties`, bounded depth, and valid
-under the 2020-12 meta-schema.
+schemas) follow the subset in the lint rules: allowlisted keywords only,
+acyclic references to root `$defs`, no `number` type or float literal, no
+`pattern` or `patternProperties`, bounded depth, and valid under the 2020-12
+meta-schema.
 
 ## 5. Decision cards and bundles
 
