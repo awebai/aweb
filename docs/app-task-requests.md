@@ -172,6 +172,7 @@ current generation.
       "proposal_rev": null,
       "proposal_sha256": null,
       "choices": null,
+      "fields": null,
       "eligible_dids": null,
       "role": null
     }
@@ -190,7 +191,8 @@ current generation.
 | `proposal_rev`, `proposal_sha256` | Equal the authorization's. |
 | `eligible_dids` | Required on a **decision request** (one whose `proposal_rev` and `proposal_sha256` are set) and `null` otherwise: 1–16 distinct principal DIDs, sorted, of individually designated people, including `assignee_did`. Frozen at create: they are who may answer. |
 | `role` | On a decision request, the role name (`aweb_naapp.roles` grammar: dot-separated lowercase segments, at most 128 bytes) the eligible set was resolved from, or `null` when the target named the principals directly. `null` on any other request. The app is the installation's own; hosts show the pair (app, role). |
-| `choices` | `null`, or 1–10 distinct strings `^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$` that an answer may choose from. These are a decision card's option `value`s ([page-format.md](page-format.md) §5), copied unchanged. |
+| `choices` | `null`, or 1–10 objects `{value, label}` that an answer may choose from, in display order: `value` matches `^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`, `label` is 1–4,096 runes with no control or bidi character, and both are distinct across the list. They are a decision card's options ([page-format.md](page-format.md) §5), copied unchanged. Signed through `task_body_sha256`, they are what the person is shown, so a page cannot relabel an option. |
+| `fields` | On a decision request, 1–32 objects `{field, label, format}` in display order, and `null` otherwise: `field` is the record property shown (1–128 characters, the same literal name as a page binding), `label` what the person reads (1–200 runes, the `title` character rule), `format` one of `text`, `date`, `number`, `money_minor`. `field` and `label` are each distinct. Signed through `task_body_sha256`, they bind what the person reads next to each value ([page-actions.md](page-actions.md) §5). |
 
 Unknown fields are refused at every level. `task_body_sha256` is the hex
 SHA-256 of `canonical_json(task)`.
@@ -373,7 +375,7 @@ Request:
 | `expected_task_rev` | The `rev` the person was shown. Required: missing is 428 `precondition_required`. |
 | `answer_key` | `^[A-Za-z0-9._-]{1,128}$`, chosen by the caller and stable across its retries. |
 | `answer_sha256` | The bare hex SHA-256 of the UTF-8 bytes of `body_md`. The coordinator recomputes it and refuses a mismatch (422 `schema_invalid`). |
-| `choice` | `null`, or one of the task's declared `choices`. Required when the task declares choices. |
+| `choice` | `null`, or the `value` of one of the task's `choices`. Required when the task declares choices. |
 | `proposal_rev`, `proposal_sha256` | Required, and equal to the task's, when the task carries a proposal; otherwise both `null`. |
 | `body_md` | The answer's full text, 1–20,000 runes, Markdown. It becomes the team-visible comment. |
 | `stage_receipt` | Required on a decision task, refused elsewhere: `{payload, signature}` of an `aweb.app-answer-stage/1` (below). |
@@ -403,7 +405,7 @@ length, `answer_sha256` equal to the digest of `body_md` (otherwise 422
    Otherwise 409 `revision_conflict`.
 4. **Proposal.** The proposal fields equal the task's. Otherwise 409
    `approval_changed`.
-5. **Choice.** `choice` satisfies the task's declared choices. Otherwise 422
+5. **Choice.** `choice` is the `value` of one of the task's `choices`, or `null` when it declares none. Otherwise 422
    `schema_invalid`.
 6. **One answer per question.** The current `question_rev` has no answer yet.
    Otherwise 409 `revision_conflict`. Of two concurrent distinct answers, one

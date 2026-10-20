@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "The approval primitive's request digest and challenge binding (docs/page-actions.md §6). request_sha256 is bare lowercase hex of SHA-256 over aweb.approval-request/1\\n followed by the canonical JSON of {policy: {ref, version}, request}. The challenge binding is the raw 32-byte SHA-256 over aweb.approval-challenge/1\\n followed by the canonical JSON of its fields, shown here as hex. The fields are approval_id, candidate_subject and candidate_subject_type (the candidate the proof is for), nonce (hex), policy_ref, policy_version, purpose, request_sha256 and task_answer_ref, which is always present, null when there is no task answer. Refusals apply to the whole covered object.",
+  "description": "The approval primitive's request digest and challenge binding (docs/page-actions.md §6). request_sha256 is bare lowercase hex of SHA-256 over aweb.approval-request/1\\n followed by the canonical JSON of {policy: {ref, version}, request}. The challenge binding is the raw 32-byte SHA-256 over aweb.approval-challenge/1\\n followed by the canonical JSON of its fields, shown here as hex. The fields are approval_id, candidate_subject and candidate_subject_type (the candidate the proof is for), nonce (hex), policy_ref, policy_version, purpose, request_sha256 and task_answer_ref, which is always present, null when there is no task answer. `requester_cases` pin the requester rule at mint and at decide (docs/page-actions.md §6): principals are named by role in the case, each decide step starts from the minted approval, and both sides are compared as aweb_naapp.roles.principal_key values. Refusals apply to the whole covered object.",
   "request_prefix": "aweb.approval-request/1\n",
   "challenge_prefix": "aweb.approval-challenge/1\n",
   "requests": [
@@ -196,6 +196,84 @@
       },
       "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"candidate_subject\":\"apd_01JB9\",\"candidate_subject_type\":\"app_local\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"view\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":null}",
       "binding_hex": "c24c56b40ebe7bdbf0e9f11067472ae57dc536fdf9ebf012a08b88eeddbbdff0"
+    }
+  ],
+  "requester_cases": [
+    {
+      "name": "default-policy-requester-only",
+      "allow_requester_approval": false,
+      "requested_by": "requester",
+      "eligible": [
+        "requester"
+      ],
+      "mint": {
+        "refused": "no_eligible_approver"
+      }
+    },
+    {
+      "name": "default-policy-requester-excluded",
+      "allow_requester_approval": false,
+      "requested_by": "requester",
+      "eligible": [
+        "requester",
+        "colleague"
+      ],
+      "mint": {
+        "candidates": [
+          "colleague"
+        ]
+      },
+      "decide": [
+        {
+          "by": "requester",
+          "refused": "approver_mismatch"
+        },
+        {
+          "by": "colleague",
+          "decided": true
+        }
+      ]
+    },
+    {
+      "name": "allowed-requester-only",
+      "allow_requester_approval": true,
+      "requested_by": "requester",
+      "eligible": [
+        "requester"
+      ],
+      "mint": {
+        "candidates": [
+          "requester"
+        ]
+      },
+      "decide": [
+        {
+          "by": "requester",
+          "decided": true
+        }
+      ],
+      "note": "an internal reversible policy that allows the requester: mint keeps them and decide accepts them"
+    },
+    {
+      "name": "allowed-requester-and-colleague",
+      "allow_requester_approval": true,
+      "requested_by": "requester",
+      "eligible": [
+        "colleague",
+        "requester"
+      ],
+      "mint": {
+        "candidates": [
+          "colleague",
+          "requester"
+        ]
+      },
+      "decide": [
+        {
+          "by": "requester",
+          "decided": true
+        }
+      ]
     }
   ],
   "refusals": [
