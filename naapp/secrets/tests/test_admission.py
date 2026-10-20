@@ -30,6 +30,7 @@ from aweb_secrets.admission import AdmissionRefused, UseRequest, admit_use
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.policy import Policy
+from aweb_secrets.revisions import apply_revision_migrations
 from aweb_secrets.secret import SecretRecord
 
 TEAM = "backend:acme.com"
@@ -118,6 +119,7 @@ async def db(test_db_factory) -> AsyncIterator[AsyncDatabaseManager]:
     await AsyncMigrationManager(
         database, migrations_path=str(MIGRATIONS_PATH), module_name=MODULE_NAME
     ).apply_pending_migrations()
+    await apply_revision_migrations(database)
     yield database
 
 

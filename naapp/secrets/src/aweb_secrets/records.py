@@ -16,6 +16,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_secrets.grant import GrantRecord, GrantTemplate
 from aweb_secrets.policy import Policy
+from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.secret import SecretRecord
 
 
@@ -168,15 +169,19 @@ async def create_grant(
 
 
 async def revoke_grant(tx: TransactionManager, installation_id: str, grant_id: str) -> None:
-    """Revoke a grant at once; revoking a revoked grant changes nothing."""
-    await tx.execute(
+    """Revoke a grant at once, a narrowing act that moves the installation to its next
+    configuration revision; revoking a revoked grant changes nothing."""
+    revoked = await tx.fetch_value(
         """
         UPDATE {{tables.grants}} SET revoked_at = NOW()
         WHERE installation_id = $1 AND grant_id = $2 AND revoked_at IS NULL
+        RETURNING grant_id
         """,
         installation_id,
         grant_id,
     )
+    if revoked is not None:
+        await bump_config_revision(tx, installation_id)
 
 
 async def active_grants(

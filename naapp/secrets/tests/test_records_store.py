@@ -14,6 +14,7 @@ from aweb_secrets import records
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME
 from aweb_secrets.grant import GrantRecord, GrantTemplate
 from aweb_secrets.policy import Policy
+from aweb_secrets.revisions import apply_revision_migrations, bump_config_revision, config_revision
 from aweb_secrets.secret import SecretRecord
 
 INSTALLATION = "inst_5d2a9c31"
@@ -76,6 +77,7 @@ async def db(test_db_factory) -> AsyncIterator[AsyncDatabaseManager]:
     await AsyncMigrationManager(
         database, migrations_path=str(MIGRATIONS_PATH), module_name=MODULE_NAME
     ).apply_pending_migrations()
+    await apply_revision_migrations(database)
     yield database
 
 
@@ -239,3 +241,43 @@ async def test_records_roll_back_with_the_callers_transaction(db) -> None:
             raise RuntimeError("the change set failed")
     async with db.transaction() as tx:
         assert await records.secret_by_ref(tx, INSTALLATION, TEAM, "payments-live") is None
+
+
+async def test_revoking_a_grant_moves_the_installation_to_its_next_revision(db) -> None:
+    await _setup(db)
+    async with db.transaction() as tx:
+        await records.create_grant(
+            tx, INSTALLATION, TEAM, _grant("grt_member01", {"principal": DID_AW})
+        )
+        drafted_at = await bump_config_revision(tx, INSTALLATION)
+    async with db.transaction() as tx:
+        await records.revoke_grant(tx, INSTALLATION, "grt_member01")
+    assert await config_revision(db, INSTALLATION) == drafted_at + 1
+    assert await config_revision(db, OTHER_INSTALLATION) == 0
+
+
+async def test_revoking_a_revoked_grant_leaves_the_revision_alone(db) -> None:
+    await _setup(db)
+    async with db.transaction() as tx:
+        await records.create_grant(
+            tx, INSTALLATION, TEAM, _grant("grt_member01", {"principal": DID_AW})
+        )
+        await records.revoke_grant(tx, INSTALLATION, "grt_member01")
+    revoked_at = await config_revision(db, INSTALLATION)
+    async with db.transaction() as tx:
+        await records.revoke_grant(tx, INSTALLATION, "grt_member01")
+        await records.revoke_grant(tx, INSTALLATION, "grt_unknown01")
+    assert await config_revision(db, INSTALLATION) == revoked_at
+
+
+async def test_a_revocation_rolled_back_leaves_the_revision_alone(db) -> None:
+    await _setup(db)
+    async with db.transaction() as tx:
+        await records.create_grant(
+            tx, INSTALLATION, TEAM, _grant("grt_member01", {"principal": DID_AW})
+        )
+    with pytest.raises(RuntimeError):
+        async with db.transaction() as tx:
+            await records.revoke_grant(tx, INSTALLATION, "grt_member01")
+            raise RuntimeError("the narrowing act failed later")
+    assert await config_revision(db, INSTALLATION) == 0
