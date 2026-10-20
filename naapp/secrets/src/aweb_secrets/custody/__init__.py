@@ -14,12 +14,22 @@ from .sealing import (
     seal_canary,
     unseal,
 )
-from .store import SecretOpener, SecretSealer, apply_custody_migrations
+from .store import (
+    Custody,
+    Description,
+    Health,
+    SecretOpener,
+    SecretSealer,
+    apply_custody_migrations,
+)
 
 __all__ = [
     "AwsKmsProvider",
+    "Custody",
     "CustodyUnavailable",
     "DataKey",
+    "Description",
+    "Health",
     "KeyFileError",
     "KeyProvider",
     "LocalKeyFileProvider",

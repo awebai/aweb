@@ -2,13 +2,17 @@
 
 The console holds a :class:`SecretSealer`, which can only add a value. The
 broker holds a :class:`SecretOpener`, which is the only way a stored value is
-unsealed. No other object reads the sealed rows.
+unsealed. The app's composition hands each its own; :class:`Custody` holds
+both, with the operations that never reveal a value.
 """
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
@@ -20,6 +24,7 @@ from .sealing import (
     SealContext,
     SealedValue,
     seal,
+    seal_canary,
     unseal,
 )
 
@@ -50,15 +55,22 @@ class SecretSealer:
     ) -> int:
         """Store ``value`` as the secret's next version, in the caller's transaction.
 
-        Returns the version number. Two ingests racing for the same version
-        cannot both commit: the second fails on the primary key."""
-        version = int(
-            await tx.fetch_value(
-                "SELECT COALESCE(MAX(version), 0) + 1 FROM {{tables.sealed_versions}}"
-                " WHERE secret_id = $1",
-                secret_id,
-            )
+        Returns the version number. Allocating it locks the secret's row until
+        the transaction ends, so concurrent ingests take turns. A disabled
+        secret takes no new value."""
+        allocated = await tx.fetch_one(
+            """
+            INSERT INTO {{tables.custody_secrets}} (secret_id, last_version) VALUES ($1, 1)
+            ON CONFLICT (secret_id) DO UPDATE
+                SET last_version = {{tables.custody_secrets}}.last_version + 1
+            RETURNING last_version, disabled_at
+            """,
+            secret_id,
         )
+        assert allocated is not None
+        if allocated["disabled_at"] is not None:
+            raise CustodyUnavailable("the secret is disabled")
+        version = int(allocated["last_version"])
         context = SealContext(
             installation_id=installation_id, team_id=team_id, secret_id=secret_id, version=version
         )
@@ -89,14 +101,16 @@ class SecretOpener:
     async def open(self, context: SealContext) -> Plaintext:
         row = await self._db.fetch_one(
             """
-            SELECT key_id, wrapped_key, nonce, ciphertext FROM {{tables.sealed_versions}}
-            WHERE secret_id = $1 AND version = $2
+            SELECT v.key_id, v.wrapped_key, v.nonce, v.ciphertext
+            FROM {{tables.sealed_versions}} v
+            JOIN {{tables.custody_secrets}} s USING (secret_id)
+            WHERE v.secret_id = $1 AND v.version = $2 AND s.disabled_at IS NULL
             """,
             context.secret_id,
             context.version,
         )
         if row is None:
-            raise CustodyUnavailable("no sealed value for that secret version")
+            raise CustodyUnavailable("no usable sealed value for that secret version")
         sealed = SealedValue(
             key_id=row["key_id"],
             wrapped_key=bytes(row["wrapped_key"]),
@@ -104,3 +118,73 @@ class SecretOpener:
             ciphertext=bytes(row["ciphertext"]),
         )
         return await asyncio.to_thread(unseal, self._provider, context, sealed)
+
+
+@dataclass(frozen=True)
+class Description:
+    """A secret's custody state: its latest stored version, never its value."""
+
+    version: int | None
+    updated_at: datetime | None
+    state: Literal["active", "disabled"]
+
+
+@dataclass(frozen=True)
+class Health:
+    ok: bool
+    reason: str | None = None
+
+
+class Custody:
+    """The native KMS-sealed store of one deployment."""
+
+    def __init__(self, provider: KeyProvider, db: AsyncDatabaseManager) -> None:
+        self._provider = provider
+        self._db = db
+        self.sealer = SecretSealer(provider)
+        self.opener = SecretOpener(provider, db)
+
+    async def describe(self, secret_id: str) -> Description | None:
+        row = await self._db.fetch_one(
+            """
+            SELECT s.disabled_at, v.version, v.created_at
+            FROM {{tables.custody_secrets}} s
+            LEFT JOIN LATERAL (
+                SELECT version, created_at FROM {{tables.sealed_versions}}
+                WHERE secret_id = s.secret_id ORDER BY version DESC LIMIT 1
+            ) v ON TRUE
+            WHERE s.secret_id = $1
+            """,
+            secret_id,
+        )
+        if row is None:
+            return None
+        return Description(
+            version=row["version"],
+            updated_at=row["created_at"],
+            state="disabled" if row["disabled_at"] is not None else "active",
+        )
+
+    async def disable(self, tx: TransactionManager, secret_id: str) -> None:
+        """Refuse every open and ingest of the secret from now on."""
+        await tx.execute(
+            "UPDATE {{tables.custody_secrets}} SET disabled_at = NOW()"
+            " WHERE secret_id = $1 AND disabled_at IS NULL",
+            secret_id,
+        )
+
+    async def destroy(self, tx: TransactionManager, secret_id: str, version: int) -> None:
+        """Crypto-shred one version: its wrapped data key and ciphertext are deleted."""
+        await tx.execute(
+            "DELETE FROM {{tables.sealed_versions}} WHERE secret_id = $1 AND version = $2",
+            secret_id,
+            version,
+        )
+
+    async def health(self) -> Health:
+        """Whether a probe seals and unseals with the deployment's key provider."""
+        try:
+            await asyncio.to_thread(seal_canary, self._provider)
+        except CustodyUnavailable as exc:
+            return Health(ok=False, reason=str(exc))
+        return Health(ok=True)
