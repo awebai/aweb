@@ -140,6 +140,10 @@ class OwnerActVerifier:
         if expected_subject is None:
             raise Refused("verifier_misconfigured", "every verifier option is required")
         act = prepared._checked
+        # Expiry again: a prepared act held past its expiry could otherwise be
+        # consumed after its earlier nonce row was pruned.
+        if _utc_now(self._clock) >= act.expires_at:
+            raise Refused("expired", f"expired at {act.fields['expires_at']}")
         used = await tx.fetch_value(
             "SELECT 1 FROM {{tables.owner_act_nonces}} WHERE scope = $1 AND team_id = $2 AND nonce = $3",
             self.scope,
@@ -161,6 +165,13 @@ class OwnerActVerifier:
         if inserted is None:
             raise Refused("nonce_reused", act.nonce)
         return _verified(act)
+
+
+def _utc_now(clock: Callable[[], datetime]) -> datetime:
+    now = clock()
+    if now.tzinfo is None:
+        raise Refused("verifier_misconfigured", "now must be timezone-aware")
+    return now.astimezone(UTC).replace(tzinfo=None)
 
 
 async def prune_owner_act_nonces(db: AsyncDatabaseManager, *, now: datetime) -> int:
