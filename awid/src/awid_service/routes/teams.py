@@ -25,13 +25,13 @@ from awid.dns_auth import (
     enforce_timestamp_skew,
     parse_didkey_auth,
     require_timestamp,
-    verify_signed_json_request,
 )
 from awid.did import public_key_from_did
 from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_with_public_key
 from awid.team_ids import build_team_id
+from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
 
-router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"])
+router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"], route_class=ControllerAuthRoute)
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"])
 # ---------------------------------------------------------------------------
 
 
-def _verify_signed_request(
+async def _verify_signed_request(
     request: Request,
     *,
     domain: str,
@@ -50,12 +50,12 @@ def _verify_signed_request(
     payload = {"domain": domain, "operation": operation}
     if extra_payload:
         payload.update(extra_payload)
-    return verify_signed_json_request(request, payload_dict=payload)
+    return await verify_controller_json_request(request, payload_dict=payload)
 
 
 async def _require_namespace_controller(request: Request, db, *, domain: str, operation: str, **extra) -> str:
     """Verify auth and check that the signer is the namespace controller. Returns caller DID."""
-    caller_did = _verify_signed_request(
+    caller_did = await _verify_signed_request(
         request, domain=domain, operation=operation, extra_payload=extra or None,
     )
     row = await db.fetch_one(
@@ -77,7 +77,7 @@ async def _require_team_controller(
     request: Request, db, *, domain: str, name: str, operation: str, **extra,
 ) -> tuple[str, dict]:
     """Verify auth against the team's own public key. Returns (caller_did, team_row)."""
-    caller_did = _verify_signed_request(
+    caller_did = await _verify_signed_request(
         request, domain=domain, operation=operation,
         extra_payload={"team_name": name, **extra} if extra else {"team_name": name},
     )
@@ -191,7 +191,7 @@ def _verify_certificate_blob(
 ) -> None:
     cert = _parse_certificate_blob(certificate)
     if cert is None:
-        return
+        raise HTTPException(status_code=422, detail="team-signed certificate blob is required")
 
     expected = {
         "version": 1,
