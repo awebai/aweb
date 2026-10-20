@@ -2,7 +2,8 @@
 
 An app creates a :class:`NaappRuntime`, builds its FastAPI app with the
 runtime's lifespan, and calls :func:`mount_naapp_routes` for the standard public
-surface.
+surface. An app without the docs surface calls :func:`mount_manifest_routes`
+and :func:`aweb_naapp.runtime.health.mount_health` instead.
 
 The runtime reads the app's manifest once, at construction, for its configured
 public origin: :attr:`NaappRuntime.manifest_bytes` are the bytes served at the
@@ -301,6 +302,29 @@ def _template(segments: Sequence[str]) -> tuple[str, ...]:
     return tuple("{}" if is_placeholder(segment) else segment for segment in segments)
 
 
+def mount_manifest_routes(app: FastAPI, *, runtime: NaappRuntime) -> None:
+    """Serve the runtime's ``manifest_bytes`` verbatim, for an app with or
+    without the docs surface."""
+    manifest_bytes = runtime.manifest_bytes
+
+    async def _manifest_response() -> Response:
+        return Response(
+            content=manifest_bytes,
+            media_type="application/json",
+            headers=_NOSNIFF,
+        )
+
+    # Served at the RFC 8615 well-known path the dispatcher and gateway fetch,
+    # plus the bare path the docs surface links. Both return the same bytes.
+    @app.get("/.well-known/aweb-app.json")
+    async def well_known_manifest_route() -> Response:
+        return await _manifest_response()
+
+    @app.get("/aweb-app.json")
+    async def aweb_app_manifest_route() -> Response:
+        return await _manifest_response()
+
+
 def mount_naapp_routes(
     app: FastAPI,
     *,
@@ -408,23 +432,5 @@ def mount_naapp_routes(
             raise HTTPException(status_code=404, detail="Skill not found")
         return PlainTextResponse(skill, headers=_NOSNIFF)
 
-    manifest_bytes = runtime.manifest_bytes
-
-    async def _manifest_response() -> Response:
-        return Response(
-            content=manifest_bytes,
-            media_type="application/json",
-            headers=_NOSNIFF,
-        )
-
-    # Served at the RFC 8615 well-known path the dispatcher and gateway fetch,
-    # plus the bare path the docs surface links. Both return the same bytes.
-    @app.get("/.well-known/aweb-app.json")
-    async def well_known_manifest_route() -> Response:
-        return await _manifest_response()
-
-    @app.get("/aweb-app.json")
-    async def aweb_app_manifest_route() -> Response:
-        return await _manifest_response()
-
+    mount_manifest_routes(app, runtime=runtime)
     mount_health(app, settings, checks={**runtime.health_checks(), **(health_checks or {})})

@@ -13,7 +13,7 @@ from pydantic_settings import SettingsConfigDict
 from aweb_naapp import CSS_SHA256, aweb_css
 from aweb_naapp.css import FONT_NAMES
 from aweb_naapp.manifest import canonical_bytes, manifest_for_origin, write_manifest_file
-from aweb_naapp.runtime.app import NaappRuntime, mount_naapp_routes
+from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes, mount_naapp_routes
 from aweb_naapp.runtime.health import CheckResult
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.skills import Skills
@@ -250,3 +250,25 @@ def test_health_checks_the_apps_own_dependencies(tmp_path: Path) -> None:
 
     response = _client(tmp_path, health_checks={"kms": kms}).get("/health")
     assert response.json()["checks"]["kms"] == {"ok": True, "canary": "ok"}
+
+
+def test_an_app_without_the_docs_surface_serves_its_manifest_alone(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "aweb-app.json"
+    write_manifest_file(manifest_path, _MANIFEST)
+    runtime = NaappRuntime(
+        ExampleSettings(_env_file=None),
+        module_name="example",
+        migrations_path=tmp_path,
+        manifest_path=manifest_path,
+    )
+    app = FastAPI()
+    mount_manifest_routes(app, runtime=runtime)
+    client = TestClient(app)
+    for path in ("/.well-known/aweb-app.json", "/aweb-app.json"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/json"
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.content == manifest_path.read_bytes()
+    for path in ("/", "/llms.txt", "/health"):
+        assert client.get(path).status_code == 404
