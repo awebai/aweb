@@ -26,7 +26,9 @@ USAGE_FORMAT = "aweb.usage/1"
 METRIC_VERSION = 1
 REPORT_PREFIX = b"aweb.usage-report/1\n"
 MAX_ENTRIES = 1000
-MAX_BYTES = 1 << 20
+# The collector's limit on a raw request body, checked before parsing. The
+# field bounds keep every valid batch's canonical JSON below it.
+MAX_BODY_BYTES = 1 << 20
 SAFE_INTEGER = 2**53 - 1
 
 COUNTERS = frozenset(
@@ -194,11 +196,9 @@ def validate_report(batch: object) -> None:
     if "inventory" in batch:
         _check_inventory(batch["inventory"], first, last)
     try:
-        size = len(canonical_json_bytes(dict(batch)))
+        canonical_json_bytes(dict(batch))
     except (UnicodeEncodeError, ValueError, TypeError) as exc:
         raise _bad("batch has no canonical form") from exc
-    if size > MAX_BYTES:
-        raise _bad("batch over 1 MiB")
 
 
 def report_sha256(batch: Mapping[str, Any]) -> str:

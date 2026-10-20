@@ -120,8 +120,10 @@ The app sends its ledger in batches, oldest first:
 | entry `deltas` | Counter metrics only (§1), each a safe integer from 0 to 2^53−1. An omitted counter is 0. |
 | `inventory` | Optional: every gauge of §1, each a safe non-negative integer, and `at_seq`, the sequence the gauges are true after, with `first_seq ≤ at_seq ≤ last_seq`. |
 
-Unknown fields are refused at every level. A batch's canonical JSON is at
-most 1 MiB. Its digest, `report_sha256`, is the bare hex SHA-256 of
+Unknown fields are refused at every level. The collector refuses a request
+body over 1 MiB (1,048,576 bytes) before parsing it (413). The field bounds
+above keep every valid batch's canonical JSON below that: the largest one
+possible is about 0.9 MiB. Its digest, `report_sha256`, is the bare hex SHA-256 of
 `"aweb.usage-report/1\n" || canonical_json(batch)`.
 
 ## 4. Credential, purpose `app-usage`
@@ -252,7 +254,7 @@ neither inherits nor encodes them.
 | 401 | (app credential messages) | The `app-usage` credential fails. |
 | 403 | `scope_denied` | The installation is retired outside its lifecycle grant, or the key is not registered for `app-usage`. |
 | 409 | `usage_conflict` | A known report with other bytes, or an overlap that differs. |
-| 413 | `schema_invalid` | The batch is over 1 MiB. |
+| 413 | `schema_invalid` | The request body is over 1 MiB. |
 | 422 | `schema_invalid` | The batch fails §3. |
 
 ## Conformance vectors

@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import pytest
+from awid.signing import canonical_json_bytes
 from nacl.signing import SigningKey
 
 from aweb_naapp.runtime.usage import (
@@ -79,3 +80,41 @@ def test_app_usage_credential():
     assert headers == CREDENTIAL["headers"]
     signed = base64.urlsafe_b64decode(headers["X-AWEB-Signed-Payload"] + "==")
     assert signed == CREDENTIAL["canonical_payload"].encode("utf-8")
+
+
+def test_the_largest_valid_batch_fits_under_the_body_limit():
+    """§3's field bounds keep every valid batch's canonical JSON under 1 MiB, so
+    the collector's raw-body limit never refuses a valid batch."""
+    long_id = "a" * 128
+    entries = [
+        {
+            "seq": seq,
+            "occurred_at": "2026-10-20T10:00:00Z",
+            "operation_id": long_id,
+            "attempt_id": long_id,
+            "source": "background",
+            "outcome": "refused_validation",
+            "deltas": {metric: 2**53 - 1 for metric in REPORTS["counters"]},
+        }
+        for seq in range(1, REPORTS["max_entries"] + 1)
+    ]
+    batch = {
+        "format": "aweb.usage/1",
+        "team_id": "backend:" + "a" * 60 + ".com",
+        "app_id": "a" * 128,
+        "installation_id": "a" * 128,
+        "installation_generation": 2**53 - 1,
+        "reporter": "r" * 64,
+        "epoch": 2**53 - 1,
+        "report_id": long_id,
+        "first_seq": 1,
+        "last_seq": REPORTS["max_entries"],
+        "metric_version": 1,
+        "entries": entries,
+        "inventory": {
+            "at_seq": REPORTS["max_entries"],
+            **{g: 2**53 - 1 for g in REPORTS["gauges"]},
+        },
+    }
+    validate_report(batch)
+    assert len(canonical_json_bytes(batch)) < REPORTS["max_bytes"]
