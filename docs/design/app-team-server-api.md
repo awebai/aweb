@@ -456,8 +456,10 @@ and `httpx` (`naapp-lib/pyproject.toml` on `agents/aweb-protocol-expert-naapp-ve
     purposes a kid may sign comes from the pinned manifest's `app_keys`, not
     from configuration, so the signer for a purpose picks the configured kid
     the manifest declares for it and refuses at startup when there is none.
-  - **One loader**, `aweb_naapp.runtime`, runs once at runtime startup and fails
-    startup on a missing, unreadable or malformed key. No naapp parses key bytes
+  - **One loader**, in a dependency-light `aweb_naapp` module (standard
+    library and `pynacl` only) so that core can load its own hook-producer key
+    with it too, runs once at startup and fails startup on a missing,
+    unreadable or malformed key. No naapp parses key bytes
     itself.
   - **File checks**: a regular file, not group- or world-writable. Read bits
     are left to the platform, because standard mounted secrets (Kubernetes
