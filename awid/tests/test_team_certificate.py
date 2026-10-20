@@ -112,3 +112,30 @@ def test_the_helper_imports_only_identity_primitives() -> None:
     )
     result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
     assert result.stdout.strip() == ""
+
+
+def test_a_header_over_the_cap_is_malformed_before_decoding() -> None:
+    from awid.team_certificate import MAX_HEADER_BYTES
+
+    nested = base64.b64encode(b"[" * 100000).decode()
+    for encoded in (nested, "A" * (MAX_HEADER_BYTES + 1)):
+        with pytest.raises(TeamCertificateError) as refused:
+            decode_team_certificate(encoded)
+        assert refused.value.reason == "malformed"
+
+
+def test_deep_nesting_under_the_cap_is_malformed_not_a_crash() -> None:
+    from awid.team_certificate import MAX_HEADER_BYTES
+
+    depth = MAX_HEADER_BYTES // 4 * 3
+    encoded = base64.b64encode(b"[" * depth).decode()
+    assert len(encoded) <= MAX_HEADER_BYTES
+    with pytest.raises(TeamCertificateError) as refused:
+        decode_team_certificate(encoded)
+    assert refused.value.reason == "malformed"
+
+
+def test_a_team_key_of_the_wrong_type_is_an_invalid_team_key() -> None:
+    with pytest.raises(TeamCertificateError) as refused:
+        verify_team_certificate_signature(certificate(), None)  # type: ignore[arg-type]
+    assert refused.value.reason == "invalid_team_key"

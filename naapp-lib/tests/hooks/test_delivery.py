@@ -120,3 +120,16 @@ def test_a_lone_surrogate_in_a_client_certificate_is_refused_not_a_crash() -> No
             "POST", "/hooks/ingest", headers, case["body"].encode(), _options(case["receive"])
         )
     assert refused.value.code == "certificate_invalid"
+
+
+@pytest.mark.parametrize("depth", [6000, 100000], ids=["under-the-cap", "over-the-cap"])
+def test_a_deeply_nested_client_certificate_is_refused_not_a_crash(depth) -> None:
+    case = next(c for c in VECTOR["positive_cases"] if "certificate" in c)
+    headers = dict(
+        case["headers"], **{"X-AWID-Team-Certificate": base64.b64encode(b"[" * depth).decode()}
+    )
+    with pytest.raises(Refused) as refused:
+        verify_delivery(
+            "POST", "/hooks/ingest", headers, case["body"].encode(), _options(case["receive"])
+        )
+    assert refused.value.code == "certificate_invalid"

@@ -17,7 +17,17 @@ from typing import Any
 from awid.did import public_key_from_did
 from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_with_public_key
 
-__all__ = ["TeamCertificateError", "decode_team_certificate", "verify_team_certificate_signature"]
+__all__ = [
+    "MAX_HEADER_BYTES",
+    "TeamCertificateError",
+    "decode_team_certificate",
+    "verify_team_certificate_signature",
+]
+
+# A real certificate header is well under 4 KiB. Anything longer is refused
+# before it is decoded, so unauthenticated input never reaches the JSON parser
+# at a size that could exhaust it.
+MAX_HEADER_BYTES = 8192
 
 
 class TeamCertificateError(ValueError):
@@ -33,10 +43,14 @@ class TeamCertificateError(ValueError):
 
 
 def decode_team_certificate(header: str) -> dict[str, Any]:
-    """Decode the ``X-AWID-Team-Certificate`` header: base64 of a JSON object."""
+    """Decode the ``X-AWID-Team-Certificate`` header: base64 of a JSON object,
+    at most MAX_HEADER_BYTES long."""
+    if len(header) > MAX_HEADER_BYTES:
+        raise TeamCertificateError("malformed")
     try:
         certificate = json.loads(base64.b64decode(header, validate=True).decode("utf-8"))
-    except (binascii.Error, ValueError, UnicodeDecodeError):
+    except (binascii.Error, ValueError, UnicodeDecodeError, RecursionError):
+        # RecursionError is what deep nesting raises on some Python versions.
         raise TeamCertificateError("malformed") from None
     if not isinstance(certificate, dict):
         raise TeamCertificateError("malformed")
@@ -51,7 +65,7 @@ def verify_team_certificate_signature(certificate: dict[str, Any], team_did_key:
         raise TeamCertificateError("missing_signature")
     try:
         team_key = public_key_from_did(team_did_key)
-    except (TypeError, ValueError):
+    except Exception:
         raise TeamCertificateError("invalid_team_key") from None
     unsigned = {name: value for name, value in certificate.items() if name != "signature"}
     try:

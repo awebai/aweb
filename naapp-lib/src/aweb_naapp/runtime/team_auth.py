@@ -456,9 +456,12 @@ def _verified_signed_payload(
     canonical = _decode_signed_payload_header(signed_payload_header)
     try:
         payload = json.loads(canonical)
-    except Exception as exc:
+        # A value that does not encode, such as a lone surrogate, can never be
+        # the canonical bytes the member signed.
+        recanonical = canonical_json_bytes(payload) if isinstance(payload, dict) else None
+    except (ValueError, TypeError, RecursionError) as exc:
         raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload") from exc
-    if not isinstance(payload, dict) or canonical_json_bytes(payload) != canonical:
+    if recanonical != canonical:
         raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload")
 
     if payload.get("v") != TEAM_AUTH_ENVELOPE_V2:
