@@ -35,6 +35,8 @@ MAX_LIFETIME_SECONDS = 86400
 MAX_ISSUED_AT_SKEW_SECONDS = 60
 SAFE_INTEGER = 2**53 - 1
 MAX_ELIGIBLE = 16
+MAX_FIELDS = 32
+FIELD_FORMATS = frozenset({"text", "date", "number", "money_minor"})
 
 _REFERENCE = re.compile(r"[A-Za-z0-9._-]{1,128}")
 _OPAQUE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
@@ -115,6 +117,7 @@ _APP_REQUEST_FIELDS = frozenset(
         "proposal_rev",
         "proposal_sha256",
         "choices",
+        "fields",
         "eligible_dids",
         "role",
     }
@@ -222,6 +225,24 @@ def _proposal_pair(rev: object, digest: object) -> bool:
 # ---------------------------------------------------------------- task body
 
 
+def _check_fields(fields: object) -> None:
+    """The display binding of a decision: 1-32 distinct {field, label, format}."""
+    if not isinstance(fields, list) or not 1 <= len(fields) <= MAX_FIELDS:
+        raise _refuse("schema_invalid", "fields")
+    for entry in fields:
+        if not isinstance(entry, Mapping) or set(entry) != {"field", "label", "format"}:
+            raise _refuse("schema_invalid", "fields")
+        field = entry["field"]
+        if not isinstance(field, str) or not 1 <= len(field) <= 128:
+            raise _refuse("schema_invalid", "fields")
+        if not _clean_text(entry["label"], 200) or entry["format"] not in FIELD_FORMATS:
+            raise _refuse("schema_invalid", "fields")
+    names = [entry["field"] for entry in fields]
+    labels = [entry["label"] for entry in fields]
+    if len(set(names)) != len(names) or len(set(labels)) != len(labels):
+        raise _refuse("schema_invalid", "fields")
+
+
 def validate_task(task: object) -> None:
     """Check a task body against docs/app-task-requests.md §3."""
     if not isinstance(task, Mapping) or set(task) != _TASK_FIELDS:
@@ -246,6 +267,12 @@ def validate_task(task: object) -> None:
             raise _refuse("schema_invalid", "eligible_dids on a request without a proposal")
     elif not _principal_set(eligible) or task["assignee_did"] not in eligible:
         raise _refuse("schema_invalid", "eligible_dids")
+    fields = request["fields"]
+    if request["proposal_rev"] is None:
+        if fields is not None:
+            raise _refuse("schema_invalid", "fields on a request without a proposal")
+    else:
+        _check_fields(fields)
     role = request["role"]
     if request["proposal_rev"] is None:
         if role is not None:
@@ -256,7 +283,14 @@ def validate_task(task: object) -> None:
     if choices is not None:
         if not isinstance(choices, list) or not 1 <= len(choices) <= 10:
             raise _refuse("schema_invalid", "choices")
-        if len(set(choices)) != len(choices) or not all(_matches(_CHOICE, c) for c in choices):
+        for option in choices:
+            if not isinstance(option, Mapping) or set(option) != {"value", "label"}:
+                raise _refuse("schema_invalid", "choices")
+            if not _matches(_CHOICE, option["value"]) or not _clean_text(option["label"], 4096):
+                raise _refuse("schema_invalid", "choices")
+        values = [option["value"] for option in choices]
+        labels = [option["label"] for option in choices]
+        if len(set(values)) != len(values) or len(set(labels)) != len(labels):
             raise _refuse("schema_invalid", "choices")
 
 

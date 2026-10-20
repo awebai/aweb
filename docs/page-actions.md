@@ -167,6 +167,27 @@ answer-route checks cover:
    fields, and `answered_by` equal to the signer. It then decides the approval
    (§6) in one local transaction.
 
+**What the card shows.** The host's `decision(task_id)` evidence returns, from
+the stored task and never from the page:
+- `options`: the task's `choices`, `{value, label}` in order;
+- `fields`: the task's `fields`, `{field, label, format}` in order;
+- the revisions, digests, status and authority the renderer checks;
+- `application_state`, when the naapp knows it: `pending` until the executor
+  resolves the action (§8), then `applied` or `failed`. Only `applied` may be
+  shown as applied; a recorded approval is not an applied one.
+
+The renderer refuses the card, showing no proposal and a host status saying
+why, unless the card's options equal `options` exactly (values, labels and
+order). It shows only the bound fields, in bound order, with the bound label
+and format, and nothing else from the record. It also refuses when a bound
+field is missing from the record at the verified revision, or when a
+`money_minor` field's record has no ISO 4217 `currency` (three uppercase
+letters): a person approving an amount sees its currency. Elsewhere on a page
+the two-decimal fallback of [page-format.md](page-format.md) §3 applies. For a
+bundle, `fields` describes every item record. The host checks the chosen value
+against the task's `choices`, never the page. `decision-display-v1.json`
+pins these cases.
+
 Staged content with no task answer is not approved. A task answer whose
 approval is not yet decided is visibly pending and cannot dispatch. If step 3
 is lost, the naapp finds the answer through its reconciliation read of the
@@ -247,9 +268,11 @@ the candidates, unless the action policy sets `allow_requester_approval`
 (aweb-acgh.25). A mint left with no candidate is refused with
 `no_eligible_approver`; for a page decision, that is a proposal whose only
 eligible answerer is its own proposer. At decide, the
-decider must be one of the frozen candidates, still designated, enrolled at
-the policy's assurance and not the requester; mint-time filtering alone is not
-enough (decision 53, approver sets in the B2 primitive).
+decider must be one of the frozen candidates, still designated and enrolled at
+the policy's assurance, and not the requester unless the policy sets
+`allow_requester_approval`, the same exception as at mint. Mint-time filtering
+alone is not enough (decision 53, approver sets in the B2 primitive).
+`approval-request-v1.json` `requester_cases` pin both rules each way.
 The comparison is of raw strings, so both sides are derived the same way,
 from the verified certificate, with `aweb_naapp.roles.principal_key`: the
 certificate's `member_did_aw` when it carries one, otherwise its

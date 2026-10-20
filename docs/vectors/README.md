@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 33
+`docs/vectors/*.json` is the only public protocol-vector authority for the 34
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -232,9 +232,10 @@ is `aweb_naapp.runtime.task_requests`. See
 
 ### `task-answer-v1.json`
 
-Conditional task answers (aweb-acgg.8): answer text digests, and one task's
-ordered answer, replay, reopen and conflict steps with the expected result of
-each. The answer digests are checked by `aweb_naapp.runtime.task_requests`; the
+Conditional task answers (aweb-acgg.8): answer text digests, the app's stage
+receipt with its refusals, and ordered steps for a decision task (eligible
+answerers, stage-gate refusals, replay, reopen and conflicts) and a plain
+task, with the expected result of each. The answer digests are checked by `aweb_naapp.runtime.task_requests`; the
 sequence is for the task service. See
 [app task requests](../app-task-requests.md) §4.
 
@@ -246,13 +247,23 @@ digests, and value refusals. The reference consumers are `aweb_naapp.pages` in
 `naapp-lib/tests/pages/` and `cli/go/awid/`. See
 [the page format](../page-format.md) §5.
 
+### `decision-display-v1.json`
+
+What a decision card shows (aweb-acgg.8): the host's evidence carries the
+task's signed `options` and `fields`, and each case gives a card's options and
+a record value with the expected display, in bound order with bound labels and
+formats, or the reason the card is refused (options differ, a bound field is
+missing, a money field has no ISO 4217 currency). It is for the shared
+renderer and its host. See [page actions](../page-actions.md) §5.
+
 ### `approval-request-v1.json`
 
 The approval primitive's `request_sha256` and challenge binding
 (aweb-acgg.8, aweb-acgh.4): the covered canonical bytes with the policy
 wrapper, digests for page decisions and a generic request, challenge bindings
-with and without a task answer, and refusals. Its consumer is the approval
-primitive in `aweb_naapp`. See [page actions](../page-actions.md) §6.
+with and without a task answer and per candidate, the requester rule at mint
+and decide each way, and refusals. Its consumer is the approval primitive in
+`aweb_naapp`. See [page actions](../page-actions.md) §6.
 
 ### `agent-status-v1.json`
 

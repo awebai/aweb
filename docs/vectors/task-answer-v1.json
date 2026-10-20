@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Conditional task answers (docs/app-task-requests.md §4). answer_sha256 is the bare hex SHA-256 of the UTF-8 bytes of body_md, which is the team-visible comment. `sequence` is one task's ordered steps with the expected result of each: expected_task_rev 'current' is the task's rev at that step, 'stale' an earlier one, 'missing' absent; 'proposal' 'task' sends the task's proposal fields, 'changed' a different proposal_sha256; same_receipt_as names the step index (0-based) whose receipt is returned unchanged. 'as' is the answering member: 'assignee' and 'colleague' are both in the task's eligible_dids, 'other_member' is not. Every answer carries a valid stage receipt unless 'stage_receipt' says otherwise ('expired': past its window).",
+  "description": "Conditional task answers (docs/app-task-requests.md §4). answer_sha256 is the bare hex SHA-256 of the UTF-8 bytes of body_md, which is the team-visible comment. `stage_receipt` pins the app's aweb.app-answer-stage/1. `sequence` is one decision task's ordered steps and `plain_sequence` a task without an app_request, each step with its expected result. expected_task_rev 'current' is the task's rev at that step, 'stale' an earlier one, 'missing' absent; 'proposal' 'task' sends the task's proposal fields, 'changed' a different proposal_sha256, 'none' no proposal; same_receipt_as names the step index (0-based) whose receipt is returned unchanged. 'as' is the answering member: 'assignee', 'colleague' and 'former_holder' are in the task's eligible_dids, and only 'former_holder' no longer holds its role; 'other_member' is not eligible. A step's stage_receipt is 'valid' unless stated: issued by the app for exactly that request's fields, signed with its app-request key, with a fresh nonce (or the named one). 'not_issued' and 'missing' send none, 'wrong_key' is signed with a key registered only for app-event, 'reused_nonce' carries a nonce already recorded, 'expired' is past its window. Every refused step commits nothing and records no nonce.",
   "bodies": [
     {
       "name": "plain",
@@ -948,20 +948,43 @@
       "step": "create",
       "task": {
         "choices": [
-          "approve",
-          "reject"
+          {
+            "value": "approve",
+            "label": "Approve"
+          },
+          {
+            "value": "reject",
+            "label": "Reject"
+          }
         ],
         "proposal_rev": 2,
         "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
         "eligible": [
           "assignee",
-          "colleague"
-        ]
+          "colleague",
+          "former_holder"
+        ],
+        "role": "pages.price-approver"
       },
       "result": {
         "status": 201,
         "question_rev": 1
       }
+    },
+    {
+      "step": "answer",
+      "as": "former_holder",
+      "expected_task_rev": "current",
+      "answer_key": "a0",
+      "choice": "approve",
+      "body": "plain",
+      "proposal": "task",
+      "stage_receipt": "not_issued",
+      "result": {
+        "status": 403,
+        "code": "target_mismatch"
+      },
+      "note": "still in the frozen eligible set but no longer holds the role, so the app issues no receipt; nothing commits"
     },
     {
       "step": "answer",
@@ -971,12 +994,45 @@
       "choice": "approve",
       "body": "plain",
       "proposal": "task",
+      "stage_receipt": "missing",
+      "result": {
+        "status": 403,
+        "code": "target_mismatch"
+      },
+      "note": "a decision answer without a stage receipt; nothing commits"
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "a1",
+      "choice": "approve",
+      "body": "plain",
+      "proposal": "task",
+      "stage_receipt": "wrong_key",
+      "result": {
+        "status": 403,
+        "code": "target_mismatch"
+      },
+      "note": "signed by an app key registered only for app-event, not app-request; nothing commits"
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "a1",
+      "choice": "approve",
+      "body": "plain",
+      "proposal": "task",
+      "stage_receipt": "valid",
+      "nonce": "n1",
       "result": {
         "status": 201,
         "question_rev": 1,
         "current": true,
         "comment": "body"
-      }
+      },
+      "note": "the refused attempts above committed nothing and consumed no nonce"
     },
     {
       "step": "answer",
@@ -1003,7 +1059,7 @@
       "stage_receipt": "expired",
       "result": {
         "status": 200,
-        "same_receipt_as": 1
+        "same_receipt_as": 4
       },
       "note": "replay returns the original receipt; neither expected_task_rev nor the stage receipt is rechecked, even once the receipt has expired"
     },
@@ -1051,7 +1107,7 @@
       "proposal": "task",
       "result": {
         "status": 200,
-        "same_receipt_as": 1,
+        "same_receipt_as": 4,
         "current": false
       }
     },
@@ -1076,6 +1132,7 @@
       "choice": "reject",
       "body": "markdown",
       "proposal": "task",
+      "stage_receipt": "not_issued",
       "result": {
         "status": 403,
         "code": "target_mismatch"
@@ -1142,6 +1199,24 @@
       "choice": "reject",
       "body": "markdown",
       "proposal": "task",
+      "stage_receipt": "reused_nonce",
+      "nonce": "n1",
+      "result": {
+        "status": 403,
+        "code": "target_mismatch"
+      },
+      "note": "a receipt valid for this request but carrying the nonce already recorded at step 4; nothing commits"
+    },
+    {
+      "step": "answer",
+      "as": "colleague",
+      "expected_task_rev": "current",
+      "answer_key": "a2",
+      "choice": "reject",
+      "body": "markdown",
+      "proposal": "task",
+      "stage_receipt": "valid",
+      "nonce": "n2",
       "result": {
         "status": 201,
         "question_rev": 2,
@@ -1149,14 +1224,14 @@
         "comment": "body",
         "answered_by": "colleague"
       },
-      "note": "any eligible answerer may answer the reopened question"
+      "note": "any eligible holder may answer the reopened question"
     },
     {
       "step": "read_receipt",
       "answer_key": "a1",
       "result": {
         "status": 200,
-        "same_receipt_as": 1,
+        "same_receipt_as": 4,
         "current": false
       }
     },
@@ -1165,8 +1240,53 @@
       "answer_key": "a2",
       "result": {
         "status": 200,
-        "same_receipt_as": 14,
+        "same_receipt_as": 18,
         "current": true
+      }
+    }
+  ],
+  "plain_sequence": [
+    {
+      "step": "create",
+      "task": {
+        "plain": true,
+        "assignee": "assignee"
+      },
+      "result": {
+        "status": 201,
+        "question_rev": 1
+      },
+      "note": "a task without an app_request, such as a dashboard request"
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "p1",
+      "choice": null,
+      "body": "plain",
+      "proposal": "none",
+      "stage_receipt": "valid",
+      "result": {
+        "status": 422,
+        "code": "schema_invalid"
+      },
+      "note": "a stage receipt is refused on a task that is not a decision; nothing commits"
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "p1",
+      "choice": null,
+      "body": "plain",
+      "proposal": "none",
+      "stage_receipt": "missing",
+      "result": {
+        "status": 201,
+        "question_rev": 1,
+        "current": true,
+        "comment": "body"
       }
     }
   ]
