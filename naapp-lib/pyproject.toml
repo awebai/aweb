@@ -50,6 +50,7 @@ dev = [
   "aweb-naapp[runtime]",
   "pytest>=9.0.0",
   "pytest-asyncio>=1.2.0",
+  "httpx2>=2.9.1",
   "ruff>=0.14.0",
   "mypy>=1.18.0",
 ]
