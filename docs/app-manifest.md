@@ -436,9 +436,13 @@ path is agent-visible is refused at install:
 - the answer tool itself declares other contexts
   (`answer_tool_contexts_invalid`);
 - another tool whose contexts include `agent` can reach the answer tool's
-  route: the same method, and a path whose segments, ignoring trailing and
-  repeated slashes, are equal or a placeholder on either side
-  (`answer_route_agent_visible`);
+  route as a server routes it, on the decoded path
+  (`answer_route_agent_visible`). The check is deliberately conservative: it
+  uses the same method, ignores trailing and repeated slashes, and lets a
+  caller segment holding a placeholder cover one or more segments, since its
+  value may carry an encoded `/`. v2 tool paths carry no percent-encoding, so
+  literal segments compare as the server sees them. This is defence in
+  depth; the guarantee is below;
 - another tool, the `invoke_tool` included, declares an `answer` input,
   top-level or inside an object body parameter (`answer_input_forbidden`).
 

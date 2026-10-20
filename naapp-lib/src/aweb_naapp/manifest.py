@@ -617,6 +617,9 @@ def _validate_v2(d: dict[str, Any], app_id: str, tools: dict[str, _Tool]) -> Non
     if len(set(names)) != len(names):
         raise _invalid("tool names must be unique")
     for tool in d["tools"]:
+        if "%" in tool.path:
+            raise _invalid(f"tool {tool.name!r} path must not carry percent-encoding")
+    for tool in d["tools"]:
         if tool.contexts is None:
             continue
         if not tool.contexts:
@@ -748,24 +751,32 @@ def _route(tool: _Tool) -> tuple[str, list[str]]:
     return _go_trim(tool.method).upper(), segments
 
 
-def _is_placeholder(segment: str) -> bool:
-    return len(segment) > 2 and segment.startswith("{") and segment.endswith("}")
+def _segments_reach(caller: list[str], target: list[str]) -> bool:
+    """A caller segment holding a placeholder covers one or more target
+    segments, because its value may carry an encoded '/' that the server decodes
+    before routing. A target segment holding a placeholder matches any one
+    caller segment."""
+    if not caller:
+        return not target
+    if "{" in caller[0]:
+        return any(_segments_reach(caller[1:], target[covered:]) for covered in range(1, len(target) + 1))
+    if not target or (caller[0] != target[0] and "{" not in target[0]):
+        return False
+    return _segments_reach(caller[1:], target[1:])
 
 
-def _routes_overlap(a: _Tool, b: _Tool) -> bool:
-    (method_a, segments_a), (method_b, segments_b) = _route(a), _route(b)
-    return method_a == method_b and len(segments_a) == len(segments_b) and all(
-        x == y or _is_placeholder(x) or _is_placeholder(y) for x, y in zip(segments_a, segments_b, strict=True)
-    )
+def _can_reach_route(caller: _Tool, target: _Tool) -> bool:
+    (method_caller, segments_caller), (method_target, segments_target) = _route(caller), _route(target)
+    return method_caller == method_target and _segments_reach(segments_caller, segments_target)
 
 
 def _validate_answer_routes(d: dict[str, Any], tools: dict[str, _Tool]) -> None:
-    """No agent-visible tool may reach a surface answer_tool's route: the same
-    method, and a path whose non-empty segments are equal or a placeholder on
-    either side, so trailing and repeated slashes do not make a different route."""
+    """No agent-visible tool may reach a surface answer_tool's route as a server
+    routes it, on the decoded path. Deliberately conservative, and defence in
+    depth: the guarantee is the naapp refusing answer-kind actions."""
     for name in _answer_tools(d["surfaces"]):
         for tool in d["tools"]:
-            if _go_trim(tool.name) != name and AGENT in tool.effective_contexts and _routes_overlap(tool, tools[name]):
+            if _go_trim(tool.name) != name and AGENT in tool.effective_contexts and _can_reach_route(tool, tools[name]):
                 raise _refuse("answer_route_agent_visible",
                               f"agent-visible tool {tool.name!r} can reach answer_tool {name!r}'s route")
 

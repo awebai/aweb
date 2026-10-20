@@ -9,13 +9,13 @@
   ],
   "mutation_semantics": "Each case starts from a deep copy of base_manifests[base] and applies mutations in order. Paths are RFC 6901 JSON Pointers. op=set replaces or adds the member or array element at path; a final token '-' appends to the array. op=remove deletes the member. The result is serialized as canonical JSON (sorted keys, no insignificant whitespace, UTF-8) and passed to the loader as bytes.",
   "error_codes": {
-    "manifest_invalid": "Not exactly one JSON object; a non-finite number; an unknown or wrongly typed field (null included) at any modeled level; a v2 field in v1; event_emitters in v2; or any v1 rule.",
+    "manifest_invalid": "Not exactly one JSON object; a v2 tool path with percent-encoding; a non-finite number; an unknown or wrongly typed field (null included) at any modeled level; a v2 field in v1; event_emitters in v2; or any v1 rule.",
     "manifest_version_unsupported": "manifest_version is neither 1 nor 2.",
     "tool_contexts_invalid": "invocation_contexts is empty, has duplicates or a value other than agent, surface, hook.",
     "surface_invalid": "A surface field value, bound, input binding or event binding is invalid.",
     "surface_tool_invalid": "A surface tool is unresolved, lacks the surface context, is public, or has the wrong method or mutation flag.",
     "answer_tool_contexts_invalid": "A surface answer_tool does not declare invocation_contexts exactly [\"surface\"]. Checked before surface_tool_invalid for the answer tool.",
-    "answer_route_agent_visible": "A v2 tool whose contexts include agent has the method of a surface answer_tool and a path that can match the same requests: after dropping empty segments (trailing and repeated slashes), segments are equal or either is a placeholder.",
+    "answer_route_agent_visible": "A v2 tool whose contexts include agent has the method of a surface answer_tool and a path that can match the same requests: after dropping empty segments (trailing and repeated slashes), each agent segment that holds a placeholder may cover one or more answer-route segments, since its value may carry an encoded '/', and every other segment is equal to the answer route's or faces an answer-route placeholder.",
     "answer_input_forbidden": "A v2 tool other than a surface answer_tool declares an answer property, top-level or in an object body parameter's schema; or a surface names its invoke_tool as its answer_tool.",
     "usage_invalid": "usage format is missing or invalid, or its snapshot tool is unresolved, public or a mutation.",
     "lifecycle_invalid": "lifecycle is empty, or a lifecycle tool is unresolved, public, or has the wrong mutation flag.",
@@ -2752,6 +2752,301 @@
       "expected": {
         "accepted": false,
         "error": "answer_route_agent_visible"
+      }
+    },
+    {
+      "name": "agent_catch_all_reaches_answer_route",
+      "description": "A path parameter's value may carry an encoded '/', which the server decodes before routing, so an agent placeholder can cover several segments of the answer route.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/-",
+          "value": {
+            "name": "relay",
+            "method": "POST",
+            "path": "/v1/{rest}",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "rest": {
+                  "type": "string"
+                },
+                "request": {
+                  "type": "object"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "rest",
+                "in": "path"
+              },
+              {
+                "name": "request",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "fixture:write"
+            ],
+            "mutation": true,
+            "invocation_contexts": [
+              "agent"
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "answer_route_agent_visible"
+      }
+    },
+    {
+      "name": "agent_partial_placeholder_reaches_answer_route",
+      "description": "A segment holding a placeholder with literal text around it ('p{rest}' with rest='1/answers') also covers several segments.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/-",
+          "value": {
+            "name": "relay",
+            "method": "POST",
+            "path": "/v1/workspaces/p{rest}",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "rest": {
+                  "type": "string"
+                },
+                "request": {
+                  "type": "object"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "rest",
+                "in": "path"
+              },
+              {
+                "name": "request",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "fixture:write"
+            ],
+            "mutation": true,
+            "invocation_contexts": [
+              "agent"
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "answer_route_agent_visible"
+      }
+    },
+    {
+      "name": "v2_tool_path_percent_encoded",
+      "description": "v2 tool paths carry no percent-encoding, so literal segments are compared as the server sees them.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/-",
+          "value": {
+            "name": "relay",
+            "method": "POST",
+            "path": "/v1/workspaces/{page_id}/%61nswers",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "page_id": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                },
+                "request": {
+                  "type": "object"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "page_id",
+                "in": "path"
+              },
+              {
+                "name": "request",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "fixture:write"
+            ],
+            "mutation": true,
+            "invocation_contexts": [
+              "agent"
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "agent_catch_all_other_method_allowed",
+      "description": "Route reach is per method: a GET catch-all cannot reach a POST answer route.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/-",
+          "value": {
+            "name": "browse",
+            "method": "GET",
+            "path": "/v1/{rest}",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "rest": {
+                  "type": "string"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "rest",
+                "in": "path"
+              }
+            ],
+            "scopes": [
+              "fixture:read"
+            ],
+            "mutation": false,
+            "invocation_contexts": [
+              "agent"
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "accepted": true,
+        "resolved": {
+          "manifest_version": 2,
+          "app_id": "fixture",
+          "agent_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status",
+            "browse"
+          ],
+          "surface_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "workspace-answer",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status",
+            "human-input"
+          ],
+          "hook_tools": [
+            "audit-ingest"
+          ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
+          "app_keys": [
+            {
+              "kid": "app-2026-10",
+              "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+              "purposes": [
+                "app-event",
+                "app-request",
+                "app-usage"
+              ]
+            }
+          ],
+          "surfaces": [
+            {
+              "id": "workbench",
+              "label": "Workspace",
+              "format": "aweb.page/1",
+              "list_tool": "workspace-list",
+              "read_tool": "workspace-read",
+              "invoke_tool": "workspace-invoke",
+              "answer_tool": "workspace-answer",
+              "resource_param": "page_id",
+              "invocation_param": "request",
+              "events": [
+                {
+                  "type": "fixture/workspace.changed",
+                  "resource_field": "resource_ref",
+                  "revision_field": "rev"
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "format": "aweb.usage/1",
+            "snapshot_tool": "usage-snapshot"
+          },
+          "lifecycle": {
+            "export_tool": "workspace-export",
+            "delete_tool": "workspace-delete",
+            "status_tool": "lifecycle-status"
+          },
+          "hooks": {
+            "registration_version": 1,
+            "registrations": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-operation",
+                "tool": "audit-ingest",
+                "scopes": [
+                  "fixture:audit-ingest"
+                ]
+              }
+            ],
+            "productions": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-command",
+                "reads": [
+                  "workspace-list"
+                ]
+              }
+            ]
+          }
+        }
       }
     },
     {

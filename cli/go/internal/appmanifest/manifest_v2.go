@@ -562,6 +562,9 @@ func validateV2(m Manifest) error {
 			return codedf(CodeManifestInvalid, "duplicate tool name %q", name)
 		}
 		names[name] = true
+		if strings.Contains(tool.Path, "%") {
+			return codedf(CodeManifestInvalid, "tool %q path must not carry percent-encoding", name)
+		}
 	}
 	tools := toolIndex(m.Tools)
 	for _, tool := range m.Tools {
@@ -801,8 +804,9 @@ func answerTools(surfaces Surfaces) map[string]bool {
 }
 
 // validateAnswerRoutes refuses an agent-visible tool that can reach a surface
-// answer_tool's route: the same method, and a path whose non-empty segments
-// are equal or a placeholder on either side.
+// answer_tool's route as a server routes it, on the decoded path. It is
+// deliberately conservative, and defence in depth: the guarantee is the
+// naapp refusing answer-kind actions.
 func validateAnswerRoutes(m Manifest, tools map[string]*Tool) error {
 	for name := range answerTools(m.Surfaces) {
 		answer := tools[name]
@@ -811,7 +815,7 @@ func validateAnswerRoutes(m Manifest, tools map[string]*Tool) error {
 			if strings.TrimSpace(tool.Name) == name || !toolContexts(tool)[ContextAgent] {
 				continue
 			}
-			if routesOverlap(tool, answer) {
+			if canReachRoute(tool, answer) {
 				return codedf(CodeAnswerRouteAgentVisible, "agent-visible tool %q can reach answer_tool %q's route", tool.Name, name)
 			}
 		}
@@ -819,25 +823,19 @@ func validateAnswerRoutes(m Manifest, tools map[string]*Tool) error {
 	return nil
 }
 
-func routesOverlap(a, b *Tool) bool {
-	if strings.ToUpper(strings.TrimSpace(a.Method)) != strings.ToUpper(strings.TrimSpace(b.Method)) {
+// canReachRoute reports whether some request the caller tool sends can be
+// routed to the target tool: the same method, and decoded paths that can
+// match.
+func canReachRoute(caller, target *Tool) bool {
+	if strings.ToUpper(strings.TrimSpace(caller.Method)) != strings.ToUpper(strings.TrimSpace(target.Method)) {
 		return false
 	}
-	pathA, errA := validateRelativePath(a.Path)
-	pathB, errB := validateRelativePath(b.Path)
-	if errA != nil || errB != nil {
+	callerPath, errCaller := validateRelativePath(caller.Path)
+	targetPath, errTarget := validateRelativePath(target.Path)
+	if errCaller != nil || errTarget != nil {
 		return false
 	}
-	segmentsA, segmentsB := routeSegments(pathA), routeSegments(pathB)
-	if len(segmentsA) != len(segmentsB) {
-		return false
-	}
-	for i := range segmentsA {
-		if segmentsA[i] != segmentsB[i] && !isPlaceholderSegment(segmentsA[i]) && !isPlaceholderSegment(segmentsB[i]) {
-			return false
-		}
-	}
-	return true
+	return segmentsReach(routeSegments(callerPath), routeSegments(targetPath))
 }
 
 // routeSegments splits a path into its non-empty segments, so trailing and
@@ -846,8 +844,26 @@ func routeSegments(path string) []string {
 	return strings.FieldsFunc(path, func(r rune) bool { return r == '/' })
 }
 
-func isPlaceholderSegment(segment string) bool {
-	return len(segment) > 2 && strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}")
+// segmentsReach matches caller segments against target segments. A caller
+// segment holding a placeholder covers one or more target segments, because
+// its value may carry an encoded '/' that the server decodes before routing.
+// A target segment holding a placeholder matches any one caller segment.
+func segmentsReach(caller, target []string) bool {
+	if len(caller) == 0 {
+		return len(target) == 0
+	}
+	if strings.Contains(caller[0], "{") {
+		for covered := 1; covered <= len(target); covered++ {
+			if segmentsReach(caller[1:], target[covered:]) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(target) == 0 || (caller[0] != target[0] && !strings.Contains(target[0], "{")) {
+		return false
+	}
+	return segmentsReach(caller[1:], target[1:])
 }
 
 // validateAnswerInputs refuses an answer input on every tool except a surface
