@@ -74,7 +74,7 @@ egress = [
 # (a subprocess test pins that). Installing awid-service brings that package's
 # own dependencies, which the core server and every naapp already carry.
 hooks = [
-  "awid-service",
+  "awid-service>=0.5.30",
   "pgdbm>=0.5.0",
   "pynacl>=1.6.2",
 ]
