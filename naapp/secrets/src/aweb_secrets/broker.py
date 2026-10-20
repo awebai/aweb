@@ -12,7 +12,8 @@ An ``oauth2-client-credentials`` secret is first exchanged at its owner-set
 token endpoint, through the guard to that endpoint's own destination, with
 the client authenticated by ``client_secret_basic`` or ``client_secret_post``
 and the owner-set scope. The access token is cached for its lifetime less
-60 s, never returned, and injected as a bearer. The client secret and the
+60 s under a key secrets derives (:class:`aweb_secrets.tokens.TokenKey`),
+never returned, and injected as a bearer. The client secret and the
 token are both known values. If the exchange fails, the target was never
 called: :class:`TokenExchangeFailed` is a kind of ``EgressNotSent``.
 """
@@ -24,7 +25,6 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
 from urllib.parse import quote_plus, urlencode
 
 from aweb_naapp.egress import (
@@ -40,6 +40,7 @@ from aweb_secrets.credential_shapes import is_credential_shaped_value
 from aweb_secrets.injection import Injection, inject
 from aweb_secrets.redaction import KnownValues
 from aweb_secrets.responses import BrokeredResult, handle_response
+from aweb_secrets.tokens import TokenCache, TokenKey
 
 OAUTH2 = "oauth2-client-credentials"
 # A cached access token is dropped this long before the upstream says it expires.
@@ -51,14 +52,14 @@ class TokenExchangeFailed(EgressNotSent):
     never called. The message never carries a credential or the response."""
 
 
-class TokenCache(Protocol):
-    """Where access tokens are kept between calls; custody keeps them sealed."""
+@dataclass(frozen=True)
+class SecretVersion:
+    """The secret version a call opened, which its cached tokens belong to."""
 
-    async def get(self, key: str) -> str | None:
-        """The token cached under ``key``, if it has not expired."""
-        ...
-
-    async def put(self, key: str, token: str, expires_at: datetime) -> None: ...
+    installation_id: str
+    team_id: str
+    secret_id: str
+    version: int
 
 
 @dataclass(frozen=True)
@@ -137,14 +138,22 @@ async def _oauth2_injection(
     url: str,
     destination: Destination | None,
     tokens: TokenCache | None,
-    key: str | None,
+    secret: SecretVersion | None,
 ) -> Injection:
     client_id = _required(value, "client_id")
     client_secret = _required(value, "client_secret")
     for name in ("token_endpoint", "client_auth", "scope"):
         _required(kind_params, name)
-    if destination is None or tokens is None or key is None:
-        raise ValueError("an OAuth2 secret needs its token destination, token cache and key")
+    if destination is None or tokens is None or secret is None:
+        raise ValueError("an OAuth2 secret needs its token destination, token cache and version")
+    key = TokenKey(
+        installation_id=secret.installation_id,
+        team_id=secret.team_id,
+        secret_id=secret.secret_id,
+        version=secret.version,
+        token_endpoint=kind_params["token_endpoint"],
+        scope=kind_params["scope"],
+    )
     token = await tokens.get(key)
     if token is None:
         token, lifetime = await _exchange(
@@ -183,13 +192,13 @@ async def broker(
     bounds: Bounds | None = None,
     token_destination: Destination | None = None,
     tokens: TokenCache | None = None,
-    token_key: str | None = None,
+    secret: SecretVersion | None = None,
 ) -> BrokeredCall:
     """Send one request with ``value`` injected; ``headers`` are the agent's.
 
     An OAuth2 secret also needs ``token_destination`` (its token endpoint's
-    destination), ``tokens`` and ``token_key``, the secret version's key in
-    the cache. Raises the guard's ``EgressRefused`` before sending, and its
+    destination), ``tokens`` and ``secret``, the version whose tokens the
+    cache keeps. Raises the guard's ``EgressRefused`` before sending, and its
     ``EgressNotSent`` (including :class:`TokenExchangeFailed`) or
     ``EgressOutcomeUnknown`` when the exchange fails.
     """
@@ -202,7 +211,7 @@ async def broker(
             url=url,
             destination=token_destination,
             tokens=tokens,
-            key=token_key,
+            secret=secret,
         )
     else:
         injection = inject(
