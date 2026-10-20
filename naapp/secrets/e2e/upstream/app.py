@@ -3,7 +3,7 @@
 It holds its own copy of every credential, given to it by name when it
 starts, and refuses a request whose credential is wrong or missing with 401.
 A request that passes gets an echo of what arrived (method, path, query, body
-hash, idempotency key), so a test can see what the broker actually sent.
+hash, idempotency key, accepted encodings), so a test can see what the broker actually sent.
 
 - ``/bearer/echo…``: ``Authorization: Bearer <token>``.
 - ``/basic/echo…``: ``Authorization: Basic base64(user:password)``.
@@ -214,6 +214,7 @@ def create_upstream(
                 "query": request.scope["query_string"].decode("latin-1"),
                 "body_sha256": hashlib.sha256(body).hexdigest(),
                 "idempotency_key": request.headers.get("idempotency-key"),
+                "accept_encoding": request.headers.get("accept-encoding"),
             }
         )
 

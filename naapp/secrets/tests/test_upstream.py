@@ -115,7 +115,11 @@ async def test_the_echo_reports_what_arrived(client, creds) -> None:
         "/bearer/echo/charges/ch_1",
         params={"expand": "x"},
         content=b'{"amount":500}',
-        headers={"Authorization": f"Bearer {creds.bearer}", "Idempotency-Key": "secrets-d1"},
+        headers={
+            "Authorization": f"Bearer {creds.bearer}",
+            "Idempotency-Key": "secrets-d1",
+            "Accept-Encoding": "gzip, deflate",
+        },
     )
     assert response.status_code == 200
     assert response.json() == {
@@ -125,6 +129,7 @@ async def test_the_echo_reports_what_arrived(client, creds) -> None:
         "query": "expand=x",
         "body_sha256": hashlib.sha256(b'{"amount":500}').hexdigest(),
         "idempotency_key": "secrets-d1",
+        "accept_encoding": "gzip, deflate",
     }
 
 

@@ -1,0 +1,217 @@
+"""Brokered calls through the real egress guard to the S19 upstream over TLS.
+
+The upstream listens on this host's own non-loopback address and is reached
+as an internal destination with that address's exact CIDR, under
+``internal_destinations: allowed``, by a name a local DNS server answers. The
+credentials are generated when the test runs.
+"""
+
+from __future__ import annotations
+
+import json
+import secrets
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from pathlib import Path
+
+import pytest
+from aweb_naapp.egress import (
+    AddressPolicy,
+    Destination,
+    DnsResolver,
+    Egress,
+    EgressRefused,
+    InternalDestinations,
+    parse_destination,
+)
+from aweb_naapp_testing.network import DnsServer, local_address, make_certificates
+from upstream.app import UpstreamCredentials, create_upstream
+from upstream.serve import serving
+
+from aweb_secrets.broker import broker
+
+NAME = "upstream.secrets.test"
+OTHER = "other.secrets.test"
+
+
+@dataclass
+class Upstream:
+    creds: UpstreamCredentials
+    egress: Egress
+    port: int
+    host: str
+    requests: list[str]
+
+    def url(self, path: str, name: str = NAME) -> str:
+        return f"https://{name}:{self.port}{path}"
+
+    def destination(self, name: str = NAME, **entry: object) -> Destination:
+        return parse_destination(
+            {
+                "host": name,
+                "port": self.port,
+                "path": "/**",
+                "methods": ["GET", "POST"],
+                "network": "internal",
+                "cidr": f"{self.host}/32",
+                **entry,
+            },
+            internal_destinations=InternalDestinations.ALLOWED,
+        )
+
+
+def _credentials() -> UpstreamCredentials:
+    return UpstreamCredentials(
+        bearer=secrets.token_urlsafe(24),
+        basic_username="svc-" + secrets.token_hex(4),
+        basic_password=secrets.token_urlsafe(24),
+        header_name="X-Upstream-Key",
+        header_prefix="Key ",
+        header_value=secrets.token_urlsafe(24),
+        query_param="key",
+        query_value=secrets.token_urlsafe(24),
+        oauth_client_id="client-" + secrets.token_hex(4),
+        oauth_client_secret=secrets.token_urlsafe(24),
+        oauth_scope="read:things",
+        sigv4_access_key_id="AKIA" + secrets.token_hex(8).upper(),
+        sigv4_secret_access_key=secrets.token_urlsafe(30),
+        sigv4_region="eu-west-1",
+        sigv4_service="execute-api",
+    )
+
+
+@pytest.fixture
+async def upstream(tmp_path: Path) -> AsyncIterator[Upstream]:
+    host = local_address()
+    certificates = make_certificates(tmp_path, [NAME, OTHER], [])
+    creds = _credentials()
+    app = create_upstream(creds)
+    requests: list[str] = []
+
+    @app.middleware("http")
+    async def record(request, call_next):
+        requests.append(request.headers.get("host", ""))
+        return await call_next(request)
+
+    dns = DnsServer(records={(NAME, "A"): [host], (OTHER, "A"): [host]})
+    await dns.start()
+    try:
+        async with serving(app, certificates, host) as port:
+            egress = Egress(
+                addresses=AddressPolicy(internal_destinations=InternalDestinations.ALLOWED),
+                resolver=DnsResolver(nameservers=["127.0.0.1"], port=dns.port),
+                user_agent="aweb-secrets/test",
+                ca_file=certificates.ca_file,
+            )
+            yield Upstream(creds, egress, port, host, requests)
+    finally:
+        dns.close()
+
+
+def _secret(upstream: Upstream, kind: str) -> tuple[dict[str, str], dict[str, str]]:
+    c = upstream.creds
+    return {
+        "bearer": ({"value": c.bearer}, {}),
+        "basic": ({"username": c.basic_username, "password": c.basic_password}, {}),
+        "header": ({"value": c.header_value}, {"name": c.header_name, "prefix": c.header_prefix}),
+        "query": ({"value": c.query_value}, {"param": c.query_param}),
+    }[kind]
+
+
+async def _call(upstream: Upstream, kind: str, *, url: str | None = None, headers=(), **kw):
+    value, kind_params = _secret(upstream, kind)
+    return await broker(
+        upstream.egress,
+        method=kw.pop("method", "GET"),
+        url=url or upstream.url(f"/{kind}/echo"),
+        destination=kw.pop("destination", None) or upstream.destination(),
+        headers=list(headers),
+        body=kw.pop("body", b""),
+        kind=kind,
+        value=value,
+        kind_params=kind_params,
+        secret_ref="upstream-test",
+        max_bytes=4096,
+        projection=None,
+        token_issuing=False,
+    )
+
+
+@pytest.mark.parametrize("kind", ["bearer", "basic", "header", "query"])
+async def test_each_scheme_verifies_at_the_upstream(upstream: Upstream, kind: str) -> None:
+    call = await _call(upstream, kind)
+    assert call.result.status == 200, call.result.body
+    assert call.result.disposition == "returned"
+    assert json.loads(call.result.body)["scheme"] == kind
+
+
+@pytest.mark.parametrize("kind", ["bearer", "basic", "header", "query"])
+async def test_the_request_asks_for_an_unencoded_response(upstream: Upstream, kind: str) -> None:
+    call = await _call(upstream, kind)
+    assert json.loads(call.result.body)["accept_encoding"] == "identity"
+
+
+async def test_a_query_credential_echoed_back_is_redacted(upstream: Upstream) -> None:
+    call = await _call(upstream, "query")
+    echoed = json.loads(call.result.body)
+    assert upstream.creds.query_value not in call.result.body.decode()
+    assert echoed["query"] == "key=[REDACTED:upstream-test]"
+    assert call.result.redaction_count == 1
+    assert call.recorded_url == upstream.url("/query/echo") + "?key=[REDACTED]"
+    assert upstream.creds.query_value not in call.recorded_url
+
+
+async def test_a_wrong_host_gets_no_injection(upstream: Upstream) -> None:
+    with pytest.raises(EgressRefused) as refused:
+        await _call(upstream, "bearer", url=upstream.url("/bearer/echo", name=OTHER))
+    assert refused.value.code == "destination_not_in_scope"
+    assert upstream.requests == []
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        ("Authorization", "Bearer agent-own"),
+        ("X-Upstream-Key", "Key agent-own"),
+        ("Cookie", "a=b"),
+        ("Accept-Encoding", "gzip"),
+        ("X-Request-Id", "ghp_" + "Ab3dEf7hJk" * 4),
+    ],
+    ids=["authorization", "injected-name", "cookie", "accept-encoding", "credential-shaped"],
+)
+async def test_a_refused_agent_header_sends_nothing(upstream: Upstream, header) -> None:
+    with pytest.raises(EgressRefused) as refused:
+        await _call(upstream, "header", headers=[header])
+    assert refused.value.code == "header_not_allowed"
+    assert upstream.requests == []
+
+
+async def test_an_allowed_agent_header_passes(upstream: Upstream) -> None:
+    call = await _call(upstream, "bearer", headers=[("Accept", "application/json")])
+    assert call.result.status == 200
+
+
+async def test_an_agent_url_carrying_the_injected_param_sends_nothing(upstream: Upstream) -> None:
+    with pytest.raises(EgressRefused) as refused:
+        await _call(upstream, "query", url=upstream.url("/query/echo?key=mine"))
+    assert refused.value.code == "params_invalid"
+    assert upstream.requests == []
+
+
+async def test_a_wrong_credential_is_refused_by_the_upstream(upstream: Upstream) -> None:
+    call = await broker(
+        upstream.egress,
+        method="GET",
+        url=upstream.url("/bearer/echo"),
+        destination=upstream.destination(),
+        headers=[],
+        body=b"",
+        kind="bearer",
+        value={"value": "not-the-upstream-token"},
+        kind_params={},
+        secret_ref="upstream-test",
+        max_bytes=4096,
+        projection=None,
+        token_issuing=False,
+    )
+    assert call.result.status == 401
