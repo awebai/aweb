@@ -191,5 +191,9 @@
   {
     "case": "bundle-card-partial-answer",
     "expect": "no partial approval of a hashed bundle; changing an item makes a new bundle and needs a new approval"
+  },
+  {
+    "case": "bundle-item-revised-after-hashing",
+    "expect": "item record_rev or proposal_sha256 no longer matches the bundle; host refuses the card and the old approval cannot be answered; a new bundle and approval are needed"
   }
 ]

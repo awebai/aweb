@@ -1011,6 +1011,9 @@
                 "expires_at": {
                   "type": "string",
                   "format": "date-time"
+                },
+                "bundle": {
+                  "type": "boolean"
                 }
               },
               "required": [
