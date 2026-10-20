@@ -30,7 +30,7 @@ import dns.resolver
 import httpcore
 
 from .addresses import AddressPolicy, IPAddress
-from .headers import HeaderRefusal, HeaderRules, check_headers
+from .headers import HeaderRefusal, HeaderRules, check_headers, check_injected
 from .refused import EgressRefused
 from .urls import CanonicalURL, Destination, Network, canonical_url, match_destination
 
@@ -147,6 +147,7 @@ class Egress:
         *,
         header_rules: HeaderRules,
         headers: Sequence[tuple[str, str]] = (),
+        injected: Sequence[tuple[str, str]] = (),
         refuse_header: HeaderRefusal | None = None,
         body: bytes = b"",
         bounds: Bounds | None = None,
@@ -157,6 +158,13 @@ class Egress:
         method, against the destination under the deploy setting, so a caller
         that skipped either step is still refused. Whether the destination is
         internal, and its CIDR, come from the destination alone.
+
+        ``headers`` are the caller's and pass the header rules. ``injected``
+        are the headers the caller's credential handling sets, each a name
+        ``header_rules.injected`` declares; they are sent after the caller's
+        headers, and their values reach only the wire. The guard sets
+        ``Host`` to the canonical authority, so a signature over the request
+        signs ``canonical_url(url).authority``.
         """
         bounds = bounds or self.bounds
         canonical = canonical_url(str(url))
@@ -172,6 +180,7 @@ class Egress:
             rules=header_rules,
             refuse=refuse_header,
         )
+        injected = check_injected(injected, rules=header_rules)
         if len(body) > bounds.max_request_bytes:
             raise EgressRefused("params_invalid", "request_body", "over the request bound")
         internal = destination.cidr if destination.network is Network.INTERNAL else None
@@ -184,7 +193,7 @@ class Egress:
             addresses = await self._resolve(canonical.host, bounds, deadline)
         self.addresses.check(addresses, internal=internal)
         return await self._exchange(
-            method, canonical, addresses[0], headers, body, bounds, deadline
+            method, canonical, addresses[0], [*headers, *injected], body, bounds, deadline
         )
 
     async def _resolve(self, host: str, bounds: Bounds, deadline: float) -> list[IPAddress]:
@@ -216,6 +225,8 @@ class Egress:
         request_headers = [
             ("Host", url.authority),
             ("User-Agent", self.user_agent),
+            # The guard never decodes a body, so it asks for none to be encoded.
+            ("Accept-Encoding", "identity"),
             *headers,
             ("Connection", "close"),
         ]

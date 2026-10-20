@@ -15,12 +15,13 @@ from aweb_naapp.egress import (
     InternalDestinations,
     canonical_url,
     check_headers,
+    check_injected,
     match_destination,
     parse_destination,
 )
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
-VECTORS = json.loads((AWEB_ROOT / "docs" / "vectors" / "egress-url-v1.json").read_text())
+VECTORS = json.loads((AWEB_ROOT / "docs" / "vectors" / "egress-url-v2.json").read_text())
 
 
 def _named(cases: list[dict]) -> list:
@@ -173,3 +174,38 @@ def test_the_extra_refusal_cannot_allow_a_refused_header() -> None:
 def test_header_rules_have_no_defaults() -> None:
     with pytest.raises(TypeError):
         HeaderRules()  # type: ignore[call-arg]
+
+
+INJECTED = HEADERS["injected"]
+
+
+def _declared(case: dict) -> HeaderRules:
+    return HeaderRules(injected=case["declared"], amz_allowed=[], is_credential=_never)
+
+
+@pytest.mark.parametrize("case", _named(INJECTED["allowed"]))
+def test_injected_allowed(case: dict) -> None:
+    headers = [tuple(pair) for pair in case["headers"]]
+    assert check_injected(headers, rules=_declared(case)) == headers
+
+
+@pytest.mark.parametrize("case", _named(INJECTED["refused"]))
+def test_injected_refused(case: dict) -> None:
+    with pytest.raises(EgressRefused) as refused:
+        check_injected([tuple(pair) for pair in case["headers"]], rules=_declared(case))
+    assert refused.value.code == case["code"]
+    for _, value in case["headers"]:
+        assert value not in str(refused.value)
+
+
+def test_every_guard_set_header_is_refused_even_when_declared() -> None:
+    for name in INJECTED["guard_set"]:
+        for spelling in (name, name.lower(), name.upper()):
+            rules = HeaderRules(injected=[name], amz_allowed=[], is_credential=_never)
+            with pytest.raises(EgressRefused):
+                check_injected([(spelling, "x")], rules=rules)
+
+
+def test_an_injected_credential_value_is_not_checked_by_the_detector() -> None:
+    rules = HeaderRules(injected=["Authorization"], amz_allowed=[], is_credential=lambda v: True)
+    assert check_injected([("Authorization", CANARY)], rules=rules) == [("Authorization", CANARY)]

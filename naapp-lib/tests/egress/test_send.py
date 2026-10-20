@@ -415,3 +415,117 @@ async def test_internal_cidr_must_hold_the_resolved_address(network: Network) ->
         await _send(network, "GET", "/ok", destination=network.internal(cidr="10.99.0.0/16"))
     assert refused.value.code == "destination_address_denied"
     assert network.tls.seen == []
+
+
+# Injected credential headers and the encoding the guard asks for
+
+INJECTING = HeaderRules(
+    injected=["Authorization", "X-Vendor-Key"], amz_allowed=[], is_credential=lambda value: False
+)
+
+
+def _sent_headers(network: Network) -> dict[str, list[str]]:
+    sent: dict[str, list[str]] = {}
+    for name, value in network.tls.seen[-1].headers:
+        sent.setdefault(name.lower(), []).append(value)
+    return sent
+
+
+async def test_an_injected_credential_header_reaches_the_wire(network: Network) -> None:
+    egress = network.egress()
+    await egress.send(
+        "GET",
+        network.url("/echo"),
+        network.internal(header_allow=["X-Vendor"]),
+        header_rules=INJECTING,
+        headers=[("X-Vendor", "1")],
+        injected=[("Authorization", "Bearer canary-token"), ("X-Vendor-Key", "k-1")],
+    )
+    sent = _sent_headers(network)
+    assert sent["authorization"] == ["Bearer canary-token"]
+    assert sent["x-vendor-key"] == ["k-1"]
+    assert sent["x-vendor"] == ["1"]
+    assert sent["host"] == [f"{NAME}:{network.tls.port}"]
+    assert sent["user-agent"] == ["egress-test/1"]
+
+
+@pytest.mark.parametrize(
+    "injected",
+    [
+        [("X-Undeclared", "v")],
+        [("Authorization", "Bearer a"), ("authorization", "Bearer b")],
+        [("Authorization", "Bearer a\r\nX-Smuggled: 1")],
+        [("Authorization", "Bearer ☃")],
+        [("Bad Name", "v")],
+    ],
+)
+async def test_an_injected_header_outside_the_rules_sends_nothing(
+    network: Network, injected: list[tuple[str, str]]
+) -> None:
+    rules = HeaderRules(
+        injected=["Authorization", "X-Undeclared-Not", "Bad Name"],
+        amz_allowed=[],
+        is_credential=lambda value: False,
+    )
+    with pytest.raises(EgressRefused) as refused:
+        await network.egress().send(
+            "GET", network.url("/ok"), network.internal(), header_rules=rules, injected=injected
+        )
+    assert refused.value.code == "header_not_allowed"
+    assert network.tls.seen == []
+    assert sum(network.dns.queries.values()) == 0
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Host", "User-Agent", "Connection", "Content-Length", "Accept-Encoding", "Transfer-Encoding"],
+)
+async def test_the_guard_set_headers_cannot_be_injected(network: Network, name: str) -> None:
+    rules = HeaderRules(injected=[name], amz_allowed=[], is_credential=lambda value: False)
+    with pytest.raises(EgressRefused) as refused:
+        await network.egress().send(
+            "GET",
+            network.url("/ok"),
+            network.internal(),
+            header_rules=rules,
+            injected=[(name, "x")],
+        )
+    assert refused.value.code == "header_not_allowed"
+    assert network.tls.seen == []
+
+
+async def test_a_refused_injected_value_never_appears_in_the_refusal(network: Network) -> None:
+    secret = "Bearer canary-secret-value"
+    rules = HeaderRules(injected=["Authorization"], amz_allowed=[], is_credential=lambda v: False)
+    for injected in ([("Authorization", secret + "\n")], [("X-Other", secret)]):
+        with pytest.raises(EgressRefused) as refused:
+            await network.egress().send(
+                "GET", network.url("/ok"), network.internal(), header_rules=rules, injected=injected
+            )
+        assert "canary-secret-value" not in str(refused.value)
+        assert "canary-secret-value" not in repr(refused.value)
+
+
+async def test_the_guard_asks_for_the_identity_encoding(network: Network) -> None:
+    await _send(network, "GET", "/echo")
+    assert _sent_headers(network)["accept-encoding"] == ["identity"]
+
+
+async def test_a_caller_cannot_set_the_accepted_encoding(network: Network) -> None:
+    with pytest.raises(EgressRefused) as refused:
+        await _send(
+            network,
+            "GET",
+            "/ok",
+            destination=network.internal(header_allow=["Accept-Encoding"]),
+            headers=[("Accept-Encoding", "gzip")],
+        )
+    assert refused.value.code == "header_not_allowed"
+    assert network.tls.seen == []
+
+
+async def test_an_encoded_response_is_returned_as_it_came(network: Network) -> None:
+    response = await _send(network, "GET", "/encoded")
+    assert response.status == 200
+    assert ("Content-Encoding", "gzip") in response.headers
+    assert response.body != b"hidden"

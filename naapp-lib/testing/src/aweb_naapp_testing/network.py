@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import gzip
 import ipaddress
 import json
 import socket
@@ -198,8 +199,9 @@ class TlsServer:
     """An HTTPS/1.1 server on ``host`` with a few fixed paths.
 
     ``/ok`` answers JSON, ``/redirect`` answers 302 to another host,
-    ``/big?n=`` answers ``n`` bytes, ``/slow`` never answers, and ``/echo``
-    returns the request it saw as JSON.
+    ``/big?n=`` answers ``n`` bytes, ``/slow`` never answers, ``/encoded``
+    answers a gzip-encoded body, and ``/echo`` returns the request it saw as
+    JSON.
     """
 
     certificates: Certificates
@@ -251,6 +253,8 @@ class TlsServer:
             await _respond(writer, 302, b"", [("Location", "https://elsewhere.example/next")])
         elif path.startswith("/big?n="):
             await _respond(writer, 200, b"x" * int(path.split("=")[1]), [])
+        elif path == "/encoded":
+            await _respond(writer, 200, gzip.compress(b"hidden"), [("Content-Encoding", "gzip")])
         elif path == "/echo":
             echoed = {"request_line": seen.request_line, "headers": seen.headers, "sni": sni}
             await _respond(writer, 200, json.dumps(echoed).encode(), [])
