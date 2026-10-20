@@ -125,7 +125,13 @@ the answer path stays a single surface-only tool that the manifest's
 answer-route checks cover:
 
 1. **Stage.** A body `{"stage": {expected_task_rev, choice, input,
-   proposal_rev, proposal_sha256, answer_key}}`. The naapp checks that the task
+   proposal_rev, proposal_sha256, answer_key}}`. `input` is only the
+   answer action's additional input, validated against its `input_schema`. It
+   never repeats `choice`, the proposal or the task revision, which the stage
+   body carries. An answer action with no additional input declares
+   `{"type": "object", "additionalProperties": false}` and stages `{}`; a
+   renderer fills only fields the person entered, and refuses visibly when the
+   schema requires input it has no control for. The naapp checks that the task
    is the card's and that the proposal is still current. It then stores the
    answer (choice and input) with the page, and returns
    `{answer_key, body_md, answer_sha256, approval_id, challenge}`. `body_md`
