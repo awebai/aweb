@@ -611,6 +611,12 @@ The two are deliberately separate:
   - `identity_grant.minted`, `identity_grant.revoked`.
   - `app.installed`, `app.updated`, `hook_binding.activated`,
     `hook_binding.revoked`.
+  - `app_key.revoked`: the per-team key revocation of aweb-acgh.7, enqueued
+    in the transaction that sets the key row's `revoked_at`. Its per-type
+    fields are `app_id`, `kid` and `purposes`; `team_id` and `actor` are the
+    envelope's (§A6). It changes which events a target accepts, so it needs
+    its own record; key registration at install is covered by
+    `app.installed` and `app.updated`.
   - `membership.connected` (the `connect` projection) and
     `membership.workspace_retired` (the lifecycle cascade).
   - Excluded, with reasons in the vector: reservations, which are operational
@@ -636,12 +642,12 @@ Python tests:
 
 | Vector | Covers |
 | --- | --- |
-| `docs/vectors/hook-catalog-v1.json` | Hooks, class, producer kinds, audit-critical flag, precedence, the flat payload allowlists (including `post-secret-use-hook` and the `post-governance-hook` act/direction table), client command classes. |
+| `docs/vectors/hook-catalog-v1.json` | Hooks, class, producer kinds, audit-critical flag, precedence, the flat payload allowlists (including `post-secret-use-hook`, the `post-governance-hook` act/direction table, and the per-type fields of each §A10 mutation type, such as `app_key.revoked`), client command classes. |
 | `hook-event-envelope-v1.json` | Seeds, canonical bytes, signatures. Negatives: wrong prefix, non-canonical bytes, float, duplicate key, unknown payload field, team mismatch, client-signed server hook, a client event whose actor is not its signer, unknown catalog version. Secret digests: `request_sha256` over the pre-injection request, with a negative where the digest covers injected credential bytes. |
 | `hook-delivery-credential-v1.json` | `hook-delivery`. Negatives: an app-event or `hook-resolve` credential at a hook target, cross-audience, tampered body, wrong binding, stale timestamp. (`hook-resolve` vectors belong to acgh.7.) |
 | `owner-act-v1.json` | Activate and revoke, plus each logs act. Negatives: admin signer, rotated-out team key, expired, nonce reuse, subject/generation mismatch, a valid act of the wrong type or audience, a team certificate presented as an owner act. |
 | `hook-binding-cases-v1.json` | Semantic cases: admin install leaves bindings pending, a new generation supersedes, an unknown catalog is refused, the `active_from` pad, revocation cancels pending deliveries. |
-| `post-mutation-hook-sites-v1.json` | Enqueue inventory, plus the `on_mutation` mapping (§A10). |
+| `post-mutation-hook-sites-v1.json` | Enqueue inventory for every §A10 v1 mutation type, `app_key.revoked` included, plus the `on_mutation` mapping (§A10). |
 | `logs-chain-v1.json` | Genesis, append, receipt, checkpoint, a purged stub that still verifies. Negatives: reorder, gap, altered content, forged checkpoint. |
 | `team-auth-envelope-v2.json` (added case) | A positive request carrying `trace_id`. |
 
