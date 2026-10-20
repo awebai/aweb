@@ -474,6 +474,16 @@ class PgApprovalStore:
         """A retired approver stops being a candidate of every approval still
         pending, and loses their link to it; the approvals they decided and
         that are not yet dispatched are revoked. Returns those revoked."""
+        # Lock every approval this touches first, in a fixed order, so that a
+        # decision on any of them serialises with the retirement.
+        await tx.fetch_all(
+            "SELECT a.approval_id FROM {{tables.approvals}} a "
+            "WHERE a.decided_subject = $1 OR (a.state = 'pending' AND EXISTS ("
+            "SELECT 1 FROM {{tables.approval_candidates}} c "
+            "WHERE c.approval_id = a.approval_id AND c.subject = $1)) "
+            "ORDER BY a.approval_id FOR UPDATE",
+            subject,
+        )
         retired = await tx.fetch_all(
             "UPDATE {{tables.approval_candidates}} c SET retired_at = $2 "
             "FROM {{tables.approvals}} a "

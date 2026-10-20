@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS {{tables.approval_candidates}} (
     position INTEGER NOT NULL,
     retired_at TIMESTAMPTZ,
     PRIMARY KEY (approval_id, subject),
-    UNIQUE (approval_id, position)
+    UNIQUE (approval_id, position),
+    UNIQUE (approval_id, subject, scope)
 );
 
 CREATE INDEX IF NOT EXISTS idx_approval_candidates_active_subject
@@ -24,8 +25,9 @@ ALTER TABLE {{tables.approvals}}
     ADD CHECK ((decided_scope IS NULL) = (decided_at IS NULL)),
     ADD CHECK ((authenticator IS NULL) = (decided_at IS NULL)),
     ADD CHECK ((auth_evidence_ref IS NULL) = (decided_at IS NULL)),
-    ADD FOREIGN KEY (approval_id, decided_subject)
-        REFERENCES {{tables.approval_candidates}}(approval_id, subject);
+    -- The decider is one of the approval's candidates, in that candidate's scope.
+    ADD FOREIGN KEY (approval_id, decided_subject, decided_scope)
+        REFERENCES {{tables.approval_candidates}}(approval_id, subject, scope);
 
 CREATE INDEX IF NOT EXISTS idx_approvals_decided_subject
     ON {{tables.approvals}}(decided_subject) WHERE decided_subject IS NOT NULL;

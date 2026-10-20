@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -181,6 +182,9 @@ class KeyAuthenticator:
         self.assurance = assurance
         self.keys: dict[str, VerifyKey] = {}
         self.issued: dict[bytes, tuple[str, str, Purpose, str | None, bytes]] = {}
+        # Runs once a proof has verified, before the primitive records anything:
+        # a test makes something else commit at exactly that point.
+        self.after_verify: Callable[[], Awaitable[None]] | None = None
 
     def register(self, subject: str) -> SigningKey:
         key = SigningKey.generate()
@@ -234,6 +238,8 @@ class KeyAuthenticator:
             key.verify(binding, bytes.fromhex(proof["signature"]))
         except BadSignatureError as exc:
             raise AuthenticationFailed("bad signature") from exc
+        if self.after_verify is not None:
+            await self.after_verify()
         return Evidence(
             assurance=self.assurance,
             subject=proof["subject"],

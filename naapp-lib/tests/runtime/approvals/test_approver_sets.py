@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
+import asyncpg
 import pytest
 
 from aweb_naapp.runtime.approvals import (
@@ -17,6 +18,7 @@ from aweb_naapp.runtime.approvals import (
     ApprovalState,
     Approver,
     Assurance,
+    DecidedBy,
     Decision,
     DeliveryStatus,
     PresentationKind,
@@ -440,3 +442,142 @@ async def test_one_person_designated_in_two_scopes_is_one_candidate(world: World
     approval = await mint(world)
     assert [(c.scope, c.subject) for c in approval.candidates] == [("ops.alice", alice.subject)]
     assert len(world.mailbox.sent) == 1
+
+
+# Retirement and decision serialise
+
+
+async def test_a_retirement_committed_during_the_ceremony_stops_the_decision(world: World):
+    people, approval = await task_approval(world)
+    (alice, alice_key), (bob, _) = people["ops.alice"], people["ops.bob"]
+    world.task_answers.record("answer-1", approval, Decision.REJECT, alice.principal_did)
+    retirement = ApprovalRevocation(world.store, world.audit, world.clock)
+
+    async def retire_alice() -> None:
+        async with world.store.db.transaction() as tx:
+            await retirement.approver_retired(alice.subject, retired_by="owner-1", tx=tx)
+
+    issued = await world.approvals.challenge(
+        approval.approval_id,
+        Decision.REJECT,
+        Assurance.PASSKEY,
+        task_answer_ref="answer-1",
+        subject=alice.subject,
+    )
+    world.passkey.after_verify = retire_alice
+    decided = world.approvals.decide(
+        approval.approval_id,
+        Decision.REJECT,
+        Assurance.PASSKEY,
+        sign(alice_key, alice.subject, issued),
+        task_answer_ref="answer-1",
+        subject=alice.subject,
+    )
+    assert await refusal(decided) is Refusal.APPROVER_RETIRED
+    after = await world.approvals.get(approval.approval_id)
+    assert after.state is ApprovalState.PENDING
+    assert bob.subject in {c.subject for c in after.candidates if c.retired_at is None}
+
+
+async def waiting_on_a_lock(w: World) -> bool:
+    return bool(
+        await w.store.db.fetch_value(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+            "WHERE datname = current_database() AND wait_event_type = 'Lock')"
+        )
+    )
+
+
+async def test_a_decision_waits_for_a_retirement_in_flight(world: World):
+    people, approval = await task_approval(world)
+    alice, alice_key = people["ops.alice"]
+    world.task_answers.record("answer-1", approval, Decision.APPROVE, alice.principal_did)
+    issued = await world.approvals.challenge(
+        approval.approval_id,
+        Decision.APPROVE,
+        Assurance.PASSKEY,
+        task_answer_ref="answer-1",
+        subject=alice.subject,
+    )
+    retirement = ApprovalRevocation(world.store, world.audit, world.clock)
+    async with world.store.db.transaction() as tx:
+        await retirement.approver_retired(alice.subject, retired_by="owner-1", tx=tx)
+        deciding = asyncio.create_task(
+            world.approvals.decide(
+                approval.approval_id,
+                Decision.APPROVE,
+                Assurance.PASSKEY,
+                sign(alice_key, alice.subject, issued),
+                task_answer_ref="answer-1",
+                subject=alice.subject,
+            )
+        )
+        for _ in range(200):
+            if await waiting_on_a_lock(world) or deciding.done():
+                break
+            await asyncio.sleep(0.01)
+        assert not deciding.done()
+    assert await refusal(deciding) is Refusal.APPROVER_RETIRED
+    assert (await world.approvals.get(approval.approval_id)).state is ApprovalState.PENDING
+
+
+async def test_mint_keeps_only_candidates_in_the_policys_scopes(world: World):
+    world.policies.set(policy(policy_ref="deploy", approver_scopes=("ops.alice",)))
+    world.directory.designate(person("ops.alice"))
+    world.directory.designate(person("owners.mallory"))
+    world.directory.candidates = lambda policy, request: _all_designated(world)  # type: ignore[method-assign]
+    approval = await mint(world)
+    assert [c.scope for c in approval.candidates] == ["ops.alice"]
+
+
+async def _all_designated(w: World) -> list[Approver]:
+    return list(w.directory.by_scope.values())
+
+
+async def test_a_link_view_shows_only_its_own_candidate(world: World):
+    people = designate_all(world, link_reveals_request=True)
+    alice, _ = people["ops.alice"]
+    approval = await mint(world)
+    linked = await world.approvals.open_link(link(world, approval, alice))
+    assert linked.request == REQUEST
+    assert [c.subject for c in linked.approval.candidates] == [alice.subject]
+
+
+async def test_the_store_records_a_decider_only_in_their_candidate_scope(world: World):
+    people = designate_all(world)
+    alice, _ = people["ops.alice"]
+    approval = await mint(world)
+    with pytest.raises(asyncpg.ForeignKeyViolationError):
+        async with world.store.locked(approval.approval_id, None) as locked:
+            await locked.set_decision(
+                ApprovalState.APPROVED,
+                DecidedBy("owners.root", alice.subject, Assurance.PASSKEY, "e"),
+                None,
+                None,
+                world.clock(),
+            )
+    assert (await world.approvals.get(approval.approval_id)).state is ApprovalState.PENDING
+
+
+async def test_a_candidate_standing_for_the_requester_is_excluded(world: World):
+    world.policies.set(policy(policy_ref="deploy", approver_scopes=("ops.alice", "ops.bob")))
+    alice, bob = principal("ops.alice"), principal("ops.bob")
+    world.directory.designate(alice)
+    world.directory.designate(bob)
+    approval = await mint(world, requested_by=alice.principal_did)
+    assert [c.subject for c in approval.candidates] == [bob.subject]
+
+
+async def test_a_policy_can_keep_a_candidate_standing_for_the_requester(world: World):
+    world.policies.set(
+        policy(policy_ref="deploy", approver_scopes=("ops.alice",), allow_requester_approval=True)
+    )
+    alice = principal("ops.alice")
+    world.directory.designate(alice)
+    alice_key = world.passkey.register(alice.subject)
+    approval = await mint(world, requested_by=alice.principal_did)
+    assert [c.subject for c in approval.candidates] == [alice.subject]
+    world.policies.set(policy(policy_ref="deploy", approver_scopes=("ops.alice",)))
+    assert await refusal(decide(world, approval, alice, alice_key)) is (
+        Refusal.NO_ELIGIBLE_APPROVER
+    )

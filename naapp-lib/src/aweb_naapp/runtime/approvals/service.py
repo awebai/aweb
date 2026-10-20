@@ -85,6 +85,17 @@ def _sha256(canonical: bytes) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def _is_requester(approver: Approver | Candidate, requested_by: str) -> bool:
+    """Whether this approver is the requester: by subject, or by the principal
+    the approver stands for, when one is known."""
+    return requested_by in (approver.subject, approver.principal_did)
+
+
+def _seen_by(approval: Approval, candidate: Candidate) -> Approval:
+    """The approval as one candidate sees it: not who else may approve."""
+    return replace(approval, candidates=(candidate,))
+
+
 async def _emit(
     audit: AuditSink,
     kind: AuditKind,
@@ -289,12 +300,14 @@ class Approvals:
         requested_by: str,
         presentation: PresentationKind,
     ) -> list[Approver]:
-        """The directory's approvers, one per subject, without the requester
-        unless the policy allows it. A task presentation needs each candidate's
+        """The directory's approvers in the policy's scopes, one per subject,
+        without the requester unless the policy allows it. A task presentation needs each candidate's
         principal, to match the answer's."""
         eligible: dict[str, Approver] = {}
         for approver in await self._approvers.candidates(policy, request):
-            if approver.subject == requested_by and not policy.allow_requester_approval:
+            if approver.scope not in policy.approver_scopes:
+                continue
+            if _is_requester(approver, requested_by) and not policy.allow_requester_approval:
                 continue
             if presentation is PresentationKind.TASK and approver.principal_did is None:
                 continue
@@ -335,17 +348,21 @@ class Approvals:
     # The approver
 
     async def open_link(self, link_token: str) -> LinkedApproval:
-        """What the link locates. Reading consumes nothing. The request itself
-        is included only when the policy lets link possession reveal it;
-        otherwise the approver authenticates first with `view`."""
+        """What the link locates, for the candidate it was sent to. Reading
+        consumes nothing. The request itself is included only when the policy
+        lets link possession reveal it; otherwise the approver authenticates
+        first with `view`."""
         link = await self._usable_link(link_token)
         approval = await self._store.get(link.approval_id)
         if approval is None or approval.state_at(self._clock()) is not ApprovalState.PENDING:
             raise ApprovalRefused(Refusal.LINK_UNAVAILABLE)
+        candidate = approval.candidate(link.candidate_subject)
+        assert candidate is not None
         policy = await self._policies.current(approval.policy_ref)
         revealed = policy is not None and policy.reveals_request_on_link()
         return LinkedApproval(
-            approval=approval, request=await self._request(approval) if revealed else None
+            approval=_seen_by(approval, candidate),
+            request=await self._request(approval) if revealed else None,
         )
 
     async def _request(self, approval: Approval) -> Mapping[str, Any]:
@@ -427,7 +444,7 @@ class Approvals:
     ) -> None:
         """The candidate may still decide: still designated, not retired, and
         not the requester unless the policy allows it."""
-        if candidate.subject == approval.requested_by and not policy.allow_requester_approval:
+        if _is_requester(candidate, approval.requested_by) and not policy.allow_requester_approval:
             raise ApprovalRefused(Refusal.NO_ELIGIBLE_APPROVER)
         if await self._still_eligible(approval, candidate):
             return
@@ -577,7 +594,9 @@ class Approvals:
         )
         self._check_pending(approval)
         await self._verified(approval, candidate, Purpose.VIEW, assurance, proof, None)
-        return LinkedApproval(approval=approval, request=await self._request(approval))
+        return LinkedApproval(
+            approval=_seen_by(approval, candidate), request=await self._request(approval)
+        )
 
     async def decide(
         self,
@@ -608,7 +627,16 @@ class Approvals:
         )
 
         async with self._store.locked(approval_id, tx) as locked:
-            self._check_pending(locked.approval)
+            current = self._check_pending(locked.approval)
+            # Eligibility again under the lock: a retirement serialises with
+            # this decision on the approval row, so one committed during the
+            # ceremony is seen here.
+            locked_candidate = current.candidate(candidate.subject)
+            if locked_candidate is None:
+                raise ApprovalRefused(Refusal.APPROVER_MISMATCH)
+            await self._check_candidate(
+                current, locked_candidate, await self._current_policy(current)
+            )
             now = self._clock()
             state = (
                 ApprovalState.APPROVED if decision is Decision.APPROVE else ApprovalState.REJECTED

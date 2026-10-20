@@ -129,8 +129,9 @@ class ActionPolicy:
     shows the request before the approver authenticates; by default it does
     only below passkey assurance. `allow_requester_approval` keeps the
     requester eligible when they are also a designated approver; by default
-    the requester is excluded. The comparison is between `requested_by` and an
-    approver's subject, so it holds only when the app names both the same way.
+    the requester is excluded. `requested_by` is compared with an approver's
+    subject and, when set, the principal they stand for, so it holds only when
+    the app names the requester the same way.
     """
 
     policy_ref: str
