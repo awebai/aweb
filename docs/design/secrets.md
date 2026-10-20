@@ -938,11 +938,12 @@ adopted this outcome vocabulary.
   authority.** Install authority can belong to any certified member today, and
   so possibly to an agent. Designating the first owner-approver, and
   re-designating owners after a lockout, therefore take the team owner act
-  `aweb.owner-act/1` defined by the hooks design (aweb-acgh.1, §A3): a statement
-  signed by the current AWID team key, single-use and short-lived. The act is
-  `naapp-owner.designate`. Its subject is
-  `{installation_id, generation, app_id, approver_id, contact_sha256}`, which
-  commits to the contact without carrying it.
+  `aweb.owner-act/1` defined by the hooks design (aweb-acgh.1, audit-substrate
+  §A3): a statement signed by the current AWID team key, single-use and
+  short-lived. Bootstrap uses its `app-role.designate` act with the
+  owner-approver role. Recovery after a lockout uses `app-credential.recover`,
+  and `app-role.revoke` removes an owner. The subject commits to the contact by
+  hash, without carrying it.
   - For BYOT the owner signs it locally with `aw`.
   - Where a custodial deployment holds the controller key, it signs only after a
     fresh, interactive step-up by the human owner. That requirement on custodial
@@ -1135,8 +1136,8 @@ SOT §2), reached through the hook.
   secrets' outbox **in the same DB transaction as the transition**.
 - If the outbox insert fails, the transition does not commit. The request is
   refused or stays in its previous state, and nothing is dispatched.
-- A dispatch therefore never happens without a durably enqueued
-  `dispatch_intent` event.
+- A dispatch therefore never happens without durably enqueued `admitted` and
+  `dispatching` events.
 - **No active target.** secrets resolves targets through aweb-acgh.7, using the
   hooks design's freshness bound of 60 s at most. The rule counts only a
   registration whose `active_from` is at or before the event's `occurred_at`.
@@ -1164,61 +1165,85 @@ retries never re-mint it. The hooks seat owns delivery, retry, the signature
 envelope and target registration.
 
 **Schema.** The hooks design owns the `post-secret-use-hook` schema: one action
-enum and one flat allowlisted payload, recorded in its catalog vector (aweb-acgh.1,
-audit-substrate §A2). This design cites that schema and does not define its own.
-The actor comes from the common envelope and is not repeated in the payload.
-secrets' part is deciding which transition emits which action:
+enum and one flat allowlisted payload (aweb-acgh.1, `docs/design/audit-substrate.md`
+§A2 at 23a88a8ad325, to be recorded in `docs/vectors/hook-catalog-v1.json` once
+reviewed). This design cites that schema and does not define its own. The actor
+comes from the common envelope. secrets' part is deciding which transition emits
+which action, with the fields it fills:
 
 | secrets transition (§11.1) | hook `action` |
 | --- | --- |
-| refusal at admission or at the fence | `refused` |
+| refusal at admission or at the fence | `refused`, with `refusal_code` |
 | `awaiting_approval` | `approval_requested` |
-| approval decided (approve, deny, expire, revoke) | `approval_decided` |
-| `dispatching`, enqueued in the fence transaction before any byte is sent | `dispatch_intent` |
-| `completed`, including a withheld result or an undeclared credential, recorded as `disposition` | `completed` |
-| `not_sent` | `not_sent` (proposed addition) |
+| approval decided (approve, deny, expire, revoke) | `approval_decided`, with `approval_evidence_sha256` when a passkey decided |
+| `admitted` | `admitted` |
+| `dispatching`, enqueued in the fence transaction before any byte is sent | `dispatching` |
+| `completed`, including a withheld result or an undeclared credential | `completed`, with `disposition` and `returned_hmac` |
+| `not_sent` | `not_sent` |
 | `outcome_unknown` | `outcome_unknown` |
 | `reconciled_*` | `reconciled` |
 
-**Proposed additions to the flat allowlist.** These are for the hooks seat to
-accept or reject in the catalog vector:
+The fields secrets fills are:
 
-- `not_sent`, as an action;
-- `kind`: `broker` or `run_job`. For `run_job`, `operation` is `job_id@digest`
-  and `runner_id`;
-- `secret_version`, `grant_id`, `policy_digest`;
-- `approval_evidence_sha256`;
+- `op_kind`: `broker` or `run_job`.
+- **Broker target.** `target_method`, `target_host`, `target_port` and
+  `target_path_template`. Concrete paths and query values are never sent.
+- **Job target.** `runner_id`, `job_id` and `job_digest`.
+- **Grant and policy.** `secret_version`, `grant_id` and `policy_digest`.
 - `disposition`: `returned`, `withheld`, `stored_as_secret`, or
-  `returned_credential` only if Q8 keeps `return`;
-- `refusal_code`, from a fixed enum;
-- `returned_sha256`, the SHA-256 of the bytes actually returned to the agent
-  after projection and redaction. It is absent when the result is withheld, so
-  the log cannot confirm a guess at a withheld credential-bearing response.
-  secrets keeps a keyed HMAC of the raw response in its own record, as
-  reconciliation evidence.
+  `returned_credential` if Juan keeps `return` (Q8).
+- **`returned_hmac`.** This is an HMAC, keyed by secrets, over the bytes returned
+  to the agent. It is not a plain hash: a plain hash of a returned credential, or
+  of one that redaction missed, would be a confirmable credential digest. The
+  field is absent when the result is withheld. secrets keeps an HMAC of the raw
+  response in its own record as reconciliation evidence.
 
-For open requests, `operation` is the method plus canonical host and path
-template, as the hooks design limits it. Concrete paths and query values are
-never sent.
+`refusal_code` is a fixed enum, proposed for the catalog vector:
 
-**Governance acts.** These are the widening changes confirmed on the console:
+- grants and policy: `grant_missing`, `grant_revoked`, `operation_not_allowed`,
+  `open_request_not_allowed`, `policy_rate_limited`, `policy_window_closed`;
+- destination and request: `destination_not_in_scope`,
+  `destination_address_denied`, `internal_destinations_disabled`,
+  `header_not_allowed`, `params_invalid`, `token_issuing_denied`;
+- secret state: `secret_disabled`, `installation_disabled`,
+  `secret_version_changed`, `custody_unavailable`;
+- identity: `attestation_unavailable`;
+- approval: `approval_denied`, `approval_expired`, `approval_revoked`,
+  `approval_unrenderable`, `distinct_approver_required`;
+- dispatch: `reconciliation_pending`, `idempotency_conflict`;
+- audit: `audit_target_unavailable`, `audit_delivery_stalled`;
+- runner: `runner_unavailable`, `job_not_allowed`.
 
-- owner and approver designation, passkey enrolment and recovery (B3's audit
-  interface);
-- secret creation, value replacement, disabling and enabling;
-- destinations, operations, jobs and runners;
-- grants and roles;
-- every containment act (§12).
+**Governance acts** go on the generic `post-governance-hook` (audit-substrate §A2).
+The catalog fixes its act enum and fixes each act's direction:
 
-They go on the **one generic governance hook** that the hooks seat is adding to
-the v1 catalog. That hook carries no app name, and pages' approver acts use it
-as well. secrets fires it at each of those points, with the same fail-closed
-enqueue rule: a governance act that cannot enqueue does not commit.
+| secrets act | hook `act` |
+| --- | --- |
+| owner and approver designation and revocation (B3's audit interface) | `role.designated`, `role.revoked` |
+| passkey and contact enrolment, recovery and revocation | `credential.enrolled`, `credential.recovered`, `credential.revoked` |
+| grant lifecycle | `grant.created`, `grant.changed`, `grant.revoked` |
+| secret, destination, operation and job lifecycle | `resource.created`, `resource.version_added`, `resource.replaced`, `resource.disabled`, `resource.enabled` |
+| policy changes | `policy.changed` |
+| runners | `runner.registered`, `runner.deregistered` |
+| kill switch | `installation.disabled`, `installation.enabled` |
 
-**One effect, one hook.** Under the hooks design's rule, a secrets tool call
-whose effect is a secret use fires only `post-secret-use-hook`. A governance act
-fires only the governance hook. Other secrets tool calls fire
-`post-manifest-command-hook` through the shared middleware.
+How audit availability applies to governance acts:
+
+- **Widening acts are audit-critical.** One that cannot enqueue does not commit,
+  and it is refused, like a use, when no audit target is active.
+- **Narrowing acts are never gated.** That covers every containment act in §12.
+  They are always enqueued, but never refused for audit availability, because
+  containment must not wait.
+
+secrets fills `authority` with one of:
+
+- `owner_act`, with `owner_act_sha256`;
+- `passkey_session`, with `approval_evidence_sha256`;
+- `team_cert`, for narrowing acts through the agent API.
+
+**One effect, one hook.** A secrets tool call fires only its specific hook:
+`post-secret-use-hook` for a use, `post-governance-hook` for a governance act. It
+never also fires `post-manifest-command-hook`.
 
 **Provenance and production.** secrets declares `post-secret-use-hook`, and the
 governance hook, in its manifest v2 `hooks.productions`. An owner must activate
@@ -1509,7 +1534,7 @@ rows.
 | Grant status, admission fence, hook-target resolution | aweb-acgh.7; D1 F5/F6 | §4.1 step 2; §11.5 "no registered target". |
 | Approval primitive and WebAuthn | B2+B3, aweb-acgh.4 | §10. Requirements (a) and (b) in §10.1, plus the owner-lockout protection in §10.2, proposed as generic B3 behaviour. |
 | Team owner act `aweb.owner-act/1` and its verifier | hooks design (aweb-acgh.1); `aweb_naapp` | §10.2: bootstrap and re-designation. |
-| Generic governance hook in the v1 catalog; post-secret-use-hook schema and action enum | hooks design (aweb-acgh.1) | §11.5. secrets cites the schema and proposes the additions listed there. |
+| `post-governance-hook`; `post-secret-use-hook` schema, action enum and `refusal_code` enum | hooks design (aweb-acgh.1, §A2) | §11.5. secrets cites the schema. The hooks seat has taken secrets' additions; the `refusal_code` list in §11.5 goes into its catalog vector. |
 | Manifest v2 with `invocation_contexts`, the `hooks` slot (`productions`) and `app_keys` with purposes | D1 C3 (in D1 §5) | §13 and §11.5. Open requests already fit as typed body parameters. |
 | `link_out` widget restricted to the installed app's pinned origin | D1 C1/R1, a *proposed* vocabulary addition that needs Juan's acceptance | §6.1. It shows the normalized domain, opens a new top-level context with no opener or referrer, and carries no token in the URL. |
 | Hook envelope, catalog, provenance purpose, producer outbox, delivery | hooks seat; B4 for the shared code | §11.5. secrets owns its payload fields and its enqueue points. |
