@@ -185,7 +185,7 @@ requires-dist = [
     { name = "idna", marker = "extra == 'egress'", specifier = ">=3.10" },
     { name = "pgdbm", marker = "extra == 'outbox'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'runtime'", specifier = ">=0.5.0" },
-    { name = "publicsuffixlist", marker = "extra == 'egress'", specifier = ">=1.0.2" },
+    { name = "publicsuffixlist", marker = "extra == 'egress'", specifier = "==1.1.0.20261018" },
     { name = "pydantic-settings", marker = "extra == 'runtime'", specifier = ">=2.10.1" },
     { name = "pynacl", marker = "extra == 'runtime'", specifier = ">=1.6.2" },
     { name = "webauthn", marker = "extra == 'runtime'", specifier = ">=3.0.1" },

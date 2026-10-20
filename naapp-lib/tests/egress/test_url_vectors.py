@@ -1,0 +1,133 @@
+"""The frozen egress URL contract, consumed in place from the repository root."""
+
+from __future__ import annotations
+
+import json
+from importlib.metadata import version
+from pathlib import Path
+
+import pytest
+
+from aweb_naapp.egress import (
+    PUBLIC_SUFFIX_LIST_VERSION,
+    EgressRefused,
+    InternalDestinations,
+    canonical_url,
+    check_headers,
+    match_destination,
+    parse_destination,
+)
+
+AWEB_ROOT = Path(__file__).resolve().parents[3]
+VECTORS = json.loads((AWEB_ROOT / "docs" / "vectors" / "egress-url-v1.json").read_text())
+
+
+def _named(cases: list[dict]) -> list:
+    return [pytest.param(case, id=case["name"]) for case in cases]
+
+
+def test_public_suffix_list_is_the_pinned_one() -> None:
+    pinned = VECTORS["public_suffix_list"]["version"]
+    assert PUBLIC_SUFFIX_LIST_VERSION == pinned
+    assert version(VECTORS["public_suffix_list"]["package"]) == pinned
+
+
+@pytest.mark.parametrize("case", _named(VECTORS["canonical"]))
+def test_canonical(case: dict) -> None:
+    assert str(canonical_url(case["url"])) == case["canonical"]
+
+
+@pytest.mark.parametrize("case", _named(VECTORS["canonical"]))
+def test_canonical_is_a_fixed_point(case: dict) -> None:
+    assert str(canonical_url(case["canonical"])) == case["canonical"]
+
+
+@pytest.mark.parametrize("case", _named(VECTORS["refused"]))
+def test_refused(case: dict) -> None:
+    with pytest.raises(EgressRefused) as refused:
+        canonical_url(case["url"])
+    assert (refused.value.code, refused.value.rule) == (case["code"], case["rule"])
+
+
+@pytest.mark.parametrize("case", _named(VECTORS["destinations"]))
+def test_destination(case: dict) -> None:
+    parse_destination(
+        case["destination"],
+        internal_destinations=InternalDestinations(case["internal_destinations"]),
+    )
+
+
+@pytest.mark.parametrize("case", _named(VECTORS["refused_destinations"]))
+def test_refused_destination(case: dict) -> None:
+    with pytest.raises(EgressRefused) as refused:
+        parse_destination(
+            case["destination"],
+            internal_destinations=InternalDestinations(case["internal_destinations"]),
+        )
+    assert (refused.value.code, refused.value.rule) == (case["code"], case["rule"])
+
+
+@pytest.mark.parametrize("case", _named(VECTORS["matches"]))
+def test_match(case: dict) -> None:
+    setting = InternalDestinations(case["internal_destinations"])
+    destination = parse_destination(case["destination"], internal_destinations=setting)
+    params = match_destination(
+        destination, case["method"], case["url"], internal_destinations=setting
+    )
+    assert params == case["params"]
+
+
+@pytest.mark.parametrize("case", _named(VECTORS["refused_matches"]))
+def test_refused_match(case: dict) -> None:
+    # A destination confirmed while internal destinations were allowed must
+    # still be refused at dispatch once the deployment disables them.
+    destination = parse_destination(
+        case["destination"], internal_destinations=InternalDestinations.ALLOWED
+    )
+    with pytest.raises(EgressRefused) as refused:
+        match_destination(
+            destination,
+            case["method"],
+            case["url"],
+            internal_destinations=InternalDestinations(case["internal_destinations"]),
+        )
+    assert (refused.value.code, refused.value.rule) == (case["code"], case["rule"])
+
+
+HEADERS = VECTORS["headers"]
+
+
+@pytest.mark.parametrize("case", _named(HEADERS["allowed"]))
+def test_headers_allowed(case: dict) -> None:
+    headers = [tuple(pair) for pair in case["headers"]]
+    assert check_headers(headers, header_allow=case["header_allow"]) == headers
+
+
+@pytest.mark.parametrize("case", _named(HEADERS["refused"]))
+def test_headers_refused(case: dict) -> None:
+    with pytest.raises(EgressRefused) as refused:
+        check_headers([tuple(pair) for pair in case["headers"]], header_allow=case["header_allow"])
+    assert refused.value.code == case["code"]
+
+
+def test_every_always_rejected_header_is_refused_even_when_allowed() -> None:
+    for name in HEADERS["always_rejected"]:
+        with pytest.raises(EgressRefused):
+            check_headers([(name, "x")], header_allow=[name])
+        with pytest.raises(EgressRefused):
+            check_headers([(name.upper(), "x")], header_allow=[name])
+
+
+def test_every_default_allowed_header_passes() -> None:
+    for name in HEADERS["default_allow"]:
+        assert check_headers([(name, "x")], header_allow=[]) == [(name, "x")]
+
+
+def test_caller_can_refuse_more_headers() -> None:
+    def refuse(name: str, value: str) -> bool:
+        return value.startswith("sk_live_")
+
+    check_headers([("Accept", "application/json")], header_allow=[], refuse=refuse)
+    with pytest.raises(EgressRefused) as refused:
+        check_headers([("Accept", "sk_live_canary")], header_allow=[], refuse=refuse)
+    assert refused.value.code == "header_not_allowed"

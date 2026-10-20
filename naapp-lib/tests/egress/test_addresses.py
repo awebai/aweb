@@ -99,7 +99,7 @@ def test_one_private_record_among_public_ones_refuses_the_name() -> None:
 def test_no_address_is_refused() -> None:
     with pytest.raises(EgressRefused) as refused:
         AddressPolicy().check([])
-    assert refused.value.code == "destination_unresolved"
+    assert refused.value.code == "destination_address_denied"
 
 
 def test_deployment_denied_addresses_are_refused_directly_and_embedded() -> None:

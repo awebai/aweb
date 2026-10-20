@@ -101,19 +101,17 @@ class AddressPolicy:
         """
         addresses = list(addresses)
         if not addresses:
-            raise EgressRefused("destination_unresolved", "the name has no address")
+            raise EgressRefused("destination_address_denied", "address", "the name has no address")
         if internal is not None and self.internal_destinations is not InternalDestinations.ALLOWED:
-            raise EgressRefused(
-                "internal_destinations_disabled", "this deployment refuses internal destinations"
-            )
+            raise EgressRefused("internal_destinations_disabled", "internal_destinations")
         for address in addresses:
             if self._deployment_denies(address):
-                raise EgressRefused("destination_address_denied", str(address))
+                raise EgressRefused("destination_address_denied", "address", str(address))
             if internal is not None:
                 if address.version != internal.version or address not in internal:
-                    raise EgressRefused("destination_address_denied", str(address))
+                    raise EgressRefused("destination_address_denied", "address", str(address))
             elif self._is_denied(address):
-                raise EgressRefused("destination_address_denied", str(address))
+                raise EgressRefused("destination_address_denied", "address", str(address))
 
     def _deployment_denies(self, address: IPAddress) -> bool:
         candidates: tuple[IPAddress, ...] = (address,)

@@ -40,7 +40,7 @@ egress = [
   "dnspython>=2.7.0",
   "httpcore>=1.0.9",
   "idna>=3.10",
-  "publicsuffixlist>=1.0.2",
+  "publicsuffixlist==1.1.0.20261018",
 ]
 
 [project.urls]

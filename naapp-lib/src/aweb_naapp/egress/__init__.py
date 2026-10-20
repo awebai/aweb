@@ -9,10 +9,34 @@ followed and no proxy from the environment.
 from __future__ import annotations
 
 from .addresses import AddressPolicy, InternalDestinations
+from .headers import check_headers
 from .refused import EgressRefused
+from .urls import (
+    PUBLIC_SUFFIX_LIST_VERSION,
+    CanonicalURL,
+    Destination,
+    Network,
+    Presence,
+    QueryRule,
+    canonical_url,
+    check_destination,
+    match_destination,
+    parse_destination,
+)
 
 __all__ = [
+    "PUBLIC_SUFFIX_LIST_VERSION",
     "AddressPolicy",
+    "CanonicalURL",
+    "Destination",
     "EgressRefused",
     "InternalDestinations",
+    "Network",
+    "Presence",
+    "QueryRule",
+    "canonical_url",
+    "check_destination",
+    "check_headers",
+    "match_destination",
+    "parse_destination",
 ]
