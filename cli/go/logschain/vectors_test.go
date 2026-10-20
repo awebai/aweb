@@ -224,7 +224,7 @@ func TestChainCasesFromTheVector(t *testing.T) {
 			t.Fatalf("%s: %v", c.Name, err)
 		}
 		if got, want := asJSON(t, report.JSON()), asJSON(t, c.Report); !reflect.DeepEqual(got, want) {
-			t.Fatalf("%s: report %v, want %v", c.Name, got, want)
+			t.Errorf("%s: report %v, want %v", c.Name, got, want)
 		}
 	}
 }
