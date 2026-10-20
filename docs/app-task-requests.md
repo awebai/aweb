@@ -304,7 +304,9 @@ A request's receipt and task read carry `cancellation`: `null`, or
   cancelled; its answer receipt stays and is no longer `current`.
 - **Uninstall.** The transaction that retires an installation (F6) also
   cancels, in the same transaction, every open task created by that
-  installation's requests, with reason `installation_retired`. Tasks and the
+  installation's requests, with reason `installation_retired`, by calling the
+  task service's `cancel_installation_requests_on(tx, team_id, app_id,
+  installation_id)` on its own transaction; that call never commits. Tasks and the
   installation live in the same database, and creates take the installation
   row lock (step 8), so a create either commits before the retirement and is
   cancelled by it, or sees the retired installation and is refused. No
