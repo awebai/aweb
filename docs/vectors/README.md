@@ -218,8 +218,8 @@ The member-signed `aweb.app-task-authorization/1` (aweb-acgg.8): task body
 digests, domain-prefixed signing bytes and base64url signatures under fixed
 test keys, verification cases at a pinned clock with the bindings each is
 checked against and its expected refusal code, strict-JSON refusals, and task
-body bounds. The reference consumer is `aweb_naapp.runtime.task_requests` in
-`naapp-lib/tests/runtime/`. See [app task requests](../app-task-requests.md).
+body bounds. The reference consumers are `aweb_naapp.runtime.task_requests` in
+`naapp-lib/tests/runtime/` and `aw`'s signer in `cli/go/awid/`. See [app task requests](../app-task-requests.md).
 
 ### `app-request-credential-v1.json`
 
@@ -241,8 +241,8 @@ sequence is for the task service. See
 
 `proposal_sha256` for page proposals (aweb-acgg.8): canonical bytes and
 digests over a record's collection, id and value, a bundle built from item
-digests, and value refusals. The reference consumer is `aweb_naapp.pages` in
-`naapp-lib/tests/pages/`. See [page actions](../page-actions.md) §4.
+digests, and value refusals. The reference consumers are `aweb_naapp.pages` in
+`naapp-lib/tests/pages/` and `cli/go/awid/`. See [page actions](../page-actions.md) §4.
 
 ### `approval-request-v1.json`
 

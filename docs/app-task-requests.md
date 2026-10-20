@@ -222,8 +222,11 @@ Each step fails closed. Nothing is written before step 8.
    `task.app_request`'s, and `action_id` equals `action_ref`. Failure: 403
    `target_mismatch`.
 6. **Time.** `issued_at` is at most 60 s ahead of the service clock and
-   `expires_at` has not passed. Failure: 401 `authorization_expired`. A
-   matching replay of a task that already exists is still answered (step 7).
+   `expires_at` has not passed. Failure: 401 `authorization_expired`. Time is
+   checked after steps 1–5, so an authorization that fails only on time has
+   passed its transport, signature, current certificate and bindings. Only
+   then may it serve a matching replay of a task that already exists
+   (step 7); it never creates one.
 7. **Replay.** Look up the request by its dedup key
    `(team_id, app_id, installation_id, originator principal DID,
    external_request_id)`, where the originator principal DID is derived from
