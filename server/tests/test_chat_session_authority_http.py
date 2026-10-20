@@ -236,11 +236,10 @@ async def test_federated_sender_cannot_join_known_session_by_uuid(privacy_app):
     payload = _federated_chat_payload(
         sender_sk=sk, sender_did_key=did, sender_did_aw=did,
         sender_address='remote.example/outsider',
-        target_address='example.test/bob', target_did_key=env.actors['bob'].did,
+        target_address='example.test/bob', target_did_aw=env.actors['bob'].did,
+        target_did_key=env.actors['bob'].did,
         conversation_id=thread, signed_to_did=env.actors['bob'].did,
     )
-    # The wrapper and signed envelope name the actual local recipient.
-    payload['envelope']['target_did_aw'] = env.actors['bob'].did
     before = await _snapshot(env)
     response = await env.client.post('/v1/federation/messages', json=payload)
     assert response.status_code == 409, response.text
