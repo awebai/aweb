@@ -245,7 +245,11 @@ class Approvals:
         Without `tx` the approval commits at once and its links are sent.
         With `tx` it commits with the caller's transaction, and nothing is
         sent: the caller passes the returned `PendingApproval` to `deliver`
-        after the commit, so no link points at an approval that rolled back."""
+        after the commit, so no link points at an approval that rolled back.
+
+        The directory is read on its own connection, not in `tx`, so it does
+        not see designations or roles the caller wrote earlier in the same
+        transaction: designate and mint in separate transactions."""
         policy = await self._policies.current(policy_ref)
         if policy is None:
             raise ApprovalRefused(Refusal.POLICY_UNKNOWN)
@@ -324,7 +328,10 @@ class Approvals:
 
     async def deliver(self, pending: PendingApproval) -> RequesterView:
         """Send each candidate their link, once the approval has committed, and
-        record how the delivery went: delivered if any candidate's link was."""
+        record how the delivery went: delivered if any candidate's link was.
+
+        It is not idempotent: a second call sends the same single-use links
+        again and records the delivery again."""
         approval = pending.approval
         if not pending.deliveries:
             return pending.view
