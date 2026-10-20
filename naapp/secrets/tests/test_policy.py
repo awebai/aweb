@@ -6,8 +6,9 @@ import copy
 from datetime import UTC, datetime
 
 import pytest
+from aweb_naapp.runtime.attestation import VerifiedAttestation
 
-from aweb_secrets.policy import AttestationFacts, Policy, PolicyInvalid
+from aweb_secrets.policy import Policy, PolicyInvalid
 
 OPERATION_DIGEST = "24252d809f32328585e0e05fa02bf474df2cab5ba52b840eba6941f80c1c7fe1"
 
@@ -150,7 +151,9 @@ def test_window_evaluation_needs_an_aware_instant() -> None:
         Policy.from_body(BODY).window_open(datetime(2026, 10, 20, 9, 0))
 
 
-ATTESTED = AttestationFacts(custodian_id="cust_hosted", channel="dashboard", human_principal="h_1")
+ATTESTED = VerifiedAttestation(
+    custodian_id="cust_hosted", channel="dashboard", human_principal="h_1", session_id="ses_1"
+)
 
 
 @pytest.mark.parametrize(
@@ -163,7 +166,9 @@ ATTESTED = AttestationFacts(custodian_id="cust_hosted", channel="dashboard", hum
         ({"human_principal": True}, ATTESTED, True),
         (
             {"human_principal": True},
-            AttestationFacts(custodian_id="cust_hosted", channel="api", human_principal=None),
+            VerifiedAttestation(
+                custodian_id="cust_hosted", channel="api", human_principal=None, session_id="ses_1"
+            ),
             False,
         ),
         ({"channels": ["dashboard"]}, None, False),

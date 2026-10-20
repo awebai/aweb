@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired, claim
 from aweb_naapp.roles import principal_key, roles_of
+from aweb_naapp.runtime.attestation import VerifiedAttestation
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationFence
 from aweb_naapp.runtime.team_auth import Principal
@@ -36,7 +37,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_secrets import records
 from aweb_secrets.grant import GrantRecord, is_secrets_role
-from aweb_secrets.policy import AttestationFacts, Policy
+from aweb_secrets.policy import Policy
 from aweb_secrets.rate import RateLimited, charge
 
 # How long a request id keeps answering with its first intent (§11.2).
@@ -126,7 +127,7 @@ async def admit_use(
     grant: Grant,
     principal: Principal,
     request: UseRequest,
-    attestation: AttestationFacts | None,
+    attestation: VerifiedAttestation | None,
     now: datetime,
 ) -> Admission:
     """Admit ``request`` in the caller's transaction, or raise :class:`AdmissionRefused`.

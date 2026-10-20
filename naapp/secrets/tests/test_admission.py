@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from aweb_naapp.idempotency import apply_idempotency_migrations
 from aweb_naapp.roles import apply_roles_migrations, assign, principal_key, unassign
+from aweb_naapp.runtime.attestation import VerifiedAttestation
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.installation import (
     InstallationFence,
@@ -28,7 +29,7 @@ from aweb_secrets import records
 from aweb_secrets.admission import AdmissionRefused, UseRequest, admit_use
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME
 from aweb_secrets.grant import GrantRecord
-from aweb_secrets.policy import AttestationFacts, Policy
+from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
 
 TEAM = "backend:acme.com"
@@ -168,7 +169,7 @@ async def _admit(
     request: UseRequest | None = None,
     *,
     grant: Grant | None = None,
-    attestation: AttestationFacts | None = None,
+    attestation: VerifiedAttestation | None = None,
     now: datetime = NOW,
 ):
     async with db.transaction() as tx:
@@ -308,8 +309,12 @@ async def test_requires_attestation_refuses_without_a_verified_attestation(db, f
         db, policy_body={**POLICY_BODY, "requires_attestation": {"channels": ["dashboard"]}}
     )
     assert await _refusal(db, fence) == "attestation_unavailable"
-    dashboard = AttestationFacts(custodian_id="cust_1", channel="dashboard", human_principal=None)
-    l2 = AttestationFacts(custodian_id="cust_1", channel="mcp_l2", human_principal="h_1")
+    dashboard = VerifiedAttestation(
+        custodian_id="cust_1", channel="dashboard", human_principal=None, session_id="ses_1"
+    )
+    l2 = VerifiedAttestation(
+        custodian_id="cust_1", channel="mcp_l2", human_principal="h_1", session_id="ses_1"
+    )
     assert await _refusal(db, fence, attestation=l2) == "attestation_unavailable"
     await _admit(db, fence, attestation=dashboard)
 

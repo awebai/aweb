@@ -16,6 +16,7 @@ from datetime import datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
+from aweb_naapp.runtime.attestation import VerifiedAttestation
 from awid.signing import canonical_json_bytes
 
 DIGEST_PREFIX = b"aweb.secrets.policy/1\n"
@@ -52,15 +53,6 @@ _CLOCK = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")
 
 class PolicyInvalid(ValueError):
     """The policy body does not have the policy shape."""
-
-
-@dataclass(frozen=True)
-class AttestationFacts:
-    """What a verified ``aweb.principal-attestation/1`` asserts about a request."""
-
-    custodian_id: str
-    channel: str
-    human_principal: str | None
 
 
 def _require(condition: bool, message: str) -> None:
@@ -258,7 +250,7 @@ class Policy:
             for window in windows["ranges"]
         )
 
-    def attestation_satisfied(self, facts: AttestationFacts | None) -> bool:
+    def attestation_satisfied(self, facts: VerifiedAttestation | None) -> bool:
         """Whether a verified attestation meets the policy's predicates; none is needed without them."""
         predicates = self.body["requires_attestation"]
         if predicates is None:
