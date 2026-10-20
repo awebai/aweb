@@ -320,3 +320,73 @@ console.log('kept-valid-until-expiry');
             assert json.loads((home/'certificate.json').read_text()) == cert
     finally:
         unavailable.close()
+
+
+@pytest.mark.usefixtures('source_cli_binary')
+@pytest.mark.asyncio
+@pytest.mark.parametrize('attack',['unsigned-listing','tampered-blob','self-signed-policy'])
+async def test_controller_renewal_authenticates_registry_signing_inputs(privacy_app,tmp_path,monkeypatch,attack):
+    from datetime import datetime,timezone
+    from awid.credential_policy import POLICY_FIELDS,policy_signing_bytes
+    from test_lifetime_review_http import parent
+    env=privacy_app
+    monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED','true')
+    old=await parent(env)
+    name=TEAM.split(':')[0]
+    path=tmp_path/'.awid'/'team-keys'/'example.test'/(name+'.key')
+    path.parent.mkdir(parents=True)
+    _pem(path,'ED25519 PRIVATE KEY',env.team_sk)
+    attacker=env.actors['bob']
+    original=env.app.state.awid_registry_client.transport.app
+    class AlterRegistryResponse:
+        """A hostile intermediary changes bytes only after real AWID ran."""
+        async def __call__(self,scope,receive,send):
+            messages=[]
+            async def collect(message): messages.append(message)
+            await original(scope,receive,collect)
+            start=next(message for message in messages if message['type']=='http.response.start')
+            if scope['method']=='GET' and start['status']==200:
+                raw=b''.join(message.get('body',b'') for message in messages if message['type']=='http.response.body')
+                body=json.loads(raw)
+                if attack=='unsigned-listing' and scope['path'].endswith('/certificates'):
+                    for cert in body['certificates']:
+                        cert.update(member_did_key=attacker.did,alias='mallory',validity_class='ephemeral',identity_scope='global')
+                elif attack=='tampered-blob' and scope['path'].endswith('/certificates/'+old['certificate_id']):
+                    cert=json.loads(base64.b64decode(body['certificate']))
+                    cert['member_did_key']=attacker.did
+                    body['certificate']=base64.b64encode(json.dumps(cert).encode()).decode()
+                elif attack=='self-signed-policy' and scope['path'].endswith('/credential-lifetimes'):
+                    body['team_did_key']=attacker.did
+                    body['record']['team_did_key']=attacker.did
+                    body['record']['member_certificate']=1
+                    body['signature']=sign_message(attacker.sk,policy_signing_bytes(body['record']))
+                raw=json.dumps(body).encode()
+                start['headers']=[(k,v) for k,v in start['headers'] if k.lower()!=b'content-length']+[(b'content-length',str(len(raw)).encode())]
+                messages=[start,{'type':'http.response.body','body':raw}]
+            for message in messages: await send(message)
+    env.app.state.awid_registry_client.transport.app=AlterRegistryResponse()
+    try:
+        async with registry_listener(env) as (registry,origin):
+            env.registry_app.state.awid_public_origins=(origin,)
+            record=dict(v=1,type='aweb.team-credential-policy',team_id=TEAM,team_did_key=env.team_did,
+                revision=1,issued_at=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
+            record.update(dict.fromkeys(POLICY_FIELDS));record['member_certificate']=3600
+            await registry.set_team_credential_policy('example.test',name,record,sign_message(env.team_sk,policy_signing_bytes(record)),signing_key=env.team_sk)
+            process=await asyncio.create_subprocess_exec(os.environ['AW_TEST_CLI_BINARY'],'id','team','renew-certs',
+                '--team',name,'--namespace','example.test','--registry',origin,'--json',cwd=tmp_path,env=_child_env(tmp_path,origin),
+                stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
+            stdout,stderr=await asyncio.wait_for(process.communicate(),20)
+            if attack=='unsigned-listing':
+                assert process.returncode==0,(stdout+stderr).decode()
+                assert json.loads(stdout)['renewed']==['alice']
+                row=await env.registry_db.fetch_one('SELECT certificate FROM {{tables.team_certificates}} WHERE revoked_at IS NULL')
+                fresh=json.loads(base64.b64decode(row['certificate']))
+                for field in ('member_did_key','alias','identity_scope'):
+                    assert fresh[field]==old[field]
+            else:
+                assert process.returncode!=0,(stdout+stderr).decode()
+                assert b'signature' in stdout+stderr if attack=='tampered-blob' else b'policy' in stderr
+                assert await env.registry_db.fetch_value('SELECT count(*) FROM {{tables.team_certificates}}')==1
+                assert await env.registry_db.fetch_value('SELECT revoked_at IS NULL FROM {{tables.team_certificates}}')
+    finally:
+        env.app.state.awid_registry_client.transport.app=original

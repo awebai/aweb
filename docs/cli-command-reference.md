@@ -805,6 +805,7 @@ Subcommands:
 - `import-request` Protocol/admin: create a signed BYOT import request for aweb cloud
 - `invite` Generate an invite token for a team
 - `leave` Remove a team membership from this identity
+- `lifetimes` Controller: show or set the team's optional credential lifetimes
 - `list` List team memberships for this identity
 - `members` List a team's members from AWID certificates
 - `register` Protocol/admin: register or sync a customer-controlled team with a service
@@ -1014,6 +1015,52 @@ Remove a team membership from this identity
 Flags:
 - `-h, --help help for leave`
 
+## `id team lifetimes`
+
+### `id team lifetimes`
+
+Controller: show or set the team's optional credential lifetimes
+
+Subcommands:
+- `set` set the team credential lifetime policy
+- `show` show the team credential lifetime policy
+
+Flags:
+- `-h, --help help for lifetimes`
+
+## `id team lifetimes set`
+
+### `id team lifetimes set`
+
+Publish a complete policy signed by the local team controller. Supply all four limits
+as durations (for example 24h) or 'none'. Unset team policies have no expiry.
+Grant changes take effect within a minute and may end existing over-limit grants.
+Certificate limits trigger controller renewal; existing signed deadlines never extend.
+This also repairs a policy stranded on an old key after a non-atomic rotation.
+Every value must be explicit; no values from an unverified record are reused.
+
+Flags:
+- `--ephemeral-certificate string Duration or none (required)`
+- `-h, --help help for set`
+- `--hosted-mcp-grant string Duration or none (required)`
+- `--identity-grant string Duration or none (required)`
+- `--member-certificate string Duration or none (required)`
+- `--namespace string Namespace domain`
+- `--registry string AWID registry origin`
+- `--team string Team name`
+
+## `id team lifetimes show`
+
+### `id team lifetimes show`
+
+show the team credential lifetime policy
+
+Flags:
+- `-h, --help help for show`
+- `--namespace string Namespace domain`
+- `--registry string AWID registry origin`
+- `--team string Team name`
+
 ## `id team list`
 
 ### `id team list`
@@ -1130,7 +1177,7 @@ Flags:
 
 ### `id team renew-certs`
 
-Reissue due memberships with the same key, alias, identity and address, using atomic AWID rollover.
+Reissue due memberships from verified old certificates, using atomic AWID rollover.
 Finite policies renew in the final third, or when the old certificate has no expiry or exceeds the limit.
 Removing a limit replaces finite certificates with certificates without expiry. Revoked members are excluded.
 Requires the team's controller key; a member or session grant cannot renew membership.
