@@ -755,6 +755,36 @@
       "expect": "signature_invalid"
     },
     {
+      "name": "whitespace-with-canonical-signature",
+      "signed_payload": "eyJib2R5X3NoYTI1NiI6ICJkMjc0MzZkMTg1MDcyMmZlZDU2NDhiOGI3YWM3MTZiZjNiMDg1N2U3NzJmYThlMTNlOWI2NGU2NzE2YWE4NDk2IiwgImlzc3VlZF9hdCI6ICIyMDI2LTEwLTIwVDEyOjAxOjAwWiIsICJsaW5rX2lkIjogImxua18wMUpDN1EiLCAibWV0aG9kIjogIlBPU1QiLCAibm9uY2UiOiAiNWYyYjBjMWU5YThkN2M2YjVhNGYzZTJkMWMwYjlhODgiLCAicGF0aCI6ICIvdjEvcGFnZXMvcGdfNGhkMi9hY3Rpb25zIiwgInNlc3Npb25faWQiOiAibGtzXzAxSkM3UiIsICJ0eXBlIjogImF3ZWIubGluay1yZXF1ZXN0IiwgInYiOiAxfQ",
+      "signature": "0O9GXMbmwatI_aNSxOAgyt718eif6HJ-FWIQA0HPSOSOxwOE_DTGOGmRYxUpwQ4uxVZvBbkDU7N-pTZ--toIDg",
+      "expected": {
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496"
+      },
+      "now": "2026-10-20T12:01:00Z",
+      "expect": "signature_invalid",
+      "note": "carries the valid signature over the canonical bytes; only the byte-equality check refuses it"
+    },
+    {
+      "name": "key-order-with-canonical-signature",
+      "signed_payload": "eyJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDEyOjAxOjAwWiIsIm5vbmNlIjoiNWYyYjBjMWU5YThkN2M2YjVhNGYzZTJkMWMwYjlhODgiLCJib2R5X3NoYTI1NiI6ImQyNzQzNmQxODUwNzIyZmVkNTY0OGI4YjdhYzcxNmJmM2IwODU3ZTc3MmZhOGUxM2U5YjY0ZTY3MTZhYTg0OTYiLCJwYXRoIjoiL3YxL3BhZ2VzL3BnXzRoZDIvYWN0aW9ucyIsIm1ldGhvZCI6IlBPU1QiLCJzZXNzaW9uX2lkIjoibGtzXzAxSkM3UiIsImxpbmtfaWQiOiJsbmtfMDFKQzdRIiwidHlwZSI6ImF3ZWIubGluay1yZXF1ZXN0IiwidiI6MX0",
+      "signature": "0O9GXMbmwatI_aNSxOAgyt718eif6HJ-FWIQA0HPSOSOxwOE_DTGOGmRYxUpwQ4uxVZvBbkDU7N-pTZ--toIDg",
+      "expected": {
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496"
+      },
+      "now": "2026-10-20T12:01:00Z",
+      "expect": "signature_invalid",
+      "note": "carries the valid signature over the canonical bytes; only the byte-equality check refuses it"
+    },
+    {
       "name": "duplicate-key",
       "signed_payload": "eyJib2R5X3NoYTI1NiI6ImQyNzQzNmQxODUwNzIyZmVkNTY0OGI4YjdhYzcxNmJmM2IwODU3ZTc3MmZhOGUxM2U5YjY0ZTY3MTZhYTg0OTYiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDEyOjAxOjAwWiIsImxpbmtfaWQiOiJsbmtfMDFKQzdRIiwibWV0aG9kIjoiUE9TVCIsIm5vbmNlIjoiNWYyYjBjMWU5YThkN2M2YjVhNGYzZTJkMWMwYjlhODgiLCJwYXRoIjoiL3YxL3BhZ2VzL3BnXzRoZDIvYWN0aW9ucyIsInNlc3Npb25faWQiOiJsa3NfMDFKQzdSIiwidHlwZSI6ImF3ZWIubGluay1yZXF1ZXN0IiwidiI6MSwicGF0aCI6Ii92MS9wYWdlcy9wZ19vdGhlci9hY3Rpb25zIn0",
       "signature": "jn2LQing3uZPO7nvQUsGWeSXMDWks45Tg8VE9yNIQxsADqbucjbTVm4Xvk8hlHcW97oQ2GYRxT7F8S_sso34Ag",
