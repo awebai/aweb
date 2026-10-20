@@ -14,7 +14,6 @@ from aweb.awid_error_handling import (
     awid_registry_not_configured_exception,
 )
 from aweb.auth_context import GrantContext
-from aweb.auth_metrics import count_legacy_request_auth
 from aweb.request_auth_replay import admit_verified_request
 from aweb.team_auth_envelope import identity_auth_signature_payload
 from aweb.config import require_registered_certificates
@@ -98,8 +97,6 @@ async def resolve_identity_auth(request: Request) -> IdentityAuth:
     if not did_aw:
         await admit_verified_request(request, envelope=envelope, did_key=did_key,
                                      signature_b64=signature_b64, family="identity")
-        if envelope.version == 1:
-            count_legacy_request_auth(request, "identity")
         return IdentityAuth(did_key=did_key, did_aw=None, address=None)
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
@@ -136,8 +133,6 @@ async def resolve_identity_auth(request: Request) -> IdentityAuth:
         first = addresses[0]
         address = f"{first.domain}/{first.name}"
 
-    if envelope.version == 1:
-        count_legacy_request_auth(request, "identity")
     return IdentityAuth(did_key=did_key, did_aw=did_aw, address=address)
 
 

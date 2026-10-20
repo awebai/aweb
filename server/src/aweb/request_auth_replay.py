@@ -11,7 +11,9 @@ from typing import Protocol
 
 from fastapi import HTTPException, Request
 
-from aweb.auth_metrics import count_nonce_free_request_auth, count_request_auth_replay
+from aweb.auth_metrics import (
+    count_legacy_request_auth, count_nonce_free_request_auth, count_request_auth_replay,
+)
 from aweb.team_auth_envelope import TeamAuthEnvelope
 
 logger = logging.getLogger(__name__)
@@ -63,8 +65,11 @@ async def admit_verified_request(request: Request, *, envelope: TeamAuthEnvelope
     Bridge and mounted dependencies must share request.scope['state'] and the
     same replay store. Separate HTTP requests never share this memoization.
     """
-    if envelope.version != 2:
+    if envelope.version == 1:
+        count_legacy_request_auth(request, family)
         return
+    if envelope.version != 2:
+        raise ValueError('unsupported verified request version')
     key = request_replay_key(did_key, signature_b64)
     admitted = getattr(request.state, 'request_auth_replay_admitted', None)
     if admitted is not None and key in admitted:
