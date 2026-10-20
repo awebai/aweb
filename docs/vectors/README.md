@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 26
+`docs/vectors/*.json` is the only public protocol-vector authority for the 28
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -198,6 +198,20 @@ transfer. These bytes authorize no storage, ingress, migration, or activation
 behavior by themselves.
 
 ## Agreed fixtures ahead of implementation
+
+### `page-format-v1.json`
+
+The frozen `aweb.page/1` page format (aweb-acgg.7): the host limits, named base
+pages, and positive and negative cases, each given as a base page plus a small
+patch, raw bytes, or a generated tree. Every case expects a verdict and, when
+invalid, at least the listed errors, each a layer (`limits`, `schema`, `lint`),
+a stable code and a JSON pointer. Limits run before the schema and the schema
+before lint, so a case reports only its first failing layer. Hostile-corpus
+cases that are structurally valid carry a `render` expectation for the shared
+renderer, which this file names but does not test. `bundle_hash` pins the
+bundle decision-card digest across languages. The reference consumer is
+`aweb_naapp.pages` in `naapp-lib/tests/pages/`. See
+[the page format](../page-format.md).
 
 ### `agent-status-v1.json`
 

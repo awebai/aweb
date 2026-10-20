@@ -39,6 +39,15 @@ Server changes are since `server-v1.27.29`.
 
 CLI changes are since `aw-v1.36.44`.
 
+- **Security:** all root-authenticated SDK and CLI requests now sign
+  target-bound v2 envelopes, including identity-only `aw id request`.
+  Certificate and identity claims share one signer; grants keep their separate
+  target-bound protocol. This closes the interim identity-v1 retargeting
+  residual. The client does not fall back to v1 after a refusal.
+- **Upgrade requirement:** self-hosted aweb servers must run **1.27.29 or later
+  before users upgrade aw to 1.36.45**. Embedding hosts must also deploy the v2
+  certificate and identity verifiers before their users upgrade the client.
+
 - `aw plugin install` and `aw plugin update` send the exact fetched manifest
   bytes with the install, for v1 manifests whose declared origin is the
   install origin. Other installs are sent without bytes, as before.

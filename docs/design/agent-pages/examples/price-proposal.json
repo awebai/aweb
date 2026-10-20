@@ -178,7 +178,8 @@
           },
           "proposal_digest": {
             "type": "string",
-            "pattern": "^sha256:[0-9a-f]{64}$"
+            "minLength": 71,
+            "maxLength": 71
           },
           "expected_task_rev": {
             "type": "integer",

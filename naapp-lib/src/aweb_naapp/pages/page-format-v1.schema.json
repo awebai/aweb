@@ -1,0 +1,1843 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aweb.ai/schemas/aweb.page/1",
+  "title": "aweb.page/1 page snapshot",
+  "type": "object",
+  "properties": {
+    "page_format": {
+      "const": "aweb.page/1"
+    },
+    "page_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+    },
+    "locale": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "rev": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "layout_version": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "owner": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+    },
+    "policy_ref": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+    },
+    "layout": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/widget"
+      },
+      "maxItems": 100
+    },
+    "collections": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/collection"
+      },
+      "maxItems": 32
+    },
+    "widget_state": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/state"
+      },
+      "maxProperties": 200,
+      "propertyNames": {
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/action"
+      },
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "page_format",
+    "page_id",
+    "locale",
+    "title",
+    "rev",
+    "layout_version",
+    "owner",
+    "policy_ref",
+    "layout",
+    "collections",
+    "widget_state",
+    "actions"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+    },
+    "rev": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "collection": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "all": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              "op": {
+                "enum": [
+                  "eq",
+                  "ne",
+                  "lt",
+                  "lte",
+                  "gt",
+                  "gte",
+                  "in"
+                ]
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/scalar"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/scalar"
+                    },
+                    "maxItems": 50
+                  }
+                ]
+              }
+            },
+            "required": [
+              "field",
+              "op",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 20
+        },
+        "sort": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              "direction": {
+                "enum": [
+                  "asc",
+                  "desc"
+                ]
+              }
+            },
+            "required": [
+              "field",
+              "direction"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 8
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "cursor": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "collection"
+      ],
+      "additionalProperties": false
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "rev": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "value": {
+          "type": "object"
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "system": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "external_id": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "version": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "synced_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "system",
+            "external_id",
+            "version",
+            "synced_at"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "rev",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "collection": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "schema_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "schema": {
+          "type": "object"
+        },
+        "mode": {
+          "enum": [
+            "owned",
+            "synced"
+          ]
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/record"
+          },
+          "maxItems": 200
+        }
+      },
+      "required": [
+        "id",
+        "schema_version",
+        "schema",
+        "mode",
+        "records"
+      ],
+      "additionalProperties": false
+    },
+    "action": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "kind": {
+          "enum": [
+            "edit",
+            "intent",
+            "answer"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "input_schema": {
+          "type": "object"
+        },
+        "policy_ref": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "operation": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "requires_approval": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "label",
+        "input_schema",
+        "policy_ref"
+      ],
+      "additionalProperties": false
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "kind": {
+          "enum": [
+            "text",
+            "number",
+            "date",
+            "select",
+            "checkbox",
+            "file"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "required": [
+              "value",
+              "label"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 100
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10485760
+        },
+        "accept": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z]+/([a-z0-9.+-]+|\\*)(?![\\s\\S])",
+            "maxLength": 128
+          },
+          "minItems": 1,
+          "maxItems": 20
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "label"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "select"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "options"
+            ],
+            "properties": {
+              "options": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "file"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "accept",
+              "max_bytes"
+            ]
+          }
+        }
+      ]
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "progress": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "busy": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "scalar": {
+      "oneOf": [
+        {
+          "type": "string",
+          "maxLength": 4096
+        },
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "widget_text": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "text"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "markdown": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          },
+          "required": [
+            "markdown"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "widget_heading": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "heading"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "level": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 6
+            }
+          },
+          "required": [
+            "text",
+            "level"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "widget_stat": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "stat"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "field": {
+              "type": "string",
+              "maxLength": 128,
+              "minLength": 1
+            },
+            "value": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "unit": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "label"
+          ],
+          "additionalProperties": false
+        },
+        "bind": {
+          "$ref": "#/$defs/binding"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "widget_status_badge": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "status_badge"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "field": {
+              "type": "string",
+              "maxLength": 128,
+              "minLength": 1
+            },
+            "tone": {
+              "enum": [
+                "neutral",
+                "info",
+                "success",
+                "warning",
+                "danger"
+              ]
+            }
+          },
+          "required": [
+            "label",
+            "tone"
+          ],
+          "additionalProperties": false
+        },
+        "bind": {
+          "$ref": "#/$defs/binding"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "widget_table": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "table"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "format": {
+                    "enum": [
+                      "text",
+                      "date",
+                      "number",
+                      "money_minor",
+                      "status"
+                    ]
+                  }
+                },
+                "required": [
+                  "field",
+                  "label",
+                  "format"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 32
+            },
+            "row_actions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+              },
+              "maxItems": 20
+            }
+          },
+          "required": [
+            "columns"
+          ],
+          "additionalProperties": false
+        },
+        "bind": {
+          "$ref": "#/$defs/binding"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props",
+        "bind"
+      ],
+      "additionalProperties": false
+    },
+    "widget_cards": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "cards"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "fields": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              "maxProperties": 32
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+              },
+              "maxItems": 20
+            }
+          },
+          "required": [
+            "fields"
+          ],
+          "additionalProperties": false
+        },
+        "bind": {
+          "$ref": "#/$defs/binding"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props",
+        "bind"
+      ],
+      "additionalProperties": false
+    },
+    "widget_list": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "list"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "fields": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              "maxProperties": 32
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+              },
+              "maxItems": 20
+            }
+          },
+          "required": [
+            "fields"
+          ],
+          "additionalProperties": false
+        },
+        "bind": {
+          "$ref": "#/$defs/binding"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props",
+        "bind"
+      ],
+      "additionalProperties": false
+    },
+    "widget_form": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "form"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "fields": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/input"
+              },
+              "maxItems": 50
+            },
+            "submit_action": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "fields",
+            "submit_action"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "widget_button": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "button"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "action": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+            },
+            "confirmation": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "label",
+            "action"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "widget_decision_card": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "decision_card"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+            },
+            "task_rev": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "collection": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+            },
+            "record_id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+            },
+            "record_rev": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 4096
+                  }
+                },
+                "required": [
+                  "value",
+                  "label"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 10
+            },
+            "recommendation": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+            },
+            "answer_action": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+            },
+            "proposal_sha256": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+            },
+            "operation": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+                },
+                "destination": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "summary": {
+                  "type": "string",
+                  "maxLength": 4096
+                }
+              },
+              "required": [
+                "kind",
+                "destination",
+                "summary"
+              ],
+              "additionalProperties": false
+            },
+            "source_version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "expires_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "bundle": {
+              "type": "boolean"
+            },
+            "items_collection": {
+              "$ref": "#/$defs/id"
+            }
+          },
+          "required": [
+            "task_id",
+            "task_rev",
+            "collection",
+            "record_id",
+            "record_rev",
+            "options",
+            "recommendation",
+            "answer_action",
+            "proposal_sha256",
+            "operation",
+            "source_version",
+            "expires_at"
+          ],
+          "additionalProperties": false,
+          "if": {
+            "properties": {
+              "bundle": {
+                "const": true
+              }
+            },
+            "required": [
+              "bundle"
+            ]
+          },
+          "then": {
+            "required": [
+              "items_collection"
+            ]
+          }
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "widget_chart": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "chart"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "bar",
+                "line",
+                "pie"
+              ]
+            },
+            "x": {
+              "type": "string",
+              "maxLength": 128,
+              "minLength": 1
+            },
+            "series": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              "maxItems": 8
+            },
+            "alternative": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "kind",
+            "x",
+            "series",
+            "alternative"
+          ],
+          "additionalProperties": false
+        },
+        "bind": {
+          "$ref": "#/$defs/binding"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props",
+        "bind"
+      ],
+      "additionalProperties": false
+    },
+    "widget_file_drop": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "file_drop"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "action": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+            },
+            "accept": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z]+/([a-z0-9.+-]+|\\*)(?![\\s\\S])",
+                "maxLength": 128
+              },
+              "minItems": 1,
+              "maxItems": 20
+            },
+            "max_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10485760
+            }
+          },
+          "required": [
+            "label",
+            "action",
+            "accept",
+            "max_bytes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "widget_image": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "image"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "asset_id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+            },
+            "alt": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "caption": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "asset_id",
+            "alt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "widget_video": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "video"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "asset_id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+            },
+            "alt": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "caption": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "asset_id",
+            "alt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "widget_activity_timeline": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "activity_timeline"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "fields": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              "maxProperties": 32
+            }
+          },
+          "required": [
+            "fields"
+          ],
+          "additionalProperties": false
+        },
+        "bind": {
+          "$ref": "#/$defs/binding"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props",
+        "bind"
+      ],
+      "additionalProperties": false
+    },
+    "widget_agent_presence": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "agent_presence"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "subject": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "subject"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "widget_stack": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "stack"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "gap": {
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ]
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/widget"
+          },
+          "maxItems": 100
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props",
+        "children"
+      ],
+      "additionalProperties": false
+    },
+    "widget_grid": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "const": "grid"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            },
+            "gap": {
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ]
+            }
+          },
+          "required": [
+            "columns"
+          ],
+          "additionalProperties": false
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/widget"
+          },
+          "maxItems": 100
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props",
+        "children"
+      ],
+      "additionalProperties": false
+    },
+    "widget_link_out": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "type": {
+          "const": "link_out"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "path": {
+              "type": "string",
+              "maxLength": 1024,
+              "pattern": "^/(?:(?!\\.{1,2}(?:/|(?![\\s\\S])))[A-Za-z0-9._~-]+(?:/(?!\\.{1,2}(?:/|(?![\\s\\S])))[A-Za-z0-9._~-]+)*/?)?(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "label",
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "widget_unknown": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}(?![\\s\\S])"
+        },
+        "type": {
+          "type": "string",
+          "maxLength": 128,
+          "not": {
+            "enum": [
+              "text",
+              "heading",
+              "stat",
+              "status_badge",
+              "table",
+              "cards",
+              "list",
+              "form",
+              "button",
+              "decision_card",
+              "chart",
+              "file_drop",
+              "image",
+              "video",
+              "activity_timeline",
+              "agent_presence",
+              "stack",
+              "grid",
+              "link_out"
+            ]
+          }
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "props": {
+          "type": "object",
+          "maxProperties": 32
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "fallback"
+      ],
+      "additionalProperties": false
+    },
+    "widget": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "text"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_text"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "heading"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_heading"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "stat"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_stat"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "status_badge"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_status_badge"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "table"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_table"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "cards"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_cards"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "list"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_list"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "form"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_form"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "button"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_button"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "decision_card"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_decision_card"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "chart"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_chart"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "file_drop"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_file_drop"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "image"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_image"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "video"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_video"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "activity_timeline"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_activity_timeline"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "agent_presence"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_agent_presence"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "stack"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_stack"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "grid"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_grid"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "link_out"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_link_out"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "not": {
+                  "enum": [
+                    "text",
+                    "heading",
+                    "stat",
+                    "status_badge",
+                    "table",
+                    "cards",
+                    "list",
+                    "form",
+                    "button",
+                    "decision_card",
+                    "chart",
+                    "file_drop",
+                    "image",
+                    "video",
+                    "activity_timeline",
+                    "agent_presence",
+                    "stack",
+                    "grid",
+                    "link_out"
+                  ]
+                }
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget_unknown"
+          }
+        }
+      ]
+    }
+  }
+}
