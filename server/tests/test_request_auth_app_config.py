@@ -53,3 +53,14 @@ async def test_v2_uses_explicit_app_origin_without_database_environment(privacy_
         bad_host = await client.get('/v1/messages/inbox', headers={
             **signed('http://untrusted-host.test'), 'Host': 'untrusted-host.test'})
         assert bad_host.status_code == 401, bad_host.text
+
+        # Missing app configuration is a named service refusal, never an env read.
+        del app.state.public_origin
+        missing = await client.get('/v1/messages/inbox', headers=signed(origin))
+        assert missing.status_code == 503, missing.text
+        # Released compact clients still do not require a public audience.
+        canonical = canonical_json_bytes(dict(timestamp=timestamp,
+            body_sha256=hashlib.sha256(b'').hexdigest(), **claim))
+        legacy_headers = {**headers, 'Authorization': f'DIDKey {actor.did} {sign_message(actor.sk, canonical)}'}
+        legacy = await client.get('/v1/messages/inbox', headers=legacy_headers)
+        assert legacy.status_code == 200, legacy.text
