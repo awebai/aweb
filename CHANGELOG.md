@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Team-certificate verification is one shared implementation,
+  `awid.team_certificate`, used by the server's team auth, the naapp team-auth
+  verifier and the hook delivery receiver. A certificate carrying a
+  lone-surrogate JSON escape is refused as a failed signature, instead of
+  surfacing an encoding error. A naapp certificate header over 8 KiB, or a
+  signed payload that is too deeply nested or does not canonicalise, is a 401
+  rather than a 500. Server 1.27.30; awid-service needs a release that carries
+  the new module.
 - `aw chat history <recipient>` applies its limit and unread filter before
   custody decryption, skips unrelated pending previews during session lookup,
   and uses individual request timeouts rather than one budget for the whole page.
