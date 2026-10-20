@@ -92,8 +92,11 @@ class AppGrantStatusResponse(BaseModel):
     digest: str
     granted_scopes: list[str]
     # Present from the start and null until installations carry an identity,
-    # a generation and origin provenance; consumers that bind them refuse null.
+    # an epoch, a generation and origin provenance; consumers that bind them
+    # refuse null. installation_epoch orders installations of one app in one
+    # team across reinstalls; generation is monotone within one installation.
     installation_id: str | None
+    installation_epoch: int | None
     generation: int | None
     origin_verified: bool | None
     as_of: str
@@ -242,6 +245,7 @@ async def app_grant_status_route(
         digest=app.digest,
         granted_scopes=app.granted_scopes,
         installation_id=None,
+        installation_epoch=None,
         generation=None,
         origin_verified=None,
         as_of=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
