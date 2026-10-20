@@ -1161,7 +1161,7 @@ def _parse_catalog(data: bytes) -> tuple[str, list[tuple[int, str, str]]]:
     if not isinstance(doc, dict) or set(doc) - {"catalog_version", "app_id", "variants"}:
         raise invalid("manifest catalog is not a catalog object")
     version, app_id, variants = doc.get("catalog_version"), doc.get("app_id"), doc.get("variants")
-    if version != 1 or isinstance(version, bool):
+    if isinstance(version, bool) or not isinstance(version, int) or version != 1:
         raise invalid("unsupported catalog_version")
     if not isinstance(app_id, str) or not _go_trim(app_id):
         raise invalid("manifest catalog requires app_id")
