@@ -172,7 +172,6 @@ main {
   color: var(--muted);
 }
 .badge {
-  border-left: 3px solid var(--muted);
   display: inline-flex;
   border-radius: var(--page-radius);
   padding: 0.2rem 0.8rem;
@@ -362,29 +361,6 @@ th {
   font-weight: 600;
   text-align: left;
 }
-.collection-toolbar {
-  display: flex;
-  gap: 1rem;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 1rem;
-}
-.filter-controls {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-.filter-controls input,
-.filter-controls select {
-  min-width: 0;
-  max-width: 100%;
-  background: var(--surface);
-  color: var(--ink);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  padding: 0.5rem;
-}
 .collection-count {
   font-size: var(--page-small);
   color: var(--muted);
@@ -437,36 +413,46 @@ figcaption {
   max-height: 15rem;
 }
 .series-0 {
-  fill: var(--accent);
-  stroke: var(--accent);
+  fill: var(--page-series-0);
+  stroke: var(--page-series-0);
 }
 .series-1 {
-  fill: var(--run);
-  stroke: var(--run);
+  fill: var(--page-series-1);
+  stroke: var(--page-series-1);
 }
 .series-2 {
-  fill: var(--ok);
-  stroke: var(--ok);
+  fill: var(--page-series-2);
+  stroke: var(--page-series-2);
 }
 .series-3 {
-  fill: var(--wait);
-  stroke: var(--wait);
+  fill: var(--page-series-3);
+  stroke: var(--page-series-3);
 }
 .series-4 {
-  fill: var(--stop);
-  stroke: var(--stop);
+  fill: var(--page-series-4);
+  stroke: var(--page-series-4);
 }
 .series-5 {
-  fill: var(--muted);
-  stroke: var(--muted);
+  fill: var(--page-series-5);
+  stroke: var(--page-series-5);
 }
 .series-6 {
-  fill: var(--ink);
-  stroke: var(--ink);
+  fill: var(--page-series-6);
+  stroke: var(--page-series-6);
 }
 .series-7 {
-  fill: var(--faint);
-  stroke: var(--faint);
+  fill: var(--page-series-7);
+  stroke: var(--page-series-7);
+}
+:root {
+  --page-series-0: color-mix(in srgb, var(--ink) 95%, var(--bg));
+  --page-series-1: color-mix(in srgb, var(--ink) 87%, var(--bg));
+  --page-series-2: color-mix(in srgb, var(--ink) 79%, var(--bg));
+  --page-series-3: color-mix(in srgb, var(--ink) 71%, var(--bg));
+  --page-series-4: color-mix(in srgb, var(--ink) 63%, var(--bg));
+  --page-series-5: color-mix(in srgb, var(--ink) 55%, var(--bg));
+  --page-series-6: color-mix(in srgb, var(--ink) 47%, var(--bg));
+  --page-series-7: color-mix(in srgb, var(--ink) 39%, var(--bg));
 }
 polyline {
   fill: none;
@@ -564,4 +550,105 @@ polyline {
 
 .widget-chart circle[stroke-dasharray] {
   fill: none;
+}
+
+.badge::before {
+  content: "";
+  width: 0.4em;
+  height: 0.4em;
+  border-radius: var(--page-radius);
+  background: currentColor;
+  margin-right: 0.45em;
+  align-self: center;
+}
+.table-scroll th,
+.table-scroll td {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.cell-compact {
+  white-space: nowrap;
+}
+.cell-text {
+  min-width: 8rem;
+}
+.pagination {
+  align-items: center;
+}
+.record-list {
+  list-style: none;
+  padding-left: 0;
+}
+.activity-timeline li {
+  border: 0;
+  border-left: 2px solid var(--line-strong);
+  border-radius: 0;
+}
+.timeline-time {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.8rem;
+}
+
+.chart-label {
+  fill: var(--ink);
+  stroke: none;
+  font-size: var(--page-small);
+}
+
+.chart-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.4rem;
+  list-style: none;
+  padding: 0;
+  font-size: var(--page-small);
+}
+.chart-labels li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.chart-swatch {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--page-series-0);
+}
+.chart-swatch.series-0 {
+  background: var(--page-series-0);
+}
+.chart-swatch.series-1 {
+  background: var(--page-series-1);
+}
+.chart-swatch.series-2 {
+  background: var(--page-series-2);
+}
+.chart-swatch.series-3 {
+  background: var(--page-series-3);
+}
+.chart-swatch.series-4 {
+  background: var(--page-series-4);
+}
+.chart-swatch.series-5 {
+  background: var(--page-series-5);
+}
+.chart-swatch.series-6 {
+  background: var(--page-series-6);
+}
+.chart-swatch.series-7 {
+  background: var(--page-series-7);
+}
+
+.primary-button {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+.widget-image figcaption,
+.widget-video figcaption {
+  margin: 0.75rem 0 0;
+  font-weight: 400;
+  color: var(--muted);
 }

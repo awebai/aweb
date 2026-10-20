@@ -82,9 +82,29 @@ export function typedValue(text, schema) {
   // Decimal strings remain strings; no locale-dependent binary float is signed.
   return text;
 }
+export function fileTypes(accept) {
+  return accept
+    .map(
+      (mime) =>
+        ({
+          "text/plain": "Text files",
+          "application/pdf": "PDF files",
+          "image/*": "Images",
+          "image/png": "PNG images",
+          "image/jpeg": "JPEG images",
+        })[mime] || `${mime} files`,
+    )
+    .join(" or ");
+}
+export function fileSize(bytes) {
+  return bytes >= 1024
+    ? `${new Intl.NumberFormat("en", { maximumFractionDigits: 1 }).format(bytes / 1024)} KB`
+    : `${bytes} bytes`;
+}
 export function acceptableFile(file, accept, maxBytes) {
-  if (!file || file.size > maxBytes)
-    return "Choose a file within the size limit.";
+  if (!file) return "Choose a file.";
+  if (file.size > maxBytes)
+    return `${file.name} is ${fileSize(file.size)}. The limit is ${fileSize(maxBytes)}.`;
   if (
     !accept.some((mime) =>
       mime.endsWith("/*")
@@ -92,6 +112,33 @@ export function acceptableFile(file, accept, maxBytes) {
         : file.type === mime,
     )
   )
-    return "Choose an allowed file type.";
+    return accept.length === 1 && accept[0] === "text/plain"
+      ? `${file.name} isn't a text file.`
+      : `${file.name} isn't an allowed type. Choose ${fileTypes(accept).toLowerCase()}.`;
   return null;
+}
+export function fieldError(value, schema, required, kind) {
+  if (value === "" && required) return "Complete this field.";
+  if (inputErrors(value, schema).length === 0) return null;
+  if (kind === "number" && schema?.type === "integer") {
+    if (schema.minimum !== undefined && schema.maximum !== undefined)
+      return `Enter a whole number from ${schema.minimum} to ${schema.maximum}.`;
+    if (schema.minimum !== undefined)
+      return `Enter a whole number of at least ${schema.minimum}.`;
+    if (schema.maximum !== undefined)
+      return `Enter a whole number no greater than ${schema.maximum}.`;
+    return "Enter a whole number.";
+  }
+  if (
+    typeof value === "string" &&
+    [...value].length > (schema?.maxLength ?? Infinity)
+  )
+    return `Use at most ${schema.maxLength} characters.`;
+  if (
+    schema?.minLength !== undefined &&
+    typeof value === "string" &&
+    [...value].length < schema.minLength
+  )
+    return `Use at least ${schema.minLength} characters.`;
+  return "Enter a valid value for this field.";
 }

@@ -45,7 +45,13 @@ function dataTable(records, columns, label, locale, timeZone) {
     const row = element("tr");
     row.dataset.record = record.id;
     for (const column of columns) {
-      const cell = element("td");
+      const cell = element(
+        "td",
+        null,
+        ["date", "number", "money_minor", "status"].includes(column.format)
+          ? "cell-compact"
+          : "cell-text",
+      );
       cell.append(
         element(
           "bdi",
@@ -54,6 +60,7 @@ function dataTable(records, columns, label, locale, timeZone) {
             column.format,
             locale,
             timeZone,
+            record.value.currency,
           ),
         ),
       );
@@ -153,6 +160,7 @@ export function renderCollection({
   query,
   onRead,
   actionButton,
+  announce,
 }) {
   const p = w.props;
   const region = element("div", null, "collection-content");
@@ -165,9 +173,7 @@ export function renderCollection({
   const cursors = [query.cursor];
   let cursorIndex = 0;
   const limit = query.limit || 20;
-  const toolbar = element("div", null, "collection-toolbar");
   const status = element("p", "", "collection-count");
-  status.setAttribute("role", "status");
   let requestSerial = 0;
   async function change(bind, reset = true) {
     const request = ++requestSerial;
@@ -190,14 +196,15 @@ export function renderCollection({
         count = records.length;
         remote = false;
       }
-      draw();
+      draw(true);
     } catch (error) {
       status.textContent =
         error?.code === "revision_conflict" ? t.conflict : t.unavailable;
     }
   }
   let projectionFocusKey;
-  function draw() {
+  function draw(shouldAnnounce = false) {
+    const active = document.activeElement;
     const focusKey = region.contains(document.activeElement)
       ? document.activeElement.dataset.focusKey
       : document.activeElement === document.body
@@ -206,8 +213,13 @@ export function renderCollection({
     projectionFocusKey = undefined;
     region.replaceChildren();
     const visible = remote ? records : records.slice(offset, offset + limit);
-    status.textContent = `${count} ${t.records}`;
-    if (!visible.length) region.append(element("p", t.empty));
+    const start = cursorIndex * limit + offset + 1;
+    const range = count
+      ? `Showing ${start === Math.min(start + visible.length - 1, count) ? start : `${start}–${Math.min(start + visible.length - 1, count)}`} of ${count}`
+      : "0 records";
+    status.textContent = range;
+    if (!visible.length)
+      region.append(element("p", "Nothing here yet.", "field-description"));
     else if (w.type === "table") {
       const table = dataTable(visible, p.columns, t.records, locale, timeZone);
       [...table.tHead.rows[0].cells].forEach((th, i) => {
@@ -277,18 +289,45 @@ export function renderCollection({
         );
       for (let i = 0; i < p.series.length; i++) {
         figure.append(
-          element("p", p.series[i], "widget-label"),
+          element(
+            "p",
+            schema?.properties?.[p.series[i]]?.title || p.series[i],
+            "widget-label",
+          ),
           chartGraphic(visible, p, i),
         );
+        const labels = element("ul", null, "chart-labels");
+        visible.forEach((record, category) => {
+          const item = element("li");
+          const swatch = element(
+            "span",
+            null,
+            `chart-swatch series-${p.kind === "pie" ? category % 8 : i}`,
+          );
+          swatch.setAttribute("aria-hidden", "true");
+          item.append(
+            swatch,
+            element(
+              "bdi",
+              `${valueText(record.value[p.x])}: ${valueText(record.value[p.series[i]], "number", locale)}`,
+            ),
+          );
+          labels.append(item);
+        });
+        figure.append(labels);
       }
       figure.append(
         dataTable(
           visible,
           [
-            { field: p.x, label: p.x, format: "text" },
+            {
+              field: p.x,
+              label: schema?.properties?.[p.x]?.title || p.x,
+              format: "text",
+            },
             ...p.series.map((field) => ({
               field,
-              label: field,
+              label: schema?.properties?.[field]?.title || field,
               format: "number",
             })),
           ],
@@ -302,13 +341,32 @@ export function renderCollection({
       const list = element(
         w.type === "activity_timeline" ? "ol" : "ul",
         null,
-        w.type === "cards" ? "record-cards" : "record-list",
+        w.type === "cards"
+          ? "record-cards"
+          : w.type === "activity_timeline"
+            ? "record-list activity-timeline"
+            : "record-list",
       );
       for (const record of visible) {
         const item = element("li");
         item.dataset.record = record.id;
         const fields = element("dl");
+        const timeField =
+          w.type === "activity_timeline" &&
+          Object.values(p.fields).find(
+            (field) => schema?.properties?.[field]?.format === "date-time",
+          );
+        if (timeField) {
+          const time = element(
+            "time",
+            valueText(record.value[timeField], "date-time", locale, timeZone),
+            "timeline-time",
+          );
+          time.dateTime = record.value[timeField];
+          item.append(time);
+        }
         for (const [slot, field] of Object.entries(p.fields)) {
+          if (field === timeField) continue;
           fields.append(element("dt", slot));
           const dd = element("dd");
           dd.append(
@@ -316,8 +374,10 @@ export function renderCollection({
               "bdi",
               valueText(
                 record.value[field],
-                schema?.properties?.[field]?.format === "date-time"
-                  ? "date"
+                ["date", "date-time"].includes(
+                  schema?.properties?.[field]?.format,
+                )
+                  ? schema.properties[field].format
                   : "text",
                 locale,
                 timeZone,
@@ -338,6 +398,17 @@ export function renderCollection({
         ?.focus({ preventScroll: true });
     previous.disabled = remote ? cursorIndex === 0 : offset === 0;
     next.disabled = remote ? !nextCursor : offset + limit >= records.length;
+    navigation.hidden = !visible.length || (previous.disabled && next.disabled);
+    if (
+      (active === previous && previous.disabled) ||
+      (active === next && next.disabled) ||
+      (navigation.contains(active) && navigation.hidden)
+    ) {
+      (navigation.hidden ? region : previous.disabled ? next : previous).focus({
+        preventScroll: true,
+      });
+    }
+    if (shouldAnnounce) announce?.(range);
   }
   const previous = element("button", t.previous);
   previous.type = "button";
@@ -362,55 +433,18 @@ export function renderCollection({
       draw();
     }
   };
-  if (w.type === "table") {
-    const filter = element("form", null, "filter-controls");
-    const fields = element("select");
-    fields.setAttribute("aria-label", t.filterField);
-    for (const column of p.columns) {
-      const option = element("option", column.label);
-      option.value = column.field;
-      fields.append(option);
-    }
-    const value = element("input");
-    value.setAttribute("aria-label", t.filterValue);
-    const submit = element("button", t.applyFilter);
-    submit.type = "submit";
-    const clear = element("button", t.clearFilter);
-    clear.type = "button";
-    clear.onclick = () => {
-      value.value = "";
-      change({ all: w.bind.all || [], cursor: undefined });
-    };
-    filter.append(fields, value, submit, clear);
-    filter.onsubmit = (event) => {
-      event.preventDefault();
-      const type = schema?.properties?.[fields.value]?.type;
-      let typed = value.value;
-      if (type === "integer") typed = Number(value.value);
-      if (type === "boolean") typed = value.value === "true";
-      change({
-        all: [
-          ...(w.bind.all || []),
-          { field: fields.value, op: "eq", value: typed },
-        ],
-        cursor: undefined,
-      });
-    };
-    toolbar.append(filter);
-  }
-  toolbar.append(status);
-  box.append(toolbar, region);
+  box.append(region);
   const navigation = element("nav", null, "pagination");
   navigation.setAttribute("aria-label", `${t.pagination}: ${w.id}`);
-  navigation.append(previous, next);
+  navigation.append(status, previous, next);
   box.append(navigation);
+  region.tabIndex = -1;
   draw();
   return {
     beginRefresh() {
       projectionFocusKey = region.contains(document.activeElement)
         ? document.activeElement.dataset.focusKey
         : undefined;
-      region.replaceChildren(element("p", t.loading));
       region.setAttribute("aria-busy", "true");
       cursorIndex = 0;
       cursors.splice(0, cursors.length, query.cursor);

@@ -160,8 +160,8 @@ def gallery_page() -> dict:
                 "schema": {
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string"},
-                        "occupancy": {"type": "integer"},
+                        "name": {"type": "string", "title": "Property"},
+                        "occupancy": {"type": "integer", "title": "Occupancy"},
                         "updated": {"type": "string", "format": "date-time"},
                     },
                     "additionalProperties": False,
@@ -242,6 +242,29 @@ def fixture(query: dict) -> dict:
         page["widget_state"]["occupancy"] = {"message": "Projection updated", "busy": False}
     if "vector" not in query:
         additions(page)
+    if query.get("case") == ["dense-table"]:
+        collection = page["collections"][0]
+        collection["schema"]["properties"].update(
+            checkin={"type": "string", "format": "date"},
+            amount={"type": "integer"},
+            currency={"type": "string"},
+            status={"type": "string"},
+        )
+        for record in collection["records"]:
+            record["value"].update(
+                checkin="2026-10-20", amount=1234567, currency="EUR", status="Confirmed"
+            )
+        table = next(w for w in page["layout"] if w["id"] == "property-table")
+        table["props"]["columns"].extend(
+            [
+                {"field": "checkin", "label": "Check-in", "format": "date"},
+                {"field": "amount", "label": "Total", "format": "money_minor"},
+                {"field": "status", "label": "Status", "format": "status"},
+            ]
+        )
+    if query.get("case") == ["empty"]:
+        for collection in page["collections"]:
+            collection["records"] = []
     validation = validate_page(page)
     if not validation.valid:
         raise ValueError(validation.errors)

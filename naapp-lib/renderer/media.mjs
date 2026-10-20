@@ -70,7 +70,7 @@ export function renderMedia(box, w, host) {
 
 export function renderPresence(box, w, host) {
   const subject = element("p", w.props.subject, "widget-label"),
-    status = element("p", "Status unavailable"),
+    status = element("p", "Unknown"),
     age = element("p", null, "field-description");
   box.append(subject, status, age);
   let disposed = false,
@@ -92,17 +92,17 @@ export function renderPresence(box, w, host) {
           until - observed <= 900000 &&
           until > now;
         if (!valid) {
-          status.textContent = "Status unavailable";
+          status.textContent = "Unknown";
           age.textContent = Number.isFinite(observed)
-            ? `Last report: ${new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: host.timeZone }).format(observed)}`
+            ? `Reported ${new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: host.timeZone }).format(observed)}`
             : "No current host report";
           return;
         }
         const states = {
-          yes: "Can receive messages",
-          degraded: "Limited reachability",
-          no: "Cannot receive messages",
-          unknown: "Status unavailable",
+          yes: "Ready",
+          degraded: "Unknown",
+          no: "Offline",
+          unknown: "Unknown",
         };
         status.textContent = states[evidence.reachable] || states.unknown;
         if (evidence.reason?.text)
@@ -110,7 +110,7 @@ export function renderPresence(box, w, host) {
         if (evidence.fixing?.text)
           status.append(element("span", ` ${evidence.fixing.text}`));
         const seconds = Math.max(0, Math.floor((now - observed) / 1000));
-        age.textContent = `Status reported ${seconds < 60 ? "less than a minute ago" : `${Math.floor(seconds / 60)} minutes ago`}`;
+        age.textContent = `Reported ${seconds < 60 ? "less than a minute ago" : `${Math.floor(seconds / 60)} minutes ago`}`;
       }
       display();
       timer = setInterval(display, 1000);

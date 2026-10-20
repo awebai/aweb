@@ -47,11 +47,9 @@ export function createActionConfirmation(dialog) {
       return Promise.resolve(false);
     return new Promise((resolve) => {
       settle = resolve;
-      const title = element("h2", "Confirm action");
+      const title = element("h2", details.description || details.label);
       title.id = "action-confirmation-title";
-      const label = element("p", details.label),
-        description = element("p", details.description);
-      const yes = element("button", "Confirm");
+      const yes = element("button", details.label);
       yes.type = "button";
       const cancel = element("button", "Cancel");
       cancel.type = "button";
@@ -68,7 +66,7 @@ export function createActionConfirmation(dialog) {
         settle = null;
         if (trigger?.isConnected) trigger.focus({ preventScroll: true });
       };
-      dialog.replaceChildren(title, label, description, yes, cancel);
+      dialog.replaceChildren(title, yes, cancel);
       dialog.showModal();
       cancel.focus();
     });

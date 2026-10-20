@@ -4,14 +4,23 @@ export function element(tag, text, className) {
   if (className) node.className = className;
   return node;
 }
-export function valueText(value, format = "text", locale = "en", timeZone) {
+export function valueText(
+  value,
+  format = "text",
+  locale = "en",
+  timeZone,
+  currency,
+) {
   if (value === null || value === undefined) return "—";
-  if (format === "date") {
+  if (format === "date" || format === "date-time") {
     const date = new Date(value);
     return Number.isFinite(date.valueOf())
       ? new Intl.DateTimeFormat(locale, {
           dateStyle: "medium",
-          timeZone,
+          ...(format === "date-time" ? { timeStyle: "short" } : {}),
+          timeZone: /^\d{4}-\d{2}-\d{2}$/.test(String(value))
+            ? "UTC"
+            : timeZone,
         }).format(date)
       : String(value);
   }
@@ -23,8 +32,30 @@ export function valueText(value, format = "text", locale = "en", timeZone) {
       tail = fraction;
     if (format === "money_minor") {
       if (fraction !== undefined) return "—";
-      tail = (integer % 100n).toString().padStart(2, "0");
-      integer /= 100n;
+      const validCurrency =
+        typeof currency === "string" &&
+        Intl.supportedValuesOf("currency").includes(currency);
+      const formatter = new Intl.NumberFormat(
+        "en",
+        validCurrency
+          ? { style: "currency", currency }
+          : { minimumFractionDigits: 2, maximumFractionDigits: 2 },
+      );
+      const scale = validCurrency
+        ? formatter.resolvedOptions().maximumFractionDigits
+        : 2;
+      const divisor = 10n ** BigInt(scale);
+      tail = (integer % divisor).toString().padStart(scale, "0");
+      integer /= divisor;
+      // Format the integer with Intl and replace only its fractional part. This
+      // avoids rounding large signed minor-unit integers through Number.
+      const parts = formatter.formatToParts(sign === "-" ? -integer : integer);
+      // Preserve a negative amount smaller than one major unit.
+      if (sign === "-" && integer === 0n)
+        parts.unshift({ type: "minusSign", value: "-" });
+      return parts
+        .map((part) => (part.type === "fraction" ? tail : part.value))
+        .join("");
     }
     return (
       sign +

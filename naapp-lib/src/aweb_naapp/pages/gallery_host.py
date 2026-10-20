@@ -200,13 +200,14 @@ def host_get(handler: BaseHTTPRequestHandler, asset_origin: str, case: str = "")
         "app_origin": "https://app.example",
         "allowed_actions": ["save-note", "request-visit", "upload-document"],
         "health": health,
+        "form_values": state.get("form_values", {}),
     }
     json_response(handler, configuration, cookie=cookie)
 
 
 def post(handler: BaseHTTPRequestHandler, path: str, page: dict) -> None:
     cookie, state = session(handler)
-    expected_origin = f"http://127.0.0.1:{cast(ThreadingHTTPServer,handler.server).server_port}"
+    expected_origin = f"http://127.0.0.1:{cast(ThreadingHTTPServer, handler.server).server_port}"
     if handler.headers.get("Origin") != expected_origin or not secrets.compare_digest(
         handler.headers.get("X-CSRF-Token", ""), state["csrf"]
     ):
@@ -225,6 +226,8 @@ def post(handler: BaseHTTPRequestHandler, path: str, page: dict) -> None:
         if path == "/api/fixture-change":
             state["rev"] += 1
             state["state_updated"] = request.get("mode") == "state"
+            if request.get("mode") == "form":
+                state.setdefault("form_values", {}).setdefault("note-form", {})["guests"] = 4
             json_response(handler, {"page_rev": state["rev"]})
             return
         action = next((a for a in page["actions"] if a["id"] == request.get("action_id")), None)
@@ -270,6 +273,8 @@ def post(handler: BaseHTTPRequestHandler, path: str, page: dict) -> None:
                 json_response(handler, {"code": "schema_invalid"}, 422)
                 return
             state["rev"] += 1
+            if action["id"] == "save-note":
+                state.setdefault("form_values", {})["note-form"] = request["input"]
             receipt = (
                 {"transaction_id": secrets.token_hex(8), "page_rev": state["rev"]}
                 if action["kind"] == "edit"

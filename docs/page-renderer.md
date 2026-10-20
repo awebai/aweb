@@ -53,7 +53,7 @@ The adapter grows with R1's widget slices. Its full shape is:
   independent widget projection: `{page_rev, records, next_cursor, count}`. Every initial bound widget calls this, even with empty bootstrap records.
   Each record retains `{id, rev, value}`. A response at another page revision triggers a
   complete snapshot restart, never mixing rows across revisions. Cursors are
-  opaque; hosts bind them to actor, policy and query. Sorting/filtering/paging
+  opaque; hosts bind them to actor, policy and query. Agent-defined filters, reader sorting and paging
   goes through this read; no broader collection is sent to the browser. The
   bootstrap retains only definitions and exact decision/bundle records required
   by the frozen validator.
@@ -65,17 +65,17 @@ The adapter grows with R1's widget slices. Its full shape is:
   confirmation is a gesture, never human approval evidence.
 - `csrfToken()` retrieves a nonempty host CSRF token through the host's private
   closure, separately for every state-changing callback. It is never a page value,
-  DOM attribute or hidden input. Clearing the renderer fences pending retrievals.
+  DOM attribute or hidden input. Every submission captures its authority epoch and page before awaiting anything. Clearing the renderer fences the complete submission, including hashing, uploads, confirmations and refresh continuations; current policy is checked again before each dispatch.
 - `refresh()` returns a newly authorized and validated full page, used for
-  explicit conflict recovery. Drafts survive Review current page; only an
-  explicit Use current page revision rebases their precondition.
+  conflict recovery. The renderer refreshes in place, keeps the draft and offers Save my changes or Discard my changes. Saving explicitly rebases the revision; nothing retries silently.
+- `formValues(widget_id)` optionally returns host-authorized current field values keyed by field ID. The host updates this cache before resolving `refresh()`. The renderer compares these with the edit baseline to mark fields changed concurrently, and uses them when the person discards a draft. It never infers current values from agent messages.
 - `invoke(request, {csrfToken})` invokes an allowed action. Request context
   retains page/widget/action IDs, expected page and record revisions, an
   idempotency key, and typed input. Answer requests additionally bind exact task
   revision, proposal record/revision/digest and selected offered option. The
   host obtains `csrfToken` through its private adapter closure, never page JSON.
 - `upload(request, {csrfToken})` applies the same authority/CSRF context and
-  MIME/size bounds, returning attachment IDs. Its request contains the `File`
+  MIME/size bounds, returning attachment IDs. The submitted File is captured once and used for validation, hashing, metadata and bytes, even if the selection changes. Its request contains the `File`
   object and metadata including a SHA-256 binding in `input.file_sha256`; the
   host maps this to its declared upload tool, never an agent-supplied URL. The
   host validates actual bytes and MIME independently. Form file fields upload
@@ -87,7 +87,7 @@ The adapter grows with R1's widget slices. Its full shape is:
   `{subject, reachable, observed_at, valid_until, reason?, fixing?}` with the
   [agent-health](agent-health.md) meanings. Report words are escaped and shown
   verbatim. Age and expiry are recalculated; missing, expired or mismatched
-  evidence says Status unavailable. Presence never proves execution.
+  evidence says Unknown. Presence never proves execution.
 - `decision(task_id)` returns trusted current task/proposal/authority evidence
   (the decision slice documents its fields). Agent-authored widget state is
   never such evidence.

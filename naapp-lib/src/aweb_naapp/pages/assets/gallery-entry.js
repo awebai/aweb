@@ -4,7 +4,7 @@ import {
   createActionConfirmation,
 } from "/assets/page-renderer.js";
 const query = new URLSearchParams(location.search);
-const configuration = await fetch("/api/host?" + query).then((r) => r.json());
+let configuration = await fetch("/api/host?" + query).then((r) => r.json());
 async function send(path, request, credential) {
   const response = await fetch(path, {
     method: "POST",
@@ -18,7 +18,10 @@ async function send(path, request, credential) {
   if (!response.ok) throw body;
   return body;
 }
-const readPage = () => fetch("/api/page?" + query).then((r) => r.json());
+const readPage = async () => {
+  configuration = await fetch("/api/host?" + query).then((r) => r.json());
+  return fetch("/api/page?" + query).then((r) => r.json());
+};
 const host = {
   confirmLink: createLinkConfirmation(
     document.querySelector("#link-confirmation"),
@@ -27,6 +30,7 @@ const host = {
     document.querySelector("#action-confirmation"),
   ),
   csrfToken: () => configuration.csrf_token,
+  formValues: (widget) => configuration.form_values[widget],
   actionPolicy: (action) => ({
     allowed: configuration.allowed_actions.includes(action),
     consequential: action === "request-visit",
@@ -80,11 +84,14 @@ async function refresh() {
 }
 document.querySelector("#identity").textContent = "Fixture gallery";
 document.addEventListener("keydown", async (event) => {
-  if (event.altKey && (event.key === "u" || event.key === "c")) {
+  if (event.altKey && ["u", "c", "f"].includes(event.key)) {
     event.preventDefault();
     await send(
       "/api/fixture-change",
-      { mode: event.key === "u" ? "state" : "record" },
+      {
+        mode:
+          event.key === "u" ? "state" : event.key === "f" ? "form" : "record",
+      },
       { csrfToken: configuration.csrf_token },
     );
     if (event.key === "u") await refresh();

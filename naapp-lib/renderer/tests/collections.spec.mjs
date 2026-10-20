@@ -48,9 +48,75 @@ test("bound values use bidi isolation and filters return only matching authorize
   ).toBe("isolate");
   await page.goto("/");
   const table = page.locator('[data-widget="property-table"]');
-  await table.getByLabel("Filter field").selectOption("name");
-  await table.getByLabel("Filter value").fill("Riverside");
-  await table.getByRole("button", { name: "Apply filter" }).click();
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  await expect(table.locator("input, select")).toHaveCount(0);
+});
+
+test("pager retains keyboard focus at the last page and announces the range", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const table = page.locator('[data-widget="property-table"]');
+  const next = table.getByRole("button", { name: "Next" });
+  await next.focus();
+  await page.keyboard.press("Enter");
   await expect(table.locator("tbody tr")).toHaveCount(1);
-  await expect(table.locator("tbody tr")).toContainText("Riverside");
+  await expect(table.getByRole("button", { name: "Previous" })).toBeFocused();
+  await expect(page.locator("#announcements")).toContainText("Showing 3 of 3");
+  await expect(
+    page.locator('[data-widget="property-cards"] .pagination'),
+  ).not.toBeVisible();
+});
+
+test("a dense phone table scrolls as a table and calendar dates retain their day", async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 375, height: 812 },
+    timezoneId: "America/Los_Angeles",
+    ignoreHTTPSErrors: true,
+  });
+  const page = await context.newPage();
+  await page.goto(baseURL + "/?case=dense-table");
+  const table = page.locator('[data-widget="property-table"]');
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  await expect(table).toContainText("Oct 20, 2026");
+  await expect(table).toContainText("€12,345.67");
+  const sizes = await table.locator(".table-scroll").evaluate((node) => ({
+    scroll: node.scrollWidth,
+    width: node.clientWidth,
+    body: document.body.scrollWidth,
+    viewport: innerWidth,
+    cells: [...node.querySelectorAll("td")].map(
+      (cell) => getComputedStyle(cell).overflowWrap,
+    ),
+    compact: [...node.querySelectorAll(".cell-compact")].map(
+      (cell) => getComputedStyle(cell).whiteSpace,
+    ),
+  }));
+  expect(sizes.scroll).toBeGreaterThan(sizes.width);
+  expect(sizes.body).toBeLessThanOrEqual(sizes.viewport);
+  expect(sizes.cells.every((value) => value === "normal")).toBe(true);
+  expect(sizes.compact.every((value) => value === "nowrap")).toBe(true);
+  await context.close();
+});
+test("empty collections have one quiet message, and charts and timelines carry readable labels", async ({
+  page,
+}) => {
+  await page.goto("/?case=empty");
+  const table = page.locator('[data-widget="property-table"]');
+  await expect(table).toContainText("Nothing here yet.");
+  await expect(table.locator(".pagination")).not.toBeVisible();
+  await expect(table.locator("input,select,table")).toHaveCount(0);
+  await page.goto("/");
+  await expect(
+    page.locator('[data-widget="chart-pie"] .chart-labels'),
+  ).toContainText("Maple House: 62");
+  await expect(page.locator('[data-widget="chart-pie"] th').first()).toHaveText(
+    "Property",
+  );
+  await expect(
+    page.locator('[data-widget="activity"] time').first(),
+  ).toContainText(/\d:\d\d (AM|PM)/);
 });

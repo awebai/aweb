@@ -7,8 +7,15 @@ test("a labeled typed form sends validated values with host CSRF and revisions",
   const form = page.locator('[data-widget="note-form"]');
   await form.getByRole("button", { name: "Save note" }).click();
   await expect(form.getByRole("alert")).toBeVisible();
-  await form.getByLabel("Note", { exact: true }).fill("Inspect the entrance");
-  await form.getByLabel("Guests", { exact: true }).fill("3");
+  await expect(
+    form.locator(".field-error", { hasText: "Complete this field." }),
+  ).toHaveCount(2);
+  await form
+    .getByLabel("Note (required)", { exact: true })
+    .fill("Inspect the entrance");
+  await form
+    .getByLabel(/^Guests(?: \(required\))?$/, { exact: true })
+    .fill("3");
   await form.getByLabel("Visit date", { exact: true }).fill("2026-11-04");
   await form.getByLabel("Priority", { exact: true }).selectOption("urgent");
   const sent = page.waitForRequest(
@@ -28,6 +35,7 @@ test("a labeled typed form sends validated values with host CSRF and revisions",
     },
   });
   await expect(form.getByRole("status")).toContainText("Saved");
+  await expect(form.getByRole("button", { name: "Save note" })).toBeFocused();
 });
 
 test("consequential buttons wait for host confirmation and intents report admission separately from execution", async ({
@@ -44,10 +52,13 @@ test("consequential buttons wait for host confirmation and intents report admiss
   await expect(
     dialog.getByRole("button", { name: "Cancel", exact: true }),
   ).toBeFocused();
-  await dialog.getByRole("button", { name: "Confirm", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Ask the agent", exact: true })
+    .click();
   await expect(
     page.locator('[data-widget="request-button"] [role="status"]'),
-  ).toContainText("Execution not started");
+  ).toContainText("Waiting for the agent to pick it up");
+  await expect(button).toBeFocused();
 });
 
 test("bounded uploads use host CSRF and attachment IDs; unacceptable files stay local", async ({
@@ -61,7 +72,10 @@ test("bounded uploads use host CSRF and attachment IDs; unacceptable files stay 
     buffer: Buffer.from("<svg/>"),
   });
   await drop.getByRole("button", { name: "Upload", exact: true }).click();
-  await expect(drop.getByRole("alert")).toContainText("file type");
+  await expect(drop.getByRole("alert")).toContainText("isn't a text file");
+  await expect(page.locator("#announcements")).toContainText(
+    "isn't a text file",
+  );
   await drop.getByLabel("Upload a document", { exact: true }).setInputFiles({
     name: "notes.txt",
     mimeType: "text/plain",
@@ -72,7 +86,10 @@ test("bounded uploads use host CSRF and attachment IDs; unacceptable files stay 
   );
   await drop.getByRole("button", { name: "Upload", exact: true }).click();
   expect((await sent).headers()["x-csrf-token"]).toBeTruthy();
-  await expect(drop.getByRole("status")).toContainText("attachment-");
+  await expect(drop.getByRole("status")).toContainText("notes.txt uploaded.");
+  await expect(
+    drop.getByRole("button", { name: "Upload", exact: true }),
+  ).toBeFocused();
 });
 
 test("media uses only the separate app asset origin and video has explicit playback controls", async ({
@@ -88,7 +105,7 @@ test("media uses only the separate app asset origin and video has explicit playb
   await expect(video).toHaveAttribute("controls", "");
   await expect(video).not.toHaveAttribute("autoplay");
   await expect(page.locator('[data-widget="agent-health"]')).toContainText(
-    "Status reported",
+    "Reported",
   );
   await page.getByRole("link", { name: "Open app console" }).click();
   await expect(page.getByRole("dialog").getByRole("heading")).toHaveText(
@@ -101,9 +118,11 @@ test("form drafts survive live updates and conflicts require an explicit reapply
 }) => {
   await page.goto("/");
   const form = page.locator('[data-widget="note-form"]');
-  const note = form.getByLabel("Note", { exact: true });
+  const note = form.getByLabel("Note (required)", { exact: true });
   await note.fill("Keep my draft");
-  await form.getByLabel("Guests", { exact: true }).fill("2");
+  await form
+    .getByLabel(/^Guests(?: \(required\))?$/, { exact: true })
+    .fill("2");
   await note.focus();
   await page.keyboard.press("Alt+u");
   await expect(page.locator("#announcements")).toContainText(
@@ -113,11 +132,11 @@ test("form drafts survive live updates and conflicts require an explicit reapply
   await expect(note).toBeFocused();
   await form.getByRole("button", { name: "Save note" }).click();
   await expect(form.getByRole("alert")).toContainText("draft is kept");
-  await form.getByRole("button", { name: "Review current page" }).click();
-  await form.getByRole("button", { name: "Use current page revision" }).click();
+  await expect(form.getByRole("button", { name: "Save note" })).toBeFocused();
   await expect(note).toHaveValue("Keep my draft");
-  await form.getByRole("button", { name: "Save note" }).click();
+  await form.getByRole("button", { name: "Save my changes" }).click();
   await expect(form.getByRole("status")).toContainText("Saved");
+  await expect(form.getByRole("button", { name: "Save note" })).toBeFocused();
 });
 
 test("missing CSRF blocks dispatch and the real fixture host rejects a headerless POST", async ({
@@ -129,9 +148,13 @@ test("missing CSRF blocks dispatch and the real fixture host rejects a headerles
     if (request.url().endsWith("/api/invoke")) mutations++;
   });
   const form = page.locator('[data-widget="note-form"]');
-  await form.getByLabel("Note", { exact: true }).fill("A valid note");
-  await form.getByLabel("Guests", { exact: true }).fill("2");
-  await form.getByRole("button", { name: "Save note" }).click();
+  await form
+    .getByLabel("Note (required)", { exact: true })
+    .fill("A valid note");
+  await form
+    .getByLabel(/^Guests(?: \(required\))?$/, { exact: true })
+    .fill("2");
+  await expect(form.getByRole("button", { name: "Save note" })).toBeDisabled();
   await expect(form.getByRole("alert")).toContainText("could not verify");
   expect(mutations).toBe(0);
   const response = await page.request.post("/api/invoke", { data: {} });
@@ -152,10 +175,10 @@ test("foreign media is refused before a network request and health loses a posit
   expect(foreign).toEqual([]);
   await page.goto("/?case=health-expiring");
   await expect(page.locator('[data-widget="agent-health"]')).toContainText(
-    "Can receive messages",
+    "Ready",
   );
   await expect(page.locator('[data-widget="agent-health"]')).toContainText(
-    "Status unavailable",
+    "Unknown",
     { timeout: 5000 },
   );
 });
@@ -165,15 +188,17 @@ test("file form fields resolve to attachment IDs before the typed form is invoke
 }) => {
   await page.goto("/");
   const form = page.locator('[data-widget="note-form"]');
-  await form.getByLabel("Note", { exact: true }).fill("A note with a file");
-  await form.getByLabel("Guests", { exact: true }).fill("2");
   await form
-    .getByLabel("Attachment", { exact: true })
-    .setInputFiles({
-      name: "note.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("Attached text"),
-    });
+    .getByLabel("Note (required)", { exact: true })
+    .fill("A note with a file");
+  await form
+    .getByLabel(/^Guests(?: \(required\))?$/, { exact: true })
+    .fill("2");
+  await form.getByLabel("Attachment", { exact: true }).setInputFiles({
+    name: "note.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Attached text"),
+  });
   const invocation = page.waitForRequest(
     (r) => r.url().endsWith("/api/invoke") && r.method() === "POST",
   );
@@ -182,6 +207,7 @@ test("file form fields resolve to attachment IDs before the typed form is invoke
     /^attachment-[a-f0-9]+$/,
   );
   await expect(form.getByRole("status")).toContainText("Saved");
+  await expect(form.getByRole("button", { name: "Save note" })).toBeFocused();
 });
 
 test("upload size limits stop dispatch and equal-size different files get different request keys", async ({
@@ -189,30 +215,68 @@ test("upload size limits stop dispatch and equal-size different files get differ
 }) => {
   await page.goto("/");
   const drop = page.locator('[data-widget="document-upload"]');
-  await drop
-    .getByLabel("Upload a document", { exact: true })
-    .setInputFiles({
-      name: "big.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.alloc(1025),
-    });
+  await drop.getByLabel("Upload a document", { exact: true }).setInputFiles({
+    name: "big.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.alloc(1025),
+  });
   await drop.getByRole("button", { name: "Upload", exact: true }).click();
-  await expect(drop.getByRole("alert")).toContainText("size limit");
+  await expect(drop.getByRole("alert")).toContainText("The limit is 1 KB");
   const keys = [];
   for (const content of ["abc", "xyz"]) {
-    await drop
-      .getByLabel("Upload a document", { exact: true })
-      .setInputFiles({
-        name: "same.txt",
-        mimeType: "text/plain",
-        buffer: Buffer.from(content),
-      });
+    await drop.getByLabel("Upload a document", { exact: true }).setInputFiles({
+      name: "same.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from(content),
+    });
     const sent = page.waitForRequest(
       (r) => r.url().endsWith("/api/upload") && r.method() === "POST",
     );
     await drop.getByRole("button", { name: "Upload", exact: true }).click();
     keys.push((await sent).postDataJSON().idempotency_key);
-    await expect(drop.getByRole("status")).toContainText("attachment-");
+    await expect(drop.getByRole("status")).toContainText("same.txt uploaded.");
   }
   expect(keys[0]).not.toBe(keys[1]);
+});
+
+test("conflicting field values are marked and discard restores the current host values", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const form = page.locator('[data-widget="note-form"]');
+  await form
+    .getByLabel("Note (required)", { exact: true })
+    .fill("Draft to discard");
+  await form.getByLabel("Guests (required)", { exact: true }).fill("2");
+  const changed = page.waitForResponse((r) =>
+    r.url().endsWith("/api/fixture-change"),
+  );
+  await page.keyboard.press("Alt+f");
+  await changed;
+  await form.getByRole("button", { name: "Save note" }).click();
+  await expect(form).toContainText("Changed while you were editing: now 4");
+  await expect(
+    form.getByLabel("Guests (required)", { exact: true }),
+  ).toHaveValue("2");
+  await form.getByRole("button", { name: "Discard my changes" }).click();
+  await expect(
+    form.getByLabel("Guests (required)", { exact: true }),
+  ).toHaveValue("4");
+  await expect(form.getByLabel("Note (required)", { exact: true })).toHaveValue(
+    "",
+  );
+  await expect(form.getByRole("button", { name: "Save note" })).toBeFocused();
+});
+test("form validation explains numeric bounds and text limits", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const form = page.locator('[data-widget="note-form"]');
+  await form
+    .getByLabel("Note (required)", { exact: true })
+    .fill("x".repeat(501));
+  await form.getByLabel("Guests (required)", { exact: true }).fill("0");
+  await form.getByRole("button", { name: "Save note" }).click();
+  await expect(form).toContainText("Use at most 500 characters.");
+  await expect(form).toContainText("Enter a whole number from 1 to 20.");
 });

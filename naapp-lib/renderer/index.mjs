@@ -285,6 +285,9 @@ export function createPageRenderer({
               query,
               actionButton,
               onRead: (bind) => read(bind),
+              announce: (text) => {
+                announcements.textContent = text;
+              },
             });
           } else {
             const value = p.field ? records[0]?.value?.[p.field] : p.value;

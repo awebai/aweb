@@ -19,10 +19,6 @@ var english = {
   previous: "Previous",
   next: "Next",
   actions: "Actions",
-  filterField: "Filter field",
-  filterValue: "Filter value",
-  applyFilter: "Apply filter",
-  clearFilter: "Clear filter",
   pagination: "Record pages",
   loading: "Loading records\u2026",
   conflict: "The page changed. Refresh to see the current records.",
@@ -7474,13 +7470,14 @@ function element(tag, text3, className) {
   if (className) node.className = className;
   return node;
 }
-function valueText(value, format2 = "text", locale = "en", timeZone) {
+function valueText(value, format2 = "text", locale = "en", timeZone, currency) {
   if (value === null || value === void 0) return "\u2014";
-  if (format2 === "date") {
+  if (format2 === "date" || format2 === "date-time") {
     const date = new Date(value);
     return Number.isFinite(date.valueOf()) ? new Intl.DateTimeFormat(locale, {
       dateStyle: "medium",
-      timeZone
+      ...format2 === "date-time" ? { timeStyle: "short" } : {},
+      timeZone: /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? "UTC" : timeZone
     }).format(date) : String(value);
   }
   if (format2 === "number" || format2 === "money_minor") {
@@ -7490,8 +7487,19 @@ function valueText(value, format2 = "text", locale = "en", timeZone) {
     let integer = BigInt(whole), tail = fraction;
     if (format2 === "money_minor") {
       if (fraction !== void 0) return "\u2014";
-      tail = (integer % 100n).toString().padStart(2, "0");
-      integer /= 100n;
+      const validCurrency = typeof currency === "string" && Intl.supportedValuesOf("currency").includes(currency);
+      const formatter = new Intl.NumberFormat(
+        "en",
+        validCurrency ? { style: "currency", currency } : { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+      );
+      const scale = validCurrency ? formatter.resolvedOptions().maximumFractionDigits : 2;
+      const divisor = 10n ** BigInt(scale);
+      tail = (integer % divisor).toString().padStart(scale, "0");
+      integer /= divisor;
+      const parts = formatter.formatToParts(sign === "-" ? -integer : integer);
+      if (sign === "-" && integer === 0n)
+        parts.unshift({ type: "minusSign", value: "-" });
+      return parts.map((part) => part.type === "fraction" ? tail : part.value).join("");
     }
     return sign + new Intl.NumberFormat(locale).format(integer) + (tail !== void 0 ? "." + tail : "");
   }
@@ -7562,14 +7570,47 @@ function typedValue(text3, schema) {
   }
   return text3;
 }
+function fileTypes(accept) {
+  return accept.map(
+    (mime) => ({
+      "text/plain": "Text files",
+      "application/pdf": "PDF files",
+      "image/*": "Images",
+      "image/png": "PNG images",
+      "image/jpeg": "JPEG images"
+    })[mime] || `${mime} files`
+  ).join(" or ");
+}
+function fileSize(bytes) {
+  return bytes >= 1024 ? `${new Intl.NumberFormat("en", { maximumFractionDigits: 1 }).format(bytes / 1024)} KB` : `${bytes} bytes`;
+}
 function acceptableFile(file, accept, maxBytes) {
-  if (!file || file.size > maxBytes)
-    return "Choose a file within the size limit.";
+  if (!file) return "Choose a file.";
+  if (file.size > maxBytes)
+    return `${file.name} is ${fileSize(file.size)}. The limit is ${fileSize(maxBytes)}.`;
   if (!accept.some(
     (mime) => mime.endsWith("/*") ? file.type.startsWith(mime.slice(0, -1)) : file.type === mime
   ))
-    return "Choose an allowed file type.";
+    return accept.length === 1 && accept[0] === "text/plain" ? `${file.name} isn't a text file.` : `${file.name} isn't an allowed type. Choose ${fileTypes(accept).toLowerCase()}.`;
   return null;
+}
+function fieldError(value, schema, required, kind) {
+  if (value === "" && required) return "Complete this field.";
+  if (inputErrors(value, schema).length === 0) return null;
+  if (kind === "number" && schema?.type === "integer") {
+    if (schema.minimum !== void 0 && schema.maximum !== void 0)
+      return `Enter a whole number from ${schema.minimum} to ${schema.maximum}.`;
+    if (schema.minimum !== void 0)
+      return `Enter a whole number of at least ${schema.minimum}.`;
+    if (schema.maximum !== void 0)
+      return `Enter a whole number no greater than ${schema.maximum}.`;
+    return "Enter a whole number.";
+  }
+  if (typeof value === "string" && [...value].length > (schema?.maxLength ?? Infinity))
+    return `Use at most ${schema.maxLength} characters.`;
+  if (schema?.minLength !== void 0 && typeof value === "string" && [...value].length < schema.minLength)
+    return `Use at least ${schema.minLength} characters.`;
+  return "Enter a valid value for this field.";
 }
 
 // actions.mjs
@@ -7585,11 +7626,11 @@ var errorText = (error2) => ({
 })[error2?.code] || "The outcome is unknown. Check the request before trying again.";
 function receiptText(receipt) {
   if (receipt?.transaction_id) return "Saved";
-  if (receipt?.attachment_id) return `Uploaded \xB7 ${receipt.attachment_id}`;
+  if (receipt?.attachment_id) return "Uploaded";
   if (receipt?.delivery === "queued")
-    return "Queued for the agent. Execution not started.";
+    return "Request saved. Waiting for the agent to pick it up.";
   if (receipt?.delivery === "pending")
-    return "Request recorded \xB7 delivery pending. Execution not started.";
+    return "Request saved. Waiting for the agent to pick it up.";
   return "Request recorded";
 }
 function createActions({ host, getPage, update, announce }) {
@@ -7601,11 +7642,36 @@ function createActions({ host, getPage, update, announce }) {
       reason: "This action is unavailable."
     };
   }
-  async function csrf() {
-    const boundary = authorityEpoch;
-    const token = await host.csrfToken?.();
-    if (boundary !== authorityEpoch || !getPage())
+  function capture(w, actionId, record, baseRev) {
+    const page = getPage(), action = page?.actions.find((a) => a.id === actionId);
+    if (!page || !action || !policy(actionId, { widget_id: w.id, record }).allowed)
       throw { code: "action_denied" };
+    return {
+      epoch: authorityEpoch,
+      page_id: page.page_id,
+      page_rev: baseRev ?? page.rev,
+      widget_id: w.id,
+      action_id: actionId,
+      action: structuredClone(action),
+      record: record ? structuredClone(record) : void 0,
+      collection: w.bind?.collection
+    };
+  }
+  function assertCurrent(context) {
+    const page = getPage();
+    if (!context || context.epoch !== authorityEpoch || context.page_id !== page?.page_id)
+      throw { code: "authority_changed", silent: true };
+    const action = page.actions.find((a) => a.id === context.action_id);
+    if (JSON.stringify(action) !== JSON.stringify(context.action) || !policy(context.action_id, {
+      widget_id: context.widget_id,
+      record: context.record
+    }).allowed)
+      throw { code: "action_denied" };
+  }
+  async function csrf(context) {
+    assertCurrent(context);
+    const token = await host.csrfToken?.();
+    assertCurrent(context);
     if (typeof token !== "string" || !token) throw { code: "csrf_required" };
     return { csrfToken: token };
   }
@@ -7619,30 +7685,33 @@ function createActions({ host, getPage, update, announce }) {
       (byte) => byte.toString(16).padStart(2, "0")
     ).join("");
   }
-  function requestFor(w, actionId, input, record, baseRev) {
-    const page = getPage();
-    if (!page) throw { code: "action_denied" };
+  function requestFor(context, input) {
+    assertCurrent(context);
     const request = {
-      page_id: page.page_id,
-      widget_id: w.id,
-      action_id: actionId,
-      expected_page_rev: baseRev ?? page.rev,
+      page_id: context.page_id,
+      widget_id: context.widget_id,
+      action_id: context.action_id,
+      expected_page_rev: context.page_rev,
       input
     };
-    if (record) {
-      request.collection = w.bind.collection;
-      request.record_id = record.id;
-      request.expected_record_rev = record.rev;
-    }
+    if (context.record)
+      request.expected_record_revs = {
+        [`${context.collection}/${context.record.id}`]: context.record.rev
+      };
     const identity = JSON.stringify(request);
     if (!keys.has(identity)) keys.set(identity, crypto.randomUUID());
     return { ...request, idempotency_key: keys.get(identity) };
   }
-  async function invoke(w, actionId, input, event, { record, baseRev, files = [] } = {}) {
-    if (!event?.isTrusted) throw { code: "action_denied" };
-    const page = getPage(), action = page?.actions.find((a) => a.id === actionId), admission = policy(actionId, { widget_id: w.id, record });
-    if (!action || action.kind === "answer" || !admission.allowed || !host.invoke)
+  async function invoke(w, actionId, input, event, {
+    record,
+    baseRev,
+    files = [],
+    context = capture(w, actionId, record, baseRev)
+  } = {}) {
+    if (!event?.isTrusted || context.action.kind === "answer" || !host.invoke)
       throw { code: "action_denied" };
+    assertCurrent(context);
+    const action = context.action, admission = policy(actionId, { widget_id: w.id, record: context.record });
     if (admission.consequential || w.props?.confirmation || action.requires_approval) {
       if (!host.confirmAction || !await host.confirmAction(
         {
@@ -7652,36 +7721,38 @@ function createActions({ host, getPage, update, announce }) {
         event
       ))
         return null;
+      assertCurrent(context);
     }
     const values = { ...input };
     for (const { field, file } of files) {
+      assertCurrent(context);
       if (!host.upload) throw { code: "unavailable" };
-      const request = requestFor(
-        w,
-        actionId,
-        {
-          field_id: field.id,
-          name: file.name,
-          mime: file.type,
-          size: file.size,
-          file_sha256: await fileDigest(file)
-        },
-        record,
-        baseRev
-      );
-      const receipt = await host.upload({ ...request, file }, await csrf());
+      const digest = await fileDigest(file);
+      assertCurrent(context);
+      const request2 = requestFor(context, {
+        field_id: field.id,
+        name: file.name,
+        mime: file.type,
+        size: file.size,
+        file_sha256: digest
+      });
+      const credential2 = await csrf(context);
+      assertCurrent(context);
+      const receipt2 = await host.upload({ ...request2, file }, credential2);
+      assertCurrent(context);
       if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(
-        receipt?.attachment_id || ""
+        receipt2?.attachment_id || ""
       ))
         throw { code: "schema_invalid" };
-      values[field.id] = receipt.attachment_id;
+      values[field.id] = receipt2.attachment_id;
     }
     const errors2 = inputErrors(values, action.input_schema);
     if (errors2.length) throw { code: "schema_invalid", pointers: errors2 };
-    return host.invoke(
-      requestFor(w, actionId, values, record, baseRev),
-      await csrf()
-    );
+    const request = requestFor(context, values), credential = await csrf(context);
+    assertCurrent(context);
+    const receipt = await host.invoke(request, credential);
+    assertCurrent(context);
+    return receipt;
   }
   function feedback(box) {
     const error2 = element("p", null, "field-error");
@@ -7693,41 +7764,70 @@ function createActions({ host, getPage, update, announce }) {
     box.append(error2, status, recovery);
     return { error: error2, status, recovery };
   }
-  function showError(ui, error2, onRebase) {
+  function restoreFocus(control, message, context) {
+    try {
+      assertCurrent(context);
+    } catch {
+      return;
+    }
+    const target = control?.isConnected && !control.disabled ? control : message;
+    if (!target?.isConnected) return;
+    if (target !== control) target.tabIndex = -1;
+    target.focus({ preventScroll: true });
+  }
+  function initialize(button, ui, w, actionId, record) {
+    button.disabled = true;
+    let context;
+    try {
+      context = capture(w, actionId, record);
+    } catch {
+      return;
+    }
+    csrf(context).then(() => {
+      if (button.isConnected) button.disabled = false;
+    }).catch((error2) => {
+      if (!error2.silent && button.isConnected) {
+        ui.error.hidden = false;
+        ui.error.textContent = errorText(error2);
+      }
+    });
+  }
+  async function showError(ui, error2, recovery, context) {
+    if (error2?.silent) return;
     ui.error.hidden = false;
     ui.error.textContent = errorText(error2);
     ui.recovery.replaceChildren();
-    if (error2?.code === "revision_conflict" && host.refresh) {
-      const refresh = element("button", "Review current page");
-      refresh.type = "button";
-      refresh.onclick = async () => {
-        try {
-          const page = await host.refresh();
-          if (!getPage()) return;
-          update(page);
-          ui.recovery.replaceChildren();
-          const reapply = element("button", "Use current page revision");
-          reapply.type = "button";
-          reapply.onclick = () => {
-            onRebase?.(page.rev);
-            ui.error.hidden = true;
-            ui.recovery.replaceChildren();
-            announce("Draft retained. Review it before submitting again.");
-          };
-          ui.recovery.append(
-            element(
-              "p",
-              "Your draft is unchanged. Review the current page before reapplying it."
-            ),
-            reapply
-          );
-        } catch (error3) {
-          ui.error.textContent = errorText(error3);
-        }
-      };
-      ui.recovery.append(refresh);
-    }
     announce(ui.error.textContent);
+    if (error2?.code !== "revision_conflict" || !host.refresh || !recovery)
+      return;
+    try {
+      assertCurrent(context);
+      const page = await host.refresh();
+      assertCurrent(context);
+      if (page.page_id !== context.page_id) throw { code: "action_denied" };
+      update(page);
+      assertCurrent(context);
+      recovery.updated?.(page.rev);
+      const save = element("button", "Save my changes");
+      save.type = "button";
+      save.onclick = (event) => {
+        if (!event.isTrusted) return;
+        assertCurrent(context);
+        recovery.save(page.rev);
+      };
+      const discard = element("button", "Discard my changes");
+      discard.type = "button";
+      discard.onclick = (event) => {
+        if (!event.isTrusted) return;
+        assertCurrent(context);
+        recovery.discard(page.rev);
+        ui.error.hidden = true;
+        ui.recovery.replaceChildren();
+      };
+      ui.recovery.append(save, discard);
+    } catch (problem) {
+      if (!problem.silent) ui.error.textContent = errorText(problem);
+    }
   }
   function actionButton(w, actionId, record, label) {
     const action = getPage()?.actions.find((a) => a.id === actionId), admission = policy(actionId, { widget_id: w.id, record });
@@ -7751,20 +7851,35 @@ function createActions({ host, getPage, update, announce }) {
       button.after(box);
       const ui = feedback(box);
       ui.status.textContent = "Submitting\u2026";
+      let context;
       try {
-        const receipt = await invoke(w, actionId, fixed, event, { record });
+        context = capture(w, actionId, record);
+        const receipt = await invoke(w, actionId, fixed, event, {
+          record,
+          context
+        });
         if (receipt) {
           ui.status.textContent = receiptText(receipt);
           announce(ui.status.textContent);
         }
       } catch (error2) {
         ui.status.textContent = "";
-        showError(ui, error2);
+        await showError(ui, error2, void 0, context);
       } finally {
         pending = false;
         button.disabled = !policy(actionId, { widget_id: w.id, record }).allowed;
+        restoreFocus(button, ui.error.hidden ? ui.status : ui.error, context);
       }
     };
+    if (!button.disabled) {
+      const box = element("div", null, "action-feedback");
+      queueMicrotask(() => {
+        if (!button.isConnected) return;
+        button.after(box);
+        feedbackBox = box;
+        initialize(button, feedback(box), w, actionId, record);
+      });
+    }
     return button;
   }
   function form(box, w) {
@@ -7776,7 +7891,11 @@ function createActions({ host, getPage, update, announce }) {
     let baseRev, pending = false;
     for (const field of p.fields) {
       const group = element("div", null, "form-field");
-      const label = element("label", field.label);
+      const isRequired = field.required || action.input_schema.required?.includes(field.id);
+      const label = element(
+        "label",
+        field.label + (isRequired ? " (required)" : "")
+      );
       const id = `field-${w.id}-${field.id}`;
       label.htmlFor = id;
       let input;
@@ -7795,11 +7914,11 @@ function createActions({ host, getPage, update, announce }) {
       input.name = field.id;
       input.dataset.focusKey = `field:${field.id}`;
       const required = field.required || action.input_schema.required?.includes(field.id);
-      input.required = !!required;
+      input.required = field.kind !== "checkbox" && !!required;
       if (field.kind === "number")
         input.inputMode = action.input_schema.properties?.[field.id]?.type === "integer" ? "numeric" : "decimal";
       if (field.kind === "file") input.accept = field.accept.join(",");
-      const initial = action.input_schema.properties?.[field.id]?.default;
+      const initial = host.formValues?.(w.id)?.[field.id] ?? action.input_schema.properties?.[field.id]?.default;
       if (field.kind === "checkbox") input.checked = initial === true;
       else if (initial !== void 0 && ["string", "number"].includes(typeof initial))
         input.value = String(initial);
@@ -7823,12 +7942,14 @@ function createActions({ host, getPage, update, announce }) {
       node.append(group);
       controls.set(field.id, { field, input, error: error2 });
     }
-    const submit = element("button", action.label);
+    const submit = element("button", action.label, "primary-button");
     submit.type = "submit";
     submit.disabled = !policy(action.id, { widget_id: w.id }).allowed;
     node.append(submit);
     const ui = feedback(node);
     box.append(node);
+    initialize(submit, ui, w, action.id);
+    let baseline = structuredClone(host.formValues?.(w.id) || {});
     node.onsubmit = async (event) => {
       event.preventDefault();
       if (pending || !event.isTrusted) return;
@@ -7852,11 +7973,11 @@ function createActions({ host, getPage, update, announce }) {
             files.push({ field, file: input.files[0] });
           } else if (input.required) message = "Choose a file.";
         } else {
+          const required = field.required || getPage().actions.find((a) => a.id === action.id)?.input_schema.required?.includes(field.id);
+          if (field.kind !== "checkbox" && field.kind !== "select" && input.value === "" && !required)
+            continue;
           const value = field.kind === "checkbox" ? input.checked : field.kind === "number" || field.kind === "select" ? typedValue(input.value, property) : input.value;
-          if (input.required && (field.kind === "checkbox" && !value || value === ""))
-            message = "Complete this field.";
-          else if (value === void 0 || inputErrors(value, property).length)
-            message = "Enter a valid value for this field.";
+          message = input.value === "" && required && field.kind !== "checkbox" ? "Complete this field." : fieldError(value, property, required, field.kind);
           values[field.id] = value;
         }
         if (message) {
@@ -7876,10 +7997,13 @@ function createActions({ host, getPage, update, announce }) {
       submit.disabled = true;
       node.setAttribute("aria-busy", "true");
       ui.status.textContent = "Submitting\u2026";
+      let context;
       try {
+        context = capture(w, action.id, void 0, baseRev);
         const receipt = await invoke(w, action.id, values, event, {
           baseRev,
-          files
+          files,
+          context
         });
         if (receipt) {
           ui.status.textContent = receiptText(receipt);
@@ -7888,9 +8012,40 @@ function createActions({ host, getPage, update, announce }) {
         }
       } catch (error2) {
         ui.status.textContent = "";
-        showError(ui, error2, (revision) => {
-          baseRev = revision;
-        });
+        await showError(
+          ui,
+          error2,
+          {
+            updated() {
+              const latest = host.formValues?.(w.id) || {};
+              for (const [id, control] of controls) {
+                if (Object.hasOwn(latest, id) && JSON.stringify(latest[id]) !== JSON.stringify(baseline[id])) {
+                  control.error.hidden = false;
+                  control.error.textContent = `Changed while you were editing: now ${String(latest[id])}`;
+                }
+              }
+            },
+            save(revision) {
+              baseRev = revision;
+              node.requestSubmit(submit);
+            },
+            discard(revision) {
+              baseRev = revision;
+              baseline = structuredClone(host.formValues?.(w.id) || {});
+              for (const [id, { field, input, error: error3 }] of controls) {
+                const value = baseline[id] ?? action.input_schema.properties?.[id]?.default;
+                if (field.kind === "checkbox") input.checked = value === true;
+                else
+                  input.value = field.kind === "file" ? "" : String(value ?? "");
+                error3.hidden = true;
+                input.removeAttribute("aria-invalid");
+              }
+              restoreFocus(submit, ui.status, context);
+              announce("Draft discarded.");
+            }
+          },
+          context
+        );
         for (const pointer of error2?.pointers || []) {
           const field = controls.get(pointer.slice(1));
           if (field) {
@@ -7903,6 +8058,7 @@ function createActions({ host, getPage, update, announce }) {
         pending = false;
         node.setAttribute("aria-busy", "false");
         submit.disabled = !policy(action.id, { widget_id: w.id }).allowed;
+        restoreFocus(submit, ui.error.hidden ? ui.status : ui.error, context);
       }
     };
   }
@@ -7917,7 +8073,7 @@ function createActions({ host, getPage, update, announce }) {
     input.accept = p.accept.join(",");
     const selected = element(
       "p",
-      `Allowed: ${p.accept.join(", ")} \xB7 up to ${p.max_bytes.toLocaleString("en")} bytes`,
+      `${fileTypes(p.accept)}, up to ${fileSize(p.max_bytes)}.`,
       "field-description"
     );
     const submit = element("button", "Upload");
@@ -7926,24 +8082,33 @@ function createActions({ host, getPage, update, announce }) {
     let file, pending = false;
     input.onchange = () => {
       file = input.files[0];
-      selected.textContent = file?.name || "Choose a file.";
+      selectionChanged();
     };
     node.ondragover = (event) => event.preventDefault();
     node.ondrop = (event) => {
       event.preventDefault();
       file = event.dataTransfer.files[0];
-      selected.textContent = file?.name || "Choose a file.";
+      selectionChanged();
     };
     node.append(label, input, selected, submit);
     const ui = feedback(node);
     box.append(node);
+    initialize(submit, ui, w, p.action);
+    function selectionChanged() {
+      const message = acceptableFile(file, p.accept, p.max_bytes);
+      ui.error.hidden = !message;
+      ui.error.textContent = message || "";
+      announce(message || "");
+    }
     node.onsubmit = async (event) => {
       event.preventDefault();
       if (pending || !event.isTrusted) return;
-      const message = acceptableFile(file, p.accept, p.max_bytes);
+      const selectedFile = file;
+      const message = acceptableFile(selectedFile, p.accept, p.max_bytes);
       if (message) {
         ui.error.hidden = false;
         ui.error.textContent = message;
+        announce(message);
         return;
       }
       if (!policy(p.action, { widget_id: w.id }).allowed || !host.upload) {
@@ -7955,31 +8120,37 @@ function createActions({ host, getPage, update, announce }) {
       node.setAttribute("aria-busy", "true");
       ui.status.textContent = "Uploading\u2026";
       ui.error.hidden = true;
+      let context;
       try {
-        const receipt = await host.upload(
-          {
-            ...requestFor(w, p.action, {
-              name: file.name,
-              mime: file.type,
-              size: file.size,
-              file_sha256: await fileDigest(file)
-            }),
-            file
-          },
-          await csrf()
-        );
+        context = capture(w, p.action);
+        const digest = await fileDigest(selectedFile);
+        assertCurrent(context);
+        const request = {
+          ...requestFor(context, {
+            name: selectedFile.name,
+            mime: selectedFile.type,
+            size: selectedFile.size,
+            file_sha256: digest
+          }),
+          file: selectedFile
+        };
+        const credential = await csrf(context);
+        assertCurrent(context);
+        const receipt = await host.upload(request, credential);
+        assertCurrent(context);
         if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(
           receipt?.attachment_id || ""
         ))
           throw { code: "schema_invalid" };
-        ui.status.textContent = receiptText(receipt);
+        ui.status.textContent = `${selectedFile.name} uploaded.`;
         announce(ui.status.textContent);
       } catch (error2) {
-        showError(ui, error2);
+        await showError(ui, error2, void 0, context);
       } finally {
         pending = false;
         node.setAttribute("aria-busy", "false");
         submit.disabled = !policy(p.action, { widget_id: w.id }).allowed;
+        restoreFocus(submit, ui.error.hidden ? ui.status : ui.error, context);
       }
     };
   }
@@ -7992,6 +8163,8 @@ function createActions({ host, getPage, update, announce }) {
       keys.clear();
     },
     csrf,
+    capture,
+    assertCurrent,
     requestFor,
     policy,
     showError,
@@ -8052,7 +8225,7 @@ function renderMedia(box, w, host) {
   };
 }
 function renderPresence(box, w, host) {
-  const subject = element("p", w.props.subject, "widget-label"), status = element("p", "Status unavailable"), age = element("p", null, "field-description");
+  const subject = element("p", w.props.subject, "widget-label"), status = element("p", "Unknown"), age = element("p", null, "field-description");
   box.append(subject, status, age);
   let disposed = false, timer;
   Promise.resolve().then(() => host.health?.(w.props.subject)).then((evidence) => {
@@ -8061,15 +8234,15 @@ function renderPresence(box, w, host) {
       const observed = Date.parse(evidence?.observed_at), until = Date.parse(evidence?.valid_until), now = Date.now();
       const valid = evidence?.subject === w.props.subject && Number.isFinite(observed) && Number.isFinite(until) && observed <= now + 3e4 && observed < until && until - observed <= 9e5 && until > now;
       if (!valid) {
-        status.textContent = "Status unavailable";
-        age.textContent = Number.isFinite(observed) ? `Last report: ${new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: host.timeZone }).format(observed)}` : "No current host report";
+        status.textContent = "Unknown";
+        age.textContent = Number.isFinite(observed) ? `Reported ${new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: host.timeZone }).format(observed)}` : "No current host report";
         return;
       }
       const states = {
-        yes: "Can receive messages",
-        degraded: "Limited reachability",
-        no: "Cannot receive messages",
-        unknown: "Status unavailable"
+        yes: "Ready",
+        degraded: "Unknown",
+        no: "Offline",
+        unknown: "Unknown"
       };
       status.textContent = states[evidence.reachable] || states.unknown;
       if (evidence.reason?.text)
@@ -8077,7 +8250,7 @@ function renderPresence(box, w, host) {
       if (evidence.fixing?.text)
         status.append(element("span", ` ${evidence.fixing.text}`));
       const seconds = Math.max(0, Math.floor((now - observed) / 1e3));
-      age.textContent = `Status reported ${seconds < 60 ? "less than a minute ago" : `${Math.floor(seconds / 60)} minutes ago`}`;
+      age.textContent = `Reported ${seconds < 60 ? "less than a minute ago" : `${Math.floor(seconds / 60)} minutes ago`}`;
     }
     display();
     timer = setInterval(display, 1e3);
@@ -8132,7 +8305,11 @@ function dataTable(records, columns, label, locale, timeZone) {
     const row = element("tr");
     row.dataset.record = record.id;
     for (const column of columns) {
-      const cell = element("td");
+      const cell = element(
+        "td",
+        null,
+        ["date", "number", "money_minor", "status"].includes(column.format) ? "cell-compact" : "cell-text"
+      );
       cell.append(
         element(
           "bdi",
@@ -8140,7 +8317,8 @@ function dataTable(records, columns, label, locale, timeZone) {
             record.value[column.field],
             column.format,
             locale,
-            timeZone
+            timeZone,
+            record.value.currency
           )
         )
       );
@@ -8235,7 +8413,8 @@ function renderCollection({
   t,
   query,
   onRead,
-  actionButton
+  actionButton,
+  announce
 }) {
   const p = w.props;
   const region = element("div", null, "collection-content");
@@ -8243,9 +8422,7 @@ function renderCollection({
   const cursors = [query.cursor];
   let cursorIndex = 0;
   const limit = query.limit || 20;
-  const toolbar = element("div", null, "collection-toolbar");
   const status = element("p", "", "collection-count");
-  status.setAttribute("role", "status");
   let requestSerial = 0;
   async function change(bind, reset = true) {
     const request = ++requestSerial;
@@ -8268,19 +8445,23 @@ function renderCollection({
         count = records.length;
         remote = false;
       }
-      draw();
+      draw(true);
     } catch (error2) {
       status.textContent = error2?.code === "revision_conflict" ? t.conflict : t.unavailable;
     }
   }
   let projectionFocusKey;
-  function draw() {
+  function draw(shouldAnnounce = false) {
+    const active = document.activeElement;
     const focusKey = region.contains(document.activeElement) ? document.activeElement.dataset.focusKey : document.activeElement === document.body ? projectionFocusKey : void 0;
     projectionFocusKey = void 0;
     region.replaceChildren();
     const visible = remote ? records : records.slice(offset, offset + limit);
-    status.textContent = `${count} ${t.records}`;
-    if (!visible.length) region.append(element("p", t.empty));
+    const start = cursorIndex * limit + offset + 1;
+    const range = count ? `Showing ${start === Math.min(start + visible.length - 1, count) ? start : `${start}\u2013${Math.min(start + visible.length - 1, count)}`} of ${count}` : "0 records";
+    status.textContent = range;
+    if (!visible.length)
+      region.append(element("p", "Nothing here yet.", "field-description"));
     else if (w.type === "table") {
       const table2 = dataTable(visible, p.columns, t.records, locale, timeZone);
       [...table2.tHead.rows[0].cells].forEach((th, i) => {
@@ -8342,18 +8523,45 @@ function renderCollection({
         );
       for (let i = 0; i < p.series.length; i++) {
         figure.append(
-          element("p", p.series[i], "widget-label"),
+          element(
+            "p",
+            schema?.properties?.[p.series[i]]?.title || p.series[i],
+            "widget-label"
+          ),
           chartGraphic(visible, p, i)
         );
+        const labels = element("ul", null, "chart-labels");
+        visible.forEach((record, category) => {
+          const item = element("li");
+          const swatch = element(
+            "span",
+            null,
+            `chart-swatch series-${p.kind === "pie" ? category % 8 : i}`
+          );
+          swatch.setAttribute("aria-hidden", "true");
+          item.append(
+            swatch,
+            element(
+              "bdi",
+              `${valueText(record.value[p.x])}: ${valueText(record.value[p.series[i]], "number", locale)}`
+            )
+          );
+          labels.append(item);
+        });
+        figure.append(labels);
       }
       figure.append(
         dataTable(
           visible,
           [
-            { field: p.x, label: p.x, format: "text" },
+            {
+              field: p.x,
+              label: schema?.properties?.[p.x]?.title || p.x,
+              format: "text"
+            },
             ...p.series.map((field) => ({
               field,
-              label: field,
+              label: schema?.properties?.[field]?.title || field,
               format: "number"
             }))
           ],
@@ -8367,13 +8575,26 @@ function renderCollection({
       const list2 = element(
         w.type === "activity_timeline" ? "ol" : "ul",
         null,
-        w.type === "cards" ? "record-cards" : "record-list"
+        w.type === "cards" ? "record-cards" : w.type === "activity_timeline" ? "record-list activity-timeline" : "record-list"
       );
       for (const record of visible) {
         const item = element("li");
         item.dataset.record = record.id;
         const fields = element("dl");
+        const timeField = w.type === "activity_timeline" && Object.values(p.fields).find(
+          (field) => schema?.properties?.[field]?.format === "date-time"
+        );
+        if (timeField) {
+          const time = element(
+            "time",
+            valueText(record.value[timeField], "date-time", locale, timeZone),
+            "timeline-time"
+          );
+          time.dateTime = record.value[timeField];
+          item.append(time);
+        }
         for (const [slot, field] of Object.entries(p.fields)) {
+          if (field === timeField) continue;
           fields.append(element("dt", slot));
           const dd = element("dd");
           dd.append(
@@ -8381,7 +8602,9 @@ function renderCollection({
               "bdi",
               valueText(
                 record.value[field],
-                schema?.properties?.[field]?.format === "date-time" ? "date" : "text",
+                ["date", "date-time"].includes(
+                  schema?.properties?.[field]?.format
+                ) ? schema.properties[field].format : "text",
                 locale,
                 timeZone
               )
@@ -8399,6 +8622,13 @@ function renderCollection({
       region.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
     previous.disabled = remote ? cursorIndex === 0 : offset === 0;
     next.disabled = remote ? !nextCursor : offset + limit >= records.length;
+    navigation.hidden = !visible.length || previous.disabled && next.disabled;
+    if (active === previous && previous.disabled || active === next && next.disabled || navigation.contains(active) && navigation.hidden) {
+      (navigation.hidden ? region : previous.disabled ? next : previous).focus({
+        preventScroll: true
+      });
+    }
+    if (shouldAnnounce) announce?.(range);
   }
   const previous = element("button", t.previous);
   previous.type = "button";
@@ -8423,53 +8653,16 @@ function renderCollection({
       draw();
     }
   };
-  if (w.type === "table") {
-    const filter = element("form", null, "filter-controls");
-    const fields = element("select");
-    fields.setAttribute("aria-label", t.filterField);
-    for (const column of p.columns) {
-      const option = element("option", column.label);
-      option.value = column.field;
-      fields.append(option);
-    }
-    const value = element("input");
-    value.setAttribute("aria-label", t.filterValue);
-    const submit = element("button", t.applyFilter);
-    submit.type = "submit";
-    const clear = element("button", t.clearFilter);
-    clear.type = "button";
-    clear.onclick = () => {
-      value.value = "";
-      change({ all: w.bind.all || [], cursor: void 0 });
-    };
-    filter.append(fields, value, submit, clear);
-    filter.onsubmit = (event) => {
-      event.preventDefault();
-      const type = schema?.properties?.[fields.value]?.type;
-      let typed = value.value;
-      if (type === "integer") typed = Number(value.value);
-      if (type === "boolean") typed = value.value === "true";
-      change({
-        all: [
-          ...w.bind.all || [],
-          { field: fields.value, op: "eq", value: typed }
-        ],
-        cursor: void 0
-      });
-    };
-    toolbar.append(filter);
-  }
-  toolbar.append(status);
-  box.append(toolbar, region);
+  box.append(region);
   const navigation = element("nav", null, "pagination");
   navigation.setAttribute("aria-label", `${t.pagination}: ${w.id}`);
-  navigation.append(previous, next);
+  navigation.append(status, previous, next);
   box.append(navigation);
+  region.tabIndex = -1;
   draw();
   return {
     beginRefresh() {
       projectionFocusKey = region.contains(document.activeElement) ? document.activeElement.dataset.focusKey : void 0;
-      region.replaceChildren(element("p", t.loading));
       region.setAttribute("aria-busy", "true");
       cursorIndex = 0;
       cursors.splice(0, cursors.length, query.cursor);
@@ -8532,10 +8725,9 @@ function createActionConfirmation(dialog) {
       return Promise.resolve(false);
     return new Promise((resolve) => {
       settle = resolve;
-      const title = element("h2", "Confirm action");
+      const title = element("h2", details.description || details.label);
       title.id = "action-confirmation-title";
-      const label = element("p", details.label), description = element("p", details.description);
-      const yes = element("button", "Confirm");
+      const yes = element("button", details.label);
       yes.type = "button";
       const cancel = element("button", "Cancel");
       cancel.type = "button";
@@ -8552,7 +8744,7 @@ function createActionConfirmation(dialog) {
         settle = null;
         if (trigger?.isConnected) trigger.focus({ preventScroll: true });
       };
-      dialog.replaceChildren(title, label, description, yes, cancel);
+      dialog.replaceChildren(title, yes, cancel);
       dialog.showModal();
       cancel.focus();
     });
@@ -8812,7 +9004,10 @@ function createPageRenderer({
               t,
               query,
               actionButton,
-              onRead: (bind) => read(bind)
+              onRead: (bind) => read(bind),
+              announce: (text3) => {
+                announcements.textContent = text3;
+              }
             });
           } else {
             const value = p.field ? records[0]?.value?.[p.field] : p.value;
