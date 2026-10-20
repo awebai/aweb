@@ -232,3 +232,33 @@ async def test_an_act_prepared_by_another_verifier_is_refused(db, registry, team
         with pytest.raises(Refused) as refused:
             await verifier(registry).consume_in(tx, prepared, expected_subject=SUBJECT)
     assert refused.value.code == "verifier_misconfigured"
+
+
+async def test_a_prepared_act_past_its_expiry_is_not_consumed(db, registry, team_key) -> None:
+    issued = datetime.now(UTC)
+    moment = [issued]
+    verify = verifier(registry, clock=lambda: moment[0])
+    signing, signature = owner_act(team_key, issued=issued)
+    prepared = await verify.prepare(signing, signature, team_id=TEAM_ID)
+    moment[0] = issued + timedelta(minutes=5, seconds=1)
+    async with db.transaction() as tx:
+        with pytest.raises(Refused) as refused:
+            await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
+    assert refused.value.code == "expired"
+    assert await effects(db) == 0
+
+
+async def test_a_pruned_act_cannot_be_consumed_again(db, registry, team_key) -> None:
+    issued = datetime.now(UTC).replace(microsecond=0)
+    moment = [issued]
+    verify = verifier(registry, clock=lambda: moment[0])
+    signing, signature = owner_act(team_key, issued=issued)
+    prepared = await verify.prepare(signing, signature, team_id=TEAM_ID)
+    async with db.transaction() as tx:
+        await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
+    moment[0] = issued + timedelta(minutes=5, seconds=61)
+    assert await prune_owner_act_nonces(db, now=moment[0]) == 1
+    async with db.transaction() as tx:
+        with pytest.raises(Refused) as refused:
+            await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
+    assert refused.value.code == "expired"
