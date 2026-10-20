@@ -230,6 +230,40 @@ Response:
 
 Conformance: `test-vectors/app-read-credential-v1.json`.
 
+## The core hook producer's keys
+
+```http
+GET /v1/hooks/producer-keys
+```
+
+Anyone may read the public keys this server's core hook producer signs
+`post-mutation-hook` events with. A consumer reaches the server only through
+the team's anchored `aweb.team-server/1` record, never through an origin an
+event names.
+
+```json
+{
+  "keys": [
+    {"kid": "hook-2026-09", "did_key": "did:key:z6Mk...", "valid_from": "2026-09-01T00:00:00Z", "valid_until": "2026-10-01T00:00:00Z"},
+    {"kid": "hook-2026-10", "did_key": "did:key:z6Mk...", "valid_from": "2026-10-01T00:00:00Z", "valid_until": null}
+  ],
+  "as_of": "2026-10-20T12:00:00Z",
+  "max_age_seconds": 60
+}
+```
+
+- The keys are the operator's configuration, `AWEB_HOOK_PRODUCER_KEYS`: a JSON
+  list of `{kid, did_key, valid_from, valid_until}`, times in UTC seconds
+  (`YYYY-MM-DDTHH:MM:SSZ`, ASCII digits). They are never a team, controller or
+  agent key.
+- Retired keys stay listed, so events they signed keep verifying.
+  `valid_until` is `null` for a key with no end; it is never omitted, so a
+  missing end cannot be mistaken for a truncated answer.
+- The server refuses to start with a malformed list: an entry with other
+  fields, a repeated kid, an invalid Ed25519 `did:key`, a time in another
+  spelling or an impossible date, or a key that ends before it starts.
+- `as_of` and `max_age_seconds` are as for the grant read.
+
 ## Operator reseed from manifest bytes
 
 ```sh

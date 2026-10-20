@@ -1,11 +1,15 @@
+import json
 import os
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
+from awid.did import did_from_public_key, public_key_from_did
 from awid.dns_verify import DEFAULT_AWID_REGISTRY_URL
 from awid.log import canonical_server_origin
 from awid.ratelimit import normalize_service_token
+from awid.utc_timestamps import parse_utc_seconds
 
 
 def _env_bool(*names: str, default: bool = False) -> bool:
@@ -43,6 +47,7 @@ class Settings:
     dashboard_jwt_secret: str
     require_registered_certificates: bool
     app_grant_max_age_seconds: int
+    hook_producer_keys: tuple["HookProducerKey", ...]
 
 
 def get_awid_registry_url() -> str:
@@ -114,6 +119,85 @@ def get_app_grant_max_age_seconds() -> int:
     return int(value)
 
 
+# A kid as hook events carry it (the hook event envelope's kid rule).
+_HOOK_KID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+_HOOK_PRODUCER_KEY_FIELDS = frozenset({"kid", "did_key", "valid_from", "valid_until"})
+
+
+@dataclass(frozen=True)
+class HookProducerKey:
+    """A public key the core hook producer signs or signed events with.
+
+    ``valid_until`` is None while the key has no end; retired keys stay listed
+    so events they signed keep verifying."""
+
+    kid: str
+    did_key: str
+    valid_from: str
+    valid_until: str | None
+
+
+def get_hook_producer_keys() -> tuple[HookProducerKey, ...]:
+    """The core hook producer's public keys, from ``AWEB_HOOK_PRODUCER_KEYS``.
+
+    The value is a JSON list of ``{kid, did_key, valid_from, valid_until}``,
+    times as ``YYYY-MM-DDTHH:MM:SSZ`` and ``valid_until`` null for a key with no
+    end. Unset means no keys. Anything malformed is refused, so the server does
+    not start with a key list consumers would read differently.
+    """
+    raw = os.getenv("AWEB_HOOK_PRODUCER_KEYS")
+    if raw is None or not raw.strip():
+        return ()
+    try:
+        entries = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("AWEB_HOOK_PRODUCER_KEYS must be a JSON list") from exc
+    if not isinstance(entries, list):
+        raise ValueError("AWEB_HOOK_PRODUCER_KEYS must be a JSON list")
+    keys = tuple(_hook_producer_key(entry) for entry in entries)
+    kids = [key.kid for key in keys]
+    if len(set(kids)) != len(kids):
+        raise ValueError("AWEB_HOOK_PRODUCER_KEYS lists a kid more than once")
+    return keys
+
+
+def _hook_producer_key(entry: object) -> HookProducerKey:
+    if not isinstance(entry, dict) or set(entry) != _HOOK_PRODUCER_KEY_FIELDS:
+        raise ValueError(
+            "each AWEB_HOOK_PRODUCER_KEYS entry has exactly kid, did_key, valid_from and valid_until"
+        )
+    kid, did_key, valid_from, valid_until = (
+        entry["kid"],
+        entry["did_key"],
+        entry["valid_from"],
+        entry["valid_until"],
+    )
+    if not isinstance(kid, str) or not _HOOK_KID.fullmatch(kid):
+        raise ValueError(f"AWEB_HOOK_PRODUCER_KEYS: invalid kid {kid!r}")
+    if not isinstance(did_key, str) or not _is_ed25519_did_key(did_key):
+        raise ValueError(f"AWEB_HOOK_PRODUCER_KEYS: kid {kid} has an invalid did_key")
+    starts = _key_time(kid, "valid_from", valid_from)
+    if valid_until is not None and _key_time(kid, "valid_until", valid_until) <= starts:
+        raise ValueError(f"AWEB_HOOK_PRODUCER_KEYS: kid {kid} ends before it starts")
+    return HookProducerKey(kid=kid, did_key=did_key, valid_from=valid_from, valid_until=valid_until)
+
+
+def _is_ed25519_did_key(value: str) -> bool:
+    try:
+        return did_from_public_key(public_key_from_did(value)) == value
+    except ValueError:
+        return False
+
+
+def _key_time(kid: str, name: str, value: object) -> datetime:
+    try:
+        return parse_utc_seconds(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"AWEB_HOOK_PRODUCER_KEYS: kid {kid} {name} must be YYYY-MM-DDTHH:MM:SSZ"
+        ) from exc
+
+
 def get_settings() -> Settings:
     """
     Load settings from environment at call time.
@@ -176,4 +260,5 @@ def get_settings() -> Settings:
         dashboard_jwt_secret=os.getenv("AWEB_DASHBOARD_JWT_SECRET", ""),
         require_registered_certificates=require_registered_certificates(),
         app_grant_max_age_seconds=get_app_grant_max_age_seconds(),
+        hook_producer_keys=get_hook_producer_keys(),
     )
