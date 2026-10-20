@@ -95,12 +95,41 @@ Current rules:
   supplying a different `did_key` for a registered key id is refused with
   `409`, and the install is not applied. Rotate a key under a new key id.
   Reinstalling never reactivates a revoked key.
-- Scopes are normalized and stored. The server does not fetch the manifest to
-  prove that the requested scopes are the union of `tools[].scopes`.
+- Scopes are normalized and stored. Without `manifest` (below), the server
+  cannot prove that the granted scopes are within the manifest's
+  `tools[].scopes`.
 - Event declarations are app-local names. Emit keys are public `did:key`
   material; private emit keys never belong in a manifest or install request.
 - No public uninstall route ships today. Do not document uninstall or automatic
   upgrade as current behavior.
+- Each install or update, accepted or refused after authentication, writes one
+  append-only operator audit row (`apps.install`, target `app:<app_id>`); a
+  successful install's row commits with its registrations
+  ([operator audit](operator-audit.md)).
+
+### Installing with the manifest bytes
+
+The request may carry `manifest`: standard base64 of the exact bytes the app
+serves, at most 10 MiB (`413` above). `aw plugin install` and `aw plugin update`
+send them. When present:
+
+- the bytes must hash to `digest` and name the request's `app_id`, `origin`,
+  `app_version` and `manifest_version`;
+- `events` and `event_emitters` come from the bytes. If the request also
+  supplies them, they must equal the bytes' declarations;
+- `granted_scopes` must be a subset of the scopes the bytes' tools request; a
+  team may grant less, never more.
+
+A disagreement refuses the whole install with `422`, and nothing is written.
+An install without `manifest` behaves as before and registers the supplied
+fields. Each install row records which way it was registered, so an operator
+can measure when every client sends the bytes before requiring them:
+
+```sql
+SELECT registered_from_manifest_bytes, count(*)
+FROM aweb.team_app_installs
+GROUP BY registered_from_manifest_bytes;
+```
 
 ## Read installed apps and grants
 

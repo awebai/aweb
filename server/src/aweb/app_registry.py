@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
+from typing import Any
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -262,12 +264,20 @@ async def install_app(
     installed_by_agent_id: str | None = None,
     event_types: list[AppEventType] | None = None,
     emit_keys: list[AppEmitKey] | None = None,
+    manifest: bytes | None = None,
+    audit: Callable[[Any], Awaitable[None]] | None = None,
 ) -> AppInstall:
     """Install or explicitly re-install an app for a team.
 
     Re-install/update is explicit: the caller supplies the new pinned digest and
     scopes. Reusing an app id for a different origin within the team is
     rejected as an app-id collision.
+
+    With ``manifest``, the exact bytes that hash to the pinned digest supply the
+    event declarations and emit keys. Separately supplied declarations, keys or
+    versions must equal the bytes', and the granted scopes must be a subset of
+    the scopes the bytes' tools request. ``audit`` runs inside the install
+    transaction, after the registrations are written.
     """
 
     team_id = validate_team_id(team_id)
@@ -279,6 +289,18 @@ async def install_app(
     granted_scopes = normalize_scopes(granted_scopes)
     event_types = normalize_event_types(event_types or [])
     emit_keys = normalize_emit_keys(emit_keys or [])
+    if manifest is not None:
+        event_types, emit_keys = _registrations_from_manifest(
+            manifest,
+            app_id=app_id,
+            origin=origin,
+            digest=digest,
+            app_version=app_version,
+            manifest_version=manifest_version,
+            granted_scopes=granted_scopes,
+            event_types=event_types,
+            emit_keys=emit_keys,
+        )
 
     existing = await db.fetch_one(
         """
@@ -319,9 +341,9 @@ async def install_app(
             """
             INSERT INTO {{tables.team_app_installs}} (
                 team_id, app_id, origin, digest, app_version, manifest_version,
-                granted_scopes, installed_by_agent_id, updated_at
+                granted_scopes, installed_by_agent_id, registered_from_manifest_bytes, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[], $8::UUID, NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[], $8::UUID, $9, NOW())
             ON CONFLICT (team_id, app_id) DO UPDATE SET
                 origin = EXCLUDED.origin,
                 digest = EXCLUDED.digest,
@@ -329,6 +351,7 @@ async def install_app(
                 manifest_version = EXCLUDED.manifest_version,
                 granted_scopes = EXCLUDED.granted_scopes,
                 installed_by_agent_id = EXCLUDED.installed_by_agent_id,
+                registered_from_manifest_bytes = EXCLUDED.registered_from_manifest_bytes,
                 updated_at = NOW()
             """,
             team_id,
@@ -339,6 +362,7 @@ async def install_app(
             manifest_version,
             granted_scopes,
             installed_by_agent_id,
+            manifest is not None,
         )
         # The install row upsert above locks (team_id, app_id), so concurrent
         # installs of one app in one team write registrations one at a time.
@@ -351,6 +375,8 @@ async def install_app(
             event_types=event_types,
             emit_keys=emit_keys,
         )
+        if audit is not None:
+            await audit(tx)
 
     return AppInstall(
         app_id=app_id,
@@ -360,6 +386,30 @@ async def install_app(
         digest=digest,
         granted_scopes=granted_scopes,
     )
+
+
+def _registrations_from_manifest(
+    manifest: bytes,
+    *,
+    app_id: str,
+    origin: str,
+    digest: str,
+    app_version: str,
+    manifest_version: int,
+    granted_scopes: list[str],
+    event_types: list[AppEventType],
+    emit_keys: list[AppEmitKey],
+) -> tuple[list[AppEventType], list[AppEmitKey]]:
+    registration = manifest_registration(manifest, app_id=app_id, origin=origin, digest=digest)
+    if app_version != registration.app_version or manifest_version != registration.manifest_version:
+        raise ValidationError("install version does not match the manifest bytes")
+    if event_types and set(event_types) != set(registration.event_types):
+        raise ValidationError("install events do not match the manifest bytes")
+    if emit_keys and set(emit_keys) != set(registration.emit_keys):
+        raise ValidationError("install event_emitters do not match the manifest bytes")
+    if not set(granted_scopes) <= set(registration.requested_scopes):
+        raise ValidationError("granted_scopes must be a subset of the scopes the manifest requests")
+    return registration.event_types, registration.emit_keys
 
 
 async def _write_team_registrations(
@@ -436,6 +486,7 @@ class ManifestRegistration:
     manifest_version: int
     event_types: list[AppEventType]
     emit_keys: list[AppEmitKey]
+    requested_scopes: list[str]
 
 
 def _parse_manifest(manifest: bytes) -> dict:
@@ -470,8 +521,15 @@ def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: 
         raise ValidationError("manifest origin does not match the install")
     events = parsed.get("events") or []
     emitters = parsed.get("event_emitters") or []
-    if not isinstance(events, list) or not isinstance(emitters, list):
-        raise ValidationError("manifest events and event_emitters must be arrays")
+    tools = parsed.get("tools") or []
+    if not isinstance(events, list) or not isinstance(emitters, list) or not isinstance(tools, list):
+        raise ValidationError("manifest tools, events and event_emitters must be arrays")
+    requested_scopes: list[str] = []
+    for tool in tools:
+        scopes = tool.get("scopes") if isinstance(tool, dict) else None
+        if not isinstance(tool, dict) or not isinstance(scopes or [], list):
+            raise ValidationError("manifest tool scopes must be an array")
+        requested_scopes.extend(str(scope) for scope in scopes or [])
     prefix = app_id + "/"
     event_types = []
     for event in events:
@@ -495,6 +553,7 @@ def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: 
         manifest_version=1,
         event_types=normalize_event_types(event_types),
         emit_keys=normalize_emit_keys(emit_keys),
+        requested_scopes=normalize_scopes(requested_scopes),
     )
 
 
