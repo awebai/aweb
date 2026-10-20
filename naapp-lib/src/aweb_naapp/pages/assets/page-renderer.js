@@ -5,14 +5,32 @@ var __export = (target, all) => {
 };
 
 // catalogs.mjs
-var catalogs = {
-  en: { unavailable: "Widget unavailable", unsupported: "This page cannot be displayed.", destinations: "Link destinations", progress: "Progress", busy: "In progress", empty: "No records", readOnly: "Read only", updated: "Updated" },
-  ca: { unavailable: "Giny no disponible", unsupported: "No es pot mostrar aquesta p\xE0gina.", destinations: "Destinacions dels enlla\xE7os", progress: "Progr\xE9s", busy: "En curs", empty: "Cap registre", readOnly: "Nom\xE9s lectura", updated: "Actualitzat" }
+var english = {
+  unavailable: "This part of the page can't be shown here.",
+  unsupported: "This page can't be shown here",
+  unsupportedHelp: "It needs a newer version of aweb. Ask the agent that made it to check it.",
+  destinations: "Link destinations",
+  progress: "Progress",
+  busy: "Updating",
+  empty: "No records",
+  readOnly: "Read only",
+  updated: "Updated",
+  records: "records",
+  previous: "Previous",
+  next: "Next",
+  actions: "Actions",
+  filterField: "Filter field",
+  filterValue: "Filter value",
+  applyFilter: "Apply filter",
+  clearFilter: "Clear filter",
+  pagination: "Record pages",
+  loading: "Loading records\u2026",
+  conflict: "The page changed. Refresh to see the current records.",
+  open: "Open",
+  cancel: "Cancel"
 };
-function messages(memberLocale, pageLocale) {
-  const locale = memberLocale || pageLocale || "en";
-  const language = locale.split("-")[0];
-  return { locale: language === "ca" ? "ca" : "en", t: catalogs[language] || catalogs.en };
+function messages() {
+  return { locale: "en", t: english };
 }
 
 // node_modules/dompurify/dist/purify.es.mjs
@@ -7368,7 +7386,11 @@ _defineProperty(MarkdownIt, "StateInline", StateInline);
 var MarkdownItCallable = callable(MarkdownIt);
 
 // sanitize.mjs
-var markdown = new MarkdownItCallable({ html: false, linkify: false, typographer: false });
+var markdown = new MarkdownItCallable({
+  html: false,
+  linkify: false,
+  typographer: false
+});
 function safeLink(value) {
   try {
     let decoded = value;
@@ -7381,18 +7403,19 @@ function safeLink(value) {
     const url = new URL(decoded);
     if (url.protocol !== "https:" || url.username || url.password) return null;
     const original = new URL(value);
-    if (original.protocol !== "https:" || original.username || original.password) return null;
+    if (original.protocol !== "https:" || original.username || original.password)
+      return null;
     return original;
   } catch {
     return null;
   }
 }
-markdown.validateLink = (value) => safeLink(value) !== null;
+markdown.validateLink = () => true;
 markdown.renderer.rules.image = (tokens, index) => markdown.utils.escapeHtml(tokens[index].content);
 markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
   const token = tokens[index];
   const url = safeLink(token.attrGet("href"));
-  if (!url) return "";
+  if (!url) return "<a>";
   token.attrSet("href", url.href);
   token.attrSet("rel", "noopener noreferrer");
   token.attrSet("target", "_blank");
@@ -7402,103 +7425,770 @@ markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
 function renderMarkdown(target, text3) {
   target.innerHTML = purify_default.sanitize(markdown.render(text3), {
     RETURN_TRUSTED_TYPE: true,
-    ALLOWED_TAGS: ["p", "br", "strong", "em", "s", "blockquote", "ul", "ol", "li", "pre", "code", "a", "hr", "h1", "h2", "h3", "h4", "h5", "h6"],
+    ALLOWED_TAGS: [
+      "p",
+      "br",
+      "strong",
+      "em",
+      "s",
+      "blockquote",
+      "ul",
+      "ol",
+      "li",
+      "pre",
+      "code",
+      "a",
+      "hr",
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+      "h5",
+      "h6"
+    ],
     ALLOWED_ATTR: ["href", "title", "rel", "target", "referrerpolicy", "start"],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
     ADD_URI_SAFE_ATTR: ["rel", "target", "referrerpolicy"],
     ALLOWED_URI_REGEXP: /^https:\/\//i
   });
+  for (const inert of target.querySelectorAll("a:not([href])"))
+    inert.replaceWith(...inert.childNodes);
 }
 
-// index.mjs
+// dom.mjs
 function element(tag, text3, className) {
   const node = document.createElement(tag);
   if (text3 !== void 0 && text3 !== null) node.textContent = String(text3);
   if (className) node.className = className;
   return node;
 }
-var known = /* @__PURE__ */ new Set(["heading", "text", "stat", "status_badge", "stack", "grid"]);
-function createPageRenderer({ root, destinations, announcements, host = {}, memberLocale }) {
-  if (root.contains(destinations) || root.contains(announcements)) throw new TypeError("Host chrome must be outside the page");
-  let current;
+function valueText(value, format2 = "text", locale = "en", timeZone) {
+  if (value === null || value === void 0) return "\u2014";
+  if (format2 === "date") {
+    const date = new Date(value);
+    return Number.isFinite(date.valueOf()) ? new Intl.DateTimeFormat(locale, {
+      dateStyle: "medium",
+      timeZone
+    }).format(date) : String(value);
+  }
+  if (format2 === "number" || format2 === "money_minor") {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "\u2014";
+    return new Intl.NumberFormat(
+      locale,
+      format2 === "money_minor" ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : {}
+    ).format(format2 === "money_minor" ? number / 100 : number);
+  }
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
+// collections.mjs
+function selectRecords(records, bind) {
+  const compare = (a, b) => a === b ? 0 : a == null ? -1 : b == null ? 1 : a < b ? -1 : 1;
+  const predicates = {
+    eq: (a, b) => a === b,
+    ne: (a, b) => a !== b,
+    lt: (a, b) => a < b,
+    lte: (a, b) => a <= b,
+    gt: (a, b) => a > b,
+    gte: (a, b) => a >= b,
+    in: (a, b) => Array.isArray(b) && b.includes(a)
+  };
+  return records.filter(
+    (record) => (bind.all || []).every(
+      (p) => predicates[p.op]?.(record.value[p.field], p.value)
+    )
+  ).toSorted((a, b) => {
+    for (const sort of bind.sort || []) {
+      const difference = compare(a.value[sort.field], b.value[sort.field]);
+      if (difference)
+        return sort.direction === "desc" ? -difference : difference;
+    }
+    return 0;
+  });
+}
+function dataTable(records, columns, label, locale, timeZone) {
+  const table2 = element("table");
+  table2.append(element("caption", label, "sr-only"));
+  const head = element("thead");
+  const header = element("tr");
+  for (const column of columns) {
+    const th = element("th", column.label);
+    th.scope = "col";
+    header.append(th);
+  }
+  head.append(header);
+  table2.append(head);
+  const body = element("tbody");
+  for (const record of records) {
+    const row = element("tr");
+    row.dataset.record = record.id;
+    for (const column of columns) {
+      const cell = element("td");
+      cell.append(
+        element(
+          "bdi",
+          valueText(
+            record.value[column.field],
+            column.format,
+            locale,
+            timeZone
+          )
+        )
+      );
+      row.append(cell);
+    }
+    body.append(row);
+  }
+  table2.append(body);
+  return table2;
+}
+var svg2 = (tag, attrs) => {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [name, value] of Object.entries(attrs))
+    node.setAttribute(name, String(value));
+  return node;
+};
+function chartGraphic(records, p, seriesIndex) {
+  const field = p.series[seriesIndex];
+  const chart = svg2("svg", {
+    viewBox: "0 0 640 240",
+    "aria-hidden": "true",
+    focusable: "false",
+    class: `chart-graphic series-${seriesIndex}`
+  });
+  const values = records.map((r) => Number(r.value[field]));
+  const maximum = Math.max(1, ...values.filter(Number.isFinite).map(Math.abs));
+  const points = values.map((v, i) => [
+    30 + i * 580 / Math.max(1, values.length - 1),
+    120 - (Number.isFinite(v) ? v / maximum : 0) * 100
+  ]);
+  if (p.kind === "bar") {
+    const width = 580 / Math.max(1, values.length);
+    values.forEach((v, i) => {
+      const height = Number.isFinite(v) ? v / maximum * 100 : 0;
+      chart.append(
+        svg2("rect", {
+          x: 30 + i * width,
+          y: height >= 0 ? 120 - height : 120,
+          width: Math.max(1, width - 4),
+          height: Math.abs(height),
+          rx: 2
+        })
+      );
+    });
+  } else if (p.kind === "line") {
+    chart.append(
+      svg2("polyline", {
+        points: points.map((point) => point.join(",")).join(" "),
+        fill: "none",
+        "stroke-width": 3
+      })
+    );
+    for (const [cx, cy] of points)
+      chart.append(svg2("circle", { cx, cy, r: 4 }));
+  } else {
+    const positive = values.map(
+      (v) => Number.isFinite(v) ? Math.max(0, v) / maximum : 0
+    );
+    const total = positive.reduce((a, b) => a + b, 0);
+    let offset = 0;
+    positive.forEach((value, i) => {
+      if (!value || !total) return;
+      const fraction = value / total;
+      chart.append(
+        svg2("circle", {
+          cx: 320,
+          cy: 120,
+          r: 85,
+          fill: "none",
+          "stroke-width": 45,
+          "stroke-dasharray": `${fraction * 534.071} 534.071`,
+          "stroke-dashoffset": -offset * 534.071,
+          class: `series-${i % 8}`
+        })
+      );
+      offset += fraction;
+    });
+  }
+  return chart;
+}
+function renderCollection({
+  box,
+  w,
+  initialRecords,
+  initialProjection,
+  schema,
+  locale,
+  timeZone,
+  t,
+  query,
+  onRead,
+  actionButton
+}) {
+  const p = w.props;
+  const region = element("div", null, "collection-content");
+  let offset = 0, nextCursor = initialProjection?.next_cursor, remote = !!initialProjection, records = initialProjection?.records || selectRecords(initialRecords, query), count = initialProjection?.count ?? records.length;
+  const cursors = [query.cursor];
+  let cursorIndex = 0;
+  const limit = query.limit || 20;
+  const toolbar = element("div", null, "collection-toolbar");
+  const status = element("p", "", "collection-count");
+  status.setAttribute("role", "status");
+  let requestSerial = 0;
+  async function change(bind, reset = true) {
+    const request = ++requestSerial;
+    if (reset) {
+      offset = 0;
+      cursorIndex = 0;
+      cursors.splice(0, cursors.length, bind.cursor);
+    }
+    Object.assign(query, bind);
+    try {
+      const result = await onRead?.(structuredClone(query));
+      if (request !== requestSerial) return;
+      if (result) {
+        records = result.records;
+        count = result.count ?? records.length;
+        nextCursor = result.next_cursor;
+        remote = true;
+      } else {
+        records = selectRecords(initialRecords, query);
+        count = records.length;
+        remote = false;
+      }
+      draw();
+    } catch (error2) {
+      status.textContent = error2?.code === "revision_conflict" ? t.conflict : t.unavailable;
+    }
+  }
+  function draw() {
+    const focusKey = region.contains(document.activeElement) ? document.activeElement.dataset.focusKey : void 0;
+    region.replaceChildren();
+    const visible = remote ? records : records.slice(offset, offset + limit);
+    status.textContent = `${count} ${t.records}`;
+    if (!visible.length) region.append(element("p", t.empty));
+    else if (w.type === "table") {
+      const table2 = dataTable(visible, p.columns, t.records, locale, timeZone);
+      [...table2.tHead.rows[0].cells].forEach((th, i) => {
+        const column = p.columns[i];
+        const button = element("button", column.label, "sort-button");
+        const order = query.sort?.find(
+          (s) => s.field === column.field
+        )?.direction;
+        if (order)
+          th.setAttribute(
+            "aria-sort",
+            order === "asc" ? "ascending" : "descending"
+          );
+        button.dataset.focusKey = `sort:${column.field}`;
+        button.type = "button";
+        button.onclick = () => change({
+          sort: [
+            {
+              field: column.field,
+              direction: order === "asc" ? "desc" : "asc"
+            }
+          ],
+          cursor: void 0
+        });
+        th.replaceChildren(button);
+      });
+      if (p.row_actions?.length) {
+        const th = element("th", t.actions);
+        th.scope = "col";
+        table2.tHead.rows[0].append(th);
+        [...table2.tBodies[0].rows].forEach((row, i) => {
+          const td = element("td");
+          for (const id of p.row_actions)
+            td.append(actionButton(id, visible[i]));
+          row.append(td);
+        });
+      }
+      const scroll = element("div", null, "table-scroll");
+      scroll.tabIndex = 0;
+      scroll.setAttribute("role", "region");
+      scroll.setAttribute("aria-label", t.records);
+      scroll.append(table2);
+      region.append(scroll);
+    } else if (w.type === "chart") {
+      const figure = element("figure");
+      figure.append(element("figcaption", p.alternative));
+      for (let i = 0; i < p.series.length; i++) {
+        figure.append(
+          element("p", p.series[i], "widget-label"),
+          chartGraphic(visible, p, i)
+        );
+      }
+      figure.append(
+        dataTable(
+          visible,
+          [
+            { field: p.x, label: p.x, format: "text" },
+            ...p.series.map((field) => ({
+              field,
+              label: field,
+              format: "number"
+            }))
+          ],
+          p.alternative,
+          locale,
+          timeZone
+        )
+      );
+      region.append(figure);
+    } else {
+      const list2 = element(
+        w.type === "activity_timeline" ? "ol" : "ul",
+        null,
+        w.type === "cards" ? "record-cards" : "record-list"
+      );
+      for (const record of visible) {
+        const item = element("li");
+        item.dataset.record = record.id;
+        const fields = element("dl");
+        for (const [slot, field] of Object.entries(p.fields)) {
+          fields.append(element("dt", slot));
+          const dd = element("dd");
+          dd.append(
+            element(
+              "bdi",
+              valueText(
+                record.value[field],
+                schema?.properties?.[field]?.format === "date-time" ? "date" : "text",
+                locale,
+                timeZone
+              )
+            )
+          );
+          fields.append(dd);
+        }
+        item.append(fields);
+        for (const id of p.actions || []) item.append(actionButton(id, record));
+        list2.append(item);
+      }
+      region.append(list2);
+    }
+    if (focusKey)
+      region.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
+    previous.disabled = remote ? cursorIndex === 0 : offset === 0;
+    next.disabled = remote ? !nextCursor : offset + limit >= records.length;
+  }
+  const previous = element("button", t.previous);
+  previous.type = "button";
+  previous.onclick = () => {
+    if (remote) {
+      cursorIndex--;
+      change({ cursor: cursors[cursorIndex] }, false);
+    } else {
+      offset = Math.max(0, offset - limit);
+      draw();
+    }
+  };
+  const next = element("button", t.next);
+  next.type = "button";
+  next.onclick = () => {
+    if (remote) {
+      cursorIndex++;
+      cursors[cursorIndex] = nextCursor;
+      change({ cursor: nextCursor }, false);
+    } else {
+      offset += limit;
+      draw();
+    }
+  };
+  if (w.type === "table") {
+    const filter = element("form", null, "filter-controls");
+    const fields = element("select");
+    fields.setAttribute("aria-label", t.filterField);
+    for (const column of p.columns) {
+      const option = element("option", column.label);
+      option.value = column.field;
+      fields.append(option);
+    }
+    const value = element("input");
+    value.setAttribute("aria-label", t.filterValue);
+    const submit = element("button", t.applyFilter);
+    submit.type = "submit";
+    const clear = element("button", t.clearFilter);
+    clear.type = "button";
+    clear.onclick = () => {
+      value.value = "";
+      change({ all: w.bind.all || [], cursor: void 0 });
+    };
+    filter.append(fields, value, submit, clear);
+    filter.onsubmit = (event) => {
+      event.preventDefault();
+      const type = schema?.properties?.[fields.value]?.type;
+      let typed = value.value;
+      if (type === "integer") typed = Number(value.value);
+      if (type === "boolean") typed = value.value === "true";
+      change({
+        all: [
+          ...w.bind.all || [],
+          { field: fields.value, op: "eq", value: typed }
+        ],
+        cursor: void 0
+      });
+    };
+    toolbar.append(filter);
+  }
+  toolbar.append(status);
+  box.append(toolbar, region);
+  const navigation = element("nav", null, "pagination");
+  navigation.setAttribute("aria-label", `${t.pagination}: ${w.id}`);
+  navigation.append(previous, next);
+  box.append(navigation);
+  draw();
+}
+
+// link-host.mjs
+function createLinkConfirmation(dialog) {
+  const { t } = messages();
+  dialog.setAttribute("aria-labelledby", "link-destination-title");
+  const confirm = (destination, event) => {
+    if (!event?.isTrusted || !navigator.userActivation.isActive) return;
+    const url = safeLink(destination);
+    if (!url || dialog.open) return;
+    const trigger = document.activeElement;
+    const title = element("h2", url.host, "destination-title");
+    title.id = "link-destination-title";
+    const address = element("p", url.href, "destination-url");
+    const open = element("button", `${t.open} ${url.host}`);
+    open.type = "button";
+    const cancel = element("button", t.cancel);
+    cancel.type = "button";
+    cancel.autofocus = true;
+    open.onclick = () => {
+      window.open(url.href, "_blank", "noopener,noreferrer");
+      dialog.close();
+    };
+    cancel.onclick = () => dialog.close();
+    dialog.onclose = () => {
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    };
+    dialog.replaceChildren(title, address, open, cancel);
+    dialog.showModal();
+    cancel.focus();
+  };
+  confirm.clear = () => {
+    dialog.close();
+    dialog.replaceChildren();
+  };
+  return confirm;
+}
+
+// index.mjs
+var collectionTypes = /* @__PURE__ */ new Set([
+  "table",
+  "cards",
+  "list",
+  "activity_timeline",
+  "chart"
+]);
+var known = /* @__PURE__ */ new Set([
+  "heading",
+  "text",
+  "stat",
+  "status_badge",
+  "stack",
+  "grid",
+  ...collectionTypes
+]);
+var focusables = "a,button,input,select,textarea,[tabindex]";
+function setChildren(parent, children) {
+  children.forEach((node, index) => {
+    if (parent.childNodes[index] !== node)
+      parent.insertBefore(node, parent.childNodes[index] || null);
+  });
+  const keep = new Set(children);
+  for (const child of [...parent.childNodes])
+    if (!keep.has(child)) child.remove();
+}
+function createPageRenderer({
+  root,
+  destinations,
+  announcements,
+  host = {}
+}) {
+  if (root.contains(destinations) || root.contains(announcements))
+    throw new TypeError("Host chrome must be outside the page");
+  let current, epoch = 0;
+  const cache = /* @__PURE__ */ new Map(), queries = /* @__PURE__ */ new Map(), links = /* @__PURE__ */ new WeakMap();
+  const title = element("h1", null, "page-title");
   function update(page) {
+    const before = current;
     current = page;
-    const { locale, t } = messages(memberLocale, page?.locale);
-    root.lang = locale;
+    const generation = before?.page_id !== page?.page_id || before?.rev !== page?.rev ? ++epoch : epoch;
+    const { locale, t } = messages();
+    const focused = document.activeElement;
+    const focusedWidget = focused?.closest("[data-widget]");
+    const focusIndex = focusedWidget ? [...focusedWidget.querySelectorAll(focusables)].indexOf(focused) : -1;
+    const scroll = [scrollX, scrollY];
+    if (before?.page_id !== page?.page_id) {
+      cache.clear();
+      queries.clear();
+    } else if (before?.rev !== page?.rev) {
+      for (const query of queries.values()) delete query.cursor;
+    }
+    root.lang = page?.locale || "en";
     destinations.replaceChildren(element("h2", t.destinations));
-    root.replaceChildren();
+    destinations.hidden = true;
     if (page?.page_format !== "aweb.page/1" || !Array.isArray(page.layout)) {
-      const error2 = element("p", t.unsupported, "page-error");
-      error2.setAttribute("role", "alert");
-      root.append(error2);
+      const panel = element("section", null, "page-unavailable");
+      panel.setAttribute("role", "alert");
+      panel.append(
+        element("h1", t.unsupported),
+        element("p", t.unsupportedHelp)
+      );
+      root.replaceChildren(panel);
+      cache.clear();
       return;
     }
-    root.append(element("p", `aweb / ${page.page_id}`, "eyebrow"), element("h1", page.title, "page-title"));
-    const domainSet = /* @__PURE__ */ new Set();
+    title.textContent = page.title;
+    const domains = /* @__PURE__ */ new Set(), used = /* @__PURE__ */ new Set();
     function rememberLink(url) {
-      if (!domainSet.has(url.host)) {
-        domainSet.add(url.host);
+      if (!domains.has(url.host)) {
+        domains.add(url.host);
         destinations.append(element("bdi", url.host, "destination-domain"));
+        destinations.hidden = false;
       }
     }
-    function widget(w) {
-      const supported = known.has(w.type);
-      const p = supported ? w.props : {};
-      const state = page.widget_state?.[w.id] || {};
-      const box = element("section", null, `widget widget-${supported ? w.type : "unknown"}`);
-      box.dataset.widget = w.id;
+    function pageLink(node, url) {
+      node.removeAttribute("href");
+      node.removeAttribute("target");
+      node.removeAttribute("rel");
+      node.removeAttribute("referrerpolicy");
+      node.setAttribute("role", "link");
+      node.tabIndex = 0;
+      links.set(node, url.href);
+      const activate = (event) => {
+        event.preventDefault();
+        if (event.isTrusted) host.confirmLink?.(links.get(node), event);
+      };
+      node.onclick = activate;
+      node.onauxclick = (event) => event.preventDefault();
+      node.onkeydown = (event) => {
+        if (event.key === "Enter" || event.key === " ") activate(event);
+      };
+      rememberLink(url);
+    }
+    function displayState(box, w, state) {
       box.setAttribute("aria-busy", String(!!state.busy));
-      if (!supported) box.append(element("p", t.unavailable, "widget-label"), element("p", w.fallback));
+      let status = [...box.children].find(
+        (node) => node.hasAttribute("data-widget-state")
+      );
+      if (!status) {
+        status = element("div", null, "widget-state");
+        status.dataset.widgetState = "";
+        box.append(status);
+      }
+      status.replaceChildren();
+      const message = state.message || (state.busy ? t.busy : "");
+      if (message || state.progress !== void 0)
+        status.append(
+          element(
+            "p",
+            `${message}${state.progress !== void 0 ? `${message ? " \xB7 " : ""}${state.progress}%` : ""}`,
+            "state-message"
+          )
+        );
+      if (state.progress !== void 0) {
+        const progress = element("progress");
+        progress.max = 100;
+        progress.value = state.progress;
+        progress.setAttribute(
+          "aria-label",
+          `${known.has(w.type) && w.props?.label || w.id}: ${t.progress}`
+        );
+        status.append(progress);
+      }
+      status.hidden = !status.childNodes.length;
+    }
+    function widget(w) {
+      used.add(w.id);
+      const supported = known.has(w.type), p = supported ? w.props : {}, state = page.widget_state?.[w.id] || {};
+      const container = w.type === "stack" || w.type === "grid";
+      const signature = JSON.stringify([
+        !supported ? { id: w.id, type: w.type, fallback: w.fallback } : container ? { ...w, children: void 0 } : w,
+        locale,
+        w.bind ? page.rev : void 0
+      ]);
+      let entry = cache.get(w.id), box;
+      if (entry?.signature === signature) {
+        box = entry.box;
+        if (container)
+          setChildren(box, [...w.children.map(widget), entry.state]);
+        for (const link2 of box.querySelectorAll('[role="link"]')) {
+          const value = links.get(link2);
+          if (value) rememberLink(new URL(value));
+        }
+        displayState(box, w, state);
+        return box;
+      }
+      box = element(
+        "section",
+        null,
+        `widget widget-${supported ? w.type : "unknown"}`
+      );
+      box.dataset.widget = w.id;
+      if (!supported)
+        box.append(
+          element("p", t.unavailable, "widget-label"),
+          element("p", w.fallback)
+        );
       else if (w.type === "heading") box.append(element(`h${p.level}`, p.text));
       else if (w.type === "text") {
         const body = element("div", null, "markdown");
         renderMarkdown(body, p.markdown);
         for (const link2 of body.querySelectorAll("a[href]")) {
-          const url = safeLink(link2.href);
-          if (url) rememberLink(url);
+          const url = safeLink(link2.getAttribute("href"));
+          if (url) pageLink(link2, url);
         }
         box.append(body);
-      } else if (w.type === "stack" || w.type === "grid") {
+      } else if (container) {
         box.classList.add(`gap-${p.gap || "medium"}`);
         if (w.type === "grid") box.classList.add(`columns-${p.columns}`);
         box.append(...w.children.map(widget));
       } else {
-        const records = page.collections?.find((c) => c.id === w.bind?.collection)?.records || [];
-        const value = p.field ? records[0]?.value?.[p.field] : p.value;
-        box.append(element("p", p.label, "widget-label"));
-        if (w.type === "stat") {
-          box.append(element("bdi", typeof value === "number" ? new Intl.NumberFormat(locale).format(value) : value ?? "\u2014", "stat-value"));
-          if (p.unit) box.append(element("span", p.unit, "stat-unit"));
-        } else {
-          box.append(element("bdi", p.field ? value ?? "\u2014" : p.label, `badge tone-${p.tone}`));
+        const content = element("div", null, "bound-content");
+        box.append(content);
+        const actionButton = (id, record) => {
+          const button = element(
+            "button",
+            page.actions.find((a) => a.id === id)?.label || t.actions
+          );
+          button.type = "button";
+          button.disabled = true;
+          button.title = t.readOnly;
+          return button;
+        };
+        const draw = (records, projection) => {
+          content.replaceChildren();
+          if (collectionTypes.has(w.type)) {
+            let query = queries.get(w.id);
+            if (!query) {
+              query = structuredClone(w.bind);
+              queries.set(w.id, query);
+            }
+            renderCollection({
+              box: content,
+              w,
+              initialRecords: records,
+              initialProjection: projection,
+              schema: page.collections.find((c) => c.id === w.bind.collection)?.schema,
+              locale,
+              timeZone: host.timeZone,
+              t,
+              query,
+              actionButton,
+              onRead: (bind) => read(bind)
+            });
+          } else {
+            const value = p.field ? records[0]?.value?.[p.field] : p.value;
+            if (w.type === "stat" || p.field)
+              content.append(element("p", p.label, "widget-label"));
+            if (w.type === "stat") {
+              const figure = element("div", null, "stat-figure");
+              figure.append(
+                element(
+                  "bdi",
+                  typeof value === "number" ? new Intl.NumberFormat(locale).format(value) : value ?? "\u2014",
+                  "stat-value"
+                )
+              );
+              if (p.unit) figure.append(element("span", p.unit, "stat-unit"));
+              content.append(figure);
+            } else
+              content.append(
+                element(
+                  "bdi",
+                  p.field ? value ?? "\u2014" : p.label,
+                  `badge tone-${p.tone}`
+                )
+              );
+          }
+        };
+        async function read(bind) {
+          if (!host.read) throw Object.assign(Error(), { code: "unavailable" });
+          const result = await host.read({
+            page_id: page.page_id,
+            expected_page_rev: page.rev,
+            widget_id: w.id,
+            bind
+          });
+          if (generation !== epoch || result.page_rev !== page.rev)
+            throw Object.assign(Error(), { code: "revision_conflict" });
+          return result;
         }
+        if (w.bind) {
+          content.append(element("p", t.loading));
+          read(queries.get(w.id) || w.bind).then((result) => {
+            if (generation === epoch) draw(result.records, result);
+          }).catch((error2) => {
+            if (generation === epoch)
+              content.replaceChildren(
+                element(
+                  "p",
+                  error2.code === "revision_conflict" ? t.conflict : t.unavailable
+                )
+              );
+          });
+        } else draw([]);
       }
-      if (state.message) box.append(element("p", state.message, "state-message"));
-      if (state.progress !== void 0) {
-        const progress = element("progress");
-        progress.max = 100;
-        progress.value = state.progress;
-        progress.setAttribute("aria-label", `${p.label || w.id}: ${t.progress}`);
-        box.append(progress);
-      }
-      if (state.busy) box.append(element("span", t.busy, "busy-label"));
+      displayState(box, w, state);
+      entry = {
+        signature,
+        box,
+        state: [...box.children].find(
+          (n) => n.hasAttribute("data-widget-state")
+        )
+      };
+      cache.set(w.id, entry);
       return box;
     }
-    root.append(...page.layout.map(widget));
-    if (domainSet.size === 0) destinations.hidden = true;
-    else destinations.hidden = false;
+    setChildren(root, [title, ...page.layout.map(widget)]);
+    for (const id of cache.keys()) if (!used.has(id)) cache.delete(id);
+    if (focusedWidget && !focused?.isConnected) {
+      const replacement = root.querySelector(
+        `[data-widget="${CSS.escape(focusedWidget.dataset.widget)}"]`
+      )?.querySelectorAll(focusables)[focusIndex];
+      replacement?.focus({ preventScroll: true });
+    }
+    if (before?.page_id === page.page_id) {
+      const changes = [];
+      for (const id of /* @__PURE__ */ new Set([
+        ...Object.keys(before.widget_state || {}),
+        ...Object.keys(page.widget_state || {})
+      ])) {
+        const state = page.widget_state?.[id] || {};
+        if (JSON.stringify(state) !== JSON.stringify(before.widget_state?.[id] || {}))
+          changes.push(state.message || (state.busy ? t.busy : t.updated));
+      }
+      if (changes.length) announcements.textContent = changes.join(". ");
+      window.scrollTo(...scroll);
+    }
   }
-  return { update, clear() {
-    current = null;
-    root.replaceChildren();
-    destinations.replaceChildren();
-    announcements.textContent = "";
-  }, get page() {
-    return current;
-  } };
+  return {
+    update,
+    clear() {
+      host.confirmLink?.clear?.();
+      ++epoch;
+      current = null;
+      cache.clear();
+      queries.clear();
+      root.replaceChildren();
+      destinations.replaceChildren();
+      destinations.hidden = true;
+      announcements.textContent = "";
+    },
+    get page() {
+      return current;
+    }
+  };
 }
 export {
-  createPageRenderer,
-  element
+  createLinkConfirmation,
+  createPageRenderer
 };

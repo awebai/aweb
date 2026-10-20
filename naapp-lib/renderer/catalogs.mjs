@@ -1,9 +1,29 @@
-export const catalogs = {
-  en: { unavailable: 'Widget unavailable', unsupported: 'This page cannot be displayed.', destinations: 'Link destinations', progress: 'Progress', busy: 'In progress', empty: 'No records', readOnly: 'Read only', updated: 'Updated' },
-  ca: { unavailable: 'Giny no disponible', unsupported: 'No es pot mostrar aquesta pàgina.', destinations: 'Destinacions dels enllaços', progress: 'Progrés', busy: 'En curs', empty: 'Cap registre', readOnly: 'Només lectura', updated: 'Actualitzat' },
+// Product chrome is English. page.locale affects only the page container's lang.
+export const english = {
+  unavailable: "This part of the page can't be shown here.",
+  unsupported: "This page can't be shown here",
+  unsupportedHelp:
+    "It needs a newer version of aweb. Ask the agent that made it to check it.",
+  destinations: "Link destinations",
+  progress: "Progress",
+  busy: "Updating",
+  empty: "No records",
+  readOnly: "Read only",
+  updated: "Updated",
+  records: "records",
+  previous: "Previous",
+  next: "Next",
+  actions: "Actions",
+  filterField: "Filter field",
+  filterValue: "Filter value",
+  applyFilter: "Apply filter",
+  clearFilter: "Clear filter",
+  pagination: "Record pages",
+  loading: "Loading records…",
+  conflict: "The page changed. Refresh to see the current records.",
+  open: "Open",
+  cancel: "Cancel",
 };
-export function messages(memberLocale, pageLocale) {
-  const locale = memberLocale || pageLocale || 'en';
-  const language = locale.split('-')[0];
-  return { locale: language === 'ca' ? 'ca' : 'en', t: catalogs[language] || catalogs.en };
+export function messages() {
+  return { locale: "en", t: english };
 }

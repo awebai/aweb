@@ -31,7 +31,7 @@ class PageShell:
     headers: dict[str, str]
 
 
-def page_shell(*, script_path: str, asset_origin: str, locale: str = "en") -> PageShell:
+def page_shell(*, script_path: str, asset_origin: str) -> PageShell:
     """Host shell with independent chrome. script_path is trusted packaged host code.
 
     Hosts serve the packaged pages/assets/page-renderer.js and page-renderer.css;
@@ -42,7 +42,7 @@ def page_shell(*, script_path: str, asset_origin: str, locale: str = "en") -> Pa
         raise ValueError("A same-origin packaged script path is required")
     asset_origin = _origin(asset_origin)
     nonce = secrets.token_urlsafe(24)
-    language = "ca" if locale.split("-")[0] == "ca" else "en"
+    language = "en"
     headers = {
         "Content-Security-Policy": "; ".join(
             [
@@ -71,10 +71,11 @@ def page_shell(*, script_path: str, asset_origin: str, locale: str = "en") -> Pa
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pages · aweb</title><link rel="stylesheet" href="/assets/page-renderer.css">
 <script type="module" nonce="{nonce}" src="{escape(script_path, quote=True)}"></script>
-</head><body><a class="skip-link" href="#page">{"Ves al contingut" if language == "ca" else "Skip to content"}</a>
+</head><body><a class="skip-link" href="#page">Skip to content</a>
 <header class="host-chrome"><span class="brand">aweb <span>Pages</span></span><div id="identity"></div></header>
 <main><div id="page" tabindex="-1"></div></main>
-<aside id="destinations" class="host-chrome" aria-label="{"Destinacions" if language == "ca" else "Destinations"}"></aside>
+<aside id="destinations" class="host-chrome" aria-label="Destinations"></aside>
+<dialog id="link-confirmation" class="link-confirmation"></dialog>
 <div id="announcements" class="sr-only" role="status" aria-live="polite"></div>
 </body></html>'''
     return PageShell(html, headers)

@@ -18,12 +18,11 @@ host origin. `page_shell` supplies a shell and response headers; its `script_pat
 selects the host's **external, packaged** entry module. That module imports:
 
 ```js
-import { createPageRenderer } from '/assets/page-renderer.js';
+import { createPageRenderer, createLinkConfirmation } from '/assets/page-renderer.js';
 const renderer = createPageRenderer({
   root: document.querySelector('#page'),
   destinations: document.querySelector('#destinations'),
   announcements: document.querySelector('#announcements'),
-  memberLocale: 'ca', // trusted host setting, otherwise omit
   host: adapter,
 });
 renderer.update(authorizedValidatedPage);
@@ -33,18 +32,31 @@ renderer.clear();
 
 `destinations`, `announcements`, identity and approval chrome are host-owned
 siblings outside `root`. No page content, styles or widget state can replace
-them. Trusted member locale takes precedence over page locale, then English;
-agent-authored text is never translated. The host must supply trusted identity
+them. All chrome, dates and numbers are English. The page's locale sets only the
+page container's lang attribute for pronunciation; agent-authored text is never
+translated. There is no locale switch. The host must supply trusted identity
 and approval text itself. Link possession is not a verified human identity.
+
+The host creates a native `<dialog id="link-confirmation">` outside `root`
+(`page_shell` includes it), and supplies
+`adapter.confirmLink = createLinkConfirmation(dialog)`. Page links have no
+`href` or URL attribute; validated URLs stay in a renderer-owned WeakMap. A
+trusted keyboard or pointer gesture opens the host confirmation, which parses
+the URL independently and shows its normalized domain and full destination.
+Cancel has initial focus; Escape cancels. Only the explicit Open gesture calls
+`window.open` with `noopener,noreferrer`. The footer remains an index. Page
+markup cannot create, restyle, remove or auto-trigger this host dialog.
 
 The adapter grows with R1's widget slices. Its full shape is:
 
 - `read({page_id, expected_page_rev, widget_id, bind})` resolves an authorized
-  independent widget projection: `{page_rev, records, next_cursor}`. Each record
-  retains `{id, rev, value}`. A response at another page revision triggers a
+  independent widget projection: `{page_rev, records, next_cursor, count}`. Every initial bound widget calls this, even with empty bootstrap records.
+  Each record retains `{id, rev, value}`. A response at another page revision triggers a
   complete snapshot restart, never mixing rows across revisions. Cursors are
   opaque; hosts bind them to actor, policy and query. Sorting/filtering/paging
-  goes through this read, with no additional collection records fetched locally.
+  goes through this read; no broader collection is sent to the browser. The
+  bootstrap retains only definitions and exact decision/bundle records required
+  by the frozen validator.
 - `invoke(request, {csrfToken})` invokes an allowed action. Request context
   retains page/widget/action IDs, expected page and record revisions, an
   idempotency key, and typed input. Answer requests additionally bind exact task
@@ -84,7 +96,7 @@ npm run build --prefix renderer
 uv run --extra pages python -m aweb_naapp.pages.gallery --port 8734
 ```
 
-Open <http://127.0.0.1:8734/> or <http://127.0.0.1:8734/?locale=ca>.
+Open <http://127.0.0.1:8734/>.
 The gallery is a loopback fixture host with no real team credentials; its
 packaged renderer is the same artifact consumed by applications. Widgets are
 added to the gallery as their R1 slices land. Full application authorization
@@ -106,3 +118,14 @@ bidi isolation. Markdown images cannot load assets. HTTPS destinations are
 normalized and shown in host chrome. Raw HTML/SVG remains literal text. The
 shell enforces no inline/eval scripts, no frames, no referrers, no object/base
 injection, and media restricted to the pinned asset origin.
+
+
+## Accessibility verification
+
+Browser tests cover keyboard link confirmation/cancellation, focus retained by
+stable widget ID, polite state announcements, chart table alternatives, bidi
+isolation and measured single-column phone geometry. Axe runs in light and dark
+modes. E3 additionally checks real Windows typography and VoiceOver on macOS;
+these manual passes require their actual platforms and are not replaced by a
+browser user-agent override. English chrome is tested with non-English authored
+content to ensure pronunciation metadata does not change the product language.

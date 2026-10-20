@@ -1,7 +1,6 @@
-"""Local fixture gallery, exercising the packaged shared renderer.
+"""Loopback fixture gallery for the packaged renderer; no application credentials.
 
 Run: uv run --extra pages python -m aweb_naapp.pages.gallery --port 8734
-Only binds loopback. It has no application credentials or production actions.
 """
 
 from __future__ import annotations
@@ -18,11 +17,12 @@ from aweb_naapp.pages import validate_page
 from aweb_naapp.pages.render import page_shell
 
 
-def gallery_page(locale: str = "en") -> dict:
+def gallery_page() -> dict:
+    bind = {"collection": "properties"}
     return {
         "page_format": "aweb.page/1",
         "page_id": "property-overview",
-        "locale": locale,
+        "locale": "en",
         "title": "A quieter view of your properties",
         "rev": 1,
         "layout_version": 1,
@@ -64,13 +64,116 @@ def gallery_page(locale: str = "en") -> dict:
                 ],
             },
             {
+                "id": "bound-metrics",
+                "type": "grid",
+                "props": {"columns": 2},
+                "children": [
+                    {
+                        "id": "bound-one",
+                        "type": "stat",
+                        "props": {
+                            "label": "Maple House occupancy",
+                            "field": "occupancy",
+                            "unit": "%",
+                        },
+                        "bind": {
+                            **bind,
+                            "all": [{"field": "name", "op": "eq", "value": "Maple House"}],
+                        },
+                    },
+                    {
+                        "id": "bound-two",
+                        "type": "stat",
+                        "props": {
+                            "label": "Riverside occupancy",
+                            "field": "occupancy",
+                            "unit": "%",
+                        },
+                        "bind": {
+                            **bind,
+                            "all": [{"field": "name", "op": "eq", "value": "Riverside"}],
+                        },
+                    },
+                ],
+            },
+            {
+                "id": "property-table",
+                "type": "table",
+                "props": {
+                    "columns": [
+                        {"field": "name", "label": "Property", "format": "text"},
+                        {"field": "occupancy", "label": "Occupancy", "format": "number"},
+                        {"field": "updated", "label": "Updated", "format": "date"},
+                    ]
+                },
+                "bind": {**bind, "sort": [{"field": "name", "direction": "asc"}], "limit": 2},
+            },
+            *[
+                {
+                    "id": f"property-{kind}",
+                    "type": kind,
+                    "props": {"fields": {"Property": "name", "Occupancy": "occupancy"}},
+                    "bind": bind,
+                }
+                for kind in ("cards", "list")
+            ],
+            {
+                "id": "activity",
+                "type": "activity_timeline",
+                "props": {"fields": {"Property": "name", "Reported": "updated"}},
+                "bind": bind,
+            },
+            *[
+                {
+                    "id": f"chart-{kind}",
+                    "type": "chart",
+                    "props": {
+                        "kind": kind,
+                        "x": "name",
+                        "series": ["occupancy"],
+                        "alternative": "Occupancy by property, percent",
+                    },
+                    "bind": bind,
+                }
+                for kind in ("bar", "line", "pie")
+            ],
+            {
                 "id": "future",
                 "type": "future_widget",
                 "fallback": "A future widget",
                 "props": {"ignored": "<script>alert(1)</script>"},
             },
         ],
-        "collections": [],
+        "collections": [
+            {
+                "id": "properties",
+                "mode": "owned",
+                "schema_version": 1,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "occupancy": {"type": "integer"},
+                        "updated": {"type": "string", "format": "date-time"},
+                    },
+                    "additionalProperties": False,
+                },
+                "records": [
+                    {
+                        "id": f"property-{index}",
+                        "rev": 1,
+                        "value": {
+                            "name": name,
+                            "occupancy": occupancy,
+                            "updated": "2026-10-20T10:00:00Z",
+                        },
+                    }
+                    for index, (name, occupancy) in enumerate(
+                        [("Maple House", 62), ("Oak Terrace", 82), ("Riverside", 95)]
+                    )
+                ],
+            }
+        ],
         "actions": [],
         "widget_state": {
             "occupancy": {
@@ -82,11 +185,107 @@ def gallery_page(locale: str = "en") -> dict:
     }
 
 
-ENTRY = b"""import { createPageRenderer } from '/assets/page-renderer.js';
-const renderer = createPageRenderer({root: document.querySelector('#page'), destinations: document.querySelector('#destinations'), announcements: document.querySelector('#announcements')});
-const page = await fetch('/api/page' + location.search).then(r => r.json());
+def fixture(query: dict) -> dict:
+    page = gallery_page()
+    if "vector" in query:
+        vectors = json.loads(
+            (Path(__file__).resolve().parents[4] / "docs/vectors/page-format-v1.json").read_text()
+        )
+        case = next(
+            c for c in vectors["cases"] if c["name"] == query["vector"][0] and c.get("render")
+        )
+        page = copy.deepcopy(vectors["bases"][case["input"]["base"]])
+        for patch in case["input"]["patch"]:
+            parts = [v.replace("~1", "/").replace("~0", "~") for v in patch["path"].split("/")[1:]]
+            parent = page
+            for part in parts[:-1]:
+                parent = parent[int(part)] if isinstance(parent, list) else parent[part]
+            key = parts[-1]
+            if isinstance(parent, list):
+                if key == "-":
+                    parent.append(patch["value"])
+                else:
+                    parent[int(key)] = patch["value"]
+            else:
+                parent[key] = patch["value"]
+    if query.get("case") == ["wide-stats"]:
+        metrics = page["layout"][2]
+        metrics["props"]["columns"] = 4
+        metrics["children"][0]["props"].update(value=1234567, unit="EUR")
+        metrics["children"].append(
+            {
+                "id": "decimal-display",
+                "type": "stat",
+                "props": {"label": "Agent-formatted decimal", "value": "1234567.50", "unit": "EUR"},
+            }
+        )
+    if query.get("case") == ["dialog-hostile"]:
+        page["layout"].append(
+            {
+                "id": "hostile",
+                "type": "text",
+                "props": {
+                    "markdown": '<dialog id="link-confirmation" open>Fake</dialog><style>#link-confirmation{display:none}</style><script>document.querySelector("#link-confirmation").remove()</script>\n\n[Continue](https://example.com/verified)'
+                },
+            }
+        )
+    if query.get("state") == ["updated"]:
+        page["rev"] = 2
+        page["widget_state"]["occupancy"] = {"message": "Projection updated", "busy": False}
+    validation = validate_page(page)
+    if not validation.valid:
+        raise ValueError(validation.errors)
+    return page
+
+
+def widget_projection(page: dict, bind: dict) -> dict:
+    records = copy.deepcopy(
+        next(c for c in page["collections"] if c["id"] == bind["collection"])["records"]
+    )
+    for predicate in bind.get("all", []):
+
+        def matches(record: dict, predicate: dict = predicate) -> bool:
+            a, b = record["value"].get(predicate["field"]), predicate["value"]
+            return {
+                "eq": lambda: a == b,
+                "ne": lambda: a != b,
+                "lt": lambda: a < b,
+                "lte": lambda: a <= b,
+                "gt": lambda: a > b,
+                "gte": lambda: a >= b,
+                "in": lambda: a in b,
+            }[predicate["op"]]()
+
+        records = [r for r in records if matches(r)]
+    for order in reversed(bind.get("sort", [])):
+        records.sort(
+            key=lambda r: r["value"].get(order["field"]), reverse=order["direction"] == "desc"
+        )
+    count = len(records)
+    offset, limit = int(bind.get("cursor") or 0), bind.get("limit", 20)
+    return {
+        "page_rev": page["rev"],
+        "records": records[offset : offset + limit],
+        "count": count,
+        "next_cursor": str(offset + limit) if offset + limit < count else None,
+    }
+
+
+ENTRY = b"""import { createPageRenderer, createLinkConfirmation } from '/assets/page-renderer.js';
+let query = new URLSearchParams(location.search);
+const host = {
+  confirmLink: createLinkConfirmation(document.querySelector('#link-confirmation')),
+  read: async request => {
+    const params = new URLSearchParams(query);
+    params.set('bind', JSON.stringify(request.bind));
+    return fetch('/api/widget?' + params).then(r => r.json());
+  },
+};
+const renderer = createPageRenderer({root: document.querySelector('#page'), destinations: document.querySelector('#destinations'), announcements: document.querySelector('#announcements'), host});
+async function refresh() { renderer.update(await fetch('/api/page?' + query).then(r => r.json())); }
 document.querySelector('#identity').textContent = 'Fixture gallery';
-renderer.update(page);
+document.addEventListener('keydown', event => { if(event.altKey && event.key === 'u') { event.preventDefault(); query.set('state','updated');refresh(); } });
+await refresh();
 """
 
 
@@ -94,7 +293,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         url = urlsplit(self.path)
         query = parse_qs(url.query)
-        locale = "ca" if query.get("locale") == ["ca"] else "en"
         headers: dict[str, str] = {
             "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff",
@@ -103,46 +301,19 @@ class Handler(BaseHTTPRequestHandler):
         status = 200
         if url.path == "/":
             shell = page_shell(
-                script_path="/assets/gallery.js",
-                asset_origin="https://assets.example",
-                locale=locale,
+                script_path="/assets/gallery.js", asset_origin="https://assets.example"
             )
             body, content_type = shell.html.encode(), "text/html; charset=utf-8"
             headers.update(shell.headers)
-        elif url.path == "/api/page":
-            page = gallery_page(locale)
-            if "vector" in query:
-                vectors = json.loads(
-                    (
-                        Path(__file__).resolve().parents[4] / "docs/vectors/page-format-v1.json"
-                    ).read_text()
-                )
-                case = next(
-                    c
-                    for c in vectors["cases"]
-                    if c["name"] == query["vector"][0] and c.get("render")
-                )
-                page = copy.deepcopy(vectors["bases"][case["input"]["base"]])
-                for patch in case["input"]["patch"]:
-                    parts = [
-                        v.replace("~1", "/").replace("~0", "~")
-                        for v in patch["path"].split("/")[1:]
-                    ]
-                    parent = page
-                    for part in parts[:-1]:
-                        parent = parent[int(part)] if isinstance(parent, list) else parent[part]
-                    key = parts[-1]
-                    if isinstance(parent, list):
-                        if key == "-":
-                            parent.append(patch["value"])
-                        else:
-                            parent[int(key)] = patch["value"]
-                    else:
-                        parent[key] = patch["value"]
-            validation = validate_page(page)
-            if not validation.valid:
-                raise ValueError(validation.errors)
-            if query.get("case") == ["unsupported"]:
+        elif url.path in ("/api/page", "/api/widget"):
+            page = fixture(query)
+            if url.path == "/api/widget":
+                page = widget_projection(page, json.loads(query["bind"][0]))
+            elif "vector" not in query:
+                # Independent projections: the bootstrap has definitions only.
+                for collection in page["collections"]:
+                    collection["records"] = []
+            if url.path == "/api/page" and query.get("case") == ["unsupported"]:
                 page["page_format"] = "aweb.page/2"
             body, content_type = json.dumps(page, ensure_ascii=False).encode(), "application/json"
         elif url.path == "/assets/gallery.js":
@@ -162,10 +333,13 @@ class Handler(BaseHTTPRequestHandler):
         for name, value in headers.items():
             self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # Browser navigation may cancel independent widget reads.
 
     def log_message(self, format: str, *args: object) -> None:
-        pass  # Do not log request targets; link hosts must redact capabilities too.
+        pass  # Link hosts must not log capability-bearing request targets.
 
 
 def main() -> None:
@@ -173,7 +347,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8734)
     args = parser.parse_args()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"Gallery: http://127.0.0.1:{server.server_port}/ (Catalan: /?locale=ca)", flush=True)
+    print(f"Gallery: http://127.0.0.1:{server.server_port}/", flush=True)
     server.serve_forever()
 
 
