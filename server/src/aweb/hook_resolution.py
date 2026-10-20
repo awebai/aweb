@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from aweb.hook_bindings import PRODUCTION, REGISTRATION, HookBinding, _binding, _COLUMNS
+from aweb.hook_bindings import BINDING_COLUMNS, PRODUCTION, REGISTRATION, HookBinding, binding_from_row
 
 # The key purposes a production's keys are listed for: the event signature and
 # the delivery credential. Any other purpose is never listed.
@@ -61,7 +61,7 @@ async def active_bindings(db, *, team_id: str, kind: str, selector: HookSelector
     """The team's active bindings of ``kind`` for the hook, oldest activation first."""
     rows = await db.fetch_all(
         f"""
-        SELECT {_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
+        SELECT {BINDING_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
         WHERE team_id = $1 AND kind = $2 AND catalog_id = $3 AND catalog_version = $4 AND hook = $5
           AND state = 'active'
         ORDER BY activated_at, binding_id
@@ -72,7 +72,7 @@ async def active_bindings(db, *, team_id: str, kind: str, selector: HookSelector
         selector.catalog_version,
         selector.hook,
     )
-    return [_binding(row) for row in rows]
+    return [binding_from_row(row) for row in rows]
 
 
 async def hook_keys(db, binding: HookBinding) -> list[HookKey]:
@@ -105,7 +105,7 @@ async def own_bindings(
     if binding_id is not None:
         rows = await db.fetch_all(
             f"""
-            SELECT {_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
+            SELECT {BINDING_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
             WHERE team_id = $1 AND app_id = $2 AND binding_id = $3
             """,
             team_id,
@@ -116,7 +116,7 @@ async def own_bindings(
         assert selector is not None
         rows = await db.fetch_all(
             f"""
-            SELECT {_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
+            SELECT {BINDING_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
             WHERE team_id = $1 AND app_id = $2 AND catalog_id = $3 AND catalog_version = $4 AND hook = $5
             ORDER BY created_at, binding_id
             """,
@@ -126,4 +126,4 @@ async def own_bindings(
             selector.catalog_version,
             selector.hook,
         )
-    return [_binding(row) for row in rows]
+    return [binding_from_row(row) for row in rows]

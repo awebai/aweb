@@ -66,7 +66,8 @@ async def _activate(db, binding_id: UUID) -> None:
     await db.execute(
         """
         UPDATE {{tables.app_hook_bindings}}
-        SET state = 'active', activated_at = NOW(), active_from = NOW() + INTERVAL '60 seconds',
+        SET state = 'active', activated_at = date_trunc('milliseconds', NOW()),
+            active_from = date_trunc('milliseconds', NOW()) + INTERVAL '60 seconds',
             activation_act_sha256 = $2
         WHERE binding_id = $1
         """,
@@ -78,7 +79,8 @@ async def _revoke(db, binding_id: UUID) -> None:
     await db.execute(
         """
         UPDATE {{tables.app_hook_bindings}}
-        SET state = 'revoked', ended_by = 'owner_act', revoked_at = NOW(), revocation_act_sha256 = $2
+        SET state = 'revoked', ended_by = 'owner_act', revoked_at = date_trunc('milliseconds', NOW()),
+            revocation_act_sha256 = $2
         WHERE binding_id = $1
         """,
         binding_id, "cd" * 32,
