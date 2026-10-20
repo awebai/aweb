@@ -255,6 +255,8 @@ test-server:
 # The naapp packages the candidate gate covers. Each provides `make lint` and
 # `make test`: the checks stage lints them, and the isolated unit stage runs
 # their suites against its Postgres. A package joins by being added here.
+# UV_FROZEN keeps the gate on each committed lock, a lock the run changed fails
+# it, and the suites run offline.
 NAAPP_PACKAGES := naapp-lib naapp/folio naapp/library
 
 # Installs each package's locked dependencies, for a runner that then goes offline.
@@ -266,13 +268,16 @@ naapp-sync:
 lint-naapp:
 	set -e; for package in $(NAAPP_PACKAGES); do \
 		echo "=== lint $$package ==="; \
-		UV_CACHE_DIR=/tmp/uv-cache $(MAKE) -C $$package lint; \
+		UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 $(MAKE) -C $$package lint; \
+		git diff --exit-code -- $$package/uv.lock; \
 	done
 
 test-naapp:
 	set -e; for package in $(NAAPP_PACKAGES); do \
 		echo "=== test $$package ==="; \
-		UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) $(MAKE) -C $$package test; \
+		UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --project $$package; \
+		UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) $(MAKE) -C $$package test; \
+		git diff --exit-code -- $$package/uv.lock; \
 	done
 
 test-awid:
