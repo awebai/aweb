@@ -202,3 +202,19 @@ async def test_ended_sessions_are_dropped_as_new_ones_open(
         assert (await client.get("/whoami", headers={"Cookie": current})).status_code == 200
     rows = await console.db.fetch_value("SELECT count(*) FROM {{tables.console_sessions}}")
     assert rows == 1
+
+
+async def test_opening_a_session_does_not_wait_on_a_locked_ended_one(
+    console: Console, owners: dict[str, str]
+) -> None:
+    async with await _client(console.sessions()) as client:
+        cookie, csrf = await _login(client, owners)
+        await client.post("/logout", headers={"Cookie": cookie, "X-CSRF-Token": csrf})
+        tx_context = console.db.transaction()
+        tx = await tx_context.__aenter__()
+        await tx.execute("SELECT * FROM {{tables.console_sessions}} FOR UPDATE")
+        try:
+            current, _ = await asyncio.wait_for(_login(client, owners), timeout=5)
+        finally:
+            await tx_context.__aexit__(None, None, None)
+        assert (await client.get("/whoami", headers={"Cookie": current})).status_code == 200

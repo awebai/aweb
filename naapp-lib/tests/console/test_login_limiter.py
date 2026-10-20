@@ -186,3 +186,59 @@ async def test_volume_cannot_be_read_past_its_retention(db: AsyncDatabaseManager
     assert (await limiter.volume(SCOPE, since=timedelta(days=7))).requests == 0
     with pytest.raises(ValueError):
         await limiter.volume(SCOPE, since=timedelta(days=7, seconds=1))
+
+
+# A login never waits on another transaction's lock to prune: a prune that skips
+# locked rows, outside the login's own writes, cannot join a deadlock cycle.
+
+
+async def _held(db: AsyncDatabaseManager, statement: str):
+    """A transaction on another connection holding a lock on the rows `statement` selects."""
+    tx_context = db.transaction()
+    tx = await tx_context.__aenter__()
+    await tx.execute(statement)
+    return tx_context
+
+
+async def test_a_login_does_not_wait_on_a_locked_stale_attempt(db: AsyncDatabaseManager) -> None:
+    limiter = _limiter(db, window=timedelta(seconds=1))
+    async with _client(limiter, "203.0.113.7") as client:
+        await _codes(client, 1)
+    await db.execute(
+        "UPDATE {{tables.console_login_attempts}} SET window_start = NOW() - interval '1 hour'"
+    )
+    held = await _held(db, "SELECT * FROM {{tables.console_login_attempts}} FOR UPDATE")
+    try:
+        async with _client(limiter, "198.51.100.9") as client:
+            assert await asyncio.wait_for(_codes(client, 1), timeout=5) == [200]
+    finally:
+        await held.__aexit__(None, None, None)
+    rows = await db.fetch_value("SELECT count(*) FROM {{tables.console_login_attempts}}")
+    assert rows == 2
+
+
+async def test_a_login_does_not_wait_on_a_locked_old_volume_bucket(
+    db: AsyncDatabaseManager,
+) -> None:
+    limiter = _limiter(db, volume_retention=timedelta(days=1))
+    async with _client(limiter, "203.0.113.7") as client:
+        await _codes(client, 1)
+    await db.execute(
+        "UPDATE {{tables.console_login_volume}} SET window_start = NOW() - interval '2 days'"
+    )
+    held = await _held(db, "SELECT * FROM {{tables.console_login_volume}} FOR UPDATE")
+    try:
+        async with _client(limiter, "198.51.100.9") as client:
+            assert await asyncio.wait_for(_codes(client, 1), timeout=5) == [200]
+    finally:
+        await held.__aexit__(None, None, None)
+
+
+async def test_a_client_whose_window_ended_starts_a_new_one(db: AsyncDatabaseManager) -> None:
+    limiter = _limiter(db, limit=1, window=timedelta(minutes=1))
+    async with _client(limiter, "203.0.113.7") as client:
+        assert await _codes(client, 2) == [200, 429]
+        await db.execute(
+            "UPDATE {{tables.console_login_attempts}} SET window_start = NOW() - interval '2 minutes'"
+        )
+        assert await _codes(client, 2) == [200, 429]

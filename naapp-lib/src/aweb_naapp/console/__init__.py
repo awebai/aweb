@@ -119,13 +119,6 @@ class ConsoleSessions:
         token = secrets.token_urlsafe(32)
         csrf_token = secrets.token_urlsafe(32)
         async with self._db.transaction() as tx:
-            # A session that has ended is refused already; dropping it bounds the table.
-            await tx.execute(
-                """
-                DELETE FROM {{tables.console_sessions}}
-                WHERE expires_at <= NOW() OR closed_at IS NOT NULL
-                """
-            )
             expires_at = await tx.fetch_value(
                 """
                 INSERT INTO {{tables.console_sessions}}
@@ -140,6 +133,16 @@ class ConsoleSessions:
                 evidence_ref,
                 self._ttl,
             )
+        # A session that has ended is refused already; dropping it, after the
+        # insert has committed and skipping rows another transaction holds,
+        # bounds the table without ever waiting on a login.
+        await self._db.execute(
+            """
+            DELETE FROM {{tables.console_sessions}} WHERE token_sha256 IN (
+                SELECT token_sha256 FROM {{tables.console_sessions}}
+                WHERE expires_at <= NOW() OR closed_at IS NOT NULL FOR UPDATE SKIP LOCKED)
+            """
+        )
         return IssuedSession(token, csrf_token, expires_at, int(self._ttl.total_seconds()))
 
     def set_cookie(self, response: Response, issued: IssuedSession) -> None:
@@ -260,20 +263,17 @@ class LoginLimiter:
     async def admit(self, request: Request, scope: str) -> None:
         client = self._identity.of(request)
         async with self._db.transaction() as tx:
-            # Windows that have ended no longer limit anyone; dropping them bounds the table.
-            await tx.execute(
-                """
-                DELETE FROM {{tables.console_login_attempts}}
-                WHERE window_start + $1 <= NOW()
-                """,
-                self._window,
-            )
+            # A client whose window has ended starts a new one at this request.
             row = await tx.fetch_one(
                 """
                 INSERT INTO {{tables.console_login_attempts}} AS a
                     (client_key, window_start, attempts)
                 VALUES ($1, NOW(), 1)
-                ON CONFLICT (client_key) DO UPDATE SET attempts = a.attempts + 1
+                ON CONFLICT (client_key) DO UPDATE SET
+                    window_start = CASE WHEN a.window_start + $2 <= NOW()
+                                        THEN NOW() ELSE a.window_start END,
+                    attempts = CASE WHEN a.window_start + $2 <= NOW()
+                                    THEN 1 ELSE a.attempts + 1 END
                 RETURNING attempts,
                     ceil(extract(epoch FROM window_start + $2 - NOW()))::int AS retry_after
                 """,
@@ -283,10 +283,6 @@ class LoginLimiter:
             if row is None:
                 raise RuntimeError("the login attempt was not counted")
             throttled = row["attempts"] > self._limit
-            await tx.execute(
-                "DELETE FROM {{tables.console_login_volume}} WHERE window_start < NOW() - $1::interval",
-                self._volume_retention,
-            )
             await tx.execute(
                 """
                 INSERT INTO {{tables.console_login_volume}} AS v
@@ -299,12 +295,34 @@ class LoginLimiter:
                 self._window.total_seconds(),
                 int(throttled),
             )
+        await self._prune()
         if throttled:
             raise HTTPException(
                 status_code=429,
                 detail="login_rate_limited",
                 headers={"Retry-After": str(max(1, row["retry_after"]))},
             )
+
+    async def _prune(self) -> None:
+        """Drop ended windows and volume past its retention, after the request's
+        writes have committed; rows another transaction holds are left for a
+        later prune, so a prune never waits on a login."""
+        await self._db.execute(
+            """
+            DELETE FROM {{tables.console_login_attempts}} WHERE client_key IN (
+                SELECT client_key FROM {{tables.console_login_attempts}}
+                WHERE window_start + $1 <= NOW() FOR UPDATE SKIP LOCKED)
+            """,
+            self._window,
+        )
+        await self._db.execute(
+            """
+            DELETE FROM {{tables.console_login_volume}} WHERE (scope, window_start) IN (
+                SELECT scope, window_start FROM {{tables.console_login_volume}}
+                WHERE window_start < NOW() - $1::interval FOR UPDATE SKIP LOCKED)
+            """,
+            self._volume_retention,
+        )
 
     async def volume(self, scope: str, *, since: timedelta) -> LoginVolume:
         """Login requests for ``scope`` in the buckets that began within ``since``,
