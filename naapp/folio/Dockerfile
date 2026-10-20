@@ -17,16 +17,16 @@ RUN apt-get update \
 # uv binary from the official image — no pip anywhere in the build.
 COPY --from=ghcr.io/astral-sh/uv:0.11.21 /uv /uvx /bin/
 
-# folio sits at /app and its path sources ../../awid and ../../naapp-lib resolve to
-# /awid and /naapp-lib, the same relative layout as in the repository. Only the
-# paths the service needs are copied, so nothing local to a checkout (.venv, .env)
-# enters the image.
-COPY awid/pyproject.toml awid/README.md /awid/
-COPY awid/src /awid/src
-COPY naapp-lib/pyproject.toml naapp-lib/README.md /naapp-lib/
-COPY naapp-lib/src /naapp-lib/src
+# /app mirrors the repository layout, so folio's path sources ../../awid and
+# ../../naapp-lib resolve in the image as they do in a checkout. Only the paths the
+# service needs are copied, so nothing local to a checkout (.venv, .env) enters
+# the image.
+COPY awid/pyproject.toml awid/README.md /app/awid/
+COPY awid/src /app/awid/src
+COPY naapp-lib/pyproject.toml naapp-lib/README.md /app/naapp-lib/
+COPY naapp-lib/src /app/naapp-lib/src
 
-WORKDIR /app
+WORKDIR /app/naapp/folio
 
 # Resolve dependencies from the committed lock first (cached layer), then the
 # project, with `uv sync --frozen` so the build is reproducible and never re-resolves.

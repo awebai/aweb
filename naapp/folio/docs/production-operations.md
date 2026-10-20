@@ -17,8 +17,9 @@ docker build -f naapp/folio/Dockerfile .    # from the aweb repository root
 
 The Dockerfile copies only the paths the service needs (`awid/`,
 `naapp-lib/`, and folio's `pyproject.toml`, `uv.lock`, `README.md`, `src/` and
-`skills/`), so nothing local to a checkout enters the image. The image lays
-folio out at `/app`, with awid at `/awid` and naapp-lib at `/naapp-lib`.
+`skills/`), so nothing local to a checkout enters the image. `/app` mirrors the
+repository layout (`/app/naapp/folio`, `/app/awid`, `/app/naapp-lib`), so the
+path sources resolve in the image as they do in a checkout.
 
 ### Hosting service settings
 
