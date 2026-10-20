@@ -218,3 +218,63 @@ source tests and documentation review. The digest pin and explicit-update rule
 are compatibility constraints. App installation is not required for mail, chat,
 events from built-in coordination mutations, or self-hosting the core
 communication service.
+
+## App-side installation admission and dispatch fence (X9)
+
+`aweb_naapp.runtime.installation` supplies the shared PostgreSQL fence. Apply
+`apply_installation_migrations(db)` during startup, then construct one
+`InstallationFence(db, app_id=app_id, grants=team_grant_source)` per app. The
+source implements B1's `GrantSource`; its remote implementation belongs to the
+generic app-to-team-server API.
+
+Admission obtains B1's authenticated, fresh `Grant`, then calls
+`admitted = await fence.admit(tx, grant)` inside the intent's transaction. Store
+the returned `AdmittedInstallation`'s `team_id`, `app_id`, `installation_id` and
+`generation` with that intent. Acquire the fence before app resource locks.
+The observation rolls back with admission. Missing identity is refused, never
+synthesized. Committed observations cannot lower a generation, revive an
+inactive generation or revive an ID retired by a replacement installation ID.
+A negative grant also covers denial of an old digest's read key; a fresh higher
+generation may recover that same ID after a key update. Uninstall itself is
+irreversible on the team server: reinstall always creates a new ID.
+
+Before dispatch, refresh outside the dispatch transaction and its intent lock:
+
+```python
+await fence.refresh(team_id)
+async with db.transaction() as tx:
+    await dispatches.begin_dispatch(
+        tx, dispatch_id,
+        fence=lambda tx, dispatch: fence.check(tx, admitted),
+    )
+```
+
+`refresh` uses ordinary `grant_for` cache semantics, never a forced refresh. It
+commits an active/inactive observation in its own short transaction. Failed
+refresh invalidates local freshness and stops dispatch. Refresh before resumed
+dispatch even when there have been no new admissions: an idle app must learn
+uninstall. `check(tx, admitted)` performs SQL only, requiring a fresh active
+observation with the admitted ID/generation. Its shared row lock lasts through
+the dispatch commit, serializing it with local authority observations.
+
+An expired observation refuses even when refresh is not running. PostgreSQL
+stores the source's remaining monotonic freshness; waiting for the fence lock
+does not renew it, and a process restart does not reset it. Across the remote
+team server and app the guarantee is **max_age plus one bounded refresh**, at
+most **60 + 5 seconds with the remote source's defaults**. A local lock is not
+a cross-server lease. Earlier committed work is reconciled, never reported as
+rolled back. Immediate app-local containment is a separate authority operation.
+
+`InstallationRefused` carries `code` and HTTP-compatible `status`:
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `installation_identity_required` | 403 | Authority omitted a nonempty ID or positive generation. |
+| `installation_inactive` | 403 | Installation is not granted, or the ID was retired. |
+| `generation_superseded` | 409 | A different installation or generation superseded the admission. |
+| `authority_unavailable` | 503 | Authority is unreachable, mismatched or no longer fresh. |
+
+Consumers own outward error/audit mapping and must stop when refresh or check
+refuses. The store holds opaque installation references and freshness, never
+app content or credential material. X9 consumes the team server registry's
+authority.
