@@ -1412,37 +1412,8 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 				req.Header.Set(key, value)
 			}
 		}
-		if c.grantID != "" && c.signingKey != nil {
-			// Grant auth: session did:key signature over the identity-grant
-			// envelope. aud, method, path, and body_sha256 bind the request to
-			// the grant, mirroring the v2 team envelope canonicalization.
-			timestamp := time.Now().UTC().Format(time.RFC3339)
-			credential, err := SignIdentityGrantCredential(c.signingKey, method, req.URL, c.grantID, bodyBytes, timestamp)
-			if err != nil {
-				return nil, err
-			}
-			for key := range credential.Headers {
-				req.Header.Set(key, credential.Headers.Get(key))
-			}
-		} else if c.teamCertHeader != "" && c.signingKey != nil {
-			// Certificate auth: DIDKey signature over {body_sha256, team_id, timestamp}.
-			// body_sha256 binds the request body to the signature without the
-			// server having to consume the body stream for signature verification.
-			timestamp := time.Now().UTC().Format(time.RFC3339)
-			signPayload := certAuthSignPayload(c.teamID, timestamp, bodyBytes)
-			sig := ed25519.Sign(c.signingKey, signPayload)
-			req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
-			req.Header.Set("X-AWEB-Timestamp", timestamp)
-			req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
-		} else if c.signingKey != nil {
-			timestamp := time.Now().UTC().Format(time.RFC3339)
-			signPayload := identityAuthSignPayload(c.stableID, timestamp, bodyBytes)
-			sig := ed25519.Sign(c.signingKey, signPayload)
-			req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
-			req.Header.Set("X-AWEB-Timestamp", timestamp)
-			if c.stableID != "" {
-				req.Header.Set("X-AWEB-DID-AW", c.stableID)
-			}
+		if err := c.signRequest(req, bodyBytes); err != nil {
+			return nil, err
 		}
 		return req, nil
 	}
@@ -1698,36 +1669,60 @@ func decorateTimeoutError(method string, err error) error {
 	return fmt.Errorf("%w\nRequest timed out before a response was received; it may have applied. Check current state before retrying.", err)
 }
 
-// certAuthSignPayload builds the canonical JSON bytes for certificate auth:
-// {"body_sha256":"<hex>","team_id":"<team_id>","timestamp":"<ts>"} —
-// sorted keys, no whitespace. body_sha256 is the hex SHA256 of the request
-// body bytes (empty body hashes the empty string).
-func certAuthSignPayload(teamID, timestamp string, body []byte) []byte {
-	h := sha256.Sum256(body)
-	bodyHash := hex.EncodeToString(h[:])
-	payload, err := CanonicalJSONValue(map[string]string{
-		"body_sha256": bodyHash,
-		"team_id":     teamID,
-		"timestamp":   timestamp,
-	})
-	if err != nil {
-		panic(fmt.Sprintf("certAuthSignPayload: %v", err))
+// requestAuthPayload binds the final external URL and decoded body bytes.
+// Identity-only requests bind did_aw; certificate requests bind team_id.
+func requestAuthPayload(method string, target *url.URL, claim, value, timestamp string, body []byte) ([]byte, error) {
+	if target == nil || target.Scheme == "" || target.Host == "" {
+		return nil, fmt.Errorf("target URL is required")
 	}
-	return []byte(payload)
+	h := sha256.Sum256(body)
+	payload, err := CanonicalJSONValue(map[string]any{
+		"v":           2,
+		"aud":         target.Scheme + "://" + target.Host,
+		"method":      strings.ToUpper(method),
+		"path":        appEmitRequestTargetPath(target),
+		"body_sha256": hex.EncodeToString(h[:]),
+		"timestamp":   timestamp,
+		claim:         value,
+	})
+	return []byte(payload), err
 }
 
-func identityAuthSignPayload(didAW, timestamp string, body []byte) []byte {
-	h := sha256.Sum256(body)
-	bodyHash := hex.EncodeToString(h[:])
-	payload, err := CanonicalJSONValue(map[string]string{
-		"body_sha256": bodyHash,
-		"did_aw":      didAW,
-		"timestamp":   timestamp,
-	})
-	if err != nil {
-		panic(fmt.Sprintf("identityAuthSignPayload: %v", err))
+// signRequest is shared by JSON/raw, event SSE and chat SSE requests. Grant
+// credentials keep their already target-bound protocol; root credentials use v2.
+func (c *Client) signRequest(req *http.Request, body []byte) error {
+	if c.signingKey == nil {
+		return nil
 	}
-	return []byte(payload)
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	if c.grantID != "" {
+		credential, err := SignIdentityGrantCredential(c.signingKey, req.Method, req.URL, c.grantID, body, timestamp)
+		if err != nil {
+			return err
+		}
+		for key := range credential.Headers {
+			req.Header.Set(key, credential.Headers.Get(key))
+		}
+		return nil
+	}
+	claim, value := "did_aw", c.stableID
+	if c.teamCertHeader != "" {
+		claim, value = "team_id", c.teamID
+	}
+	payload, err := requestAuthPayload(req.Method, req.URL, claim, value, timestamp, body)
+	if err != nil {
+		return err
+	}
+	sig := ed25519.Sign(c.signingKey, payload)
+	req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
+	req.Header.Set("X-AWEB-Timestamp", timestamp)
+	req.Header.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString(payload))
+	if c.teamCertHeader != "" {
+		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
+	} else if c.stableID != "" {
+		req.Header.Set("X-AWEB-DID-AW", c.stableID)
+	}
+	return nil
 }
 
 // verifiedHeadSeeder is implemented by resolvers that keep an anti-rollback

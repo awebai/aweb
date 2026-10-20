@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -68,17 +69,22 @@ func signedPayloadMap(t *testing.T, body map[string]any) map[string]any {
 	return env
 }
 
-func TestCertAuthSignPayloadDoesNotHTMLEscapeAndPreservesUnicode(t *testing.T) {
+func TestRequestAuthPayloadDoesNotHTMLEscapeAndPreservesUnicode(t *testing.T) {
 	t.Parallel()
 
 	body := []byte(`{"ok":true}`)
 	timestamp := "2026-04-07T12:00:00Z"
 	teamID := "backend:tést.example/<a&b>"
 
-	got := string(certAuthSignPayload(teamID, timestamp, body))
+	target, _ := url.Parse("https://example.test/mount/a%2Fb?q=x%2Fy")
+	payload, err := requestAuthPayload("POST", target, "team_id", teamID, timestamp, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(payload)
 
 	h := sha256.Sum256(body)
-	want := `{"body_sha256":"` + hex.EncodeToString(h[:]) + `","team_id":"backend:tést.example/<a&b>","timestamp":"2026-04-07T12:00:00Z"}`
+	want := `{"aud":"https://example.test","body_sha256":"` + hex.EncodeToString(h[:]) + `","method":"POST","path":"/mount/a%2Fb?q=x%2Fy","team_id":"backend:tést.example/<a&b>","timestamp":"2026-04-07T12:00:00Z","v":2}`
 	if got != want {
 		t.Fatalf("got:  %s\nwant: %s", got, want)
 	}

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -106,5 +107,22 @@ func TestClientRequestFamiliesUseTargetBoundV2(t *testing.T) {
 				<-received
 			})
 		}
+	}
+}
+
+func TestRequestAuthPayloadVectors(t *testing.T) {
+	// The certificate case is the existing operation-free public v2 vector.
+	// The identity case uses its own required claim and the same binding rules.
+	for _, vector := range []struct{ claim, value, expected string }{
+		{"team_id", "engineering:example.com", `{"aud":"https://coordination.example.com","body_sha256":"6968ffb71df7a14c4ec20c9bb266013dc0d5ff280ab6740239fd2628d3eaab63","method":"POST","path":"/v1/tasks","team_id":"engineering:example.com","timestamp":"2026-06-12T10:00:00Z","v":2}`},
+		{"did_aw", "did:aw:test", `{"aud":"https://coordination.example.com","body_sha256":"6968ffb71df7a14c4ec20c9bb266013dc0d5ff280ab6740239fd2628d3eaab63","did_aw":"did:aw:test","method":"POST","path":"/v1/tasks","timestamp":"2026-06-12T10:00:00Z","v":2}`},
+	} {
+		t.Run(vector.claim, func(t *testing.T) {
+			target, _ := url.Parse("https://coordination.example.com/v1/tasks")
+			payload, err := requestAuthPayload("POST", target, vector.claim, vector.value, "2026-06-12T10:00:00Z", []byte(`{"title":"prepare review"}`))
+			if err != nil || string(payload) != vector.expected {
+				t.Fatalf("got %s (%v), want %s", payload, err, vector.expected)
+			}
+		})
 	}
 }
