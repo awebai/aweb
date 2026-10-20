@@ -30,6 +30,7 @@ from aweb_naapp.runtime.approvals.model import (
     ApprovalDelivery,
     ApprovalRefused,
     ApprovalState,
+    Approver,
     ApproverDirectory,
     Assurance,
     AuthenticationFailed,
@@ -159,7 +160,7 @@ class Approvals:
             approval = replace(approval, delivery_status=status)
         return self._view(approval, now)
 
-    async def _deliver(self, approver, token: str, approval: Approval) -> DeliveryStatus:
+    async def _deliver(self, approver: Approver, token: str, approval: Approval) -> DeliveryStatus:
         try:
             return await self._delivery.deliver_approval_link(approver, token, approval)
         except Exception:
