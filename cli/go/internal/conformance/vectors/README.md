@@ -45,7 +45,7 @@ Coverage includes:
 - mutation classification
 - security rejection cases kept beside positives in this file: scheme/host
   paths, `..` traversal, path param values that are not exactly one segment
-  (`/`, `\`, `%`), unsupported methods, reserved names/aliases, malformed
+  (`/`, `\`, `%`, `?`, `#`, `;`, control characters), unsupported methods, reserved names/aliases, malformed
   raw body declarations, and float body fields for v1
 
 External-plugin PATH rejection is a CLI dispatch invariant and lives in

@@ -315,7 +315,7 @@ func TestInterpretRefusesDotSegmentPathParamValues(t *testing.T) {
 			Body:        Body{Mode: "json"},
 		}},
 	}
-	for _, value := range []string{".", "..", " ", " .. ", "a/b", "x/../..", "..\\x", "%2e%2e", "a%2Fb"} {
+	for _, value := range []string{".", "..", " ", " .. ", "a/b", "x/../..", "..\\x", "%2e%2e", "a%2Fb", "x?", "a#b", "..;", "a;b", "a\x00b", "a\nb", "a\rb", "\tx", "a\x7fb"} {
 		got, err := Interpret(InterpretRequest{Manifest: manifest, Verb: "show", Args: map[string]any{"page_id": "P", "a": "x", "b": value}})
 		if err == nil {
 			t.Fatalf("path param value %q built %s; want refusal", value, got.PathQuery)
@@ -329,7 +329,7 @@ func TestInterpretRefusesDotSegmentPathParamValues(t *testing.T) {
 }
 
 func TestSafePathParamValue(t *testing.T) {
-	for _, value := range []string{"", " ", ".", "..", " .. ", "a/b", "x/../..", "..\\x", "%2e%2e", "a%2Fb"} {
+	for _, value := range []string{"", " ", ".", "..", " .. ", "a/b", "x/../..", "..\\x", "%2e%2e", "a%2Fb", "x?", "a#b", "..;", "a;b", "a\x00b", "a\nb", "a\rb", "\tx", "a\x7fb"} {
 		if SafePathParamValue(value) {
 			t.Errorf("%q accepted as a path parameter value", value)
 		}

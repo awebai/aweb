@@ -535,11 +535,21 @@ func pathPlaceholders(path string) map[string]bool {
 // SafePathParamValue reports whether a tool path parameter value fills
 // exactly one path segment, as the app routes it. A blank value would leave
 // the segment empty, and "." or ".." would let the value remove a segment
-// wherever the URL is normalized. A value never holds "/", "\" or "%", so
-// an intermediary that decodes the path cannot turn it into more segments.
+// wherever the URL is normalized. A value never holds "/", "\", "%", "?",
+// "#", ";" or an ASCII control character, so an intermediary that decodes the
+// path cannot split it into more segments, end the path early, or turn it
+// into a dot segment with a path parameter ("..;").
 func SafePathParamValue(value string) bool {
 	v := strings.TrimSpace(value)
-	return v != "" && v != "." && v != ".." && !strings.ContainsAny(value, "/\\%")
+	if v == "" || v == "." || v == ".." || strings.ContainsAny(value, "/\\%?#;") {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < 0x20 || value[i] == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func substitutePath(path string, params []Param, args map[string]any) (string, error) {

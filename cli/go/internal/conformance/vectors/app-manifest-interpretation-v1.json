@@ -1515,6 +1515,182 @@
         "slug": "%2e%2e"
       },
       "expected_error_contains": "not a safe path segment"
+    },
+    {
+      "name": "reject_path_param_question",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "folio",
+          "version": "1.0.0",
+          "origin": "https://folio.aweb.ai"
+        },
+        "tools": [
+          {
+            "name": "show",
+            "method": "GET",
+            "path": "/v1/documents/{slug}",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "slug",
+                "in": "path"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "folio:read"
+            ],
+            "mutation": false
+          }
+        ]
+      },
+      "verb": "show",
+      "args": {
+        "slug": "x?"
+      },
+      "expected_error_contains": "not a safe path segment"
+    },
+    {
+      "name": "reject_path_param_hash",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "folio",
+          "version": "1.0.0",
+          "origin": "https://folio.aweb.ai"
+        },
+        "tools": [
+          {
+            "name": "show",
+            "method": "GET",
+            "path": "/v1/documents/{slug}",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "slug",
+                "in": "path"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "folio:read"
+            ],
+            "mutation": false
+          }
+        ]
+      },
+      "verb": "show",
+      "args": {
+        "slug": "a#b"
+      },
+      "expected_error_contains": "not a safe path segment"
+    },
+    {
+      "name": "reject_path_param_semicolon",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "folio",
+          "version": "1.0.0",
+          "origin": "https://folio.aweb.ai"
+        },
+        "tools": [
+          {
+            "name": "show",
+            "method": "GET",
+            "path": "/v1/documents/{slug}",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "slug",
+                "in": "path"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "folio:read"
+            ],
+            "mutation": false
+          }
+        ]
+      },
+      "verb": "show",
+      "args": {
+        "slug": "..;"
+      },
+      "expected_error_contains": "not a safe path segment"
+    },
+    {
+      "name": "reject_path_param_control",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "folio",
+          "version": "1.0.0",
+          "origin": "https://folio.aweb.ai"
+        },
+        "tools": [
+          {
+            "name": "show",
+            "method": "GET",
+            "path": "/v1/documents/{slug}",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "slug",
+                "in": "path"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "folio:read"
+            ],
+            "mutation": false
+          }
+        ]
+      },
+      "verb": "show",
+      "args": {
+        "slug": "a\nb"
+      },
+      "expected_error_contains": "not a safe path segment"
     }
   ]
 }

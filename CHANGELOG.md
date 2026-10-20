@@ -18,8 +18,8 @@
 ### Breaking changes
 
 - aw refuses a tool path parameter value that is blank, is `.` or `..`
-  once surrounding whitespace is trimmed, or contains `/`, `\` or `%`, in
-  manifest versions 1 and 2. Each value fills exactly one path segment, even
+  once surrounding whitespace is trimmed, or contains `/`, `\`, `%`, `?`,
+  `#`, `;` or an ASCII control character, in manifest versions 1 and 2. Each value fills exactly one path segment, even
   where an intermediary decodes the path. Send such values in the query or
   body. The `path_param_percent_encoding` interpretation vector no longer
   sends a `/`, and new `reject_path_param_*` cases pin the refusal.

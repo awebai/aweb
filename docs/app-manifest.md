@@ -192,10 +192,11 @@ Given `(tool, args)`:
    `tool.path` that is not relative — absolute URL, leading `//host`, a scheme,
    or path-traversal (`..`) → validation error.
    **Reject** a path param value that is blank, is `.` or `..` after trimming
-   whitespace, or contains `/`, `\` or `%`: each value fills exactly one
-   segment, even where an intermediary decodes the path before routing. App
-   authors must not design path params that carry `/` or `%`; such values
-   go in the query or the body.
+   whitespace, or contains `/`, `\`, `%`, `?`, `#`, `;` or an ASCII control
+   character: each value fills exactly one segment, even where an
+   intermediary decodes the path before routing. App authors must not design
+   path params that carry any of these; such values go in the query or the
+   body.
 2. **Query** = `in:query` params, **canonically encoded — this lands in the
    SIGNED path.** `aw id request` signs `path` *including* the raw query
    (`cli/go/cmd/aw/id_request.go`), so every consumer MUST encode identically
@@ -451,9 +452,9 @@ path is agent-visible is refused at install:
   caller segment holding a placeholder cover one or more segments. v2 tool
   paths carry no percent-encoding, so literal segments compare as the server
   sees them. Path parameter values are never blank, `.` or `..`, and never
-  contain `/`, `\` or `%`, so a value is always one segment, even after an
-  intermediary decodes it. This is defence in
-  depth; the guarantee is below;
+  contain `/`, `\`, `%`, `?`, `#`, `;` or an ASCII control character, so a
+  value is always one segment, even after an intermediary decodes it. This is
+  defence in depth; the guarantee is below;
 - another tool, the `invoke_tool` included, declares an `answer` input,
   top-level or inside an object body parameter (`answer_input_forbidden`).
 
