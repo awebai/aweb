@@ -246,6 +246,14 @@ async def test_an_app_without_an_installation_gets_app_key_not_registered(instal
 # --- app-read-credential-v1 ---
 
 
+def test_the_servers_purpose_table_equals_the_vectors():
+    # The vector is the one list of app credential purposes; the server and the
+    # naapp signer each assert equality with it, so neither can add one alone.
+    assert {
+        purpose: {"prefix": spec.prefix, "auth": spec.auth} for purpose, spec in PURPOSES.items()
+    } == VECTOR["purposes"]
+
+
 def test_vector_bytes_are_reproduced_from_its_seed():
     for case in VECTOR["cases"] + VECTOR["negative_cases"]:
         canonical = canonical_json_bytes(case["payload"])
