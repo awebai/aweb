@@ -54,6 +54,7 @@ input_identity() {
     || refuse "$name input checkout is dirty"
   sha="$(git -C "$repo" rev-parse HEAD)"
   relative="${path#"$repo"}"
+  printf -v "${name}_input_sha" '%s' "$sha"
   if [[ "$repo" != "$ROOT" ]]; then
     external_inputs+="$name=$sha$relative"$'\n'
   elif [[ "$path" != "$ROOT/$default" ]]; then
@@ -189,6 +190,8 @@ record_input() {
     || refuse "$name input checkout is dirty"
   sha="$(git -C "$repo" rev-parse HEAD)"
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || refuse "$name input has no exact SHA"
+  local selected="${name}_input_sha"
+  [[ "$sha" == "${!selected}" ]] || refuse "$name input changed after the ledger lookup"
   printf '%s\n' "$sha" > "$LOG_DIR/$name-sha"
   repo="$(cd "$repo" && pwd -P)"
   tree="$sha"
