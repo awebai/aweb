@@ -158,6 +158,18 @@ CLI changes are since `aw-v1.36.43`. Prepared alongside server 1.27.29 and AWID 
 - **Deploy order:** deploy AWID 0.5.29 with migration
   `008_team_server_records` before any `aw` publishes records.
 
+### Release preparation: server 1.27.30
+
+Server changes are since server 1.27.29.
+
+- Team-certificate decoding and signature checks are one shared
+  implementation, `awid.team_certificate`, used by the server's team auth, the
+  naapp team-auth verifier and the hook delivery receiver. A certificate
+  header that does not decode to an object, is over 8 KiB, nests too deeply,
+  or carries a lone-surrogate escape is a 401 ("Malformed certificate" or a
+  failed signature), never a 500.
+- Needs an awid-service release that carries `awid.team_certificate`.
+
 ### Release preparation: AWID 0.5.29
 
 Changes are since `awid-v0.5.28` / `awid-service-v0.5.28`.
