@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 23
+`docs/vectors/*.json` is the only public protocol-vector authority for the 24
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -58,6 +58,15 @@ exactly the team ID, current team key, active/revoked status, and revocation tim
 Unknown team and unknown/mismatched certificate share one 404 response. The AWID
 real-route tests consume these bytes; active status does not authenticate an
 old-key certificate after rotation. See [the team contract](../awid-sot.md#teams).
+
+### `principal-attestation-v1.json`
+
+Signed bytes and signatures of the team-key-signed `aweb.team-custodian/1`,
+`aweb.member-custody/1` and `aweb.member-person/1` records, record refusals, the
+`aweb.principal-attestation/1` header, and the verification cases of
+[principal attestation](../principal-attestation.md) §4 with their refusal
+codes. Keys are fixed seeds, so every signature can be recomputed. The AWID
+codec and the `aweb_naapp` verifier consume these bytes.
 
 ### `message-signing-v1.json`
 
