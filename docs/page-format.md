@@ -75,6 +75,7 @@ need care in every implementation:
 | `inline_schema_unbounded` | Every array schema (`type` includes `array`, or it has `items` or `minItems`) declares `maxItems`. Every object schema whose `additionalProperties` is not `false` declares `maxProperties`. Pointer: the schema missing the bound. |
 | `inline_schema_cost` | The schema's cost is at most 10,000. Cost: each sub-schema counts 1 plus its `enum` length, multiplied by the declared `maxItems` or `maxProperties` of every `items` or `additionalProperties` applicator above it. Pointer: the inline schema's root. |
 | `page_validation_cost` | The sum over collections of (records in the snapshot × schema cost) is at most 200,000. Pointer `/collections`. No record is validated when this fails. |
+| `inline_schema_enum` | Every `enum` entry and every `const` is a scalar: a string, a safe integer, a boolean or null. Closed choices then compare in constant work per entry. Pointer: the offending entry or `const`. |
 | `inline_schema_number` | `type: "number"` is refused. Float literals and unsafe integers in an inline schema are already refused as `unsafe_number`. |
 | `inline_schema_pattern` | `pattern` and `patternProperties` are refused. A regular expression's work and dialect cannot be bounded portably (JSON Schema specifies ECMA-262, and backtracking engines can take exponential time), so inline schemas use `enum`, `const`, lengths and bounds instead. A linear-time, ECMA-compatible subset would be a later, explicit addition. |
 | `inline_schema_invalid` | A collection schema or action input schema is not a valid JSON Schema 2020-12 schema (checked against the meta-schema). Pointer: the offending keyword. Checked only after the subset rules pass, and before any record is validated. |
@@ -86,7 +87,7 @@ Permitted inline-schema keywords, each for a reason a page needs:
 
 | Keywords | Why |
 | --- | --- |
-| `type`, `enum`, `const`, `required` | Field types, closed choices and mandatory fields, as the base pages use. |
+| `type`, `enum`, `const`, `required` | Field types, closed choices (scalar entries only) and mandatory fields, as the base pages use. |
 | `properties`, `additionalProperties`, `maxProperties` | Record and input objects. `additionalProperties` is `false` for closed objects, or a schema for a bounded map. |
 | `items`, `minItems`, `maxItems` | Bounded lists, such as a bundle's item list. |
 | `minLength`, `maxLength`, `minimum`, `maximum` | Bounds on strings and integers. Text fields and identifiers are bounded by length, since `pattern` is refused. |
@@ -96,9 +97,11 @@ Permitted inline-schema keywords, each for a reason a page needs:
 to cost × a constant and a whole snapshot to 200,000 × a constant. The
 value-count limit bounds the host checks, which are linear in the page's
 values. The targets are under 50 ms per record and under 1 s per page on
-ordinary hardware. In the reference validator, the worst shapes measured about
-20 ms for one record and under 400 ms for a page at the schema budgets. A page
-at the value limit took under 300 ms, and a refused 10 MiB page under 400 ms. An implementation checks each value's arrays and objects
+ordinary hardware. In the reference validator, the worst shapes at the schema budgets measured
+under 35 ms for one record and under 450 ms for a full page. The shapes were
+9,000 1,000-character enum strings, a 99 × 99 nested array, a 9,992-entry map,
+and 9,990-entry enums of short strings and of integers. A page at the value
+limit took under 300 ms, and a refused 10 MiB page under 400 ms. An implementation checks each value's arrays and objects
 against their declared `maxItems` and `maxProperties`, and an object under
 `additionalProperties: false` against its declared property count, **before**
 applying `items` or `additionalProperties`. Then applying the schema never

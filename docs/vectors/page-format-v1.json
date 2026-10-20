@@ -5994,6 +5994,177 @@
       }
     },
     {
+      "name": "collection-enum-array-entry",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "enum": [
+                "a",
+                [
+                  1,
+                  2,
+                  3
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_enum",
+            "pointer": "/collections/0/schema/properties/extra/enum/1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-enum-object-entry",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "enum": [
+                {
+                  "k": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "b"
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_enum",
+            "pointer": "/collections/0/schema/properties/extra/enum/0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-object-const",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "const": {
+                "k": 1
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_enum",
+            "pointer": "/collections/0/schema/properties/extra/const"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection-scalar-enum-and-const",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "enum": [
+                "a",
+                1,
+                true,
+                null
+              ]
+            }
+          },
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/other",
+            "value": {
+              "const": "fixed"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      }
+    },
+    {
       "name": "collection-float-in-enum",
       "input": {
         "base": "fixture",
@@ -9223,6 +9394,177 @@
             "pointer": "/actions/0/input_schema"
           }
         ]
+      }
+    },
+    {
+      "name": "action-enum-array-entry",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "enum": [
+                "a",
+                [
+                  1,
+                  2,
+                  3
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_enum",
+            "pointer": "/actions/0/input_schema/properties/extra/enum/1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-enum-object-entry",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "enum": [
+                {
+                  "k": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "b"
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_enum",
+            "pointer": "/actions/0/input_schema/properties/extra/enum/0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-object-const",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "const": {
+                "k": 1
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_enum",
+            "pointer": "/actions/0/input_schema/properties/extra/const"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-scalar-enum-and-const",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "enum": [
+                "a",
+                1,
+                true,
+                null
+              ]
+            }
+          },
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/other",
+            "value": {
+              "const": "fixed"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
       }
     },
     {

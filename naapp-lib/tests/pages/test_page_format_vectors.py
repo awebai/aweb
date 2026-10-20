@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import json
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -189,3 +190,14 @@ def test_declared_bounds_are_checked_before_items_are_applied():
         ("record_invalid", "/collections/0/records/0/value")
     }
     assert elapsed < 5
+
+
+def test_dict_and_list_subclasses_get_the_limits_walk():
+    # a caller's own parse (an OrderedDict hook, for example) is walked like json.loads output
+    page = json.loads(json.dumps(VECTORS["bases"]["fixture"]), object_pairs_hook=OrderedDict)
+    page["collections"][0]["schema"]["properties"]["extra"] = OrderedDict()
+    page["collections"][0]["records"][0]["value"]["extra"] = 0.5
+    result = validate_page(page)
+    assert {(error.layer, error.code, error.pointer) for error in result.errors} == {
+        ("limits", "unsafe_number", "/collections/0/records/0/value/extra")
+    }

@@ -9,7 +9,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from importlib.resources import files
-from typing import Any, cast
+from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 
@@ -131,21 +131,22 @@ def _walk_error(page: dict[str, Any]) -> PageError | None:
         remaining -= 1
         if remaining < 0:
             return PageError("limits", "too_many_values", "")
-        kind = type(child)
-        if kind is int:
-            if not -_SAFE_INTEGER <= cast(int, child) <= _SAFE_INTEGER:
+        if isinstance(child, bool):
+            continue
+        if isinstance(child, int):
+            if not -_SAFE_INTEGER <= child <= _SAFE_INTEGER:
                 return PageError("limits", "unsafe_number", pointer((*path, key)))
-        elif kind is float:
+        elif isinstance(child, float):
             return PageError("limits", "unsafe_number", pointer((*path, key)))
-        elif kind is dict or kind is list:
+        elif isinstance(child, (dict, list)):
             # the page is depth 1, so a child of the innermost open value is at len(stack) + 1
             if len(stack) + 1 > limit:
                 return PageError("limits", "too_deep_json", pointer((*path, key)))
             path.append(key)
-            if kind is dict:
-                stack.append(iter(cast(dict[str, Any], child).items()))
+            if isinstance(child, dict):
+                stack.append(iter(child.items()))
             else:
-                stack.append(enumerate(cast(list[Any], child)))
+                stack.append(enumerate(child))
     return None
 
 

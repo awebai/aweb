@@ -63,6 +63,11 @@ _ALLOWED_KEYWORDS = frozenset(
 _PATTERN_KEYWORDS = frozenset({"pattern", "patternProperties"})
 
 
+def _is_scalar(value: object) -> bool:
+    """Closed choices compare in constant work: strings, integers, booleans and null."""
+    return value is None or isinstance(value, (str, int, bool))
+
+
 def _types(node: Mapping[str, Any]) -> set[str]:
     declared = node.get("type")
     if isinstance(declared, str):
@@ -152,6 +157,12 @@ def _inline_schema_errors(schema: object, path: Path) -> Iterator[PageError]:
                 "number" == value or (isinstance(value, list) and "number" in value)
             ):
                 yield PageError("lint", "inline_schema_number", pointer((*at, key)))
+            elif key == "const" and not _is_scalar(value):
+                yield PageError("lint", "inline_schema_enum", pointer((*at, key)))
+            elif key == "enum" and isinstance(value, list):
+                for index, entry in enumerate(value):
+                    if not _is_scalar(entry):
+                        yield PageError("lint", "inline_schema_enum", pointer((*at, key, index)))
         unbounded = (_is_array_schema(node) and "maxItems" not in node) or (
             _is_object_schema(node)
             and node.get("additionalProperties", True) is not False
