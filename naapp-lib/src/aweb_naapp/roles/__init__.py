@@ -133,6 +133,12 @@ async def purge_team(tx: TransactionManager, team_id: str) -> None:
 
 
 async def has_role(db: Executor, principal: PrincipalKey, role: str) -> bool:
+    """Whether ``principal`` holds the role now, without locking the assignment.
+
+    For read-only checks, such as listing what a member may see. When a
+    transaction acts on the role's authority and commits evidence of it, use
+    :func:`hold_role` instead, so the role cannot be withdrawn under it.
+    """
     _require_role_name(role)
     return bool(
         await db.fetch_value(
@@ -147,6 +153,33 @@ async def has_role(db: Executor, principal: PrincipalKey, role: str) -> bool:
             role,
         )
     )
+
+
+async def hold_role(tx: TransactionManager, principal: PrincipalKey, role: str) -> bool:
+    """Whether ``principal`` holds the role, holding the assignment until the transaction ends.
+
+    True locks the assignment row: an unassign or a purge of the team waits
+    until the caller's transaction commits or rolls back, so evidence written
+    on the role's authority commits while the role is still held. False means
+    there is no assignment now; a withdrawal committed first is seen.
+
+    Lock order for a transaction that acts on a role: the installation fence
+    first, then this hold, then approval and candidate locks, then the
+    transaction's own writes. A withdrawal of the role must take the role's
+    row before any approval lock it needs, so the two orders never cycle.
+    """
+    _require_role_name(role)
+    held = await tx.fetch_value(
+        """
+        SELECT 1 FROM {{tables.role_assignments}}
+        WHERE team_id = $1 AND principal_did = $2 AND role = $3
+        FOR SHARE
+        """,
+        principal.team_id,
+        principal.principal_did,
+        role,
+    )
+    return held is not None
 
 
 async def roles_of(db: Executor, principal: PrincipalKey) -> list[str]:
