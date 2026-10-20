@@ -244,11 +244,12 @@ Hosted-side item H1, on the board as L6 (aweb-acgg.31).
 
 ### G1-c1: one app-key loader
 
-- **Repo/paths:** a dependency-light `aweb_naapp` module outside `runtime`
-  (for example `aweb_naapp.keys`), importable with the standard library and
-  `pynacl` only, as the outbox is, because core loads its own hook-producer
-  key with it (aweb-acgh.1 build). `runtime/settings.py` only wires
-  configuration to it.
+- **Repo/paths:** `naapp-lib/src/aweb_naapp/signing_key.py`
+  (`aweb_naapp.signing_key`), behind the `signing-key` extra, outside
+  `runtime`. It imports with the standard library and `pynacl` only, as the
+  outbox does, because core loads its own hook-producer key with it (the
+  hooks plan's K0 points at the same module). `runtime/settings.py` only
+  wires configuration to it.
 - **Contents:** decision 10.
   - Configuration maps kid → key file.
   - Which purposes a kid may sign comes from the pinned manifest's
@@ -264,11 +265,12 @@ Hosted-side item H1, on the board as L6 (aweb-acgg.31).
   - a test proves the key material is absent from captured logs, error text
     and repr;
   - Folio's released variable still loads its emit key;
-  - a guard test proves the module imports without the `runtime` extra
-    (stdlib and `pynacl` only), as the docs-surface guard does.
+  - a guard test proves the module imports with only the `signing-key` extra
+    (stdlib and `pynacl`), without the `runtime` extra, as the docs-surface
+    guard does.
 - **Done-signal:** SHA ACKed, landed.
-- **Depends on:** nothing. The runtime seat proposed building it with the
-  outbox emit piece (aweb-acgh.6).
+- **Depends on:** nothing. Owned by aweb-acgh.6, built with the outbox emit
+  piece.
 - **Seat:** aweb-expert (aweb-expert-naapp-runtime).
 - **Review:** reviewer plus Athena (key handling).
 
