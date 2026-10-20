@@ -801,7 +801,10 @@ class Passkeys:
 
         It needs no prior authentication. A scope without an enrolled, in-effect
         approver is refused, which tells the caller so; scope names are fixed by
-        the app, so that is deliberate."""
+        the app, so that is deliberate. The bound on outstanding challenges
+        protects storage, not availability: a sustained flood can keep evicting
+        the real approver's challenge, so the caller must rate-limit its login
+        route per client and meter request volume per scope."""
         approver = await self._current_approver(scope)
         if not await self._active_credentials(approver["subject"]):
             raise AuthenticationFailed("approver has no current passkey")
