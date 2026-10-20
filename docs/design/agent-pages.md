@@ -1094,29 +1094,20 @@ not page HTML. File names, chart labels and activity text are untrusted too.
 
 Page and approval chrome (built-in widget controls, decision-card and approval
 text, identity and signer chrome, the `link_out` domain notice, status, error
-and blocked states) uses the signed-in member's locale setting, else the page
-locale, else English. A stored per-member locale setting is new host work in
-L3; until it exists the in-page chrome falls back to the page locale. Message
-catalogs ship in the shared renderer package.
+and blocked states) is English. There are no per-locale message catalogs and no
+per-member locale setting. The page's `locale` tags the language of the
+agent-written content: the renderer sets it as the page container's `lang`
+attribute, so assistive technology pronounces that content correctly, and never
+selects chrome by it.
 
-The L3 passkey hand-off locale is the member's locale setting, else the locale
-recorded with the approver's designation, else English. It never uses the page
-locale, because page data is agent-authored. The host passes the member's
-setting as a bare language tag carrying nothing else, or no tag when the member
-has none; the app, which records the designation, then applies the designation
-locale, else English. So a ceremony's locale can differ from the
-page chrome: when a member has no stored setting and the page locale differs
-from the designation locale. App-owned enrolment, ceremony, recovery, link and
-view pages and notification bodies use the same message keys and translations:
-from the catalogs when the app uses the shared renderer, or shipped alongside
-them when it renders those pages server-side. A page reached without a
-hand-off, such as an approve-only link, uses the designation locale, else the
-browser's preference, else English. First-party apps ship Catalan and English.
-The app sets its WebAuthn relying-party name. The approval and passkey pieces
-of `aweb_naapp` render no human text: their refusals are machine codes that the
-host maps to localized text. Agent-authored content keeps its own language.
+Passkey ceremonies and hand-offs are in English. App-owned enrolment, ceremony,
+recovery, link and view pages and notification bodies are English too, whether
+the app uses the shared renderer or renders those pages server-side. The app
+sets its WebAuthn relying-party name. The approval and passkey pieces of
+`aweb_naapp` render no human text: their refusals are machine codes that the
+host maps to its own text. Agent-authored content keeps its own language.
 
-The renderer ships Catalan and English chrome with locale-aware dates, numbers,
+The renderer ships English chrome with English-formatted dates and numbers,
 time zones, accessible errors/status announcements, semantic table alternatives,
 keyboard navigation, focus-preserving updates and phone-width layouts. Agent
 content remains in its authored language. Drafts survive conflict/reconnect but
@@ -1222,8 +1213,8 @@ examples together so agents do not keep relying on a removed rule.
 [Price proposal](agent-pages/examples/price-proposal.json),
 [guest-reply approval](agent-pages/examples/guest-reply.json), and
 [booking table](agent-pages/examples/bookings.json) are **synthetic fixtures**,
-not customer records or confirmed PMS/API capabilities. Staff content/chrome is
-Catalan. Prices use integer minor currency units, not cross-runtime float
+not customer records or confirmed PMS/API capabilities. Chrome is English;
+agent-written content is tagged by the page `locale`. Prices use integer minor currency units, not cross-runtime float
 signatures. PMS is source of truth; page-owned proposals/decisions/annotations
 are distinguished from synced data and expose last sync/source version.
 
@@ -1326,17 +1317,17 @@ No estimates. “Depends” includes contract readiness, not merely deploy order
 | N5 action links/link stream | C4,B2,N3,N4 | First-delivery action links on the `aweb_naapp` capability-link module, scoped reads/assets/stream, anonymous provenance and sponsor recovery; revoked/expired links cannot act. |
 | N6 skill and rental examples | N2,N3 | Released-CLI and hosted-MCP recipes + agent text lint; synthetic rental approval, no external calls without approved adapter. |
 | N7 Folio migration/doctrine | N1,N2,N5 | Old document/version/links round-trip intact, additive reader rollback, doctrine and all agent guidance updated. |
-| R1 shared renderer | C1,C4 | Sanitizer/CSP with Trusted Types and one sanitizer-owned policy, host CSRF on every state change, chrome outside the page container, the C1 hostile corpus passing, URLs/assets, fallback, keyboard/screen reader/phone layout, Catalan/English and conflicts; used unchanged by Cloud and link pages. |
+| R1 shared renderer | C1,C4 | Sanitizer/CSP with Trusted Types and one sanitizer-owned policy, host CSRF on every state change, chrome outside the page container, the C1 hostile corpus passing, URLs/assets, fallback, keyboard/screen reader/phone layout, English chrome with the page `locale` as the container `lang`, and conflicts; used unchanged by Cloud and link pages. |
 | L1 install UI | F6,C3 | Admin exact digest/scopes diff, update/uninstall and export/delete controls; no ordinary-member bypass. Owner single-person declaration at approver designation or invitation, and the attestation carrier that brings it to the app; `member_session` approvals stay unavailable until it exists. |
 | L2 hosted MCP (aweb-abzo) | F5,C3 | Tools/list and calls actor/install scoped, exact signer and byte vectors, second app without an app-specific Cloud change; critical to claude.ai/ChatGPT workflows. |
-| L3 member surface | F5,C3,R1,N2,N3,B3,L1 | Actual dashboard member signs all calls, no controller fallback, explicit provisioning/refusal, generic tool bindings and ACL cache isolation; app-origin passkey handoff binds same task/proposal/person under Juan's assurance decision, no callback-as-proof. Owner acts need fresh step-up; the C1 hostile corpus passes on the dashboard origin. Stored per-member locale setting; the hand-off locale (member setting, else designation locale, else English, never the page locale). Depends on L1, which records the owner's single-person declaration that `member_session` approvals need, together with the approver's designation. |
+| L3 member surface | F5,C3,R1,N2,N3,B3,L1 | Actual dashboard member signs all calls, no controller fallback, explicit provisioning/refusal, generic tool bindings and ACL cache isolation; app-origin passkey handoff binds same task/proposal/person under Juan's assurance decision, no callback-as-proof. Owner acts need fresh step-up; the C1 hostile corpus passes on the dashboard origin. Chrome, ceremonies and hand-offs are English. Depends on L1, which records the owner's single-person declaration that `member_session` approvals need, together with the approver's designation. |
 | L4 browser wakes | C6,N4,L3 | Two replicas, readiness barrier, reauthorization, loss/reconnect recovery; real healthy commit-to-paint target under 2 s. Wake provenance shows the installation digest and origin-verified flag; unverified bytes shown as such. |
 | L5 metering | C5,N1,N3 | CLI/MCP/link/sync/error/no-op paths counted and reconciled, retained inventories and operator/admin views; reconcile old caps explicitly. |
 | A1 runtime intent delivery | C2,N3 | Claude, pi, Codex, aw run resume assigned tasks after missed wake/offline; no model acceptance inferred from transport delivery. |
 | A2 new enforcing external adapter | C2,N3,provider decision, shared effect components | Only usable external credentials behind approval check; payload/source version/operation fenced; ambiguous outcome lookup before retry. Built on the shared `aweb_naapp` egress guard, auth injectors, response redaction, dispatch state machine and idempotency store proposed in the secrets lane, once assigned, with the §3 idempotency rules; pages builds no copy. No customer change without separate go. |
 | E1 real-path e2e | F0–F6,B1–B3,G1,C1–C6,N1–N7,R1,L1–L5,A1,A2 for external actions | Disposable fixture team, real certs/signatures/task runtime and renderer, two unrelated apps, no mocked internal boundaries; export/delete/restore and negative authority cases. |
 | E2 Athena | D1 and implementation deltas | Member custody/admin/digests, task authorization, link/approval/egress, rendering and retention findings resolved. |
-| E3 UX | R1,L3,N6 | Decision/task consistency, action feedback/conflict recovery, Catalan/Windows/phone, honest health and keyboard use reviewed. |
+| E3 UX | R1,L3,N6 | Decision/task consistency, action feedback/conflict recovery, Windows/phone, honest health and keyboard use reviewed. |
 | E4 rental pilot | E1–E3,Juan per-action go | Confirm workflow/PMS/M365 with coordinator, approved actions only, adapter evidence and customer permission before each external integration. |
 
 Foundations F0–F4 precede expanded feature delivery; design/contracts may be
