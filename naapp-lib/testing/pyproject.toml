@@ -10,6 +10,7 @@ dependencies = [
   "awid-service",
   "cbor2>=5.6.0",
   "cryptography>=46.0.0",
+  "dnspython>=2.7.0",
 ]
 
 [build-system]

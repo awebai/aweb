@@ -1,4 +1,4 @@
-"""Real local DNS and TLS servers for the egress guard's network tests.
+"""Real local DNS and TLS servers for network tests through the egress guard.
 
 The DNS server answers A and AAAA queries from a table the test controls and
 counts every query, so a test can change an answer between two lookups. The

@@ -252,6 +252,7 @@ dependencies = [
     { name = "awid-service" },
     { name = "cbor2" },
     { name = "cryptography" },
+    { name = "dnspython" },
 ]
 
 [package.metadata]
@@ -260,6 +261,7 @@ requires-dist = [
     { name = "awid-service", editable = "../awid" },
     { name = "cbor2", specifier = ">=5.6.0" },
     { name = "cryptography", specifier = ">=46.0.0" },
+    { name = "dnspython", specifier = ">=2.7.0" },
 ]
 
 [[package]]

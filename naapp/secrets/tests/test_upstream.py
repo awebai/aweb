@@ -115,7 +115,11 @@ async def test_the_echo_reports_what_arrived(client, creds) -> None:
         "/bearer/echo/charges/ch_1",
         params={"expand": "x"},
         content=b'{"amount":500}',
-        headers={"Authorization": f"Bearer {creds.bearer}", "Idempotency-Key": "secrets-d1"},
+        headers={
+            "Authorization": f"Bearer {creds.bearer}",
+            "Idempotency-Key": "secrets-d1",
+            "Accept-Encoding": "gzip, deflate",
+        },
     )
     assert response.status_code == 200
     assert response.json() == {
@@ -125,6 +129,7 @@ async def test_the_echo_reports_what_arrived(client, creds) -> None:
         "query": "expand=x",
         "body_sha256": hashlib.sha256(b'{"amount":500}').hexdigest(),
         "idempotency_key": "secrets-d1",
+        "accept_encoding": "gzip, deflate",
     }
 
 
@@ -248,3 +253,22 @@ async def test_a_sigv4_signature_is_good_only_within_its_skew(creds, minutes, st
     upstream = create_upstream(creds, now=lambda: datetime.now(UTC) + timedelta(minutes=minutes))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=upstream), base_url=ORIGIN) as c:
         assert (await _sigv4_send(c, _sigv4_headers(creds))).status_code == status
+
+
+async def test_a_sigv4_request_without_a_payload_hash_header_passes(client, creds) -> None:
+    body = b'{"q":1}'
+    request = AWSRequest(method="POST", url=f"{ORIGIN}/sigv4/echo", data=body, headers={})
+    SigV4Auth(
+        Credentials(creds.sigv4_access_key_id, creds.sigv4_secret_access_key),
+        creds.sigv4_service,
+        creds.sigv4_region,
+    ).add_auth(request)
+    headers = dict(request.headers.items())
+    assert "X-Amz-Content-SHA256" not in headers
+    assert (await _sigv4_send(client, headers, body)).status_code == 200
+
+
+async def test_a_sigv4_payload_hash_header_that_does_not_match_the_body_fails(client, creds) -> None:
+    headers = _sigv4_headers(creds)
+    headers["X-Amz-Content-SHA256"] = hashlib.sha256(b"other").hexdigest()
+    assert (await _sigv4_send(client, headers)).status_code == 401
