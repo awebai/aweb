@@ -219,6 +219,7 @@
       {"name": "amz_target_undeclared", "header_allow": ["X-Amz-Target"], "headers": [["X-Amz-Target", "a"]], "code": "header_not_allowed"},
       {"name": "amz_security_token_declared", "header_allow": [], "amz_allowed": ["X-Amz-Security-Token"], "headers": [["X-Amz-Security-Token", "a"]], "code": "header_not_allowed"},
       {"name": "injected_name", "header_allow": ["X-Vendor-Key"], "injected": ["X-Vendor-Key"], "headers": [["x-vendor-key", "a"]], "code": "header_not_allowed"},
+      {"name": "injected_name_exact_case", "header_allow": ["X-Vendor-Key"], "injected": ["X-Vendor-Key"], "headers": [["X-Vendor-Key", "a"]], "code": "header_not_allowed"},
       {"name": "control_soh_value", "header_allow": [], "headers": [["Accept", "a\u0001b"]], "code": "header_not_allowed"},
       {"name": "control_del_value", "header_allow": [], "headers": [["Accept", "ab"]], "code": "header_not_allowed"},
       {"name": "non_latin1_value", "header_allow": [], "headers": [["Accept", "a☃"]], "code": "header_not_allowed"},

@@ -524,3 +524,21 @@ async def test_an_encoded_response_is_returned_as_it_came(network: Network) -> N
     assert response.status == 200
     assert ("Content-Encoding", "gzip") in response.headers
     assert response.body != b"hidden"
+
+
+@pytest.mark.parametrize("spelling", ["X-Vendor-Key", "x-vendor-key"])
+async def test_a_caller_cannot_send_a_declared_injected_name(
+    network: Network, spelling: str
+) -> None:
+    with pytest.raises(EgressRefused) as refused:
+        await network.egress().send(
+            "GET",
+            network.url("/ok"),
+            network.internal(header_allow=["X-Vendor-Key"]),
+            header_rules=INJECTING,
+            headers=[(spelling, "caller-chosen")],
+            injected=[("X-Vendor-Key", "k-1")],
+        )
+    assert refused.value.code == "header_not_allowed"
+    assert network.tls.seen == []
+    assert sum(network.dns.queries.values()) == 0
