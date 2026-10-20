@@ -1091,6 +1091,76 @@ class RegistryClient:
             registry_url=registry_url,
         )
 
+    async def publish_team_custodian(
+        self, domain: str, name: str, *, record: dict[str, Any], signature: str,
+        team_controller_signing_key: bytes | None = None,
+        controller_did_key: str | None = None, signer: ControllerSigner | None = None,
+    ) -> None:
+        """Publish a team-key-signed aweb.team-custodian/1 record under team-controller authority."""
+        custodian_id = record["custodian_id"]
+        await self._publish_team_record(
+            domain, name, f"/custodians/{quote(custodian_id, safe='')}",
+            operation="publish_team_custodian", key_claim={"custodian_id": custodian_id},
+            record=record, signature=signature, signing_key=team_controller_signing_key,
+            controller_did_key=controller_did_key, signer=signer,
+        )
+
+    async def publish_member_custody(
+        self, domain: str, name: str, *, record: dict[str, Any], signature: str,
+        team_controller_signing_key: bytes | None = None,
+        controller_did_key: str | None = None, signer: ControllerSigner | None = None,
+    ) -> None:
+        """Publish a team-key-signed aweb.member-custody/1 record under team-controller authority."""
+        certificate_id = record["certificate_id"]
+        await self._publish_team_record(
+            domain, name, f"/certificates/{quote(certificate_id, safe='')}/custody",
+            operation="publish_member_custody", key_claim={"certificate_id": certificate_id},
+            record=record, signature=signature, signing_key=team_controller_signing_key,
+            controller_did_key=controller_did_key, signer=signer,
+        )
+
+    async def publish_member_person(
+        self, domain: str, name: str, *, record: dict[str, Any], signature: str,
+        team_controller_signing_key: bytes | None = None,
+        controller_did_key: str | None = None, signer: ControllerSigner | None = None,
+    ) -> None:
+        """Publish a team-key-signed aweb.member-person/1 record under team-controller authority."""
+        certificate_id = record["certificate_id"]
+        await self._publish_team_record(
+            domain, name, f"/certificates/{quote(certificate_id, safe='')}/person",
+            operation="publish_member_person", key_claim={"certificate_id": certificate_id},
+            record=record, signature=signature, signing_key=team_controller_signing_key,
+            controller_did_key=controller_did_key, signer=signer,
+        )
+
+    async def publish_team_server(
+        self, domain: str, name: str, *, record: dict[str, Any], signature: str,
+    ) -> None:
+        """Publish a team's aweb.team-server/1 record.
+
+        The record's own team-key signature is AWID's authority for it, so the
+        request carries no controller envelope.
+        """
+        await self._request_json(
+            "PUT",
+            f"/v1/namespaces/{domain}/teams/{name}/server",
+            json={"record": record, "signature": signature},
+            registry_url=await self._registry_url_for_domain(domain),
+        )
+
+    async def _publish_team_record(
+        self, domain: str, name: str, suffix: str, *, operation: str, key_claim: dict[str, str],
+        record: dict[str, Any], signature: str, signing_key: bytes | None,
+        controller_did_key: str | None, signer: ControllerSigner | None,
+    ) -> None:
+        await self.controller_request(
+            "PUT", f"/v1/namespaces/{domain}/teams/{name}{suffix}",
+            claims={"domain": domain, "operation": operation, "team_name": name, **key_claim},
+            body={"record": record, "signature": signature},
+            registry_url=await self._registry_url_for_domain(domain),
+            signing_key=signing_key, controller_did_key=controller_did_key, signer=signer,
+        )
+
     async def invalidate_team_certificate_cache(self, domain: str, name: str) -> None:
         """Drop cached certificate/revocation reads for a team, if this client caches them."""
         return None
