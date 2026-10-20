@@ -89,6 +89,25 @@ async def secret_by_ref(
     )
 
 
+async def set_active_version(
+    tx: TransactionManager, installation_id: str, team_id: str, secret_id: str, version: int
+) -> None:
+    """Point a secret at the custody version the broker opens, when its change set is confirmed."""
+    updated = await tx.fetch_value(
+        """
+        UPDATE {{tables.secrets}} SET active_version = $4, updated_at = NOW()
+        WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3
+        RETURNING secret_id
+        """,
+        installation_id,
+        team_id,
+        secret_id,
+        version,
+    )
+    if updated is None:
+        raise RecordMissing("no such secret in this installation")
+
+
 async def create_policy(tx: TransactionManager, installation_id: str, policy: Policy) -> None:
     """Store ``policy``; storing the same digest again is the same policy and changes nothing."""
     await tx.execute(
