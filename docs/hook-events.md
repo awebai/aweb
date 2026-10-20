@@ -17,7 +17,9 @@ four vectors:
 The strict catalog reader is `aweb_naapp.hooks.catalog`
 (`naapp-lib/src/aweb_naapp/hooks/catalog.py`). The envelope and credential
 authority is the Go package `cli/go/hookevent`, which regenerates both of
-their vectors byte for byte. The design and its rationale are
+their vectors byte for byte. The Python reading is `aweb_naapp.hooks.envelope`
+and `aweb_naapp.hooks.delivery`, behind the dependency-light `hooks` extra, and
+passes the same vectors with the same refusal codes. The design and its rationale are
 in [the audit substrate design](design/audit-substrate.md).
 
 This contract adds named, owner-activated extension points beside the

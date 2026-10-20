@@ -34,6 +34,13 @@ runtime = [
 outbox = [
   "pgdbm>=0.5.0",
 ]
+# aw-hooks, aweb_naapp.hooks: the catalog reader (stdlib), the event envelope
+# and the delivery credential. Ed25519 and did:key only, so the core server and
+# every producing naapp can share it without the naapp runtime.
+hooks = [
+  "awid-service",
+  "pynacl>=1.6.2",
+]
 
 [project.urls]
 Homepage = "https://github.com/awebai/aweb-naapp"

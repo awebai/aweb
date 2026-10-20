@@ -145,6 +145,10 @@ version = "0.1.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
+hooks = [
+    { name = "awid-service" },
+    { name = "pynacl" },
+]
 outbox = [
     { name = "pgdbm" },
 ]
@@ -170,16 +174,18 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "awid-service", marker = "extra == 'hooks'", directory = "../awid" },
     { name = "awid-service", marker = "extra == 'runtime'", directory = "../awid" },
     { name = "fastapi", marker = "extra == 'runtime'", specifier = ">=0.116.1" },
     { name = "httpx", marker = "extra == 'runtime'", specifier = ">=0.28.1" },
     { name = "pgdbm", marker = "extra == 'outbox'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'runtime'", specifier = ">=0.5.0" },
     { name = "pydantic-settings", marker = "extra == 'runtime'", specifier = ">=2.10.1" },
+    { name = "pynacl", marker = "extra == 'hooks'", specifier = ">=1.6.2" },
     { name = "pynacl", marker = "extra == 'runtime'", specifier = ">=1.6.2" },
     { name = "webauthn", marker = "extra == 'runtime'", specifier = ">=3.0.1" },
 ]
-provides-extras = ["runtime", "outbox"]
+provides-extras = ["runtime", "outbox", "hooks"]
 
 [package.metadata.requires-dev]
 dev = [
