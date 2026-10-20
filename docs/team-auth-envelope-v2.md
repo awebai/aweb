@@ -207,6 +207,10 @@ old form. Nonce validation and replay behavior are the same as above. Registry
 controller operations and DID-log artifacts keep their distinct purposes and
 are governed by the registry contract; they are not team-member requests.
 
+Embedding hosts may pass `legacy_path` to `verify_http_didkey_proof` to preserve
+their historical v1 path spelling. It defaults to `request.url.path` and applies
+only to the old proof; v2 always verifies the external raw target and query.
+
 ## Conformance vectors
 
 [`vectors/team-auth-envelope-v2.json`](vectors/team-auth-envelope-v2.json)

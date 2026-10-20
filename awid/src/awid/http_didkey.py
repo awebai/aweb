@@ -33,13 +33,15 @@ class VerifiedHTTPDIDKeyProof:
 async def verify_http_didkey_proof(
     request: Request, *, allowed_audiences: Iterable[str] = (), did_aw: str = '',
     authorization_header: str = 'Authorization', timestamp_header: str = 'X-AWEB-Timestamp',
-    signed_payload_header: str = 'X-AWEB-Signed-Payload',
+    signed_payload_header: str = 'X-AWEB-Signed-Payload', legacy_path: str | None = None,
 ) -> VerifiedHTTPDIDKeyProof:
     """Verify possession only, returning version/nonce for the embedding host.
 
     After body-DID/current-key/route authority checks, hosts call their shared
     replay admission and count accepted legacy envelopes (version 1). Keep the
     returned envelope: do not infer its version from an unverified header.
+    Header arguments are names. legacy_path preserves a host's historical v1
+    path spelling only; v2 always verifies the external raw target and query.
     """
     body = await request.body()
     did_key, signature = parse_didkey_auth(request.headers.get(authorization_header))
@@ -47,7 +49,8 @@ async def verify_http_didkey_proof(
     enforce_timestamp_skew(timestamp)
     if request.headers.get(signed_payload_header) is None:
         canonical = build_http_didkey_payload(body_bytes=body, method=request.method,
-                                             path=request.url.path, timestamp=timestamp)
+                                             path=request.url.path if legacy_path is None else legacy_path,
+                                             timestamp=timestamp)
         envelope = RequestAuthEnvelope(1, canonical, {})
     else:
         try:
