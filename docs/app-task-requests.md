@@ -372,6 +372,11 @@ form, it is the verified identity the host passes. It is never a body field.
 
 ### Rules
 
+The request is validated before any rule runs: field shapes, `body_md`'s
+length, `answer_sha256` equal to the digest of `body_md` (otherwise 422
+`schema_invalid`), and `expected_task_rev` present (otherwise 428
+`precondition_required`). Then, in order:
+
 1. **Replay first.** If `(task_id, answer_key)` already has an answer:
    - the same `answer_sha256`, `choice` and proposal fields return the
      original receipt, at any time, even after close, reopen or later answers;
