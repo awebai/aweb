@@ -98,6 +98,7 @@ def test_audit_critical_follows_the_catalog() -> None:
     assert CATALOG.is_audit_critical("post-governance-hook", {"act": "grant.created"})
     assert not CATALOG.is_audit_critical("post-governance-hook", {"act": "grant.revoked"})
     assert not CATALOG.is_audit_critical("post-governance-hook", {"act": "installation.disabled"})
+    assert not CATALOG.is_audit_critical("post-governance-hook", {"act": "resource.replaced"})
     assert not CATALOG.is_audit_critical("post-manifest-command-hook", {})
     assert not CATALOG.is_audit_critical("post-mutation-hook", {"mutation_type": "task.created"})
     assert not CATALOG.is_audit_critical("post-command-hook", {})
@@ -175,6 +176,9 @@ def test_reader_refuses_an_unknown_key_at_every_level(change) -> None:
         lambda d: d["hooks"]["post-command-hook"]["command_classes"]["identity_key"].append("nope"),
         lambda d: d["precedence"][0].update({"specific": "post-nothing-hook"}),
         lambda d: d["catalog"].update({"version": 1.0}),
+        lambda d: d["hooks"]["post-governance-hook"]["rules"][-1].update(
+            {"require_in": {"authority": ["owner_act", "nope"]}}
+        ),
         lambda d: d["types"].update({"bad": {"kind": "string", "pattern": "("}}),
     ],
     ids=[
@@ -185,6 +189,7 @@ def test_reader_refuses_an_unknown_key_at_every_level(change) -> None:
         "class-effect-not-in-enum",
         "precedence-unknown-hook",
         "float-version",
+        "require-in-impossible-value",
         "bad-pattern",
     ],
 )

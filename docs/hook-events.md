@@ -75,8 +75,9 @@ Every hook's payload is a **flat allowlist**:
 
 Values are references, identifiers, enums, digests and bounded integers. A
 payload never carries a secret value, a message body, a subject, a preview, a
-task title or comment text, or any other free text. The `ref` type's pattern
-excludes spaces for that reason.
+task title or comment text, or any other free text. A `ref` is an opaque typed
+identifier such as `task:<uuid>`: at most 128 characters, with no spaces, `@`,
+`+` or `=`, so it cannot carry an email address or a padded base64 token.
 
 **Digest rule.** No payload digest is ever unsalted over bytes that contain, or
 may echo, a credential. `request_sha256` and `params_sha256` cover the request
@@ -108,8 +109,14 @@ meaning.
 the external call is sent. `op_kind` is `broker` or `run_job`.
 
 - A broker call names its target by method, host, port and path template, plus
-  `operation_id` and `operation_digest` for a named operation. It never names a
-  concrete path or query. A runner job names `runner_id`, `job_id` and
+  `operation_id` and `operation_digest` for a named operation.
+  `target_path_template` is the owner-configured destination or operation
+  template, such as `/v1/charges/{id}` or `/v1/charges/**`, and never the
+  request's concrete path or query: a concrete path can carry a credential, as
+  in `/bot<id>:<token>/sendMessage`. The type refuses `@`, `%` and paths over
+  256 characters, but only the producer can guarantee a template, so producers
+  test that a request whose concrete path holds a credential-shaped segment
+  emits only its configured template. A runner job names `runner_id`, `job_id` and
   `job_digest` instead, and the two sets exclude each other.
 - `refused` requires `refusal_code`, from the catalog's 28 codes; no other
   action carries one.
@@ -130,17 +137,20 @@ direction, and a consumer refuses an event whose `direction` differs:
 
 | Widening | Narrowing |
 | --- | --- |
-| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.version_added`, `resource.enabled`, `resource.replaced`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `runner.deregistered`, `installation.disabled` |
+| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `runner.deregistered`, `installation.disabled` |
 
 `grant.changed` is widening whatever the change, so a change that only narrows
 a grant is still gated. A producer that must contain without waiting uses
-`grant.revoked`.
+`grant.revoked`. `resource.replaced` is narrowing: replacing a compromised value
+is containment and must not wait on audit availability. It still takes the
+strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
 
 `authority` is how the act was authorized:
 
 - `owner_act` requires `owner_act_sha256`;
 - `passkey_session` requires `approval_evidence_sha256`;
-- `team_cert` is allowed only for a narrowing act.
+- `team_cert` is allowed only for a narrowing act, and never for
+  `resource.replaced`.
 
 ### `post-manifest-command-hook`
 

@@ -11,7 +11,7 @@
     "unknown_fields": "refused, at every level of the catalog file and in every payload",
     "integers": "JSON integers only; a boolean or a float is never an integer",
     "lists": "lists hold unique items of one type, within the stated bounds",
-    "rules": "each rule applies when its 'when' holds: 'in' lists the matching values, 'present' matches a present field; 'require' and 'forbid' name fields, 'require_equals' names a field and its only allowed value",
+    "rules": "each rule applies when its 'when' holds: 'in' lists the matching values, 'present' matches a present field; 'require' and 'forbid' name fields, 'require_equals' names a field and its only allowed value, 'require_in' names a field and its allowed values",
     "audit_critical": "always: every event; widening_acts: acts whose catalog direction is widening; never: no event",
     "precedence": "a tool call whose effect a specific hook covers fires only that hook",
     "order": "checks run in this order and report the first fault: the hook is known; for a hook with a discriminator, the discriminator's value; unknown fields; missing required fields; each value against its type, bounds and constants, in field-name order; the rules in their listed order; then the act's catalog direction (post-governance-hook) or the command class's effects (post-command-hook)",
@@ -95,7 +95,7 @@
     },
     "path_template": {
       "kind": "string",
-      "pattern": "^/[A-Za-z0-9._~!$&'()*+,;=:@/{}%-]{0,1023}$"
+      "pattern": "^/[A-Za-z0-9._~!$&'()*+,;=:/{}-]{0,255}$"
     },
     "port": {
       "kind": "integer",
@@ -109,7 +109,7 @@
     },
     "ref": {
       "kind": "string",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+=-]{0,255}$"
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
     },
     "sequence": {
       "kind": "integer",
@@ -669,6 +669,20 @@
             "role",
             "subject_ref"
           ]
+        },
+        {
+          "when": {
+            "field": "act",
+            "in": [
+              "resource.replaced"
+            ]
+          },
+          "require_in": {
+            "authority": [
+              "owner_act",
+              "passkey_session"
+            ]
+          }
         }
       ],
       "act_directions": {
@@ -684,7 +698,7 @@
         "resource.version_added": "widening",
         "resource.disabled": "narrowing",
         "resource.enabled": "widening",
-        "resource.replaced": "widening",
+        "resource.replaced": "narrowing",
         "policy.changed": "widening",
         "runner.registered": "widening",
         "runner.deregistered": "narrowing",
@@ -1616,6 +1630,18 @@
       }
     },
     {
+      "name": "governance_value_replaced_by_passkey",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.replaced",
+        "direction": "narrowing",
+        "authority": "passkey_session",
+        "resource_type": "secret",
+        "resource_ref": "secret:s_3",
+        "approval_evidence_sha256": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752"
+      }
+    },
+    {
       "name": "manifest_command_mutation",
       "hook": "post-manifest-command-hook",
       "payload": {
@@ -1878,6 +1904,76 @@
       "field": "result_ref"
     },
     {
+      "name": "email_shaped_ref",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "admitted",
+        "op_kind": "broker",
+        "secret_ref": "jane.doe@example.com"
+      },
+      "error": "invalid_value",
+      "field": "secret_ref"
+    },
+    {
+      "name": "base64_token_shaped_ref",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "grant.revoked",
+        "direction": "narrowing",
+        "authority": "team_cert",
+        "resource_ref": "dG9rZW4+c2VjcmV0PQ=="
+      },
+      "error": "invalid_value",
+      "field": "resource_ref"
+    },
+    {
+      "name": "ref_over_128_characters",
+      "hook": "post-manifest-command-hook",
+      "payload": {
+        "app_id": "folio",
+        "tool": "doc.append",
+        "operation_kind": "mutation",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "http_status": 200,
+        "result_ref": "rev:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "error": "invalid_value",
+      "field": "result_ref"
+    },
+    {
+      "name": "path_template_with_userinfo",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "admitted",
+        "op_kind": "broker",
+        "target_path_template": "/user@host/v1"
+      },
+      "error": "invalid_value",
+      "field": "target_path_template"
+    },
+    {
+      "name": "path_template_percent_encoded",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "admitted",
+        "op_kind": "broker",
+        "target_path_template": "/v1/search%3Fq%3Dx"
+      },
+      "error": "invalid_value",
+      "field": "target_path_template"
+    },
+    {
+      "name": "path_template_over_256_characters",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "admitted",
+        "op_kind": "broker",
+        "target_path_template": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "error": "invalid_value",
+      "field": "target_path_template"
+    },
+    {
       "name": "governance_direction_mismatch",
       "hook": "post-governance-hook",
       "payload": {
@@ -1899,6 +1995,19 @@
       },
       "error": "rule_violation",
       "field": "direction"
+    },
+    {
+      "name": "value_replacement_by_team_cert",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.replaced",
+        "direction": "narrowing",
+        "authority": "team_cert",
+        "resource_type": "secret",
+        "resource_ref": "secret:s_3"
+      },
+      "error": "rule_violation",
+      "field": "authority"
     },
     {
       "name": "unknown_mutation_type",

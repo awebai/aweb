@@ -112,7 +112,7 @@ class Rule:
     when_present: bool | None
     require: tuple[str, ...]
     forbid: tuple[str, ...]
-    require_equals: tuple[tuple[str, Any], ...]
+    require_in: tuple[tuple[str, tuple[Any, ...]], ...]
 
     def applies(self, payload: Mapping[str, Any]) -> bool:
         if self.when_present is not None:
@@ -129,8 +129,8 @@ class Rule:
         for name in self.forbid:
             if name in payload:
                 return name
-        for name, value in self.require_equals:
-            if name not in payload or not _same(payload[name], value):
+        for name, allowed in self.require_in:
+            if name not in payload or not any(_same(payload[name], v) for v in allowed):
                 return name
         return None
 
@@ -462,10 +462,9 @@ class _Reader:
     def _rules(self, owner: str, specs: Any, fields: Mapping[str, FieldSpec]) -> tuple[Rule, ...]:
         rules = []
         for spec in self._list(specs, f"{owner} rules"):
-            spec = self._object(
-                spec, f"{owner} rule", {"when"}, {"require", "forbid", "require_equals"}
-            )
-            if not {"require", "forbid", "require_equals"} & set(spec):
+            consequences = {"require", "forbid", "require_equals", "require_in"}
+            spec = self._object(spec, f"{owner} rule", {"when"}, consequences)
+            if not consequences & set(spec):
                 raise CatalogError(f"{owner} rule has no consequence")
             when = spec["when"]
             if not isinstance(when, dict) or len(when) != 2 or "field" not in when:
@@ -485,16 +484,26 @@ class _Reader:
                     raise CatalogError(f"{owner} rule present must be a boolean")
             require = tuple(self._list(spec.get("require", []), f"{owner} rule require"))
             forbid = tuple(self._list(spec.get("forbid", []), f"{owner} rule forbid"))
-            equals = tuple(
-                self._mapping(spec.get("require_equals", {}), f"{owner} rule equals").items()
-            )
-            for name in (*require, *forbid, *(name for name, _ in equals)):
+            allowed: list[tuple[str, tuple[Any, ...]]] = [
+                (name, (value,))
+                for name, value in self._mapping(
+                    spec.get("require_equals", {}), f"{owner} rule equals"
+                ).items()
+            ]
+            for name, values in self._mapping(
+                spec.get("require_in", {}), f"{owner} rule in"
+            ).items():
+                values = tuple(self._list(values, f"{owner} rule allowed values"))
+                if not values:
+                    raise CatalogError(f"{owner} rule allows no value for {name}")
+                allowed.append((name, values))
+            for name in (*require, *forbid, *(name for name, _ in allowed)):
                 if name not in fields:
                     raise CatalogError(f"{owner} rule names unknown field {name}")
-            for name, value in equals:
-                if not fields[name].accepts(value):
+            for name, values in allowed:
+                if not all(fields[name].accepts(value) for value in values):
                     raise CatalogError(f"{owner} rule requires an impossible value for {name}")
-            rules.append(Rule(when_field, when_in, when_present, require, forbid, equals))
+            rules.append(Rule(when_field, when_in, when_present, require, forbid, tuple(allowed)))
         return tuple(rules)
 
     def _value_type(self, name: str, spec: Any) -> ValueType:
