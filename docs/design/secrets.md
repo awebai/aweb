@@ -162,10 +162,12 @@ flowchart LR
 
 ### 3.1 Placement: `aweb_naapp` or app-local
 
-This follows Juan's direction: no runtime code is repeated across naapps. Any
-piece that more than one naapp could use belongs in the shared library
-`aweb_naapp` (`naapp-lib/`). Pieces marked *proposed* are not yet in any
-`aweb_naapp` task. They go to the secrets coordinator for assignment, and their
+This follows Juan's direction: no runtime code is repeated across naapps. Shared
+pieces live in the library `aweb_naapp` (`naapp-lib/`). The table applies Q16's
+recommended rule: a component becomes shared once a second consumer exists. Rows
+marked "app-local, under Q16's recommended rule" move to `aweb_naapp` under the
+alternative rule, which shares anything another naapp *could* use. Pieces marked
+*proposed* are not yet in any `aweb_naapp` task. They go to the secrets coordinator for assignment, and their
 runtime dependencies sit behind an extra, following B1's packaging seam.
 
 | Component | Placement | Why |
@@ -180,10 +182,10 @@ runtime dependencies sit behind an extra, following B1's packaging seam.
 | Idempotency-key store: request hash, `409` on conflict, `410` on expiry | `aweb_naapp`, *proposed* | D1 §3 states the same rule for pages. |
 | External-effect dispatch state machine: intent, fence, `dispatching`, `completed`, `not_sent`, `outcome_unknown`, reconcile before retry | `aweb_naapp`, *proposed* | D1's A2 enforcing adapter needs identical semantics (D1 §4). |
 | Egress guard: canonical URL, destination matching, DNS and address policy, pinned connection, redirects off, header policy, bounds | `aweb_naapp`, *proposed* | Any naapp calling an external API with its own credential needs it: pages' A2 adapter, and a Linear naapp. |
-| Auth-scheme injectors: bearer, basic, header, query, OAuth2 client credentials with a token cache, SigV4 | `aweb_naapp`, *proposed* | The same reason: a naapp that calls an API with its own credential signs the same way. |
-| Response handling: header filter, JSON-pointer projection, known-value redaction, credential-shape detector, log redactor | `aweb_naapp`, *proposed* | Producer-side redaction is required of every hook producer (audit-logs SOT §4), and pages renders untrusted agent content. |
-| KMS envelope sealing with bound context | `aweb_naapp`, *proposed* | Every naapp seals its own operational credentials, such as private keys and upstream tokens. |
-| Rate-limit buckets and time windows | `aweb_naapp`, *proposed* | They are generic policy primitives; D1 needs safety throttles. |
+| Auth-scheme injectors: bearer, basic, header, query, OAuth2 client credentials with a token cache, SigV4 | app-local, under Q16's recommended rule | No second consumer exists yet, and secrets' custody argument (below) says another naapp needing a customer credential should use secrets. They move to `aweb_naapp` under the alternative rule, or when a second consumer appears. |
+| Response handling: header filter, JSON-pointer projection, known-value redaction, credential-shape detector, log redactor | app-local, under Q16's recommended rule | Only secrets returns upstream responses to agents. Hook payload redaction is structural, through the strict allowlists, so it does not need this. They move to `aweb_naapp` under the alternative rule, or when a second consumer appears. |
+| KMS envelope sealing with bound context | app-local, under Q16's recommended rule | No second consumer is committed yet. Other naapps could seal their own operational credentials this way, and it moves to `aweb_naapp` under the alternative rule or when one does. |
+| Rate-limit buckets and time windows | app-local, under Q16's recommended rule | D1's safety throttles are a candidate second consumer but are not yet committed to this component. They move to `aweb_naapp` under the alternative rule, or when that consumer is confirmed. |
 | Role assignments keyed by stable principal | `aweb_naapp`, *proposed* | Pages resolves role targets the same way (D1 §4). secrets only names its roles. |
 | Principal-attestation verifier (§4.6) | `aweb_naapp`, when the contract exists | Any relying app could require it. |
 | Secret, version, destination, operation, grant and policy records and their evaluation | app-local | They are secrets' domain model. They call the shared pieces above and contain no generic mechanism. |
@@ -1167,11 +1169,12 @@ retries never re-mint it. The hooks seat owns delivery, retry, the signature
 envelope and target registration.
 
 **Schema.** The hooks design owns the `post-secret-use-hook` schema: one action
-enum and one flat allowlisted payload (aweb-acgh.1, `docs/design/audit-substrate.md`
-§A2 at 23a88a8ad325, to be recorded in `docs/vectors/hook-catalog-v1.json` once
-reviewed). This design cites that schema and does not define its own. The actor
-comes from the common envelope. secrets' part is deciding which transition emits
-which action, with the fields it fills:
+enum, one flat allowlisted payload and the `refusal_code` enum. They are defined
+in aweb-acgh.1, `docs/design/audit-substrate.md` §A2 (at hooks head 1b40a1d44, or
+as merged), and recorded in `docs/vectors/hook-catalog-v1.json` once reviewed.
+This design cites that schema and does not define its own. The actor comes from
+the common envelope. secrets' part is deciding which transition emits which
+action:
 
 | secrets transition (§11.1) | hook `action` |
 | --- | --- |
@@ -1185,38 +1188,22 @@ which action, with the fields it fills:
 | `outcome_unknown` | `outcome_unknown` |
 | `reconciled_*` | `reconciled` |
 
-The fields secrets fills are:
+secrets fills every field of the §A2 allowlist that applies to the event. The
+list below highlights fields with secrets-specific rules and is not exhaustive:
+the `secret_*`, `request_sha256`/`params_sha256`, `approval_*`, `dispatch_*` and
+`upstream_*` fields are filled as §A2 defines them.
 
-- `op_kind`: `broker` or `run_job`.
 - **Broker target.** `target_method`, `target_host`, `target_port` and
   `target_path_template`, plus `operation_id` and `operation_digest` for a named
-  operation. Concrete paths and query values are never sent.
-- **Job target.** `runner_id`, `job_id` and `job_digest`.
-- **Grant and policy.** `secret_version`, `grant_id` and `policy_digest`.
-- `disposition`: `returned`, `withheld`, `stored_as_secret`, or
-  `returned_credential` if Juan keeps `return` (Q8).
+  operation. Concrete paths and query values are never sent. A runner job sends
+  `runner_id`, `job_id` and `job_digest` instead.
 - **`returned_hmac`.** This is an HMAC, keyed by secrets, over the bytes returned
-  to the agent. It is not a plain hash: a plain hash of a returned credential, or
-  of one that redaction missed, would be a confirmable credential digest. The
-  field is absent when the result is withheld. secrets keeps a keyed HMAC of
-  the raw response in its own record as reconciliation evidence. That HMAC
-  fills the optional `upstream_response_hmac` field.
-
-`refusal_code` is a fixed enum, proposed for the catalog vector:
-
-- grants and policy: `grant_missing`, `grant_revoked`, `operation_not_allowed`,
-  `open_request_not_allowed`, `policy_rate_limited`, `policy_window_closed`;
-- destination and request: `destination_not_in_scope`,
-  `destination_address_denied`, `internal_destinations_disabled`,
-  `header_not_allowed`, `params_invalid`, `token_issuing_denied`;
-- secret state: `secret_disabled`, `installation_disabled`,
-  `secret_version_changed`, `custody_unavailable`;
-- identity: `attestation_unavailable`;
-- approval: `approval_denied`, `approval_expired`, `approval_revoked`,
-  `approval_unrenderable`, `distinct_approver_required`;
-- dispatch: `reconciliation_pending`, `idempotency_conflict`;
-- audit: `audit_target_unavailable`, `audit_delivery_stalled`;
-- runner: `runner_unavailable`, `job_not_allowed`.
+  to the agent. It is absent when the result is withheld. secrets' keyed HMAC of
+  the raw response fills `upstream_response_hmac`.
+- **`refusal_code`.** It takes values from the §A2 enum. secrets proposed every
+  code there, and each one is a refusal this design defines.
+- **`disposition`.** The value `returned_credential` appears only if Juan keeps
+  `return` (Q8).
 
 **Governance acts** go on the generic `post-governance-hook` (audit-substrate §A2).
 The catalog fixes its act enum and fixes each act's direction:
@@ -1546,7 +1533,7 @@ rows.
 | `link_out` widget restricted to the installed app's pinned origin | D1 C1/R1, a *proposed* vocabulary addition that needs Juan's acceptance | §6.1. It shows the normalized domain, opens a new top-level context with no opener or referrer, and carries no token in the URL. |
 | Hook envelope, catalog, provenance purpose, producer outbox, delivery | hooks seat; B4 for the shared code | §11.5. secrets owns its payload fields and its enqueue points. |
 | Usage reporting `aweb.usage/1` | D1 C5 | secrets reports `uses_admitted`, `dispatches`, `approvals_requested` and `job_runs` under the same rules. |
-| The *proposed* `aweb_naapp` components in §3.1 | secrets coordinator to assign | Mainly the egress guard, auth injectors, response handling, dispatch state machine, idempotency store, KMS sealing and console session. Pages' A2 adapter needs most of them. |
+| The *proposed* `aweb_naapp` components in §3.1 | secrets coordinator to assign | Under Q16's recommended rule: the egress guard, dispatch state machine, idempotency store and console session, each with pages (D1's A2 adapter and approval pages) as its second consumer. |
 | Principal attestation (§4.6) | generic AWID/OSS work, with the custodial deployment as issuer | Q5. Policy that requires it refuses until it exists. |
 
 **Requirements on a hosted operator or custodial deployment.** These are stated
