@@ -280,7 +280,7 @@ def verify_task_authorization(
     expected: Mapping[str, Any],
     now: datetime,
 ) -> None:
-    """Verify shape, signature, time and bindings (§3 steps 3, 5 and 6).
+    """Verify shape and signature, then bindings, then time (§3 steps 3, 5 and 6).
 
     ``expected`` holds the values the payload must equal: the task service's
     audience, the transport's team, app, installation and generation, the
@@ -294,15 +294,17 @@ def verify_task_authorization(
         key.verify(task_authorization_signing_bytes(payload), raw)
     except BadSignatureError as exc:
         raise _refuse("signature_invalid", "signature does not verify") from exc
+    for field, value in expected.items():
+        if payload.get(field) != value or (_is_int(value) and not _is_int(payload.get(field))):
+            raise _refuse("target_mismatch", field)
+    # Time is checked last, so a caller that accepts an expired authorization
+    # for a matching replay knows every other check passed.
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     if (
         issued - now.astimezone(UTC)
     ).total_seconds() > MAX_ISSUED_AT_SKEW_SECONDS or now >= expires:
         raise _refuse("authorization_expired", "outside the validity window")
-    for field, value in expected.items():
-        if payload.get(field) != value or (_is_int(value) and not _is_int(payload.get(field))):
-            raise _refuse("target_mismatch", field)
 
 
 # ---------------------------------------------------------------- app-request credential
