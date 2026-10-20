@@ -706,6 +706,44 @@ async def get_installed_app_event_type(
     )
 
 
+async def get_active_app_key(
+    db,
+    *,
+    team_id: str,
+    app_id: str,
+    kid: str,
+    did_key: str,
+    purpose: str,
+) -> dict | None:
+    """The team's active registered app key for ``purpose``, under its installed digest."""
+    team_id = validate_team_id(team_id)
+    app_id = normalize_app_id(app_id)
+    kid = normalize_key_id(kid)
+    did_key = normalize_did_key(did_key)
+    return await db.fetch_one(
+        """
+        SELECT k.app_id, k.origin, k.digest, k.key_id, k.did_key, k.purposes
+        FROM {{tables.team_app_installs}} AS i
+        JOIN {{tables.team_app_keys}} AS k
+          ON k.team_id = i.team_id
+         AND k.app_id = i.app_id
+         AND k.origin = i.origin
+         AND k.digest = i.digest
+        WHERE i.team_id = $1
+          AND i.app_id = $2
+          AND k.key_id = $3
+          AND k.did_key = $4
+          AND $5 = ANY(k.purposes)
+          AND k.revoked_at IS NULL
+        """,
+        team_id,
+        app_id,
+        kid,
+        did_key,
+        purpose,
+    )
+
+
 async def get_active_app_emit_key(
     db,
     *,
