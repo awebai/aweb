@@ -4,6 +4,7 @@ No ``from __future__ import annotations``: FastAPI resolves the routes'
 ``Depends(runtime.authorized(...))`` annotations at definition time.
 """
 
+import json
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -15,21 +16,30 @@ from fastapi import Depends, FastAPI, Request
 from pgdbm import AsyncDatabaseManager
 from pydantic_settings import SettingsConfigDict
 
+from aweb_naapp.manifest import write_manifest_file
 from aweb_naapp.runtime.app import NaappRuntime
-from aweb_naapp.runtime.authorization import Authorization, DeclaredTool, DeclaredTools, Grant
+from aweb_naapp.runtime.authorization import Authorization, DeclaredTool, Grant
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import Principal
 
 from .conftest import REGISTRY_URL, Member
 
 ORIGIN = "https://app.example"
-TOOLS = DeclaredTools.from_manifest(
-    {
-        "tools": [
-            {"name": "create", "method": "POST", "path": "/v1/things", "scopes": ["example:write"]}
-        ]
+CREATE = {"name": "create", "method": "POST", "path": "/v1/things", "scopes": ["example:write"]}
+GET_THING = {"name": "get-thing", "method": "GET", "path": "/v1/things/{id}", "scopes": ["r"]}
+
+
+def _manifest(tmp_path: Path, *tools: dict) -> Path:
+    """The app's committed manifest file, declaring ``tools``."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    path = tmp_path / "aweb-app.json"
+    manifest = {
+        "manifest_version": 1,
+        "app": {"id": "example", "origin": ORIGIN},
+        "tools": list(tools),
     }
-)
+    write_manifest_file(path, manifest)
+    return path
 
 
 class ExampleSettings(NaappSettings):
@@ -73,7 +83,7 @@ def _migrations(tmp_path: Path) -> Path:
 
 def _app(runtime: NaappRuntime, grants: InstalledTeams) -> FastAPI:
     app = FastAPI(lifespan=runtime.lifespan)
-    authorized = runtime.authorized(tools=TOOLS, grants=grants, policy=allow_all)
+    authorized = runtime.authorized(grants=grants, policy=allow_all)
 
     @app.post("/v1/things")
     async def create_thing(
@@ -118,6 +128,7 @@ async def _running(
         settings,
         module_name="example",
         migrations_path=_migrations(tmp_path),
+        manifest_path=_manifest(tmp_path, CREATE),
         awid_transport=registry.transport,
     )
     app = _app(runtime, grants)
@@ -197,7 +208,12 @@ async def test_principal_authenticates_only_and_records_nothing(
 
 async def test_the_database_is_unavailable_outside_the_lifespan(tmp_path: Path) -> None:
     settings = ExampleSettings(_env_file=None, database_url="postgresql://localhost/unused")
-    runtime = NaappRuntime(settings, module_name="example", migrations_path=_migrations(tmp_path))
+    runtime = NaappRuntime(
+        settings,
+        module_name="example",
+        migrations_path=_migrations(tmp_path),
+        manifest_path=_manifest(tmp_path),
+    )
     assert runtime.connected_db() is None
     with pytest.raises(RuntimeError):
         runtime.db()
@@ -207,29 +223,20 @@ async def test_the_database_is_unavailable_outside_the_lifespan(tmp_path: Path) 
 
 # --- Every authorized route must be exactly a declared tool ---------------------
 
-GET_THING = DeclaredTools.from_manifest(
-    {
-        "tools": [
-            {
-                "name": "get-thing",
-                "method": "GET",
-                "path": "/v1/things/{id}",
-                "scopes": ["things:read"],
-            }
-        ]
-    }
-)
-
 
 def _guarded_app(
-    tmp_path: Path, register, *, tools: DeclaredTools = GET_THING, root_path: str = ""
+    tmp_path: Path, register, *, tools: tuple[dict, ...] = (GET_THING,), root_path: str = ""
 ) -> tuple[NaappRuntime, FastAPI]:
     settings = ExampleSettings(_env_file=None, database_url="postgresql://localhost/unused")
     runtime = NaappRuntime(
-        settings, module_name="example", migrations_path=_migrations(tmp_path), root_path=root_path
+        settings,
+        module_name="example",
+        migrations_path=_migrations(tmp_path),
+        manifest_path=_manifest(tmp_path, *tools),
+        root_path=root_path,
     )
     app = FastAPI(lifespan=runtime.lifespan)
-    register(app, runtime.authorized(tools=tools, grants=InstalledTeams({}), policy=allow_all))
+    register(app, runtime.authorized(grants=InstalledTeams({}), policy=allow_all))
     return runtime, app
 
 
@@ -322,20 +329,9 @@ def test_the_root_path_is_part_of_the_declared_path(tmp_path: Path) -> None:
     runtime, app = _guarded_app(tmp_path / "unprefixed", _renamed_placeholder, root_path="/api")
     with pytest.raises(RuntimeError):
         runtime.check_authorized_routes(app)
-    prefixed = DeclaredTools.from_manifest(
-        {
-            "tools": [
-                {
-                    "name": "get-thing",
-                    "method": "GET",
-                    "path": "/api/v1/things/{id}",
-                    "scopes": ["r"],
-                }
-            ]
-        }
-    )
+    prefixed = {**GET_THING, "path": "/api/v1/things/{id}"}
     runtime, app = _guarded_app(
-        tmp_path / "prefixed", _renamed_placeholder, tools=prefixed, root_path="/api/"
+        tmp_path / "prefixed", _renamed_placeholder, tools=(prefixed,), root_path="/api/"
     )
     runtime.check_authorized_routes(app)
 
@@ -393,3 +389,40 @@ def test_a_guarded_route_under_a_host_route_is_refused(tmp_path: Path) -> None:
     runtime, app = _guarded_app(tmp_path, register)
     with pytest.raises(RuntimeError):
         runtime.check_authorized_routes(app)
+
+
+def test_authorization_is_built_from_the_manifest_served_at_startup(tmp_path: Path) -> None:
+    runtime, app = _guarded_app(tmp_path, _renamed_placeholder)
+    served = json.loads(runtime.manifest_bytes)
+    assert [tool["name"] for tool in served["tools"]] == ["get-thing"]
+    assert [tool.name for tool in runtime.declared_tools] == ["get-thing"]
+
+    # A manifest changed on disk later changes neither what is served nor what is authorized.
+    _manifest(tmp_path, {**GET_THING, "path": "/v1/things/{id}/purge"})
+
+    def purge(app: FastAPI, authorized) -> None:
+        @app.get("/v1/things/{id}/purge")
+        async def handler(id: str, auth: Annotated[Authorization, Depends(authorized)]) -> dict:
+            return {}
+
+    purge(app, runtime.authorized(grants=InstalledTeams({}), policy=allow_all))
+    with pytest.raises(RuntimeError, match="purge"):
+        runtime.check_authorized_routes(app)
+    assert json.loads(runtime.manifest_bytes) == served
+
+
+def test_authorization_follows_the_served_manifest_for_a_self_hosted_origin(tmp_path: Path) -> None:
+    settings = ExampleSettings(
+        _env_file=None,
+        database_url="postgresql://localhost/unused",
+        public_origin="http://self.test",
+    )
+    runtime = NaappRuntime(
+        settings,
+        module_name="example",
+        migrations_path=_migrations(tmp_path),
+        manifest_path=_manifest(tmp_path, GET_THING),
+    )
+    assert json.loads(runtime.manifest_bytes)["app"]["origin"] == "http://self.test"
+    assert runtime.manifest == json.loads(runtime.manifest_bytes)
+    assert [tool.name for tool in runtime.declared_tools] == ["get-thing"]

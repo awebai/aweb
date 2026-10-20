@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -33,10 +34,13 @@ def _clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def _client(tmp_path: Path, **overrides: object) -> TestClient:
+def _client(tmp_path: Path, *, committed: bytes | None = None, **overrides: object) -> TestClient:
     tmp_path.mkdir(parents=True, exist_ok=True)
     manifest_path = tmp_path / "aweb-app.json"
-    write_manifest_file(manifest_path, _MANIFEST)
+    if committed is None:
+        write_manifest_file(manifest_path, _MANIFEST)
+    else:
+        manifest_path.write_bytes(committed)
     skills_dir = tmp_path / "skills"
     (skills_dir / "hello").mkdir(parents=True)
     (skills_dir / "hello" / "SKILL.md").write_text("# Hello\n", encoding="utf-8")
@@ -45,11 +49,13 @@ def _client(tmp_path: Path, **overrides: object) -> TestClient:
         return "<html>landing</html>"
 
     settings = overrides.pop("settings", None) or ExampleSettings(_env_file=None)
-    runtime = NaappRuntime(settings, module_name="example", migrations_path=tmp_path)
+    runtime = NaappRuntime(
+        settings, module_name="example", migrations_path=tmp_path, manifest_path=manifest_path
+    )
     app = FastAPI(lifespan=runtime.lifespan)
+    app.state.runtime = runtime
     options: dict[str, object] = dict(
         runtime=runtime,
-        manifest_path=manifest_path,
         skills=Skills(app_name="example", env_var="EXAMPLE_SKILLS_DIR", source_dir=skills_dir),
         landing=landing,
         reference_html="<html>reference</html>",
@@ -108,6 +114,38 @@ def test_manifest_is_the_committed_bytes_at_both_paths(tmp_path: Path) -> None:
         assert response.headers["content-type"].startswith("application/json")
         assert response.headers["x-content-type-options"] == "nosniff"
         assert response.content == committed
+
+
+def test_the_committed_origin_serves_the_committed_file_byte_for_byte(tmp_path: Path) -> None:
+    committed = json.dumps(_MANIFEST, indent=2).encode("utf-8") + b"\n"
+    response = _client(tmp_path, committed=committed).get("/.well-known/aweb-app.json")
+    assert response.content == committed
+
+
+def test_request_headers_never_change_the_served_manifest(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    expected = (tmp_path / "aweb-app.json").read_bytes()
+    for headers in (
+        {"Host": "evil.example"},
+        {"X-Forwarded-Host": "evil.example", "X-Forwarded-Proto": "http"},
+        {"Forwarded": "host=evil.example;proto=http"},
+    ):
+        response = client.get("/.well-known/aweb-app.json", headers=headers)
+        assert response.content == expected, headers
+
+
+def test_the_manifest_is_fixed_at_startup_and_served_verbatim(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    runtime = client.app.state.runtime
+    first = client.get("/.well-known/aweb-app.json").content
+    (tmp_path / "aweb-app.json").write_bytes(canonical_bytes({**_MANIFEST, "tools": ["changed"]}))
+    digests = {
+        hashlib.sha256(client.get(path).content).hexdigest()
+        for path in ("/.well-known/aweb-app.json", "/aweb-app.json", "/aweb-app.json")
+    }
+    assert digests == {hashlib.sha256(first).hexdigest()}
+    assert runtime.manifest_bytes == first
+    assert runtime.manifest == json.loads(first)
 
 
 def test_manifest_follows_a_self_hosted_origin(tmp_path: Path) -> None:
