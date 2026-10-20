@@ -42,9 +42,10 @@ async def _register(env, registry, cert):
         certificate=base64.b64encode(json.dumps(cert).encode()).decode())
 
 
-async def _rollover(env, registry, cert):
+async def _rollover(env, registry, cert, **fields):
     fresh = {key: value for key, value in cert.items() if key != 'signature'}
     fresh.update(version=2, validity_class='member', certificate_id=str(uuid4()))
+    fresh.update(fields)
     fresh['signature'] = sign_message(env.team_sk, canonical_json_bytes(fresh))
     await registry.rollover_team_certificate('example.test', TEAM.split(':')[0], cert['certificate_id'], dict(
         certificate_id=fresh['certificate_id'], member_did_key=fresh['member_did_key'],

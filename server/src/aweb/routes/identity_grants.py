@@ -245,7 +245,7 @@ async def identity_grant_status(
         """
         SELECT g.grant_id, g.team_id, g.subject_did_aw, g.grant_did_key, g.scopes, g.label,
                g.issued_at, g.expires_at, g.revoked_at, g.issued_by_certificate_id, g.issued_by_certificate_expires_at, g.issued_by_certificate_version,
-               a.status AS subject_status, a.deleted_at AS subject_deleted_at
+               a.did_key AS subject_did_key, a.status AS subject_status, a.deleted_at AS subject_deleted_at
         FROM {{tables.identity_session_grants}} AS g
         JOIN {{tables.agents}} AS a ON a.agent_id = g.subject_agent_id
         WHERE g.grant_id = $1::UUID AND g.team_id = $2 AND g.subject_agent_id = $3::UUID

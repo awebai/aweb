@@ -130,7 +130,7 @@ export class APIClient {
     const resp = await fetch(url, init);
     if (!resp.ok) {
       const text = await readSafeErrorExcerpt(resp).catch(() => "");
-      if (!certificateRetried && await this.recoverCertificate(resp.status, text)) return this.send(method, path, body, noCache, true);
+      if (!certificateRetried && await this.recoverCertificate(resp.status, text, headers["X-AWID-Team-Certificate"] || "")) return this.send(method, path, body, noCache, true);
       throw new APIError(resp.status, text, retryAfterSeconds(resp.headers.get("Retry-After")));
     }
 
@@ -140,19 +140,20 @@ export class APIClient {
   /** Open an SSE stream. Returns the raw Response for streaming. */
   async openSSE(path: string, signal?: AbortSignal, certificateRetried = false): Promise<Response> {
     const url = this.baseURL + path;
+    const sentAuth = this.authHeaders("GET", path, "");
     const resp = await fetch(url, {
       signal,
       redirect: "error",
       headers: {
         Accept: "text/event-stream",
         "Cache-Control": "no-cache",
-        ...this.authHeaders("GET", path, ""),
+        ...sentAuth,
       },
     });
 
     if (!resp.ok) {
       const text = await readSafeErrorExcerpt(resp).catch(() => "");
-      if (!certificateRetried && await this.recoverCertificate(resp.status, text)) return this.openSSE(path, signal, true);
+      if (!certificateRetried && await this.recoverCertificate(resp.status, text, sentAuth["X-AWID-Team-Certificate"] || "")) return this.openSSE(path, signal, true);
       throw new APIError(resp.status, text);
     }
 
@@ -205,12 +206,14 @@ export class APIClient {
     return headers;
   }
 
-  private async recoverCertificate(status: number, text: string): Promise<boolean> {
+  private async recoverCertificate(status: number, text: string, sentHeader: string): Promise<boolean> {
     if (status !== 401 || this.auth.authMode === "grant" || !this.auth.refreshCertificate) return false;
     let detail: { code?: string; replacement_certificate_id?: string };
     try { detail = JSON.parse(text).detail; } catch { return false; }
     if (detail?.code !== "certificate_replaced" || typeof detail.replacement_certificate_id !== "string" || !detail.replacement_certificate_id) return false;
-    const old = JSON.parse(Buffer.from(this.auth.teamCertificateHeader, "base64").toString("utf8"));
+    if (!sentHeader) return false;
+    if (this.auth.teamCertificateHeader !== sentHeader) return true;
+    const old = JSON.parse(Buffer.from(sentHeader, "base64").toString("utf8"));
     const fresh = await this.auth.refreshCertificate(detail.replacement_certificate_id);
     const { verifyTeamCertificate, encodeTeamCertificateHeader, certificateIdentityScope } = await import("../identity/certificate.js");
     const cert = fresh.certificate;

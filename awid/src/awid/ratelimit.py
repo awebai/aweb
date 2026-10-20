@@ -182,7 +182,7 @@ _BUCKET_DEFAULTS: dict[str, tuple[int, int]] = {
     "certificate_register": (30, 3600),
     "certificate_list": (60, 60),
     "certificate_fetch": (60, 60),
-    "certificate_status": (60, 60),
+    "certificate_status": (600, 60),
     "team_server_publish": (30, 3600),
     "team_server_get": (120, 60),
     "certificate_revoke": (1000, 3600),
@@ -197,6 +197,13 @@ def _rate_config(bucket: str) -> tuple[int, int]:
     cfg = _BUCKET_DEFAULTS.get(bucket)
     if cfg is None:
         raise ValueError(f"unknown rate limit bucket: {bucket}")
+    if bucket == "certificate_status":
+        raw = os.getenv("AWID_CERTIFICATE_STATUS_LIMIT_PER_MINUTE", "").strip()
+        if raw:
+            limit = int(raw)
+            if limit < 1:
+                raise ValueError("AWID_CERTIFICATE_STATUS_LIMIT_PER_MINUTE must be positive")
+            return limit, 60
     return cfg
 
 

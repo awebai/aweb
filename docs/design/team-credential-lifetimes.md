@@ -94,8 +94,12 @@ finite-policy hosted teams, with warnings when renewal becomes due. It also
 handles removal of a prior lifetime by issuing unbounded replacements, then
 stops scheduled lifetime renewal. It must recheck revocation and policy under
 replacement concurrency; never retire the old artifact on a failed registration.
-Revoking an issuing certificate still ends its old grants; renewal does not
-silently transfer or broaden them.
+Disciplinary revocation ends old grants. Rollover preserves them through at most
+eight same-member, same-team replacement links ending at an active certificate
+signed by the current team key. A cycle, changed member or disciplinary
+revocation refuses. Renewal never extends a grant's original stored deadline or
+its issuing-certificate clamp. Removing policy neither ends nor extends grants.
+This supersedes the earlier renewal-time cliff (Athena57912983).
 
 ## Atomic certificate rollover
 
@@ -230,3 +234,14 @@ keeps accepting released v1 certificates and never grants throughout.
 
 Cross-language signing examples are additive in
 `docs/vectors/certificate-lifetimes-v2.json`; existing v1 vectors remain intact.
+
+
+Review adjustments (Athena fd10c6f8, d0eea79b): status stays a narrow exact-ID
+read, with an operator-configured default of 600/minute/IP via
+`AWID_CERTIFICATE_STATUS_LIMIT_PER_MINUTE`. There is no public team snapshot.
+`include_issuer=true` adds only member_did_key and certificate_team_did_key,
+derived from the registered artifact; without opt-in the released shape stays
+unchanged. The same-member replacement-chain check uses these facts. Certificate
+signatures are checked against a cached per-team current key before per-ID
+reads. Status caches, including 404s, are bounded and last at most 60 seconds,
+without expired fallback; lock maps weakly retain only live locks.

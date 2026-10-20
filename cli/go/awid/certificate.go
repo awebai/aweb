@@ -29,9 +29,10 @@ type TeamCertificate struct {
 	ValidityClass string `json:"validity_class,omitempty"`
 	Signature     string `json:"signature"`
 
-	scopeWireKey   string
-	legacyLifetime string
-	v2WireFields   map[string]json.RawMessage
+	scopeWireKey      string
+	legacyLifetime    string
+	v2WireFields      map[string]json.RawMessage
+	hasLifetimeFields bool
 }
 
 // TeamCertificateFields are the inputs for signing a certificate.
@@ -120,6 +121,16 @@ func VerifyTeamCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey) err
 }
 
 func verifyTeamCertificateAt(cert *TeamCertificate, teamPub ed25519.PublicKey, now time.Time) error {
+	return verifyCertificate(cert, teamPub, now, true)
+}
+
+// VerifyTeamCertificateSignature authenticates an old artifact for controller
+// renewal without using expired membership as authorization.
+func VerifyTeamCertificateSignature(cert *TeamCertificate, teamPub ed25519.PublicKey) error {
+	return verifyCertificate(cert, teamPub, time.Time{}, false)
+}
+
+func verifyCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey, now time.Time, checkLifetime bool) error {
 	if cert == nil {
 		return fmt.Errorf("nil certificate")
 	}
@@ -162,9 +173,12 @@ func verifyTeamCertificateAt(cert *TeamCertificate, teamPub ed25519.PublicKey, n
 		if !ed25519.Verify(teamPub, []byte(payload), sig) {
 			return fmt.Errorf("certificate signature verification failed")
 		}
-		return validateCertificateLifetime(cert, now)
+		if checkLifetime {
+			return validateCertificateLifetime(cert, now)
+		}
+		return nil
 	}
-	if cert.ExpiresAt != "" || cert.ValidityClass != "" {
+	if cert.hasLifetimeFields || cert.ExpiresAt != "" || cert.ValidityClass != "" {
 		return fmt.Errorf("certificate_malformed: lifetime fields require version 2")
 	}
 	if !ed25519.Verify(teamPub, []byte(payload), sig) {
@@ -331,6 +345,8 @@ func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &w); err != nil {
 		return err
 	}
+	_, hasExpiry := raw["expires_at"]
+	_, hasClass := raw["validity_class"]
 	identityScope := NormalizeIdentityScope(w.IdentityScope)
 	scopeWireKey := "identity_scope"
 	if strings.TrimSpace(w.IdentityScope) == "" && strings.TrimSpace(w.Lifetime) != "" {
@@ -338,21 +354,22 @@ func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 		scopeWireKey = "lifetime"
 	}
 	*c = TeamCertificate{
-		Version:        w.Version,
-		CertificateID:  w.CertificateID,
-		Team:           w.Team,
-		TeamDIDKey:     w.TeamDIDKey,
-		MemberDIDKey:   w.MemberDIDKey,
-		MemberDIDAW:    w.MemberDIDAW,
-		MemberAddress:  w.MemberAddress,
-		Alias:          w.Alias,
-		IdentityScope:  identityScope,
-		IssuedAt:       w.IssuedAt,
-		ExpiresAt:      w.ExpiresAt,
-		ValidityClass:  w.ValidityClass,
-		Signature:      w.Signature,
-		scopeWireKey:   scopeWireKey,
-		legacyLifetime: strings.TrimSpace(w.Lifetime),
+		hasLifetimeFields: hasExpiry || hasClass,
+		Version:           w.Version,
+		CertificateID:     w.CertificateID,
+		Team:              w.Team,
+		TeamDIDKey:        w.TeamDIDKey,
+		MemberDIDKey:      w.MemberDIDKey,
+		MemberDIDAW:       w.MemberDIDAW,
+		MemberAddress:     w.MemberAddress,
+		Alias:             w.Alias,
+		IdentityScope:     identityScope,
+		IssuedAt:          w.IssuedAt,
+		ExpiresAt:         w.ExpiresAt,
+		ValidityClass:     w.ValidityClass,
+		Signature:         w.Signature,
+		scopeWireKey:      scopeWireKey,
+		legacyLifetime:    strings.TrimSpace(w.Lifetime),
 	}
 	if w.Version == 2 {
 		c.v2WireFields = raw
@@ -454,7 +471,10 @@ func certificateV2Fields(c *TeamCertificate) map[string]any {
 			continue
 		}
 		if _, known := fields[name]; !known {
-			fields[name] = raw
+			var decoded any
+			if json.Unmarshal(raw, &decoded) == nil {
+				fields[name] = decoded
+			}
 		}
 	}
 	for name, value := range map[string]string{

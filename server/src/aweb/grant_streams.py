@@ -33,6 +33,14 @@ def clamp_deadline_to_grant(deadline: datetime, identity: TeamIdentity) -> datet
     return min(_as_utc(deadline), expires_at)
 
 
+def clamp_deadline_to_certificate(deadline: datetime, request: Request) -> datetime:
+    """A certificate stream cannot authorize work beyond its signed deadline."""
+    expiry = getattr(request.state, 'team_certificate_expires_at', None)
+    if not expiry:
+        return deadline
+    return min(_as_utc(deadline), datetime.fromisoformat(expiry.replace('Z', '+00:00')))
+
+
 def grant_terminal_sse(reason: str) -> str:
     payload = {"type": reason, "detail": GRANT_TERMINAL_DETAILS.get(reason, reason)}
     return f"event: {reason}\ndata: {json.dumps(payload)}\n\n"
@@ -62,7 +70,7 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
         """
         SELECT g.team_id, g.grant_did_key, g.issued_at, g.expires_at, g.revoked_at,
                g.issued_by_certificate_id, g.issued_by_certificate_expires_at, g.issued_by_certificate_version,
-               a.agent_id, a.status, a.deleted_at
+               a.agent_id, a.did_key AS subject_did_key, a.status, a.deleted_at
         FROM {{tables.identity_session_grants}} AS g
         JOIN {{tables.agents}} AS a ON a.agent_id = g.subject_agent_id
         WHERE g.grant_id = $1::UUID
@@ -80,10 +88,15 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
     if issuing_certificate_id:
         public_status = row.get('issued_by_certificate_version', 1) == 2 or getattr(request.app.state.awid_registry_client, 'service_token', True) is None
         if public_status:
-            from aweb.credential_policy import v2_issuer_revoked
-            revoked_certs = {issuing_certificate_id} if await v2_issuer_revoked(request, row['team_id'], issuing_certificate_id) else set()
+            from aweb.credential_policy import issuer_certificate_revoked
+            revoked_certs = {issuing_certificate_id} if await issuer_certificate_revoked(request, row['team_id'], issuing_certificate_id, row.get('subject_did_key')) else set()
         else:
             revoked_certs = await _get_revoked_certificates(request, row["team_id"])
+        if not public_status and issuing_certificate_id in revoked_certs:
+            from aweb.credential_policy import issuer_certificate_revoked
+            if not await issuer_certificate_revoked(request, row['team_id'], issuing_certificate_id,
+                    row.get('subject_did_key'), known_revoked=True):
+                revoked_certs = revoked_certs - {issuing_certificate_id}
         if issuing_certificate_id in revoked_certs:
             return "grant_issuer_revoked"
         if require_registered_certificates() and not public_status:

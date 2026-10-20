@@ -1444,7 +1444,7 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 			return nil, decorated
 		}
 		if !certificateRetried && resp.StatusCode == http.StatusUnauthorized {
-			recovered, recoverErr := c.recoverReplacedCertificate(ctx, resp)
+			recovered, recoverErr := c.recoverReplacedCertificate(ctx, resp, req.Header.Get("X-AWID-Team-Certificate"))
 			if recoverErr != nil {
 				return nil, recoverErr
 			}

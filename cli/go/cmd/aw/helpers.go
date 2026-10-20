@@ -33,6 +33,8 @@ import (
 // configured via flags, environment, or local config.
 const DefaultAwebURL = "https://app.aweb.ai"
 
+var proactiveCertificateAttempts sync.Map
+
 func loadDotenvBestEffort() {
 	// Best effort: load from current working directory.
 	_ = godotenv.Load()
@@ -787,9 +789,17 @@ func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Cl
 		issued, issuedErr := time.Parse(time.RFC3339Nano, cert.IssuedAt)
 		expires, expiresErr := time.Parse(time.RFC3339Nano, cert.ExpiresAt)
 		if issuedErr == nil && expiresErr == nil && !time.Now().Before(expires.Add(-expires.Sub(issued)/3)) {
+			_, attempted := proactiveCertificateAttempts.LoadOrStore(certPath+":"+cert.CertificateID, true)
+			if attempted {
+				return client, nil
+			}
 			fresh, _, refreshErr := refresh(context.Background(), "")
 			if refreshErr != nil {
-				return nil, refreshErr
+				if !time.Now().Before(expires) {
+					return nil, fmt.Errorf("certificate_expired: %w", refreshErr)
+				}
+				fmt.Fprintf(os.Stderr, "warning: proactive certificate refresh unavailable; using the still-valid certificate: %v\n", refreshErr)
+				return client, nil
 			}
 			client, err = aweb.NewWithCertificate(baseURL, signingKey, fresh)
 			if err != nil {

@@ -18,6 +18,9 @@ signed the request, not that the signer may perform it; see
 from __future__ import annotations
 
 import base64
+import asyncio
+import weakref
+from collections import OrderedDict
 import hashlib
 import json
 import logging
@@ -34,6 +37,7 @@ import httpx
 from awid.did import public_key_from_did, validate_stable_id
 from awid.certificates import CertificateValidationError, validate_certificate_lifetime
 from awid.log import canonical_server_origin
+from awid.registry import RegistryClient, RegistryError
 from awid.signing import (
     VerifyResult,
     canonical_json_bytes,
@@ -142,7 +146,10 @@ class AWIDTeamCache:
             else {}
         )
         self._cache: dict[str, CachedTeamFacts] = {}
-        self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = {}
+        self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = OrderedDict()
+        self._unknown_certificates = OrderedDict()
+        self._current_team_keys = OrderedDict()
+        self._key_locks = weakref.WeakValueDictionary()
         self._did_keys: dict[tuple[str, str], CachedDidKey] = {}
         self._transport = transport
 
@@ -150,6 +157,31 @@ class AWIDTeamCache:
         if self._transport is None:
             return httpx.AsyncClient(timeout=10.0)
         return httpx.AsyncClient(timeout=10.0, transport=self._transport)
+
+    async def current_team_key(self, team_id: str) -> str:
+        async with self._key_locks.setdefault(team_id, asyncio.Lock()):
+            now = time.monotonic()
+            cached = self._current_team_keys.get(team_id)
+            if cached and cached[1] > now:
+                if cached[0] is None:
+                    raise HTTPException(status_code=401, detail="Unknown AWID team")
+                return cached[0]
+            domain, name = parse_team_id(team_id)
+            registry = RegistryClient(self.registry_url, transport=self._transport,
+                service_token=self._headers.get('X-AWID-Service-Token'))
+            try:
+                key = await registry.get_team_current_public_key(domain, name)
+            except Exception as exc:
+                logger.warning('AWID current team key lookup failed', exc_info=True)
+                raise HTTPException(status_code=503, detail='AWID current team key unavailable') from exc
+            finally:
+                await registry.aclose()
+            self._current_team_keys[team_id] = (key, now + 30)
+            while len(self._current_team_keys) > 1024:
+                self._current_team_keys.popitem(last=False)
+            if not key:
+                raise HTTPException(status_code=401, detail="Unknown AWID team")
+            return key
 
     async def get(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
         if not self._headers:
@@ -252,21 +284,27 @@ class AWIDTeamCache:
         if cached and cached.expires_at > now:
             return cached
         domain, team_name = parse_team_id(team_id)
+        if self._unknown_certificates.get(cache_key, 0) > now:
+            raise HTTPException(status_code=401, detail="Unknown AWID certificate")
+        registry = RegistryClient(self.registry_url, transport=self._transport,
+            service_token=self._headers.get('X-AWID-Service-Token'))
         try:
-            async with self._client() as client:
-                response = await client.get(
-                    f"{self.registry_url}/v1/namespaces/{quote(domain, safe='')}/teams/"
-                    f"{quote(team_name, safe='')}/certificates/{quote(certificate_id, safe='')}/status?include_replacement=true",
-                    headers=self._headers,
-                )
-                if response.status_code == 404:
-                    raise HTTPException(status_code=401, detail="Unknown AWID certificate")
-                response.raise_for_status()
-                payload = response.json()
+            try:
+                payload = await registry.get_team_certificate_status(domain, team_name, certificate_id)
+                active = await registry.resolve_active_certificate(domain, team_name, certificate_id) if payload.get('replaced_by_certificate_id') else None
+            except RegistryError as exc:
+                if exc.status_code == 404:
+                    self._unknown_certificates[cache_key] = now + self.ttl_seconds
+                    while len(self._unknown_certificates) > 4096:
+                        self._unknown_certificates.popitem(last=False)
+                    raise HTTPException(status_code=401, detail="Unknown AWID certificate") from exc
+                raise
+            finally:
+                await registry.aclose()
             if (
                 not isinstance(payload, dict)
                 or not {"team_id", "team_did_key", "status", "revoked_at"} <= set(payload)
-                or set(payload) - {"team_id", "team_did_key", "status", "revoked_at", "replaced_by_certificate_id"}
+                or set(payload) - {"team_id", "team_did_key", "status", "revoked_at", "replaced_by_certificate_id", "member_did_key", "certificate_team_did_key"}
                 or payload["team_id"] != team_id
                 or payload["status"] not in ("active", "revoked")
                 or not isinstance(payload["team_did_key"], str)
@@ -274,7 +312,7 @@ class AWIDTeamCache:
                 raise ValueError("Malformed AWID certificate status")
             public_key_from_did(payload["team_did_key"])
             revoked_at = payload["revoked_at"]
-            replacement_id = payload.get('replaced_by_certificate_id')
+            replacement_id = active['certificate_id'] if active else None
             if replacement_id is not None and (
                 not isinstance(replacement_id, str) or not replacement_id.strip()
                 or replacement_id == certificate_id or payload['status'] != 'revoked'
@@ -303,9 +341,11 @@ class AWIDTeamCache:
             published_certificate_ids=frozenset({certificate_id}),
             revoked_certificate_ids=revoked,
             expires_at=now + self.ttl_seconds,
-            replacement_ids={certificate_id: payload['replaced_by_certificate_id']} if payload.get('replaced_by_certificate_id') else {},
+            replacement_ids={certificate_id: replacement_id} if replacement_id else {},
         )
         self._certificate_cache[cache_key] = facts
+        while len(self._certificate_cache) > 4096:
+            self._certificate_cache.popitem(last=False)
         return facts
 
     async def current_did_key(self, did_aw: str) -> str | None:
@@ -567,6 +607,8 @@ async def authenticate_request(
         body=body,
     )
 
+    # Authenticate the controller before any per-certificate registry lookup.
+    _verify_certificate_signature(cert, await team_cache.current_team_key(team_id))
     try:
         facts = await team_cache.get(team_id, certificate_id)
     except ValueError as exc:

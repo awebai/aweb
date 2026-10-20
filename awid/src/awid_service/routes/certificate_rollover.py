@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/v1/namespaces/{domain}/teams', tags=['certificate-rollover'], route_class=ControllerAuthRoute)
 
 
-async def certificate_policy_limit(tx, team, certificate: str | None):
+async def certificate_policy_limit(tx, team, certificate: str | None, *, team_id: str):
     """Resolve the current signed policy while the caller holds the team lock."""
     row = await tx.fetch_one('SELECT record_json, signature FROM {{tables.team_credential_policies}} WHERE team_uuid=$1', team['team_uuid'])
     cert = _parse_certificate_blob(certificate) or {}
@@ -35,7 +35,7 @@ async def certificate_policy_limit(tx, team, certificate: str | None):
     if row is None:
         return None
     try:
-        policy = verify_credential_policy(json.loads(row['record_json']), row['signature'], team_id=cert.get('team_id', ''), team_did_key=team['team_did_key'])
+        policy = verify_credential_policy(json.loads(row['record_json']), row['signature'], team_id=team_id, team_did_key=team['team_did_key'])
     except (CredentialPolicyError, ValueError) as exc:
         logger.warning('Stored certificate policy failed current-key verification', exc_info=True)
         raise HTTPException(status_code=503, detail={'code': 'authority_unavailable'}) from exc
@@ -77,14 +77,14 @@ async def rollover(request: Request, domain: str, name: str, old_id: str, body: 
             if existing is not None:
                 raise HTTPException(status_code=409, detail='Replacement ID already exists')
             await _require_member_address_owned_by_did_aw(tx, member_address=new.member_address, member_did_aw=new.member_did_aw)
-            maximum = await certificate_policy_limit(tx, team, new.certificate)
-            _verify_certificate_blob(new.certificate, team_id=build_team_id(domain, name), team_did_key=caller, body=new, max_lifetime_seconds=maximum)
+            maximum = await certificate_policy_limit(tx, team, new.certificate, team_id=build_team_id(domain, name))
+            expires_at = _verify_certificate_blob(new.certificate, team_id=build_team_id(domain, name), team_did_key=caller, body=new, max_lifetime_seconds=maximum)
             # Uncommitted revocation releases the partial alias index. Any
             # insertion failure rolls this back; readers see only the commit.
             await tx.execute('UPDATE {{tables.team_certificates}} SET revoked_at=$3 WHERE team_uuid=$1 AND certificate_id=$2', team['team_uuid'], old_id, datetime.now(timezone.utc))
             await tx.execute(
-                'INSERT INTO {{tables.team_certificates}} (team_uuid,certificate_id,member_did_key,member_did_aw,member_address,alias,identity_scope,certificate) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-                team['team_uuid'], new.certificate_id, new.member_did_key, new.member_did_aw, new.member_address, new.alias, new.identity_scope, new.certificate,
+                'INSERT INTO {{tables.team_certificates}} (team_uuid,certificate_id,member_did_key,member_did_aw,member_address,alias,identity_scope,certificate,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+                team['team_uuid'], new.certificate_id, new.member_did_key, new.member_did_aw, new.member_address, new.alias, new.identity_scope, new.certificate, expires_at,
             )
             await tx.execute('UPDATE {{tables.team_certificates}} SET replaced_by_certificate_id=$3 WHERE team_uuid=$1 AND certificate_id=$2', team['team_uuid'], old_id, new.certificate_id)
     except (QueryError, asyncpg.UniqueViolationError) as exc:

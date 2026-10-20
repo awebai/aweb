@@ -22,7 +22,7 @@ from ._reservation_utils import reservation_metadata
 from ..grant_liveness import valid_grant_liveness_by_workspace
 from ..grant_streams import (
     allowed_status_categories,
-    clamp_deadline_to_grant,
+    clamp_deadline_to_grant, clamp_deadline_to_certificate,
     NeverGrantStreamGuard,
     grant_terminal_sse,
     require_valid_stream_grant,
@@ -746,6 +746,8 @@ async def status_stream(
     deadline = clamp_deadline_to_grant(
         datetime.now(timezone.utc) + timedelta(seconds=300), identity
     )
+
+    deadline = clamp_deadline_to_certificate(deadline, request)
 
     async def _grant_guarded_status_stream():
         guard = NeverGrantStreamGuard(request, db_infra, identity)

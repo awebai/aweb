@@ -60,6 +60,7 @@ def parse_and_verify_certificate(
     request_did_key: str,
     team_public_key_resolver: Callable[[str], str],
     revocation_checker: Callable[[str, str], bool],
+    check_lifetime: bool = True,
 ) -> dict[str, str]:
     """Parse, verify, and validate a team certificate.
 
@@ -115,7 +116,8 @@ def parse_and_verify_certificate(
     if revocation_checker(team_id, certificate_id):
         raise ValueError(f"Certificate {certificate_id} has been revoked")
 
-    validate_certificate_lifetime(cert)
+    if check_lifetime:
+        validate_certificate_lifetime(cert)
 
     identity_scope = normalize_identity_scope(cert.get("identity_scope") or cert.get("lifetime"))
     return {

@@ -18,11 +18,11 @@ func (c *Client) SetCertificateRefresher(refresh func(context.Context, string) (
 	c.certificateRefresher = refresh
 }
 
-func (c *Client) recoverReplacedCertificate(ctx context.Context, resp *http.Response) (bool, error) {
+func (c *Client) recoverReplacedCertificate(ctx context.Context, resp *http.Response, sentHeader string) (bool, error) {
 	c.certificateMu.RLock()
-	refresh, oldHeader := c.certificateRefresher, c.teamCertHeader
+	refresh, currentHeader := c.certificateRefresher, c.teamCertHeader
 	c.certificateMu.RUnlock()
-	if refresh == nil || c.grantID != "" || oldHeader == "" || resp.Body == nil {
+	if refresh == nil || c.grantID != "" || sentHeader == "" || resp.Body == nil {
 		return false, nil
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 65537))
@@ -43,7 +43,10 @@ func (c *Client) recoverReplacedCertificate(ctx context.Context, resp *http.Resp
 	if json.Unmarshal(data, &refusal) != nil || refusal.Detail.Code != "certificate_replaced" || refusal.Detail.ReplacementID == "" {
 		return false, nil
 	}
-	old, err := DecodeTeamCertificateHeader(oldHeader)
+	if currentHeader != sentHeader {
+		return true, nil
+	}
+	old, err := DecodeTeamCertificateHeader(sentHeader)
 	if err != nil {
 		return false, err
 	}
@@ -81,7 +84,7 @@ func (c *Client) sendSSEWithCertificateRecovery(req *http.Request) (*http.Respon
 			return nil, err
 		}
 		if attempt == 0 && response.StatusCode == http.StatusUnauthorized {
-			recovered, err := c.recoverReplacedCertificate(req.Context(), response)
+			recovered, err := c.recoverReplacedCertificate(req.Context(), response, req.Header.Get("X-AWID-Team-Certificate"))
 			if err != nil {
 				return nil, err
 			}

@@ -150,6 +150,9 @@ async def test_registered_private_v2_issuer_remains_revocable_without_service_to
         await _register(env, registry, cert)
         key, did, grant = await _mint(env)
         assert (await _read(env, key, did, grant)).status_code == 200
-        await _rollover(env, registry, cert)
+        fresh = await _rollover(env, registry, cert)
+        assert (await _read(env, key, did, grant)).status_code == 200
+        await registry.revoke_team_certificate('example.test', TEAM.split(':')[0],
+            team_controller_signing_key=env.team_sk, certificate_id=fresh['certificate_id'])
         refused = await _read(env, key, did, grant)
         assert refused.status_code == 403 and 'issuing certificate revoked' in refused.text, refused.text

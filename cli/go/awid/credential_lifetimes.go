@@ -209,3 +209,26 @@ func ResignTeamCredentialPolicy(record map[string]any, signature, teamID, curren
 	}
 	return fresh, sig, nil
 }
+
+// FetchTeamCertificateForRenewal uses controller authority to authenticate the
+// old signed artifact. Expiry does not prevent its controller from renewing it;
+// no membership fields from an unsigned roster row become signing input.
+func (c *RegistryClient) FetchTeamCertificateForRenewal(ctx context.Context, registryURL, domain, name, id string, controllerKey ed25519.PrivateKey) (*TeamCertificate, error) {
+	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/certificates/" + urlPathEscape(id)
+	var wire registryCertificateFetchResponse
+	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, signedPathHeaders(http.MethodGet, path, controllerKey), nil, &wire); err != nil {
+		return nil, err
+	}
+	cert, err := DecodeTeamCertificateHeader(wire.Certificate)
+	if err != nil {
+		return nil, err
+	}
+	public := controllerKey.Public().(ed25519.PublicKey)
+	if cert.CertificateID != id || cert.Team != BuildTeamID(domain, name) || cert.TeamDIDKey != ComputeDIDKey(public) {
+		return nil, fmt.Errorf("old certificate is not bound to this controller and team")
+	}
+	if err := VerifyTeamCertificateSignature(cert, public); err != nil {
+		return nil, err
+	}
+	return cert, nil
+}

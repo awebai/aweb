@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import weakref
+from collections import OrderedDict
 import fnmatch
 import hashlib
 import ipaddress
@@ -30,6 +32,13 @@ from awid.log import (
 )
 from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER, normalize_service_token
 from awid.signing import canonical_json_bytes, sign_message
+
+
+def _bounded_cache_put(cache, key, value, maximum=4096):
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > maximum:
+        cache.popitem(last=False)
 
 
 DomainRegistryResolver = Callable[[str], Awaitable[str]]
@@ -290,9 +299,10 @@ class RegistryClient:
     domain_registry_resolver: DomainRegistryResolver | None = None
     service_token: str | None = field(default=None, repr=False, compare=False)
     _http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
-    _credential_policy_cache: dict = field(default_factory=dict, init=False, repr=False, compare=False)
-    _credential_policy_locks: dict = field(default_factory=dict, init=False, repr=False, compare=False)
-    _certificate_status_cache: dict = field(default_factory=dict, init=False, repr=False, compare=False)
+    _credential_policy_cache: dict = field(default_factory=OrderedDict, init=False, repr=False, compare=False)
+    _credential_policy_locks: dict = field(default_factory=weakref.WeakValueDictionary, init=False, repr=False, compare=False)
+    _certificate_status_cache: dict = field(default_factory=OrderedDict, init=False, repr=False, compare=False)
+    _certificate_status_locks: dict = field(default_factory=weakref.WeakValueDictionary, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "service_token", normalize_service_token(self.service_token))
@@ -458,7 +468,7 @@ class RegistryClient:
                 match = re.fullmatch(r'0\.5\.(\d+)', str(info.get('version', '')))
                 if info.get('service') != 'awid' or not match or int(match[1]) >= 31:
                     raise
-                self._credential_policy_cache[cache_key] = (started, None)
+                _bounded_cache_put(self._credential_policy_cache, cache_key, (started, None), 1024)
                 return None
             if not isinstance(data, dict) or data.get('team_id') != f'{name}:{domain}' or not isinstance(data.get('team_did_key'), str):
                 raise ValueError('Malformed credential policy authority response')
@@ -472,7 +482,7 @@ class RegistryClient:
                 value = verify_credential_policy(data['record'], data.get('signature'), team_id=f'{name}:{domain}', team_did_key=data['team_did_key'])
             from awid.did import public_key_from_did
             public_key_from_did(data['team_did_key'])
-            self._credential_policy_cache[cache_key] = (started, value, data['team_did_key'])
+            _bounded_cache_put(self._credential_policy_cache, cache_key, (started, value, data['team_did_key']), 1024)
             return None if value is None else dict(value)
 
     async def get_team_current_public_key(self, domain: str, name: str) -> str | None:
@@ -499,18 +509,36 @@ class RegistryClient:
         return result
 
     async def get_team_certificate_status(self, domain: str, name: str, certificate_id: str) -> dict[str, Any]:
-        """Public current-key facts, with replacement links, for at most 60s."""
         origin = await self._registry_url_for_domain(domain)
+        key = (origin, domain, name, certificate_id)
+        async with self._certificate_status_locks.setdefault(key, asyncio.Lock()):
+            return await self._get_team_certificate_status(domain, name, certificate_id, origin)
+
+    async def _get_team_certificate_status(self, domain: str, name: str, certificate_id: str, origin: str) -> dict[str, Any]:
+        """Public current-key facts, with replacement links, for at most 60s."""
         key = (origin, domain, name, certificate_id)
         cached = self._certificate_status_cache.get(key)
         if cached and time.monotonic() - cached[0] < 60:
+            if cached[1] is None:
+                raise RegistryError('Certificate not found', status_code=404)
             return dict(cached[1])
         started = time.monotonic()
-        data = await self._request_json('GET', f'/v1/namespaces/{domain}/teams/{name}/certificates/{quote(certificate_id, safe="")}/status?include_replacement=true', registry_url=origin)
+        try:
+            data = await self._request_json('GET', f'/v1/namespaces/{domain}/teams/{name}/certificates/{quote(certificate_id, safe="")}/status?include_replacement=true&include_issuer=true', registry_url=origin)
+        except RegistryError as exc:
+            if exc.status_code == 404:
+                _bounded_cache_put(self._certificate_status_cache, key, (started, None))
+            raise
         if not isinstance(data, dict) or data.get('team_id') != f'{name}:{domain}' or data.get('status') not in ('active', 'revoked') or not isinstance(data.get('team_did_key'), str):
             raise ValueError('Malformed certificate status')
         from awid.did import public_key_from_did
         public_key_from_did(data['team_did_key'])
+        for field in ('member_did_key', 'certificate_team_did_key'):
+            value = data.get(field)
+            if value is not None:
+                if not isinstance(value, str):
+                    raise ValueError('Malformed certificate issuer projection')
+                public_key_from_did(value)
         replacement = data.get('replaced_by_certificate_id')
         if replacement is not None and (not isinstance(replacement, str) or not replacement.strip() or replacement == certificate_id or data['status'] != 'revoked'):
             raise ValueError('Malformed certificate replacement link')
@@ -522,8 +550,39 @@ class RegistryClient:
             revoked_at = datetime.fromisoformat(data['revoked_at'].replace('Z', '+00:00'))
             if revoked_at.tzinfo is None:
                 raise ValueError('Malformed certificate revocation timestamp')
-        self._certificate_status_cache[key] = (started, dict(data))
+        _bounded_cache_put(self._certificate_status_cache, key, (started, dict(data)))
         return dict(data)
+
+    async def resolve_active_certificate(self, domain: str, name: str, certificate_id: str, *, member_did_key: str | None = None) -> dict[str, Any] | None:
+        """Follow only same-member rollover links, never disciplinary revocation.
+
+        Registered status is authority for the projection; after a replacement
+        the final artifact must have been signed by the CURRENT team key.
+        """
+        seen = set()
+        expected_member = member_did_key
+        for hop in range(9):
+            if certificate_id in seen:
+                return None
+            seen.add(certificate_id)
+            status = await self.get_team_certificate_status(domain, name, certificate_id)
+            member = status.get('member_did_key')
+            if expected_member is None:
+                expected_member = member
+            if member is not None and expected_member != member:
+                return None
+            if status['status'] == 'active':
+                signing_key = status.get('certificate_team_did_key')
+                if signing_key is not None and signing_key != status['team_did_key']:
+                    return None
+                if hop and (not expected_member or member != expected_member or status.get('certificate_team_did_key') != status['team_did_key']):
+                    return None
+                return dict(status, certificate_id=certificate_id)
+            replacement = status.get('replaced_by_certificate_id')
+            if not replacement or hop == 8 or not expected_member or member != expected_member:
+                return None
+            certificate_id = replacement
+        return None
 
     async def rollover_team_certificate(self, domain: str, name: str, old_certificate_id: str, replacement: dict[str, Any], *,
                                         signing_key: bytes | None = None, controller_did_key: str | None = None,
@@ -1210,6 +1269,7 @@ class RegistryClient:
             json=payload,
             registry_url=registry_url,
         )
+        await self.invalidate_team_certificate_cache(domain, name)
 
     async def revoke_team_certificate(
         self,
@@ -1235,10 +1295,14 @@ class RegistryClient:
             json={"certificate_id": certificate_id},
             registry_url=registry_url,
         )
+        await self.invalidate_team_certificate_cache(domain, name)
 
     async def invalidate_team_certificate_cache(self, domain: str, name: str) -> None:
-        """Drop cached certificate/revocation reads for a team, if this client caches them."""
-        return None
+        """Drop all exact-ID facts for the caller after membership mutations."""
+        origin = await self._registry_url_for_domain(domain)
+        for key in list(self._certificate_status_cache):
+            if key[:3] == (origin, domain, name):
+                self._certificate_status_cache.pop(key, None)
 
     async def update_address(
         self,
@@ -1731,6 +1795,7 @@ class CachedRegistryClient(RegistryClient):
         await self._invalidate_keys(self._team_revocations_cache_key(domain, name))
 
     async def invalidate_team_certificate_cache(self, domain: str, name: str) -> None:
+        await super().invalidate_team_certificate_cache(domain, name)
         try:
             await self._invalidate_team_certificate_cache_keys(domain, name)
         finally:

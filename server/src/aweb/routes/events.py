@@ -34,7 +34,7 @@ from aweb.messaging.waiting import get_waiting_agents, get_waiting_agents_by_ses
 from aweb.internal_auth import parse_internal_auth_context
 from aweb.grant_streams import (
     agent_event_allowed,
-    clamp_deadline_to_grant,
+    clamp_deadline_to_grant, clamp_deadline_to_certificate,
     NeverGrantStreamGuard, grant_expiry_reason,
     grant_terminal_sse,
     require_valid_stream_grant,
@@ -682,7 +682,7 @@ async def event_stream(
     max_deadline = datetime.now(timezone.utc) + timedelta(seconds=MAX_STREAM_DURATION)
     if deadline_dt > max_deadline:
         deadline_dt = max_deadline
-    deadline_dt = clamp_deadline_to_grant(deadline_dt, identity)
+    deadline_dt = clamp_deadline_to_certificate(clamp_deadline_to_grant(deadline_dt, identity), request)
 
     await require_valid_stream_grant(request, db, identity)
 

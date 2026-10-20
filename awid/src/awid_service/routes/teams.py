@@ -193,7 +193,7 @@ def _verify_certificate_blob(
     team_did_key: str,
     body: "CertificateRegisterRequest",
     max_lifetime_seconds: int | None = None,
-) -> None:
+) -> datetime | None:
     cert = _parse_certificate_blob(certificate)
     if cert is None:
         raise HTTPException(status_code=422, detail="team-signed certificate blob is required")
@@ -244,6 +244,7 @@ def _verify_certificate_blob(
     except CertificateValidationError as exc:
         status = 401 if exc.code == "certificate_expired" else 422
         raise HTTPException(status_code=status, detail={"code": exc.code, "message": str(exc)}) from exc
+    return expiry
 
 
 def _verify_path_signature(request: Request, authorization: str | None) -> str:
@@ -327,6 +328,7 @@ async def _require_team_read_access(
             SELECT 1
             FROM {{tables.team_certificates}}
             WHERE team_uuid = $1 AND member_did_key = $2 AND revoked_at IS NULL
+              AND (expires_at IS NULL OR expires_at > NOW())
             LIMIT 1
             """,
             team_uuid,
@@ -467,6 +469,8 @@ class CertificateStatusResponse(BaseModel):
     status: Literal["active", "revoked"]
     revoked_at: str | None
     replaced_by_certificate_id: str | None = None
+    member_did_key: str | None = None
+    certificate_team_did_key: str | None = None
 
 
 class CertificateResponse(BaseModel):
@@ -629,7 +633,7 @@ async def list_teams(
                 " OR EXISTS ("
                 "SELECT 1 FROM {{tables.team_certificates}} tc"
                 f" WHERE tc.team_uuid = t.team_uuid AND tc.member_did_key = ${idx}"
-                " AND tc.revoked_at IS NULL))"
+                " AND tc.revoked_at IS NULL AND (tc.expires_at IS NULL OR tc.expires_at > NOW())))"
             )
         else:
             where_clauses.append("t.visibility = 'public'")
@@ -876,14 +880,14 @@ async def register_certificate(
             locked = await tx.fetch_one('SELECT team_did_key FROM {{tables.teams}} WHERE team_uuid=$1 AND deleted_at IS NULL FOR UPDATE', team_row['team_uuid'])
             if not locked or locked['team_did_key'] != team_row['team_did_key']:
                 raise HTTPException(status_code=409, detail='Team controller changed')
-            maximum = await certificate_policy_limit(tx, team_row, body.certificate)
-            _verify_certificate_blob(body.certificate, team_id=build_team_id(domain, name), team_did_key=team_row['team_did_key'], body=body, max_lifetime_seconds=maximum)
+            maximum = await certificate_policy_limit(tx, team_row, body.certificate, team_id=build_team_id(domain, name))
+            expires_at = _verify_certificate_blob(body.certificate, team_id=build_team_id(domain, name), team_did_key=team_row['team_did_key'], body=body, max_lifetime_seconds=maximum)
             await tx.execute(
                 """
                 INSERT INTO {{tables.team_certificates}}
                     (team_uuid, certificate_id, member_did_key, member_did_aw,
-                     member_address, alias, identity_scope, certificate)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     member_address, alias, identity_scope, certificate, expires_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 """,
                 team_row["team_uuid"],
                 body.certificate_id,
@@ -893,6 +897,7 @@ async def register_certificate(
                 body.alias,
                 body.identity_scope,
                 body.certificate,
+                expires_at,
             )
     except (QueryError, asyncpg.UniqueViolationError) as exc:
         cause = exc if isinstance(exc, asyncpg.UniqueViolationError) else exc.__cause__
@@ -1113,6 +1118,7 @@ async def certificate_status(
     name: str,
     certificate_id: str,
     include_replacement: bool = False,
+    include_issuer: bool = False,
     db_infra=Depends(get_db),
 ) -> CertificateStatusResponse:
     """Public facts for one published certificate, including on private teams.
@@ -1123,7 +1129,7 @@ async def certificate_status(
     db = db_infra.get_manager("aweb")
     row = await db.fetch_one(
         """
-        SELECT t.team_did_key, tc.revoked_at, tc.replaced_by_certificate_id
+        SELECT t.team_did_key, tc.revoked_at, tc.replaced_by_certificate_id, tc.member_did_key, tc.certificate
         FROM {{tables.team_certificates}} tc
         JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
         WHERE t.domain = $1 AND t.name = $2 AND t.deleted_at IS NULL
@@ -1140,6 +1146,7 @@ async def certificate_status(
         status="revoked" if revoked_at is not None else "active",
         revoked_at=revoked_at.isoformat() if revoked_at is not None else None,
         **({'replaced_by_certificate_id': row['replaced_by_certificate_id']} if include_replacement else {}),
+        **({'member_did_key': row['member_did_key'], 'certificate_team_did_key': (_parse_certificate_blob(row['certificate']) or {}).get('team_did_key')} if include_issuer else {}),
     )
 
 

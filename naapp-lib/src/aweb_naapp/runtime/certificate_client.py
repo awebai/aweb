@@ -9,13 +9,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 import httpx
 from awid.contract import normalize_identity_scope
-from awid.certificates import certificate_timestamp
+from awid.certificates import certificate_timestamp, validate_certificate_lifetime
 from awid.did import did_from_public_key
 from awid.log import canonical_server_origin
 from awid.registry import RegistryClient
@@ -38,6 +39,7 @@ class TeamCertificateHTTPClient:
         if not path.startswith('/') or '#' in path:
             raise ValueError('An exact request path is required')
         await self.refresh_if_due()
+        validate_certificate_lifetime(self.certificate)
         for attempt in range(2):
             request = self.http.build_request(method, self.origin + path, content=content)
             timestamp = datetime.now(timezone.utc).isoformat()
@@ -76,12 +78,17 @@ class TeamCertificateHTTPClient:
         expires = certificate_timestamp(self.certificate['expires_at'], 'expires_at')
         if datetime.now(timezone.utc) < expires - (expires - issued) / 3:
             return
-        if time.monotonic() - self._proactive_checked_at < 30:
+        if time.monotonic() - self._proactive_checked_at < 3600:
             return
         domain, name = parse_team_id(self.certificate['team_id'])
-        fresh = await self.registry.fetch_current_member_certificate(domain, name, self.certificate['alias'], self.key)
-        await self._install_verified_membership(fresh)
         self._proactive_checked_at = time.monotonic()
+        try:
+            fresh = await self.registry.fetch_current_member_certificate(domain, name, self.certificate['alias'], self.key)
+            await self._install_verified_membership(fresh)
+        except Exception:
+            if datetime.now(timezone.utc) >= expires:
+                raise
+            logging.getLogger(__name__).warning('Proactive certificate refresh unavailable; using the still-valid certificate', exc_info=True)
 
     async def _install_verified_membership(self, fresh: dict) -> None:
         for field in ('member_did_key', 'team_id', 'alias', 'member_did_aw', 'member_address'):

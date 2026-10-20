@@ -8,6 +8,8 @@ import { loadTeamCertificate, encodeTeamCertificateHeader, fetchReplacementCerti
 import { computeDIDKey } from "./identity/did.js";
 import { loadSigningKey } from "./identity/keys.js";
 
+const proactiveCertificateAttempts = new Set<string>();
+
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
 export interface AgentConfig {
@@ -233,7 +235,15 @@ export async function resolveConfig(workdir: string, options: ResolveConfigOptio
   };
   if (certificate.expires_at) {
     const expires = Date.parse(certificate.expires_at), issued = Date.parse(certificate.issued_at);
-    if (Date.now() >= expires - (expires - issued) / 3) await refreshCertificate("");
+    const attemptKey = loadedCertificate.path + ":" + certificate.certificate_id;
+    if (Date.now() >= expires - (expires - issued) / 3 && !proactiveCertificateAttempts.has(attemptKey)) {
+      proactiveCertificateAttempts.add(attemptKey);
+      try { await refreshCertificate(""); }
+      catch (error) {
+        if (Date.now() >= expires) throw error;
+        console.warn("Proactive certificate refresh unavailable; using the still-valid certificate:", error);
+      }
+    }
   }
   return {
     baseURL,

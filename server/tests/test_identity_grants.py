@@ -144,6 +144,7 @@ def _build_app(aweb_db) -> FastAPI:
     registry = AsyncMock()
     registry.get_team_revocations = AsyncMock(return_value=set())
     registry.get_team_credential_policy = AsyncMock(return_value=None)
+    registry.resolve_active_certificate = AsyncMock(return_value=None)
     app.state.awid_registry_client = registry
 
     @app.middleware("http")
@@ -759,6 +760,7 @@ def _build_real_messaging_app(aweb_db) -> FastAPI:
     registry = AsyncMock()
     registry.get_team_revocations = AsyncMock(return_value=set())
     registry.get_team_credential_policy = AsyncMock(return_value=None)
+    registry.resolve_active_certificate = AsyncMock(return_value=None)
     app.state.awid_registry_client = registry
 
     @app.middleware("http")
@@ -1308,6 +1310,7 @@ async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_d
     stream_registry = AsyncMock()
     stream_registry.get_team_revocations = AsyncMock(return_value=set())
     stream_registry.get_team_credential_policy = AsyncMock(return_value=None)
+    stream_registry.resolve_active_certificate = AsyncMock(return_value=None)
     stream_app.state.awid_registry_client = stream_registry
 
     # Advance only this route's clock at polling; DB/auth work cannot consume
@@ -1714,6 +1717,7 @@ async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
     deny_registry = AsyncMock()
     deny_registry.get_team_revocations = AsyncMock(return_value=set())
     deny_registry.get_team_credential_policy = AsyncMock(return_value=None)
+    deny_registry.resolve_active_certificate = AsyncMock(return_value=None)
     deny_app.state.awid_registry_client = deny_registry
 
     @deny_app.middleware("http")
@@ -1927,6 +1931,7 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
     deny_registry = AsyncMock()
     deny_registry.get_team_revocations = AsyncMock(return_value=set())
     deny_registry.get_team_credential_policy = AsyncMock(return_value=None)
+    deny_registry.resolve_active_certificate = AsyncMock(return_value=None)
     deny_app.state.awid_registry_client = deny_registry
 
     @deny_app.middleware("http")

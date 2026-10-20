@@ -99,7 +99,7 @@ from aweb.messaging.waiting import (
 )
 from aweb.grant_streams import (
     GRANT_STREAM_RECHECK_SECONDS,
-    clamp_deadline_to_grant,
+    clamp_deadline_to_grant, clamp_deadline_to_certificate,
     grant_expiry_reason,
     grant_terminal_reason,
     grant_terminal_sse,
@@ -2486,7 +2486,7 @@ async def stream(
     max_deadline = datetime.now(timezone.utc) + timedelta(seconds=MAX_CHAT_STREAM_DURATION)
     if deadline_dt > max_deadline:
         deadline_dt = max_deadline
-    deadline_dt = clamp_deadline_to_grant(deadline_dt, auth)
+    deadline_dt = clamp_deadline_to_certificate(clamp_deadline_to_grant(deadline_dt, auth), request)
 
     after_dt = _parse_timestamp(after, "after") if after is not None else None
     await require_valid_stream_grant(request, db, auth)

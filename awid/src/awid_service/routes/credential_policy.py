@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -47,7 +48,6 @@ async def set_policy(request: Request, domain: str, name: str, body: SignedRecor
         except CredentialPolicyError as exc:
             raise HTTPException(status_code=422, detail={'code': 'policy_invalid', 'message': str(exc)}) from exc
         # Issuance must remain disabled until operators measure verifier adoption.
-        import os
         if any(record[field] is not None for field in ('member_certificate', 'ephemeral_certificate')) and os.getenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED', '').lower() != 'true':
             raise HTTPException(status_code=409, detail={'code': 'certificate_verifier_adoption_required'})
         old = await tx.fetch_one('SELECT record_json, signature, revision FROM {{tables.team_credential_policies}} WHERE team_uuid=$1 FOR UPDATE', team['team_uuid'])

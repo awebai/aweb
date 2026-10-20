@@ -104,6 +104,7 @@ async def _active_certificate(tx, team_uuid, certificate_id: str):
         SELECT member_did_key
         FROM {{tables.team_certificates}}
         WHERE team_uuid = $1 AND certificate_id = $2 AND revoked_at IS NULL
+          AND (expires_at IS NULL OR expires_at > NOW())
         """,
         team_uuid, certificate_id,
     )

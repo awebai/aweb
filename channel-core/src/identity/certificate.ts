@@ -1,5 +1,6 @@
-import { readFile, writeFile, rename, rm } from "node:fs/promises";
+import { readFile, open, rename, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { dirname } from "node:path";
 import { canonicalJSONValue } from "./canonical.js";
 import { verifySignedPayload } from "./signing.js";
 import { signBytes } from "./signing.js";
@@ -139,8 +140,14 @@ export async function fetchReplacementCertificate(old: TeamCertificate, id: stri
 export async function installTeamCertificate(path: string, cert: TeamCertificate): Promise<void> {
   const temporary = `${path}.refresh-${randomUUID()}`;
   try {
-    await writeFile(temporary, JSON.stringify(cert) + "\n", { mode: 0o600, flag: "wx" });
+    const file = await open(temporary, "wx", 0o600);
+    try { await file.writeFile(JSON.stringify(cert) + "\n"); await file.sync(); }
+    finally { await file.close(); }
     await rename(temporary, path);
+    if (process.platform !== "win32") {
+      const directory = await open(dirname(path), "r");
+      try { await directory.sync(); } finally { await directory.close(); }
+    }
   } finally {
     await rm(temporary, { force: true });
   }
