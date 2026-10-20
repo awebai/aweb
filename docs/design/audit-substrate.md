@@ -197,8 +197,8 @@ objects and no free text). The hooks catalog vector records it.
 | `approval_id`, `approval_assurance`, `approver_id`, `approval_credential_id`, `approval_evidence_sha256`, `approval_decision` | Present only when there is an approval. |
 | `dispatch_id`, `dispatch_state` | |
 | `upstream_status_code`, `upstream_bytes`, `upstream_truncated`, `upstream_response_hmac` | The HMAC is producer-keyed and optional. There is no unsalted response digest. |
-| `returned_hmac` | A producer-keyed HMAC of the bytes returned to the agent, after projection and redaction. It is absent when the result is `withheld`. It is an HMAC and not a plain hash, because returned bytes may still carry a credential (`returned_credential`, or one that redaction missed). |
-| `disposition`, `derived_secret_id` | `returned`, `withheld`, `stored_as_secret` or `returned_credential`, on `completed`. |
+| `returned_hmac` | A producer-keyed HMAC of the bytes returned to the agent, after projection and redaction. It is absent when the result is `withheld`. It is an HMAC and not a plain hash, because returned bytes may still carry a credential that redaction missed. |
+| `disposition`, `derived_secret_id` | `returned`, `withheld` or `stored_as_secret`, on `completed`. |
 | `undeclared_credential` | Boolean, on `completed`: the response carried a credential that was not declared. |
 | `redaction_count`, `refusal_code` | `refusal_code` is a fixed enum, recorded in the catalog vector: `grant_missing`, `grant_revoked`, `operation_not_allowed`, `open_request_not_allowed`, `policy_rate_limited`, `policy_window_closed`, `destination_not_in_scope`, `destination_address_denied`, `internal_destinations_disabled`, `header_not_allowed`, `params_invalid`, `token_issuing_denied`, `secret_disabled`, `installation_disabled`, `secret_version_changed`, `custody_unavailable`, `attestation_unavailable`, `approval_denied`, `approval_expired`, `approval_revoked`, `approval_unrenderable`, `distinct_approver_required`, `reconciliation_pending`, `idempotency_conflict`, `audit_target_unavailable`, `audit_delivery_stalled`, `runner_unavailable`, `job_not_allowed`. |
 
