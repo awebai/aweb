@@ -1084,8 +1084,10 @@ catalogs ship in the shared renderer package.
 
 The L3 passkey hand-off locale is the member's locale setting, else the locale
 recorded with the approver's designation, else English. It never uses the page
-locale, because page data is agent-authored. The host supplies it as a bare
-language tag carrying nothing else. So a ceremony's locale can differ from the
+locale, because page data is agent-authored. The host passes the member's
+setting as a bare language tag carrying nothing else, or no tag when the member
+has none; the app, which records the designation, then applies the designation
+locale, else English. So a ceremony's locale can differ from the
 page chrome: when a member has no stored setting and the page locale differs
 from the designation locale. App-owned enrolment, ceremony, recovery, link and
 view pages and notification bodies use the same message keys and translations:
@@ -1310,7 +1312,7 @@ No estimates. “Depends” includes contract readiness, not merely deploy order
 | R1 shared renderer | C1,C4 | Sanitizer/CSP with Trusted Types and one sanitizer-owned policy, host CSRF on every state change, chrome outside the page container, the C1 hostile corpus passing, URLs/assets, fallback, keyboard/screen reader/phone layout, Catalan/English and conflicts; used unchanged by Cloud and link pages. |
 | L1 install UI | F6,C3 | Admin exact digest/scopes diff, update/uninstall and export/delete controls; no ordinary-member bypass. Owner single-person declaration at approver designation or invitation, and the attestation carrier that brings it to the app; `member_session` approvals stay unavailable until it exists. |
 | L2 hosted MCP (aweb-abzo) | F5,C3 | Tools/list and calls actor/install scoped, exact signer and byte vectors, second app without an app-specific Cloud change; critical to claude.ai/ChatGPT workflows. |
-| L3 member surface | F5,C3,R1,N2,N3,B3,L1 | Actual dashboard member signs all calls, no controller fallback, explicit provisioning/refusal, generic tool bindings and ACL cache isolation; app-origin passkey handoff binds same task/proposal/person under Juan's assurance decision, no callback-as-proof. Owner acts need fresh step-up; the C1 hostile corpus passes on the dashboard origin. Stored per-member locale setting; the hand-off locale (member setting, else designation locale, else English, never the page locale). Depends on L1 for the attestation. |
+| L3 member surface | F5,C3,R1,N2,N3,B3,L1 | Actual dashboard member signs all calls, no controller fallback, explicit provisioning/refusal, generic tool bindings and ACL cache isolation; app-origin passkey handoff binds same task/proposal/person under Juan's assurance decision, no callback-as-proof. Owner acts need fresh step-up; the C1 hostile corpus passes on the dashboard origin. Stored per-member locale setting; the hand-off locale (member setting, else designation locale, else English, never the page locale). Depends on L1, which records the owner's single-person declaration that `member_session` approvals need, together with the approver's designation. |
 | L4 browser wakes | C6,N4,L3 | Two replicas, readiness barrier, reauthorization, loss/reconnect recovery; real healthy commit-to-paint target under 2 s. |
 | L5 metering | C5,N1,N3 | CLI/MCP/link/sync/error/no-op paths counted and reconciled, retained inventories and operator/admin views; reconcile old caps explicitly. |
 | A1 runtime intent delivery | C2,N3 | Claude, pi, Codex, aw run resume assigned tasks after missed wake/offline; no model acceptance inferred from transport delivery. |
