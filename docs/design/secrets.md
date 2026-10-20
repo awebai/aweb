@@ -1202,12 +1202,17 @@ action:
 | refusal at admission or at the fence | `refused`, with `refusal_code` |
 | `awaiting_approval` | `approval_requested` |
 | approval decided (approve, deny, expire, revoke) | `approval_decided`, with `approval_evidence_sha256` when a passkey decided |
+| `cancelled`: the requester withdraws, or containment revokes the pending approval through B2 | `approval_decided`, with `approval_decision: revoked` |
 | `admitted` | `admitted` |
 | `dispatching`, enqueued in the fence transaction before any byte is sent | `dispatching` |
 | `completed`, including a withheld result or an undeclared credential | `completed`, with `disposition`, `returned_hmac`, and `undeclared_credential: true` (with disposition `withheld`) when §8.3 detects an undeclared credential |
 | `not_sent` | `not_sent` |
 | `outcome_unknown` | `outcome_unknown` |
 | `reconciled_*` | `reconciled` |
+
+`naapp/secrets/vectors/hook-actions-v1.json` freezes this table and the
+governance table below as data, with an example event per row that the catalog
+validates. S13's tests read it.
 
 secrets fills every field of the §A2 allowlist that applies to the event. The
 list below highlights fields with secrets-specific rules and is not exhaustive:

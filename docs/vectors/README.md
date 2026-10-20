@@ -27,7 +27,7 @@ The other tracked vector directories have disjoint, explicit purposes:
 | `cli/go/internal/conformance/vectors/` | Consumer-local Go fixtures plus the byte-enforced `team-auth-envelope-v2.json` package copy linked by the currently pinned naapp reference generator. |
 | `naapp/folio/tests/vectors/` | App test snapshots; `app-emit-credential-v1.json` is byte-checked against its Go consumer authority. |
 | `naapp/library/tests/vectors/` | App snapshots plus Library blueprint input/output goldens; the app-emit snapshot is byte-checked. |
-| `naapp/secrets/vectors/` | secrets' app-internal contracts: the `aweb.secrets.use-approval/1` request object under B2's prefix. Each file is consumed by a test in `naapp/secrets/tests/`. |
+| `naapp/secrets/vectors/` | secrets' app-internal contracts: the `aweb.secrets.use-approval/1` request object under B2's prefix, and the transition-to-hook-action table checked against `hook-catalog-v1.json`. Each file is consumed by a test in `naapp/secrets/tests/`. |
 | `test-vectors/` | Repository-level policy, blueprint, app-manifest, and packaging fixtures governed by their own indexes. |
 
 There is deliberately no server-local public-vector package copy. Server wheels
@@ -271,7 +271,8 @@ effect outside its command class. A payload that this file may not hold, such
 as a float, is given as JSON text in `payload_json`. The strict reader in
 `aweb_naapp.hooks.catalog` refuses the whole file on any unknown key, duplicate
 key, float or unresolved reference. Any payload change, including an addition,
-is a new catalog version.
+is a new catalog version. secrets' `test_hook_actions_vector.py` checks its
+transition-to-action table against it.
 
 ### `hook-binding-cases-v1.json`
 
