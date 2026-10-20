@@ -43,7 +43,8 @@ MAX_CERTIFICATE_PAGES = 100
 CERTIFICATE_PAGE_SIZE = 200
 
 TEAM_AUTH_ENVELOPE_V2 = 2
-DEFAULT_TIMESTAMP_SKEW_SECONDS = 300
+# The envelope contract allows at most five minutes; a larger configured window is clamped.
+MAX_TIMESTAMP_SKEW_SECONDS = 300
 _B64URL_NO_PADDING = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -391,7 +392,7 @@ async def authenticate_request(
     *,
     public_origin: str,
     team_cache: AWIDTeamCache,
-    timestamp_skew_seconds: int = DEFAULT_TIMESTAMP_SKEW_SECONDS,
+    timestamp_skew_seconds: int = MAX_TIMESTAMP_SKEW_SECONDS,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> Principal:
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization") or ""
@@ -402,7 +403,7 @@ async def authenticate_request(
         raise HTTPException(status_code=401, detail="Missing X-AWEB-Timestamp")
     parsed_timestamp = _parse_rfc3339_utc(timestamp)
     skew = abs((now() - parsed_timestamp).total_seconds())
-    if skew > timestamp_skew_seconds:
+    if skew > min(timestamp_skew_seconds, MAX_TIMESTAMP_SKEW_SECONDS):
         raise HTTPException(status_code=401, detail="X-AWEB-Timestamp outside allowed clock skew")
 
     cert_header = request.headers.get("X-AWID-Team-Certificate") or request.headers.get("x-awid-team-certificate") or ""

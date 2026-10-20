@@ -57,6 +57,21 @@ async def test_timestamp_window_is_five_minutes(registry, member, offset, accept
     assert response.status_code == (200 if accepted else 401), response.text
 
 
+@pytest.mark.parametrize("configured,offset,accepted", [
+    (600, 299, True), (600, 301, False), (600, -301, False), (60, 59, True), (60, 61, False),
+])
+async def test_configured_window_never_exceeds_five_minutes(registry, member, configured, offset, accepted):
+    signed_at = datetime(2026, 10, 19, 12, 0, 0, tzinfo=UTC)
+    async with relying_app(
+        registry, public_origin=ORIGIN, timestamp_skew_seconds=configured,
+        now=lambda: signed_at + timedelta(seconds=offset),
+    ) as (client, _):
+        response = await client.get(
+            "/v1/items", headers=member.headers(aud=ORIGIN, method="GET", path="/v1/items", timestamp=utc_timestamp(signed_at)),
+        )
+    assert response.status_code == (200 if accepted else 401), response.text
+
+
 @pytest.mark.parametrize("timestamp", ["2026-10-19T12:00:00", "not-a-time"])
 async def test_timestamp_without_zone_or_unparseable_is_refused(registry, member, timestamp):
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
