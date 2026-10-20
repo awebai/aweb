@@ -11,7 +11,7 @@ from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError
 from aweb.task_contracts import strict_json_bytes
 from aweb.coordination.app_tasks import (
     _scopes, app_request_transport_on,
-    cancel_app_task_on, create_app_task_on, read_app_request_on,
+    cancel_app_task_on, create_app_task_on, prepare_app_task, read_app_request_on,
 )
 from aweb.coordination.tasks_service import _answer_receipt
 
@@ -22,11 +22,12 @@ router = APIRouter()
 async def create_app_request(request: Request, db: DatabaseInfra = Depends(get_db_infra)):
     try:
         raw = await request.body()
+        prepared = await prepare_app_task(request, body=strict_json_bytes(raw))
         outcome = {}
         async with db.get_manager("aweb").transaction() as tx:
             credential, installation = await app_request_transport_on(request, tx)
-            receipt, created = await create_app_task_on(request, tx, credential=credential,
-                installation=installation, body=strict_json_bytes(raw), outcome=outcome)
+            receipt, created = await create_app_task_on(tx, credential=credential,
+                installation=installation, prepared=prepared, outcome=outcome)
         if created:
             await fire_mutation_hook(request, "task.created", {
                 "task_id": receipt["task_id"], "task_ref": receipt["task_ref"],

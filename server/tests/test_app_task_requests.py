@@ -1,8 +1,4 @@
-"""C2 service tests with real registry, signatures and database.
-
-The caller supplies a verified installation/transport snapshot. F6's actual
-installation-lock/HTTP integration is covered separately once F6 is available.
-"""
+"""C2 services and signed HTTP paths with real registry, signatures and database."""
 
 import base64
 import asyncio
@@ -25,7 +21,7 @@ from awid.signing import canonical_json_bytes, sign_message
 from aweb.app_credentials import APP_REQUEST, AppCredential
 from aweb.coordination.app_tasks import (
     AUTHORIZATION_PREFIX, cancel_app_task_on, cancel_installation_requests_on,
-    create_app_task_on, read_app_request_on,
+    create_app_task_on, prepare_app_task, read_app_request_on,
 )
 from aweb.service_errors import ConflictError, ForbiddenError, ValidationError
 from aweb.task_contracts import validate_app_task, strict_json_bytes
@@ -69,7 +65,7 @@ async def app_request_context(privacy_app):
     credential = AppCredential(purpose=APP_REQUEST, team_id=TEAM, app_id="fixture", kid="requests-1",
                                did_key=app_did, installation_id="install-fixture", installation_generation=1)
     request = Request({"type": "http", "method": "POST", "path": "/v1/tasks/app-requests",
-                       "headers": [], "app": env.app})
+                       "headers": [(b"x-aweb-team-id", TEAM.encode()), (b"x-aweb-app-id", b"fixture")], "app": env.app})
     return env, request, credential, installation
 
 
@@ -109,8 +105,9 @@ def _sign(env, body):
 
 async def _create(context, body):
     env, request, credential, installation = context
+    prepared = await prepare_app_task(request, body=body)
     async with env.db.transaction() as tx:
-        return await create_app_task_on(request, tx, credential=credential, installation=installation, body=body)
+        return await create_app_task_on(tx, credential=credential, installation=installation, prepared=prepared)
 
 
 @pytest.mark.asyncio
@@ -220,7 +217,8 @@ def test_app_task_titles_refuse_control_and_bidi_control_characters(control):
 
 
 @pytest.mark.asyncio
-async def test_revoked_originator_cannot_create_or_read_by_replay(app_request_context):
+@pytest.mark.parametrize("expired", [False, True])
+async def test_revoked_originator_cannot_create_or_read_by_replay(app_request_context, expired):
     env, *_ = app_request_context
     body = _body(env)
     await _create(app_request_context, body)
@@ -228,7 +226,7 @@ async def test_revoked_originator_cannot_create_or_read_by_replay(app_request_co
         "example.test", TEAM.split(":", 1)[0], team_controller_signing_key=env.team_sk,
         certificate_id="privacy-alice")
     with pytest.raises(HTTPException) as caught:
-        await _create(app_request_context, body)
+        await _create(app_request_context, _body(env, expired=expired))
     assert caught.value.status_code == 401 and caught.value.detail == "certificate_revoked"
 
 
@@ -306,6 +304,47 @@ async def test_create_waits_for_retirement_lock_and_cannot_commit_after_it(app_r
     response = await asyncio.wait_for(creating, 5)
     assert response.status_code == 403, response.text
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registry_suffix", ["", "/revocations", "/certificates"])
+async def test_stalled_awid_does_not_block_installation_retirement(app_request_context, monkeypatch, registry_suffix):
+    env, *_ = app_request_context
+    made = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _body(env))
+    assert made.status_code == 201, made.text
+    entered, resume = asyncio.Event(), asyncio.Event()
+    registry_path = f'/v1/namespaces/example.test/teams/{TEAM.split(":", 1)[0]}' + registry_suffix
+
+    async def stalled_registry(scope, receive, send):
+        # Delay only the external HTTP boundary; all registry handlers and
+        # cryptographic checks still execute against the real registry.
+        if scope["type"] == "http" and scope["path"] == registry_path:
+            entered.set()
+            await resume.wait()
+        await env.registry_app(scope, receive, send)
+
+    transport = env.app.state.awid_registry_client.transport
+    monkeypatch.setattr(transport, "app", stalled_registry)
+    creating = asyncio.create_task(_app_http(app_request_context, "POST", "/v1/tasks/app-requests",
+                                            _body(env, request_id="during-awid-stall")))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        # Retirement must finish while AWID is still paused. A statement timeout
+        # turns a held installation lock into a deterministic test failure.
+        async with env.db.transaction() as tx:
+            await tx.execute("SET LOCAL statement_timeout = '750ms'")
+            installation = await get_installation_on(tx, team_id=TEAM, app_id="fixture", for_update=True)
+            assert await cancel_installation_requests_on(tx, team_id=TEAM, app_id="fixture",
+                installation_id=installation["installation_id"]) == 1
+            await tx.execute("UPDATE {{tables.team_app_installs}} SET state='uninstalled' WHERE team_id=$1 AND app_id='fixture'", TEAM)
+        assert not creating.done()
+        assert (await get_installation_on(env.db, team_id=TEAM, app_id="fixture"))["state"] == "uninstalled"
+        assert await env.db.fetch_value("SELECT status FROM {{tables.tasks}} WHERE task_id=$1", UUID(made.json()["task_id"])) == "closed"
+    finally:
+        resume.set()
+        response = await asyncio.wait_for(creating, 5)
+    assert response.status_code == 403 and response.json()["detail"] == "scope_denied", response.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 1
 
 
 @pytest.mark.asyncio

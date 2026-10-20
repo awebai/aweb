@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request
@@ -96,7 +97,20 @@ async def verify_authorization_certificate(request, authorization):
     return info, certificates
 
 
-async def create_app_task_on(request: Request, tx, *, credential: AppCredential, installation: dict, body: dict, outcome: dict | None = None):
+@dataclass(frozen=True)
+class PreparedAppTask:
+    """Registry-verified request facts, collected before any DB transaction."""
+
+    task: dict
+    authorization: dict
+    digest: str
+    expected: dict
+    actor: dict
+    targets: tuple
+
+
+async def prepare_app_task(request: Request, *, body: dict) -> PreparedAppTask:
+    """Verify member authority and fetch current targets without holding locks."""
     if not isinstance(body, dict) or set(body) != {"task", "task_authorization"}:
         raise ValidationError("schema_invalid")
     task = validate_app_task(body["task"])
@@ -109,26 +123,54 @@ async def create_app_task_on(request: Request, tx, *, credential: AppCredential,
     digest = task_body_sha256(task)
     from aweb.app_credentials import _allowed_audiences
 
+    # There is one canonical public origin. Destructuring refuses a future
+    # multi-origin configuration rather than choosing nondeterministically.
+    audience, = _allowed_audiences(request)
     expected = {
-        "aud": next(iter(_allowed_audiences(request))),
-        "team_id": credential.team_id, "app_id": credential.app_id,
-        "installation_id": credential.installation_id,
-        "installation_generation": credential.installation_generation,
-        "app_origin": installation["origin"], "task_body_sha256": digest,
+        "aud": audience,
+        "team_id": (request.headers.get("X-AWEB-Team-ID") or "").strip(),
+        "app_id": (request.headers.get("X-AWEB-App-ID") or "").strip().lower(),
+        "task_body_sha256": digest,
         "target_did": task["assignee_did"], "external_request_id": metadata["external_request_id"],
         "action_id": metadata["action_ref"], "proposal_rev": metadata["proposal_rev"],
         "proposal_sha256": metadata["proposal_sha256"],
     }
-    expired = None
     try:
         validate_task_authorization(payload, authorization["signature"], expected=expected, now=datetime.now(timezone.utc))
     except HTTPException as exc:
         if exc.detail != "authorization_expired":
             raise
-        expired = exc
-    # A time-only failure is eligible for replay only after CURRENT certificate
-    # authority has also passed. Shared verification checks bindings before time.
+    # Even expired replay requires current authority. Every registry call is
+    # completed here, before the caller opens the installation transaction.
     info, certificates = await verify_authorization_certificate(request, authorization)
+    targets = tuple(c for c in certificates
+                    if (c.member_did_aw or c.member_did_key) == task["assignee_did"] and not c.revoked_at)
+    return PreparedAppTask(task, authorization, digest, expected, info, targets)
+
+
+async def create_app_task_on(tx, *, credential: AppCredential, installation: dict,
+                             prepared: PreparedAppTask, outcome: dict | None = None):
+    """Commit using local facts under F6's installation lock; no registry I/O."""
+    task, authorization, digest, info = prepared.task, prepared.authorization, prepared.digest, prepared.actor
+    metadata = task["app_request"]
+    # Recheck all bindings against the credential and CURRENT locked row. A
+    # generation/origin change during registry I/O cannot use the old authority.
+    # The shared verifier also rechecks time after any wait for the row lock.
+    expected = {
+        **prepared.expected,
+        "team_id": credential.team_id, "app_id": credential.app_id,
+        "installation_id": credential.installation_id,
+        "installation_generation": credential.installation_generation,
+        "app_origin": installation["origin"],
+    }
+    expired = None
+    try:
+        validate_task_authorization(authorization["payload"], authorization["signature"],
+            expected=expected, now=datetime.now(timezone.utc))
+    except HTTPException as exc:
+        if exc.detail != "authorization_expired":
+            raise
+        expired = exc
     principal = info["member_did_aw"] or info["did_key"]
     existing = await tx.fetch_one(
         """SELECT r.task_body_sha256, r.receipt, t.cancellation
@@ -147,10 +189,9 @@ async def create_app_task_on(request: Request, tx, *, credential: AppCredential,
         raise expired
     if "requests.create" not in _scopes(installation):
         raise ForbiddenError("scope_denied")
-    targets = [c for c in certificates if (c.member_did_aw or c.member_did_key) == task["assignee_did"] and not c.revoked_at]
-    if len(targets) != 1:
+    if len(prepared.targets) != 1:
         raise ValidationError("target_unresolved")
-    target = targets[0]
+    target = prepared.targets[0]
     number = await _allocate_task_number_on(tx, team_id=credential.team_id)
     root = await _allocate_root_task_seq_on(tx, team_id=credential.team_id)
     suffix = _encode_alpha_component(root)
@@ -177,7 +218,7 @@ async def create_app_task_on(request: Request, tx, *, credential: AppCredential,
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb)""",
         row["task_id"], credential.team_id, credential.app_id, credential.installation_id,
         credential.installation_generation, principal, metadata["external_request_id"], digest,
-        json.dumps(body["task_authorization"]), json.dumps(receipt),
+        json.dumps(authorization), json.dumps(receipt),
     )
     if outcome is not None:
         actor = await tx.fetch_one(
