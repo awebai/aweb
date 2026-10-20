@@ -1533,7 +1533,7 @@ rows.
 | `link_out` widget restricted to the installed app's pinned origin | D1 C1/R1, a *proposed* vocabulary addition that needs Juan's acceptance | §6.1. It shows the normalized domain, opens a new top-level context with no opener or referrer, and carries no token in the URL. |
 | Hook envelope, catalog, provenance purpose, producer outbox, delivery | hooks seat; B4 for the shared code | §11.5. secrets owns its payload fields and its enqueue points. |
 | Usage reporting `aweb.usage/1` | D1 C5 | secrets reports `uses_admitted`, `dispatches`, `approvals_requested` and `job_runs` under the same rules. |
-| The *proposed* `aweb_naapp` components in §3.1 | secrets coordinator to assign | Under Q16's recommended rule: the egress guard, dispatch state machine, idempotency store and console session, each with pages (D1's A2 adapter and approval pages) as its second consumer. |
+| The *proposed* `aweb_naapp` components in §3.1 | secrets coordinator to assign | Under Q16's recommended rule: the egress guard, dispatch state machine, idempotency store, console session and role assignments keyed by stable principal, each with pages as its second consumer (D1's A2 adapter, approval pages, and role-target resolution in D1 §4). |
 | Principal attestation (§4.6) | generic AWID/OSS work, with the custodial deployment as issuer | Q5. Policy that requires it refuses until it exists. |
 
 **Requirements on a hosted operator or custodial deployment.** These are stated
@@ -1613,7 +1613,7 @@ These are recommendations; Juan decides. No item below removes scope.
       Under it, all the *proposed* components in §3.1 go to `aweb_naapp` now.
     - **The reviewer's rule:** share a component once a second consumer exists.
       Under it, the egress guard, the dispatch state machine, the idempotency
-      store and the console session go shared now, because pages (D1) needs
+      store, the console session and role assignments go shared now, because pages (D1) needs
       them. The auth-scheme injectors, KMS envelope sealing, rate buckets and
       the credential-shape detector stay app-local until a second consumer
       appears. The reviewer notes that secrets' own custody argument weighs
