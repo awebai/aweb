@@ -1,9 +1,18 @@
 """The wiring and public surface every naapp shares.
 
 An app creates a :class:`NaappRuntime`, builds its FastAPI app with the
-runtime's lifespan, calls :func:`mount_naapp_routes` for the standard public
-surface, and declares its own operations with ``Depends(runtime.principal)``
-and ``Depends(runtime.db)``.
+runtime's lifespan, and calls :func:`mount_naapp_routes` for the standard public
+surface.
+
+Member operations are guarded with ``Depends(runtime.authorized(tools=...,
+grants=..., policy=...))``. It admits a request only when it is signed by a
+team member, declared by the app's manifest, covered by the team's installed
+grant, and allowed by the app's policy. ``Depends(runtime.principal)`` only
+authenticates: it says who signed the request, never that they may act, so it
+is for routes that need nothing more than the signer's identity.
+
+The ``/fonts/`` route is not part of the shared surface yet: it waits on
+whether the font files may ship inside this package.
 """
 
 from __future__ import annotations
@@ -20,6 +29,13 @@ from pgdbm import AsyncDatabaseManager
 from aweb_naapp.css import aweb_css
 from aweb_naapp.manifest import read_manifest_bytes
 from aweb_naapp.robots import robots_txt
+from aweb_naapp.runtime.authorization import (
+    ActionPolicy,
+    Authorization,
+    DeclaredTools,
+    GrantSource,
+    authorize_request,
+)
 from aweb_naapp.runtime.db import NaappDatabase
 from aweb_naapp.runtime.health import mount_health
 from aweb_naapp.runtime.settings import NaappSettings
@@ -90,16 +106,38 @@ class NaappRuntime:
         return self._team_cache
 
     async def principal(self, request: Request) -> Principal:
-        """FastAPI dependency: the team member who signed this request, recorded
-        as observed by the app."""
-        principal = await authenticate_request(
+        """FastAPI dependency: the team member who signed this request.
+
+        Authentication only: any certified member of any team passes. Guard
+        member operations with :meth:`authorized` instead.
+        """
+        return await authenticate_request(
             request,
             public_origin=self.settings.public_origin,
             team_cache=self.team_cache(),
             timestamp_skew_seconds=self.settings.timestamp_skew_seconds,
         )
-        await record_observed_principal(self.db(), principal)
-        return principal
+
+    def authorized(
+        self, *, tools: DeclaredTools, grants: GrantSource, policy: ActionPolicy
+    ) -> Callable[[Request], Awaitable[Authorization]]:
+        """A FastAPI dependency admitting only authorized member requests.
+
+        It authenticates the request, then authorizes it against the app's
+        declared ``tools``, the team's grant from ``grants`` and the app's
+        ``policy``. Only an admitted member is recorded as observed, so
+        refused requests never write to the app's database.
+        """
+
+        async def authorized_request(request: Request) -> Authorization:
+            principal = await self.principal(request)
+            authorization = await authorize_request(
+                request, principal=principal, tools=tools, grants=grants, policy=policy
+            )
+            await record_observed_principal(self.db(), principal)
+            return authorization
+
+        return authorized_request
 
 
 def mount_naapp_routes(

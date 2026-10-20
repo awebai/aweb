@@ -1,25 +1,35 @@
 """The shared naapp wiring on a real database and real AWID routes.
 
-No ``from __future__ import annotations``: FastAPI resolves the route's
-``Depends(runtime.principal)`` annotations at definition time.
+No ``from __future__ import annotations``: FastAPI resolves the routes'
+``Depends(runtime.authorized(...))`` annotations at definition time.
 """
 
+import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated
 
 import httpx
 import pytest
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from pgdbm import AsyncDatabaseManager
 from pydantic_settings import SettingsConfigDict
 
 from aweb_naapp.runtime.app import NaappRuntime
+from aweb_naapp.runtime.authorization import Authorization, DeclaredTool, DeclaredTools, Grant
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import Principal
 
 from .conftest import REGISTRY_URL, Member
 
 ORIGIN = "https://app.example"
+TOOLS = DeclaredTools.from_manifest(
+    {
+        "tools": [
+            {"name": "create", "method": "POST", "path": "/v1/things", "scopes": ["example:write"]}
+        ]
+    }
+)
 
 
 class ExampleSettings(NaappSettings):
@@ -27,6 +37,29 @@ class ExampleSettings(NaappSettings):
 
     public_origin: str = ORIGIN
     app_id: str = "example"
+
+
+class InstalledTeams:
+    """A local grant source: the teams that installed the app, with their scopes."""
+
+    def __init__(self, scopes_by_team: dict[str, frozenset[str]]) -> None:
+        self.scopes_by_team = scopes_by_team
+
+    async def grant_for(self, team_id: str) -> Grant | None:
+        scopes = self.scopes_by_team.get(team_id)
+        if scopes is None:
+            return None
+        return Grant(
+            team_id=team_id,
+            scopes=scopes,
+            fresh_until=time.monotonic() + 60,
+            installation_id=None,
+            generation=None,
+        )
+
+
+async def allow_all(request: Request, principal: Principal, tool: DeclaredTool) -> bool:
+    return True
 
 
 def _migrations(tmp_path: Path) -> Path:
@@ -38,16 +71,29 @@ def _migrations(tmp_path: Path) -> Path:
     return path
 
 
-def _app(runtime: NaappRuntime) -> FastAPI:
+def _app(runtime: NaappRuntime, grants: InstalledTeams) -> FastAPI:
     app = FastAPI(lifespan=runtime.lifespan)
+    authorized = runtime.authorized(tools=TOOLS, grants=grants, policy=allow_all)
 
     @app.post("/v1/things")
     async def create_thing(
-        actor: Annotated[Principal, Depends(runtime.principal)],
+        auth: Annotated[Authorization, Depends(authorized)],
         db: Annotated[AsyncDatabaseManager, Depends(runtime.db)],
     ) -> dict[str, object]:
         await db.execute("INSERT INTO {{tables.things}} (id) VALUES (1)")
-        return {"team_id": actor.team_id, "alias": actor.alias}
+        return {
+            "team_id": auth.principal.team_id,
+            "alias": auth.principal.alias,
+            "tool": auth.tool.name,
+        }
+
+    @app.post("/v1/undeclared")
+    async def undeclared(auth: Annotated[Authorization, Depends(authorized)]) -> dict[str, str]:
+        return {"tool": auth.tool.name}
+
+    @app.post("/v1/whoami")
+    async def whoami(actor: Annotated[Principal, Depends(runtime.principal)]) -> dict[str, str]:
+        return {"alias": actor.alias}
 
     return app
 
@@ -58,12 +104,17 @@ async def app_database_url(test_db_factory) -> str:
     return database.config.get_dsn()
 
 
-async def test_principal_authenticates_and_records_the_observed_member(
-    registry, app_database_url: str, tmp_path: Path
-) -> None:
+@pytest.fixture
+async def member(registry) -> Member:
     member = Member(team_id="backend:example.com")
     await registry.add_team(member.team_id, member.team_did_key)
     await registry.add_certificate(member.certificate())
+    return member
+
+
+async def _running(
+    registry, app_database_url: str, tmp_path: Path, grants: InstalledTeams
+) -> AsyncIterator[tuple[NaappRuntime, httpx.AsyncClient]]:
     settings = ExampleSettings(
         _env_file=None, database_url=app_database_url, awid_registry_url=REGISTRY_URL
     )
@@ -73,29 +124,82 @@ async def test_principal_authenticates_and_records_the_observed_member(
         migrations_path=_migrations(tmp_path),
         awid_transport=registry.transport,
     )
-    app = _app(runtime)
-    body = b"{}"
-
+    app = _app(runtime, grants)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url=ORIGIN
         ) as client:
-            signed = await client.post(
-                "/v1/things",
-                content=body,
-                headers=member.headers(aud=ORIGIN, method="POST", path="/v1/things", body=body),
-            )
-            unsigned = await client.post("/v1/things", content=body)
+            yield runtime, client
 
-        assert signed.status_code == 200, signed.text
-        assert signed.json() == {"team_id": member.team_id, "alias": "alice"}
-        assert unsigned.status_code == 401
+
+def _signed(member: Member, path: str, body: bytes = b"{}") -> dict[str, object]:
+    return dict(
+        content=body,
+        headers=member.headers(aud=ORIGIN, method="POST", path=path, body=body),
+    )
+
+
+async def _observed(runtime: NaappRuntime) -> tuple[int, int]:
+    db = runtime.db()
+    return (
+        await db.fetch_value("SELECT count(*) FROM teams"),
+        await db.fetch_value("SELECT count(*) FROM agents"),
+    )
+
+
+async def test_an_installed_team_member_is_authorized_and_then_recorded(
+    registry, member: Member, app_database_url: str, tmp_path: Path
+) -> None:
+    grants = InstalledTeams({member.team_id: frozenset({"example:write"})})
+    async for runtime, client in _running(registry, app_database_url, tmp_path, grants):
+        response = await client.post("/v1/things", **_signed(member, "/v1/things"))
+        assert response.status_code == 200, response.text
+        assert response.json() == {"team_id": member.team_id, "alias": "alice", "tool": "create"}
         db = runtime.db()
         assert await db.fetch_value("SELECT count(*) FROM things") == 1
         assert await db.fetch_value("SELECT team_did_key FROM teams") == member.team_did_key
         assert await db.fetch_value("SELECT did_key FROM agents") == member.did_key
-
     assert runtime.connected_db() is None
+
+
+@pytest.mark.parametrize(
+    ("scopes_by_team", "status"),
+    [({}, 403), ({"backend:example.com": frozenset({"example:read"})}, 403)],
+    ids=["not-installed", "missing-scope"],
+)
+async def test_a_member_without_the_grant_is_refused_and_not_recorded(
+    registry, member: Member, app_database_url: str, tmp_path: Path, scopes_by_team, status
+) -> None:
+    async for runtime, client in _running(
+        registry, app_database_url, tmp_path, InstalledTeams(scopes_by_team)
+    ):
+        response = await client.post("/v1/things", **_signed(member, "/v1/things"))
+        assert response.status_code == status, response.text
+        assert response.json()["detail"]["code"] == "scope_denied"
+        assert await runtime.db().fetch_value("SELECT count(*) FROM things") == 0
+        assert await _observed(runtime) == (0, 0)
+
+
+async def test_unsigned_and_undeclared_requests_are_refused_and_not_recorded(
+    registry, member: Member, app_database_url: str, tmp_path: Path
+) -> None:
+    grants = InstalledTeams({member.team_id: frozenset({"example:write"})})
+    async for runtime, client in _running(registry, app_database_url, tmp_path, grants):
+        assert (await client.post("/v1/things", content=b"{}")).status_code == 401
+        undeclared = await client.post("/v1/undeclared", **_signed(member, "/v1/undeclared"))
+        assert undeclared.status_code == 403
+        assert undeclared.json()["detail"]["code"] == "operation_undeclared"
+        assert await _observed(runtime) == (0, 0)
+
+
+async def test_principal_authenticates_only_and_records_nothing(
+    registry, member: Member, app_database_url: str, tmp_path: Path
+) -> None:
+    async for runtime, client in _running(registry, app_database_url, tmp_path, InstalledTeams({})):
+        response = await client.post("/v1/whoami", **_signed(member, "/v1/whoami"))
+        assert response.status_code == 200, response.text
+        assert response.json() == {"alias": "alice"}
+        assert await _observed(runtime) == (0, 0)
 
 
 async def test_the_database_is_unavailable_outside_the_lifespan(tmp_path: Path) -> None:
