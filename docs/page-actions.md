@@ -307,6 +307,13 @@ admin approves the roles as part of the exact-digest install.
 
 - The host reads `roles` only from the installation's verified manifest
   bytes, and renders each role's `label` and `description` in its own chrome.
+- Every host surface that shows a role shows it as the pair (app, name), and
+  never the bare name. That covers the install diff, the designation UI,
+  audit and member views. A role name means nothing without its app: an app
+  `evil` may declare `secrets.owner`, and must not be mistaken for the secrets
+  app's owner role. Test: install two apps that both declare
+  `secrets.owner`, designate a member to one, and require every surface to
+  identify it by app, and audit to record the pair.
 - `app-role.designate` accepts only a `name` declared by the installation's
   current generation. Any other name is refused (422 `schema_invalid`), so
   roles are never free entry.
