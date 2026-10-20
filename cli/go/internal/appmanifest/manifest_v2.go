@@ -32,6 +32,7 @@ const (
 	CodeHooksInvalid               = "hooks_invalid"
 	CodeHookToolInvalid            = "hook_tool_invalid"
 	CodeAppKeysInvalid             = "app_keys_invalid"
+	CodeRoleInvalid                = "role_invalid"
 	CodeToolContextDenied          = "tool_context_denied"
 	CodeChannelInvalid             = "channel_invalid"
 	CodeAttestationInvalid         = "attestation_invalid"
@@ -91,20 +92,27 @@ const (
 	maxSurfaceLabelRunes = 128
 	maxV2Tools           = 256
 	maxV2PathSegments    = 32
+	maxRoles             = 64
+	maxRoleNameBytes     = 128
+	maxRoleLabelRunes    = 128
+	maxRoleDescRunes     = 512
 	// MaxJSONDepth bounds the nesting of any manifest or catalog document, so
 	// every reader handles it within its own recursion limits.
 	MaxJSONDepth = 512
 )
 
 var (
-	surfaceIDPattern  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-	formatPattern     = regexp.MustCompile(`^[a-z][a-z0-9.-]{0,63}/[1-9][0-9]{0,8}$`)
-	fieldNamePattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
-	purposePattern    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
-	keyIDPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
-	hookNamePattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
-	scopeNamePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}$`)
-	v2TopLevelMembers = []string{"app_keys", "surfaces", "usage", "lifecycle", "hooks"}
+	surfaceIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+	formatPattern    = regexp.MustCompile(`^[a-z][a-z0-9.-]{0,63}/[1-9][0-9]{0,8}$`)
+	fieldNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	purposePattern   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
+	keyIDPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	hookNamePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	scopeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}$`)
+	// roleNamePattern is the designatable role grammar of aweb_naapp.roles:
+	// dot-separated lowercase segments, at least two, no ':'.
+	roleNamePattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)+$`)
+	v2TopLevelMembers = []string{"app_keys", "surfaces", "usage", "lifecycle", "hooks", "roles"}
 )
 
 // UnmarshalJSON decodes a manifest strictly: unknown fields are refused at
@@ -571,6 +579,7 @@ func validateV1Only(m Manifest) error {
 		"usage":     m.Usage != nil,
 		"lifecycle": m.Lifecycle != nil,
 		"hooks":     m.Hooks != nil,
+		"roles":     m.Roles != nil,
 	}
 	for _, name := range v2TopLevelMembers {
 		if m.hasMember(name, v2Members[name]) {
@@ -628,7 +637,73 @@ func validateV2(m Manifest) error {
 	if err := validateLifecycle(m.Lifecycle, tools); err != nil {
 		return err
 	}
-	return validateHooks(m.Hooks, tools)
+	if err := validateHooks(m.Hooks, tools); err != nil {
+		return err
+	}
+	_, err := parseRoles(m.Roles)
+	return err
+}
+
+// Role is one role an app declares a team admin may designate.
+type Role struct {
+	Name        string  `json:"name"`
+	Label       string  `json:"label"`
+	Description *string `json:"description,omitempty"`
+}
+
+// parseRoles decodes and checks the roles member; absent declares none. A
+// name is compared exactly, and its label and description are shown in the
+// host's own chrome, so they carry no control or bidi character.
+func parseRoles(raw json.RawMessage) ([]Role, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	var items []json.RawMessage
+	if err := decodeStrictArray(raw, &items, "roles"); err != nil {
+		return nil, codedf(CodeRoleInvalid, "%v", err)
+	}
+	if len(items) == 0 || len(items) > maxRoles {
+		return nil, codedf(CodeRoleInvalid, "roles must declare 1 to %d roles", maxRoles)
+	}
+	roles := make([]Role, 0, len(items))
+	names := map[string]bool{}
+	for _, item := range items {
+		var role Role
+		if err := decodeStrictObject(item, &role, "roles[]"); err != nil {
+			return nil, codedf(CodeRoleInvalid, "%v", err)
+		}
+		if len(role.Name) > maxRoleNameBytes || !roleNamePattern.MatchString(role.Name) {
+			return nil, codedf(CodeRoleInvalid, "role name %q is not a designatable role name", role.Name)
+		}
+		if names[role.Name] {
+			return nil, codedf(CodeRoleInvalid, "duplicate role name %q", role.Name)
+		}
+		names[role.Name] = true
+		if !validRoleText(role.Label, maxRoleLabelRunes) {
+			return nil, codedf(CodeRoleInvalid, "role %q label must be 1 to %d characters with no control or bidi character", role.Name, maxRoleLabelRunes)
+		}
+		if role.Description != nil && !validRoleText(*role.Description, maxRoleDescRunes) {
+			return nil, codedf(CodeRoleInvalid, "role %q description must be 1 to %d characters with no control or bidi character", role.Name, maxRoleDescRunes)
+		}
+		roles = append(roles, role)
+	}
+	return roles, nil
+}
+
+func validRoleText(text string, maxRunes int) bool {
+	if text == "" || utf8.RuneCountInString(text) > maxRunes {
+		return false
+	}
+	for _, r := range text {
+		if r < 0x20 || (r >= 0x7f && r <= 0x9f) || isBidiControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isBidiControl(r rune) bool {
+	return r == 0x061c || r == 0x200e || r == 0x200f || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069)
 }
 
 func toolIndex(tools []Tool) map[string]*Tool {
@@ -1132,7 +1207,14 @@ type Resolved struct {
 	Usage           *Usage             `json:"usage"`
 	Lifecycle       *ResolvedLifecycle `json:"lifecycle"`
 	Hooks           *ResolvedHooks     `json:"hooks"`
+	Roles           []ResolvedRole     `json:"roles"`
 	tools           map[string]*Tool
+}
+
+type ResolvedRole struct {
+	Name        string  `json:"name"`
+	Label       string  `json:"label"`
+	Description *string `json:"description"`
 }
 
 type ResolvedAppKey struct {
@@ -1219,6 +1301,7 @@ func Resolve(manifest Manifest, reservedNames map[string]bool) (*Resolved, error
 		InstallScopes:   []string{},
 		AppKeys:         []ResolvedAppKey{},
 		Surfaces:        []ResolvedSurface{},
+		Roles:           []ResolvedRole{},
 		tools:           toolIndex(manifest.Tools),
 	}
 	installScopes := map[string]bool{}
@@ -1303,6 +1386,13 @@ func Resolve(manifest Manifest, reservedNames map[string]bool) (*Resolved, error
 			})
 		}
 		r.Hooks = hooks
+	}
+	roles, err := parseRoles(manifest.Roles)
+	if err != nil {
+		return nil, err
+	}
+	for _, role := range roles {
+		r.Roles = append(r.Roles, ResolvedRole{Name: role.Name, Label: role.Label, Description: role.Description})
 	}
 	return r, nil
 }

@@ -773,7 +773,8 @@
                 ]
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -826,7 +827,8 @@
           "surfaces": [],
           "usage": null,
           "lifecycle": null,
-          "hooks": null
+          "hooks": null,
+          "roles": []
         }
       }
     },
@@ -920,7 +922,8 @@
           "surfaces": [],
           "usage": null,
           "lifecycle": null,
-          "hooks": null
+          "hooks": null,
+          "roles": []
         }
       }
     },
@@ -1035,7 +1038,8 @@
                 ]
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -1157,7 +1161,8 @@
                 ]
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -1272,7 +1277,8 @@
                 ]
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -1389,7 +1395,8 @@
                 ]
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -1494,7 +1501,8 @@
                 ]
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -1612,7 +1620,8 @@
                 ]
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -1740,7 +1749,8 @@
                 ]
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -1845,7 +1855,8 @@
               }
             ],
             "productions": []
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -1957,7 +1968,8 @@
                 "reads": []
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -3045,7 +3057,8 @@
                 ]
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -3299,7 +3312,8 @@
                 ]
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -3430,7 +3444,8 @@
                 ]
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -3574,7 +3589,8 @@
                 ]
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -3739,7 +3755,8 @@
                 ]
               }
             ]
-          }
+          },
+          "roles": []
         }
       }
     },
@@ -3965,6 +3982,1965 @@
       "expected": {
         "accepted": false,
         "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "roles_one",
+      "description": "An app declares the roles a team admin may designate; absent declares none.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.approver",
+              "label": "Approver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": true,
+        "resolved": {
+          "manifest_version": 2,
+          "app_id": "fixture",
+          "agent_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status"
+          ],
+          "surface_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "workspace-answer",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status",
+            "human-input"
+          ],
+          "hook_tools": [
+            "audit-ingest"
+          ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
+          "app_keys": [
+            {
+              "kid": "app-2026-10",
+              "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+              "purposes": [
+                "app-event",
+                "app-request",
+                "app-usage"
+              ]
+            }
+          ],
+          "surfaces": [
+            {
+              "id": "workbench",
+              "label": "Workspace",
+              "format": "aweb.page/1",
+              "list_tool": "workspace-list",
+              "read_tool": "workspace-read",
+              "invoke_tool": "workspace-invoke",
+              "answer_tool": "workspace-answer",
+              "resource_param": "page_id",
+              "invocation_param": "request",
+              "events": [
+                {
+                  "type": "fixture/workspace.changed",
+                  "resource_field": "resource_ref",
+                  "revision_field": "rev"
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "format": "aweb.usage/1",
+            "snapshot_tool": "usage-snapshot"
+          },
+          "lifecycle": {
+            "export_tool": "workspace-export",
+            "delete_tool": "workspace-delete",
+            "status_tool": "lifecycle-status"
+          },
+          "hooks": {
+            "registration_version": 1,
+            "registrations": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-operation",
+                "tool": "audit-ingest",
+                "scopes": [
+                  "fixture:audit-ingest"
+                ]
+              }
+            ],
+            "productions": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-command",
+                "reads": [
+                  "workspace-list"
+                ]
+              }
+            ]
+          },
+          "roles": [
+            {
+              "name": "fixture.approver",
+              "label": "Approver",
+              "description": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "roles_64",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.role-0",
+              "label": "Role 0"
+            },
+            {
+              "name": "fixture.role-1",
+              "label": "Role 1"
+            },
+            {
+              "name": "fixture.role-2",
+              "label": "Role 2"
+            },
+            {
+              "name": "fixture.role-3",
+              "label": "Role 3"
+            },
+            {
+              "name": "fixture.role-4",
+              "label": "Role 4"
+            },
+            {
+              "name": "fixture.role-5",
+              "label": "Role 5"
+            },
+            {
+              "name": "fixture.role-6",
+              "label": "Role 6"
+            },
+            {
+              "name": "fixture.role-7",
+              "label": "Role 7"
+            },
+            {
+              "name": "fixture.role-8",
+              "label": "Role 8"
+            },
+            {
+              "name": "fixture.role-9",
+              "label": "Role 9"
+            },
+            {
+              "name": "fixture.role-10",
+              "label": "Role 10"
+            },
+            {
+              "name": "fixture.role-11",
+              "label": "Role 11"
+            },
+            {
+              "name": "fixture.role-12",
+              "label": "Role 12"
+            },
+            {
+              "name": "fixture.role-13",
+              "label": "Role 13"
+            },
+            {
+              "name": "fixture.role-14",
+              "label": "Role 14"
+            },
+            {
+              "name": "fixture.role-15",
+              "label": "Role 15"
+            },
+            {
+              "name": "fixture.role-16",
+              "label": "Role 16"
+            },
+            {
+              "name": "fixture.role-17",
+              "label": "Role 17"
+            },
+            {
+              "name": "fixture.role-18",
+              "label": "Role 18"
+            },
+            {
+              "name": "fixture.role-19",
+              "label": "Role 19"
+            },
+            {
+              "name": "fixture.role-20",
+              "label": "Role 20"
+            },
+            {
+              "name": "fixture.role-21",
+              "label": "Role 21"
+            },
+            {
+              "name": "fixture.role-22",
+              "label": "Role 22"
+            },
+            {
+              "name": "fixture.role-23",
+              "label": "Role 23"
+            },
+            {
+              "name": "fixture.role-24",
+              "label": "Role 24"
+            },
+            {
+              "name": "fixture.role-25",
+              "label": "Role 25"
+            },
+            {
+              "name": "fixture.role-26",
+              "label": "Role 26"
+            },
+            {
+              "name": "fixture.role-27",
+              "label": "Role 27"
+            },
+            {
+              "name": "fixture.role-28",
+              "label": "Role 28"
+            },
+            {
+              "name": "fixture.role-29",
+              "label": "Role 29"
+            },
+            {
+              "name": "fixture.role-30",
+              "label": "Role 30"
+            },
+            {
+              "name": "fixture.role-31",
+              "label": "Role 31"
+            },
+            {
+              "name": "fixture.role-32",
+              "label": "Role 32"
+            },
+            {
+              "name": "fixture.role-33",
+              "label": "Role 33"
+            },
+            {
+              "name": "fixture.role-34",
+              "label": "Role 34"
+            },
+            {
+              "name": "fixture.role-35",
+              "label": "Role 35"
+            },
+            {
+              "name": "fixture.role-36",
+              "label": "Role 36"
+            },
+            {
+              "name": "fixture.role-37",
+              "label": "Role 37"
+            },
+            {
+              "name": "fixture.role-38",
+              "label": "Role 38"
+            },
+            {
+              "name": "fixture.role-39",
+              "label": "Role 39"
+            },
+            {
+              "name": "fixture.role-40",
+              "label": "Role 40"
+            },
+            {
+              "name": "fixture.role-41",
+              "label": "Role 41"
+            },
+            {
+              "name": "fixture.role-42",
+              "label": "Role 42"
+            },
+            {
+              "name": "fixture.role-43",
+              "label": "Role 43"
+            },
+            {
+              "name": "fixture.role-44",
+              "label": "Role 44"
+            },
+            {
+              "name": "fixture.role-45",
+              "label": "Role 45"
+            },
+            {
+              "name": "fixture.role-46",
+              "label": "Role 46"
+            },
+            {
+              "name": "fixture.role-47",
+              "label": "Role 47"
+            },
+            {
+              "name": "fixture.role-48",
+              "label": "Role 48"
+            },
+            {
+              "name": "fixture.role-49",
+              "label": "Role 49"
+            },
+            {
+              "name": "fixture.role-50",
+              "label": "Role 50"
+            },
+            {
+              "name": "fixture.role-51",
+              "label": "Role 51"
+            },
+            {
+              "name": "fixture.role-52",
+              "label": "Role 52"
+            },
+            {
+              "name": "fixture.role-53",
+              "label": "Role 53"
+            },
+            {
+              "name": "fixture.role-54",
+              "label": "Role 54"
+            },
+            {
+              "name": "fixture.role-55",
+              "label": "Role 55"
+            },
+            {
+              "name": "fixture.role-56",
+              "label": "Role 56"
+            },
+            {
+              "name": "fixture.role-57",
+              "label": "Role 57"
+            },
+            {
+              "name": "fixture.role-58",
+              "label": "Role 58"
+            },
+            {
+              "name": "fixture.role-59",
+              "label": "Role 59"
+            },
+            {
+              "name": "fixture.role-60",
+              "label": "Role 60"
+            },
+            {
+              "name": "fixture.role-61",
+              "label": "Role 61"
+            },
+            {
+              "name": "fixture.role-62",
+              "label": "Role 62"
+            },
+            {
+              "name": "fixture.role-63",
+              "label": "Role 63"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": true,
+        "resolved": {
+          "manifest_version": 2,
+          "app_id": "fixture",
+          "agent_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status"
+          ],
+          "surface_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "workspace-answer",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status",
+            "human-input"
+          ],
+          "hook_tools": [
+            "audit-ingest"
+          ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
+          "app_keys": [
+            {
+              "kid": "app-2026-10",
+              "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+              "purposes": [
+                "app-event",
+                "app-request",
+                "app-usage"
+              ]
+            }
+          ],
+          "surfaces": [
+            {
+              "id": "workbench",
+              "label": "Workspace",
+              "format": "aweb.page/1",
+              "list_tool": "workspace-list",
+              "read_tool": "workspace-read",
+              "invoke_tool": "workspace-invoke",
+              "answer_tool": "workspace-answer",
+              "resource_param": "page_id",
+              "invocation_param": "request",
+              "events": [
+                {
+                  "type": "fixture/workspace.changed",
+                  "resource_field": "resource_ref",
+                  "revision_field": "rev"
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "format": "aweb.usage/1",
+            "snapshot_tool": "usage-snapshot"
+          },
+          "lifecycle": {
+            "export_tool": "workspace-export",
+            "delete_tool": "workspace-delete",
+            "status_tool": "lifecycle-status"
+          },
+          "hooks": {
+            "registration_version": 1,
+            "registrations": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-operation",
+                "tool": "audit-ingest",
+                "scopes": [
+                  "fixture:audit-ingest"
+                ]
+              }
+            ],
+            "productions": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-command",
+                "reads": [
+                  "workspace-list"
+                ]
+              }
+            ]
+          },
+          "roles": [
+            {
+              "name": "fixture.role-0",
+              "label": "Role 0",
+              "description": null
+            },
+            {
+              "name": "fixture.role-1",
+              "label": "Role 1",
+              "description": null
+            },
+            {
+              "name": "fixture.role-2",
+              "label": "Role 2",
+              "description": null
+            },
+            {
+              "name": "fixture.role-3",
+              "label": "Role 3",
+              "description": null
+            },
+            {
+              "name": "fixture.role-4",
+              "label": "Role 4",
+              "description": null
+            },
+            {
+              "name": "fixture.role-5",
+              "label": "Role 5",
+              "description": null
+            },
+            {
+              "name": "fixture.role-6",
+              "label": "Role 6",
+              "description": null
+            },
+            {
+              "name": "fixture.role-7",
+              "label": "Role 7",
+              "description": null
+            },
+            {
+              "name": "fixture.role-8",
+              "label": "Role 8",
+              "description": null
+            },
+            {
+              "name": "fixture.role-9",
+              "label": "Role 9",
+              "description": null
+            },
+            {
+              "name": "fixture.role-10",
+              "label": "Role 10",
+              "description": null
+            },
+            {
+              "name": "fixture.role-11",
+              "label": "Role 11",
+              "description": null
+            },
+            {
+              "name": "fixture.role-12",
+              "label": "Role 12",
+              "description": null
+            },
+            {
+              "name": "fixture.role-13",
+              "label": "Role 13",
+              "description": null
+            },
+            {
+              "name": "fixture.role-14",
+              "label": "Role 14",
+              "description": null
+            },
+            {
+              "name": "fixture.role-15",
+              "label": "Role 15",
+              "description": null
+            },
+            {
+              "name": "fixture.role-16",
+              "label": "Role 16",
+              "description": null
+            },
+            {
+              "name": "fixture.role-17",
+              "label": "Role 17",
+              "description": null
+            },
+            {
+              "name": "fixture.role-18",
+              "label": "Role 18",
+              "description": null
+            },
+            {
+              "name": "fixture.role-19",
+              "label": "Role 19",
+              "description": null
+            },
+            {
+              "name": "fixture.role-20",
+              "label": "Role 20",
+              "description": null
+            },
+            {
+              "name": "fixture.role-21",
+              "label": "Role 21",
+              "description": null
+            },
+            {
+              "name": "fixture.role-22",
+              "label": "Role 22",
+              "description": null
+            },
+            {
+              "name": "fixture.role-23",
+              "label": "Role 23",
+              "description": null
+            },
+            {
+              "name": "fixture.role-24",
+              "label": "Role 24",
+              "description": null
+            },
+            {
+              "name": "fixture.role-25",
+              "label": "Role 25",
+              "description": null
+            },
+            {
+              "name": "fixture.role-26",
+              "label": "Role 26",
+              "description": null
+            },
+            {
+              "name": "fixture.role-27",
+              "label": "Role 27",
+              "description": null
+            },
+            {
+              "name": "fixture.role-28",
+              "label": "Role 28",
+              "description": null
+            },
+            {
+              "name": "fixture.role-29",
+              "label": "Role 29",
+              "description": null
+            },
+            {
+              "name": "fixture.role-30",
+              "label": "Role 30",
+              "description": null
+            },
+            {
+              "name": "fixture.role-31",
+              "label": "Role 31",
+              "description": null
+            },
+            {
+              "name": "fixture.role-32",
+              "label": "Role 32",
+              "description": null
+            },
+            {
+              "name": "fixture.role-33",
+              "label": "Role 33",
+              "description": null
+            },
+            {
+              "name": "fixture.role-34",
+              "label": "Role 34",
+              "description": null
+            },
+            {
+              "name": "fixture.role-35",
+              "label": "Role 35",
+              "description": null
+            },
+            {
+              "name": "fixture.role-36",
+              "label": "Role 36",
+              "description": null
+            },
+            {
+              "name": "fixture.role-37",
+              "label": "Role 37",
+              "description": null
+            },
+            {
+              "name": "fixture.role-38",
+              "label": "Role 38",
+              "description": null
+            },
+            {
+              "name": "fixture.role-39",
+              "label": "Role 39",
+              "description": null
+            },
+            {
+              "name": "fixture.role-40",
+              "label": "Role 40",
+              "description": null
+            },
+            {
+              "name": "fixture.role-41",
+              "label": "Role 41",
+              "description": null
+            },
+            {
+              "name": "fixture.role-42",
+              "label": "Role 42",
+              "description": null
+            },
+            {
+              "name": "fixture.role-43",
+              "label": "Role 43",
+              "description": null
+            },
+            {
+              "name": "fixture.role-44",
+              "label": "Role 44",
+              "description": null
+            },
+            {
+              "name": "fixture.role-45",
+              "label": "Role 45",
+              "description": null
+            },
+            {
+              "name": "fixture.role-46",
+              "label": "Role 46",
+              "description": null
+            },
+            {
+              "name": "fixture.role-47",
+              "label": "Role 47",
+              "description": null
+            },
+            {
+              "name": "fixture.role-48",
+              "label": "Role 48",
+              "description": null
+            },
+            {
+              "name": "fixture.role-49",
+              "label": "Role 49",
+              "description": null
+            },
+            {
+              "name": "fixture.role-50",
+              "label": "Role 50",
+              "description": null
+            },
+            {
+              "name": "fixture.role-51",
+              "label": "Role 51",
+              "description": null
+            },
+            {
+              "name": "fixture.role-52",
+              "label": "Role 52",
+              "description": null
+            },
+            {
+              "name": "fixture.role-53",
+              "label": "Role 53",
+              "description": null
+            },
+            {
+              "name": "fixture.role-54",
+              "label": "Role 54",
+              "description": null
+            },
+            {
+              "name": "fixture.role-55",
+              "label": "Role 55",
+              "description": null
+            },
+            {
+              "name": "fixture.role-56",
+              "label": "Role 56",
+              "description": null
+            },
+            {
+              "name": "fixture.role-57",
+              "label": "Role 57",
+              "description": null
+            },
+            {
+              "name": "fixture.role-58",
+              "label": "Role 58",
+              "description": null
+            },
+            {
+              "name": "fixture.role-59",
+              "label": "Role 59",
+              "description": null
+            },
+            {
+              "name": "fixture.role-60",
+              "label": "Role 60",
+              "description": null
+            },
+            {
+              "name": "fixture.role-61",
+              "label": "Role 61",
+              "description": null
+            },
+            {
+              "name": "fixture.role-62",
+              "label": "Role 62",
+              "description": null
+            },
+            {
+              "name": "fixture.role-63",
+              "label": "Role 63",
+              "description": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "roles_name_128_bytes",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "label": "Approver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": true,
+        "resolved": {
+          "manifest_version": 2,
+          "app_id": "fixture",
+          "agent_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status"
+          ],
+          "surface_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "workspace-answer",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status",
+            "human-input"
+          ],
+          "hook_tools": [
+            "audit-ingest"
+          ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
+          "app_keys": [
+            {
+              "kid": "app-2026-10",
+              "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+              "purposes": [
+                "app-event",
+                "app-request",
+                "app-usage"
+              ]
+            }
+          ],
+          "surfaces": [
+            {
+              "id": "workbench",
+              "label": "Workspace",
+              "format": "aweb.page/1",
+              "list_tool": "workspace-list",
+              "read_tool": "workspace-read",
+              "invoke_tool": "workspace-invoke",
+              "answer_tool": "workspace-answer",
+              "resource_param": "page_id",
+              "invocation_param": "request",
+              "events": [
+                {
+                  "type": "fixture/workspace.changed",
+                  "resource_field": "resource_ref",
+                  "revision_field": "rev"
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "format": "aweb.usage/1",
+            "snapshot_tool": "usage-snapshot"
+          },
+          "lifecycle": {
+            "export_tool": "workspace-export",
+            "delete_tool": "workspace-delete",
+            "status_tool": "lifecycle-status"
+          },
+          "hooks": {
+            "registration_version": 1,
+            "registrations": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-operation",
+                "tool": "audit-ingest",
+                "scopes": [
+                  "fixture:audit-ingest"
+                ]
+              }
+            ],
+            "productions": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-command",
+                "reads": [
+                  "workspace-list"
+                ]
+              }
+            ]
+          },
+          "roles": [
+            {
+              "name": "fixture.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "label": "Approver",
+              "description": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "roles_label_128_runes",
+      "description": "Labels are counted in runes, not bytes.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.prices",
+              "label": "Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de p"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": true,
+        "resolved": {
+          "manifest_version": 2,
+          "app_id": "fixture",
+          "agent_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status"
+          ],
+          "surface_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "workspace-answer",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status",
+            "human-input"
+          ],
+          "hook_tools": [
+            "audit-ingest"
+          ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
+          "app_keys": [
+            {
+              "kid": "app-2026-10",
+              "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+              "purposes": [
+                "app-event",
+                "app-request",
+                "app-usage"
+              ]
+            }
+          ],
+          "surfaces": [
+            {
+              "id": "workbench",
+              "label": "Workspace",
+              "format": "aweb.page/1",
+              "list_tool": "workspace-list",
+              "read_tool": "workspace-read",
+              "invoke_tool": "workspace-invoke",
+              "answer_tool": "workspace-answer",
+              "resource_param": "page_id",
+              "invocation_param": "request",
+              "events": [
+                {
+                  "type": "fixture/workspace.changed",
+                  "resource_field": "resource_ref",
+                  "revision_field": "rev"
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "format": "aweb.usage/1",
+            "snapshot_tool": "usage-snapshot"
+          },
+          "lifecycle": {
+            "export_tool": "workspace-export",
+            "delete_tool": "workspace-delete",
+            "status_tool": "lifecycle-status"
+          },
+          "hooks": {
+            "registration_version": 1,
+            "registrations": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-operation",
+                "tool": "audit-ingest",
+                "scopes": [
+                  "fixture:audit-ingest"
+                ]
+              }
+            ],
+            "productions": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-command",
+                "reads": [
+                  "workspace-list"
+                ]
+              }
+            ]
+          },
+          "roles": [
+            {
+              "name": "fixture.prices",
+              "label": "Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de p",
+              "description": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "roles_description_512_runes",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.prices",
+              "label": "Preus",
+              "description": "Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. "
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": true,
+        "resolved": {
+          "manifest_version": 2,
+          "app_id": "fixture",
+          "agent_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status"
+          ],
+          "surface_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "workspace-answer",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status",
+            "human-input"
+          ],
+          "hook_tools": [
+            "audit-ingest"
+          ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
+          "app_keys": [
+            {
+              "kid": "app-2026-10",
+              "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+              "purposes": [
+                "app-event",
+                "app-request",
+                "app-usage"
+              ]
+            }
+          ],
+          "surfaces": [
+            {
+              "id": "workbench",
+              "label": "Workspace",
+              "format": "aweb.page/1",
+              "list_tool": "workspace-list",
+              "read_tool": "workspace-read",
+              "invoke_tool": "workspace-invoke",
+              "answer_tool": "workspace-answer",
+              "resource_param": "page_id",
+              "invocation_param": "request",
+              "events": [
+                {
+                  "type": "fixture/workspace.changed",
+                  "resource_field": "resource_ref",
+                  "revision_field": "rev"
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "format": "aweb.usage/1",
+            "snapshot_tool": "usage-snapshot"
+          },
+          "lifecycle": {
+            "export_tool": "workspace-export",
+            "delete_tool": "workspace-delete",
+            "status_tool": "lifecycle-status"
+          },
+          "hooks": {
+            "registration_version": 1,
+            "registrations": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-operation",
+                "tool": "audit-ingest",
+                "scopes": [
+                  "fixture:audit-ingest"
+                ]
+              }
+            ],
+            "productions": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-command",
+                "reads": [
+                  "workspace-list"
+                ]
+              }
+            ]
+          },
+          "roles": [
+            {
+              "name": "fixture.prices",
+              "label": "Preus",
+              "description": "Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. "
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "roles_null",
+      "description": "As for every version 2 member.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": null
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "roles_in_v1",
+      "description": "",
+      "base": "v1",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.approver",
+              "label": "Approver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "roles_empty_array",
+      "description": "No roles has one spelling: absent.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": []
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_65",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.role-0",
+              "label": "Role 0"
+            },
+            {
+              "name": "fixture.role-1",
+              "label": "Role 1"
+            },
+            {
+              "name": "fixture.role-2",
+              "label": "Role 2"
+            },
+            {
+              "name": "fixture.role-3",
+              "label": "Role 3"
+            },
+            {
+              "name": "fixture.role-4",
+              "label": "Role 4"
+            },
+            {
+              "name": "fixture.role-5",
+              "label": "Role 5"
+            },
+            {
+              "name": "fixture.role-6",
+              "label": "Role 6"
+            },
+            {
+              "name": "fixture.role-7",
+              "label": "Role 7"
+            },
+            {
+              "name": "fixture.role-8",
+              "label": "Role 8"
+            },
+            {
+              "name": "fixture.role-9",
+              "label": "Role 9"
+            },
+            {
+              "name": "fixture.role-10",
+              "label": "Role 10"
+            },
+            {
+              "name": "fixture.role-11",
+              "label": "Role 11"
+            },
+            {
+              "name": "fixture.role-12",
+              "label": "Role 12"
+            },
+            {
+              "name": "fixture.role-13",
+              "label": "Role 13"
+            },
+            {
+              "name": "fixture.role-14",
+              "label": "Role 14"
+            },
+            {
+              "name": "fixture.role-15",
+              "label": "Role 15"
+            },
+            {
+              "name": "fixture.role-16",
+              "label": "Role 16"
+            },
+            {
+              "name": "fixture.role-17",
+              "label": "Role 17"
+            },
+            {
+              "name": "fixture.role-18",
+              "label": "Role 18"
+            },
+            {
+              "name": "fixture.role-19",
+              "label": "Role 19"
+            },
+            {
+              "name": "fixture.role-20",
+              "label": "Role 20"
+            },
+            {
+              "name": "fixture.role-21",
+              "label": "Role 21"
+            },
+            {
+              "name": "fixture.role-22",
+              "label": "Role 22"
+            },
+            {
+              "name": "fixture.role-23",
+              "label": "Role 23"
+            },
+            {
+              "name": "fixture.role-24",
+              "label": "Role 24"
+            },
+            {
+              "name": "fixture.role-25",
+              "label": "Role 25"
+            },
+            {
+              "name": "fixture.role-26",
+              "label": "Role 26"
+            },
+            {
+              "name": "fixture.role-27",
+              "label": "Role 27"
+            },
+            {
+              "name": "fixture.role-28",
+              "label": "Role 28"
+            },
+            {
+              "name": "fixture.role-29",
+              "label": "Role 29"
+            },
+            {
+              "name": "fixture.role-30",
+              "label": "Role 30"
+            },
+            {
+              "name": "fixture.role-31",
+              "label": "Role 31"
+            },
+            {
+              "name": "fixture.role-32",
+              "label": "Role 32"
+            },
+            {
+              "name": "fixture.role-33",
+              "label": "Role 33"
+            },
+            {
+              "name": "fixture.role-34",
+              "label": "Role 34"
+            },
+            {
+              "name": "fixture.role-35",
+              "label": "Role 35"
+            },
+            {
+              "name": "fixture.role-36",
+              "label": "Role 36"
+            },
+            {
+              "name": "fixture.role-37",
+              "label": "Role 37"
+            },
+            {
+              "name": "fixture.role-38",
+              "label": "Role 38"
+            },
+            {
+              "name": "fixture.role-39",
+              "label": "Role 39"
+            },
+            {
+              "name": "fixture.role-40",
+              "label": "Role 40"
+            },
+            {
+              "name": "fixture.role-41",
+              "label": "Role 41"
+            },
+            {
+              "name": "fixture.role-42",
+              "label": "Role 42"
+            },
+            {
+              "name": "fixture.role-43",
+              "label": "Role 43"
+            },
+            {
+              "name": "fixture.role-44",
+              "label": "Role 44"
+            },
+            {
+              "name": "fixture.role-45",
+              "label": "Role 45"
+            },
+            {
+              "name": "fixture.role-46",
+              "label": "Role 46"
+            },
+            {
+              "name": "fixture.role-47",
+              "label": "Role 47"
+            },
+            {
+              "name": "fixture.role-48",
+              "label": "Role 48"
+            },
+            {
+              "name": "fixture.role-49",
+              "label": "Role 49"
+            },
+            {
+              "name": "fixture.role-50",
+              "label": "Role 50"
+            },
+            {
+              "name": "fixture.role-51",
+              "label": "Role 51"
+            },
+            {
+              "name": "fixture.role-52",
+              "label": "Role 52"
+            },
+            {
+              "name": "fixture.role-53",
+              "label": "Role 53"
+            },
+            {
+              "name": "fixture.role-54",
+              "label": "Role 54"
+            },
+            {
+              "name": "fixture.role-55",
+              "label": "Role 55"
+            },
+            {
+              "name": "fixture.role-56",
+              "label": "Role 56"
+            },
+            {
+              "name": "fixture.role-57",
+              "label": "Role 57"
+            },
+            {
+              "name": "fixture.role-58",
+              "label": "Role 58"
+            },
+            {
+              "name": "fixture.role-59",
+              "label": "Role 59"
+            },
+            {
+              "name": "fixture.role-60",
+              "label": "Role 60"
+            },
+            {
+              "name": "fixture.role-61",
+              "label": "Role 61"
+            },
+            {
+              "name": "fixture.role-62",
+              "label": "Role 62"
+            },
+            {
+              "name": "fixture.role-63",
+              "label": "Role 63"
+            },
+            {
+              "name": "fixture.role-64",
+              "label": "Approver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_not_array",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": {
+            "name": "fixture.approver",
+            "label": "Approver"
+          }
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_unknown_entry_field",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.approver",
+              "label": "Approver",
+              "scope": "fixture:write"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_entry_null_member",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.approver",
+              "label": "Approver",
+              "description": null
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_missing_label",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.approver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_empty_label",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.approver",
+              "label": ""
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_label_129_runes",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.prices",
+              "label": "Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de ps"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_label_bidi",
+      "description": "The host renders labels in its own chrome; bidi controls could reorder it.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.approver",
+              "label": "Approver‮"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_label_c0_control",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.approver",
+              "label": "Appro\u0007ver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_label_c1_control",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.approver",
+              "label": "Approver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_name_one_segment",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "owner",
+              "label": "Approver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_name_uppercase",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "Secrets.owner",
+              "label": "Approver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_name_colon",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "secrets:owner",
+              "label": "Approver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_name_empty_segment",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "secrets..owner",
+              "label": "Approver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_name_trailing_dot",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "secrets.owner.",
+              "label": "Approver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_name_padded",
+      "description": "Names compare exactly; nothing is trimmed.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": " secrets.owner",
+              "label": "Approver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_name_129_bytes",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "label": "Approver"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_duplicate_name",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.approver",
+              "label": "Approver"
+            },
+            {
+              "name": "fixture.approver",
+              "label": "Other"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_description_513_runes",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.prices",
+              "label": "Preus",
+              "description": "Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. s"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_description_empty",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.prices",
+              "label": "Preus",
+              "description": ""
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
+      }
+    },
+    {
+      "name": "roles_description_bidi",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/roles",
+          "value": [
+            {
+              "name": "fixture.prices",
+              "label": "Preus",
+              "description": "Aprova ‮preus"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "role_invalid"
       }
     },
     {

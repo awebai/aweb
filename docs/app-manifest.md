@@ -393,6 +393,7 @@ unchanged, removes `event_emitters`, and adds:
 | `usage` | `{format, snapshot_tool}`. |
 | `lifecycle` | `{export_tool, delete_tool, status_tool}`, at least one. |
 | `hooks` | The versioned hooks slot: `registration_version: 1`, `registrations` and `productions` (at most 64 each). |
+| `roles` | The roles a team admin may designate: `[{name, label, description?}]`, 1 to 64 entries. Absent declares none. |
 
 A v2 manifest declares at most 256 tools, and a v2 tool path has at most 32
 segments and no percent-encoding. Any manifest or catalog nested deeper than
@@ -402,6 +403,26 @@ level.
 Keys match exactly: `Surfaces` is not `surfaces`. v2 tool names are unique,
 so every lookup by name finds the same tool. v1 decoding is unchanged, and a
 v2 field in a v1 manifest is refused.
+
+### Designatable roles
+
+`roles` declares the roles a team admin may designate for this app. Absent
+declares none; an empty array is refused, so "none" has one spelling.
+
+- `name` is the designatable role grammar of `aweb_naapp.roles`:
+  dot-separated lowercase segments, at least two (`[a-z0-9][a-z0-9_-]*` each),
+  no `:`, at most 128 bytes, unique within the array and compared exactly,
+  never trimmed. A name is not tied to `app.id`: a role is scoped by the
+  installation that declares it.
+- `label` is 1 to 128 characters (runes), and the optional `description` is
+  1 to 512. The host shows both in its own chrome, in the install diff and
+  the designation UI, so neither may carry a C0 or C1 control character or a
+  bidi control (U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069).
+
+Every fault in `roles` is `role_invalid`, except `roles: null`, which is
+`manifest_invalid` like any null v2 member. The manifest only declares the
+roles; where the host reads them and what designating one allows are the
+host's contract.
 
 ### Tool invocation contexts
 

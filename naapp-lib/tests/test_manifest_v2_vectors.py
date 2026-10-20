@@ -168,3 +168,22 @@ def test_route_reach_check_is_prompt() -> None:
     started = time.monotonic()
     load_manifest(data, reserved_names=RESERVED)
     assert time.monotonic() - started < 1.0
+
+
+def test_role_names_follow_the_designatable_role_grammar() -> None:
+    # The manifest accepts exactly the names aweb_naapp.roles accepts.
+    roles = pytest.importorskip("aweb_naapp.roles")
+    names = ["fixture.approver", "a.b", "secrets.owner", "x-1.y_2.z", "fixture." + "x" * 120,
+             "fixture." + "x" * 121, "owner", "Secrets.owner", "secrets:owner", "secrets..owner",
+             "secrets.owner.", " secrets.owner", ".secrets.owner", "-a.b", "a.-b", "a.b c", "é.b", ""]
+    base = V2["base_manifests"]["v2"]
+    for name in names:
+        doc = copy.deepcopy(base)
+        doc["roles"] = [{"name": name, "label": "Role"}]
+        try:
+            load_manifest(json.dumps(doc).encode("utf-8"), reserved_names=RESERVED)
+            accepted = True
+        except ManifestError as refused:
+            assert refused.code == "role_invalid", refused
+            accepted = False
+        assert accepted == roles.is_role_name(name), name
