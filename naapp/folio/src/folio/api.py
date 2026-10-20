@@ -249,7 +249,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if payload.body is None:
                 raise HTTPException(status_code=422, detail="body must be a string")
             body = payload.body
-        return await create_document(
+        result = await create_document(
             database,
             principal=actor,
             settings=resolved,
@@ -257,6 +257,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             title=payload.title,
             body=body,
         )
+        await emit_doc_changed(
+            settings=resolved,
+            team_id=actor.team_id,
+            slug=payload.slug,
+            version=int(result["current_version"]),
+            source="api",
+        )
+        return result
 
     @app.get("/v1/documents", response_model=list[DocumentSummary])
     async def list_documents_route(
@@ -468,7 +476,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         payload = PresentationEditRequest.model_validate(await request.json())
-        return await edit_presented_document(
+        edited = await edit_presented_document(
             database,
             token=token,
             settings=resolved,
@@ -476,6 +484,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             base_version=payload.base_version,
             editor_name=payload.editor_name,
         )
+        await emit_doc_changed(
+            settings=resolved,
+            team_id=edited["team_id"],
+            slug=edited["slug"],
+            version=edited["version_number"],
+            source="present-link",
+        )
+        return {"version_number": edited["version_number"]}
 
     @app.post("/present/{token}/preview", response_class=HTMLResponse)
     async def presentation_preview_route(

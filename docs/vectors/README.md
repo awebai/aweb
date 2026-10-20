@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 22
+`docs/vectors/*.json` is the only public protocol-vector authority for the 23
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -35,6 +35,17 @@ repository-root authority. `test-vectors/app-manifests/` contains
 digest-pinned experimental app-manifest snapshots documented by
 [`app-manifest.md`](../app-manifest.md); they are not silently promoted into the
 identity/trust vector family.
+
+## Accepting protocols awaiting client rollout
+
+### `awid-controller-request-v2.json`
+
+Controller HTTP envelopes bind the configured registry audience, protocol type,
+method, external path/query and exact body, retaining the operation discriminator.
+The real AWID route consumes this vector, including wrong-audience and team-auth
+purpose refusals. Legacy forms remain accepted and measured until the operator's
+cutoff; clients emit this shape only after the accepting registry is deployed.
+See [AWID controller requests](../awid-controller-requests.md).
 
 ## Current protocol fixtures
 
@@ -311,7 +322,7 @@ reference duplication are mutation-tested failures.
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
-| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; folio `test_auth_v2_envelope.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
+| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; folio `test_auth_v2_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-authority-state-v1.json` | Python AWID `test_federation_authority_vectors.py`; Python aweb `test_federation_authority_core.py`, `test_federation_authority_schema.py`, and pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go`; generated `federation-error-reference.md` response-shape cross-check through `generate_federation_error_reference.py` (reason/status/retryability source is `awid/src/awid/federation_errors.py`); federation SOT/support coverage in `check-extension-docs.py` |

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from awid.registry import CachedRegistryClient, KeyResolution, RegistryError
 from aweb import identity_auth_deps
@@ -57,15 +58,17 @@ class _FailingIdentityRegistry:
 
 
 def _request_with_registry(registry_client):
-    return SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry_client)),
-        state=SimpleNamespace(),
-        headers={
-            "Authorization": "DIDKey did:key:alice sig",
-            "X-AWEB-Timestamp": "2026-06-22T00:00:00Z",
-            "X-AWEB-DID-AW": "did:aw:alice",
-        },
-    )
+    # Authentication metrics use the real HTTP route/method context.
+    return Request({
+        "type": "http", "scheme": "https", "method": "GET",
+        "path": "/v1/messages/inbox", "query_string": b"",
+        "app": SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry_client)),
+        "headers": [
+            (b"authorization", b"DIDKey did:key:alice sig"),
+            (b"x-aweb-timestamp", b"2026-06-22T00:00:00Z"),
+            (b"x-aweb-did-aw", b"did:aw:alice"),
+        ],
+    })
 
 
 @pytest.mark.asyncio

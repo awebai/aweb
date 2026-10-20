@@ -1,0 +1,53 @@
+{
+  "format": "aweb.usage/1",
+  "team_id": "demo:example.com",
+  "app_id": "fixture",
+  "installation_id": "installation-1",
+  "install_generation": 1,
+  "reporter": "primary-epoch-1",
+  "report_id": "report-1",
+  "first_seq": 1,
+  "last_seq": 2,
+  "metric_version": 1,
+  "entries": [
+    {
+      "seq": 1,
+      "occurred_at": "2026-10-19T10:00:00Z",
+      "operation_id": "fixture-op-1",
+      "attempt_id": "attempt-1",
+      "source": "cli",
+      "outcome": "committed",
+      "deltas": {
+        "calls": 1,
+        "pages_updated": 1,
+        "records_updated": 1,
+        "intents_created": 0
+      }
+    },
+    {
+      "seq": 2,
+      "occurred_at": "2026-10-19T10:00:01Z",
+      "operation_id": "fixture-op-1",
+      "attempt_id": "attempt-2",
+      "source": "cli",
+      "outcome": "idempotent_noop",
+      "deltas": {
+        "calls": 1,
+        "pages_updated": 0,
+        "records_updated": 0,
+        "intents_created": 0
+      }
+    }
+  ],
+  "inventory": {
+    "at_seq": 2,
+    "pages_live": 1,
+    "records_live": 1,
+    "bytes_live": 1250,
+    "bytes_versions": 0,
+    "bytes_audit": 700,
+    "bytes_assets": 0,
+    "bytes_deleted_retained": 0
+  },
+  "note": "Logical byte values are synthetic; transport uses purpose-bound app-usage auth, never events."
+}

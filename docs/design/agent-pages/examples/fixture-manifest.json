@@ -1,0 +1,407 @@
+{
+  "manifest_version": 2,
+  "app": {
+    "id": "fixture",
+    "version": "0.0.0-draft",
+    "origin": "https://fixture.example"
+  },
+  "tools": [
+    {
+      "name": "workspace-list",
+      "description": "Synthetic fixture workspace-list",
+      "method": "GET",
+      "path": "/v1/workspaces",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "params": [],
+      "scopes": [
+        "fixture:read"
+      ],
+      "mutation": false
+    },
+    {
+      "name": "workspace-read",
+      "description": "Synthetic fixture workspace-read",
+      "method": "GET",
+      "path": "/v1/workspaces/{page_id}",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          }
+        },
+        "required": [
+          "page_id"
+        ],
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "page_id",
+          "in": "path"
+        }
+      ],
+      "scopes": [
+        "fixture:read"
+      ],
+      "mutation": false
+    },
+    {
+      "name": "workspace-invoke",
+      "description": "Synthetic fixture workspace-invoke",
+      "method": "POST",
+      "path": "/v1/workspaces/{page_id}/invoke",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          },
+          "request": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "page_id",
+          "request"
+        ],
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "page_id",
+          "in": "path"
+        },
+        {
+          "name": "request",
+          "in": "body"
+        }
+      ],
+      "scopes": [
+        "fixture:write"
+      ],
+      "mutation": true,
+      "body": {
+        "mode": "json"
+      },
+      "invocation_contexts": [
+        "agent",
+        "surface"
+      ]
+    },
+    {
+      "name": "workspace-answer",
+      "description": "Synthetic fixture workspace-answer (human answers only)",
+      "method": "POST",
+      "path": "/v1/workspaces/{page_id}/answers",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          },
+          "request": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "page_id",
+          "request"
+        ],
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "page_id",
+          "in": "path"
+        },
+        {
+          "name": "request",
+          "in": "body"
+        }
+      ],
+      "scopes": [
+        "fixture:write"
+      ],
+      "mutation": true,
+      "body": {
+        "mode": "json"
+      },
+      "invocation_contexts": [
+        "surface"
+      ]
+    },
+    {
+      "name": "usage-snapshot",
+      "description": "Synthetic fixture usage-snapshot",
+      "method": "GET",
+      "path": "/v1/resource-usage",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "params": [],
+      "scopes": [
+        "fixture:usage"
+      ],
+      "mutation": false
+    },
+    {
+      "name": "workspace-export",
+      "description": "Synthetic fixture workspace-export",
+      "method": "POST",
+      "path": "/v1/export",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          }
+        },
+        "required": [
+          "page_id"
+        ],
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "page_id",
+          "in": "body"
+        }
+      ],
+      "scopes": [
+        "fixture:export"
+      ],
+      "mutation": true,
+      "body": {
+        "mode": "json"
+      }
+    },
+    {
+      "name": "workspace-delete",
+      "description": "Synthetic fixture workspace-delete",
+      "method": "POST",
+      "path": "/v1/erase",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          }
+        },
+        "required": [
+          "page_id",
+          "idempotency_key"
+        ],
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "page_id",
+          "in": "body"
+        },
+        {
+          "name": "idempotency_key",
+          "in": "body"
+        }
+      ],
+      "scopes": [
+        "fixture:delete"
+      ],
+      "mutation": true,
+      "body": {
+        "mode": "json"
+      }
+    },
+    {
+      "name": "lifecycle-status",
+      "description": "Synthetic fixture lifecycle-status",
+      "method": "GET",
+      "path": "/v1/jobs/{job_id}",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "job_id",
+          "in": "path"
+        }
+      ],
+      "scopes": [
+        "fixture:lifecycle"
+      ],
+      "mutation": false
+    },
+    {
+      "name": "audit-ingest",
+      "description": "Synthetic restricted-context fixture; no real credential content.",
+      "method": "POST",
+      "path": "/v1/audit-ingest",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "request",
+          "in": "body"
+        }
+      ],
+      "body": {
+        "mode": "json"
+      },
+      "scopes": [
+        "fixture:audit-ingest"
+      ],
+      "mutation": true,
+      "invocation_contexts": [
+        "hook"
+      ]
+    },
+    {
+      "name": "human-input",
+      "description": "Synthetic restricted-context fixture; no real credential content.",
+      "method": "POST",
+      "path": "/v1/human-input",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "request",
+          "in": "body"
+        }
+      ],
+      "body": {
+        "mode": "json"
+      },
+      "scopes": [
+        "fixture:human-input"
+      ],
+      "mutation": true,
+      "invocation_contexts": [
+        "surface"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "type": "workspace.changed",
+      "default_delivery_intent": "ambient",
+      "description": "Opaque revision changed."
+    }
+  ],
+  "app_keys": [
+    {
+      "kid": "app-2026-10",
+      "did_key": "did:key:z6Mk...",
+      "purposes": [
+        "app-event",
+        "app-request",
+        "app-usage"
+      ]
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "workbench",
+      "label": "Workspace",
+      "format": "aweb.page/1",
+      "list_tool": "workspace-list",
+      "read_tool": "workspace-read",
+      "invoke_tool": "workspace-invoke",
+      "answer_tool": "workspace-answer",
+      "inputs": {
+        "resource": "page_id",
+        "invocation": "request"
+      },
+      "events": [
+        {
+          "type": "fixture/workspace.changed",
+          "resource_field": "resource_ref",
+          "revision_field": "rev"
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "format": "aweb.usage/1",
+    "snapshot_tool": "usage-snapshot"
+  },
+  "lifecycle": {
+    "export_tool": "workspace-export",
+    "delete_tool": "workspace-delete",
+    "status_tool": "lifecycle-status"
+  },
+  "hooks": {
+    "registration_version": 1,
+    "registrations": [
+      {
+        "catalog": {
+          "id": "example.hooks",
+          "version": 1
+        },
+        "hook": "example.after-operation",
+        "tool": "audit-ingest",
+        "scopes": [
+          "fixture:audit-ingest"
+        ]
+      }
+    ],
+    "productions": [
+      {
+        "catalog": {
+          "id": "example.hooks",
+          "version": 1
+        },
+        "hook": "example.after-command",
+        "reads": [
+          "workspace-list"
+        ]
+      }
+    ]
+  }
+}
