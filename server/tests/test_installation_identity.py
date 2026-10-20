@@ -213,3 +213,24 @@ async def test_generation_allocations_serialize_and_rollback_with_the_registry_t
             assert await next_installation_generation_on(tx, team_id=TEAM, app_id="fixture") == 14
             raise RuntimeError("abort installation")
     assert await allocate() == 14
+
+
+async def test_generation_counter_outlives_team_deletion_and_recreation_under_the_same_id(db):
+    previous = await read(db)
+    await db.execute("DELETE FROM {{tables.teams}} WHERE team_id = $1", TEAM)
+    assert await read(db) is None
+    async with db.transaction() as tx:
+        await tx.execute(
+            "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) VALUES ($1, 'example.com', 'demo', 'did:key:new-controller')",
+            TEAM,
+        )
+        generation = await next_installation_generation_on(tx, team_id=TEAM, app_id="fixture")
+        await tx.execute(
+            """INSERT INTO {{tables.team_app_installs}}
+               (team_id, app_id, origin, digest, app_version, manifest_version, granted_scopes, generation)
+               VALUES ($1, 'fixture', $2, $3, '1.0.0', 1, ARRAY['fixture:read'], $4)""",
+            TEAM, ORIGIN, DIGEST, generation,
+        )
+    current = await read(db)
+    assert current["installation_id"] != previous["installation_id"]
+    assert current["generation"] > previous["generation"]
