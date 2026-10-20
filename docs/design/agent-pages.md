@@ -395,12 +395,11 @@ The older mail recommendation in `A docs/app-events.md:34` remains correct for
 ordinary app requests without task integration. This proposal adds a task-backed
 alternative, not a claim that existing event durability improved.
 
-Task metadata is team-visible today. Use generic titles, opaque page/action
-references and no guest message, booking details, capability or private proposal
-in the title and description. A task's answer is team-visible too: every answer,
-a page answer included, is written in full as the task's comment (Juan's ruling
-of 2026-10-20), as dashboard answers already are. No capability, token or link
-appears in a title, description, comment or mail. The agent re-reads using its
+Task metadata is team-visible, like everything else the team works on, and so
+is a task's answer: every answer, a page answer included, is written in full as
+the task's comment (Juan's ruling of 2026-10-20), as dashboard answers already
+are. The one content rule is that no capability, token or link appears in a
+title, description, comment or mail. The agent re-reads using its
 own certificate and page ACL; assignment does not grant page access. A
 restricted page can leak its existence through a task reference: disclose that
 boundary and use unguessable references. Until task visibility changes under its
