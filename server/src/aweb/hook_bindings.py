@@ -5,6 +5,9 @@ production is a hook the app may emit. Each install generation writes its
 declared bindings as pending. A new generation supersedes every earlier
 binding, so an owner's activation is never inherited, and uninstall revokes the
 live ones. Activation and owner revocation take an owner act and are not here.
+
+Binding times are stored at millisecond precision, the precision hook events
+spell them in, so a reader reports exactly what is stored.
 """
 
 from __future__ import annotations
@@ -175,7 +178,7 @@ async def write_pending_bindings(
     await tx.execute(
         """
         UPDATE {{tables.app_hook_bindings}}
-        SET state = 'superseded', ended_by = 'generation', revoked_at = NOW()
+        SET state = 'superseded', ended_by = 'generation', revoked_at = date_trunc('milliseconds', NOW())
         WHERE team_id = $1 AND app_id = $2 AND state IN ('pending', 'active')
           AND (digest <> $3
                OR origin <> $6
@@ -247,7 +250,7 @@ async def revoke_uninstalled_bindings(tx, *, team_id: str, app_id: str) -> int:
     result = await tx.execute(
         """
         UPDATE {{tables.app_hook_bindings}}
-        SET state = 'revoked', ended_by = 'uninstall', revoked_at = NOW()
+        SET state = 'revoked', ended_by = 'uninstall', revoked_at = date_trunc('milliseconds', NOW())
         WHERE team_id = $1 AND app_id = $2 AND state IN ('pending', 'active')
         """,
         validate_team_id(team_id),
