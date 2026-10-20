@@ -12,7 +12,7 @@ import base64
 import binascii
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from nacl.exceptions import BadSignatureError
@@ -21,6 +21,7 @@ from nacl.signing import SigningKey, VerifyKey
 from awid.did import public_key_from_did
 from awid.signing import canonical_json_bytes
 from awid.team_ids import parse_team_id
+from awid.utc_timestamps import parse_utc_seconds
 
 TEAM_CUSTODIAN = "aweb.team-custodian"
 MEMBER_CUSTODY = "aweb.member-custody"
@@ -32,7 +33,6 @@ ATTESTATION_HEADER_MAX_BYTES = 4096
 ATTESTATION_MAX_LIFETIME_SECONDS = 300
 CHANNELS = frozenset({"mcp_l2", "dashboard", "api"})
 
-_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 _CUSTODIAN_ID = re.compile(r"^[a-z0-9.-]{1,128}$")
 _CERTIFICATE_ID = re.compile(r"^[A-Za-z0-9-]{1,128}$")
 _HANDLE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -83,12 +83,10 @@ def _verify(did_key: str, payload: dict[str, Any], signature: bytes, error: type
 
 
 def _parse_timestamp(value: Any, error: type[ValueError]) -> datetime:
-    if not isinstance(value, str) or not _TIMESTAMP.fullmatch(value):
-        raise error("timestamp must be RFC 3339 UTC with Z and second precision")
     try:
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return parse_utc_seconds(value)
     except ValueError as exc:
-        raise error("invalid timestamp") from exc
+        raise error("timestamp must be RFC 3339 UTC with Z and second precision") from exc
 
 
 def _require_did_key(value: Any, error: type[ValueError]) -> None:

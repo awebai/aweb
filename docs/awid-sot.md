@@ -677,7 +677,8 @@ PUT    /v1/namespaces/{domain}/teams/{name}/server
        Signing bytes: "aweb.team-server/1\n" || canonical_json(record).
        Accepted only when the record has exactly these fields, names this
        team, carries the current team key and verifies under it, and its
-       issued_at (UTC seconds) is at most five minutes ahead of AWID's clock.
+       issued_at (UTC seconds: YYYY-MM-DDTHH:MM:SSZ in ASCII digits, naming a
+       real calendar date) is at most five minutes ahead of AWID's clock.
        server_url is a canonical https origin with an optional path prefix
        (no trailing slash, userinfo, query or fragment), at most 2048 bytes;
        http only for loopback hosts, and localhost only in development. The
