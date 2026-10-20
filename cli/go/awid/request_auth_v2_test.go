@@ -119,10 +119,41 @@ func TestRequestAuthPayloadVectors(t *testing.T) {
 	} {
 		t.Run(vector.claim, func(t *testing.T) {
 			target, _ := url.Parse("https://coordination.example.com/v1/tasks")
-			payload, err := requestAuthPayload("POST", target, vector.claim, vector.value, "2026-06-12T10:00:00Z", []byte(`{"title":"prepare review"}`))
+			payload, err := requestAuthPayload("POST", target, vector.claim, vector.value, "2026-06-12T10:00:00Z", []byte(`{"title":"prepare review"}`), nil)
 			if err != nil || string(payload) != vector.expected {
 				t.Fatalf("got %s (%v), want %s", payload, err, vector.expected)
 			}
 		})
+	}
+}
+
+func TestSignRequestCredentialRefusesCallerAuthorityClaimsAndInvalidInputs(t *testing.T) {
+	_, key, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := url.Parse("https://example.test/mount/a%2Fb?q=x%2Fy&b=2&a=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, claim := range []string{"team_id", "did_aw"} {
+		for _, field := range []string{"v", "aud", "method", "path", "body_sha256", "timestamp", "team_id", "did_aw"} {
+			t.Run(claim+"/"+field, func(t *testing.T) {
+				if _, _, _, err := SignRequestCredential(key, "POST", target, claim, "selected", "2026-06-12T10:00:00Z", []byte(`{}`), map[string]any{field: "caller-chosen"}); err == nil {
+					t.Fatal("caller-supplied authority claim was signed")
+				}
+			})
+		}
+	}
+	for _, invalidKey := range []ed25519.PrivateKey{nil, {1}, make([]byte, ed25519.SeedSize)} {
+		if _, _, _, err := SignRequestCredential(invalidKey, "GET", target, "did_aw", "", "2026-06-12T10:00:00Z", nil, nil); err == nil {
+			t.Fatal("invalid signing key accepted")
+		}
+	}
+	if _, _, _, err := SignRequestCredential(key, "GET", nil, "did_aw", "", "2026-06-12T10:00:00Z", nil, nil); err == nil {
+		t.Fatal("missing target accepted")
+	}
+	if _, _, _, err := SignRequestCredential(key, "GET", target, "operation", "rotate_key", "2026-06-12T10:00:00Z", nil, nil); err == nil {
+		t.Fatal("non-identity claim accepted")
 	}
 }

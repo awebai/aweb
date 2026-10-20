@@ -470,13 +470,15 @@ this exact prefix. There is no unprefixed compatibility mode: these signatures
 cannot authorize AWID log entries, controller operations or request authentication.
 Protocol-specific commands construct and sign their own protocol artifacts.
 
-`aw id request --team-auth` signs a target-bound v2 request envelope; optional
-`--sign` fields cannot override its authoritative claims. Without `--team-auth`,
-the interim request signs only the fixed compact-v1 identity claims: the actual
-body hash, selected `did_aw` and timestamp. Caller JSON is refused in this mode.
-This removes arbitrary signing but retains v1's known method/path/origin
-retargeting risk until identity-v2 verification is deployed and the client moves
-to v2. That migration follows the server-then-Cloud-then-client release order.
+`aw id request` signs a target-bound v2 request envelope through the same
+signer as SDK JSON, raw, streaming and connect requests. It binds the final
+external origin, method, raw path and query, actual body hash and timestamp.
+Without `--team-auth`, it binds the selected `did_aw` (empty for a local
+identity) and refuses caller JSON. With `--team-auth`, it binds the active
+certificate's team; optional `--sign` fields cannot replace any authoritative
+claim, including `did_aw`. A refusal never triggers a v1 fallback. Publish this
+client only after both the OSS server and every embedding host deploy the v2
+verifier, following the server-then-Cloud-then-client release order.
 
 ## Message verification and trust
 

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- All root-authenticated SDK and CLI requests now sign target-bound v2
+  envelopes, including identity-only `aw id request`; certificate and identity
+  claims share one signer. Grants keep their separate target-bound protocol.
+  This closes the interim identity-v1 retargeting residual. Publish this client
+  only after Cloud's v2 verifier is deployed; no fallback to v1 is performed.
+
 ## Release preparations
 
 ### Release preparation: aw 1.36.44

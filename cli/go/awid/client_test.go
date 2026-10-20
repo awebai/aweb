@@ -77,7 +77,7 @@ func TestRequestAuthPayloadDoesNotHTMLEscapeAndPreservesUnicode(t *testing.T) {
 	teamID := "backend:tést.example/<a&b>"
 
 	target, _ := url.Parse("https://example.test/mount/a%2Fb?q=x%2Fy")
-	payload, err := requestAuthPayload("POST", target, "team_id", teamID, timestamp, body)
+	payload, err := requestAuthPayload("POST", target, "team_id", teamID, timestamp, body, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1671,12 +1671,15 @@ func decorateTimeoutError(method string, err error) error {
 
 // requestAuthPayload binds the final external URL and decoded body bytes.
 // Identity-only requests bind did_aw; certificate requests bind team_id.
-func requestAuthPayload(method string, target *url.URL, claim, value, timestamp string, body []byte) ([]byte, error) {
+func requestAuthPayload(method string, target *url.URL, claim, value, timestamp string, body []byte, custom map[string]any) ([]byte, error) {
 	if target == nil || target.Scheme == "" || target.Host == "" {
 		return nil, fmt.Errorf("target URL is required")
 	}
+	if claim != "team_id" && claim != "did_aw" {
+		return nil, fmt.Errorf("unsupported request identity claim")
+	}
 	h := sha256.Sum256(body)
-	payload, err := CanonicalJSONValue(map[string]any{
+	fields := map[string]any{
 		"v":           2,
 		"aud":         target.Scheme + "://" + target.Host,
 		"method":      strings.ToUpper(method),
@@ -1684,8 +1687,30 @@ func requestAuthPayload(method string, target *url.URL, claim, value, timestamp 
 		"body_sha256": hex.EncodeToString(h[:]),
 		"timestamp":   timestamp,
 		claim:         value,
-	})
+	}
+	for name, value := range custom {
+		switch name {
+		case "v", "aud", "method", "path", "body_sha256", "timestamp", "team_id", "did_aw":
+			return nil, fmt.Errorf("request signing field %q is reserved", name)
+		}
+		fields[name] = value
+	}
+	payload, err := CanonicalJSONValue(fields)
 	return []byte(payload), err
+}
+
+// SignRequestCredential signs only a target-bound v2 certificate or identity
+// envelope. Optional operation claims cannot replace the authoritative fields.
+func SignRequestCredential(key ed25519.PrivateKey, method string, target *url.URL, claim, value, timestamp string, body []byte, custom map[string]any) (didKey, signature, canonical string, err error) {
+	if len(key) != ed25519.PrivateKeySize {
+		return "", "", "", fmt.Errorf("valid signing key is required")
+	}
+	payload, err := requestAuthPayload(method, target, claim, value, timestamp, body, custom)
+	if err != nil {
+		return "", "", "", err
+	}
+	didKey = ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	return didKey, base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, payload)), string(payload), nil
 }
 
 // signRequest is shared by JSON/raw, event SSE and chat SSE requests. Grant
@@ -1709,14 +1734,13 @@ func (c *Client) signRequest(req *http.Request, body []byte) error {
 	if c.teamCertHeader != "" {
 		claim, value = "team_id", c.teamID
 	}
-	payload, err := requestAuthPayload(req.Method, req.URL, claim, value, timestamp, body)
+	didKey, signature, canonical, err := SignRequestCredential(c.signingKey, req.Method, req.URL, claim, value, timestamp, body, nil)
 	if err != nil {
 		return err
 	}
-	sig := ed25519.Sign(c.signingKey, payload)
-	req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
+	req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
 	req.Header.Set("X-AWEB-Timestamp", timestamp)
-	req.Header.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString(payload))
+	req.Header.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(canonical)))
 	if c.teamCertHeader != "" {
 		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
 	} else if c.stableID != "" {
