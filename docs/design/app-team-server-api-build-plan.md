@@ -149,6 +149,9 @@ Hosted-side item H1, on the board as L6 (aweb-acgg.31).
   - `aw plugin install/update` sends the exact fetched bytes.
   - The server records whether each install carried bytes, so the later
     "require bytes" narrowing can be measured.
+  - Install and update write the append-only operator audit row
+    (`record_coordination_audit`) in the same transaction as their key
+    registration.
 - **Acceptance:**
   - a member cannot register an emit key or declaration that the pinned bytes
     do not declare, when bytes are carried;
@@ -201,14 +204,21 @@ Hosted-side item H1, on the board as L6 (aweb-acgg.31).
   - revocation takes effect on the next credential check;
   - a member without install authority is refused;
   - one team's revoke never touches another team's rows;
-  - the hook event is written in the revoke transaction or not at all;
+  - the operator audit row is written in the revoke transaction or not at all;
   - nothing reactivates a revoked key.
 - **Done-signal:** SHA ACKed, landed.
+- **Audit:** the team route and the operator command both write the
+  append-only operator audit row (`record_coordination_audit` in
+  `server/src/aweb/audit.py`, or its successor) in the same transaction as
+  `revoked_at`. That row is required from the first landing, so a revocation
+  never exists without an audit record and this task does not wait on the
+  hooks outbox.
 - **Depends on:** acgh.8 landed; F6's admin policy (aweb-acgg.5) for the
-  team route; aweb-acgh.1's core post-mutation-hook outbox (S2) for the
-  event. The route and its event commit together, so this task waits for the
-  outbox; the operator command can land first only if it also writes the
-  event.
+  team route.
+- **Follow-up G1-b3e:** once aweb-acgh.1's core post-mutation-hook outbox
+  (S2) lands, the revoke also enqueues `app_key.revoked` in the same
+  transaction, with a test that the event and `revoked_at` commit together or
+  not at all. Review: reviewer plus Athena.
 - **Review:** reviewer plus Athena.
 
 ### G1-b4: grant status read
@@ -399,7 +409,7 @@ created here.
 | H1 | Publish an `aweb.team-server/1` record for every team whose controller key the deployment holds: at creation, on any move and on team key rotation, in the same operation. Backfill all existing teams before any naapp depends on discovery. No interim pin or default. | L6, aweb-acgg.31 | G1-a1 |
 | H2 | The hosted install path sends the exact manifest bytes with every install, as `aw` does after G1-b2a, and reads no `app_registry_emit_keys` or `app_registry_event_types` rows. | L1, aweb-acgg.21 | G1-b2a; acgh.8 for the second half |
 | H3 | Hosted admin controls for per-team key revocation call the G1-b3 route under the hosted admin policy. | L1, aweb-acgg.21 | G1-b3, F6 |
-| H4 | Deploy runbook for each server release that migrates registrations: save installed apps' manifest bytes before migrating, reseed right after, report `key_conflict` teams. | operations (Hestia, on Juan's go), not a build task | each such release |
+| H4 | Deploy steps for each server release that migrates registrations: save installed apps' manifest bytes before migrating, reseed right after, report `key_conflict` teams. Under Juan's standing rule a release deploys once its last reviewer approves; these steps are part of that operations deploy. | operations (Hestia), not a build task | each such release |
 
 ## Cross-lane dependencies
 
