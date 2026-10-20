@@ -49,12 +49,14 @@ func HookClass(hook string) (class string, producers []string, ok bool) {
 	return spec.class, spec.producers, ok
 }
 
+// The field shapes of hook events, which other signed hook-family objects
+// share.
 var (
-	uuidPattern    = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	UUIDPattern    = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	traceIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
-	teamIDPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}:[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
-	originPattern  = regexp.MustCompile(`^https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?$`)
-	kidPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	TeamIDPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}:[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
+	OriginPattern  = regexp.MustCompile(`^https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?$`)
+	KIDPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 	didKeyPattern  = regexp.MustCompile(`^did:key:z[1-9A-HJ-NP-Za-km-z]{40,60}$`)
 	didAWPattern   = regexp.MustCompile(`^did:aw:[1-9A-HJ-NP-Za-km-z]{20,32}$`)
 	appIDPattern   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
@@ -135,21 +137,21 @@ func Verify(signing []byte, signature string, opts VerifyOptions) (*Envelope, er
 	if opts.TeamID == "" {
 		return nil, strictjson.Refuse("verifier_misconfigured", "an expected team is required")
 	}
-	env, err := open(signing, signature)
+	env, err := Open(signing)
 	if err != nil {
 		return nil, err
 	}
 	if env.TeamID != opts.TeamID {
 		return nil, strictjson.Refuse("team_mismatch", "event team %s, expected %s", env.TeamID, opts.TeamID)
 	}
-	if err := verifySignature(env.ProducerDIDKey, signing, signature); err != nil {
+	if err := VerifySignature(env.ProducerDIDKey, signing, signature); err != nil {
 		return nil, err
 	}
 	return env, nil
 }
 
-// open checks everything but the expected team and the signature.
-func open(signing []byte, signature string) (*Envelope, error) {
+// Open checks everything but the expected team and the signature.
+func Open(signing []byte) (*Envelope, error) {
 	if !bytes.HasPrefix(signing, []byte(EnvelopePrefix)) {
 		return nil, strictjson.Refuse("wrong_prefix", "signing bytes do not start with %q", EnvelopePrefix)
 	}
@@ -160,7 +162,9 @@ func open(signing []byte, signature string) (*Envelope, error) {
 	return checkEnvelope(fields)
 }
 
-func verifySignature(didKey string, message []byte, signature string) error {
+// VerifySignature checks a detached Ed25519 signature in its one spelling
+// against the key didKey names.
+func VerifySignature(didKey string, message []byte, signature string) error {
 	public, err := awid.ExtractPublicKey(didKey)
 	if err != nil {
 		return strictjson.Refuse("bad_signature", "did:key does not decode")
@@ -176,7 +180,7 @@ func verifySignature(didKey string, message []byte, signature string) error {
 }
 
 func checkEnvelope(f map[string]any) (*Envelope, error) {
-	if err := checkKeys(f, "", []string{
+	if err := CheckKeys(f, "", []string{
 		"v", "type", "catalog", "hook", "event_id", "trace", "team_id", "producer",
 		"actor", "occurred_at", "fired_at", "result_status", "payload",
 	}, nil); err != nil {
@@ -193,7 +197,7 @@ func checkEnvelope(f map[string]any) (*Envelope, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkKeys(catalog, "catalog.", []string{"id", "version"}, nil); err != nil {
+	if err := CheckKeys(catalog, "catalog.", []string{"id", "version"}, nil); err != nil {
 		return nil, err
 	}
 	if version, ok := catalog["version"].(int64); catalog["id"] != CatalogID || !ok || version != CatalogVersion {
@@ -205,14 +209,14 @@ func checkEnvelope(f map[string]any) (*Envelope, error) {
 		return nil, strictjson.Refuse("unknown_hook", "%v", f["hook"])
 	}
 
-	if err := match(f, "event_id", uuidPattern); err != nil {
+	if err := match(f, "event_id", UUIDPattern); err != nil {
 		return nil, err
 	}
 	trace, err := object(f, "trace")
 	if err != nil {
 		return nil, err
 	}
-	if err := checkKeys(trace, "trace.", []string{"id", "origin"}, nil); err != nil {
+	if err := CheckKeys(trace, "trace.", []string{"id", "origin"}, nil); err != nil {
 		return nil, err
 	}
 	if id, _ := trace["id"].(string); !traceIDPattern.MatchString(id) || id == "00000000000000000000000000000000" {
@@ -221,7 +225,7 @@ func checkEnvelope(f map[string]any) (*Envelope, error) {
 	if err := oneOf(trace, "origin", "trace.", []string{"signed_request", "producer"}); err != nil {
 		return nil, err
 	}
-	if err := match(f, "team_id", teamIDPattern); err != nil {
+	if err := match(f, "team_id", TeamIDPattern); err != nil {
 		return nil, err
 	}
 
@@ -242,7 +246,7 @@ func checkEnvelope(f map[string]any) (*Envelope, error) {
 	}
 
 	for _, name := range []string{"occurred_at", "fired_at"} {
-		if err := exactTime(f, name, eventTimeLayout); err != nil {
+		if err := ExactTime(f, name, EventTimeLayout); err != nil {
 			return nil, err
 		}
 	}
@@ -271,12 +275,12 @@ func checkProducer(p map[string]any, env *Envelope) error {
 	kind, _ := p["kind"].(string)
 	switch kind {
 	case "core":
-		if err := checkKeys(p, "producer.", []string{"kind", "origin", "kid", "did_key", "seq"}, nil); err != nil {
+		if err := CheckKeys(p, "producer.", []string{"kind", "origin", "kid", "did_key", "seq"}, nil); err != nil {
 			return err
 		}
 		env.Producer = "core"
 	case "app":
-		if err := checkKeys(p, "producer.", []string{
+		if err := CheckKeys(p, "producer.", []string{
 			"kind", "origin", "app_id", "installation_id", "generation", "kid", "did_key", "seq",
 		}, nil); err != nil {
 			return err
@@ -284,7 +288,7 @@ func checkProducer(p map[string]any, env *Envelope) error {
 		if err := match(p, "app_id", appIDPattern); err != nil {
 			return err
 		}
-		if err := match(p, "installation_id", uuidPattern); err != nil {
+		if err := match(p, "installation_id", UUIDPattern); err != nil {
 			return err
 		}
 		if err := positive(p, "generation"); err != nil {
@@ -292,7 +296,7 @@ func checkProducer(p map[string]any, env *Envelope) error {
 		}
 		env.Producer = "app:" + p["app_id"].(string)
 	case "client":
-		if err := checkKeys(p, "producer.", []string{"kind", "did_key", "certificate_id"}, nil); err != nil {
+		if err := CheckKeys(p, "producer.", []string{"kind", "did_key", "certificate_id"}, nil); err != nil {
 			return err
 		}
 		if err := match(p, "certificate_id", certIDPattern); err != nil {
@@ -303,10 +307,10 @@ func checkProducer(p map[string]any, env *Envelope) error {
 		return strictjson.Refuse("invalid_value", "producer.kind")
 	}
 	if kind != "client" {
-		if err := match(p, "origin", originPattern); err != nil {
+		if err := match(p, "origin", OriginPattern); err != nil {
 			return err
 		}
-		if err := match(p, "kid", kidPattern); err != nil {
+		if err := match(p, "kid", KIDPattern); err != nil {
 			return err
 		}
 		if err := positive(p, "seq"); err != nil {
@@ -314,7 +318,7 @@ func checkProducer(p map[string]any, env *Envelope) error {
 		}
 		env.ProducerKID = p["kid"].(string)
 	}
-	if err := ed25519DIDKey(p, "did_key", "producer."); err != nil {
+	if err := Ed25519DIDKey(p, "did_key", "producer."); err != nil {
 		return err
 	}
 	env.ProducerKind = kind
@@ -323,7 +327,7 @@ func checkProducer(p map[string]any, env *Envelope) error {
 }
 
 func checkActor(a map[string]any) error {
-	if err := checkKeys(a, "actor.", []string{"authority_mode", "attestations"},
+	if err := CheckKeys(a, "actor.", []string{"authority_mode", "attestations"},
 		[]string{"did_key", "did_aw", "certificate_id", "alias", "grant_id"}); err != nil {
 		return err
 	}
@@ -347,7 +351,7 @@ func checkActor(a map[string]any) error {
 	}
 	checks := map[string]*regexp.Regexp{
 		"did_key": didKeyPattern, "did_aw": didAWPattern, "certificate_id": certIDPattern,
-		"alias": aliasPattern, "grant_id": uuidPattern,
+		"alias": aliasPattern, "grant_id": UUIDPattern,
 	}
 	for _, name := range sortedKeys(checks) {
 		if _, present := a[name]; present {
@@ -357,7 +361,7 @@ func checkActor(a map[string]any) error {
 		}
 	}
 	if _, present := a["did_key"]; present {
-		if err := ed25519DIDKey(a, "did_key", "actor."); err != nil {
+		if err := Ed25519DIDKey(a, "did_key", "actor."); err != nil {
 			return err
 		}
 	}
@@ -401,7 +405,9 @@ func checkPayloadShape(value any) error {
 	return nil
 }
 
-func checkKeys(object map[string]any, prefix string, required, optional []string) error {
+// CheckKeys refuses a field outside required and optional (unknown_field)
+// and a missing required one (missing_field), naming fields after prefix.
+func CheckKeys(object map[string]any, prefix string, required, optional []string) error {
 	allowed := map[string]bool{}
 	for _, name := range append(append([]string{}, required...), optional...) {
 		allowed[name] = true
@@ -421,12 +427,12 @@ func checkKeys(object map[string]any, prefix string, required, optional []string
 	return nil
 }
 
-// eventTimeLayout is UTC with exactly three fractional digits.
-const eventTimeLayout = "2006-01-02T15:04:05.000Z"
+// EventTimeLayout is UTC with exactly three fractional digits.
+const EventTimeLayout = "2006-01-02T15:04:05.000Z"
 
-// exactTime accepts a time only in its one canonical spelling under layout,
+// ExactTime accepts a time only in its one canonical spelling under layout,
 // so an out-of-range field or a different precision is refused.
-func exactTime(f map[string]any, name, layout string) error {
+func ExactTime(f map[string]any, name, layout string) error {
 	value, ok := f[name].(string)
 	if !ok {
 		return strictjson.Refuse("invalid_value", "%s", name)
@@ -438,8 +444,8 @@ func exactTime(f map[string]any, name, layout string) error {
 	return nil
 }
 
-// ed25519DIDKey requires a did:key that decodes to an Ed25519 public key.
-func ed25519DIDKey(f map[string]any, name, prefix string) error {
+// Ed25519DIDKey requires a did:key that decodes to an Ed25519 public key.
+func Ed25519DIDKey(f map[string]any, name, prefix string) error {
 	value, ok := f[name].(string)
 	if !ok || !didKeyPattern.MatchString(value) {
 		return strictjson.Refuse("invalid_value", "%s%s", prefix, name)

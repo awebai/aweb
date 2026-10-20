@@ -49,11 +49,11 @@ type Delivery struct {
 // the second. A client producer passes its team certificate, which must name
 // the event's producer key and certificate; a server producer passes nil.
 func SignDelivery(key ed25519.PrivateKey, method string, target *url.URL, bindingID string, signing []byte, signature string, certificate *awid.TeamCertificate, timestamp time.Time) (*Delivery, error) {
-	env, err := open(signing, signature)
+	env, err := Open(signing)
 	if err != nil {
 		return nil, err
 	}
-	if err := verifySignature(env.ProducerDIDKey, signing, signature); err != nil {
+	if err := VerifySignature(env.ProducerDIDKey, signing, signature); err != nil {
 		return nil, err
 	}
 	didKey := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
@@ -78,7 +78,7 @@ func SignDelivery(key ed25519.PrivateKey, method string, target *url.URL, bindin
 	if target == nil || target.Scheme != "https" || target.Host == "" {
 		return nil, strictjson.Refuse("invalid_value", "target must be an https URL")
 	}
-	if !uuidPattern.MatchString(bindingID) {
+	if !UUIDPattern.MatchString(bindingID) {
 		return nil, strictjson.Refuse("invalid_value", "binding_id")
 	}
 	body, err := strictjson.Canonical(map[string]any{
@@ -178,13 +178,13 @@ func VerifyDelivery(method, path string, headers map[string]string, body []byte,
 	if !didKeyPattern.MatchString(headerDIDKey) {
 		return nil, strictjson.Refuse("bad_signature", "malformed did:key")
 	}
-	if err := verifySignature(headerDIDKey, signedPayload, authSignature); err != nil {
+	if err := VerifySignature(headerDIDKey, signedPayload, authSignature); err != nil {
 		return nil, err
 	}
 	if payload["auth"] != "hook-delivery" {
 		return nil, strictjson.Refuse("wrong_auth", "%v", payload["auth"])
 	}
-	if err := checkKeys(payload, "", deliveryPayloadKeys, nil); err != nil {
+	if err := CheckKeys(payload, "", deliveryPayloadKeys, nil); err != nil {
 		return nil, err
 	}
 	if payload["did_key"] != headerDIDKey {
@@ -194,7 +194,7 @@ func VerifyDelivery(method, path string, headers map[string]string, body []byte,
 		return nil, strictjson.Refuse("invalid_value", "v")
 	}
 	teamID, ok := payload["team_id"].(string)
-	if !ok || !teamIDPattern.MatchString(teamID) {
+	if !ok || !TeamIDPattern.MatchString(teamID) {
 		return nil, strictjson.Refuse("invalid_value", "team_id")
 	}
 	if payload["aud"] != opts.Audience {
@@ -207,7 +207,7 @@ func VerifyDelivery(method, path string, headers map[string]string, body []byte,
 	if payload["body_sha256"] != hex.EncodeToString(sum[:]) {
 		return nil, strictjson.Refuse("body_mismatch", "body_sha256")
 	}
-	if err := exactTime(payload, "timestamp", deliveryTimeLayout); err != nil {
+	if err := ExactTime(payload, "timestamp", deliveryTimeLayout); err != nil {
 		return nil, err
 	}
 	stamp := payload["timestamp"].(string)
@@ -223,7 +223,7 @@ func VerifyDelivery(method, path string, headers map[string]string, body []byte,
 	if err != nil {
 		return nil, strictjson.Refuse("invalid_body", "%v", err)
 	}
-	if err := checkKeys(bodyObject, "body.", []string{"hook_event", "signature"}, nil); err != nil {
+	if err := CheckKeys(bodyObject, "body.", []string{"hook_event", "signature"}, nil); err != nil {
 		return nil, strictjson.Refuse("invalid_body", "%v", err)
 	}
 	eventText, _ := bodyObject["hook_event"].(string)
