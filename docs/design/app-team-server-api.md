@@ -286,7 +286,12 @@ declarations and keys from digest-pinned bytes. App keys follow the same rules.
   only under its own digest and in its own team, where it already holds
   install authority (narrowed to admins by F6). Owner activation of a hook
   binding compares the digest the owner's client fetched from the origin
-  (audit-substrate §A3), so bytes the installer made never activate.
+  (audit-substrate §A3), so bytes the installer made never activate. App
+  events in that team, however, can be signed by keys those bytes declare,
+  under the app's id. Event provenance (D1, aweb-acgh.1) should therefore show
+  the install's digest and that the server did not verify it against the
+  origin, so agents in that team do not read such events as the real app's.
+  This is acceptable once install is admin-only (F6).
 - **No interim path.** v1 manifests declare no `app_keys` (strict v1 rejects
   unknown fields, `docs/app-manifest.md`, "Top-level structure"), so read
   purposes exist only for v2 installs after C3. Released clients send no
@@ -297,7 +302,10 @@ declarations and keys from digest-pinned bytes. App keys follow the same rules.
 A team's install authority, meaning F6's admin policy, may revoke one key for
 its own team at once, without waiting for a new digest:
 `POST /v1/apps/{app_id}/keys/{kid}/revoke`, with ordinary team auth. It sets
-the team row's `revoked_at`, which is one-way. Key rows are the team's own, so
+the team row's `revoked_at`, which is one-way, and enqueues the
+post-mutation-hook event `app_key.revoked` (`team_id`, `app_id`, `kid`,
+`purposes`, actor) in the same transaction, because which events a target
+accepts is audit-relevant (audit-substrate §A6). Key rows are the team's own, so
 one team can never disable an app for another. Revocation for every team is
 the app's own act: it publishes new bytes, and each team installs the new
 digest.
