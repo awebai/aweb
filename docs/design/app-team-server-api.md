@@ -117,7 +117,15 @@ record = {
   certificate status is (`docs/awid-sot.md:583`–`:597`). It returns
   `{record, signature}` exactly as stored. Only the current record is served.
   Moving a team is a newer record. Rotating the team key invalidates the old
-  record, and the controller re-signs.
+  record, so rotation re-signs and publishes the record in the same
+  operation: in `aw`'s rotate flow for BYOT, and in the same step for a
+  custodial deployment. A publish that fails after rotation is reported and
+  retried, because publishing is idempotent. Until it succeeds, naapps fail
+  closed for that team.
+- **Privacy.** Like certificate status, the anonymous `GET` reveals a private
+  team's server URL to anyone who knows the team id. A server URL is not a
+  credential, and the team-id-keyed anonymous reads are already accepted for
+  certificate status. This design accepts the same exposure, and states it.
 - **CLI.** `aw id team set-server --url <server_url>` signs locally with the
   team key under the existing controller custody, BYOT or local, and
   publishes. `aw id team show-server` reads and verifies. Both are generic.
@@ -133,13 +141,17 @@ Input: a `team_id` taken from a team certificate that B1 has already verified
 against AWID. The naapp never uses a team id or URL from a request body or
 header.
 
-1. **Registry.** Select the registry for the team's domain exactly as B1 does
-   for team keys: the `_awid.<domain>` statement's registry, or the canonical
-   public registry when no statement exists. A malformed, duplicate,
-   timed-out or failed lookup refuses and never falls back
-   (`docs/awid-sot.md:279`–`:287`; `awid/src/awid/dns_verify.py:57`–`:66`).
-2. **Current team key** from that registry, the same value B1 caches for
-   certificate verification.
+1. **Registry.** Select the registry for the team's domain: the
+   `_awid.<domain>` statement's registry, or the canonical public registry
+   when no statement exists. A malformed, duplicate, timed-out or failed
+   lookup refuses and never falls back (`docs/awid-sot.md:279`–`:287`;
+   `awid/src/awid/dns_verify.py:57`–`:66`). This must be the same registry
+   whose team key verified the certificate. If the verifier is configured
+   with a single registry, discovery uses that registry and refuses a domain
+   whose `_awid` statement names a different one, rather than mixing two
+   authorities for one team.
+2. **Current team key** from that registry, read through B1's team cache
+   (`AWIDTeamCache`), one instance per registry origin, not a second cache.
 3. **Record.** `GET …/teams/{name}/server` from the same registry. Require
    `type`, `v`, `team_id` equal to the input, and `team_did_key` equal to the
    current team key. Verify the Ed25519 signature over the signing bytes.
@@ -223,24 +235,60 @@ from the existing app-emit verifier and driven by a fixed purpose table:
   current installed digest. That code is also what an app sees once it has no
   installation.
 
-### Key registration
+### Key registration: keys come only from the pinned bytes
 
-The install request gains an additive, optional field (`server/src/aweb/routes/apps.py:30`–`:40`):
+An app key is the app's own statement, so the server takes it only from the
+manifest bytes that hash to the pinned digest. It never takes one from a
+field the installer fills in. Otherwise any certified member could install an
+app's real origin and digest with keys of its own. Because key rows belong to
+the shared `(app_id, origin, digest)` entry
+(`server/src/aweb/migrations/aweb/009_app_events.sql:21`–`:40`), that key
+would then be active for every team that pins the digest. The shipped
+`event_emitters` path has exactly this gap today
+(`server/src/aweb/routes/apps.py:104`–`:133`,
+`server/src/aweb/app_registry.py:371`–`:385`, `:462`–`:492`). Its fix belongs
+to the event lane and can reuse the mechanism below.
 
-```json
-"app_keys": [{"kid": "read-2026-10", "did_key": "did:key:z6Mk…", "purposes": ["app-grant-read", "hook-resolve"]}]
-```
+- **Install carries the bytes.** The install request gains an additive,
+  optional `manifest` field: the exact fetched bytes, base64, bounded in size
+  (`server/src/aweb/routes/apps.py:30`–`:40`). There is no `app_keys` request
+  field.
+- **The server checks the bytes.** `sha256(manifest)` must equal `digest`.
+  The bytes must parse as the declared `manifest_version`, with `app.id` and
+  `app.origin` equal to the request's `app_id` and `origin`. The server then
+  reads `app_keys: [{kid, did_key, purposes}]` from those bytes (v2, frozen by
+  C3), using a strict reader of only the fields it needs, held to C3's
+  interpreter vectors. A mismatch refuses the install with a distinct error.
+- **Rows are content-determined and immutable.** They go in a new ordered
+  migration, `app_registry_app_keys (app_id, origin, digest, key_id, did_key,
+  purposes TEXT[], created_at)`. A row for a given `(app_id, origin, digest,
+  key_id)` is written once and never overwritten. The same bytes always yield
+  the same rows, so every team pinning that digest shares exactly the keys the
+  bytes declare.
+- **Labels.** A purpose label is a lower-case token. An unrecognized label is
+  stored and grants nothing, which is D1's rule.
+- **What this does not prove.** Matching the digest does not prove that the
+  origin serves those bytes. An installer can pin bytes of its own making, but
+  only under its own digest and in its own team, where it already holds
+  install authority (narrowed to admins by F6). It cannot add a key to
+  another team's digest. Owner activation of a hook binding compares the
+  digest the owner's client fetched from the origin (audit-substrate §A3), so
+  bytes the installer made never activate.
+- **No interim path.** v1 manifests declare no `app_keys` (strict v1 rejects
+  unknown fields, `docs/app-manifest.md`, "Top-level structure"), so read
+  purposes exist only for v2 installs after C3. Released clients send no
+  `manifest`, so existing installs are unchanged.
 
-Rows go in a new ordered migration, `app_registry_app_keys (app_id, origin,
-digest, key_id, did_key, purposes TEXT[], created_at, revoked_at)`, scoped to
-the registry entry exactly as emit keys are
-(`server/src/aweb/migrations/aweb/009_app_events.sql:21`–`:40`). A purpose
-label is a lower-case token. An unrecognized label is stored and grants
-nothing, which is D1's rule. Released clients send no `app_keys`, so existing
-installs are unchanged. The manifest declaration (v2 `app_keys`) and the CLI
-forwarding it belong to C3, because strict v1 rejects unknown fields
-(`docs/app-manifest.md`, "Top-level structure"). Until C3 lands, only a
-direct install call registers read keys.
+### Per-team key revocation
+
+A team's install authority, meaning F6's admin policy, may revoke one key for
+its own team at once, without waiting for a new digest:
+`POST /v1/apps/{app_id}/keys/{kid}/revoke`, with ordinary team auth. The row
+goes in `team_app_key_revocations (team_id, app_id, digest, key_id,
+revoked_at, revoked_by)`, which every purpose's key lookup consults. Revocation
+is per team because key rows are shared across teams, and one team must not be
+able to disable an app for another. Revocation for every team is the app's
+own act: it publishes new bytes, and each team installs the new digest.
 
 ## 3. Grant status
 
@@ -291,6 +339,10 @@ parameter, so an app can read only its own grant.
 
 - A positive answer is reused for at most `min(max_age_seconds, 60)`, counted
   from the client's own receipt time. There is no stale fallback.
+- An expired entry is never served, including while a refresh is in flight.
+  Each refresh has a request timeout (configuration, default 5 s). A caller
+  waiting on it receives unavailable when it fires, so the staleness bound is
+  `max_age_seconds` itself, with no unbounded refresh on top.
 - A definitive "not granted" may be cached for the same window.
 - Concurrent misses for one `(team, app)` share one refresh.
 
@@ -354,13 +406,21 @@ and `httpx` (`naapp-lib/pyproject.toml` on `agents/aweb-protocol-expert-naapp-ve
 
 - `TeamServerDirectory`: `resolve(team_id) -> TeamServer(server_url, audience, team_did_key)`, implementing the §1 chain. It reuses the same registry selection and team-key cache as B1's verifier rather than a second copy.
 - `AppCredentialSigner(app_id, kid, private_key_path, purpose)`: signs one purpose. The key is loaded from a path. No key material appears in configuration values or logs.
-- `TeamGrantSource`: the remote implementation of B1's `GrantSource`, with the §3 semantics.
-- `HookResolver`: `registrations(team_id, catalog, version, hook)` and `productions(…)`, with the §4 semantics.
+- `TeamGrantSource`: the remote implementation of B1's `GrantSource`
+  (`aweb_naapp.runtime.authorization`), using
+  `async grant_for(team_id) -> Grant | None`:
+  - an active installation of this app returns
+    `Grant(team_id, scopes, fresh_until, installation_id, generation)`, where
+    `fresh_until` is the client's monotonic receipt time plus
+    `min(max_age_seconds, 60)`;
+  - an inactive state or `app_key_not_registered` returns `None`, which B1
+    maps to `403`;
+  - unpublished discovery, an outage, a timeout or a malformed answer raises
+    `GrantUnavailable`, which B1 maps to `503 authority_unavailable`.
 
-The exact `GrantSource` method signature is B1's. This design needs only that
-B1's result can express grant, not-granted and unavailable, and carries
-nullable `installation_id` and `generation`. That shape is to be confirmed
-with the B1 seat before building.
+  The source itself checks the answer's `app_id`, `origin` and `digest`
+  against the app's own identity before returning a grant.
+- `HookResolver`: `registrations(team_id, catalog, version, hook)` and `productions(…)`, with the §4 semantics.
 
 ## 6. Proposed build split
 
