@@ -305,7 +305,7 @@ async def test_proactive_registry_outage_keeps_valid_certificate_until_expiry(pr
 const {resolveConfig} = await import(process.env.CORE_CONFIG);
 const {APIClient} = await import(process.env.CORE_CLIENT);
 let fetches=0; const nativeFetch=globalThis.fetch;
-globalThis.fetch=(...args)=>{fetches++;return nativeFetch(...args);};
+globalThis.fetch=(...args)=>{if(String(args[0]).startsWith(process.env.AWID_REGISTRY_URL))fetches++;return nativeFetch(...args);};
 const config=await resolveConfig(process.env.MEMBER_WORKDIR);
 assert.deepEqual((await new APIClient(config.baseURL,config).get('/v1/identity-grants')).grants,[]);
 await resolveConfig(process.env.MEMBER_WORKDIR);

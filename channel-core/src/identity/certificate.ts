@@ -101,7 +101,7 @@ export async function verifyTeamCertificate(cert: TeamCertificate, teamDIDKey: s
   validateCertificateLifetime(cert, now);
 }
 
-export async function fetchReplacementCertificate(old: TeamCertificate, id: string, signingKey: Uint8Array, registryURL: string): Promise<{ certificate: TeamCertificate; teamDIDKey: string }> {
+export async function fetchReplacementCertificate(old: TeamCertificate, id: string, signingKey: Uint8Array, registryURL: string, signal?: AbortSignal): Promise<{ certificate: TeamCertificate; teamDIDKey: string }> {
   const split = old.team_id.indexOf(":");
   if (split < 1) throw new Error("Invalid certificate team");
   const team = old.team_id.slice(0, split), domain = old.team_id.slice(split + 1);
@@ -116,7 +116,7 @@ export async function fetchReplacementCertificate(old: TeamCertificate, id: stri
       headers.Authorization = `DIDKey ${old.member_did_key} ${signature}`;
       headers["X-AWEB-Timestamp"] = timestamp;
     }
-    const response = await fetch(origin + path, { headers, redirect: "error", signal: AbortSignal.timeout(30_000) });
+    const response = await fetch(origin + path, { headers, redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) });
     if (!response.ok) { await response.body?.cancel(); throw new Error(`Certificate registry refused (${response.status})`); }
     return readBoundedJSON<T>(response);
   };

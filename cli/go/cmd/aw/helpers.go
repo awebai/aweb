@@ -796,7 +796,9 @@ func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Cl
 				}
 				return client, nil
 			}
-			fresh, _, refreshErr := refresh(context.Background(), "")
+			refreshContext, cancelRefresh := context.WithTimeout(context.Background(), 2*time.Second)
+			fresh, _, refreshErr := refresh(refreshContext, "")
+			cancelRefresh()
 			if refreshErr != nil {
 				if !time.Now().Before(expires) {
 					return nil, fmt.Errorf("certificate_expired: %w", refreshErr)

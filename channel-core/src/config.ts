@@ -226,8 +226,8 @@ export async function resolveConfig(workdir: string, options: ResolveConfigOptio
     throw new Error("active membership alias does not match the team certificate");
   }
 
-  const refreshCertificate = async (id: string) => {
-    const fresh = await fetchReplacementCertificate(certificate, id, signingKey, (process.env.AWID_REGISTRY_URL || registryURL).trim());
+  const refreshCertificate = async (id: string, signal?: AbortSignal) => {
+    const fresh = await fetchReplacementCertificate(certificate, id, signingKey, (process.env.AWID_REGISTRY_URL || registryURL).trim(), signal);
     if (identityHome.external) preflightFile(loadedCertificate.path, "team certificate");
     await installTeamCertificate(loadedCertificate.path, fresh.certificate);
     certificate = fresh.certificate;
@@ -238,7 +238,7 @@ export async function resolveConfig(workdir: string, options: ResolveConfigOptio
     const attemptKey = loadedCertificate.path + ":" + certificate.certificate_id;
     if (Date.now() >= expires - (expires - issued) / 3 && !proactiveCertificateAttempts.has(attemptKey)) {
       proactiveCertificateAttempts.add(attemptKey);
-      try { await refreshCertificate(""); }
+      try { await refreshCertificate("", AbortSignal.timeout(2_000)); }
       catch (error) {
         if (Date.now() >= expires) throw error;
         console.warn("Proactive certificate refresh unavailable; using the still-valid certificate:", error);

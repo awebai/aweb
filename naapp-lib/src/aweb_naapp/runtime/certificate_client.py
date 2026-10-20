@@ -6,6 +6,7 @@ on behalf of an incoming request.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -87,8 +88,9 @@ class TeamCertificateHTTPClient:
         domain, name = parse_team_id(self.certificate['team_id'])
         self._proactive_checked_at = time.monotonic()
         try:
-            fresh = await self.registry.fetch_current_member_certificate(domain, name, self.certificate['alias'], self.key)
-            await self._install_verified_membership(fresh)
+            async with asyncio.timeout(2):
+                fresh = await self.registry.fetch_current_member_certificate(domain, name, self.certificate['alias'], self.key)
+                await self._install_verified_membership(fresh)
         except Exception:
             if datetime.now(timezone.utc) >= expires:
                 raise
