@@ -339,3 +339,19 @@ async def test_malformed_status_is_unavailable_and_not_cached(registry, team, ch
         await cache.get(TEAM_ID, "target")
     assert caught.value.status_code == 503
     assert not cache._certificate_cache
+
+
+async def test_unknown_team_key_is_negative_cached_for_one_minute(registry, team):
+    cache = status_cache(registry)
+    for _ in range(3):
+        with pytest.raises(HTTPException) as error:
+            await cache.current_team_key('absent:example.com')
+        assert error.value.status_code == 401
+    paths = [r.url.path for r in registry.transport.calls]
+    assert paths.count('/v1/namespaces/example.com/teams/absent/credential-lifetimes') == 1
+    assert 0 < cache._current_team_keys['absent:example.com'][1] - time.monotonic() <= 60
+    assert await cache.current_team_key(TEAM_ID) == team.team_did_key
+    cache._current_team_keys['absent:example.com'] = (None, -1)
+    with pytest.raises(HTTPException):
+        await cache.current_team_key('absent:example.com')
+    assert sum(r.url.path.endswith('/absent/credential-lifetimes') for r in registry.transport.calls) == 2

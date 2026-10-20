@@ -722,12 +722,16 @@ async def status_stream(
         return True
 
     if identity.grant is None:
+        certificate_deadline = clamp_deadline_to_certificate(datetime.max.replace(tzinfo=timezone.utc), request)
+        async def certificate_disconnected_or_expired():
+            return datetime.now(timezone.utc) >= certificate_deadline or await request.is_disconnected()
         return StreamingResponse(
             stream_events_multi(
                 redis,
                 workspace_ids,
                 event_type_set,
-                check_disconnected=request.is_disconnected,
+                keepalive_seconds=1 if not workspace_ids and getattr(request.state, 'team_certificate_expires_at', None) else 30,
+                check_disconnected=certificate_disconnected_or_expired,
                 event_filter=event_visible,
             ),
             media_type="text/event-stream",

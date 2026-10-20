@@ -12,6 +12,7 @@ from redis.asyncio import from_url as async_redis_from_url
 
 from awid.log_config import configure_logging
 from awid.ratelimit import build_rate_limiter as _shared_build_rate_limiter
+from awid.ratelimit import certificate_status_limit_from_env
 from .attestation_rotation import rotate_max_body_bytes_from_env
 from .config import get_settings
 from .routes.a2a_publications import router as a2a_publications_router
@@ -122,6 +123,7 @@ def create_app(
 
     app = FastAPI(title="awid.ai registry", version=service_version, lifespan=lifespan)
 
+    app.state.certificate_status_limit = certificate_status_limit_from_env()
     app.state.rotate_max_body_bytes = rotate_max_body_bytes_from_env()
 
     # Covering controller signatures use configuration, never Host/forwarded headers.

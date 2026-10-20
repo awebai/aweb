@@ -16,7 +16,7 @@ from test_attestation_record_routes import _person,publish_person
 
 def read_headers(key,did,path):
     timestamp=datetime.now(timezone.utc).isoformat()
-    return {'Authorization':f'DIDKey {did} {sign_message(key,(timestamp+chr(10)+"GET"+chr(10)+path).encode())}',
+    return {'Authorization':f'DIDKey {did} {sign_message(key,(timestamp+chr(10)+"GET"+chr(10)+path.split('?')[0]).encode())}',
         'X-AWEB-Timestamp':timestamp}
 
 
@@ -39,6 +39,10 @@ async def test_expired_members_lose_private_reads_team_listing_and_attestation_a
     listing='/v1/namespaces/local/teams'
     assert (await env.client.get(base,headers=read_headers(*member,base))).status_code==200
     assert (await env.client.get(listing,headers=read_headers(*member,listing))).json()['teams']
+    roster=base+'/certificates?active_only=true'
+    member_path=base+'/members/'+cert['alias']
+    assert (await env.client.get(roster,headers=read_headers(*env.team,roster))).json()['certificates']
+    assert (await env.client.get(member_path,headers=read_headers(*env.team,member_path))).status_code==200
     record=_person(env,body)
     assert (await publish_person(env,record)).status_code==200
     await asyncio.sleep(max(0,(expiry-datetime.now(timezone.utc)).total_seconds())+.02)
@@ -47,6 +51,8 @@ async def test_expired_members_lose_private_reads_team_listing_and_attestation_a
     response=await env.client.get(listing,headers=read_headers(*member,listing))
     assert response.status_code==200 and response.json()['teams']==[]
     assert (await publish_person(env,record)).status_code==404
+    assert (await env.client.get(roster,headers=read_headers(*env.team,roster))).json()['certificates']==[]
+    assert (await env.client.get(member_path,headers=read_headers(*env.team,member_path))).status_code==404
     controller = RegistryClient(ORIGIN, transport=httpx.ASGITransport(app=env.app))
     try:
         assert await controller.fetch_team_certificate_for_renewal('local', 'base', cert['certificate_id'], env.team[0]) == cert
@@ -122,3 +128,59 @@ async def test_opt_in_issuer_projection_preserves_default_shape_and_signed_expir
                 assert await sdk.resolve_active_certificate('local','base',cert['certificate_id'])
     finally:
         await sdk.aclose()
+
+
+@pytest.mark.asyncio
+async def test_unknown_team_key_is_negative_cached_before_discovery_and_probe(controller_app):
+    env=controller_app
+    requests=[]
+    class RecordingTransport(httpx.ASGITransport):
+        async def handle_async_request(self,request):
+            requests.append(request.url.path)
+            return await super().handle_async_request(request)
+    client=RegistryClient(ORIGIN,transport=RecordingTransport(app=env.app))
+    try:
+        for _ in range(3):
+            assert await client.get_team_current_public_key('local','unknown') is None
+        initial=len(requests)
+        assert initial>=1
+        assert requests.count('/v1/namespaces/local/teams/unknown/credential-lifetimes')==1
+        assert await client.get_team_current_public_key('local','base')==env.team[1]
+        for key in client._unknown_team_keys:
+            client._unknown_team_keys[key]-=61
+        assert await client.get_team_current_public_key('local','unknown') is None
+        assert len(requests)>initial+1
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_successful_revoke_survives_real_redis_auth_outage(controller_app,caplog):
+    import os
+    from redis.asyncio import Redis
+    from awid.registry import CachedRegistryClient
+    env=controller_app
+    body=certificate_body(env)
+    assert (await register(env,body)).status_code==200
+    redis=Redis.from_url(os.environ['REDIS_URL'],password='deliberately-invalid-test-password',socket_connect_timeout=.2,socket_timeout=.2)
+    client=CachedRegistryClient(ORIGIN,redis_client=redis,transport=httpx.ASGITransport(app=env.app))
+    try:
+        await client.revoke_team_certificate('local','base',team_controller_signing_key=env.team[0],certificate_id=body['certificate_id'])
+        assert await env.db.fetch_value('SELECT revoked_at IS NOT NULL FROM {{tables.team_certificates}} WHERE certificate_id=$1',body['certificate_id'])
+    finally:
+        await client.aclose()
+        await redis.aclose()
+
+
+def test_certificate_status_limit_is_parsed_at_app_creation(monkeypatch):
+    from awid_service.main import create_app
+    monkeypatch.setenv('AWID_CERTIFICATE_STATUS_LIMIT_PER_MINUTE','invalid')
+    with pytest.raises(ValueError):
+        create_app()
+    monkeypatch.setenv('AWID_CERTIFICATE_STATUS_LIMIT_PER_MINUTE','777')
+    app=create_app()
+    assert app.state.certificate_status_limit==777
+    monkeypatch.setenv('AWID_CERTIFICATE_STATUS_LIMIT_PER_MINUTE','still-invalid')
+    from awid.ratelimit import _rate_config
+    from starlette.requests import Request
+    assert _rate_config('certificate_status',Request({'type':'http','app':app}))==(777,60)

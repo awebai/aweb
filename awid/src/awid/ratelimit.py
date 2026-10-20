@@ -193,17 +193,20 @@ _BUCKET_DEFAULTS: dict[str, tuple[int, int]] = {
 }
 
 
-def _rate_config(bucket: str) -> tuple[int, int]:
+def certificate_status_limit_from_env() -> int:
+    raw = os.getenv("AWID_CERTIFICATE_STATUS_LIMIT_PER_MINUTE", "").strip()
+    limit = int(raw) if raw else _BUCKET_DEFAULTS['certificate_status'][0]
+    if limit < 1:
+        raise ValueError("AWID_CERTIFICATE_STATUS_LIMIT_PER_MINUTE must be positive")
+    return limit
+
+
+def _rate_config(bucket: str, request: Request | None = None) -> tuple[int, int]:
     cfg = _BUCKET_DEFAULTS.get(bucket)
     if cfg is None:
         raise ValueError(f"unknown rate limit bucket: {bucket}")
-    if bucket == "certificate_status":
-        raw = os.getenv("AWID_CERTIFICATE_STATUS_LIMIT_PER_MINUTE", "").strip()
-        if raw:
-            limit = int(raw)
-            if limit < 1:
-                raise ValueError("AWID_CERTIFICATE_STATUS_LIMIT_PER_MINUTE must be positive")
-            return limit, 60
+    if bucket == 'certificate_status' and request is not None:
+        return getattr(request.app.state, 'certificate_status_limit', cfg[0]), cfg[1]
     return cfg
 
 
@@ -242,7 +245,7 @@ async def enforce_rate_limit(
     key: str,
 ) -> None:
     limiter = await get_rate_limiter(request)
-    limit, window = _rate_config(bucket)
+    limit, window = _rate_config(bucket, request)
     decision = await limiter.hit(
         bucket=bucket,
         key=key,
@@ -309,7 +312,7 @@ def rate_limit_dep(
                     bucket,
                 )
 
-        limit, window = _rate_config(bucket)
+        limit, window = _rate_config(bucket, request)
         key = key_extractor(request)
         decision = await limiter.hit(
             bucket=bucket, key=key, limit=limit, window_seconds=window

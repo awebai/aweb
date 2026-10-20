@@ -127,7 +127,7 @@ async def test_certificate_streams_close_at_signed_expiry(privacy_app, monkeypat
     cert=await parent(env,expires_at=expiry.isoformat())
     actor=env.actors['alice']
     query=urlencode(dict(deadline=(expiry+timedelta(minutes=2)).isoformat()))
-    paths=['/v1/events/stream?'+query,f"/v1/chat/sessions/{chat.json()['session_id']}/stream?{query}"]
+    paths=['/v1/events/stream?'+query,f"/v1/chat/sessions/{chat.json()['session_id']}/stream?{query}",'/v1/status/stream']
     async with AsyncExitStack() as stack:
         responses=[]
         for path in paths:
@@ -221,3 +221,19 @@ async def test_never_grant_streams_close_at_replacement_certificate_expiry(priva
     assert datetime.now(timezone.utc)<expiry+timedelta(seconds=2)
     for body in bodies:
         assert b'grant_expired' in body
+
+
+@pytest.mark.asyncio
+async def test_missing_later_replacement_is_revoked_not_unregistered(privacy_app, monkeypatch):
+    env=privacy_app
+    monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED','true')
+    monkeypatch.setenv('AWEB_REQUIRE_REGISTERED_CERTIFICATES','false')
+    cert=await parent(env)
+    key,did,grant=await _mint(env)
+    registry=env.app.state.awid_registry_client
+    fresh=await _rollover(env,registry,cert)
+    assert (await _read(env,key,did,grant)).status_code==200
+    await env.registry_db.execute('DELETE FROM {{tables.team_certificates}} WHERE certificate_id=$1',fresh['certificate_id'])
+    await registry.invalidate_team_certificate_cache('example.test',TEAM.split(':')[0])
+    refused=await _read(env,key,did,grant)
+    assert refused.status_code==403 and 'issuing certificate revoked' in refused.text

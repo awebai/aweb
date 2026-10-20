@@ -999,6 +999,7 @@ async def list_certificates(
 
     if active_only:
         where_clauses.append("tc.revoked_at IS NULL")
+        where_clauses.append("(tc.expires_at IS NULL OR tc.expires_at > now())")
 
     if since is not None:
         try:
@@ -1088,6 +1089,7 @@ async def get_team_member(
         WHERE tc.team_uuid = $1
           AND tc.alias = $2
           AND tc.revoked_at IS NULL
+          AND (tc.expires_at IS NULL OR tc.expires_at > now())
         ORDER BY tc.issued_at DESC, tc.id DESC
         LIMIT 1
         """,

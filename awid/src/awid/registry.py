@@ -302,6 +302,8 @@ class RegistryClient:
     _credential_policy_cache: dict = field(default_factory=OrderedDict, init=False, repr=False, compare=False)
     _credential_policy_locks: dict = field(default_factory=weakref.WeakValueDictionary, init=False, repr=False, compare=False)
     _certificate_status_cache: dict = field(default_factory=OrderedDict, init=False, repr=False, compare=False)
+    _unknown_team_keys: dict = field(default_factory=OrderedDict, init=False, repr=False, compare=False)
+    _team_key_locks: dict = field(default_factory=weakref.WeakValueDictionary, init=False, repr=False, compare=False)
     _certificate_status_locks: dict = field(default_factory=weakref.WeakValueDictionary, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -487,12 +489,28 @@ class RegistryClient:
 
     async def get_team_current_public_key(self, domain: str, name: str) -> str | None:
         """Use the anonymous signed-record read's authoritative current key."""
-        await self.get_team_credential_policy(domain, name)
-        origin = await self._registry_url_for_domain(domain)
-        cached = self._credential_policy_cache.get((origin, domain, name))
-        if cached and len(cached) > 2:
-            return cached[2]
-        return await self.get_team_public_key(domain, name)  # Recognized old registry only.
+        # Check under the configured origin before discovery as well, so an
+        # unknown team cannot force DNS/probe traffic on every request.
+        cache_key = (canonical_server_origin(self.registry_url), domain, name)
+        async with self._team_key_locks.setdefault(cache_key, asyncio.Lock()):
+            started = time.monotonic()
+            if started - self._unknown_team_keys.get(cache_key, float('-inf')) < 60:
+                return None
+            try:
+                await self.get_team_credential_policy(domain, name)
+                origin = await self._registry_url_for_domain(domain)
+                cached = self._credential_policy_cache.get((origin, domain, name))
+                if cached and len(cached) > 2:
+                    key = cached[2]
+                else:
+                    key = await self.get_team_public_key(domain, name)  # Recognized old registry only.
+            except RegistryError as exc:
+                if exc.status_code != 404:
+                    raise
+                key = None
+            if key is None:
+                _bounded_cache_put(self._unknown_team_keys, cache_key, started, 1024)
+            return key
 
     async def set_team_credential_policy(self, domain: str, name: str, record: dict[str, Any], signature: str, *,
                                          signing_key: bytes | None = None, controller_did_key: str | None = None,
@@ -571,7 +589,12 @@ class RegistryClient:
             if certificate_id in seen:
                 return None
             seen.add(certificate_id)
-            status = await self.get_team_certificate_status(domain, name, certificate_id)
+            try:
+                status = await self.get_team_certificate_status(domain, name, certificate_id)
+            except RegistryError as exc:
+                if exc.status_code == 404 and hop > 0:
+                    return None  # A broken chain is revoked, never unregistered.
+                raise
             member = status.get('member_did_key')
             if expected_member is None:
                 expected_member = member
@@ -1337,7 +1360,10 @@ class RegistryClient:
             json={"certificate_id": certificate_id},
             registry_url=registry_url,
         )
-        await self.invalidate_team_certificate_cache(domain, name)
+        try:
+            await self.invalidate_team_certificate_cache(domain, name)
+        except Exception:
+            logger.warning('Certificate revoke succeeded; cache invalidation unavailable, converging by TTL', exc_info=True)
 
     async def invalidate_team_certificate_cache(self, domain: str, name: str) -> None:
         """Drop all exact-ID facts for the caller after membership mutations."""
@@ -1839,7 +1865,7 @@ class CachedRegistryClient(RegistryClient):
     async def invalidate_team_certificate_cache(self, domain: str, name: str) -> None:
         await super().invalidate_team_certificate_cache(domain, name)
         try:
-            await self._invalidate_team_certificate_cache_keys(domain, name)
+            await self._invalidate_team_certificate_cache_keys(domain, name, tolerate_unavailable=True)
         finally:
             await self._invalidate_keys(self._team_revocations_cache_key(domain, name))
 

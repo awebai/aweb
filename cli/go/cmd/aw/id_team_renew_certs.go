@@ -61,13 +61,17 @@ func runTeamRenewCerts(cmd *cobra.Command, args []string) error {
 	if policy != nil && policy["team_did_key"] != controllerDID {
 		return fmt.Errorf("policy is not signed by this team's controller")
 	}
-	certs, err := registry.ListCertificatesWithLifetimes(cmd.Context(), registryURL, domain, name, true, key)
+	certs, err := registry.ListCertificatesWithLifetimes(cmd.Context(), registryURL, domain, name, false, key)
 	if err != nil {
 		return err
 	}
 	renewed := []string{}
 	failed := []map[string]string{}
 	for _, listed := range certs {
+		// Renewal includes expired artifacts, while the active roster excludes them.
+		if listed.RevokedAt != "" {
+			continue
+		}
 		alias, didRenew, renewalErr := func() (string, bool, error) {
 			// The listing supplies locators only. Membership comes exclusively from an
 			// artifact authenticated under the controller's own public key.

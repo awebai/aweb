@@ -277,3 +277,10 @@ own key before any fields are copied. Expiry does not prevent this artifact
 read; it still prevents all member authorization. Cloud's scheduler uses this
 public seam when retrieving signing input from AWID rather than its own verified
 certificate store.
+
+Migration012 needs no backfill: coordinator b3b08c2d confirmed that no deployment
+has issued v2 certificates, production runs AWID0.5.29, and the released tags
+awid-v0.5.29, awid-service-v0.5.29, server-v1.27.29 and aw-v1.36.44 contain no v2
+certificate/lifetime implementation. V2 support exists only on this unlanded
+branch and was enabled only inside isolated tests. This documents the migration
+precondition without editing an existing migration.

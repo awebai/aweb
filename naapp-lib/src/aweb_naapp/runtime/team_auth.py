@@ -177,7 +177,7 @@ class AWIDTeamCache:
                 raise HTTPException(status_code=503, detail='AWID current team key unavailable') from exc
             finally:
                 await registry.aclose()
-            self._current_team_keys[team_id] = (key, now + 30)
+            self._current_team_keys[team_id] = (key, now + (30 if key else 60))
             while len(self._current_team_keys) > 1024:
                 self._current_team_keys.popitem(last=False)
             if not key:
