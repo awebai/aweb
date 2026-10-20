@@ -3387,6 +3387,66 @@ function computeStableID(publicKey) {
   return "did:aw:" + esm_default2.encode(hash2.subarray(0, 20));
 }
 
+// channel-core/package.json
+var package_default = {
+  name: "@awebai/channel-core",
+  version: "0.2.0",
+  description: "Shared aweb channel core for agent host adapters such as Claude Code and pi.",
+  type: "module",
+  main: "./dist/index.js",
+  types: "./dist/index.d.ts",
+  files: [
+    "dist",
+    "README.md",
+    "package.json"
+  ],
+  scripts: {
+    build: "rm -rf dist && tsc -p tsconfig.json",
+    pretest: "npm run build",
+    test: "vitest run",
+    "test:process-guard": "npm run build && node --test test/delivery_store_process.node.mjs",
+    prepublishOnly: "npm run build"
+  },
+  dependencies: {
+    "@noble/ed25519": "^2.2.3",
+    "@noble/hashes": "^2.0.1",
+    bs58: "^6.0.0",
+    "js-yaml": "^4.3.0",
+    "proper-lockfile": "^4.1.2",
+    tldts: "^7.0.27"
+  },
+  devDependencies: {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.5.2",
+    "@types/proper-lockfile": "^4.1.4",
+    typescript: "^5.9.3",
+    vitest: "^4.0.0"
+  },
+  license: "MIT",
+  repository: {
+    type: "git",
+    url: "git+https://github.com/awebai/aweb.git",
+    directory: "channel-core"
+  }
+};
+
+// channel-core/src/client_metadata.ts
+var CORE_CLIENT_METADATA = {
+  name: "aweb-channel-core",
+  version: package_default.version
+};
+function clientMetadataHeaders(client = CORE_CLIENT_METADATA) {
+  const token = `${client.name}/${client.version}`;
+  return { "User-Agent": token, "X-AWEB-Client-Version": token };
+}
+function identifiedFetch(client = CORE_CLIENT_METADATA) {
+  return (input, init) => {
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : void 0));
+    for (const [name, value] of Object.entries(clientMetadataHeaders(client))) headers.set(name, value);
+    return fetch(input, { ...init, headers });
+  };
+}
+
 // channel-core/src/api/client.ts
 etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 function canonicalTimestamp() {
@@ -3421,12 +3481,14 @@ function signIdentityGrantHeaders(options) {
   };
 }
 var APIClient = class {
-  constructor(baseURL, auth) {
+  constructor(baseURL, auth, clientMetadata) {
     this.baseURL = baseURL;
     this.auth = auth;
+    this.clientMetadata = clientMetadata;
   }
   baseURL;
   auth;
+  clientMetadata;
   hasTeamCertificateAuth(teamID) {
     return this.auth.teamID === teamID && this.auth.teamCertificateHeader.trim() !== "" && this.auth.did.trim() !== "" && this.auth.signingKey.length > 0;
   }
@@ -3458,6 +3520,7 @@ var APIClient = class {
     const bodyText = body === void 0 ? "" : JSON.stringify(body);
     const headers = {
       Accept: "application/json",
+      ...clientMetadataHeaders(this.clientMetadata),
       ...this.authHeaders(method, path, bodyText)
     };
     if (noCache) headers["Cache-Control"] = "no-cache";
@@ -3486,6 +3549,7 @@ var APIClient = class {
       redirect: "error",
       headers: {
         Accept: "text/event-stream",
+        ...clientMetadataHeaders(this.clientMetadata),
         "Cache-Control": "no-cache",
         ...this.authHeaders("GET", path, "")
       }
@@ -9583,13 +9647,13 @@ function resolveRegistryFallbackURL(identityRegistryURL = "") {
   const configuredRegistryURL = identityRegistryURL.trim();
   return configuredRegistryURL || void 0;
 }
-function createRegistryResolver(config, resolveTxt2) {
-  return new RegistryResolver(fetch, resolveTxt2, void 0, {
+function createRegistryResolver(config, resolveTxt2, clientMetadata) {
+  return new RegistryResolver(identifiedFetch(clientMetadata), resolveTxt2, void 0, {
     fallbackRegistryURL: resolveRegistryFallbackURL(config.registryURL),
     identityAddress: config.address
   });
 }
-function createChannelClient(config) {
+function createChannelClient(config, clientMetadata) {
   const client = new APIClient(config.baseURL, {
     did: config.did,
     stableID: config.stableID,
@@ -9598,7 +9662,7 @@ function createChannelClient(config) {
     teamCertificateHeader: config.teamCertificateHeader,
     authMode: config.authMode,
     grantID: config.grantID
-  });
+  }, clientMetadata);
   if (config.authMode !== "grant" && !client.hasTeamCertificateAuth(config.teamID)) {
     throw new Error(`selected active team ${config.teamID} is missing certificate signing authentication`);
   }
@@ -10547,9 +10611,10 @@ async function start(init) {
     const config = await resolveConfig(init.home, { identityHome: binding.identity_home, teamID: binding.team_id });
     const grantScopes = new Set(config.grantScopes || []);
     bindingCapabilities.set(binding.binding_id, { grant: config.authMode === "grant", scopes: grantScopes });
-    const client = createChannelClient(config);
+    const metadata = { name: "aweb-wake", version: init.clientVersion || "dev" };
+    const client = createChannelClient(config, metadata);
     const pinStore = binding.pin_store_path ? await loadPinStore(binding.pin_store_path) : await loadPinStore();
-    const trust = new SenderTrustManager(client, createRegistryResolver(config), config.teamID, config.did, config.stableID);
+    const trust = new SenderTrustManager(client, createRegistryResolver(config, void 0, metadata), config.teamID, config.did, config.stableID);
     const deliveryStore = await DeliveryStore.load(binding.delivery_store_path);
     consumers.push(consumeAgentEvents({
       client,

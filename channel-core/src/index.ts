@@ -1,4 +1,5 @@
 export { APIClient, APIError, signIdentityGrantHeaders, type APIClientAuth } from "./api/client.js";
+export { clientMetadataHeaders, CORE_CLIENT_METADATA, identifiedFetch, type ClientMetadata } from "./client_metadata.js";
 export { ReceiveStreamReceipt, type ReceiveReceiptOptions } from "./receive.js";
 export { streamAgentEvents, parseAgentEvent, formatEventStreamState, streamErrorCause, type AgentEvent, type AgentEventType, type EventStreamState } from "./api/events.js";
 export { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";

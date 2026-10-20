@@ -14,8 +14,8 @@ LEGACY_REQUEST_AUTH_ACCEPTED = Counter(
     ("auth_family", "method", "route", "client_version"),
 )
 _CLIENT_VERSION = re.compile(
-    r"(?:^|\s)(aw|aweb-channel|aweb-pi|aweb-wake|aweb-channel-core|aweb-python|aweb-cloud)/"
-    r"(dev|\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]{1,40})?)(?:\s|$)"
+    r"(aw|aweb-channel|aweb-pi|aweb-wake|aweb-channel-core|aweb-python|aweb-cloud)/"
+    r"(dev|[0-9]{1,8}\.[0-9]{1,8}\.[0-9]{1,8}(?:[-+][A-Za-z0-9.-]{1,40})?)"
 )
 
 
@@ -31,13 +31,26 @@ REQUEST_AUTH_REPLAY_DETECTED = Counter(
 )
 
 
+def _client_label(request: Request) -> str:
+    # Self-reported, unsigned measurement ONLY. Never use this for authentication,
+    # authorization, routing, rate limits or feature selection.
+    explicit = request.headers.get("X-AWEB-Client-Version")
+    agent = request.headers.get("User-Agent", "")
+    if explicit is None and not agent:
+        return "unknown"
+    tokens = [explicit.strip()] if explicit is not None else agent[:256].split()
+    for token in tokens:
+        if len(token) > 96:
+            continue
+        match = _CLIENT_VERSION.fullmatch(token)
+        if match and len(match.group(2)) <= 64:
+            return match.group(2) if match.group(1) == "aw" else token
+    return "other"
+
+
 def _labels(request: Request, family: str) -> tuple[str, str, str, str]:
     route = getattr(request.scope.get("route"), "path", "unmatched")
-    match = _CLIENT_VERSION.search(request.headers.get("User-Agent", "")[:256])
-    version = "unknown"
-    if match:
-        version = match.group(2) if match.group(1) == "aw" else match.group(1) + "/" + match.group(2)
-    return family, request.method, route, version
+    return family, request.method, route, _client_label(request)
 
 
 def _record(request: Request, counter: Counter, family: str, *extra: str) -> None:

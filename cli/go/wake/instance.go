@@ -289,7 +289,7 @@ func (r *instanceRunner) run(ctx context.Context) {
 			oatsBin = resolver.ResolveBin()
 		}
 		newChild := r.broker.cfg.ChannelCore.StartChild(ctx, reg, channelCoreChildConfig{
-			OatsBin: oatsBin, AWCommand: awCommand, AdmissionSize: 256, Paused: paused, Generation: generation, Log: r.broker.cfg.Log,
+			ClientVersion: r.broker.cfg.Version, OatsBin: oatsBin, AWCommand: awCommand, AdmissionSize: 256, Paused: paused, Generation: generation, Log: r.broker.cfg.Log,
 			OnLiveness: func(at time.Time, state, inspectErr string) {
 				r.recordChildLiveness(generation, at, state, inspectErr)
 			},

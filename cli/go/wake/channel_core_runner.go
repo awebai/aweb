@@ -128,6 +128,7 @@ type ChannelCoreChild struct {
 }
 
 type channelCoreChildConfig struct {
+	ClientVersion     string
 	OatsBin           string
 	AWCommand         string
 	AdmissionSize     int
@@ -152,12 +153,13 @@ type childBinding struct {
 }
 
 type initLine struct {
-	Type      string         `json:"type"`
-	Home      string         `json:"home"`
-	OatsBin   string         `json:"oatsBin,omitempty"`
-	AWCommand string         `json:"awCommand,omitempty"`
-	Paused    bool           `json:"paused,omitempty"`
-	Bindings  []childBinding `json:"bindings"`
+	ClientVersion string         `json:"clientVersion,omitempty"`
+	Type          string         `json:"type"`
+	Home          string         `json:"home"`
+	OatsBin       string         `json:"oatsBin,omitempty"`
+	AWCommand     string         `json:"awCommand,omitempty"`
+	Paused        bool           `json:"paused,omitempty"`
+	Bindings      []childBinding `json:"bindings"`
 }
 
 type childLine struct {
@@ -494,7 +496,7 @@ func (c *ChannelCoreChild) initLine() initLine {
 	c.mu.Lock()
 	paused := c.paused
 	c.mu.Unlock()
-	return initLine{Type: "init", Home: c.reg.Home, OatsBin: c.cfg.OatsBin, AWCommand: c.cfg.AWCommand, Paused: paused, Bindings: bindings}
+	return initLine{ClientVersion: c.cfg.ClientVersion, Type: "init", Home: c.reg.Home, OatsBin: c.cfg.OatsBin, AWCommand: c.cfg.AWCommand, Paused: paused, Bindings: bindings}
 }
 
 func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}, fatalChannels ...chan<- error) {

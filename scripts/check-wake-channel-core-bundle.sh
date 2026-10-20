@@ -54,6 +54,7 @@ self_test() {
   mkdir -p "$tmp/cli/go/wake" "$tmp/channel-core" "$tmp/channel/node_modules"
   cp "$ROOT/cli/go/wake/channel_core_runner_entry.ts" "$ROOT/cli/go/wake/oats_command.ts" "$tmp/cli/go/wake/"
   cp -R "$ROOT/channel-core/src" "$tmp/channel-core/src"
+  cp "$ROOT/channel-core/package.json" "$tmp/channel-core/package.json"
   ln -s "$ROOT/channel-core/node_modules" "$tmp/channel-core/node_modules"
   ln -s "$ROOT/channel/node_modules/.bin" "$tmp/channel/node_modules/.bin"
   (cd "$tmp" && ESBUILD="$ESBUILD" bash -c "$(declare -f build_bundle); build_bundle cli/go/wake/channel_core_runner_bundle.mjs")
