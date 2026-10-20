@@ -64,6 +64,35 @@ denied address, and sends a request only to the destination it matches,
 through one pinned, verified connection. Redirects come back as responses, no proxy is read from
 the environment, and a failure is classed as not sent or of unknown outcome.
 
+### Health
+
+`/live` reports the app's id and build commit. `/health` and `/ready` also run
+the app's dependency checks and report each by name: `ready` is 503 when any
+check fails, and `health` always answers 200. The runtime checks its database
+and reports the age of its oldest undelivered outbox event
+(`NaappRuntime.health_checks()`). An app adds its own as async callables that
+return a `CheckResult`. A check that raises, or does not answer within 5 s,
+fails, and its error is logged, never served. `/ready` serves only whether each
+check passed; `/health` adds each check's detail, whose values are numbers,
+booleans or null, never text. The routes are unauthenticated,
+so the checks run at most once every 10 s: concurrent requests share the run in
+flight, and later ones get its result until it expires.
+
+### Agent and human origins
+
+An app with pages for people in a browser serves them on their own origin.
+`aweb_naapp.runtime.origins.split_origins(agent_app, human_app, agent_origin=...,
+human_origin=...)` is one ASGI app that dispatches on `Host`:
+
+- the agent origin serves the runtime's app, with no cookies in either
+  direction, so its only authority is the team-auth signature;
+- the human origin refuses any request carrying `Authorization`, `X-AWEB-*` or
+  `X-AWID-*` (`403 team_auth_refused`);
+- any other host is `421 unknown_origin`.
+
+A route exists on one origin because it is declared in one of the two apps. The
+lifespan is the agent app's.
+
 ## Approvals and passkeys
 
 `aweb_naapp.runtime.approvals` is the single-use human approval primitive that

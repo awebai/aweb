@@ -28,6 +28,10 @@ self_test() (
   cp "$ROOT/awid/pyproject.toml" "$ROOT/awid/uv.lock" "$ROOT/awid/README.md" "$tmp/awid/"
   cp "$ROOT/server/pyproject.toml" "$ROOT/server/uv.lock" "$ROOT/server/README.md" "$tmp/server/"
   cp "$ROOT/naapp-lib/pyproject.toml" "$ROOT/naapp-lib/uv.lock" "$ROOT/naapp-lib/README.md" "$tmp/naapp-lib/"
+  # naapp-lib's dev-only test-support distribution, which the dependents' dev groups lock too.
+  mkdir -p "$tmp/naapp-lib/testing"
+  cp "$ROOT/naapp-lib/testing/pyproject.toml" "$tmp/naapp-lib/testing/"
+  cp -R "$ROOT/naapp-lib/testing/src" "$tmp/naapp-lib/testing/"
   cp "$ROOT/naapp/folio/pyproject.toml" "$ROOT/naapp/folio/uv.lock" "$ROOT/naapp/folio/README.md" "$tmp/naapp/folio/"
   cp "$ROOT/naapp/secrets/pyproject.toml" "$ROOT/naapp/secrets/uv.lock" "$ROOT/naapp/secrets/README.md" "$tmp/naapp/secrets/"
 
@@ -114,11 +118,11 @@ path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 pattern = re.compile(
     r'(?ms)(^\[\[package\]\]\nname = "awid-service"\nversion = ")[^"]+'
-    r'("\nsource = \{ directory = "\.\./awid" \})'
+    r'("\nsource = \{ editable = "\.\./awid" \})'
 )
 stale, count = pattern.subn(r'\g<1>0.0.0\2', text)
 if count != 1:
-    raise SystemExit(f"expected one directory awid-service lock entry, found {count}")
+    raise SystemExit(f"expected one editable awid-service lock entry, found {count}")
 path.write_text(stale, encoding="utf-8")
 PY
 
