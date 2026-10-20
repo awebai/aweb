@@ -169,20 +169,13 @@ func TestTeamAuthEnvelopeV2Vectors(t *testing.T) {
 			if got := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)); got != v.DIDKey {
 				t.Fatalf("did:key got %s want %s", got, v.DIDKey)
 			}
-			payload := make(map[string]any, len(v.Payload))
-			for key, value := range v.Payload {
-				if key != "timestamp" {
-					payload[key] = value
-				}
-			}
-			timestamp, _ := v.Payload["timestamp"].(string)
-			didKey, signature, canonical, err := awid.SignArbitraryPayload(key, payload, timestamp)
+			// The fixture is a protocol credential, not a user-data signature.
+			canonical, err := awid.CanonicalJSONValue(v.Payload)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if didKey != v.DIDKey {
-				t.Fatalf("SignArbitraryPayload did:key got %s want %s", didKey, v.DIDKey)
-			}
+			signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, []byte(canonical)))
+
 			if canonical != v.CanonicalPayload {
 				t.Fatalf("canonical:\n got:  %s\n want: %s", canonical, v.CanonicalPayload)
 			}
