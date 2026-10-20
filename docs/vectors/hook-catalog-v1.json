@@ -34,6 +34,10 @@
       "kind": "string",
       "pattern": "^[a-z][a-z0-9-]{0,62}$"
     },
+    "app_scope": {
+      "kind": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}$"
+    },
     "bool": {
       "kind": "boolean"
     },
@@ -1135,7 +1139,7 @@
               "required": false
             },
             "scopes": {
-              "list_of": "token",
+              "list_of": "app_scope",
               "min_items": 0,
               "max_items": 64,
               "required": true
@@ -1170,7 +1174,7 @@
               "required": false
             },
             "scopes": {
-              "list_of": "token",
+              "list_of": "app_scope",
               "min_items": 0,
               "max_items": 64,
               "required": true
@@ -1708,6 +1712,21 @@
       }
     },
     {
+      "name": "mutation_app_installed_with_app_scopes",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "app.installed",
+        "target_ref": "app:folio",
+        "app_id": "folio",
+        "origin": "https://folio.example.com",
+        "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "scopes": [
+          "folio:write",
+          "folio:read"
+        ]
+      }
+    },
+    {
       "name": "mutation_app_key_revoked",
       "hook": "post-mutation-hook",
       "payload": {
@@ -1972,6 +1991,22 @@
       },
       "error": "invalid_value",
       "field": "target_path_template"
+    },
+    {
+      "name": "app_scope_with_space",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "app.installed",
+        "target_ref": "app:folio",
+        "app_id": "folio",
+        "origin": "https://folio.example.com",
+        "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "scopes": [
+          "folio: write"
+        ]
+      },
+      "error": "invalid_value",
+      "field": "scopes"
     },
     {
       "name": "governance_direction_mismatch",
