@@ -81,6 +81,7 @@ _BATCH_FIELDS = frozenset(
         "installation_id",
         "installation_generation",
         "reporter",
+        "epoch",
         "report_id",
         "first_seq",
         "last_seq",
@@ -178,6 +179,8 @@ def validate_report(batch: object) -> None:
         raise _bad("installation_generation")
     if not _matches(_REPORTER, batch["reporter"]) or not _matches(_ID, batch["report_id"]):
         raise _bad("reporter or report_id")
+    if not _quantity(batch["epoch"], 1):
+        raise _bad("epoch")
     first, last = batch["first_seq"], batch["last_seq"]
     if not (_quantity(first, 1) and _quantity(last, 1)) or first > last:
         raise _bad("sequence range")
@@ -190,7 +193,11 @@ def validate_report(batch: object) -> None:
         _check_entry(entry, first + offset)
     if "inventory" in batch:
         _check_inventory(batch["inventory"], first, last)
-    if len(canonical_json_bytes(dict(batch))) > MAX_BYTES:
+    try:
+        size = len(canonical_json_bytes(dict(batch)))
+    except (UnicodeEncodeError, ValueError, TypeError) as exc:
+        raise _bad("batch has no canonical form") from exc
+    if size > MAX_BYTES:
         raise _bad("batch over 1 MiB")
 
 

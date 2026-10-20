@@ -68,13 +68,13 @@ opaque.
 - The app writes a usage entry in the transaction that commits the operation
   it describes. A read, or a refused attempt, writes its entry in the app's
   durable meter ledger. Either way the entry is durable before the response.
-- **Sequence.** Each entry has the next integer in its reporter's sequence,
-  starting at 1, with no gaps and no reuse.
-- **Reporter.** `reporter` names one sequence:
-  `^[a-z0-9][a-z0-9-]{0,63}$`, for example `primary-epoch-1`. A reset (a lost
-  ledger, a restored backup) starts a **new reporter epoch**, a new name whose
-  sequence starts at 1, never a restart of the old sequence. A new
-  installation always starts new reporters.
+- **Reporter and epoch.** `reporter` names one source of reports within the
+  installation, `^[a-z0-9][a-z0-9-]{0,63}$`, for example `primary`; most apps
+  have one. `epoch` is a positive integer. A reset (a lost ledger, a restored
+  backup) starts the reporter's next epoch, never a restart of the old
+  sequence. A new installation starts its reporters at epoch 1.
+- **Sequence.** Each entry has the next integer in its reporter's sequence for
+  that epoch, starting at 1, with no gaps and no reuse.
 - **Deletion.** Deleting a page or collection reduces the gauges and moves its
   retained bytes between the disjoint byte gauges. It never rewrites past
   counters.
@@ -90,7 +90,8 @@ The app sends its ledger in batches, oldest first:
   "app_id": "pages",
   "installation_id": "inst_01JB…",
   "installation_generation": 3,
-  "reporter": "primary-epoch-1",
+  "reporter": "primary",
+  "epoch": 1,
   "report_id": "rep_000017",
   "first_seq": 41,
   "last_seq": 42,
@@ -110,7 +111,8 @@ The app sends its ledger in batches, oldest first:
 | --- | --- |
 | `format`, `metric_version` | `"aweb.usage/1"` and `1`. |
 | `team_id`, `app_id`, `installation_id`, `installation_generation` | The reporting installation. They equal the credential's. |
-| `report_id` | `^[A-Za-z0-9._-]{1,128}$`, unique per reporter. |
+| `reporter`, `epoch` | The reporter (§2) and its epoch, a safe integer of at least 1. |
+| `report_id` | `^[A-Za-z0-9._-]{1,128}$`, unique per reporter and epoch. |
 | `first_seq`, `last_seq` | `1 ≤ first_seq ≤ last_seq`, `last_seq - first_seq < 1000`. |
 | `entries` | Exactly the sequences `first_seq..last_seq`, in order, each once. |
 | entry `occurred_at` | RFC 3339 UTC, `Z`, second precision: when the operation happened, not when it was reported. |
@@ -177,23 +179,31 @@ through the same service, and presents the results (§6).
 In one transaction, after verifying the credential and the batch (§3):
 
 1. **Same report again.** If `(team_id, app_id, installation_id, reporter,
-   report_id)` is stored: the same `report_sha256` returns the stored ack
-   (200); a different one is 409 `usage_conflict`.
-2. **Overlap.** If any of `first_seq..last_seq` is already stored under
-   another report, every overlapping entry must be byte-identical (its
-   canonical JSON); then the batch is stored and the overlap is not counted
-   again. Otherwise 409 `usage_conflict`, and nothing is stored.
-3. **Store and apply.** Store the report and its new entries, add their
-   deltas to the counters, and, if the batch has `inventory`, set the gauges
-   to it when `at_seq` is the highest snapshot sequence seen. Return 201:
+   epoch, report_id)` is stored: the same `report_sha256` returns the stored
+   ack (200); a different one is 409 `usage_conflict`.
+2. **Overlap.** If any of `first_seq..last_seq` is already stored for this
+   reporter and epoch under another report, every overlapping entry must be
+   byte-identical (its canonical JSON); then the overlap is not counted again.
+   Otherwise 409 `usage_conflict`.
+3. **Snapshot identity.** A snapshot is identified by `(reporter, epoch,
+   at_seq)` and is immutable once stored. A batch carrying an identical
+   snapshot changes nothing; one carrying a snapshot with other gauges under a
+   stored identity is 409 `usage_conflict`.
+4. **Store and apply.** A batch refused by 1–3 stores nothing, entries
+   included. Otherwise store the report, its new entries and its snapshot, and
+   add the new entries' deltas to the counters. A reporter's **current
+   inventory** is its stored snapshot with the highest `(epoch, at_seq)`,
+   compared epoch first: a new epoch's first snapshot replaces the old epoch's
+   although its sequence is lower, and a delayed snapshot from an older epoch,
+   or an older sequence, is stored but never becomes current. Return 201:
 
 ```json
-{"report_id": "rep_000017", "report_sha256": "<64 hex>", "accepted": [41, 42],
- "complete_through": 42, "missing": [], "inventory_at_seq": 42}
+{"report_id": "rep_000017", "report_sha256": "<64 hex>", "reporter": "primary", "epoch": 1,
+ "accepted": [41, 42], "complete_through": 42, "missing": [], "current_inventory": {"epoch": 1, "at_seq": 42}}
 ```
 
-`complete_through` is the highest sequence with every sequence from 1 to it
-stored. `missing` lists the gaps above it as `[first, last]` ranges, at most 32
+`complete_through` is the highest sequence, in the batch's reporter and epoch,
+with every sequence from 1 to it stored. `missing` lists the gaps above it as `[first, last]` ranges, at most 32
 ranges. A batch beyond a gap is accepted and stored, and the gap stays visible
 until a report fills it. A snapshot sets the gauges; it never creates the
 counters of the missing entries.
@@ -209,11 +219,14 @@ usage. The response is per app and installation:
 
 ```json
 {"app_id": "pages", "installation_id": "inst_01JB…", "metric_version": 1,
- "reporters": [{"reporter": "primary-epoch-1", "complete_through": 42, "missing": [],
-                "last_report_at": "2026-10-20T10:00:05Z", "lag_seconds": 4}],
- "counters": {"calls": 2, "records_updated": 1},
- "inventory": {"at_seq": 42, "pages_live": 1}}
+ "reporters": [{"reporter": "primary", "epochs": [{"epoch": 1, "complete_through": 42, "missing": []}],
+                "last_report_at": "2026-10-20T10:00:05Z", "lag_seconds": 4,
+                "inventory": {"epoch": 1, "at_seq": 42, "pages_live": 1}}],
+ "counters": {"calls": 2, "records_updated": 1}}
 ```
+
+Inventory is shown per reporter, its current inventory (§5), never merged
+across reporters into one installation-wide figure.
 
 - `counters` sums every stored entry, filterable by `from`/`to` on
   `occurred_at`, `source` and `outcome`.

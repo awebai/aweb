@@ -58,7 +58,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000041",
         "first_seq": 41,
         "last_seq": 42,
@@ -89,8 +90,8 @@
           }
         ]
       },
-      "canonical": "aweb.usage-report/1\n{\"app_id\":\"pages\",\"entries\":[{\"attempt_id\":\"at_41\",\"deltas\":{\"calls\":1,\"records_updated\":1},\"occurred_at\":\"2026-10-20T10:00:00Z\",\"operation_id\":\"op_1\",\"outcome\":\"committed\",\"seq\":41,\"source\":\"cli\"},{\"attempt_id\":\"at_42\",\"deltas\":{\"calls\":1},\"occurred_at\":\"2026-10-20T10:00:01Z\",\"operation_id\":\"op_1\",\"outcome\":\"idempotent_noop\",\"seq\":42,\"source\":\"cli\"}],\"first_seq\":41,\"format\":\"aweb.usage/1\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"last_seq\":42,\"metric_version\":1,\"report_id\":\"rep_000041\",\"reporter\":\"primary-epoch-1\",\"team_id\":\"backend:acme.com\"}",
-      "report_sha256": "30b6ae7cefbdb7c81ad816d7a061fe6d7c83e8248eec5665b2c10266c793944e"
+      "canonical": "aweb.usage-report/1\n{\"app_id\":\"pages\",\"entries\":[{\"attempt_id\":\"at_41\",\"deltas\":{\"calls\":1,\"records_updated\":1},\"occurred_at\":\"2026-10-20T10:00:00Z\",\"operation_id\":\"op_1\",\"outcome\":\"committed\",\"seq\":41,\"source\":\"cli\"},{\"attempt_id\":\"at_42\",\"deltas\":{\"calls\":1},\"occurred_at\":\"2026-10-20T10:00:01Z\",\"operation_id\":\"op_1\",\"outcome\":\"idempotent_noop\",\"seq\":42,\"source\":\"cli\"}],\"epoch\":1,\"first_seq\":41,\"format\":\"aweb.usage/1\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"last_seq\":42,\"metric_version\":1,\"report_id\":\"rep_000041\",\"reporter\":\"primary\",\"team_id\":\"backend:acme.com\"}",
+      "report_sha256": "25fd73c70c07f8a11452019e01601d9d1c2946633666c27cebf2af3dc0546d64"
     },
     {
       "name": "with-inventory",
@@ -100,7 +101,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 3,
@@ -154,8 +156,8 @@
           "bytes_deleted_retained": 0
         }
       },
-      "canonical": "aweb.usage-report/1\n{\"app_id\":\"pages\",\"entries\":[{\"attempt_id\":\"at_1\",\"deltas\":{\"calls\":1,\"records_updated\":1},\"occurred_at\":\"2026-10-20T10:00:01Z\",\"operation_id\":\"op_1\",\"outcome\":\"committed\",\"seq\":1,\"source\":\"cli\"},{\"attempt_id\":\"at_2\",\"deltas\":{\"calls\":1,\"records_updated\":1},\"occurred_at\":\"2026-10-20T10:00:02Z\",\"operation_id\":\"op_2\",\"outcome\":\"committed\",\"seq\":2,\"source\":\"cli\"},{\"attempt_id\":\"at_3\",\"deltas\":{\"calls\":1,\"records_updated\":1},\"occurred_at\":\"2026-10-20T10:00:03Z\",\"operation_id\":\"op_3\",\"outcome\":\"committed\",\"seq\":3,\"source\":\"cli\"}],\"first_seq\":1,\"format\":\"aweb.usage/1\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"inventory\":{\"at_seq\":3,\"bytes_assets\":0,\"bytes_audit\":2210,\"bytes_deleted_retained\":0,\"bytes_live\":18230,\"bytes_versions\":4100,\"pages_live\":1,\"records_live\":14},\"last_seq\":3,\"metric_version\":1,\"report_id\":\"rep_000001\",\"reporter\":\"primary-epoch-1\",\"team_id\":\"backend:acme.com\"}",
-      "report_sha256": "76cb222a8a1261b52603c8556569b3fc642e912a9bfae749315d4db9a842bd62"
+      "canonical": "aweb.usage-report/1\n{\"app_id\":\"pages\",\"entries\":[{\"attempt_id\":\"at_1\",\"deltas\":{\"calls\":1,\"records_updated\":1},\"occurred_at\":\"2026-10-20T10:00:01Z\",\"operation_id\":\"op_1\",\"outcome\":\"committed\",\"seq\":1,\"source\":\"cli\"},{\"attempt_id\":\"at_2\",\"deltas\":{\"calls\":1,\"records_updated\":1},\"occurred_at\":\"2026-10-20T10:00:02Z\",\"operation_id\":\"op_2\",\"outcome\":\"committed\",\"seq\":2,\"source\":\"cli\"},{\"attempt_id\":\"at_3\",\"deltas\":{\"calls\":1,\"records_updated\":1},\"occurred_at\":\"2026-10-20T10:00:03Z\",\"operation_id\":\"op_3\",\"outcome\":\"committed\",\"seq\":3,\"source\":\"cli\"}],\"epoch\":1,\"first_seq\":1,\"format\":\"aweb.usage/1\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"inventory\":{\"at_seq\":3,\"bytes_assets\":0,\"bytes_audit\":2210,\"bytes_deleted_retained\":0,\"bytes_live\":18230,\"bytes_versions\":4100,\"pages_live\":1,\"records_live\":14},\"last_seq\":3,\"metric_version\":1,\"report_id\":\"rep_000001\",\"reporter\":\"primary\",\"team_id\":\"backend:acme.com\"}",
+      "report_sha256": "c422a9ae93f5685cefe8a720bc60f3301e2528665955499db32efa5c56d774dd"
     },
     {
       "name": "every-counter-and-boundary",
@@ -165,7 +167,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000007",
         "first_seq": 7,
         "last_seq": 7,
@@ -197,8 +200,8 @@
           }
         ]
       },
-      "canonical": "aweb.usage-report/1\n{\"app_id\":\"pages\",\"entries\":[{\"attempt_id\":\"at_7\",\"deltas\":{\"calls\":1,\"decisions_answered\":1,\"decisions_requested\":1,\"intents_created\":1,\"intents_transitioned\":1,\"mails_sent\":1,\"page_reads\":1,\"pages_created\":1,\"pages_deleted\":1,\"pages_updated\":1,\"record_reads\":9007199254740991,\"records_created\":1,\"records_deleted\":1,\"records_updated\":1},\"occurred_at\":\"2026-10-20T10:00:00Z\",\"operation_id\":\"op_7\",\"outcome\":\"committed\",\"seq\":7,\"source\":\"cli\"}],\"first_seq\":7,\"format\":\"aweb.usage/1\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"last_seq\":7,\"metric_version\":1,\"report_id\":\"rep_000007\",\"reporter\":\"primary-epoch-1\",\"team_id\":\"backend:acme.com\"}",
-      "report_sha256": "fad82805def9a970be632c78602ec81cc88785932e307dbb5b5638a8a8f1b8ad"
+      "canonical": "aweb.usage-report/1\n{\"app_id\":\"pages\",\"entries\":[{\"attempt_id\":\"at_7\",\"deltas\":{\"calls\":1,\"decisions_answered\":1,\"decisions_requested\":1,\"intents_created\":1,\"intents_transitioned\":1,\"mails_sent\":1,\"page_reads\":1,\"pages_created\":1,\"pages_deleted\":1,\"pages_updated\":1,\"record_reads\":9007199254740991,\"records_created\":1,\"records_deleted\":1,\"records_updated\":1},\"occurred_at\":\"2026-10-20T10:00:00Z\",\"operation_id\":\"op_7\",\"outcome\":\"committed\",\"seq\":7,\"source\":\"cli\"}],\"epoch\":1,\"first_seq\":7,\"format\":\"aweb.usage/1\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"last_seq\":7,\"metric_version\":1,\"report_id\":\"rep_000007\",\"reporter\":\"primary\",\"team_id\":\"backend:acme.com\"}",
+      "report_sha256": "e1e888f00ad02e675164fae68280149c99f4bddae93495c6a634e78f4eb1397a"
     },
     {
       "name": "refused-attempts-are-calls",
@@ -208,7 +211,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000008",
         "first_seq": 8,
         "last_seq": 9,
@@ -238,8 +242,8 @@
           }
         ]
       },
-      "canonical": "aweb.usage-report/1\n{\"app_id\":\"pages\",\"entries\":[{\"attempt_id\":\"at_8\",\"deltas\":{\"calls\":1},\"occurred_at\":\"2026-10-20T10:00:00Z\",\"operation_id\":\"op_8\",\"outcome\":\"refused_validation\",\"seq\":8,\"source\":\"cli\"},{\"attempt_id\":\"at_9\",\"deltas\":{\"calls\":1},\"occurred_at\":\"2026-10-20T10:00:00Z\",\"operation_id\":\"op_9\",\"outcome\":\"safety_limited\",\"seq\":9,\"source\":\"link\"}],\"first_seq\":8,\"format\":\"aweb.usage/1\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"last_seq\":9,\"metric_version\":1,\"report_id\":\"rep_000008\",\"reporter\":\"primary-epoch-1\",\"team_id\":\"backend:acme.com\"}",
-      "report_sha256": "2eb4b5ce88a261a94ae1d7a50a427719d75fe9446e541a330199d703b21b6f51"
+      "canonical": "aweb.usage-report/1\n{\"app_id\":\"pages\",\"entries\":[{\"attempt_id\":\"at_8\",\"deltas\":{\"calls\":1},\"occurred_at\":\"2026-10-20T10:00:00Z\",\"operation_id\":\"op_8\",\"outcome\":\"refused_validation\",\"seq\":8,\"source\":\"cli\"},{\"attempt_id\":\"at_9\",\"deltas\":{\"calls\":1},\"occurred_at\":\"2026-10-20T10:00:00Z\",\"operation_id\":\"op_9\",\"outcome\":\"safety_limited\",\"seq\":9,\"source\":\"link\"}],\"epoch\":1,\"first_seq\":8,\"format\":\"aweb.usage/1\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"last_seq\":9,\"metric_version\":1,\"report_id\":\"rep_000008\",\"reporter\":\"primary\",\"team_id\":\"backend:acme.com\"}",
+      "report_sha256": "3ca56ee900f9940848c2facd255fae68aa50140083c5c113036150fb6093f8dd"
     },
     {
       "name": "lifecycle-terminal",
@@ -249,7 +253,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000050",
         "first_seq": 50,
         "last_seq": 50,
@@ -280,8 +285,8 @@
           "bytes_deleted_retained": 0
         }
       },
-      "canonical": "aweb.usage-report/1\n{\"app_id\":\"pages\",\"entries\":[{\"attempt_id\":\"at_50\",\"deltas\":{\"calls\":1,\"pages_deleted\":3,\"records_deleted\":40},\"occurred_at\":\"2026-10-20T10:00:00Z\",\"operation_id\":\"op_50\",\"outcome\":\"committed\",\"seq\":50,\"source\":\"lifecycle\"}],\"first_seq\":50,\"format\":\"aweb.usage/1\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"inventory\":{\"at_seq\":50,\"bytes_assets\":0,\"bytes_audit\":0,\"bytes_deleted_retained\":0,\"bytes_live\":0,\"bytes_versions\":0,\"pages_live\":0,\"records_live\":0},\"last_seq\":50,\"metric_version\":1,\"report_id\":\"rep_000050\",\"reporter\":\"primary-epoch-1\",\"team_id\":\"backend:acme.com\"}",
-      "report_sha256": "7721acca00dc51a3dd833015f1324b1cbc20878dd221847d365589bd6b5e9aad"
+      "canonical": "aweb.usage-report/1\n{\"app_id\":\"pages\",\"entries\":[{\"attempt_id\":\"at_50\",\"deltas\":{\"calls\":1,\"pages_deleted\":3,\"records_deleted\":40},\"occurred_at\":\"2026-10-20T10:00:00Z\",\"operation_id\":\"op_50\",\"outcome\":\"committed\",\"seq\":50,\"source\":\"lifecycle\"}],\"epoch\":1,\"first_seq\":50,\"format\":\"aweb.usage/1\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"inventory\":{\"at_seq\":50,\"bytes_assets\":0,\"bytes_audit\":0,\"bytes_deleted_retained\":0,\"bytes_live\":0,\"bytes_versions\":0,\"pages_live\":0,\"records_live\":0},\"last_seq\":50,\"metric_version\":1,\"report_id\":\"rep_000050\",\"reporter\":\"primary\",\"team_id\":\"backend:acme.com\"}",
+      "report_sha256": "7e9c274bd6d720c6d21f2c190b4146ea5dee0eaed0268fceda94c4ba00f26d46"
     }
   ],
   "refusals": [
@@ -293,7 +298,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -335,7 +341,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -377,7 +384,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -420,7 +428,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 3,
         "last_seq": 2,
@@ -462,7 +471,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 0,
         "last_seq": 2,
@@ -515,7 +525,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 1001,
@@ -11544,7 +11555,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -11585,7 +11597,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -11627,7 +11640,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -11657,7 +11671,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -11700,7 +11715,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -11743,7 +11759,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -11785,7 +11802,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -11827,7 +11845,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -11869,7 +11888,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -11911,7 +11931,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -11953,7 +11974,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -11995,7 +12017,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -12037,7 +12060,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -12079,7 +12103,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -12122,7 +12147,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep/1",
         "first_seq": 1,
         "last_seq": 2,
@@ -12165,6 +12191,92 @@
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
         "reporter": "Primary",
+        "epoch": 1,
+        "report_id": "rep_000001",
+        "first_seq": 1,
+        "last_seq": 2,
+        "metric_version": 1,
+        "entries": [
+          {
+            "seq": 1,
+            "occurred_at": "2026-10-20T10:00:01Z",
+            "operation_id": "op_1",
+            "attempt_id": "at_1",
+            "source": "cli",
+            "outcome": "committed",
+            "deltas": {
+              "calls": 1,
+              "records_updated": 1
+            }
+          },
+          {
+            "seq": 2,
+            "occurred_at": "2026-10-20T10:00:02Z",
+            "operation_id": "op_2",
+            "attempt_id": "at_2",
+            "source": "cli",
+            "outcome": "committed",
+            "deltas": {
+              "calls": 1,
+              "records_updated": 1
+            }
+          }
+        ]
+      },
+      "expect": "schema_invalid"
+    },
+    {
+      "name": "epoch-zero",
+      "batch": {
+        "format": "aweb.usage/1",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "installation_generation": 3,
+        "reporter": "primary",
+        "epoch": 0,
+        "report_id": "rep_000001",
+        "first_seq": 1,
+        "last_seq": 2,
+        "metric_version": 1,
+        "entries": [
+          {
+            "seq": 1,
+            "occurred_at": "2026-10-20T10:00:01Z",
+            "operation_id": "op_1",
+            "attempt_id": "at_1",
+            "source": "cli",
+            "outcome": "committed",
+            "deltas": {
+              "calls": 1,
+              "records_updated": 1
+            }
+          },
+          {
+            "seq": 2,
+            "occurred_at": "2026-10-20T10:00:02Z",
+            "operation_id": "op_2",
+            "attempt_id": "at_2",
+            "source": "cli",
+            "outcome": "committed",
+            "deltas": {
+              "calls": 1,
+              "records_updated": 1
+            }
+          }
+        ]
+      },
+      "expect": "schema_invalid"
+    },
+    {
+      "name": "epoch-missing",
+      "batch": {
+        "format": "aweb.usage/1",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "installation_generation": 3,
+        "reporter": "primary",
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -12206,7 +12318,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -12258,7 +12371,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -12309,7 +12423,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -12361,7 +12476,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 0,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "rep_000001",
         "first_seq": 1,
         "last_seq": 2,
@@ -12394,6 +12510,12 @@
         ]
       },
       "expect": "schema_invalid"
+    },
+    {
+      "name": "lone-surrogate",
+      "batch_json": "{\"app_id\":\"pages\",\"entries\":[{\"attempt_id\":\"at_1\",\"deltas\":{\"calls\":1,\"records_updated\":1},\"occurred_at\":\"2026-10-20T10:00:01Z\",\"operation_id\":\"op_1\",\"outcome\":\"committed\",\"seq\":1,\"source\":\"cli\"}],\"epoch\":1,\"first_seq\":1,\"format\":\"aweb.usage/1\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"last_seq\":1,\"metric_version\":1,\"report_id\":\"rep_000001\",\"reporter\":\"primary\",\"team_id\":\"backend:\\ud800\"}",
+      "expect": "schema_invalid",
+      "note": "valid JSON whose team_id escapes a lone surrogate; it has no UTF-8 canonical form"
     }
   ],
   "collector": [
@@ -12405,7 +12527,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "r1",
         "first_seq": 1,
         "last_seq": 2,
@@ -12440,14 +12563,16 @@
       "result": {
         "status": 201,
         "report_id": "r1",
-        "report_sha256": "335d6c8f950f793ba73b24312263e46747c028da927c40b0dc876242ade0eb63",
+        "report_sha256": "6dd465a9421331b8eda96afb3a8235d0633a04e4013b72202eab3fdfafa2d7af",
+        "reporter": "primary",
+        "epoch": 1,
         "accepted": [
           1,
           2
         ],
         "complete_through": 2,
         "missing": [],
-        "inventory_at_seq": null
+        "current_inventory": null
       }
     },
     {
@@ -12458,7 +12583,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "r1",
         "first_seq": 1,
         "last_seq": 2,
@@ -12493,14 +12619,16 @@
       "result": {
         "status": 200,
         "report_id": "r1",
-        "report_sha256": "335d6c8f950f793ba73b24312263e46747c028da927c40b0dc876242ade0eb63",
+        "report_sha256": "6dd465a9421331b8eda96afb3a8235d0633a04e4013b72202eab3fdfafa2d7af",
+        "reporter": "primary",
+        "epoch": 1,
         "accepted": [
           1,
           2
         ],
         "complete_through": 2,
         "missing": [],
-        "inventory_at_seq": null,
+        "current_inventory": null,
         "same_ack_as": 0
       },
       "note": "the same report again"
@@ -12513,7 +12641,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "r1",
         "first_seq": 1,
         "last_seq": 2,
@@ -12559,7 +12688,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "r2",
         "first_seq": 4,
         "last_seq": 5,
@@ -12594,7 +12724,9 @@
       "result": {
         "status": 201,
         "report_id": "r2",
-        "report_sha256": "ab899f036ee9fe259478152a8f8a71922c4ad1114230044a33df084124e40367",
+        "report_sha256": "cb36ed7ea5ad3a628392532c88b72143735be15a24693d6ab64165eaed53b607",
+        "reporter": "primary",
+        "epoch": 1,
         "accepted": [
           4,
           5
@@ -12606,7 +12738,7 @@
             3
           ]
         ],
-        "inventory_at_seq": null
+        "current_inventory": null
       },
       "note": "accepted past a gap, which stays visible"
     },
@@ -12618,7 +12750,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "r3",
         "first_seq": 3,
         "last_seq": 3,
@@ -12641,14 +12774,16 @@
       "result": {
         "status": 201,
         "report_id": "r3",
-        "report_sha256": "9fe0fbcee14f1087a48c7c33d4f56dcacacb6164a1c17025722bc72125dc29dd",
+        "report_sha256": "9bf13e576da0fd46e2c217c8f80fc6b0a88c5f52cc63ee8c160bb9dde33eb4bd",
+        "reporter": "primary",
+        "epoch": 1,
         "accepted": [
           3,
           3
         ],
         "complete_through": 5,
         "missing": [],
-        "inventory_at_seq": null
+        "current_inventory": null
       },
       "note": "the gap is filled"
     },
@@ -12660,7 +12795,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "r4",
         "first_seq": 2,
         "last_seq": 3,
@@ -12695,14 +12831,16 @@
       "result": {
         "status": 201,
         "report_id": "r4",
-        "report_sha256": "8373217622506b23dd9b3848614b66beabcbd94e57c05ff6439eaa6cc289ea58",
+        "report_sha256": "0ea3aff403ffff7dc163bc6517377cd93b31daf399170f1e099989a92d6260c5",
+        "reporter": "primary",
+        "epoch": 1,
         "accepted": [
           2,
           3
         ],
         "complete_through": 5,
         "missing": [],
-        "inventory_at_seq": null
+        "current_inventory": null
       },
       "note": "overlaps stored sequences 2 and 3 with byte-identical entries; nothing is counted twice"
     },
@@ -12714,7 +12852,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "r5",
         "first_seq": 2,
         "last_seq": 3,
@@ -12760,7 +12899,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "r7",
         "first_seq": 7,
         "last_seq": 7,
@@ -12793,7 +12933,9 @@
       "result": {
         "status": 201,
         "report_id": "r7",
-        "report_sha256": "f02f51c27a553600865db003a592f5334b1de577e37d12ec9051f68298c35cbe",
+        "report_sha256": "b955a6263bca892a0380d301e234ac81456a5b0c354db327407ab021fe5fcdc0",
+        "reporter": "primary",
+        "epoch": 1,
         "accepted": [
           7,
           7
@@ -12805,9 +12947,12 @@
             6
           ]
         ],
-        "inventory_at_seq": 7
+        "current_inventory": {
+          "epoch": 1,
+          "at_seq": 7
+        }
       },
-      "note": "a snapshot past a gap sets the gauges"
+      "note": "a snapshot past a gap becomes the reporter's current inventory"
     },
     {
       "step": 8,
@@ -12817,7 +12962,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "r6",
         "first_seq": 6,
         "last_seq": 6,
@@ -12850,16 +12996,21 @@
       "result": {
         "status": 201,
         "report_id": "r6",
-        "report_sha256": "bb159452bb5d6adf24ced945d66293c9dca7efd48779dbf60b2086d2498f55df",
+        "report_sha256": "a3217e86b1a203fba750c1f3c041e1dcdbfb06b7c4d5086b21144d7516485e9e",
+        "reporter": "primary",
+        "epoch": 1,
         "accepted": [
           6,
           6
         ],
         "complete_through": 7,
         "missing": [],
-        "inventory_at_seq": 7
+        "current_inventory": {
+          "epoch": 1,
+          "at_seq": 7
+        }
       },
-      "note": "an older snapshot arriving later does not replace the gauges; its entry fills the gap"
+      "note": "an older snapshot of the same epoch arriving later does not replace it; its entry fills the gap"
     },
     {
       "step": 9,
@@ -12869,7 +13020,111 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-2",
+        "reporter": "primary",
+        "epoch": 1,
+        "report_id": "r7-again",
+        "first_seq": 7,
+        "last_seq": 7,
+        "metric_version": 1,
+        "entries": [
+          {
+            "seq": 7,
+            "occurred_at": "2026-10-20T10:00:07Z",
+            "operation_id": "op_7",
+            "attempt_id": "at_7",
+            "source": "cli",
+            "outcome": "committed",
+            "deltas": {
+              "calls": 1,
+              "records_updated": 1
+            }
+          }
+        ],
+        "inventory": {
+          "at_seq": 7,
+          "pages_live": 3,
+          "records_live": 0,
+          "bytes_live": 0,
+          "bytes_versions": 0,
+          "bytes_audit": 0,
+          "bytes_assets": 0,
+          "bytes_deleted_retained": 0
+        }
+      },
+      "result": {
+        "status": 201,
+        "report_id": "r7-again",
+        "report_sha256": "4cc11f3fff107480362481a00e1a519ea17b36cd89e7335dadaa1bbd85231a99",
+        "reporter": "primary",
+        "epoch": 1,
+        "accepted": [
+          7,
+          7
+        ],
+        "complete_through": 7,
+        "missing": [],
+        "current_inventory": {
+          "epoch": 1,
+          "at_seq": 7
+        }
+      },
+      "note": "another report repeating sequence 7 and its identical snapshot: stored once, nothing changes"
+    },
+    {
+      "step": 10,
+      "report": {
+        "format": "aweb.usage/1",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "installation_generation": 3,
+        "reporter": "primary",
+        "epoch": 1,
+        "report_id": "r7-other",
+        "first_seq": 7,
+        "last_seq": 7,
+        "metric_version": 1,
+        "entries": [
+          {
+            "seq": 7,
+            "occurred_at": "2026-10-20T10:00:07Z",
+            "operation_id": "op_7",
+            "attempt_id": "at_7",
+            "source": "cli",
+            "outcome": "committed",
+            "deltas": {
+              "calls": 1,
+              "records_updated": 1
+            }
+          }
+        ],
+        "inventory": {
+          "at_seq": 7,
+          "pages_live": 9,
+          "records_live": 0,
+          "bytes_live": 0,
+          "bytes_versions": 0,
+          "bytes_audit": 0,
+          "bytes_assets": 0,
+          "bytes_deleted_retained": 0
+        }
+      },
+      "result": {
+        "status": 409,
+        "code": "usage_conflict"
+      },
+      "note": "the same snapshot identity (reporter, epoch 1, at_seq 7) with other gauges; the whole batch is refused"
+    },
+    {
+      "step": 11,
+      "report": {
+        "format": "aweb.usage/1",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "installation_generation": 3,
+        "reporter": "primary",
+        "epoch": 2,
         "report_id": "e2-1",
         "first_seq": 1,
         "last_seq": 1,
@@ -12887,28 +13142,106 @@
               "records_updated": 1
             }
           }
-        ]
+        ],
+        "inventory": {
+          "at_seq": 1,
+          "pages_live": 5,
+          "records_live": 0,
+          "bytes_live": 0,
+          "bytes_versions": 0,
+          "bytes_audit": 0,
+          "bytes_assets": 0,
+          "bytes_deleted_retained": 0
+        }
       },
       "result": {
         "status": 201,
         "report_id": "e2-1",
-        "report_sha256": "d932bf18e621bfadd9dc03c2522b761b82f4ce612c44627212d941c13e085174",
+        "report_sha256": "2e179ebb27033f0875ae5e9f90a237f6b7face6c3868da1c26706baaacadccfd",
+        "reporter": "primary",
+        "epoch": 2,
         "accepted": [
           1,
           1
         ],
         "complete_through": 1,
         "missing": [],
-        "inventory_at_seq": null
+        "current_inventory": {
+          "epoch": 2,
+          "at_seq": 1
+        }
       },
-      "note": "a new reporter epoch has its own sequence"
+      "note": "a new epoch's first snapshot replaces the old epoch's, although its sequence is lower"
+    },
+    {
+      "step": 12,
+      "report": {
+        "format": "aweb.usage/1",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "installation_generation": 3,
+        "reporter": "primary",
+        "epoch": 1,
+        "report_id": "r9",
+        "first_seq": 8,
+        "last_seq": 8,
+        "metric_version": 1,
+        "entries": [
+          {
+            "seq": 8,
+            "occurred_at": "2026-10-20T10:00:08Z",
+            "operation_id": "op_8",
+            "attempt_id": "at_8",
+            "source": "cli",
+            "outcome": "committed",
+            "deltas": {
+              "calls": 1,
+              "records_updated": 1
+            }
+          }
+        ],
+        "inventory": {
+          "at_seq": 8,
+          "pages_live": 4,
+          "records_live": 0,
+          "bytes_live": 0,
+          "bytes_versions": 0,
+          "bytes_audit": 0,
+          "bytes_assets": 0,
+          "bytes_deleted_retained": 0
+        }
+      },
+      "result": {
+        "status": 201,
+        "report_id": "r9",
+        "report_sha256": "d0759bdebe29ab5d9b8cbc73b49743975dc80e256c223ce31fda1bff8a7f77da",
+        "reporter": "primary",
+        "epoch": 1,
+        "accepted": [
+          8,
+          8
+        ],
+        "complete_through": 8,
+        "missing": [],
+        "current_inventory": {
+          "epoch": 2,
+          "at_seq": 1
+        }
+      },
+      "note": "a delayed epoch-1 snapshot is stored but never replaces the current epoch's inventory"
     }
   ],
   "totals_after_collector": {
-    "calls": 8,
-    "records_updated": 8,
-    "pages_live": 3,
-    "note": "two epochs: sequences 1-7 of epoch-1 and 1 of epoch-2, each counted once; gauges from at_seq 7"
+    "calls": 9,
+    "records_updated": 9,
+    "current_inventory": {
+      "reporter": "primary",
+      "epoch": 2,
+      "at_seq": 1,
+      "pages_live": 5
+    },
+    "note": "epoch 1 sequences 1-8 and epoch 2 sequence 1, each counted once; the reporter's inventory is epoch 2's"
   },
   "lifecycle_grant": [
     {
@@ -12922,7 +13255,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "l1",
         "first_seq": 10,
         "last_seq": 10,
@@ -12958,7 +13292,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "l2",
         "first_seq": 11,
         "last_seq": 11,
@@ -13003,7 +13338,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "l3",
         "first_seq": 12,
         "last_seq": 12,
@@ -13039,7 +13375,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "l4",
         "first_seq": 12,
         "last_seq": 12,
@@ -13076,7 +13413,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "l5",
         "first_seq": 12,
         "last_seq": 12,
@@ -13112,7 +13450,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "l6",
         "first_seq": 12,
         "last_seq": 12,
@@ -13148,7 +13487,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "l7",
         "first_seq": 12,
         "last_seq": 12,
@@ -13185,7 +13525,8 @@
         "app_id": "pages",
         "installation_id": "inst_01JB7Q",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "l8",
         "first_seq": 12,
         "last_seq": 12,
@@ -13221,7 +13562,8 @@
         "app_id": "pages",
         "installation_id": "inst_02NEW",
         "installation_generation": 3,
-        "reporter": "primary-epoch-1",
+        "reporter": "primary",
+        "epoch": 1,
         "report_id": "l9",
         "first_seq": 12,
         "last_seq": 12,

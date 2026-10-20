@@ -32,8 +32,9 @@ def test_valid_batches(case):
 
 @pytest.mark.parametrize("case", REPORTS["refusals"], ids=lambda case: case["name"])
 def test_refused_batches(case):
+    batch = json.loads(case["batch_json"]) if "batch_json" in case else case["batch"]
     with pytest.raises(UsageReportRefused) as refused:
-        validate_report(case["batch"])
+        validate_report(batch)
     assert refused.value.code == case["expect"]
 
 
