@@ -390,3 +390,32 @@ async def test_controller_renewal_authenticates_registry_signing_inputs(privacy_
                 assert await env.registry_db.fetch_value('SELECT revoked_at IS NULL FROM {{tables.team_certificates}}')
     finally:
         env.app.state.awid_registry_client.transport.app=original
+
+
+@pytest.mark.usefixtures('source_cli_binary')
+@pytest.mark.asyncio
+async def test_controller_batch_can_renew_an_expired_member_missing_from_active_roster(privacy_app,tmp_path,monkeypatch):
+    from datetime import datetime,timedelta,timezone
+    from awid.credential_policy import POLICY_FIELDS,policy_signing_bytes
+    from test_lifetime_review_http import parent
+    env=privacy_app
+    monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED','true')
+    expiry=datetime.now(timezone.utc)+timedelta(seconds=2)
+    old=await parent(env,expires_at=expiry.isoformat())
+    name=TEAM.split(':')[0]
+    path=tmp_path/'.awid'/'team-keys'/'example.test'/(name+'.key')
+    path.parent.mkdir(parents=True)
+    _pem(path,'ED25519 PRIVATE KEY',env.team_sk)
+    async with registry_listener(env) as (registry,origin):
+        env.registry_app.state.awid_public_origins=(origin,)
+        record=dict(v=1,type='aweb.team-credential-policy',team_id=TEAM,team_did_key=env.team_did,
+            revision=1,issued_at=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
+        record.update(dict.fromkeys(POLICY_FIELDS));record['member_certificate']=3600
+        await registry.set_team_credential_policy('example.test',name,record,sign_message(env.team_sk,policy_signing_bytes(record)),signing_key=env.team_sk)
+        await asyncio.sleep(max(0,(expiry-datetime.now(timezone.utc)).total_seconds())+.02)
+        assert await registry.list_team_certificates('example.test',name,active_only=True,signing_key=env.team_sk)==[]
+        result=await _process(os.environ['AW_TEST_CLI_BINARY'],'id','team','renew-certs','--team',name,
+            '--namespace','example.test','--registry',origin,'--json',cwd=tmp_path,env=_child_env(tmp_path,origin))
+        assert json.loads(result)['renewed']==['alice']
+        active=await registry.list_team_certificates('example.test',name,active_only=True,signing_key=env.team_sk)
+        assert len(active)==1 and active[0].certificate_id!=old['certificate_id']
