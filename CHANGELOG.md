@@ -10,6 +10,9 @@
   surface-only and hook-only verbs (`tool_context_denied`), and grant
   snapshots hold only agent tools.
 - aw refuses to install a manifest whose answer path is agent-visible.
+- Manifest version 2 can declare the roles a team admin may designate
+  (`roles`: name, label and optional description). aw and
+  `aweb_naapp.manifest` refuse a malformed declaration with `role_invalid`.
 - aw and `aweb_naapp.manifest` refuse v1 manifests nested deeper than 512
   levels, as they do for v2.
 - `aweb_naapp.manifest.load_manifest` reads manifest bytes of either

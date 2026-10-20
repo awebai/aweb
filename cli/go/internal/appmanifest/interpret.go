@@ -69,6 +69,9 @@ type Manifest struct {
 	Usage           *Usage         `json:"usage,omitempty"`
 	Lifecycle       *Lifecycle     `json:"lifecycle,omitempty"`
 	Hooks           *Hooks         `json:"hooks,omitempty"`
+	// Roles stays raw until validation, so every fault in it is reported
+	// as role_invalid.
+	Roles json.RawMessage `json:"roles,omitempty"`
 	// members are the top-level member names of decoded bytes, so a
 	// present member is told apart from an absent one.
 	members map[string]bool

@@ -122,6 +122,14 @@ MAX_MANIFEST_BYTES = 10 << 20
 MAX_JSON_DEPTH = 512
 _MAX_V2_TOOLS = 256
 _MAX_V2_PATH_SEGMENTS = 32
+_MAX_ROLES = 64
+_MAX_ROLE_NAME_BYTES = 128
+_MAX_ROLE_LABEL = 128
+_MAX_ROLE_DESCRIPTION = 512
+# The designatable role grammar of aweb_naapp.roles: dot-separated lowercase
+# segments, at least two, no ':'.
+_ROLE_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+")
+_ROLE = frozenset({"name", "label", "description"})
 
 AGENT, SURFACE, HOOK = "agent", "surface", "hook"
 _CONTEXTS = (AGENT, SURFACE, HOOK)
@@ -288,8 +296,8 @@ def _v2_names(obj: Mapping[str, Any], key: str, where: str) -> list[str] | None:
 
 
 _TOP = frozenset({"manifest_version", "app", "tools", "event_emitters", "events",
-                  "app_keys", "surfaces", "usage", "lifecycle", "hooks"})
-_V2_TOP = ("app_keys", "surfaces", "usage", "lifecycle", "hooks")
+                  "app_keys", "surfaces", "usage", "lifecycle", "hooks", "roles"})
+_V2_TOP = ("app_keys", "surfaces", "usage", "lifecycle", "hooks", "roles")
 _APP = frozenset({"id", "version", "origin", "llms_txt", "skills"})
 _TOOL = frozenset({"name", "description", "method", "path", "input_schema", "params", "body",
                    "scopes", "auth", "mutation", "invocation_contexts"})
@@ -460,6 +468,8 @@ def _decode(doc: Any) -> dict[str, Any]:
                                 "reads": _v2_names(prod, "reads", where) or []})
         out["hooks"] = {"registration_version": _v2_int(hooks, "registration_version", "hooks"),
                         "registrations": registrations, "productions": productions}
+    # Roles stay raw until validation, so every fault in them is role_invalid.
+    out["roles"] = doc.get("roles")
     return out
 
 
@@ -666,6 +676,7 @@ def _validate_v2(d: dict[str, Any], app_id: str, tools: dict[str, _Tool]) -> Non
     _validate_usage(d["usage"], tools)
     _validate_lifecycle(d["lifecycle"], tools)
     _validate_hooks(d["hooks"], tools)
+    _parse_roles(d["roles"])
 
 
 def _validate_app_keys(keys: list[tuple[str, str, list[str]]]) -> None:
@@ -898,6 +909,45 @@ def _validate_distinct(names: list[str], limit: int, pattern: re.Pattern[str] | 
         raise _refuse("hooks_invalid", f"{what} are invalid or repeated")
 
 
+def _parse_roles(raw: Any) -> list[dict[str, str | None]]:
+    """The roles a team admin may designate; absent declares none. A name is
+    compared exactly, and its label and description are shown in the host's
+    own chrome, so they carry no control or bidi character."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not 1 <= len(raw) <= _MAX_ROLES:
+        raise _refuse("role_invalid", f"roles must be an array of 1 to {_MAX_ROLES} roles")
+    roles: list[dict[str, str | None]] = []
+    for item in raw:
+        if not isinstance(item, dict) or set(item) - _ROLE or any(value is None for value in item.values()):
+            raise _refuse("role_invalid", "a role is an object of name, label and description")
+        name, label, description = item.get("name", ""), item.get("label", ""), item.get("description")
+        if not isinstance(name, str) or not isinstance(label, str) or not isinstance(description, (str, type(None))):
+            raise _refuse("role_invalid", "role members are strings")
+        if len(name.encode("utf-8")) > _MAX_ROLE_NAME_BYTES or not _ROLE_NAME.fullmatch(name):
+            raise _refuse("role_invalid", f"role name {name!r} is not a designatable role name")
+        if any(role["name"] == name for role in roles):
+            raise _refuse("role_invalid", f"duplicate role name {name!r}")
+        if not _valid_role_text(label, _MAX_ROLE_LABEL):
+            raise _refuse("role_invalid", f"role {name!r} label must be 1 to {_MAX_ROLE_LABEL} characters "
+                          "with no control or bidi character")
+        if description is not None and not _valid_role_text(description, _MAX_ROLE_DESCRIPTION):
+            raise _refuse("role_invalid", f"role {name!r} description must be 1 to {_MAX_ROLE_DESCRIPTION} "
+                          "characters with no control or bidi character")
+        roles.append({"name": name, "label": label, "description": description})
+    return roles
+
+
+def _valid_role_text(text: str, max_runes: int) -> bool:
+    if not text or len(text) > max_runes:
+        return False
+    return not any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F or _is_bidi_control(ord(c)) for c in text)
+
+
+def _is_bidi_control(code: int) -> bool:
+    return code in (0x061C, 0x200E, 0x200F) or 0x202A <= code <= 0x202E or 0x2066 <= code <= 0x2069
+
+
 def _validate_hooks(hooks: dict[str, Any] | None, tools: dict[str, _Tool]) -> None:
     if hooks is None:
         return
@@ -975,6 +1025,7 @@ class Manifest:
     usage: Mapping[str, str] | None
     lifecycle: Mapping[str, str | None] | None
     hooks: Mapping[str, Any] | None
+    roles: tuple[Mapping[str, str | None], ...]
     _tools: Mapping[str, _Tool]
 
     def view(self) -> dict[str, Any]:
@@ -991,6 +1042,7 @@ class Manifest:
             "usage": None if self.usage is None else dict(self.usage),
             "lifecycle": None if self.lifecycle is None else dict(self.lifecycle),
             "hooks": copy.deepcopy(self.hooks),
+            "roles": [dict(role) for role in self.roles],
         }
 
     def tools_by_name(self) -> dict[str, Mapping[str, Any]]:
@@ -1088,6 +1140,7 @@ def load_manifest(data: bytes, *, reserved_names: frozenset[str] = frozenset()) 
         usage=d["usage"],
         lifecycle=lifecycle,
         hooks=hooks,
+        roles=tuple(_parse_roles(d["roles"])),
         _tools=tools,
     )
 
@@ -1166,7 +1219,7 @@ def _parse_catalog(data: bytes) -> tuple[str, list[tuple[int, str, str]]]:
     if not isinstance(doc, dict) or set(doc) - {"catalog_version", "app_id", "variants"}:
         raise invalid("manifest catalog is not a catalog object")
     version, app_id, variants = doc.get("catalog_version"), doc.get("app_id"), doc.get("variants")
-    if version != 1 or isinstance(version, bool):
+    if isinstance(version, bool) or not isinstance(version, int) or version != 1:
         raise invalid("unsupported catalog_version")
     if not isinstance(app_id, str) or not _go_trim(app_id):
         raise invalid("manifest catalog requires app_id")
