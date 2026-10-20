@@ -123,14 +123,24 @@ async def world(test_db_factory) -> AsyncIterator[World]:
         )
 
 
-def _policy(scope: str) -> ActionPolicy:
+def _policy(scope: str, *, allow_requester_approval: bool = True) -> ActionPolicy:
     return ActionPolicy(
         policy_ref="secrets.change",
         version=1,
         min_assurance=Assurance.PASSKEY,
         ttl=timedelta(minutes=15),
-        approver_scope=scope,
+        approver_scopes=(scope,),
+        allow_requester_approval=allow_requester_approval,
     )
+
+
+CHANGE_REQUEST = {"type": "aweb.secrets.change", "drafter": {"via": "console", "scope": "-"}}
+
+
+async def _approver(world: World, scope: str) -> Approver | None:
+    """The approver B2 would list for a policy naming only ``scope``."""
+    found = await world.directory.candidates(_policy(scope), CHANGE_REQUEST)
+    return found[0] if found else None
 
 
 async def designate_owner(
@@ -156,19 +166,19 @@ async def designate_owner(
 
 async def test_an_enrolled_owner_holding_the_role_decides(world: World) -> None:
     scope = await designate_owner(world, ALICE, "alice@acme.com")
-    approver = await world.directory.designated_approver(_policy(scope))
+    approver = await _approver(world, scope)
     assert approver is not None and approver.contact == "alice@acme.com"
-    assert await world.directory.is_current(approver.subject, _policy(scope))
+    assert await world.directory.is_current(scope, approver.subject)
 
 
 async def test_an_owner_whose_role_is_revoked_no_longer_decides(world: World) -> None:
     scope = await designate_owner(world, ALICE, "alice@acme.com")
-    approver = await world.directory.designated_approver(_policy(scope))
+    approver = await _approver(world, scope)
     assert approver is not None
     async with world.db.transaction() as tx:
         await unassign(tx, ALICE, OWNER_ROLE)
-    assert await world.directory.designated_approver(_policy(scope)) is None
-    assert not await world.directory.is_current(approver.subject, _policy(scope))
+    assert await _approver(world, scope) is None
+    assert not await world.directory.is_current(scope, approver.subject)
 
 
 async def test_revoking_one_owner_leaves_another_deciding(world: World) -> None:
@@ -176,8 +186,8 @@ async def test_revoking_one_owner_leaves_another_deciding(world: World) -> None:
     bob = await designate_owner(world, BOB, "bob@acme.com")
     async with world.db.transaction() as tx:
         await unassign(tx, ALICE, OWNER_ROLE)
-    assert await world.directory.designated_approver(_policy(alice)) is None
-    assert await world.directory.designated_approver(_policy(bob)) is not None
+    assert await _approver(world, alice) is None
+    assert await _approver(world, bob) is not None
 
 
 async def test_the_role_on_another_team_does_not_count(world: World) -> None:
@@ -185,7 +195,7 @@ async def test_the_role_on_another_team_does_not_count(world: World) -> None:
     async with world.db.transaction() as tx:
         await unassign(tx, ALICE, OWNER_ROLE)
         await assign(tx, PrincipalKey("backend:other.com", ALICE.principal_did), OWNER_ROLE)
-    assert await world.directory.designated_approver(_policy(scope)) is None
+    assert await _approver(world, scope) is None
 
 
 async def test_an_owner_scope_without_a_recorded_owner_has_no_approver(world: World) -> None:
@@ -196,18 +206,18 @@ async def test_an_owner_scope_without_a_recorded_owner_has_no_approver(world: Wo
         act = await world.owner.consume(tx, prepared, subject)
         await world.passkeys.designate(tx, scope=scope, contact="alice@acme.com", evidence=act)
         await assign(tx, ALICE, OWNER_ROLE)
-    assert await world.directory.designated_approver(_policy(scope)) is None
+    assert await _approver(world, scope) is None
 
 
 async def test_one_principal_owns_independently_in_two_installations(world: World) -> None:
     here = await designate_owner(world, ALICE, "alice@acme.com")
     there = await designate_owner(world, ALICE, "alice@acme.com", OTHER_INSTALLATION)
     assert here != there
-    first = await world.directory.designated_approver(_policy(here))
-    second = await world.directory.designated_approver(_policy(there))
+    first = await _approver(world, here)
+    second = await _approver(world, there)
     assert first is not None and second is not None
     assert first.subject != second.subject
-    assert not await world.directory.is_current(first.subject, _policy(there))
+    assert not await world.directory.is_current(there, first.subject)
 
 
 async def test_an_approver_scope_needs_no_owner_role(world: World) -> None:
@@ -225,6 +235,62 @@ async def test_an_approver_scope_needs_no_owner_role(world: World) -> None:
     await world.passkeys.complete_enrolment(
         token, device.create(await world.passkeys.enrolment_options(token))
     )
-    approver = await world.directory.designated_approver(_policy(scope))
+    approver = await _approver(world, scope)
     assert approver is not None
-    assert await world.directory.is_current(approver.subject, _policy(scope))
+    assert await world.directory.is_current(scope, approver.subject)
+
+
+def _member_draft(principal: PrincipalKey) -> dict:
+    return {
+        "type": "aweb.secrets.change",
+        "drafter": {"via": "team_auth", "principal": principal.principal_did},
+    }
+
+
+async def test_every_current_owner_is_a_candidate(world: World) -> None:
+    alice = await designate_owner(world, ALICE, "alice@acme.com")
+    bob = await designate_owner(world, BOB, "bob@acme.com")
+    policy = ActionPolicy(
+        policy_ref="secrets.change",
+        version=1,
+        min_assurance=Assurance.PASSKEY,
+        ttl=timedelta(minutes=15),
+        approver_scopes=(alice, bob),
+        allow_requester_approval=True,
+    )
+    found = await world.directory.candidates(policy, _member_draft(ALICE))
+    assert {(a.scope, a.principal_did) for a in found} == {
+        (alice, ALICE.principal_did),
+        (bob, BOB.principal_did),
+    }
+
+
+async def test_under_four_eyes_the_drafting_owner_is_left_out(world: World) -> None:
+    alice = await designate_owner(world, ALICE, "alice@acme.com")
+    bob = await designate_owner(world, BOB, "bob@acme.com")
+    policy = ActionPolicy(
+        policy_ref="secrets.change",
+        version=1,
+        min_assurance=Assurance.PASSKEY,
+        ttl=timedelta(minutes=15),
+        approver_scopes=(alice, bob),
+        allow_requester_approval=False,
+    )
+    found = await world.directory.candidates(policy, _member_draft(ALICE))
+    assert [a.principal_did for a in found] == [BOB.principal_did]
+
+
+async def test_under_four_eyes_a_console_drafter_is_left_out(world: World) -> None:
+    alice = await designate_owner(world, ALICE, "alice@acme.com")
+    bob = await designate_owner(world, BOB, "bob@acme.com")
+    policy = ActionPolicy(
+        policy_ref="secrets.change",
+        version=1,
+        min_assurance=Assurance.PASSKEY,
+        ttl=timedelta(minutes=15),
+        approver_scopes=(alice, bob),
+        allow_requester_approval=False,
+    )
+    console_draft = {"type": "aweb.secrets.change", "drafter": {"via": "console", "scope": alice}}
+    found = await world.directory.candidates(policy, console_draft)
+    assert [a.principal_did for a in found] == [BOB.principal_did]
