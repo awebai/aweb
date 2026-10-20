@@ -432,9 +432,26 @@ Placed under B1's `runtime` extra, which already depends on `awid-service`
 and `httpx` (`naapp-lib/pyproject.toml` on `agents/aweb-protocol-expert-naapp-verifier`):
 
 - `TeamServerDirectory`: `resolve(team_id) -> TeamServer(server_url, audience, team_did_key)`, implementing the §1 chain. It reuses the same registry selection and team-key cache as B1's verifier rather than a second copy.
-- `AppCredentialSigner(app_id, kid, key, purpose)`: signs one purpose. How
-  every app key is loaded is one rule for the whole lane, agreed with the
-  shared naapp runtime (open question 5); no key material appears in logs.
+- `AppCredentialSigner(app_id, kid, key, purpose)`: signs one purpose, with
+  a key from the lane's single app-key loader:
+  - **Configuration names keys by kid**: a map from kid to key file. Which
+    purposes a kid may sign comes from the pinned manifest's `app_keys`, not
+    from configuration, so the signer for a purpose picks the configured kid
+    the manifest declares for it and refuses at startup when there is none.
+  - **One loader**, `aweb_naapp.runtime`, runs once at runtime startup and fails
+    startup on a missing, unreadable or malformed key. No naapp parses key bytes
+    itself.
+  - **File checks**: a regular file, not group- or world-writable. Read bits
+    are left to the platform, because standard mounted secrets (Kubernetes
+    0644, Docker 0444, platform secret files) are world-readable inside a
+    single-user container.
+  - **One format**: 64 lowercase or uppercase hex characters (the Ed25519
+    seed), with one trailing newline allowed.
+  - **Never logged**: key material appears in no log, error, repr or
+    settings dump, and a test proves it.
+  - **Released value form**: the per-app `*_APP_EMIT_KEY_SEED_HEX` setting
+    stays accepted for the `app-event` key only, read by the same loader,
+    until it is measured that no deployment uses it (open question 5).
 - `TeamGrantSource`: the remote implementation of B1's `GrantSource`
   (`aweb_naapp.runtime.authorization`), using
   `async grant_for(team_id) -> Grant | None`:
@@ -489,10 +506,11 @@ Docker e2e harness, with AWID, aweb and one fixture naapp.
    is not a credential, every request to it is still authenticated, and the
    alternative, an authenticated read, would leave a naapp unable to discover
    a team before it can authenticate to it.
-5. **One rule for loading app keys** (§5). The shared runtime's settings
-   currently carry an emit key seed as a configuration value, and released
-   Folio and Library load theirs that way. *Recommendation: one loader for
-   every app key and purpose, reading a key file whose path is configuration;
-   the released seed-value setting stays accepted for existing deployments
-   until it is measured that none use it.* That is a compatibility change, so
-   it is routed to you with the runtime seat's agreement.
+5. **One rule for loading app keys** (§5), agreed with the shared naapp
+   runtime seat. Released Folio and Library load their emit seed as a
+   configuration value. *Recommendation: one loader for every app key and
+   purpose, reading key files named by kid; the released seed-value setting
+   stays accepted for the `app-event` key only until it is measured that no
+   deployment uses it, and is never extended to new purposes.* If a platform
+   that can only supply environment values appears, extending the value form
+   would be your decision.
