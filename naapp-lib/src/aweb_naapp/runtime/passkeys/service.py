@@ -332,6 +332,8 @@ class Passkeys:
                 "contact_sha256"
             ) != contact_sha256(contact):
                 raise DesignationRefused("owner act names another scope or contact")
+            if evidence.transaction_id != await _transaction_id(tx):
+                raise DesignationRefused("the owner act was consumed in another transaction")
             kind = evidence.act
             act_id = f"{evidence.team_id}:{evidence.nonce}"
             actor = str(evidence.fields["team_key_did"])

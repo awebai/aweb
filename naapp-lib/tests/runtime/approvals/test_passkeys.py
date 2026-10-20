@@ -484,15 +484,30 @@ async def test_an_owner_act_takes_effect_once(pw):
             )
 
 
+async def test_an_owner_act_does_not_outlive_its_transaction(pw):
+    subject = designation_subject(SCOPE, "human@example.com")
+    prepared = await pw.owner.prepare("app-role.designate", subject)
+
+    class Abandoned(Exception):
+        pass
+
+    with pytest.raises(Abandoned):
+        async with pw.passkeys.db.transaction() as tx:
+            act = await pw.owner.consume(tx, prepared, subject)
+            raise Abandoned
+    with pytest.raises(DesignationRefused):
+        async with pw.passkeys.db.transaction() as tx:
+            await pw.passkeys.designate(tx, scope=SCOPE, contact="human@example.com", evidence=act)
+    assert await pw.passkeys.designated_approver(policy()) is None
+
+
 async def test_a_recovery_act_replaces_the_approver_once(pw):
     await designate(pw, "human@example.com")
     subject = designation_subject(SCOPE, "new-phone@example.com")
     prepared = await pw.owner.prepare("app-credential.recover", subject)
     async with pw.passkeys.db.transaction() as tx:
         act = await pw.owner.consume(tx, prepared, subject)
-        await pw.passkeys.designate(
-            tx, scope=SCOPE, contact="new-phone@example.com", evidence=act
-        )
+        await pw.passkeys.designate(tx, scope=SCOPE, contact="new-phone@example.com", evidence=act)
     with pytest.raises(DesignationRefused):
         async with pw.passkeys.db.transaction() as tx:
             await pw.passkeys.designate(
