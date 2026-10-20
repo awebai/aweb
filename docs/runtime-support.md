@@ -21,6 +21,7 @@ support in all three.
 | Claude Code | Yes | Yes | aweb channel plugin |
 | Pi | Yes | Yes | bundled aweb extension |
 | Codex | Yes | No; start manually | OATS host wake broker; without OATS, read mail and chat when asked |
+| Hermes | No; connect a native aw workspace and install the Hermes platform plugin | No; run `hermes gateway run` manually | Hermes aweb platform plugin consumes `aw events stream` and delivers mail/chat into the gateway |
 | `local-shell` | Yes | No; start manually | explicit polling or runtime-specific integration |
 
 Supported materialization values are:
@@ -31,6 +32,13 @@ codex
 pi
 local-shell
 ```
+
+`hermes` is not a materialization value, an `aw team join --harness` value, or
+a runtime launched by `aw team admin up` / `--start`. Hermes support is the
+gateway platform integration, with its own manual install and launch flow.
+The validated Hermes release is **v0.22.2**
+(`d923a5eb487a17c0a68801bba9ef0f56c81040a8`); see
+[add a Hermes agent](add-ai-tool.md#hermes) for the pinned plugin install.
 
 The runtime is selected when the agent is materialized:
 

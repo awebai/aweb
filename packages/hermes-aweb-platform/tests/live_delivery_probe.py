@@ -47,28 +47,38 @@ import os
 from tools import clarify_gateway
 from tools import approval
 from tools.approval_context import set_current_session_key, reset_current_session_key
+from gateway.session_context import get_session_env
 
-async def clarify(args, *, session_key, source):
+async def clarify(args, *, session_key=None, source=None):
+    # v0.22.2 exposes session context; newer Hermes also supplies command kwargs.
+    session_key = session_key or get_session_env("HERMES_SESSION_KEY")
+    chat_id = source.chat_id if source else get_session_env("HERMES_SESSION_CHAT_ID")
+    assert session_key and chat_id, "Actual gateway command context is required"
     with Path(os.environ["HERMES_HOME"], "pending_keys").open("a") as f:
         f.write(session_key + "\\n")
     entry = clarify_gateway.register("fixture-" + session_key, session_key, "Pick one", ["one", "two"])
-    Path(os.environ["HERMES_HOME"], "blocked").write_text(source.chat_id)
+    Path(os.environ["HERMES_HOME"], "blocked").write_text(chat_id)
     response = await asyncio.to_thread(clarify_gateway.wait_for_response, entry.clarify_id, 15)
     return "fixture-resolved:" + str(response)
 
-async def hold(args, *, source):
+async def hold(args, *, source=None):
+    chat_id = source.chat_id if source else get_session_env("HERMES_SESSION_CHAT_ID")
+    assert chat_id, "Actual gateway command context is required"
     root = Path(os.environ["HERMES_HOME"])
-    (root / "blocked").write_text(source.chat_id)
+    (root / "blocked").write_text(chat_id)
     while not (root / "release").exists():
         await asyncio.sleep(.02)
-    return "fixture-held-reply:" + source.chat_id
+    return "fixture-held-reply:" + chat_id
 
 def register(ctx):
-    def approve(args, *, session_key, source):
+    def approve(args, *, session_key=None, source=None):
+        session_key = session_key or get_session_env("HERMES_SESSION_KEY")
+        chat_id = source.chat_id if source else get_session_env("HERMES_SESSION_CHAT_ID")
+        assert session_key and chat_id, "Actual gateway command context is required"
         token = set_current_session_key(session_key)
         with Path(os.environ["HERMES_HOME"], "pending_keys").open("a") as f:
             f.write(session_key + "\\n")
-        approval.register_gateway_notify(session_key, lambda data: Path(os.environ["HERMES_HOME"], "blocked").write_text(source.chat_id))
+        approval.register_gateway_notify(session_key, lambda data: Path(os.environ["HERMES_HOME"], "blocked").write_text(chat_id))
         try:
             result = approval.request_tool_approval("fixture_noop", "Acceptance only; no tool runs")
             return "fixture-approval:" + str(result.get("approved", False))

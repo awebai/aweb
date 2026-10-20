@@ -4,52 +4,114 @@ Hermes gateway platform for Aweb agent mail/chat. It runs real `aw` commands
 for identity/trust, events, body fetches, exact-session replies and read receipts.
 It creates no identities and changes no server protocol.
 
-This candidate fixes intake, routing, retries and stream health against Hermes
-`38d55b90dab7b37d7f26f0450b61851463fb1329`. Real-stack transport/control
-acceptance passes; real-model mail/chat validation awaits the approved credential.
-Telegram is untested without a token. See [findings](../../docs/hermes-aweb-live-findings.md)
-and [build evidence](../../docs/evidence/hermes-plugin-build-2026-10-18.md).
-Installation of the pin below waits for its non-author review ACK and required
-acceptance; the code pin is included in the review, rather than tracking a moving branch.
+Validated Hermes release: **v0.22.2**, upstream commit
+`d923a5eb487a17c0a68801bba9ef0f56c81040a8`. Support is limited to this tested
+release; a broader version range is not established. The earlier investigation
+used `38d55b90dab7b37d7f26f0450b61851463fb1329` on upstream main.
+See [build evidence](../../docs/evidence/hermes-plugin-build-2026-10-18.md) and
+[model/install evidence](../../docs/evidence/hermes-model-acceptance-2026-10-19.md)
+for the separate transport, release and model checks. Telegram is untested.
+The code pin below has a non-author code-review ACK; this documentation/evidence
+delta still requires its own ACK before merging.
 
 ## Install
 
-With the pinned Hermes checkout and its dependencies installed:
+Start with Git, Node/npm, and
+[uv](https://docs.astral.sh/uv/getting-started/installation/) on PATH.
+Choose an empty directory for this agent. The following uses a private npm
+prefix to select an isolated public aw installation. The public package used for acceptance is aw 1.36.43.
 
 ```bash
+export HERMES_AWEB_WORKSPACE=/absolute/path/to/empty/hermes-workspace
+mkdir -p "$HERMES_AWEB_WORKSPACE"
+cd "$HERMES_AWEB_WORKSPACE"
+export npm_config_prefix="$PWD/.tools"
+export PATH="$npm_config_prefix/bin:$PATH"
+npm install -g @awebai/aw
+command -v aw
+aw version
+
+git clone --depth 1 --branch v0.22.2 \
+  https://github.com/NousResearch/hermes-agent.git .hermes-agent
+cd .hermes-agent
+test "$(git rev-parse HEAD)" = d923a5eb487a17c0a68801bba9ef0f56c81040a8
+uv sync --frozen --python 3.14 --extra anthropic
+export PATH="$PWD/.venv/bin:$PATH"
+export HERMES_HOME="$HERMES_AWEB_WORKSPACE/.hermes"
+command -v hermes
+hermes --version
+python -c 'import hermes_cli, sys; print(sys.executable); print(hermes_cli.__file__)'
+```
+
+`aw` must resolve into the selected `.tools/bin`, with the public package version
+shown by `aw version`. `hermes --version` must report `v0.22.2` and
+`local d923a5eb487a`; its executable, Python and module paths must point into
+`.hermes-agent` and its `.venv`. Keep these PATH and `HERMES_HOME` selections
+in the shell that starts the gateway. No prior Hermes install is needed.
+
+Obtain an invite for this agent from your team's dashboard or an authorized
+member using `aw team invite`. Do not create a second account/team to join an
+existing team. The invite selects its service and team. Choose the new agent's
+name in that team; hosted invites require `--name`. With your invite:
+
+```bash
+cd "$HERMES_AWEB_WORKSPACE"
+unset AWEB_IDENTITY_HOME
+aw team join <invite-token> --name <agent-name>
+aw workspace status
 export AWEB_PLATFORM_ENABLED=true
 hermes plugins install awebai/aweb/packages/hermes-aweb-platform \
   --ref df0b38022f1a27d22542776f4b93e8456c9e1ba9 --enable
+hermes plugins list
+
+export AWEB_PLATFORM_WORKDIR="$PWD"
+export AWEB_ALLOWED_USERS=example.aweb.ai/alice
+export AWEB_ALLOW_ALL_USERS=false
+export AWEB_HOME_CHANNEL=example.aweb.ai/alice
+hermes model
+hermes gateway run
 ```
+
+If this agent already owns a connected native aw workspace, use that directory
+and omit `aw team join`; never copy another agent's `.aw` state. For the full
+team flow, see [add a Hermes agent](../../docs/add-ai-tool.md#hermes).
+`hermes model` is interactive. The `anthropic` extra prepares the acceptance
+provider. If `ANTHROPIC_API_KEY` is already supplied securely in the runtime
+environment, this noninteractive alternative selects the tested model instead
+of running `hermes model`:
+
+```bash
+hermes config set model.provider anthropic
+hermes config set model.default claude-sonnet-5-5
+hermes config set model.api_mode anthropic_messages
+hermes gateway run
+```
+
+Keep credential values out of shell history, logs and repository files.
+
+Replace the example addresses with an authorized sender/home-channel recipient.
+Use a separate `HERMES_HOME` for each gateway. This exact remote subdirectory
+install was run in fresh homes on both the investigation pin and v0.22.2,
+with byte-identical installed adapter code. The complete public-aw/team-join
+flow also passed against app.aweb.ai with aw 1.36.43.
 
 The remote manifest key is `aweb-platform`; the gateway platform name is `aweb`.
 For development, a symlink at `~/.hermes/plugins/platforms/aweb` uses the discovery
 key `platforms/aweb` and can be enabled with `hermes plugins enable platforms/aweb`.
-Remote installation itself has only source/parser validation, not a live installer run.
-
-Choose a native, already connected aw workspace belonging to this Hermes agent:
-
-```bash
-unset AWEB_IDENTITY_HOME
-cd /path/to/hermes-aweb-workspace
-aw workspace status
-export AWEB_PLATFORM_ENABLED=true
-export AWEB_PLATFORM_WORKDIR="$PWD"
-export AWEB_ALLOWED_USERS=example.aweb.ai/alice
-export AWEB_ALLOW_ALL_USERS=false
-hermes gateway run
-```
-
 Persist settings in the selected Hermes home's `.env`. Keep model and Telegram
 credentials in Hermes's own configuration. `AWEB_PLATFORM_AW_BIN` optionally
-selects an aw executable; `AWEB_HOME_CHANNEL` selects an address for cron sends.
+selects an aw executable; `AWEB_HOME_CHANNEL` selects an address for cron sends and owner notices.
+Without a configured home channel, Hermes can send its first-run setup notice
+as a visible reply before the model answer; that notice can mark the input read.
+Likewise, a clarify prompt is a visible reply: read state does not mean the
+model turn has finished. The model acceptance run configured the home channel.
 Allowlist full sender addresses when present, as those are the plugin's user ids.
 
-aw 1.36.40 refuses `events stream` when an inherited `AWEB_IDENTITY_HOME` selects
-an external identity home. A Hermes user with that variable unset follows the
-native workspace flow and avoids the refusal; an attached identity environment
-can hit it even with a correct `AWEB_PLATFORM_WORKDIR`. The plugin preserves the
-operator's environment choice and exposes failure as retrying health.
+The flow unsets `AWEB_IDENTITY_HOME` so aw acts as the native workspace
+identity selected by `AWEB_PLATFORM_WORKDIR`. With aw 1.36.43, an inherited
+external selector instead chooses that external identity. Clear it deliberately
+when starting this agent. Earlier aw 1.36.40 refused the external-home event
+stream path; that historical failure is recorded in the findings.
 
 ## Delivery behavior
 
@@ -75,24 +137,24 @@ is separate from this adapter's reply routing.
 
 ## Compatibility checks
 
-Run with the supported Hermes checkout's dependency environment. The public
+Run with the supported release checkout's dependency environment. The public
 surfaces used are platform registration, `handle_message`, processing-completion
 hooks, command/clarify helpers and `send_path_degraded`. These pinned private
 boundaries remain because a public final-turn/guard-release receipt is absent:
 
-| Boundary at the pinned Hermes commit | Why it remains | Upgrade check |
+| Boundary (v0.22.2 source locations) | Why it remains | Upgrade check |
 | --- | --- | --- |
-| `BasePlatformAdapter._session_tasks`, `_event_session_key` (`base.py:1935,2507,4726`) | The public completion hook runs before guard cleanup; ordinary admission waits for actual task completion. | Ordered burst/restart and blocked-turn probes. |
-| Runner `_startup_restore_in_progress` (`run_inbound.py:199`) | A volatile startup replay queue is not completed no-reply processing. | Burst queued before real gateway boot. |
-| Runner `_is_user_authorized_for_source` (`run.py:3793`) | Distinguish ignored unauthorized `None` from accepted no-reply `None`; refuse unauthorized control bypass. | Real unauthorized sender remains unread; do not remove this gate on upgrade. |
-| `_dispatch_inline_reply` (`base.py:3551,4055`) | Preserve a failed inline handler disposition when Hermes contains its exception. | Approval/clarify/stop probes through actual gateway dispatch. |
+| `BasePlatformAdapter._session_tasks`, `_event_session_key` (`base.py:1993,2554,4768`) | The public completion hook runs before guard cleanup; ordinary admission waits for actual task completion. | Ordered burst/restart and blocked-turn probes. |
+| Runner `_startup_restore_in_progress` (`run_inbound.py:219`) | A volatile startup replay queue is not completed no-reply processing. | Burst queued before real gateway boot. |
+| Runner `_is_user_authorized_for_source` (`run.py:4020`) | Distinguish ignored unauthorized `None` from accepted no-reply `None`; refuse unauthorized control bypass. | Real unauthorized sender remains unread; do not remove this gate on upgrade. |
+| `_dispatch_inline_reply` (`base.py:3599`) | Preserve a failed inline handler disposition when Hermes contains its exception. | Approval/clarify/stop probes through actual gateway dispatch. |
 | aw reconnect diagnostic (`cli/go/cmd/aw/events.go:93`) | aw may reconnect HTTP streams inside one child process; degrade health before the next frame. | Check this CLI diagnostic and JSON event shape when upgrading aw. |
 
 For a Hermes upgrade, inspect those boundaries at the new commit and run the
-following targeted checks before advancing the supported pin:
+following targeted checks before advancing the supported version:
 
 ```bash
-export HERMES_AGENT_SOURCE=/path/to/pinned/hermes-agent
+export HERMES_AGENT_SOURCE=/path/to/supported/hermes-agent
 python -m unittest discover -s packages/hermes-aweb-platform/tests \
   -p test_hermes_lifecycle.py -v
 
