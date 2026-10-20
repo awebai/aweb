@@ -100,15 +100,15 @@ the approval, decision, policy and the app's own origin.
 
 - The relying party is the app's own origin (`RelyingParty`).
 - `verify_registration(credential, challenge=..., rp=...)` and
-  `verify_assertion(proof, challenge=..., rp=..., public_key=..., sign_count=...)`
-  are the stateless ceremony checks `Passkeys` uses, for any caller with its own
-  challenges and credentials. They always require user verification and raise
-  `WebAuthnRefused` on any failure. The caller makes each challenge single-use,
-  stores the credential and advances its counter atomically. Before
-  `verify_assertion`, the caller looks up the stored key by the proof's
-  credential ID and checks that the credential belongs to the expected
-  subject; afterwards it advances the counter with a compare-and-set on
-  `new_sign_count`.
+  `verify_assertion(proof, challenge=..., rp=..., credential_id=...,
+  public_key=..., sign_count=...)` are the stateless ceremony checks `Passkeys`
+  uses, for any caller with its own challenges and credentials. They always
+  require user verification and raise `WebAuthnRefused` on any failure.
+  `verify_assertion` takes the stored credential the caller chose for the
+  expected subject and refuses a proof naming any other credential, since the
+  proof's credential ID is not signed. The caller makes each challenge
+  single-use, stores the credential and advances its counter with a
+  compare-and-set on `new_sign_count`.
 - `designate(tx, scope=..., contact=..., evidence=...)` runs in the caller's
   transaction. The evidence is a `VerifiedOwnerAct`, which the owner-act
   verifier (`aweb_naapp.hooks.owner_act_nonces`) consumed in that same

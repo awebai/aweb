@@ -53,10 +53,10 @@ def test_an_assertion_over_the_callers_challenge_verifies_with_the_registered_ke
         device.get(assertion_options()),
         challenge=CHALLENGE,
         rp=RP,
+        credential_id=passkey.credential_id,
         public_key=passkey.public_key,
         sign_count=passkey.sign_count,
     )
-    assert verified.credential_id == passkey.credential_id
     assert verified.new_sign_count == 1
 
 
@@ -94,7 +94,39 @@ def test_an_assertion_is_refused_for_another_challenge_origin_relying_party_or_k
     ]
     for proof, rp, public_key in attempts:
         with pytest.raises(WebAuthnRefused):
-            verify_assertion(proof, challenge=CHALLENGE, rp=rp, public_key=public_key, sign_count=0)
+            verify_assertion(
+                proof,
+                challenge=CHALLENGE,
+                rp=rp,
+                credential_id=passkey.credential_id,
+                public_key=public_key,
+                sign_count=0,
+            )
+
+
+def test_an_assertion_naming_another_credential_than_the_stored_one_is_refused():
+    device, passkey = enrolled()
+    _, stranger = enrolled()
+    with pytest.raises(WebAuthnRefused):
+        verify_assertion(
+            device.get(assertion_options()),
+            challenge=CHALLENGE,
+            rp=RP,
+            credential_id=stranger.credential_id,
+            public_key=passkey.public_key,
+            sign_count=0,
+        )
+    relabelled = device.get(assertion_options())
+    relabelled["id"] = relabelled["rawId"] = b64url(stranger.credential_id)
+    with pytest.raises(WebAuthnRefused):
+        verify_assertion(
+            relabelled,
+            challenge=CHALLENGE,
+            rp=RP,
+            credential_id=passkey.credential_id,
+            public_key=passkey.public_key,
+            sign_count=0,
+        )
 
 
 def test_an_assertion_without_user_verification_is_refused():
@@ -104,6 +136,7 @@ def test_an_assertion_without_user_verification_is_refused():
             device.get(assertion_options(), user_verified=False),
             challenge=CHALLENGE,
             rp=RP,
+            credential_id=passkey.credential_id,
             public_key=passkey.public_key,
             sign_count=passkey.sign_count,
         )
@@ -115,6 +148,7 @@ def test_an_assertion_whose_counter_does_not_advance_is_refused():
         device.get(assertion_options()),
         challenge=CHALLENGE,
         rp=RP,
+        credential_id=passkey.credential_id,
         public_key=passkey.public_key,
         sign_count=passkey.sign_count,
     )
@@ -123,19 +157,21 @@ def test_an_assertion_whose_counter_does_not_advance_is_refused():
             device.get(assertion_options(), count_step=0),
             challenge=CHALLENGE,
             rp=RP,
+            credential_id=passkey.credential_id,
             public_key=passkey.public_key,
             sign_count=first.new_sign_count,
         )
 
 
 def test_an_assertion_against_a_corrupt_stored_key_is_refused():
-    device, _ = enrolled()
+    device, passkey = enrolled()
     for corrupt in (b"", b"garbage", b"\xa1\x01\x02"):
         with pytest.raises(WebAuthnRefused):
             verify_assertion(
                 device.get(assertion_options()),
                 challenge=CHALLENGE,
                 rp=RP,
+                credential_id=passkey.credential_id,
                 public_key=corrupt,
                 sign_count=0,
             )
@@ -147,5 +183,10 @@ def test_malformed_ceremonies_are_refused():
         verify_registration({"id": "x"}, challenge=CHALLENGE, rp=RP)
     with pytest.raises(WebAuthnRefused):
         verify_assertion(
-            {"rawId": "!"}, challenge=CHALLENGE, rp=RP, public_key=passkey.public_key, sign_count=0
+            {"rawId": "!"},
+            challenge=CHALLENGE,
+            rp=RP,
+            credential_id=passkey.credential_id,
+            public_key=passkey.public_key,
+            sign_count=0,
         )

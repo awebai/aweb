@@ -31,7 +31,6 @@ class RegisteredPasskey:
 
 @dataclass(frozen=True)
 class VerifiedAssertion:
-    credential_id: bytes
     new_sign_count: int
 
 
@@ -61,16 +60,18 @@ def verify_assertion(
     *,
     challenge: bytes,
     rp: RelyingParty,
+    credential_id: bytes,
     public_key: bytes,
     sign_count: int,
 ) -> VerifiedAssertion:
-    """Verify an assertion over `challenge` at `rp` by the credential holding
-    `public_key`, with user verification, whose counter has moved past
-    `sign_count` (both zero is a device that does not count).
+    """Verify an assertion over `challenge` at `rp` by the stored credential
+    `credential_id`, holding `public_key`, with user verification, whose
+    counter has moved past `sign_count` (both zero is a device that does not
+    count).
 
-    The caller binds the assertion to its subject: it takes `public_key` and
-    `sign_count` from the stored credential whose ID the proof names, after
-    checking that credential belongs to the expected subject."""
+    The proof's credential ID is not covered by its signature, so a proof
+    naming any other credential is refused. The caller passes the stored
+    credential it chose for the expected subject."""
     try:
         verified = verify_authentication_response(
             credential=dict(proof),
@@ -84,6 +85,6 @@ def verify_assertion(
     # py_webauthn reports a corrupt stored key as a lookup error, not its own.
     except (WebAuthnException, LookupError, TypeError, ValueError) as exc:
         raise WebAuthnRefused("assertion did not verify") from exc
-    return VerifiedAssertion(
-        credential_id=verified.credential_id, new_sign_count=verified.new_sign_count
-    )
+    if verified.credential_id != credential_id:
+        raise WebAuthnRefused("assertion names another credential")
+    return VerifiedAssertion(new_sign_count=verified.new_sign_count)

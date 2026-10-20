@@ -836,6 +836,7 @@ class Passkeys:
                 proof,
                 challenge=challenge,
                 rp=self.rp,
+                credential_id=credential_id,
                 public_key=credential["public_key"],
                 sign_count=credential["sign_count"],
             )
