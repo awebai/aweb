@@ -1,12 +1,16 @@
 """What an agent gets back from a brokered call (secrets §7.6).
 
-In order: the body is cut at its bound and the cut reported; only the allowed
-response headers pass; a named operation's projection keeps only the values
-its JSON pointers name; every known value is redacted from the body and the
-passed headers; and a body that still looks like it carries a credential is
-withheld. The upstream effect has already happened when a result is withheld:
-the agent gets the status, the filtered headers, the reason and the redaction
-count, never the body.
+A body with a ``Content-Encoding`` other than ``identity`` is withheld: the
+broker asks for identity and never decompresses, so it never returns bytes it
+could not redact or inspect. Otherwise, in order: every known value is
+redacted from the whole body as received; the body is cut at its bound, the
+cut reported, and the tail of a cut body redacted so it never ends in part of
+a value; only the allowed response headers pass, redacted; a named
+operation's projection keeps only the values its JSON pointers name, redacted
+again; and a body that still looks like it carries a credential is withheld.
+The upstream effect has already happened when a result is withheld: the agent
+gets the status, the filtered headers, the reason and the redaction count,
+never the body.
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ class BrokeredResult:
     headers: list[tuple[str, str]]
     body: bytes | None
     disposition: Literal["returned", "withheld"]
-    withheld_reason: Literal["credential_shaped"] | None
+    withheld_reason: Literal["credential_shaped", "content_encoded"] | None
     undeclared_credential: bool
     redaction_count: int
     truncated: bool
@@ -46,6 +50,14 @@ class BrokeredResult:
 def _passes(name: str) -> bool:
     lowered = name.lower()
     return lowered in _PASSED_HEADERS or _PASSED_HEADER.fullmatch(lowered) is not None
+
+
+def _is_encoded(headers: Sequence[tuple[str, str]]) -> bool:
+    return any(
+        name.lower() == "content-encoding"
+        and any(coding.strip().lower() not in ("", "identity") for coding in value.split(","))
+        for name, value in headers
+    )
 
 
 def _pointer_tokens(pointer: str) -> list[str]:
@@ -110,10 +122,6 @@ def handle_response(
     from one that does not is flagged ``undeclared_credential``.
     """
     upstream_bytes = len(body)
-    if len(body) > max_bytes:
-        body = body[:max_bytes]
-        truncated = True
-
     redaction_count = 0
     passed: list[tuple[str, str]] = []
     for name, value in headers:
@@ -122,23 +130,42 @@ def handle_response(
             redaction_count += count
             passed.append((name, value))
 
-    if projection is not None:
-        body = _project(body, projection, complete=not truncated)
-    body, count = known.redact(body)
-    redaction_count += count
-
-    if has_credential_shape(body):
+    def withheld(reason: Literal["credential_shaped", "content_encoded"], undeclared: bool) -> BrokeredResult:
         return BrokeredResult(
             status=status,
             headers=passed,
             body=None,
             disposition="withheld",
-            withheld_reason="credential_shaped",
-            undeclared_credential=not token_issuing,
+            withheld_reason=reason,
+            undeclared_credential=undeclared,
             redaction_count=redaction_count,
             truncated=truncated,
             upstream_bytes=upstream_bytes,
         )
+
+    if _is_encoded(headers):
+        return withheld("content_encoded", False)
+
+    body, count = known.redact(body)
+    redaction_count += count
+    if not truncated:
+        body, count = known.redact_json(body)
+        redaction_count += count
+    if len(body) > max_bytes:
+        body = body[:max_bytes]
+        truncated = True
+    if truncated:
+        body, count = known.redact_tail(body)
+        redaction_count += count
+
+    if projection is not None:
+        body = _project(body, projection, complete=not truncated)
+        for redact in (known.redact, known.redact_json):
+            body, count = redact(body)
+            redaction_count += count
+
+    if has_credential_shape(body):
+        return withheld("credential_shaped", not token_issuing)
     return BrokeredResult(
         status=status,
         headers=passed,

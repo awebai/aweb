@@ -4,6 +4,7 @@ like it carries a credential."""
 
 from __future__ import annotations
 
+import base64
 import json
 
 import pytest
@@ -154,3 +155,70 @@ def test_a_projection_that_drops_the_credential_fields_is_returned() -> None:
 def test_a_malformed_pointer_is_refused(pointer: str) -> None:
     with pytest.raises(ValueError):
         _handle(b"{}", projection=[pointer])
+
+
+STRADDLER = "Z0x9Y8w7V6u5T4s3R2q1P0"
+
+
+def _known_straddler() -> KnownValues:
+    known = KnownValues()
+    known.add("k", STRADDLER)
+    return known
+
+
+@pytest.mark.parametrize("cut", [1, 5, 11, 21])
+@pytest.mark.parametrize("encoding", ["raw", "base64"])
+def test_a_value_straddling_the_bound_leaves_no_part_of_itself(cut: int, encoding: str) -> None:
+    encoded = STRADDLER if encoding == "raw" else base64.b64encode(STRADDLER.encode()).decode()
+    body = ("." * 20 + encoded + "." * 20).encode()
+    result = _handle(
+        body, headers=[("Content-Type", "text/plain")], max_bytes=20 + cut, known=_known_straddler()
+    )
+    assert result.truncated is True
+    assert result.body is not None
+    assert encoded[:1].encode() not in result.body
+    assert result.redaction_count >= 1
+
+
+@pytest.mark.parametrize("cut", [1, 5, 11, 21])
+@pytest.mark.parametrize("encoding", ["raw", "base64"])
+def test_a_body_the_egress_cut_inside_a_value_leaves_no_part_of_it(cut: int, encoding: str) -> None:
+    encoded = STRADDLER if encoding == "raw" else base64.b64encode(STRADDLER.encode()).decode()
+    body = ("." * 20 + encoded[:cut]).encode()
+    result = _handle(
+        body, headers=[("Content-Type", "text/plain")], truncated=True, known=_known_straddler()
+    )
+    assert result.body == b"." * 20 + b"[REDACTED:k]"
+    assert result.redaction_count == 1
+
+
+def test_a_json_body_with_an_escaped_known_value_is_redacted() -> None:
+    known = KnownValues()
+    known.add("k", "wJalr/K7MDENG/bPxRfiCY")
+    body = b'{"echo": "wJalr\\/K7MDENG\\/bPxRfiCY", "ok": true}'
+    result = _handle(body, known=known)
+    assert json.loads(result.body) == {"echo": "[REDACTED:k]", "ok": True}
+
+
+def test_a_projected_value_is_redacted_after_projection() -> None:
+    known = KnownValues()
+    known.add("k", "p&ss<w>rd")
+    body = b'{"id": "x", "echo": "p\\u0026ss\\u003cw\\u003erd"}'
+    result = _handle(body, projection=["/echo"], known=known)
+    assert json.loads(result.body) == {"/echo": "[REDACTED:k]"}
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "br", "deflate", "gzip, identity"])
+def test_a_compressed_response_is_withheld(encoding: str) -> None:
+    result = _handle(
+        b"\x1f\x8b compressed",
+        headers=[("Content-Type", "application/json"), ("Content-Encoding", encoding)],
+    )
+    assert result.disposition == "withheld"
+    assert result.withheld_reason == "content_encoded"
+    assert result.body is None
+
+
+def test_an_identity_encoded_response_is_returned() -> None:
+    result = _handle(b"{}", headers=[("Content-Type", "application/json"), ("Content-Encoding", "identity")])
+    assert result.disposition == "returned"

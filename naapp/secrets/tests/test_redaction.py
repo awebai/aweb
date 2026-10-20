@@ -99,3 +99,87 @@ def test_redacting_a_string_redacts_and_counts_the_same() -> None:
 def test_an_empty_value_is_refused() -> None:
     with pytest.raises(ValueError):
         KnownValues().add("a", "")
+
+
+SLASHED = 'a/b"c\\dé-' + "k3y/v4lue"
+
+
+def test_json_escape_variants_of_a_value_are_redacted() -> None:
+    known = KnownValues()
+    known.add("k", SLASHED)
+    plain = json.dumps(SLASHED)[1:-1]
+    ascii_escaped = json.dumps(SLASHED, ensure_ascii=True)[1:-1]
+    upper_hex = re.sub(r"\\u([0-9a-f]{4})", lambda m: "\\u" + m.group(1).upper(), ascii_escaped)
+    for form in (
+        plain.replace("/", "\\/"),
+        ascii_escaped,
+        ascii_escaped.replace("/", "\\/"),
+        upper_hex,
+        upper_hex.replace("/", "\\/"),
+    ):
+        redacted, count = known.redact(f'{{"v": "{form}"}}'.encode())
+        assert redacted == b'{"v": "[REDACTED:k]"}', form
+        assert count == 1
+
+
+def test_a_value_inside_json_is_redacted_whatever_its_escaping() -> None:
+    known = KnownValues()
+    known.add("k", "p&ss<w>rd")
+    # Go's encoding/json escapes <, > and & as <, > and &.
+    body = b'{"echo": "p\\u0026ss\\u003cw\\u003erd", "n": 1}'
+    redacted, count = known.redact_json(body)
+    assert json.loads(redacted) == {"echo": "[REDACTED:k]", "n": 1}
+    assert count == 1
+
+
+def test_json_without_a_known_value_keeps_its_bytes() -> None:
+    known = KnownValues()
+    known.add("k", "abc123def456")
+    body = b'{ "a" : 1,\n  "b": "x" }'
+    assert known.redact_json(body) == (body, 0)
+    assert known.redact_json(b"not json") == (b"not json", 0)
+
+
+@pytest.mark.parametrize("offset", [0, 1, 2])
+@pytest.mark.parametrize("alphabet", ["standard", "urlsafe"])
+def test_a_value_inside_a_longer_base64_payload_is_redacted_at_any_alignment(
+    offset: int, alphabet: str
+) -> None:
+    value = "s3cr3t/v+lue-0123456789"
+    encode = base64.b64encode if alphabet == "standard" else base64.urlsafe_b64encode
+    payload = encode(b"\x00" * offset + b'{"debug": "' + value.encode() + b'", "n": 1}').decode()
+    known = KnownValues()
+    known.add("k", value)
+    redacted, count = known.redact(payload.encode())
+    assert count == 1
+    assert b"[REDACTED:k]" in redacted
+    # No run of the encoded value survives.
+    assert encode(value.encode())[4:12] not in redacted
+
+
+def test_percent_escapes_in_mixed_case_are_redacted() -> None:
+    known = KnownValues()
+    known.add("k", "a/b+c=d")
+    redacted, count = known.redact(b"x a%2f b%2Bc%3d d y a%2Fb%2bc%3Dd")
+    assert count == 1
+    assert redacted.endswith(b"[REDACTED:k]")
+
+
+@pytest.mark.parametrize("cut", range(1, 23))
+def test_the_tail_of_a_cut_body_never_ends_in_part_of_a_value(cut: int) -> None:
+    value = "Q9w8E7r6T5y4U3i2O1p0Zz"
+    known = KnownValues()
+    known.add("k", value)
+    body = ("-" * 10 + value)[: 10 + cut].encode()
+    redacted, count = known.redact_tail(body)
+    if cut < len(value):
+        assert redacted == b"-" * 10 + b"[REDACTED:k]"
+        assert count == 1
+    else:
+        assert redacted == body
+
+
+def test_a_tail_that_is_part_of_no_value_is_kept() -> None:
+    known = KnownValues()
+    known.add("k", "Q9w8E7r6T5y4U3i2O1p0Zz")
+    assert known.redact_tail(b"ends with nothing") == (b"ends with nothing", 0)
