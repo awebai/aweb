@@ -418,6 +418,15 @@ and grant scopes. Restart custody after upgrading: an already-running process
 keeps its old capabilities. Upgrade with the services stopped, as in
 [Upgrading aw under running services](terminal-wake-broker.md#upgrading-aw-under-running-services). The marker is advertised starting with aw 1.36.31.
 
+Before unwrapping, custody independently fetches the stored message as the
+resident and compares its encrypted envelope with the requested one. This
+readability and message-binding check prevents custody from decrypting arbitrary
+caller-supplied ciphertext; a grant seat does not replace it with its own read.
+`aw chat history` applies `--limit` and `--unread-only` before decrypting messages,
+and recipient lookup does not decrypt unrelated pending-chat previews. HTTP and
+custody requests retain their individual timeouts; a history page does not share
+one cumulative API timeout. Explicit caller cancellation still stops the work.
+
 Scopes are `mail.read`, `mail.send`, `chat.read`, `chat.send`,
 `events.read`, `coord.read`, `coord.write`, `presence.write`,
 `contacts.read`, and `contacts.write`. The `normal-agent` bundle expands to
@@ -451,6 +460,23 @@ This is bounded rechecking, not instantaneous idle-stream disconnection. Existin
 finite notification streams keep their current behavior. Custody's authoritative
 status cache remains bounded to 30 seconds. Registry revocation freshness remains
 subject to the registry client's existing cache policy.
+
+## User-data signatures
+
+`aw id sign` injects its timestamp into the caller's JSON object, canonicalizes
+it, then signs the UTF-8 bytes `aweb.user-signature/1\n` followed by that canonical
+JSON. The newline is a literal byte. Verifiers of user signatures must prepend
+this exact prefix. There is no unprefixed compatibility mode: these signatures
+cannot authorize AWID log entries, controller operations or request authentication.
+Protocol-specific commands construct and sign their own protocol artifacts.
+
+`aw id request --team-auth` signs a target-bound v2 request envelope; optional
+`--sign` fields cannot override its authoritative claims. Without `--team-auth`,
+the interim request signs only the fixed compact-v1 identity claims: the actual
+body hash, selected `did_aw` and timestamp. Caller JSON is refused in this mode.
+This removes arbitrary signing but retains v1's known method/path/origin
+retargeting risk until identity-v2 verification is deployed and the client moves
+to v2. That migration follows the server-then-Cloud-then-client release order.
 
 ## Message verification and trust
 

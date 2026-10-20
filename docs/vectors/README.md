@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 22
+`docs/vectors/*.json` is the only public protocol-vector authority for the 26
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -36,6 +36,17 @@ digest-pinned experimental app-manifest snapshots documented by
 [`app-manifest.md`](../app-manifest.md); they are not silently promoted into the
 identity/trust vector family.
 
+## Accepting protocols awaiting client rollout
+
+### `awid-controller-request-v2.json`
+
+Controller HTTP envelopes bind the configured registry audience, protocol type,
+method, external path/query and exact body, retaining the operation discriminator.
+The real AWID route consumes this vector, including wrong-audience and team-auth
+purpose refusals. Legacy forms remain accepted and measured until the operator's
+cutoff; clients emit this shape only after the accepting registry is deployed.
+See [AWID controller requests](../awid-controller-requests.md).
+
 ## Current protocol fixtures
 
 These fixtures govern shipped non-A2A protocol behavior.
@@ -47,6 +58,26 @@ exactly the team ID, current team key, active/revoked status, and revocation tim
 Unknown team and unknown/mismatched certificate share one 404 response. The AWID
 real-route tests consume these bytes; active status does not authenticate an
 old-key certificate after rotation. See [the team contract](../awid-sot.md#teams).
+
+### `team-server-record-v1.json`
+
+`aweb.team-server/1` records: a team-key-signed binding of a team to its
+coordination server URL. Signing bytes are the `aweb.team-server/1` domain
+prefix and a newline, followed by canonical JSON of the record. Valid cases
+carry their exact signing bytes; refused cases carry the stable refusal code
+and AWID status (missing prefix, non-current key, team mismatch, far-future
+`issued_at`, not newer than the stored record, plain http outside loopback).
+Seeds are public test material. The AWID real-route tests consume these
+bytes. See [the team contract](../awid-sot.md#teams).
+
+### `principal-attestation-v1.json`
+
+Signed bytes and signatures of the team-key-signed `aweb.team-custodian/1`,
+`aweb.member-custody/1` and `aweb.member-person/1` records, record refusals, the
+`aweb.principal-attestation/1` header, and the verification cases of
+[principal attestation](../principal-attestation.md) §4 with their refusal
+codes. Keys are fixed seeds, so every signature can be recomputed. The AWID
+codec and the `aweb_naapp` verifier consume these bytes.
 
 ### `message-signing-v1.json`
 
@@ -210,6 +241,38 @@ Ingress separation is the required `type` at every route. Athena and the
 protocol reviewer ACKed these bytes at `4502edac0` before either side
 implemented them; changing them needs a new version.
 
+### `hook-catalog-v1.json`
+
+The `aweb.hooks` catalog, version 1 (aweb-acgh.16.1; contract in
+[`hook-events.md`](../hook-events.md)). It names the five hooks with their
+firing class, producer kinds, audit-critical rule and precedence. It holds each
+hook's flat payload allowlist: value types with patterns and bounds, required
+fields, enums (including the 28 `post-secret-use-hook` refusal codes), the
+conditional rules, each `post-governance-hook` act's fixed direction, every
+`post-mutation-hook` type with its own fields, and the `post-command-hook`
+command classes with their local effects. Positive cases validate. Each
+negative case has one fault and its expected error and field: an unknown hook
+or field, a missing field, a bad value, a float, a nested object, free text in a
+reference, a rule violation, a direction that differs from the catalog's, and an
+effect outside its command class. A payload that this file may not hold, such
+as a float, is given as JSON text in `payload_json`. The strict reader in
+`aweb_naapp.hooks.catalog` refuses the whole file on any unknown key, duplicate
+key, float or unresolved reference. Any payload change, including an addition,
+is a new catalog version.
+
+### `hook-binding-cases-v1.json`
+
+Owner-activated hook bindings (aweb-acgh.16.1; contract in
+[`hook-events.md`](../hook-events.md)). The scheme states the binding states and
+transitions, the 60-second `active_from` pad, when an event is owed to a
+binding, the audit-critical gate and what revocation does. The cases cover an
+admin install that leaves bindings pending, an admin signer refused, owner
+activation and the pad, an unknown catalog or hook, a new generation that
+supersedes and never inherits activation, revocation's final entry and
+cancelled backlog, uninstall, and the order for switching targets. A model of
+the scheme in the naapp-lib tests replays every case, and the core binding
+registry consumes the same cases.
+
 ## Experimental and compatibility A2A fixtures
 
 A2A is shipped but experimental and optional. These fixtures are release gates
@@ -311,7 +374,7 @@ reference duplication are mutation-tested failures.
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
-| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; folio `test_auth_v2_envelope.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
+| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; folio `test_auth_v2_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-authority-state-v1.json` | Python AWID `test_federation_authority_vectors.py`; Python aweb `test_federation_authority_core.py`, `test_federation_authority_schema.py`, and pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go`; generated `federation-error-reference.md` response-shape cross-check through `generate_federation_error_reference.py` (reason/status/retryability source is `awid/src/awid/federation_errors.py`); federation SOT/support coverage in `check-extension-docs.py` |

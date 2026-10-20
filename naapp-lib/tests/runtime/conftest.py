@@ -20,13 +20,21 @@ import httpx
 import pytest_asyncio
 from awid.did import did_from_public_key
 from awid.ratelimit import NoOpRateLimiter
+from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from awid_service.db import AwidDatabaseInfra
+from awid_service.routes.attestation_records import router as awid_attestation_records_router
+from awid_service.routes.did import router as awid_did_router
 from awid_service.routes.teams import router as awid_teams_router
 from fastapi import FastAPI, Request
 from nacl.signing import SigningKey
 
-from aweb_naapp.runtime.team_auth import AWIDTeamCache, Principal, authenticate_request
+from aweb_naapp.runtime.team_auth import (
+    AWIDTeamCache,
+    DidAwProfile,
+    Principal,
+    authenticate_request,
+)
 
 REGISTRY_URL = "https://registry.example"
 SERVICE_TOKEN = "runtime-test-service-token-32-bytes"
@@ -79,6 +87,17 @@ class Registry:
             certificate_id,
         )
 
+    def _client(self) -> RegistryClient:
+        return RegistryClient(registry_url=REGISTRY_URL, transport=self.transport)
+
+    async def register_did(self, key: SigningKey) -> str:
+        """Registers `key` as a new did:aw through AWID's own route; returns the did:aw."""
+        mapping = await self._client().register_did(did_key(key), bytes(key))
+        return mapping.did_aw
+
+    async def rotate_did(self, did_aw: str, old: SigningKey, new: SigningKey) -> None:
+        await self._client().rotate_key(did_aw, did_key(new), bytes(old), bytes(new))
+
     async def rotate_team_key(self, team_id: str, team_did_key: str) -> None:
         name, domain = team_id.split(":", 1)
         await self.db.execute(
@@ -98,6 +117,8 @@ async def registry(test_db_factory, monkeypatch) -> AsyncIterator[Registry]:
     app.state.rate_limiter = NoOpRateLimiter()
     app.state.awid_service_token = SERVICE_TOKEN
     app.include_router(awid_teams_router)
+    app.include_router(awid_attestation_records_router)
+    app.include_router(awid_did_router)
     try:
         yield Registry(db=infra.get_manager("aweb"), transport=RecordingTransport(app))
     finally:
@@ -202,6 +223,7 @@ async def relying_app(
     now: Callable[[], datetime] | None = None,
     timestamp_skew_seconds: int | None = None,
     root_path: str = "",
+    did_aw_profile: DidAwProfile | None = None,
     on_principal: Callable[[Request, Principal], Any] | None = None,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, AWIDTeamCache]]:
     """A naapp whose every route authenticates the request and echoes the principal."""
@@ -213,6 +235,8 @@ async def relying_app(
         kwargs: dict[str, Any] = {"now": now} if now is not None else {}
         if timestamp_skew_seconds is not None:
             kwargs["timestamp_skew_seconds"] = timestamp_skew_seconds
+        if did_aw_profile is not None:
+            kwargs["did_aw_profile"] = did_aw_profile
         principal = await authenticate_request(request, public_origin=public_origin, team_cache=cache, **kwargs)
         if on_principal is not None:
             return await on_principal(request, principal)
@@ -220,6 +244,7 @@ async def relying_app(
             "team_id": principal.team_id,
             "did_key": principal.did_key,
             "did_aw": principal.did_aw,
+            "did_aw_registry_verified": principal.did_aw_registry_verified,
             "address": principal.address,
             "alias": principal.alias,
             "certificate_id": principal.certificate_id,

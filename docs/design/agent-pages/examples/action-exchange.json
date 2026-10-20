@@ -1,0 +1,78 @@
+{
+  "draft": true,
+  "submit": {
+    "action_id": "propose-accept",
+    "idempotency_key": "folio-op-1",
+    "expected_page_rev": 1,
+    "expected_records": {
+      "bookings:booking-1": 1
+    },
+    "input": {
+      "record_id": "booking-1"
+    },
+    "task_authorization": {
+      "payload": {
+        "v": 1,
+        "type": "aweb.app-task-authorization",
+        "aud": "https://tasks.example",
+        "app_origin": "https://folio.example",
+        "team_id": "demo:example.com",
+        "app_id": "folio",
+        "installation_id": "installation-1",
+        "install_generation": 1,
+        "external_request_id": "folio-op-1",
+        "actor_did_key": "<member DID>",
+        "certificate_id": "<member certificate id>",
+        "target": "agent-fixture",
+        "task_body_sha256": "<computed exact task body SHA-256>",
+        "action_id": "propose-accept",
+        "proposal_rev": 1,
+        "proposal_sha256": "<computed proposal SHA-256>",
+        "issued_at": "2026-10-19T10:00:00Z",
+        "expires_at": "2026-10-20T10:00:00Z",
+        "nonce": "<fresh random value>"
+      },
+      "signature": "<member signature>",
+      "certificate": "<member certificate>"
+    }
+  },
+  "receipt": {
+    "action_instance_id": "action-1",
+    "page_rev": 2,
+    "delivery": "pending",
+    "execution": "not_started"
+  },
+  "queued_receipt": {
+    "action_instance_id": "action-1",
+    "page_rev": 3,
+    "task_id": "task-1",
+    "delivery": "queued",
+    "execution": "not_started"
+  },
+  "resolve": {
+    "action_instance_id": "action-1",
+    "idempotency_key": "resolve-1",
+    "expected_page_rev": 3,
+    "expected_action_rev": 1,
+    "expected_records": {
+      "bookings:booking-1": 1
+    },
+    "approval_id": "approval-1",
+    "operation_id": "external-op-1",
+    "result": {
+      "status": "done",
+      "summary": "Fixture operation confirmed"
+    },
+    "patches": [
+      {
+        "collection": "bookings",
+        "record_id": "booking-1",
+        "changes": {
+          "status": "accepted"
+        },
+        "source_version": "booking-v10"
+      }
+    ]
+  },
+  "note": "Placeholders are illustrative, not cryptographic conformance vectors. Only the authenticated sync/executor may refresh a synced source row."
+}

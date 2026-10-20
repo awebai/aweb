@@ -1,0 +1,185 @@
+{
+  "page_format": "aweb.page/1",
+  "page_id": "reply-fixture",
+  "locale": "ca",
+  "title": "Resposta a una consulta — dades fictícies",
+  "rev": 1,
+  "layout_version": 1,
+  "owner": "agent-fixture",
+  "policy_ref": "staff-read",
+  "layout": [
+    {
+      "id": "title",
+      "type": "heading",
+      "props": {
+        "text": "Revisar resposta al client",
+        "level": 1
+      }
+    },
+    {
+      "id": "draft",
+      "type": "cards",
+      "props": {
+        "fields": {
+          "title": "recipient",
+          "subtitle": "channel",
+          "body": "message"
+        }
+      },
+      "bind": {
+        "collection": "drafts",
+        "limit": 1
+      }
+    },
+    {
+      "id": "reply-decision",
+      "type": "decision_card",
+      "props": {
+        "task_id": "task-reply-1",
+        "task_rev": 1,
+        "collection": "drafts",
+        "record_id": "reply-1",
+        "record_rev": 1,
+        "options": [
+          {
+            "value": "approve",
+            "label": "Aprovar"
+          },
+          {
+            "value": "reject",
+            "label": "Rebutjar"
+          }
+        ],
+        "recommendation": "approve",
+        "answer_action": "answer-reply",
+        "proposal_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "operation": {
+          "kind": "pms.message.send",
+          "destination": "PMS · missatge al client per Booking.com",
+          "summary": "Synthetic: exact values shown in the bound record."
+        },
+        "source_version": "enquiry-v3",
+        "expires_at": "2026-10-21T10:00:00Z"
+      }
+    },
+    {
+      "id": "edit-draft",
+      "type": "form",
+      "props": {
+        "fields": [
+          {
+            "id": "message",
+            "kind": "text",
+            "label": "Text final",
+            "required": true
+          }
+        ],
+        "submit_action": "revise-reply"
+      }
+    }
+  ],
+  "collections": [
+    {
+      "id": "drafts",
+      "schema_version": 1,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "recipient": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "channel": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "source_version": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "recipient",
+          "channel",
+          "message",
+          "source_version"
+        ],
+        "additionalProperties": false
+      },
+      "mode": "owned",
+      "records": [
+        {
+          "id": "reply-1",
+          "rev": 1,
+          "value": {
+            "recipient": "guest-fixture",
+            "channel": "pms-fixture",
+            "message": "Bon dia! Gràcies pel vostre interès. Confirmarem la disponibilitat després de la revisió.",
+            "source_version": "enquiry-v3"
+          }
+        }
+      ]
+    }
+  ],
+  "widget_state": {},
+  "actions": [
+    {
+      "id": "answer-reply",
+      "kind": "answer",
+      "label": "Aprovar resposta exacta",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "choice": {
+            "enum": [
+              "approve",
+              "reject"
+            ]
+          },
+          "proposal_digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "expected_task_rev": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "choice",
+          "proposal_digest",
+          "expected_task_rev"
+        ],
+        "additionalProperties": false
+      },
+      "policy_ref": "manager-approve",
+      "operation": "pms.message.send",
+      "requires_approval": true
+    },
+    {
+      "id": "revise-reply",
+      "kind": "edit",
+      "label": "Desar nova proposta",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "policy_ref": "manager-draft",
+      "operation": "draft.replace"
+    }
+  ]
+}

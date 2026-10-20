@@ -1,0 +1,127 @@
+{
+  "page_format": "aweb.page/1",
+  "page_id": "fixture-home",
+  "locale": "en",
+  "title": "Fixture inventory",
+  "rev": 1,
+  "layout_version": 1,
+  "owner": "agent-fixture",
+  "policy_ref": "staff-read",
+  "layout": [
+    {
+      "id": "items",
+      "type": "table",
+      "props": {
+        "columns": [
+          {
+            "field": "label",
+            "label": "Item",
+            "format": "text"
+          },
+          {
+            "field": "checked",
+            "label": "Checked",
+            "format": "status"
+          }
+        ],
+        "row_actions": [
+          "check",
+          "request-restock"
+        ]
+      },
+      "bind": {
+        "collection": "items"
+      }
+    },
+    {
+      "id": "future",
+      "type": "future_widget",
+      "fallback": "This widget needs a newer renderer.",
+      "props": {
+        "untrusted": "inert"
+      }
+    }
+  ],
+  "collections": [
+    {
+      "id": "items",
+      "schema_version": 1,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "checked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "label",
+          "checked"
+        ],
+        "additionalProperties": false
+      },
+      "mode": "owned",
+      "records": [
+        {
+          "id": "item-1",
+          "rev": 1,
+          "value": {
+            "label": "Verify fixture inventory",
+            "checked": false
+          }
+        }
+      ]
+    }
+  ],
+  "widget_state": {},
+  "actions": [
+    {
+      "id": "check",
+      "kind": "edit",
+      "label": "Check item",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "record_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          },
+          "checked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "record_id",
+          "checked"
+        ],
+        "additionalProperties": false
+      },
+      "policy_ref": "fixture-edit",
+      "operation": "item.check"
+    },
+    {
+      "id": "request-restock",
+      "kind": "intent",
+      "label": "Ask the agent to restock",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "record_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          }
+        },
+        "required": [
+          "record_id"
+        ],
+        "additionalProperties": false
+      },
+      "policy_ref": "fixture-request",
+      "target": "agent-fixture",
+      "operation": "item.restock"
+    }
+  ]
+}

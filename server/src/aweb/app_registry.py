@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -265,8 +266,8 @@ async def install_app(
     """Install or explicitly re-install an app for a team.
 
     Re-install/update is explicit: the caller supplies the new pinned digest and
-    scopes. Reusing an app id for a different origin is rejected as an app-id
-    collision.
+    scopes. Reusing an app id for a different origin within the team is
+    rejected as an app-id collision.
     """
 
     team_id = validate_team_id(team_id)
@@ -278,16 +279,6 @@ async def install_app(
     granted_scopes = normalize_scopes(granted_scopes)
     event_types = normalize_event_types(event_types or [])
     emit_keys = normalize_emit_keys(emit_keys or [])
-
-    registered = await db.fetch_one(
-        """
-        SELECT origin FROM {{tables.app_registry_apps}}
-        WHERE app_id = $1
-        """,
-        app_id,
-    )
-    if registered and registered["origin"] != origin:
-        raise ConflictError("app_id is already registered from a different origin")
 
     existing = await db.fetch_one(
         """
@@ -305,7 +296,7 @@ async def install_app(
             """
             INSERT INTO {{tables.app_registry_apps}} (app_id, origin, updated_at)
             VALUES ($1, $2, NOW())
-            ON CONFLICT (app_id) DO NOTHING
+            ON CONFLICT (app_id, origin) DO NOTHING
             """,
             app_id,
             origin,
@@ -316,10 +307,7 @@ async def install_app(
                 app_id, origin, digest, app_version, manifest_version, updated_at
             )
             VALUES ($1, $2, $3, $4, $5, NOW())
-            ON CONFLICT (app_id, origin, digest) DO UPDATE SET
-                app_version = EXCLUDED.app_version,
-                manifest_version = EXCLUDED.manifest_version,
-                updated_at = NOW()
+            ON CONFLICT (app_id, origin, digest) DO NOTHING
             """,
             app_id,
             origin,
@@ -330,13 +318,15 @@ async def install_app(
         await tx.execute(
             """
             INSERT INTO {{tables.team_app_installs}} (
-                team_id, app_id, origin, digest, granted_scopes,
-                installed_by_agent_id, updated_at
+                team_id, app_id, origin, digest, app_version, manifest_version,
+                granted_scopes, installed_by_agent_id, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5::TEXT[], $6::UUID, NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[], $8::UUID, NOW())
             ON CONFLICT (team_id, app_id) DO UPDATE SET
                 origin = EXCLUDED.origin,
                 digest = EXCLUDED.digest,
+                app_version = EXCLUDED.app_version,
+                manifest_version = EXCLUDED.manifest_version,
                 granted_scopes = EXCLUDED.granted_scopes,
                 installed_by_agent_id = EXCLUDED.installed_by_agent_id,
                 updated_at = NOW()
@@ -345,44 +335,22 @@ async def install_app(
             app_id,
             origin,
             digest,
+            app_version,
+            manifest_version,
             granted_scopes,
             installed_by_agent_id,
         )
-        for event_type in event_types:
-            await tx.execute(
-                """
-                INSERT INTO {{tables.app_registry_event_types}} (
-                    app_id, origin, digest, event_type, default_delivery_intent,
-                    description, updated_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, NOW())
-                ON CONFLICT (app_id, origin, digest, event_type) DO UPDATE SET
-                    default_delivery_intent = EXCLUDED.default_delivery_intent,
-                    description = EXCLUDED.description,
-                    updated_at = NOW()
-                """,
-                app_id,
-                origin,
-                digest,
-                event_type.type,
-                event_type.default_delivery_intent,
-                event_type.description,
-            )
-        for emit_key in emit_keys:
-            await tx.execute(
-                """
-                INSERT INTO {{tables.app_registry_emit_keys}} (app_id, origin, digest, key_id, did_key)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (app_id, origin, digest, key_id) DO UPDATE SET
-                    did_key = EXCLUDED.did_key,
-                    revoked_at = NULL
-                """,
-                app_id,
-                origin,
-                digest,
-                emit_key.kid,
-                emit_key.did_key,
-            )
+        # The install row upsert above locks (team_id, app_id), so concurrent
+        # installs of one app in one team write registrations one at a time.
+        await _write_team_registrations(
+            tx,
+            team_id=team_id,
+            app_id=app_id,
+            origin=origin,
+            digest=digest,
+            event_types=event_types,
+            emit_keys=emit_keys,
+        )
 
     return AppInstall(
         app_id=app_id,
@@ -394,6 +362,229 @@ async def install_app(
     )
 
 
+async def _write_team_registrations(
+    tx,
+    *,
+    team_id: str,
+    app_id: str,
+    origin: str,
+    digest: str,
+    event_types: list[AppEventType],
+    emit_keys: list[AppEmitKey],
+) -> None:
+    """Write one team's event declarations and emit keys for an installed digest.
+
+    The caller holds the team's install row lock. Declarations are replaced;
+    a key id keeps its first did_key and a revoked key stays revoked.
+    """
+
+    for event_type in event_types:
+        await tx.execute(
+            """
+            INSERT INTO {{tables.team_app_event_types}} (
+                team_id, app_id, origin, digest, event_type,
+                default_delivery_intent, description, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+            ON CONFLICT (team_id, app_id, origin, digest, event_type) DO UPDATE SET
+                default_delivery_intent = EXCLUDED.default_delivery_intent,
+                description = EXCLUDED.description,
+                updated_at = NOW()
+            """,
+            team_id,
+            app_id,
+            origin,
+            digest,
+            event_type.type,
+            event_type.default_delivery_intent,
+            event_type.description,
+        )
+    for emit_key in emit_keys:
+        conflicting = await tx.fetch_one(
+            """
+            SELECT 1 FROM {{tables.team_app_emit_keys}}
+            WHERE team_id = $1 AND app_id = $2 AND key_id = $3 AND did_key <> $4
+            LIMIT 1
+            """,
+            team_id,
+            app_id,
+            emit_key.kid,
+            emit_key.did_key,
+        )
+        if conflicting:
+            raise ConflictError("emit key id is already registered with a different key")
+        await tx.execute(
+            """
+            INSERT INTO {{tables.team_app_emit_keys}} (
+                team_id, app_id, origin, digest, key_id, did_key
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (team_id, app_id, origin, digest, key_id) DO NOTHING
+            """,
+            team_id,
+            app_id,
+            origin,
+            digest,
+            emit_key.kid,
+            emit_key.did_key,
+        )
+
+
+@dataclass(frozen=True)
+class ManifestRegistration:
+    app_version: str
+    manifest_version: int
+    event_types: list[AppEventType]
+    emit_keys: list[AppEmitKey]
+
+
+def _parse_manifest(manifest: bytes) -> dict:
+    try:
+        parsed = json.loads(manifest)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ValidationError("manifest is not valid JSON") from exc
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("app"), dict):
+        raise ValidationError("manifest app is required")
+    return parsed
+
+
+def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: str) -> ManifestRegistration:
+    """Read an install's event declarations and emit keys from its pinned bytes.
+
+    The bytes must hash to the pinned digest and name the installed app id and
+    origin; nothing is taken from anywhere else.
+    """
+
+    app_id = normalize_app_id(app_id)
+    origin = normalize_origin(origin)
+    digest = normalize_digest(digest)
+    if "sha256:" + hashlib.sha256(manifest).hexdigest() != digest:
+        raise ValidationError("manifest bytes do not match the pinned digest")
+    parsed = _parse_manifest(manifest)
+    if parsed.get("manifest_version") != 1:
+        raise ValidationError("manifest_version is not supported")
+    app = parsed["app"]
+    if normalize_app_id(str(app.get("id") or "")) != app_id:
+        raise ValidationError("manifest app id does not match the install")
+    if normalize_origin(str(app.get("origin") or "")) != origin:
+        raise ValidationError("manifest origin does not match the install")
+    events = parsed.get("events") or []
+    emitters = parsed.get("event_emitters") or []
+    if not isinstance(events, list) or not isinstance(emitters, list):
+        raise ValidationError("manifest events and event_emitters must be arrays")
+    prefix = app_id + "/"
+    event_types = []
+    for event in events:
+        if not isinstance(event, dict):
+            raise ValidationError("manifest event must be an object")
+        event_type = str(event.get("type") or "").strip()
+        event_types.append(
+            AppEventType(
+                type=event_type[len(prefix):] if event_type.startswith(prefix) else event_type,
+                default_delivery_intent=normalize_delivery_intent(event.get("default_delivery_intent")),
+                description=str(event.get("description") or ""),
+            )
+        )
+    emit_keys = []
+    for emitter in emitters:
+        if not isinstance(emitter, dict):
+            raise ValidationError("manifest event emitter must be an object")
+        emit_keys.append(AppEmitKey(kid=str(emitter.get("kid") or ""), did_key=str(emitter.get("did_key") or "")))
+    return ManifestRegistration(
+        app_version=normalize_app_version(str(app.get("version") or "")),
+        manifest_version=1,
+        event_types=normalize_event_types(event_types),
+        emit_keys=normalize_emit_keys(emit_keys),
+    )
+
+
+@dataclass(frozen=True)
+class ReseedReport:
+    app_id: str
+    origin: str
+    digest: str
+    reseeded: list[str]
+    digest_mismatch: list[str]
+    key_conflict: list[str]
+
+
+async def reseed_app_registrations(db, *, origin: str, manifest: bytes) -> ReseedReport:
+    """Recreate team-scoped declarations and emit keys from an app's manifest bytes.
+
+    Every team whose install pins the digest of these bytes gets the bytes'
+    declarations, emit keys and version projection. Teams pinned to another
+    digest, and teams whose key id already holds a different key, are reported
+    and left unchanged. Subscriptions are never touched. Running it again
+    changes nothing further.
+    """
+
+    origin = normalize_origin(origin)
+    app_id = normalize_app_id(str(_parse_manifest(manifest)["app"].get("id") or ""))
+    digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
+    registration = manifest_registration(manifest, app_id=app_id, origin=origin, digest=digest)
+    installs = await db.fetch_all(
+        """
+        SELECT team_id FROM {{tables.team_app_installs}}
+        WHERE app_id = $1 AND origin = $2
+        ORDER BY team_id ASC
+        """,
+        app_id,
+        origin,
+    )
+    reseeded: list[str] = []
+    digest_mismatch: list[str] = []
+    key_conflict: list[str] = []
+    for install in installs:
+        team_id = install["team_id"]
+        try:
+            async with db.transaction() as tx:
+                locked = await tx.fetch_one(
+                    """
+                    SELECT digest FROM {{tables.team_app_installs}}
+                    WHERE team_id = $1 AND app_id = $2 AND origin = $3
+                    FOR UPDATE
+                    """,
+                    team_id,
+                    app_id,
+                    origin,
+                )
+                if locked is None or locked["digest"] != digest:
+                    digest_mismatch.append(team_id)
+                    continue
+                await tx.execute(
+                    """
+                    UPDATE {{tables.team_app_installs}}
+                    SET app_version = $3, manifest_version = $4, updated_at = NOW()
+                    WHERE team_id = $1 AND app_id = $2
+                    """,
+                    team_id,
+                    app_id,
+                    registration.app_version,
+                    registration.manifest_version,
+                )
+                await _write_team_registrations(
+                    tx,
+                    team_id=team_id,
+                    app_id=app_id,
+                    origin=origin,
+                    digest=digest,
+                    event_types=registration.event_types,
+                    emit_keys=registration.emit_keys,
+                )
+        except ConflictError:
+            key_conflict.append(team_id)
+            continue
+        reseeded.append(team_id)
+    return ReseedReport(
+        app_id=app_id,
+        origin=origin,
+        digest=digest,
+        reseeded=reseeded,
+        digest_mismatch=digest_mismatch,
+        key_conflict=key_conflict,
+    )
+
+
 async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
     team_id = validate_team_id(team_id)
     rows = await db.fetch_all(
@@ -401,15 +592,11 @@ async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
         SELECT
             i.app_id,
             i.origin,
-            r.app_version,
-            r.manifest_version,
+            i.app_version,
+            i.manifest_version,
             i.digest,
             i.granted_scopes
         FROM {{tables.team_app_installs}} AS i
-        JOIN {{tables.app_registry_entries}} AS r
-          ON r.app_id = i.app_id
-         AND r.origin = i.origin
-         AND r.digest = i.digest
         WHERE i.team_id = $1
         ORDER BY i.app_id ASC
         """,
@@ -445,8 +632,9 @@ async def get_installed_app_event_type(
             i.digest,
             e.default_delivery_intent
         FROM {{tables.team_app_installs}} AS i
-        JOIN {{tables.app_registry_event_types}} AS e
-          ON e.app_id = i.app_id
+        JOIN {{tables.team_app_event_types}} AS e
+          ON e.team_id = i.team_id
+         AND e.app_id = i.app_id
          AND e.origin = i.origin
          AND e.digest = i.digest
         WHERE i.team_id = $1
@@ -475,8 +663,9 @@ async def get_active_app_emit_key(
         """
         SELECT k.app_id, k.origin, k.digest, k.key_id, k.did_key
         FROM {{tables.team_app_installs}} AS i
-        JOIN {{tables.app_registry_emit_keys}} AS k
-          ON k.app_id = i.app_id
+        JOIN {{tables.team_app_emit_keys}} AS k
+          ON k.team_id = i.team_id
+         AND k.app_id = i.app_id
          AND k.origin = i.origin
          AND k.digest = i.digest
         WHERE i.team_id = $1
