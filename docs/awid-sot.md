@@ -633,6 +633,46 @@ GET    /v1/namespaces/{domain}/teams/{name}/revocations
        Response: { "revocations": [{ "certificate_id": "uuid",
                    "revoked_at": "..." }] }
        This is what services cache to reject removed members.
+
+PUT    /v1/namespaces/{domain}/teams/{name}/server
+       Publish the team's aweb.team-server/1 record.
+       Auth: the record's own signature by the CURRENT team key; no request
+       signature. Own team_server_publish public-IP bucket.
+       Body: { "record": { "v": 1, "type": "aweb.team-server",
+                           "team_id": "backend:acme.com",
+                           "team_did_key": "did:key:z6Mk...",
+                           "server_url": "https://coord.acme.com/api",
+                           "issued_at": "2026-01-20T10:00:00Z" },
+               "signature": "<unpadded standard base64 Ed25519>" }
+       Signing bytes: "aweb.team-server/1\n" || canonical_json(record).
+       Accepted only when the record has exactly these fields, names this
+       team, carries the current team key and verifies under it, and its
+       issued_at (UTC seconds) is at most five minutes ahead of AWID's clock.
+       server_url is a canonical https origin with an optional path prefix
+       (no trailing slash, userinfo, query or fragment); http only for
+       loopback hosts, and localhost only in development.
+       A record must be newer than the stored one; resending the stored
+       record answers 200 unchanged. Refusals: 422 with detail
+       record_invalid | team_mismatch | server_url_invalid |
+       signature_invalid | issued_at_in_future; 409 with detail
+       team_server_key_mismatch | not_newer; unknown or deleted team 404.
+       Response: the stored { "record", "signature" }.
+       A team key rotation leaves the stored record signed by the old key:
+       consumers refuse it until the controller publishes a newer record
+       signed by the new key, which rotation should do in the same operation.
+
+GET    /v1/namespaces/{domain}/teams/{name}/server
+       Anonymous for public and private teams. Own team_server_get public-IP
+       bucket: 120 reads per 60 seconds; trusted service reads are exempt.
+       Response: { "record", "signature" } exactly as signed.
+       Unknown or deleted team, and a team with no record: identical 404
+       { "detail": "Team server record not found" }.
+       Discloses the team's coordination server URL to anyone who knows the
+       team id; it is not a credential, and every request to it is still
+       authenticated. Consumers verify the record against the team's current
+       key from the same registry, refuse a key mismatch, cache for at most
+       60 seconds and fail closed. Conformance:
+       [`vectors/team-server-record-v1.json`](vectors/team-server-record-v1.json).
 ```
 
 ---
@@ -896,6 +936,7 @@ full ordered SQL, not a copied `001` snapshot.
 - `identity_encryption_keys`
 - `a2a_bridge_delegations`
 - `a2a_route_publications`
+- `team_server_records`
 <!-- END SOURCE INVENTORY: awid-tables -->
 
 ---
