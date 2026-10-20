@@ -644,6 +644,27 @@ async def reseed_app_registrations(db, *, origin: str, manifest: bytes) -> Resee
     )
 
 
+async def next_installation_generation_on(tx, *, team_id: str, app_id: str) -> int:
+    """Allocate authority order in the caller's installation transaction.
+
+    Every install, reinstall, update and scope change uses this persistent
+    counter. Uninstall never deletes it. Existing-installation writers first
+    lock the current installation row and check the expected generation.
+    Rollback of the caller also rolls back this unissued allocation.
+    """
+    team_id = validate_team_id(team_id)
+    app_id = normalize_app_id(app_id)
+    generation = await tx.fetch_value(
+        """INSERT INTO {{tables.team_app_install_counters}} AS c
+               (team_id, app_id, last_generation) VALUES ($1, $2, 1)
+           ON CONFLICT (team_id, app_id) DO UPDATE
+               SET last_generation = c.last_generation + 1
+           RETURNING last_generation""",
+        team_id, app_id,
+    )
+    return int(generation)
+
+
 async def get_installation_on(
     tx, *, team_id: str, app_id: str, for_update: bool = False,
 ) -> dict[str, Any] | None:

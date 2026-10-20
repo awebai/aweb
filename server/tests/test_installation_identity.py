@@ -13,7 +13,7 @@ import pytest_asyncio
 from pgdbm import AsyncMigrationManager
 
 import aweb
-from aweb.app_registry import get_installation_on
+from aweb.app_registry import get_installation_on, next_installation_generation_on
 
 pytestmark = pytest.mark.asyncio
 MIGRATION = "029_team_app_installation_identity.sql"
@@ -179,3 +179,37 @@ async def test_update_lock_serializes_lifecycle_mutations_on_the_current_install
         release.set()
         await asyncio.wait_for(asyncio.gather(reader_task, writer_task), 3)
     assert (await read(db))["state"] == "uninstalled"
+
+
+async def test_generation_counter_survives_two_complete_uninstalls_and_reinstallations(db):
+    previous = await read(db)
+    for expected in (2, 3):
+        async with db.transaction() as tx:
+            await get_installation_on(tx, team_id=TEAM, app_id="fixture", for_update=True)
+            await tx.execute("DELETE FROM {{tables.team_app_installs}} WHERE team_id = $1", TEAM)
+            generation = await next_installation_generation_on(tx, team_id=TEAM, app_id="fixture")
+            assert generation == expected
+            await tx.execute(
+                """INSERT INTO {{tables.team_app_installs}}
+                   (team_id, app_id, origin, digest, app_version, manifest_version, granted_scopes, generation)
+                   VALUES ($1, 'fixture', $2, $3, '1.0.0', 1, ARRAY['fixture:read'], $4)""",
+                TEAM, ORIGIN, DIGEST, generation,
+            )
+        current = await read(db)
+        assert current["installation_id"] != previous["installation_id"]
+        assert current["generation"] > previous["generation"]
+        previous = current
+    assert (await read(db, OTHER_TEAM))["generation"] == 1
+
+
+async def test_generation_allocations_serialize_and_rollback_with_the_registry_transaction(db):
+    async def allocate():
+        async with db.transaction() as tx:
+            return await next_installation_generation_on(tx, team_id=TEAM, app_id="fixture")
+
+    assert sorted(await asyncio.gather(*(allocate() for _ in range(12)))) == list(range(2, 14))
+    with pytest.raises(RuntimeError):
+        async with db.transaction() as tx:
+            assert await next_installation_generation_on(tx, team_id=TEAM, app_id="fixture") == 14
+            raise RuntimeError("abort installation")
+    assert await allocate() == 14
