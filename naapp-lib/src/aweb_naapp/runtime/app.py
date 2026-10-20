@@ -27,6 +27,7 @@ ship them.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
@@ -42,7 +43,14 @@ from pgdbm import AsyncDatabaseManager
 from starlette.routing import BaseRoute, Host, Mount
 
 from aweb_naapp.css import FONT_NAMES, aweb_css
-from aweb_naapp.manifest import Manifest, load_manifest, read_manifest_bytes
+from aweb_naapp.manifest import (
+    CATALOG_PATH,
+    LEGACY_MANIFEST_PATH,
+    Manifest,
+    canonical_bytes,
+    load_manifest,
+    read_manifest_bytes,
+)
 from aweb_naapp.outbox import run_drain
 from aweb_naapp.robots import robots_txt
 from aweb_naapp.runtime.attestation import (
@@ -72,6 +80,9 @@ from aweb_naapp.runtime.team_auth import (
 from aweb_naapp.skills import Skills
 
 logger = logging.getLogger(__name__)
+
+# Where a version 2 manifest's bytes are served, as its catalog lists them.
+MANIFEST_V2_PATH = "/manifests/v2.json"
 
 NOINDEX_ROBOTS_HEADER = "noindex, nofollow, noarchive"
 _NOSNIFF = {"X-Content-Type-Options": "nosniff"}
@@ -113,6 +124,11 @@ class NaappRuntime:
         self._attestation_records: AWIDAttestationRecords | None = None
         self._manifest_bytes = read_manifest_bytes(manifest_path, settings.public_origin)
         self._manifest = load_manifest(self._manifest_bytes)
+        self._catalog_bytes = (
+            _catalog_bytes(self._manifest, self._manifest_bytes)
+            if self._manifest.manifest_version == 2
+            else None
+        )
         self._declared_tools = DeclaredTools.from_manifest(self._manifest)
         self._app_events = AppEvents.from_settings(settings, self._manifest)
         self._guards: set[Callable[..., object]] = set()
@@ -121,6 +137,13 @@ class NaappRuntime:
     def manifest_bytes(self) -> bytes:
         """The manifest bytes served at the manifest routes, fixed at construction."""
         return self._manifest_bytes
+
+    @property
+    def catalog_bytes(self) -> bytes | None:
+        """The manifest catalog served for a version 2 manifest, fixed at
+        construction; ``None`` for a version 1 manifest, which consumers
+        discover at the legacy path."""
+        return self._catalog_bytes
 
     @property
     def manifest(self) -> Manifest:
@@ -310,6 +333,19 @@ class NaappRuntime:
         )
 
 
+def _catalog_bytes(manifest: Manifest, variant_bytes: bytes) -> bytes:
+    """The manifest catalog listing ``variant_bytes`` as the app's version 2 variant."""
+    return canonical_bytes({
+        "catalog_version": 1,
+        "app_id": manifest.app_id,
+        "variants": [{
+            "manifest_version": 2,
+            "url": MANIFEST_V2_PATH,
+            "digest": "sha256:" + hashlib.sha256(variant_bytes).hexdigest(),
+        }],
+    })
+
+
 def _template(segments: Sequence[str]) -> tuple[str, ...]:
     return tuple("{}" if is_placeholder(segment) else segment for segment in segments)
 
@@ -337,7 +373,9 @@ def mount_naapp_routes(
     renders the front door on each request, ``robots_disallow`` lists the paths
     crawlers must skip, and every response under ``noindex_paths`` (found or
     not) carries ``X-Robots-Tag``. The manifest routes serve the runtime's
-    ``manifest_bytes`` verbatim.
+    ``manifest_bytes`` verbatim: at the legacy well-known path for a version 1
+    manifest, or, for version 2, at the variant path its catalog
+    (``catalog_bytes``) lists, with no version 1 copy.
     """
     settings = runtime.settings
     noindex_prefixes = tuple(noindex_paths)
@@ -420,6 +458,7 @@ def mount_naapp_routes(
         return PlainTextResponse(skill, headers=_NOSNIFF)
 
     manifest_bytes = runtime.manifest_bytes
+    catalog_bytes = runtime.catalog_bytes
 
     async def _manifest_response() -> Response:
         return Response(
@@ -428,12 +467,23 @@ def mount_naapp_routes(
             headers=_NOSNIFF,
         )
 
-    # Served at the RFC 8615 well-known path the dispatcher and gateway fetch,
-    # plus the bare path the docs surface links. Both return the same bytes.
-    @app.get("/.well-known/aweb-app.json")
-    async def well_known_manifest_route() -> Response:
-        return await _manifest_response()
+    if catalog_bytes is None:
+        # A version 1 manifest is discovered at the RFC 8615 well-known path.
+        @app.get(LEGACY_MANIFEST_PATH)
+        async def well_known_manifest_route() -> Response:
+            return await _manifest_response()
+    else:
+        # A version 2 manifest is discovered through its catalog. No version 1
+        # copy is served, so the legacy well-known path is not found.
+        @app.get(CATALOG_PATH)
+        async def manifest_catalog_route() -> Response:
+            return Response(content=catalog_bytes, media_type="application/json", headers=_NOSNIFF)
 
+        @app.get(MANIFEST_V2_PATH)
+        async def manifest_v2_route() -> Response:
+            return await _manifest_response()
+
+    # The bare path the docs surface links serves the app's manifest itself.
     @app.get("/aweb-app.json")
     async def aweb_app_manifest_route() -> Response:
         return await _manifest_response()

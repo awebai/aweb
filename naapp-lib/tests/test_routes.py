@@ -12,7 +12,13 @@ from pydantic_settings import SettingsConfigDict
 
 from aweb_naapp import CSS_SHA256, aweb_css
 from aweb_naapp.css import FONT_NAMES
-from aweb_naapp.manifest import canonical_bytes, manifest_for_origin, write_manifest_file
+from aweb_naapp.manifest import (
+    ManifestError,
+    canonical_bytes,
+    manifest_for_origin,
+    select_variant,
+    write_manifest_file,
+)
 from aweb_naapp.runtime.app import NaappRuntime, mount_naapp_routes
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.skills import Skills
@@ -236,3 +242,64 @@ def test_without_noindex_paths_nothing_is_tagged(tmp_path: Path) -> None:
 def test_health_is_mounted(tmp_path: Path) -> None:
     response = _client(tmp_path).get("/health")
     assert response.json() == {"status": "ok", "service": "example", "build": {"git_sha": None}}
+
+
+# --- Manifest discovery --------------------------------------------------------
+
+_MANIFEST_V2 = {
+    "manifest_version": 2,
+    "app": {"id": "example", "origin": _HOSTED},
+    "tools": [{"name": "create", "method": "POST", "path": "/v1/things", "scopes": ["example:write"]}],
+}
+
+
+def _fetch(client: TestClient):
+    def fetch(path: str, max_bytes: int) -> tuple[int, bytes]:
+        response = client.get(path, follow_redirects=False)
+        return response.status_code, response.content[:max_bytes]
+
+    return fetch
+
+
+def test_a_v2_app_is_discovered_through_its_catalog(tmp_path: Path) -> None:
+    client = _client(tmp_path, committed=canonical_bytes(_MANIFEST_V2))
+    variant = select_variant(_HOSTED, (1, 2), _fetch(client))
+    assert (variant.source, variant.manifest_version) == ("catalog", 2)
+    assert variant.data == client.app.state.runtime.manifest_bytes
+
+
+def test_a_v2_app_serves_no_v1_manifest(tmp_path: Path) -> None:
+    client = _client(tmp_path, committed=canonical_bytes(_MANIFEST_V2))
+    assert client.get("/.well-known/aweb-app.json").status_code == 404
+    with pytest.raises(ManifestError) as refused:
+        select_variant(_HOSTED, (1,), _fetch(client))
+    assert refused.value.code == "no_supported_variant"
+
+
+def test_a_self_hosted_v2_app_lists_the_bytes_it_serves(tmp_path: Path) -> None:
+    settings = ExampleSettings(_env_file=None, public_origin="http://self.test")
+    client = _client(tmp_path, committed=canonical_bytes(_MANIFEST_V2), settings=settings)
+    variant = select_variant("http://self.test", (2,), _fetch(client))
+    assert variant.source == "catalog"
+    assert json.loads(variant.data)["app"]["origin"] == "http://self.test"
+    assert variant.data == client.app.state.runtime.manifest_bytes
+
+
+def test_a_v1_app_is_discovered_at_the_legacy_path(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    assert client.get("/.well-known/aweb-app-versions.json").status_code == 404
+    variant = select_variant(_HOSTED, (1, 2), _fetch(client))
+    assert (variant.source, variant.manifest_version) == ("legacy", 1)
+
+
+def test_the_catalog_and_its_variant_are_fixed_at_startup(tmp_path: Path) -> None:
+    client = _client(tmp_path, committed=canonical_bytes(_MANIFEST_V2))
+    catalog = client.get("/.well-known/aweb-app-versions.json")
+    assert catalog.status_code == 200
+    catalog = catalog.content
+    variant = select_variant(_HOSTED, (2,), _fetch(client))
+    assert variant.source == "catalog"
+    (tmp_path / "aweb-app.json").write_bytes(canonical_bytes({**_MANIFEST_V2, "tools": []}))
+    assert client.get("/.well-known/aweb-app-versions.json").content == catalog
+    assert select_variant(_HOSTED, (2,), _fetch(client)).data == variant.data
+    assert client.get("/aweb-app.json").content == variant.data

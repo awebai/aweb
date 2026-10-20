@@ -495,7 +495,7 @@ def test_v2_tools_are_declared_with_their_invocation_contexts(tmp_path: Path) ->
 
 def test_the_served_manifest_and_its_tools_cannot_be_replaced(tmp_path: Path) -> None:
     runtime, _ = _guarded_app(tmp_path, _renamed_placeholder)
-    for name in ("manifest_bytes", "manifest", "declared_tools"):
+    for name in ("manifest_bytes", "catalog_bytes", "manifest", "declared_tools"):
         with pytest.raises(AttributeError):
             setattr(runtime, name, getattr(runtime, name))
 

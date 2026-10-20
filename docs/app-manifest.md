@@ -542,15 +542,20 @@ the selected variant, fails discovery; nothing falls back to another variant
 or to the legacy path. Catalog and variant fetches follow no redirects.
 
 `aw plugin install` and `aw plugin update` discover this way. A failed
-update keeps the installed manifest. An app that publishes v2 keeps serving
-its v1 variant's exact bytes at the legacy path, so released v1-only clients
-keep installing and updating. That v1 variant must be an agent-safe subset
-of v2. Its app and events must equal v2's. Every v1 tool must be a v2 agent
-tool with an identical mapping, since a v1 tool has no contexts and is
-always agent-visible. Every v1 event emitter must be a v2 `app-event` key.
+update keeps the installed manifest. An app that publishes v2 may also
+serve a v1 variant's exact bytes at the legacy path, for released v1-only
+clients. That v1 variant must be an agent-safe subset of v2. Its app and
+events must equal v2's. Every v1 tool must be a v2 agent tool with an
+identical mapping, since a v1 tool has no contexts and is always
+agent-visible. Every v1 event emitter must be a v2 `app-event` key.
 Publishers check this with `aweb_naapp.manifest.check_v1_variant`
-(`v1_variant_incompatible`). How long the legacy v1 variant must stay is
-not settled here.
+(`v1_variant_incompatible`).
+
+The shared naapp runtime (`aweb_naapp`) serves a v1 manifest at the legacy
+path and publishes no catalog for it. For a v2 manifest it serves the
+catalog, listing the exact bytes it serves at `/manifests/v2.json`, and no
+v1 variant, so the legacy path is not found. It computes both once at
+startup.
 
 ## CLI resident and grant access
 
