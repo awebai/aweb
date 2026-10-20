@@ -7,7 +7,9 @@ surface.
 The runtime reads the app's manifest once, at construction, for its configured
 public origin: :attr:`NaappRuntime.manifest_bytes` are the bytes served at the
 manifest routes, and the tools authorization checks against are parsed from
-those same bytes, never from the app's authoring dict or a later file.
+those same bytes, never from the app's authoring dict or a later file. The
+bytes are read with :func:`aweb_naapp.manifest.load_manifest`, the reader the
+aw CLI's conformance vectors pin, so a manifest it refuses stops the app.
 
 Member operations are guarded with ``Depends(runtime.authorized(grants=...,
 policy=...))``. It admits a request only when it is signed by a team member,
@@ -24,11 +26,9 @@ ship them.
 from __future__ import annotations
 
 import asyncio
-import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -39,7 +39,7 @@ from pgdbm import AsyncDatabaseManager
 from starlette.routing import BaseRoute, Host, Mount
 
 from aweb_naapp.css import FONT_NAMES, aweb_css
-from aweb_naapp.manifest import read_manifest_bytes
+from aweb_naapp.manifest import Manifest, load_manifest, read_manifest_bytes
 from aweb_naapp.outbox import run_drain
 from aweb_naapp.robots import robots_txt
 from aweb_naapp.runtime.authorization import (
@@ -75,7 +75,8 @@ class NaappRuntime:
     ``manifest_path`` is the app's committed manifest file. It is read here,
     once per process, for ``settings.public_origin`` (configuration, never a
     request): ``manifest_bytes`` are served verbatim, and ``manifest`` and
-    ``declared_tools`` are parsed from them. The app-event key the manifest
+    ``declared_tools`` are parsed from them; a manifest the shared reader
+    refuses raises :class:`~aweb_naapp.manifest.ManifestError`. The app-event key the manifest
     declares is loaded here too, so a missing or wrong key stops the app
     before it serves anything, and ``app_events`` emits through it.
     """
@@ -99,7 +100,7 @@ class NaappRuntime:
         self._database: NaappDatabase | None = None
         self._team_cache: AWIDTeamCache | None = None
         self._manifest_bytes = read_manifest_bytes(manifest_path, settings.public_origin)
-        self._manifest: Mapping[str, Any] = json.loads(self._manifest_bytes)
+        self._manifest = load_manifest(self._manifest_bytes)
         self._declared_tools = DeclaredTools.from_manifest(self._manifest)
         self._app_events = AppEvents.from_settings(settings, self._manifest)
         self._guards: set[Callable[..., object]] = set()
@@ -110,8 +111,8 @@ class NaappRuntime:
         return self._manifest_bytes
 
     @property
-    def manifest(self) -> Mapping[str, Any]:
-        """The served manifest, parsed."""
+    def manifest(self) -> Manifest:
+        """The served manifest, validated and resolved."""
         return self._manifest
 
     @property

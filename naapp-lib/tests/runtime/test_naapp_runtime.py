@@ -18,7 +18,7 @@ from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 from pydantic_settings import SettingsConfigDict
 
-from aweb_naapp.manifest import write_manifest_file
+from aweb_naapp.manifest import ManifestError, write_manifest_file
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import Authorization, DeclaredTool, Grant
 from aweb_naapp.runtime.settings import NaappSettings
@@ -27,16 +27,25 @@ from aweb_naapp.runtime.team_auth import Principal
 from .conftest import REGISTRY_URL, Member, did_key
 
 ORIGIN = "https://app.example"
+
+def in_path(name: str) -> dict:
+    """The params and input_schema a tool needs to take ``name`` from its path."""
+    return {
+        "params": [{"name": name, "in": "path"}],
+        "input_schema": {"type": "object", "properties": {name: {"type": "string"}}, "required": [name]},
+    }
+
+
 CREATE = {"name": "create", "method": "POST", "path": "/v1/things", "scopes": ["example:write"]}
-GET_THING = {"name": "get-thing", "method": "GET", "path": "/v1/things/{id}", "scopes": ["r"]}
+GET_THING = {"name": "get-thing", "method": "GET", "path": "/v1/things/{id}", **in_path("id"), "scopes": ["r"]}
 
 
-def _manifest(tmp_path: Path, *tools: dict) -> Path:
+def _manifest(tmp_path: Path, *tools: dict, version: int = 1) -> Path:
     """The app's committed manifest file, declaring ``tools``."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "aweb-app.json"
     manifest = {
-        "manifest_version": 1,
+        "manifest_version": version,
         "app": {"id": "example", "origin": ORIGIN},
         "tools": list(tools),
     }
@@ -441,8 +450,46 @@ def test_authorization_follows_the_served_manifest_for_a_self_hosted_origin(tmp_
         manifest_path=_manifest(tmp_path, GET_THING),
     )
     assert json.loads(runtime.manifest_bytes)["app"]["origin"] == "http://self.test"
-    assert runtime.manifest == json.loads(runtime.manifest_bytes)
+    assert runtime.manifest.document == json.loads(runtime.manifest_bytes)
     assert [tool.name for tool in runtime.declared_tools] == ["get-thing"]
+
+
+def _constructed(tmp_path: Path, manifest_path: Path) -> NaappRuntime:
+    settings = ExampleSettings(_env_file=None, database_url="postgresql://localhost/unused")
+    return NaappRuntime(
+        settings,
+        module_name="example",
+        migrations_path=_migrations(tmp_path),
+        manifest_path=manifest_path,
+    )
+
+
+def test_a_manifest_the_shared_reader_refuses_stops_the_runtime(tmp_path: Path) -> None:
+    hook_only_in_v1 = {**CREATE, "invocation_contexts": ["hook"]}
+    with pytest.raises(ManifestError) as refused:
+        _constructed(tmp_path, _manifest(tmp_path / "app", hook_only_in_v1))
+    assert refused.value.code == "manifest_invalid"
+
+
+def test_v1_tools_are_declared_for_agent_and_surface_callers(tmp_path: Path) -> None:
+    runtime = _constructed(tmp_path, _manifest(tmp_path / "app", CREATE))
+    assert runtime.manifest.manifest_version == 1
+    assert [(t.name, t.contexts) for t in runtime.declared_tools] == [
+        ("create", frozenset({"agent", "surface"}))
+    ]
+
+
+def test_v2_tools_are_declared_with_their_invocation_contexts(tmp_path: Path) -> None:
+    ingest = {"name": "ingest", "method": "POST", "path": "/v1/ingest", "scopes": ["example:ingest"],
+              "invocation_contexts": ["hook"]}
+    review = {**GET_THING, "invocation_contexts": ["surface"]}
+    runtime = _constructed(tmp_path, _manifest(tmp_path / "app", CREATE, ingest, review, version=2))
+    assert runtime.manifest.manifest_version == 2
+    assert {t.name: t.contexts for t in runtime.declared_tools} == {
+        "create": frozenset({"agent", "surface"}),
+        "ingest": frozenset({"hook"}),
+        "get-thing": frozenset({"surface"}),
+    }
 
 
 def test_the_served_manifest_and_its_tools_cannot_be_replaced(tmp_path: Path) -> None:

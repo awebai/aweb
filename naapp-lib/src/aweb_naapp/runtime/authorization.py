@@ -30,6 +30,7 @@ from urllib.parse import unquote
 
 from fastapi import HTTPException, Request
 
+from aweb_naapp.manifest import Manifest
 from aweb_naapp.runtime.team_auth import Principal, raw_request_target
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,8 @@ class DeclaredTool:
     method: str
     path: str
     scopes: frozenset[str]
+    # The caller contexts the tool serves: agent, surface and/or hook.
+    contexts: frozenset[str]
 
     @property
     def segments(self) -> tuple[str, ...]:
@@ -67,7 +70,7 @@ def _templates_overlap(a: DeclaredTool, b: DeclaredTool) -> bool:
     )
 
 
-def _declared_tool(tool: Mapping[str, Any]) -> DeclaredTool:
+def _declared_tool(tool: Mapping[str, Any], contexts: frozenset[str]) -> DeclaredTool:
     name = tool.get("name")
     method = tool.get("method")
     path = tool.get("path")
@@ -83,11 +86,16 @@ def _declared_tool(tool: Mapping[str, Any]) -> DeclaredTool:
             raise ValueError(f"manifest tool {name!r} has a malformed path placeholder")
     if not isinstance(scopes, list) or not scopes or not all(isinstance(s, str) and s for s in scopes):
         raise ValueError(f"manifest tool {name!r} must declare the scopes it requires")
-    return DeclaredTool(name=name, method=method, path=path, scopes=frozenset(scopes))
+    return DeclaredTool(name=name, method=method, path=path, scopes=frozenset(scopes), contexts=contexts)
 
 
 class DeclaredTools:
-    """The operations an app's manifest declares, matched by method and raw path."""
+    """The operations an app's manifest declares, matched by method and raw path.
+
+    Two tools whose templates can match the same request are refused, even in a
+    manifest the shared reader accepts: each request must authorize as exactly
+    one tool, with that tool's scopes and contexts.
+    """
 
     def __init__(self, tools: list[DeclaredTool]) -> None:
         for i, a in enumerate(tools):
@@ -100,8 +108,14 @@ class DeclaredTools:
         return iter(self._tools)
 
     @classmethod
-    def from_manifest(cls, manifest: Mapping[str, Any]) -> DeclaredTools:
-        return cls([_declared_tool(tool) for tool in manifest["tools"]])
+    def from_manifest(cls, manifest: Manifest) -> DeclaredTools:
+        """The tools of a manifest that :func:`~aweb_naapp.manifest.load_manifest` resolved."""
+        tools = []
+        for tool in manifest.document["tools"]:
+            contexts = manifest.tool_contexts(tool["name"])
+            assert contexts is not None
+            tools.append(_declared_tool(tool, contexts))
+        return cls(tools)
 
     def match(self, method: str, raw_path: str) -> DeclaredTool | None:
         segments = raw_path.split("/")

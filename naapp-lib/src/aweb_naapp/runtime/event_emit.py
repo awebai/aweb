@@ -27,6 +27,7 @@ import httpx
 from awid.signing import canonical_json_bytes
 from pgdbm.core import TransactionManager
 
+from aweb_naapp.manifest import Manifest
 from aweb_naapp.outbox import (
     Acked,
     OutboxEvent,
@@ -149,7 +150,7 @@ class AppEvents:
         self.policy = policy
 
     @classmethod
-    def from_settings(cls, settings: NaappSettings, manifest: Any) -> AppEvents:
+    def from_settings(cls, settings: NaappSettings, manifest: Manifest) -> AppEvents:
         """The app's emits as configured, or an error that stops the app starting."""
         prefix = settings.model_config.get("env_prefix", "")
         policy = RetryPolicy(

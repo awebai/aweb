@@ -190,7 +190,7 @@ def test_the_manifest_is_fixed_at_startup_and_served_verbatim(tmp_path: Path) ->
     }
     assert digests == {hashlib.sha256(first).hexdigest()}
     assert runtime.manifest_bytes == first
-    assert runtime.manifest == json.loads(first)
+    assert runtime.manifest.document == json.loads(first)
 
 
 def test_manifest_follows_a_self_hosted_origin(tmp_path: Path) -> None:
