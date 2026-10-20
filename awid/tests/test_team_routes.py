@@ -9,6 +9,7 @@ from awid.log import identity_state_hash, log_entry_payload
 from awid.signing import canonical_json_bytes, sign_message
 
 from conftest import build_signed_headers as _sign
+from test_certificates import _signed_certificate_blob
 
 
 async def _register_namespace(client, signing_key, controller_did, domain):
@@ -290,6 +291,12 @@ async def test_get_team_member_by_alias(client, controller_identity):
             "member_address": "members.com/alice",
             "alias": "alice",
             "identity_scope": "global",
+            "certificate": _signed_certificate_blob(
+                team_key, certificate_id="cert-1", team_id="backend:members.com",
+                team_did_key=team_did_key, member_did_key=member_did_key,
+                member_did_aw=member_did_aw, member_address="members.com/alice",
+                alias="alice",
+            ),
         },
         headers=headers,
     )
@@ -338,6 +345,11 @@ async def test_register_certificate_rejects_duplicate_active_alias(client, contr
             "member_did_key": did_from_public_key(member1_pub),
             "alias": "alice",
             "identity_scope": "global",
+            "certificate": _signed_certificate_blob(
+                team_key, certificate_id="cert-1", team_id="backend:dupalias.com",
+                team_did_key=team_did_key, member_did_key=did_from_public_key(member1_pub),
+                alias="alice",
+            ),
         },
         headers=headers,
     )
@@ -359,6 +371,11 @@ async def test_register_certificate_rejects_duplicate_active_alias(client, contr
             "member_did_key": did_from_public_key(member2_pub),
             "alias": "alice",
             "identity_scope": "global",
+            "certificate": _signed_certificate_blob(
+                team_key, certificate_id="cert-2", team_id="backend:dupalias.com",
+                team_did_key=team_did_key, member_did_key=did_from_public_key(member2_pub),
+                alias="alice",
+            ),
         },
         headers=headers,
     )
@@ -531,6 +548,11 @@ async def test_delete_team_with_active_certificates_returns_409(client, controll
             "certificate_id": "cert-active-1",
             "member_did_key": did_from_public_key(member_pub),
             "alias": "bot",
+            "certificate": _signed_certificate_blob(
+                team_key, certificate_id="cert-active-1", team_id="ops:delactive.com",
+                team_did_key=team_did_key, member_did_key=did_from_public_key(member_pub),
+                alias="bot",
+            ),
         },
         headers=headers,
     )

@@ -30,6 +30,8 @@ from awid.dns_auth import (
 from awid.did import public_key_from_did
 from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_with_public_key
 from awid.team_ids import build_team_id
+from awid.team_server_record import TeamServerRecordError, verify_team_server_record
+from awid_service.delivery_origin import validate_delivery_origin
 from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
 from awid_service.attestation_rotation import ResignedRecords, apply_resigned_records
 
@@ -1123,6 +1125,162 @@ async def certificate_status(
         status="revoked" if revoked_at is not None else "active",
         revoked_at=revoked_at.isoformat() if revoked_at is not None else None,
     )
+
+
+class TeamServerRecordBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    record: dict
+    signature: str = Field(..., min_length=1, max_length=256)
+
+
+_TEAM_SERVER_NOT_FOUND = "Team server record not found"
+_TEAM_SERVER_MAX_BODY_BYTES = 8192
+# A record that does not verify against an existing team's current key answers
+# exactly like an unknown team, so a publish attempt never reveals that a
+# private team exists. Only a verified record gets a distinct refusal.
+_TEAM_SERVER_UNVERIFIED_CODES = frozenset(
+    {"record_invalid", "team_mismatch", "team_server_key_mismatch", "signature_invalid"}
+)
+
+
+def _team_server_not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail=_TEAM_SERVER_NOT_FOUND)
+
+
+def _team_server_refusal(code: str) -> HTTPException:
+    if code in _TEAM_SERVER_UNVERIFIED_CODES:
+        return _team_server_not_found()
+    return HTTPException(status_code=409 if code == "not_newer" else 422, detail=code)
+
+
+async def _team_server_body(request: Request) -> TeamServerRecordBody:
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > _TEAM_SERVER_MAX_BODY_BYTES:
+            raise HTTPException(status_code=413, detail="request body too large")
+    try:
+        return TeamServerRecordBody.model_validate(json.loads(bytes(body)))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="request body must be {record, signature}") from exc
+
+
+@router.put(
+    "/{name}/server",
+    response_model=TeamServerRecordBody,
+    dependencies=[Depends(rate_limit_dep("team_server_publish"))],
+)
+async def publish_team_server(
+    request: Request,
+    domain: str,
+    name: str,
+    db_infra=Depends(get_db),
+) -> TeamServerRecordBody:
+    """Store the team's aweb.team-server/1 record.
+
+    The record's own team-key signature is the authority; no request
+    signature is needed. Only a record signed by the current team key and
+    newer than the stored one replaces it; resending the stored record is
+    accepted unchanged.
+    """
+    _validate_team_name_path(name)
+    body = await _team_server_body(request)
+    db = db_infra.get_manager("aweb")
+    async with db.transaction() as tx:
+        team = await tx.fetch_one(
+            """
+            SELECT team_uuid, team_did_key FROM {{tables.teams}}
+            WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
+            FOR UPDATE
+            """,
+            domain,
+            name,
+        )
+        if team is None:
+            raise _team_server_not_found()
+        try:
+            verified = verify_team_server_record(
+                body.record,
+                body.signature,
+                team_id=build_team_id(domain, name),
+                current_team_did_key=team["team_did_key"],
+                now=datetime.now(timezone.utc),
+            )
+        except TeamServerRecordError as exc:
+            raise _team_server_refusal(exc.code) from exc
+        try:
+            validate_delivery_origin(verified.audience)
+        except ValueError as exc:
+            raise _team_server_refusal("server_url_invalid") from exc
+        record_json = canonical_json_bytes(body.record).decode("utf-8")
+        stored = await tx.fetch_one(
+            """
+            SELECT record_json, signature, issued_at FROM {{tables.team_server_records}}
+            WHERE team_uuid = $1
+            FOR UPDATE
+            """,
+            team["team_uuid"],
+        )
+        if stored is not None:
+            if stored["record_json"] == record_json and stored["signature"] == body.signature:
+                return body
+            if verified.issued_at <= stored["issued_at"]:
+                raise _team_server_refusal("not_newer")
+        await tx.execute(
+            """
+            INSERT INTO {{tables.team_server_records}} (
+                team_uuid, record_json, signature, team_did_key, server_url, issued_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, NOW())
+            ON CONFLICT (team_uuid) DO UPDATE SET
+                record_json = EXCLUDED.record_json,
+                signature = EXCLUDED.signature,
+                team_did_key = EXCLUDED.team_did_key,
+                server_url = EXCLUDED.server_url,
+                issued_at = EXCLUDED.issued_at,
+                updated_at = NOW()
+            """,
+            team["team_uuid"],
+            record_json,
+            body.signature,
+            verified.team_did_key,
+            verified.server_url,
+            verified.issued_at,
+        )
+    return body
+
+
+@router.get(
+    "/{name}/server",
+    response_model=TeamServerRecordBody,
+    dependencies=[Depends(rate_limit_dep("team_server_get", allow_trusted_service=True))],
+)
+async def get_team_server(
+    domain: str,
+    name: str,
+    db_infra=Depends(get_db),
+) -> TeamServerRecordBody:
+    """The team's stored aweb.team-server/1 record, anonymously, for public and private teams.
+
+    The answer is the record exactly as signed. Callers verify it against the
+    team's current key. An unknown team and a team without a record answer the
+    same 404.
+    """
+    db = db_infra.get_manager("aweb")
+    row = await db.fetch_one(
+        """
+        SELECT r.record_json, r.signature
+        FROM {{tables.team_server_records}} r
+        JOIN {{tables.teams}} t ON t.team_uuid = r.team_uuid
+        WHERE t.domain = $1 AND t.name = $2 AND t.deleted_at IS NULL
+        """,
+        domain,
+        name,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail=_TEAM_SERVER_NOT_FOUND)
+    return TeamServerRecordBody(record=json.loads(row["record_json"]), signature=row["signature"])
 
 
 @router.get(

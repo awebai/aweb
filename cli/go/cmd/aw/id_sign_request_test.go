@@ -58,7 +58,7 @@ func TestAwIDSignWorksWithStandaloneIdentity(t *testing.T) {
 	verifySignedPayload(t, pub, map[string]any{
 		"domain":    "acme.com",
 		"operation": "register",
-	}, timestamp, signature)
+	}, timestamp, signature, awid.UserSignaturePrefix)
 }
 
 func TestAwIDSignWorksWithLocalWorkspace(t *testing.T) {
@@ -98,7 +98,7 @@ func TestAwIDSignWorksWithLocalWorkspace(t *testing.T) {
 	verifySignedPayload(t, pub, map[string]any{
 		"key":       "plan",
 		"operation": "put_doc",
-	}, timestamp, signature)
+	}, timestamp, signature, awid.UserSignaturePrefix)
 }
 
 func TestAwIDRequestSignsAndSendsHTTP(t *testing.T) {
@@ -132,9 +132,8 @@ func TestAwIDRequestSignsAndSendsHTTP(t *testing.T) {
 			t.Fatalf("did=%q want %q", parts[1], did)
 		}
 		verifySignedPayload(t, pub, map[string]any{
-			"domain":    "acme.com",
-			"key":       "plan",
-			"operation": "put_doc",
+			"did_aw":      stableID,
+			"body_sha256": fmt.Sprintf("%x", sha256.Sum256(data)),
 		}, timestamp, parts[2])
 
 		w.Header().Set("Content-Type", "application/json")
@@ -153,7 +152,6 @@ func TestAwIDRequestSignsAndSendsHTTP(t *testing.T) {
 	writeStandaloneSelfCustodyIdentity(t, tmp, address, did, stableID, "https://api.awid.ai", priv)
 
 	run := exec.CommandContext(ctx, bin, "id", "request", "PUT", server.URL+"/v1/docs/acme.com/plan",
-		"--sign", `{"domain":"acme.com","key":"plan","operation":"put_doc"}`,
 		"--body", `{"content":"# Q3 Plan"}`,
 		"--header", "X-Custom: value",
 		"--json",
@@ -218,7 +216,6 @@ func TestAwIDRequestRawPrintsBodyOnly(t *testing.T) {
 	writeStandaloneSelfCustodyIdentity(t, tmp, "acme.com/alice", did, stableID, "https://api.awid.ai", priv)
 
 	run := exec.CommandContext(ctx, bin, "id", "request", "GET", server.URL+"/ping",
-		"--sign", `{"operation":"ping"}`,
 		"--raw",
 	)
 	run.Env = idCreateCommandEnv(tmp)
@@ -268,7 +265,6 @@ func TestAwIDRequestDoesNotFollowRedirects(t *testing.T) {
 	writeStandaloneSelfCustodyIdentity(t, tmp, "acme.com/alice", did, stableID, "https://api.awid.ai", priv)
 
 	run := exec.CommandContext(ctx, bin, "id", "request", "GET", redirectSource.URL+"/start",
-		"--sign", `{"operation":"ping"}`,
 		"--json",
 	)
 	run.Env = idCreateCommandEnv(tmp)
@@ -817,7 +813,7 @@ func writeGlobalTeamSignedRequestWorkspaceForTest(t *testing.T, workingDir, serv
 	return teamPub
 }
 
-func verifySignedPayload(t *testing.T, pub ed25519.PublicKey, payload map[string]any, timestamp, signature string) {
+func verifySignedPayload(t *testing.T, pub ed25519.PublicKey, payload map[string]any, timestamp, signature string, prefix ...string) {
 	t.Helper()
 	signedPayload := make(map[string]any, len(payload)+1)
 	for key, value := range payload {
@@ -832,7 +828,14 @@ func verifySignedPayload(t *testing.T, pub ed25519.PublicKey, payload map[string
 	if err != nil {
 		t.Fatalf("decode signature: %v", err)
 	}
-	if !ed25519.Verify(pub, []byte(canonical), sigBytes) {
+	signedBytes := canonical
+	if len(prefix) > 0 {
+		signedBytes = prefix[0] + canonical
+		if ed25519.Verify(pub, []byte(canonical), sigBytes) {
+			t.Fatal("user signature also verified as protocol bytes")
+		}
+	}
+	if !ed25519.Verify(pub, []byte(signedBytes), sigBytes) {
 		t.Fatalf("signature did not verify for %s", canonical)
 	}
 }
@@ -852,10 +855,17 @@ func decodeSignedPayloadHeaderForTest(t *testing.T, encoded string) string {
 
 func signedTeamAuthHeadersForTest(t *testing.T, signingKey ed25519.PrivateKey, cert *awid.TeamCertificate, payload map[string]any, timestamp time.Time) http.Header {
 	t.Helper()
-	didKey, signature, canonical, err := awid.SignArbitraryPayload(signingKey, payload, timestamp.UTC().Format(time.RFC3339))
+	fields := make(map[string]any, len(payload)+1)
+	for key, value := range payload {
+		fields[key] = value
+	}
+	fields["timestamp"] = timestamp.UTC().Format(time.RFC3339)
+	canonical, err := awid.CanonicalJSONValue(fields)
 	if err != nil {
 		t.Fatal(err)
 	}
+	didKey := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
+	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, []byte(canonical)))
 	certHeader, err := awid.EncodeTeamCertificateHeader(cert)
 	if err != nil {
 		t.Fatal(err)

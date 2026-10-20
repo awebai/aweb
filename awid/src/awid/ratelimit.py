@@ -183,6 +183,8 @@ _BUCKET_DEFAULTS: dict[str, tuple[int, int]] = {
     "certificate_list": (60, 60),
     "certificate_fetch": (60, 60),
     "certificate_status": (60, 60),
+    "team_server_publish": (30, 3600),
+    "team_server_get": (120, 60),
     "certificate_revoke": (1000, 3600),
     "revocation_list": (60, 60),
     "attestation_record_publish": (3000, 3600),
