@@ -156,7 +156,9 @@ async def test_drain_delivers_each_target_the_exact_bytes_with_its_metadata(db) 
     targets = Targets([Target("a", {"origin": "https://a.example"}), Target("b")])
     transport = Scripted({"a": Acked("delivered", b"receipt-a"), "b": Acked("duplicate", None)})
 
-    result = await drain(db, resolver=targets, transport=transport, policy=_POLICY)
+    result = await drain(
+        db, channel="default", resolver=targets, transport=transport, policy=_POLICY
+    )
 
     assert sorted(transport.sent, key=lambda sent: sent[1]) == [
         (event.event_id, "a", b'{"exact":"bytes"}', {"origin": "https://a.example"}),
@@ -173,6 +175,7 @@ async def test_a_drained_event_keeps_a_tombstone_and_its_receipts(db) -> None:
         await enqueue(tx, event)
     await drain(
         db,
+        channel="default",
         resolver=Targets([Target("a")]),
         transport=Scripted({"a": Acked("delivered", b"r")}),
         policy=_POLICY,
@@ -207,10 +210,10 @@ async def test_latest_receipt_follows_arrival_order_not_enqueue_order(db) -> Non
             return outcomes[event.payload].pop(0)
 
     resolver, transport = Targets([Target("a")]), InTurn({})
-    await drain(db, resolver=resolver, transport=transport, policy=_POLICY)
+    await drain(db, channel="default", resolver=resolver, transport=transport, policy=_POLICY)
     assert await latest_receipt(db, "a") == b"receipt-late"
     await _make_due(db)
-    await drain(db, resolver=resolver, transport=transport, policy=_POLICY)
+    await drain(db, channel="default", resolver=resolver, transport=transport, policy=_POLICY)
     # early arrived last, so its receipt commits to the longest prefix; a duplicate
     # ack carries an older receipt and never replaces it.
     assert await latest_receipt(db, "a") == b"receipt-early"
@@ -222,6 +225,7 @@ async def test_latest_receipt_falls_back_to_duplicates_when_nothing_was_appended
         await enqueue(tx, _event())
     await drain(
         db,
+        channel="default",
         resolver=Targets([Target("a")]),
         transport=Scripted({"a": Acked("duplicate", b"dup")}),
         policy=_POLICY,
@@ -235,7 +239,7 @@ async def test_retryable_failures_back_off_per_target_and_are_never_dropped(db) 
     transport = Scripted({"a": Retryable("ConnectError"), "b": Acked("delivered", None)})
     resolver = Targets([Target("a"), Target("b")])
 
-    await drain(db, resolver=resolver, transport=transport, policy=_POLICY)
+    await drain(db, channel="default", resolver=resolver, transport=transport, policy=_POLICY)
     row = await db.fetch_one(
         "SELECT state, attempts, last_error_class, next_attempt_at > NOW() AS later"
         " FROM {{tables.outbox_deliveries}} WHERE target_id = 'a'"
@@ -249,14 +253,14 @@ async def test_retryable_failures_back_off_per_target_and_are_never_dropped(db) 
     assert (await _states(db))["b"] == "delivered"
 
     sent_before = len(transport.sent)
-    await drain(db, resolver=resolver, transport=transport, policy=_POLICY)
+    await drain(db, channel="default", resolver=resolver, transport=transport, policy=_POLICY)
     assert len(transport.sent) == sent_before, "a backed-off delivery is not retried early"
 
     first_delay = await db.fetch_value(
         "SELECT next_attempt_at - updated_at FROM {{tables.outbox_deliveries}} WHERE target_id = 'a'"
     )
     await _make_due(db)
-    await drain(db, resolver=resolver, transport=transport, policy=_POLICY)
+    await drain(db, channel="default", resolver=resolver, transport=transport, policy=_POLICY)
     second_delay = await db.fetch_value(
         "SELECT next_attempt_at - updated_at FROM {{tables.outbox_deliveries}} WHERE target_id = 'a'"
     )
@@ -272,7 +276,13 @@ async def test_the_backoff_is_capped(db) -> None:
     for attempt in range(6):
         if attempt:
             await _make_due(db)
-        await drain(db, resolver=Targets([Target("a")]), transport=transport, policy=policy)
+        await drain(
+            db,
+            channel="default",
+            resolver=Targets([Target("a")]),
+            transport=transport,
+            policy=policy,
+        )
     delay = await db.fetch_value(
         "SELECT EXTRACT(EPOCH FROM next_attempt_at - updated_at) FROM {{tables.outbox_deliveries}}"
     )
@@ -284,6 +294,7 @@ async def test_a_transport_exception_is_retried_like_a_retryable_failure(db) -> 
         await enqueue(tx, _event())
     await drain(
         db,
+        channel="default",
         resolver=Targets([Target("a")]),
         transport=Scripted({"a": ConnectionResetError()}),
         policy=_POLICY,
@@ -306,7 +317,13 @@ async def test_permanent_failures_are_rejected_only_after_the_bounded_attempts(d
     transport = Scripted({"a": Permanent("schema_rejected")})
     states = []
     for _ in range(3):
-        await drain(db, resolver=Targets([Target("a")]), transport=transport, policy=policy)
+        await drain(
+            db,
+            channel="default",
+            resolver=Targets([Target("a")]),
+            transport=transport,
+            policy=policy,
+        )
         states.append((await _states(db))["a"])
         await _make_due(db)
     assert states == ["pending", "pending", "rejected"]
@@ -316,9 +333,13 @@ async def test_a_conflict_is_terminal_at_once(db) -> None:
     async with db.transaction() as tx:
         await enqueue(tx, _event())
     transport = Scripted({"a": Conflict()})
-    await drain(db, resolver=Targets([Target("a")]), transport=transport, policy=_POLICY)
+    await drain(
+        db, channel="default", resolver=Targets([Target("a")]), transport=transport, policy=_POLICY
+    )
     await _make_due(db)
-    await drain(db, resolver=Targets([Target("a")]), transport=transport, policy=_POLICY)
+    await drain(
+        db, channel="default", resolver=Targets([Target("a")]), transport=transport, policy=_POLICY
+    )
     assert (await _states(db))["a"] == "conflict"
     assert len(transport.sent) == 1
 
@@ -328,6 +349,7 @@ async def test_a_target_revoked_before_send_ends_cancelled_not_rejected(db) -> N
         await enqueue(tx, _event(critical=False))
     await drain(
         db,
+        channel="default",
         resolver=Targets([Target("a")]),
         transport=Scripted({"a": Cancelled("binding_revoked")}),
         policy=_POLICY,
@@ -344,11 +366,15 @@ async def test_past_the_horizon_a_retrying_delivery_is_stalled_and_still_retried
     async with db.transaction() as tx:
         await enqueue(tx, _event())
     transport = Scripted({"a": Retryable("ConnectError")})
-    await drain(db, resolver=Targets([Target("a")]), transport=transport, policy=policy)
+    await drain(
+        db, channel="default", resolver=Targets([Target("a")]), transport=transport, policy=policy
+    )
     assert (await _states(db))["a"] == "stalled"
     await _make_due(db)
     transport.outcomes["a"] = Acked("delivered", None)
-    await drain(db, resolver=Targets([Target("a")]), transport=transport, policy=policy)
+    await drain(
+        db, channel="default", resolver=Targets([Target("a")]), transport=transport, policy=policy
+    )
     assert (await _states(db))["a"] == "delivered"
 
 
@@ -357,7 +383,9 @@ async def test_an_unresolvable_event_stays_pending_and_counts_as_undelivered(db)
         await enqueue(tx, _event())
     resolver = Targets(None)
     for _ in range(2):
-        await drain(db, resolver=resolver, transport=Scripted({}), policy=_POLICY)
+        await drain(
+            db, channel="default", resolver=resolver, transport=Scripted({}), policy=_POLICY
+        )
     assert len(resolver.calls) == 2
     assert await db.fetch_value("SELECT count(*) FROM {{tables.outbox_deliveries}}") == 0
     status = await outbox_status(db)
@@ -373,7 +401,7 @@ async def test_a_resolver_exception_leaves_the_event_unmaterialized(db) -> None:
     async def broken(event: StoredEvent):
         raise ConnectionError("registry down")
 
-    await drain(db, resolver=broken, transport=Scripted({}), policy=_POLICY)
+    await drain(db, channel="default", resolver=broken, transport=Scripted({}), policy=_POLICY)
     assert (await outbox_status(db)).unmaterialized[_TEAM].count == 1
 
 
@@ -384,7 +412,11 @@ async def test_cancel_cancels_a_targets_backlog_except_the_given_events(db) -> N
         await enqueue(tx, backlog)
     transport = Scripted({"a": Retryable("ConnectError"), "b": Retryable("ConnectError")})
     await drain(
-        db, resolver=Targets([Target("a"), Target("b")]), transport=transport, policy=_POLICY
+        db,
+        channel="default",
+        resolver=Targets([Target("a"), Target("b")]),
+        transport=transport,
+        policy=_POLICY,
     )
 
     cancelled = await cancel(db, "a", except_event_ids=[revocation.event_id])
@@ -405,7 +437,11 @@ async def test_status_reports_per_target_backlog_and_its_oldest_age(db) -> None:
             await enqueue(tx, _event())
     transport = Scripted({"a": Retryable("ConnectError"), "b": Acked("delivered", None)})
     await drain(
-        db, resolver=Targets([Target("a"), Target("b")]), transport=transport, policy=_POLICY
+        db,
+        channel="default",
+        resolver=Targets([Target("a"), Target("b")]),
+        transport=transport,
+        policy=_POLICY,
     )
     status = await outbox_status(db)
     assert (status.targets["a"].pending, status.targets["a"].dead_letter) == (2, 0)
@@ -441,7 +477,7 @@ async def test_a_critical_event_with_no_surviving_delivery_is_a_fault(db) -> Non
     async with db.transaction() as tx:
         for event in (cancelled_out, rejected, no_targets, delivered, ordinary):
             await enqueue(tx, event)
-    await drain(db, resolver=resolver, transport=ByPayload({}), policy=policy)
+    await drain(db, channel="default", resolver=resolver, transport=ByPayload({}), policy=policy)
 
     status = await outbox_status(db)
     assert sorted(status.faults) == sorted(
@@ -480,7 +516,7 @@ async def test_nothing_is_lost_or_duplicated_when_a_drain_is_killed_mid_send(
     resolver = Targets([Target("a"), Target("extra")])
     transport = Scripted({"a": Acked("delivered", b"after-restart")})
     await _make_due(db)
-    await drain(db, resolver=resolver, transport=transport, policy=_POLICY)
+    await drain(db, channel="default", resolver=resolver, transport=transport, policy=_POLICY)
     assert resolver.calls == []
     assert transport.sent == [(event.event_id, "a", b"survives", {})]
     assert await _states(db) == {"a": "delivered"}
@@ -505,14 +541,20 @@ async def test_a_rejected_delivery_keeps_its_bytes_until_redriven_and_delivered(
         await enqueue(tx, event)
     policy = RetryPolicy(stalled_after=timedelta(hours=1), rejected_after_attempts=1)
     transport = Scripted({"a": Permanent("schema_rejected")})
-    await drain(db, resolver=Targets([Target("a")]), transport=transport, policy=policy)
-    await drain(db, resolver=Targets([Target("a")]), transport=transport, policy=policy)
+    await drain(
+        db, channel="default", resolver=Targets([Target("a")]), transport=transport, policy=policy
+    )
+    await drain(
+        db, channel="default", resolver=Targets([Target("a")]), transport=transport, policy=policy
+    )
     assert (await _states(db))["a"] == "rejected"
     assert await _payload(db, event) == b"keep me"
 
     assert await redrive(db, "a", [event.event_id]) == [event.event_id]
     transport.outcomes["a"] = Acked("delivered", None)
-    await drain(db, resolver=Targets([Target("a")]), transport=transport, policy=policy)
+    await drain(
+        db, channel="default", resolver=Targets([Target("a")]), transport=transport, policy=policy
+    )
     assert (await _states(db))["a"] == "delivered"
     assert await _payload(db, event) is None
     assert transport.sent[-1][2] == b"keep me"
@@ -523,15 +565,31 @@ async def test_a_conflict_keeps_its_bytes_until_the_loss_is_acknowledged(db) -> 
     async with db.transaction() as tx:
         await enqueue(tx, event)
     await drain(
-        db, resolver=Targets([Target("a")]), transport=Scripted({"a": Conflict()}), policy=_POLICY
+        db,
+        channel="default",
+        resolver=Targets([Target("a")]),
+        transport=Scripted({"a": Conflict()}),
+        policy=_POLICY,
     )
-    await drain(db, resolver=Targets([Target("a")]), transport=Scripted({}), policy=_POLICY)
+    await drain(
+        db,
+        channel="default",
+        resolver=Targets([Target("a")]),
+        transport=Scripted({}),
+        policy=_POLICY,
+    )
     assert await _payload(db, event) == b"conflicting"
     assert (await outbox_status(db)).targets["a"].dead_letter == 1
 
     assert await redrive(db, "a", [event.event_id]) == []
     assert await acknowledge_dead_letters(db, "a", [event.event_id]) == [event.event_id]
-    await drain(db, resolver=Targets([Target("a")]), transport=Scripted({}), policy=_POLICY)
+    await drain(
+        db,
+        channel="default",
+        resolver=Targets([Target("a")]),
+        transport=Scripted({}),
+        policy=_POLICY,
+    )
     assert await _payload(db, event) is None
     assert (await _states(db))["a"] == "conflict"
     assert (await outbox_status(db)).targets["a"].dead_letter == 0
@@ -545,6 +603,7 @@ async def test_redrive_and_acknowledge_touch_only_the_named_dead_letters(db) -> 
     policy = RetryPolicy(stalled_after=timedelta(hours=1), rejected_after_attempts=1)
     await drain(
         db,
+        channel="default",
         resolver=Targets([Target("a")]),
         transport=Scripted({"a": Permanent("x")}),
         policy=policy,
@@ -574,7 +633,9 @@ async def test_a_hung_transport_times_out_as_a_retryable_failure(db) -> None:
             await _sleep(60)
 
     policy = RetryPolicy(stalled_after=timedelta(hours=1), call_timeout_seconds=0.2)
-    await drain(db, resolver=Targets([Target("a")]), transport=Hung(), policy=policy)
+    await drain(
+        db, channel="default", resolver=Targets([Target("a")]), transport=Hung(), policy=policy
+    )
     row = await db.fetch_one(
         "SELECT state, attempts, last_error_class FROM {{tables.outbox_deliveries}}"
     )
@@ -589,5 +650,80 @@ async def test_a_hung_resolver_times_out_and_leaves_the_event_unmaterialized(db)
         await _sleep(60)
 
     policy = RetryPolicy(stalled_after=timedelta(hours=1), call_timeout_seconds=0.2)
-    await drain(db, resolver=hung, transport=Scripted({}), policy=policy)
+    await drain(db, channel="default", resolver=hung, transport=Scripted({}), policy=policy)
     assert (await outbox_status(db)).unmaterialized[_TEAM].count == 1
+
+
+async def test_a_drain_claims_only_its_own_channel(db) -> None:
+    wake, hook = _event(b"wake", channel="app-events"), _event(b"hook", channel="hooks")
+    async with db.transaction() as tx:
+        await enqueue(tx, wake)
+        await enqueue(tx, hook)
+    resolver = Targets([Target("app-events")])
+    transport = Scripted({"app-events": Acked("delivered", None)})
+
+    await drain(db, channel="app-events", resolver=resolver, transport=transport, policy=_POLICY)
+
+    assert resolver.calls == [wake.event_id]
+    assert [sent[0] for sent in transport.sent] == [wake.event_id]
+    hooks = await outbox_status(db, channel="hooks")
+    assert hooks.unmaterialized[_TEAM].count == 1
+    assert hooks.targets == {}
+
+
+async def test_status_per_channel_keeps_one_channels_stall_out_of_the_other(db) -> None:
+    async with db.transaction() as tx:
+        await enqueue(tx, _event(b"wake", channel="app-events"))
+        await enqueue(tx, _event(b"hook", channel="hooks"))
+    await drain(
+        db,
+        channel="app-events",
+        resolver=Targets([Target("app-events")]),
+        transport=Scripted({"app-events": Retryable("ConnectError")}),
+        policy=_POLICY,
+    )
+    await drain(
+        db,
+        channel="hooks",
+        resolver=Targets([Target("binding-1")]),
+        transport=Scripted({"binding-1": Acked("delivered", None)}),
+        policy=_POLICY,
+    )
+    wakes, hooks, everything = (
+        await outbox_status(db, channel="app-events"),
+        await outbox_status(db, channel="hooks"),
+        await outbox_status(db),
+    )
+    assert wakes.targets["app-events"].oldest_undelivered_age_seconds is not None
+    assert set(wakes.targets) == {"app-events"}
+    assert set(hooks.targets) == {"binding-1"}
+    assert hooks.targets["binding-1"].oldest_undelivered_age_seconds is None
+    assert set(everything.targets) == {"app-events", "binding-1"}
+
+
+async def test_the_same_event_id_on_another_channel_is_a_conflict(db) -> None:
+    event = _event(channel="hooks")
+    async with db.transaction() as tx:
+        await enqueue(tx, event)
+    with pytest.raises(OutboxConflict):
+        async with db.transaction() as tx:
+            await enqueue(tx, OutboxEvent(**{**event.__dict__, "channel": "app-events"}))
+
+
+async def test_a_target_id_used_on_another_channel_is_refused_and_the_event_waits(db) -> None:
+    first, second = _event(b"1", channel="hooks"), _event(b"2", channel="app-events")
+    async with db.transaction() as tx:
+        await enqueue(tx, first)
+        await enqueue(tx, second)
+    shared = Targets([Target("same-id")])
+    transport = Scripted({"same-id": Acked("delivered", None)})
+    await drain(db, channel="hooks", resolver=shared, transport=transport, policy=_POLICY)
+    await drain(db, channel="app-events", resolver=shared, transport=transport, policy=_POLICY)
+
+    rows = await db.fetch_all("SELECT event_id FROM {{tables.outbox_deliveries}}")
+    assert [row["event_id"] for row in rows] == [first.event_id]
+    assert (await outbox_status(db, channel="app-events")).unmaterialized[_TEAM].count == 1
+
+
+def test_events_default_to_the_default_channel() -> None:
+    assert _event().channel == "default"

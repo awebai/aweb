@@ -154,6 +154,15 @@ version = "0.1.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
+dispatch = [
+    { name = "pgdbm" },
+]
+egress = [
+    { name = "dnspython" },
+    { name = "httpcore", extra = ["asyncio"] },
+    { name = "idna" },
+    { name = "publicsuffixlist" },
+]
 idempotency = [
     { name = "pgdbm" },
 ]
@@ -167,6 +176,9 @@ page-store = [
 pages = [
     { name = "jsonschema" },
 ]
+roles = [
+    { name = "pgdbm" },
+]
 runtime = [
     { name = "awid-service" },
     { name = "fastapi" },
@@ -176,10 +188,14 @@ runtime = [
     { name = "pynacl" },
     { name = "webauthn" },
 ]
+signing-key = [
+    { name = "pynacl" },
+]
 
 [package.dev-dependencies]
 dev = [
-    { name = "aweb-naapp", extra = ["pages", "runtime"] },
+    { name = "aweb-naapp", extra = ["egress", "pages", "runtime"] },
+    { name = "cryptography" },
     { name = "httpx2" },
     { name = "mypy" },
     { name = "pytest" },
@@ -190,23 +206,32 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "awid-service", marker = "extra == 'runtime'", directory = "../awid" },
+    { name = "dnspython", marker = "extra == 'egress'", specifier = ">=2.7.0" },
     { name = "fastapi", marker = "extra == 'runtime'", specifier = ">=0.116.1" },
+    { name = "httpcore", extras = ["asyncio"], marker = "extra == 'egress'", specifier = ">=1.0.9" },
     { name = "httpx", marker = "extra == 'runtime'", specifier = ">=0.28.1" },
+    { name = "idna", marker = "extra == 'egress'", specifier = ">=3.10" },
     { name = "jsonschema", marker = "extra == 'page-store'", specifier = ">=4.23" },
     { name = "jsonschema", marker = "extra == 'pages'", specifier = ">=4.23" },
+    { name = "pgdbm", marker = "extra == 'dispatch'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'idempotency'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'outbox'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'page-store'", specifier = ">=0.5.0" },
+    { name = "pgdbm", marker = "extra == 'roles'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'runtime'", specifier = ">=0.5.0" },
+    { name = "publicsuffixlist", marker = "extra == 'egress'", specifier = "==1.1.0.20261018" },
     { name = "pydantic-settings", marker = "extra == 'runtime'", specifier = ">=2.10.1" },
     { name = "pynacl", marker = "extra == 'runtime'", specifier = ">=1.6.2" },
+    { name = "pynacl", marker = "extra == 'signing-key'", specifier = ">=1.6.2" },
     { name = "webauthn", marker = "extra == 'runtime'", specifier = ">=3.0.1" },
 ]
-provides-extras = ["runtime", "outbox", "idempotency", "pages", "page-store"]
+provides-extras = ["runtime", "outbox", "signing-key", "dispatch", "idempotency", "roles", "pages", "egress", "page-store"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aweb-naapp", extras = ["egress"] },
     { name = "aweb-naapp", extras = ["runtime", "pages"] },
+    { name = "cryptography", specifier = ">=44.0.0" },
     { name = "httpx2", specifier = ">=2.9.1" },
     { name = "mypy", specifier = ">=1.18.0" },
     { name = "pytest", specifier = ">=9.0.0" },
@@ -544,6 +569,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/06/94/82699a10bca87a5556c9c59b5963f2d039dbd239f25bc2a63907a05a14cb/httpcore-1.0.9.tar.gz", hash = "sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8", size = 85484, upload-time = "2025-04-24T22:06:22.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl", hash = "sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55", size = 78784, upload-time = "2025-04-24T22:06:20.566Z" },
+]
+
+[package.optional-dependencies]
+asyncio = [
+    { name = "anyio" },
 ]
 
 [[package]]
@@ -924,6 +954,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5a/04/1759906c4c5b67b2903f546de234a824d4028ef24eb0b1122daa43376c20/publicsuffix2-2.20191221.tar.gz", hash = "sha256:00f8cc31aa8d0d5592a5ced19cccba7de428ebca985db26ac852d920ddd6fe7b", size = 99592, upload-time = "2019-12-21T11:30:44.863Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9d/16/053c2945c5e3aebeefb4ccd5c5e7639e38bc30ad1bdc7ce86c6d01707726/publicsuffix2-2.20191221-py2.py3-none-any.whl", hash = "sha256:786b5e36205b88758bd3518725ec8cfe7a8173f5269354641f581c6b80a99893", size = 89033, upload-time = "2019-12-21T11:30:41.744Z" },
+]
+
+[[package]]
+name = "publicsuffixlist"
+version = "1.1.0.20261018"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/b9/aa4b37e174aa71bc4f6e3e31d837f6b2684d6023b69def1c4bc417d9a54e/publicsuffixlist-1.1.0.20261018.tar.gz", hash = "sha256:87861b9d9af2f035e68ad1fd95f9ff1caf92c8c2187ca9cf5c7d8785db0f221b", size = 106617, upload-time = "2026-10-18T07:57:32.211Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6e/d2/b60b418213e89c9adfdf6942f3e5d2ba025796a2b820628902b935ba9bef/publicsuffixlist-1.1.0.20261018-py3-none-any.whl", hash = "sha256:8a9f487ad9a501a56f76d20827d58a5847d34a345df854e3b6a1f301e292e9d4", size = 109375, upload-time = "2026-10-18T07:57:30.374Z" },
 ]
 
 [[package]]
