@@ -164,6 +164,15 @@ the approval, decision, policy and the app's own origin.
   pending one, is retired with its passkeys, unused enrolment links and live
   approvals. The scope then has no approver: its next designation is a first
   one and enrols a new passkey, and the retired passkeys stay dead.
+- **Lock order when withdrawing an approver's authority.** An app that
+  withdraws authority (a role, a membership, an owner) does it in one
+  transaction, in this order: any installation fence; the authority's own
+  delete (for example the S5 role delete or team purge); then
+  `ApprovalRevocation.approver_retired`, or `Passkeys.retire`, which calls it;
+  then its other writes. A path that checks authority before acting on an
+  approval takes locks in the same order: fence, authority hold, then the
+  approval. Retiring approvals before removing the authority inverts that
+  order and can deadlock with such a path.
 - A contact change needs the approver's own passkey, takes effect after a delay
   (at least 24 h) and is notified to the old and the new contact.
 - These durations are floors. App or owner policy may lengthen them, and

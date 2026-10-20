@@ -160,7 +160,11 @@ class ApprovalRevocation:
     ) -> None:
         """The retired approver stops being a candidate of pending approvals and
         loses their links; approvals they decided and that are not yet
-        dispatched are revoked."""
+        dispatched are revoked.
+
+        It locks those approvals in `tx`. Call it after removing the authority
+        it follows from (the role or membership delete), never before: paths
+        that check authority take its lock before an approval's."""
         async with self._store.transaction(tx) as t:
             now = self._clock()
             revoked = await self._store.retire_candidate(approver_subject, now, t)
