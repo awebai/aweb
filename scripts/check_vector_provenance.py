@@ -224,6 +224,14 @@ ROOT_CONSUMERS = {
         "hook-binding-cases-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "hook-binding-cases-v1.json"',
     ),
+    PurePosixPath("naapp-lib/tests/egress/test_url_vectors.py"): _consumer(
+        "egress-url-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "egress-url-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/egress/test_addresses.py"): _consumer(
+        "egress-address-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "egress-address-v1.json"',
+    ),
     PurePosixPath("cli/go/a2a/card_test.go"): _consumer(
         "a2a-v1.json",
         'filepath.Join(root, "docs", "vectors", "a2a-v1.json")',

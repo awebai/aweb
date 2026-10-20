@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 28
+`docs/vectors/*.json` is the only public protocol-vector authority for the 30
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -301,6 +301,32 @@ cancelled backlog, uninstall, and the order for switching targets. A model of
 the scheme in the naapp-lib tests replays every case, and the core binding
 registry consumes the same cases.
 
+## Shared naapp library fixtures
+
+### `egress-address-v1.json`
+
+The egress guard's address rules (`aweb_naapp.egress`, secrets lane S1). Every
+address a name resolves to is checked. A floor (loopback, link-local and cloud
+metadata, unspecified, multicast) is refused for every destination, internal
+ones included. A public destination's IPv6 address must be global unicast or
+NAT64, and IPv4 addresses embedded in NAT64, 6to4 and Teredo forms are checked
+as IPv4. Internal destinations need the deploy-level `internal_destinations`
+switch and an exact CIDR of bounded width that overlaps no floor range.
+
+### `egress-url-v1.json`
+
+The egress guard's URL contract (`aweb_naapp.egress`, secrets lane S1), used by
+every naapp that calls an external service with its own credential. It pins URL
+canonicalization (https only, IDNA2008 A-labels, the refused path and query
+encodings, the ambiguous IPv4 host forms), destination definition (single-label
+wildcards never over a public suffix of the pinned Public Suffix List, private
+section included; typed `{param}` and trailing `**` path segments; methods;
+query rules; internal destinations behind the deploy-level
+`internal_destinations` switch), destination matching, and the request-header
+allowlist with its always-rejected names. Each refusal carries a code from the
+hook catalog's `refusal_code` enum and the rule that fired. The pinned list
+version is updated in the egress extra, this vector and the module together.
+
 ## Experimental and compatibility A2A fixtures
 
 A2A is shipped but experimental and optional. These fixtures are release gates
@@ -394,6 +420,8 @@ reference duplication are mutation-tested failures.
 | `atomic-address-claim-v1.json` | Python AWID `test_atomic_claim.py`; Go AWID `atomic_address_claim_test.go` |
 | `dns-txt-v1.json` | Python AWID `test_conformance_vectors.py`; Python aweb `test_identity_conformance_vectors.py`; TypeScript channel-core `registry.test.ts` |
 | `e2ee-v2-cross-language.json` | Python aweb `test_e2ee_crypto_helpers.py` and pre-activation federation harness; Go AWID `e2ee_cross_language_test.go`; TypeScript channel-core `encrypted_dispatch.test.ts` |
+| `egress-address-v1.json` | naapp-lib `test_addresses.py` |
+| `egress-url-v1.json` | naapp-lib `test_url_vectors.py` |
 | `identity-log-negative-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_negative_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-raw-wire-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_raw_wire_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-v1.json` | Python AWID `test_conformance_vectors.py`, `test_did.py`, `test_external_registry.py`, and `test_identity_log_verify.py`; Python aweb `test_identity_conformance_vectors.py` and pre-activation federation harness; Go AWID `registry_register_test.go`, `federation_authority_test.go`, and `federation_external_registry_test.go`; Go shared `conformance_test.go`; TypeScript channel-core `registry.test.ts`, `log_rollback.test.ts`, and `received_sender_trust.test.ts` |
