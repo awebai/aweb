@@ -311,8 +311,9 @@ certificate presented as an owner act, an unknown act, kind-specific subject
 fields on the wrong kind, a missing conditional field, a reversed erase range,
 a duplicate key, a float, null, a non-ASCII string, a wrong version or type,
 an impossible date, an act that expires when issued, a malformed nonce, three
-respellings of the signature, and non-canonical bytes. A positive pins the
-inclusive 60-second lead. The Go authority in
+respellings of the signature, non-canonical bytes, and binding `scopes` or
+`reads` out of order or repeated. Positives pin the inclusive 60-second lead
+and a binding with more than one scope in order. The Go authority in
 `cli/go/awid/owneract.go` regenerates the vector byte for byte.
 
 ## Experimental and compatibility A2A fixtures

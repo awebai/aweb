@@ -419,13 +419,15 @@ func (f ownerField) accepts(value any) bool {
 		if !ok || len(items) > maxOwnerActItems {
 			return false
 		}
-		seen := map[string]bool{}
-		for _, item := range items {
+		// Strictly ascending by code point, so the list is distinct and
+		// every signer of the same subject signs the same bytes.
+		previous := ""
+		for i, item := range items {
 			s, ok := item.(string)
-			if !ok || seen[s] || !f.pattern.MatchString(s) {
+			if !ok || !f.pattern.MatchString(s) || (i > 0 && s <= previous) {
 				return false
 			}
-			seen[s] = true
+			previous = s
 		}
 		return true
 	case f.enum != nil:

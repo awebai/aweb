@@ -112,7 +112,11 @@ refused otherwise.
   - when `kind` is `registration`: the resolved `tool`, `method`, raw `path`
     and the app `scopes`;
   - when `kind` is `production`: `reads`, the tools whose reads fire
-    `post-manifest-command-hook`, possibly empty.
+    `post-manifest-command-hook`, possibly empty;
+  - `scopes` and `reads` are sorted ascending by code point and distinct.
+    Canonical JSON keeps array order, so this is what makes every signer of
+    one binding sign the same bytes. A list out of order or with a repeat is
+    refused as `invalid_value`, before the subject is compared.
 - **`app-role.designate` and `app-credential.recover`**: `app_id`,
   `installation_id`, `role` and `contact_sha256`. They name a role holder who
   does not exist yet, so they carry no `subject_ref`, and one is refused: the

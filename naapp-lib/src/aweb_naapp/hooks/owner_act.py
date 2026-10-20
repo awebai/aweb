@@ -89,9 +89,11 @@ class _Field:
         if self.is_list:
             if not isinstance(value, list) or len(value) > _MAX_ITEMS:
                 return False
-            if len(set(map(str, value))) != len(value):
+            if not all(isinstance(item, str) and self._matches(item) for item in value):
                 return False
-            return all(isinstance(item, str) and self._matches(item) for item in value)
+            # Strictly ascending by code point, so the list is distinct and
+            # every signer of the same subject signs the same bytes.
+            return all(a < b for a, b in zip(value, value[1:], strict=False))
         if self.enum is not None:
             return isinstance(value, str) and value in self.enum
         return isinstance(value, str) and self._matches(value)
