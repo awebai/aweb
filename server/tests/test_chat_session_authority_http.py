@@ -202,3 +202,47 @@ async def test_legacy_reuse_projects_only_stored_participants(privacy_app):
     )
     assert {row['did'] for row in participants} == {env.actors[a].did for a in ('alice', 'bob')}
     assert (await _request(env, 'carol', 'GET', f'/v1/messages/conversations/{thread}')).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_remote_identity_cannot_borrow_target_membership_on_create(privacy_app):
+    env = privacy_app
+    victim = await _chat(env, 'alice', ['bob'])
+    assert victim.status_code == 200, victim.text
+    thread = victim.json()['session_id']
+    # A remote self-custodial caller has no local agent/team row. Its target
+    # is a victim-session member; target-first ordering would grant access.
+    sk, _, did = _make_keypair()
+    env.actors['remote'] = SimpleNamespace(sk=sk, did=did, id=None)
+    fresh = await _chat(env, 'remote', ['bob'])
+    assert fresh.status_code == 200, fresh.text
+    before = await _snapshot(env)
+    response = await _chat(env, 'remote', ['bob'], session_id=thread)
+    assert response.status_code == 409, response.text
+    assert await _snapshot(env) == before
+    denied = await _request(env, 'remote', 'GET', f'/v1/chat/sessions/{thread}/messages')
+    assert denied.status_code == 404, denied.text
+
+
+@pytest.mark.asyncio
+async def test_federated_sender_cannot_join_known_session_by_uuid(privacy_app):
+    from test_chat_http import _federated_chat_payload
+
+    env = privacy_app
+    victim = await _chat(env, 'alice', ['bob'])
+    assert victim.status_code == 200, victim.text
+    thread = victim.json()['session_id']
+    sk, _, did = _make_keypair()
+    payload = _federated_chat_payload(
+        sender_sk=sk, sender_did_key=did, sender_did_aw=did,
+        sender_address='remote.example/outsider',
+        target_address='example.test/bob', target_did_key=env.actors['bob'].did,
+        conversation_id=thread, signed_to_did=env.actors['bob'].did,
+    )
+    # The wrapper and signed envelope name the actual local recipient.
+    payload['envelope']['target_did_aw'] = env.actors['bob'].did
+    before = await _snapshot(env)
+    response = await env.client.post('/v1/federation/messages', json=payload)
+    assert response.status_code == 409, response.text
+    assert response.json()['reason'] == 'federation_conversation_invalid'
+    assert await _snapshot(env) == before
