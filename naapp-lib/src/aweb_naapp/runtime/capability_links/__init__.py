@@ -37,6 +37,7 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired
+from aweb_naapp.pages import validate_page
 from aweb_naapp.ratelimit import Charge, Decision, take
 from aweb_naapp.runtime.link_requests import (
     LinkRequestRefused,
@@ -56,6 +57,7 @@ CLOCK_WINDOW = timedelta(seconds=60)
 EXCHANGES_PER_LINK = (10, 60)
 EXCHANGES_PER_CLIENT = (30, 60)
 READS_PER_SESSION = (120, 60)
+ATTEMPTS_PER_SESSION = (240, 60)
 WRITES_PER_LINK = (20, 60)
 WRITES_PER_CLIENT = (60, 60)
 
@@ -65,7 +67,6 @@ MAX_FIELDS = 64
 MAX_ASSETS = 64
 MAX_ACTIONS = 16
 MAX_FIELD_NAME = 256
-MAX_SNAPSHOT_BYTES = 10 * 1024 * 1024
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
@@ -230,9 +231,9 @@ class SnapshotSource(Protocol):
 class AssetVersions(Protocol):
     """Resolve captured asset IDs to immutable content versions on the mint tx.
 
-    The app holds its asset lifecycle lock while resolving versions and N5
-    records retention references on that same transaction. Ordinary GC takes
-    that lock and consults retained_asset_versions_on. Explicit owner deletion
+    The app holds its asset lifecycle lock from version resolution until the
+    mint transaction commits, including N5 retention-reference insertion.
+    Ordinary GC takes that lock and consults retained_asset_versions_on. Explicit owner deletion
     overrides retention; phase-3 grants check each version's availability.
     """
 
@@ -248,7 +249,9 @@ class LinkAction:
     The creator supplies delegated authority; ``caller`` is anonymous link
     provenance, never a member Principal. The app validates the action schema,
     expected revisions and field policy within ``projection``, and writes its
-    effect, audit, outbox and receipt on the supplied transaction. It must not
+    effect, audit, outbox and receipt on the supplied transaction. ``projection``
+    intersects the minted grant with current creator read access; the app must
+    enforce its current write policy as well. It must not
     open another transaction, commit this transaction, or dispatch external effects.
     """
 
@@ -595,18 +598,10 @@ def _record(value: Any) -> Mapping[str, Any]:
 
 
 def _snapshot_bytes(snapshot: Mapping[str, Any]) -> bytes:
-    """Bound the trusted projection result; ACL/redaction stay in the app source."""
-    if (
-        not isinstance(snapshot, Mapping)
-        or snapshot.get("page_format") != "aweb.page/1"
-        or type(snapshot.get("rev")) is not int
-        or snapshot["rev"] < 0
-        or not isinstance(snapshot["collections"], list)
-    ):
-        raise ValueError("invalid pinned snapshot shape")
+    # Reuse C1's schema, widget, depth, value and byte limits at storage too.
+    if not isinstance(snapshot, Mapping) or not validate_page(dict(snapshot)).valid:
+        raise ValueError("invalid pinned snapshot")
     raw = canonical_json_bytes(dict(snapshot))
-    if len(raw) > MAX_SNAPSHOT_BYTES:
-        raise ValueError("pinned snapshot exceeds the page snapshot byte bound")
     return raw
 
 
@@ -764,7 +759,9 @@ async def authenticate(
     ``target`` is the raw request path with its query. The nonce is recorded
     in its own committed write as soon as the signature, binding and time
     hold, before the Origin and CSRF checks and before any action, so a signed
-    request is never accepted twice. The link's lifecycle (step 6) is checked
+    request is never accepted twice. A per-session signed-attempt charge commits
+    in that same transaction, even when Origin/CSRF or the later operation fails.
+    Rate refusal writes no nonce. The link's lifecycle (step 6) is checked
     under its row lock by the operation that follows.
     """
     if now.tzinfo is None:
@@ -804,17 +801,23 @@ async def authenticate(
         raise LinkRefused("link_unavailable", 410)
     issued_at = _parse_timestamp(payload["issued_at"])
     async with db.transaction() as tx:
-        recorded = await tx.fetch_value(
-            """
-            INSERT INTO {{tables.link_nonces}} (session_id, nonce, keep_until)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (session_id, nonce) DO NOTHING
-            RETURNING 1
-            """,
-            session_id,
-            payload["nonce"],
-            max(session["expires_at"], issued_at + CLOCK_WINDOW),
-        )
+        limit = await take(tx, [Charge("link.attempt", session_id, *ATTEMPTS_PER_SESSION)], now=now)
+        recorded = None
+        if limit.allowed:
+            recorded = await tx.fetch_value(
+                """
+                INSERT INTO {{tables.link_nonces}} (session_id, nonce, keep_until)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (session_id, nonce) DO NOTHING
+                RETURNING 1
+                """,
+                session_id,
+                payload["nonce"],
+                max(session["expires_at"], issued_at + CLOCK_WINDOW),
+            )
+    # Raise only after commit: downstream refusal must not refund the charge.
+    if not limit.allowed:
+        raise _limited(limit)
     if recorded is None:
         raise LinkRefused("idempotency_conflict", 409)
     if method not in _SAFE_METHODS:
@@ -1004,6 +1007,36 @@ def _check_action_request(request: Mapping[str, Any]) -> None:
         raise _schema("action request")
 
 
+async def _current_projection(
+    tx: TransactionManager,
+    authority: LinkAuthority,
+    *,
+    creator: str,
+    page_id: str,
+    minted: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Only narrow the immutable grant; newly acquired access never widens it."""
+    collections = []
+    for entry in minted["collections"]:
+        current = await authority.readable(
+            tx, creator=creator, page_id=page_id, collection=entry["collection"]
+        )
+        if current is None:
+            continue
+        records = [r for r in entry["record_ids"] if r in current.records]
+        fields = [f for f in entry["fields"] if f in current.fields]
+        if records and fields:
+            collections.append(
+                {"collection": entry["collection"], "record_ids": records, "fields": fields}
+            )
+    assets = [
+        asset_id
+        for asset_id in minted["assets"]
+        if await authority.can_read_asset(tx, creator=creator, page_id=page_id, asset_id=asset_id)
+    ]
+    return {"collections": collections, "assets": assets}
+
+
 async def admit(
     tx: TransactionManager,
     authority: LinkAuthority,
@@ -1079,6 +1112,9 @@ async def admit(
         )
         if not limit.allowed:
             raise _limited(limit)
+        projection = await _current_projection(
+            tx, authority, creator=creator, page_id=page_id, minted=record["projection"]
+        )
         receipt = await actions.apply(
             tx,
             action=LinkAction(
@@ -1087,7 +1123,7 @@ async def admit(
                 creator=creator,
                 mode=record["mode"],
                 page_rev=record["page_rev"],
-                projection=record["projection"],
+                projection=projection,
                 constraints=constraints,
                 kind=kind,
                 intent_sponsor_did=sponsor,

@@ -62,7 +62,11 @@ class ProjectionSource:
                 "id": "bookings",
                 "mode": "owned",
                 "schema_version": 1,
-                "schema": {"type": "object", "properties": {"arrival": {"type": "string"}}},
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"arrival": {"type": "string"}},
+                },
                 "records": [{"id": "b-17", "rev": 3, "value": {"arrival": "2026-10-24"}}],
             }
         ],
@@ -277,3 +281,31 @@ async def test_current_action_loss_only_narrows_the_pinned_view(db, authority, s
     checked = await get_projection(db, authority, caller)
     assert checked.allowed_action_ids == ()
     assert checked.source_snapshot["actions"][0]["label"] == "Mark cleaned"
+
+
+@pytest.mark.parametrize("invalid", ["widgets", "depth", "values", "schema"])
+async def test_snapshot_storage_enforces_the_shared_c1_validator(
+    db, authority, snapshot_source, invalid
+):
+    from aweb_naapp.pages import PAGE_LIMITS
+
+    page = snapshot_source.current
+    if invalid == "widgets":
+        page["layout"] = [
+            {"id": f"w-{i}", "type": "heading", "props": {"text": "Title"}}
+            for i in range(PAGE_LIMITS["max_widgets"] + 1)
+        ]
+        page["widget_state"] = {}
+    elif invalid == "depth":
+        nested = {}
+        page["collections"][0]["schema"]["x-deep"] = nested
+        for _ in range(PAGE_LIMITS["max_json_depth"]):
+            nested["nested"] = {}
+            nested = nested["nested"]
+    elif invalid == "values":
+        page["collections"][0]["schema"]["enum"] = [0] * PAGE_LIMITS["max_values"]
+    else:
+        page["layout"][0]["props"]["text"] = 17
+    with pytest.raises(ValueError, match="snapshot"):
+        await pinned(db, authority, snapshot_source)
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.capability_links}}") == 0

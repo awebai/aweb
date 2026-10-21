@@ -360,10 +360,17 @@ buckets that refill continuously:
 | --- | --- |
 | Successful exchanges, per link | 10 per minute |
 | Exchanges (successful or not), per client address | 30 per minute |
+| Signed attempts, per session | 240 per minute |
 | Reads, per session | 120 per minute |
 | Writes (edit, intent, answer), per link | 20 per minute |
 | Writes, per client address | 60 per minute |
 | Uploads, per link | 10 per hour, each within the action's byte bound |
+
+After signature, binding, time and session verification, every signed attempt
+charges the session bucket in the nonce transaction. That charge commits before
+Origin/CSRF and operation checks, including duplicate-nonce attempts; a later
+refusal or rollback does not refund it. An exhausted bucket refuses before
+recording a new nonce. Invalid signatures do not write a bucket or nonce.
 
 Exceeding one is 429 `safety_rate_limited` with `Retry-After`. These are
 safety bounds, not price or plan caps. An app may set lower limits per link at

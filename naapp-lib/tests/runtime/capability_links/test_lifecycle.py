@@ -418,3 +418,34 @@ async def test_client_write_bucket_is_shared_by_links(db, authority, action_app)
         await submit(db, authority, action_app, caller)
     assert (refused.value.code, refused.value.retry_after_s) == ("safety_rate_limited", 1)
     await submit(db, authority, action_app, caller, now=T0 + timedelta(seconds=1))
+
+
+@pytest.mark.parametrize("loss", ["field", "record", "collection", "asset"])
+async def test_apply_receives_only_current_read_access(db, authority, action_app, loss):
+    request = request_from(CAPABILITY["delegation"][0]["link"])
+    authority.assets[CREATOR] = {"photo"}
+    request["projection"]["assets"] = ["photo"]
+    caller = await holder(db, authority, request=request)
+    if loss == "field":
+        authority.reads[CREATOR]["bookings"] = Readable(
+            ("b-17", "new-row"), frozenset({"arrival", "new-field"})
+        )
+    elif loss == "record":
+        authority.reads[CREATOR]["bookings"] = Readable(("new-row",), frozenset({"arrival"}))
+    elif loss == "collection":
+        authority.reads[CREATOR].clear()
+    else:
+        authority.assets[CREATOR].clear()
+    receipt = await submit(db, authority, action_app, caller)
+    projected = receipt.result["projection"]
+    assert projected["assets"] == ([] if loss == "asset" else ["photo"])
+    if loss in {"record", "collection"}:
+        assert projected["collections"] == []
+    elif loss == "field":
+        assert projected["collections"] == selection("arrival")["collections"]
+    else:
+        assert projected["collections"] == request["projection"]["collections"]
+    # The stored mint projection is immutable, even as current authority narrows.
+    stored = await db.fetch_value("SELECT record FROM {{tables.capability_links}}")
+    stored = json.loads(stored) if isinstance(stored, str) else stored
+    assert stored["projection"] == request["projection"]
