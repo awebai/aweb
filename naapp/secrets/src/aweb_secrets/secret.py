@@ -188,3 +188,32 @@ class SecretRecord:
             "approve_only": self.approve_only,
             "backend": self.backend,
         }
+
+
+def widened_fields(current: SecretRecord, after: SecretRecord) -> frozenset[str]:
+    """The fields an update of ``current`` to ``after`` widens (§6.3): leaving
+    sensitive for standard, turning approve_only off, or adding OAuth scopes."""
+    widened = set()
+    if current.sensitivity == "sensitive" and after.sensitivity == "standard":
+        widened.add("sensitivity")
+    if current.approve_only and not after.approve_only:
+        widened.add("approve_only")
+    if after.kind == "oauth2-client-credentials" and (
+        set(after.kind_params["scope"].split()) - set(current.kind_params.get("scope", "").split())
+    ):
+        widened.add("kind_params.scope")
+    return frozenset(widened)
+
+
+def sealed_shape(record: SecretRecord) -> dict[str, Any]:
+    """The non-secret interpretation and placement fixed after the first seal."""
+    params = dict(record.kind_params)
+    if record.kind == "oauth2-client-credentials":
+        params.pop("scope")
+    return {"kind": record.kind, "backend": record.backend, "kind_params": params}
+
+
+def sealed_shape_changed(current: SecretRecord, after: SecretRecord) -> bool:
+    """Whether an update changes a sealed value's interpretation or destination
+    (decision 65). OAuth scope remains editable."""
+    return sealed_shape(current) != sealed_shape(after)
