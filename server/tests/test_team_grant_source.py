@@ -311,6 +311,10 @@ async def test_answer_already_expired_on_arrival_is_unavailable(installed):
 
 async def test_b1_maps_missing_to_403_and_unavailable_to_503(installed):
     stack, source, clock, _ = installed
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
     request = Request(
         {
             "type": "http",
@@ -319,7 +323,8 @@ async def test_b1_maps_missing_to_403_and_unavailable_to_503(installed):
             "raw_path": b"/items",
             "headers": [],
             "query_string": b"",
-        }
+        },
+        receive=receive,
     )
     principal = Principal(
         team_id=TEAM,
