@@ -51,3 +51,35 @@ pin verification, declared mounts or the separate-user worker journey. Those
 remain required integration proofs. The Dockerfile pins its Debian base digest;
 tooling packages can receive distro updates, so the capability checks must be
 repeated on the exact operator-pinned runtime before activation.
+
+## Pinned image staging
+
+`ImageStore.stage(reference, workspace)` reads an operator-provisioned standard
+OCI content store. It selects only the job's fixed `@sha256` digest; source tag
+names and the mutable `index.json` never choose a different image. A pinned index
+uses native Linux platform matching and the first matching entry in its pinned
+order, including nested indexes. Baseline architecture variants are supported;
+unknown required OS features/versions or unsupported variants refuse. Both the
+index and the selected manifest/configuration/layers are hash-checked, and every
+descriptor size is checked as an integer, excluding booleans. Metadata and index
+depth/count bounds prevent unbounded parsing. There is no registry fetch or
+fallback for an incomplete cache.
+
+Before unpacking, exact verified bytes are copied into a fresh runner-private
+memory-backed layout. Its local `verified` label only points to the selected
+immutable manifest. Changing the original cache afterward cannot change the
+snapshot. Creation uses checked directory descriptors with exclusive files;
+failed staging deletes only its own newly created directory. Existing workspaces
+survive a name collision. Files remain 0600 and directories 0700. The shared
+`FileGuard` supplies protected-file handles rather than a second permission
+policy. No archive extraction is implemented here; real umoci consumes the
+standard snapshot in the proof.
+
+This is the OCI [image layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md)
+and [index ordering](https://github.com/opencontainers/image-spec/blob/main/image-index.md)
+contract, with no job or wire format change. Tests cover corrupt content, invalid
+sizes, wrong platforms, pinned ordering, nested indexes, mutable-tag poisoning,
+cache changes after staging and agent-writeable content. Actual worker runtime
+composition, runtime-binary pins, mounts, HOME capability before HPKE and lifecycle
+cleanup remain separate requirements. This staging module has no production
+caller yet and does not lift the OCI execution guard.

@@ -4,8 +4,10 @@ import hashlib
 import os
 import re
 import stat
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
+from typing import BinaryIO
 
 from .errors import Refused
 
@@ -78,6 +80,17 @@ class FileGuard:
             os.close(fd)
             raise Refused("path_permissions")
         return fd
+
+    @contextmanager
+    def open_file(self, path: Path | str) -> Iterator[BinaryIO]:
+        """Read one protected regular file through the checked handle."""
+        try:
+            resolved = self._resolve(path)
+            stream = os.fdopen(self._open(resolved), "rb")
+        except OSError:
+            raise Refused("path_permissions") from None
+        with stream:
+            yield stream
 
     def read_config(self, path: Path | str) -> bytes:
         try:
