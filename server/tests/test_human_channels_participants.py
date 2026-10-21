@@ -34,7 +34,8 @@ def test_shared_author_context_and_assurance(case):
         return project_session_author(
             expected_session=case['expected_session'], expected_participant=participant(case['expected_participant']),
             group=record('GroupContext', case['group']), signer_principal=case['signer_principal'],
-            signer_verified=case['signer_verified'], confidentiality=case['confidentiality'])
+            signer_verified=case['signer_verified'], confidentiality=case['confidentiality'],
+            native_trust_status=case['native_trust_status'])
     if 'error' in case:
         with pytest.raises(ContractError) as refusal:
             project()
@@ -106,7 +107,7 @@ async def test_future_typed_storage_is_exact_and_retains_opt_out(aweb_cloud_db):
         await db.execute("INSERT INTO {{tables.chat_participants}} (session_id,participant_kind,bridge_did,guest_subject,alias) VALUES ($1,'bridged','did:aw:bridge','guest-1','another name')", sid)
     with pytest.raises(QueryError):
         await db.execute("INSERT INTO {{tables.chat_participants}} (session_id,did,participant_kind,bridge_did,guest_subject,alias) VALUES ($1,'did:aw:alice','bridged','did:aw:bridge','guest-3','same name')", sid)
-    for bridge, subject_id in ((None, 'guest-3'), ('did:aw:bridge', None), ('did:key:zBridge', 'guest-3'), ('did:aw:bridge', 'did:aw:pretend-native')):
+    for bridge, subject_id in ((None, 'guest-3'), ('did:aw:bridge', None), ('did:key:zBridge', 'guest-3'), ('did:aw:bridge', 'did:aw:pretend-native'), ('did:aw:bridge', 'DID:aw:pretend-native'), ('did:aw:bridge', 'DiD:aw:pretend-native')):
         with pytest.raises(QueryError) as error:
             await db.execute("INSERT INTO {{tables.chat_participants}} (session_id,participant_kind,bridge_did,guest_subject,alias) VALUES ($1,'bridged',$2,$3,'same name')", sid, bridge, subject_id)
         assert isinstance(error.value.__cause__, asyncpg.CheckViolationError)

@@ -72,7 +72,9 @@ func DeriveHumanChannelsGuestReference(key []byte, c HumanChannelsGuestDerivatio
 // ProjectHumanChannelsSessionAuthor checks exact identity/context binding of
 // facts verified by the caller. P4/P5 must independently establish current
 // membership/epoch, signatures, consent, opt-out and history authorization.
-func ProjectHumanChannelsSessionAuthor(expectedSession string, expected HumanChannelsParticipant, group HumanChannelsGroupContext, signerPrincipal string, signerVerified bool, confidentiality string) (HumanChannelsRecord, error) {
+// nativeTrustStatus is independently verified metadata for this exact native
+// author, never inferred from confidentiality; it is unused for guests.
+func ProjectHumanChannelsSessionAuthor(expectedSession string, expected HumanChannelsParticipant, group HumanChannelsGroupContext, signerPrincipal string, signerVerified bool, confidentiality, nativeTrustStatus string) (HumanChannelsRecord, error) {
 	bad := HumanChannelsRecord{}
 	if _, err := hcParticipantDTO("GroupContext", group); err != nil {
 		return bad, err
@@ -102,34 +104,12 @@ func ProjectHumanChannelsSessionAuthor(expectedSession string, expected HumanCha
 	if guest && confidentiality != "bridge_readable" && confidentiality != "server_readable" {
 		return bad, hcError("invalid", "guest confidentiality")
 	}
-	assurance, trust := "native", "verified"
+	if !guest && nativeTrustStatus != "verified" && nativeTrustStatus != "verified_custodial" {
+		return bad, hcError("authority_unavailable", "native author status")
+	}
+	assurance, trust := "native", nativeTrustStatus
 	if guest {
 		assurance, trust = "platform_attested", "external_untrusted"
-	} else if confidentiality == "hosted_readable" {
-		trust = "verified_custodial"
 	}
 	return hcParticipantDTO("AuthorProjection", map[string]any{"author": group.AuthorRef, "author_assurance": assurance, "confidentiality": confidentiality, "signer_verified": true, "trust_status": trust, "verified": !guest})
-}
-
-// Native chat DTOs cannot consume a managed participant as an alias or DID.
-// P5 supplies a separate, negotiated managed session surface.
-func (p *ChatParticipant) UnmarshalJSON(raw []byte) error {
-	type plain ChatParticipant
-	var value plain
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return err
-	}
-	if value.ParticipantRef != nil {
-		if _, err := hcParticipantRecord(*value.ParticipantRef); err != nil {
-			return err
-		}
-		if value.ParticipantRef.Kind != "native" {
-			return hcError("unsupported", "managed chat participant")
-		}
-		if value.ParticipantRef.DID != value.DID {
-			return hcError("invalid", "native participant DID binding")
-		}
-	}
-	*p = ChatParticipant(value)
-	return nil
 }

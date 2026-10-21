@@ -79,12 +79,14 @@ def derive_guest_reference(key: bytes, *, bridge: str, platform: str, account_sc
 
 def project_session_author(*, expected_session: str, expected_participant: ContractRecord,
                            group: ContractRecord, signer_principal: str, signer_verified: bool,
-                           confidentiality: str) -> ContractRecord:
+                           confidentiality: str, native_trust_status: str | None) -> ContractRecord:
     """Project already-verified facts for an exact participant/message context.
 
     This only checks identity binding. It does not check membership/epoch,
     delegation, current policy, consent, opt-out, history or crypto signatures;
     P4/P5 must establish those facts before exposing a managed message.
+    native_trust_status is independently verified metadata for this author,
+    never inferred from the session's confidentiality label; unused for guests.
     """
     if group.schema != 'GroupContext':
         raise ContractError('invalid', 'group context')
@@ -101,8 +103,10 @@ def project_session_author(*, expected_session: str, expected_participant: Contr
         raise ContractError('forbidden', 'author signer binding')
     if guest and confidentiality not in ('bridge_readable', 'server_readable'):
         raise ContractError('invalid', 'guest confidentiality')
+    if not guest and native_trust_status not in ('verified', 'verified_custodial'):
+        raise ContractError('authority_unavailable', 'native author status')
     return decode_record('AuthorProjection', canonical_json_bytes(dict(
         author=actual, author_assurance='platform_attested' if guest else 'native',
         confidentiality=confidentiality, signer_verified=True,
-        trust_status='external_untrusted' if guest else 'verified_custodial' if confidentiality == 'hosted_readable' else 'verified',
+        trust_status='external_untrusted' if guest else native_trust_status,
         verified=not guest)))

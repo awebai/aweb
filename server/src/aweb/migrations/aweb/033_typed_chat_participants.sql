@@ -29,7 +29,7 @@ ALTER TABLE {{tables.chat_participants}}
          AND bridge_did IS NOT NULL AND bridge_did ~ '^did:aw:[A-Za-z0-9._:-]+$'
          AND guest_subject IS NOT NULL AND length(guest_subject) BETWEEN 1 AND 256
          AND guest_subject ~ '^[A-Za-z0-9._:-]+$'
-         AND guest_subject NOT LIKE 'did:%')
+         AND guest_subject NOT ILIKE 'did:%')
     ),
     ADD CONSTRAINT chat_participants_p5_gate CHECK (participant_kind = 'native');
 
@@ -64,7 +64,7 @@ ALTER TABLE {{tables.conversation_participants}}
          AND bridge_did IS NOT NULL AND bridge_did ~ '^did:aw:[A-Za-z0-9._:-]+$'
          AND guest_subject IS NOT NULL AND length(guest_subject) BETWEEN 1 AND 256
          AND guest_subject ~ '^[A-Za-z0-9._:-]+$'
-         AND guest_subject NOT LIKE 'did:%')
+         AND guest_subject NOT ILIKE 'did:%')
     ),
     ADD CONSTRAINT conversation_participants_p5_gate CHECK (participant_kind = 'native');
 

@@ -33,6 +33,7 @@ func TestHumanChannelsParticipantSharedVectors(t *testing.T) {
 			Group               HumanChannelsGroupContext
 			SignerPrincipal     string `json:"signer_principal"`
 			SignerVerified      bool   `json:"signer_verified"`
+			NativeTrustStatus   string `json:"native_trust_status"`
 			Confidentiality     string
 			Expected            map[string]any
 			Error               string
@@ -55,7 +56,7 @@ func TestHumanChannelsParticipantSharedVectors(t *testing.T) {
 	}
 	for _, c := range fixture.Projections {
 		t.Run(c.Name, func(t *testing.T) {
-			result, err := ProjectHumanChannelsSessionAuthor(c.ExpectedSession, c.ExpectedParticipant, c.Group, c.SignerPrincipal, c.SignerVerified, c.Confidentiality)
+			result, err := ProjectHumanChannelsSessionAuthor(c.ExpectedSession, c.ExpectedParticipant, c.Group, c.SignerPrincipal, c.SignerVerified, c.Confidentiality, c.NativeTrustStatus)
 			if c.Error != "" {
 				var refusal *HumanChannelsContractError
 				if !errors.As(err, &refusal) || refusal.Code != c.Error {
@@ -71,16 +72,23 @@ func TestHumanChannelsParticipantSharedVectors(t *testing.T) {
 }
 
 func TestHumanChannelsNativeParticipantDTOCompatibility(t *testing.T) {
-	for _, raw := range []string{`{"did":"did:aw:alice","alias":"Alice"}`, `{"did":"did:aw:alice","alias":"Alice","participant_ref":{"kind":"native","did":"did:aw:alice"}}`} {
+	// Native DTOs retain their historical fields and ignore additive metadata.
+	// Managed refusal belongs before a send's commit, not in response decoding.
+	for _, raw := range []string{`{"did":"did:aw:alice","alias":"Alice"}`, `{"did":"did:aw:alice","alias":"Alice","participant_ref":{"kind":"native","did":"did:aw:alice"}}`, `{"did":"did:aw:alice","alias":"Alice","participant_ref":{"kind":"bridged","bridge":"did:aw:bridge","subject":"guest-1"}}`} {
 		var p ChatParticipant
 		if err := json.Unmarshal([]byte(raw), &p); err != nil || p.DID != "did:aw:alice" {
 			t.Fatal(err)
 		}
-	}
-	for _, raw := range []string{`{"alias":"same","participant_ref":{"kind":"bridged","bridge":"did:aw:bridge","subject":"guest-1"}}`, `{"did":"did:aw:alice","participant_ref":{"kind":"native","did":"did:aw:bob"}}`} {
-		var p ChatParticipant
-		if err := json.Unmarshal([]byte(raw), &p); err == nil {
-			t.Fatal("legacy DTO accepted a managed or mismatched participant")
+		raw, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var value map[string]any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := value["participant_ref"]; ok {
+			t.Fatal("native DTO carried managed participant metadata")
 		}
 	}
 }

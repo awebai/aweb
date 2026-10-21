@@ -51,10 +51,13 @@ Native create-session responses and internal conversation participant views gain
 an optional `participant_ref`. The old fields retain their values. Historical
 native strings that are not P0 references keep their old projection, with the
 new optional reference omitted/null; no migration reinterprets them as guests.
-Go's native `ChatParticipant` accepts absent references and matching native
-references. It refuses a bridged reference as `unsupported`, and refuses a
-reference contradicting the native DID as `invalid`. The future negotiated
-managed surface cannot be consumed through this native DTO.
+Go's native `ChatParticipant` remains its existing DID/alias/address DTO and
+ignores the additive projection field, like released native clients. It does
+not decode a bridged union or introduce a new response-decoding error after a
+send has committed. Managed participants belong to P0's separate negotiated
+SessionView surface. P5 must refuse an unsupported managed operation before
+any send/commit; P3's database gates and closed native requests already refuse
+guest admission before effects.
 
 ## Pairwise identity and private mapping
 
@@ -108,6 +111,17 @@ wrong context refuses. A verified bridge signature produces
 `author_assurance=platform_attested`** for its guest. Guests cannot receive an
 E2EE label. Native and hosted-custodial neighbors retain their separate assurance.
 
+For a native author, the caller must also supply `native_trust_status` (Python)
+or `nativeTrustStatus` (Go) from independently verified metadata for that exact
+author: `verified` or `verified_custodial`. Missing/unknown native status refuses
+as `authority_unavailable`. The status is retained across session confidentiality
+labels; a bridge-readable session does not turn a custodial native author into
+a self-custodial one. See [native trust outcomes](trust-model.md#tofu-pins-and-durable-continuity).
+This fact is not inferred from `via`, a session label or an unverified submitted
+claim. Guest projection ignores this native-only fact (normally None/empty for
+guests) and always retains `external_untrusted`. Current policy still determines
+the separately supplied confidentiality label before calling this helper.
+
 These projection helpers do not perform cryptography, resolve current keys,
 verify a membership chain/epoch or authorize a history interval. P4/P5 must
 establish all those facts before calling them in a managed-message read/send
@@ -122,8 +136,9 @@ Native DID metadata lookup remains unchanged.
 ## Evidence and remaining activation
 
 Shared root vectors exercise pairwise derivation and native/guest projections
-in Python and Go, including wrong bridge, subject, context, invalid signer and
-link-promotion refusals. PostgreSQL tests cover fresh migrations, an actual
+in Python and Go, including independent custody neighbors under the same
+session label, missing native metadata, wrong bridge, subject, context, invalid
+signer and link-promotion refusals. PostgreSQL tests cover fresh migrations, an actual
 populated pre-P3 upgrade, retained native values/read-receipt cascade, old
 conflict targets and the P5 gates. Native schema/service neighbors remain valid.
 The live local OSS HTTP/AWID/PostgreSQL/Redis journey creates an ordinary native
