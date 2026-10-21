@@ -181,6 +181,66 @@ Response:
 - `400` means invalid `team_id`; `401`/`403` means the caller cannot read that
   team; storage failures are server errors.
 
+## An app reads its own grant
+
+```http
+GET /v1/apps/self/grant
+Authorization: AWEB-App-Grant-Read DIDKey <did:key> <signature>
+```
+
+The app signs the request with one of its own keys under the `app-grant-read`
+purpose. The headers and the signed payload are those of the app-event
+credential ([App events](app-events.md)), with `auth` set to
+`app-grant-read`, `method` `GET` and `body_sha256` the SHA-256 of the empty
+body. The signature is unpadded standard base64 in its one canonical
+encoding: 86 characters, the last one `A`, `Q`, `g` or `w`. A padded,
+URL-safe or otherwise re-encoded signature is refused.
+
+The key must be registered for `app-grant-read` under the team's installed
+digest. Such keys come only from the `app_keys` of the pinned manifest bytes;
+an `event_emitters` key never signs this request.
+
+Response:
+
+```json
+{
+  "team_id": "default:example.com",
+  "app_id": "folio",
+  "state": "active",
+  "origin": "https://folio.example",
+  "app_version": "1.4.0",
+  "manifest_version": 2,
+  "digest": "sha256:4f3c000000000000000000000000000000000000000000000000000000000000",
+  "granted_scopes": ["folio:read", "folio:write"],
+  "installation_id": null,
+  "generation": null,
+  "origin_verified": null,
+  "as_of": "2026-10-20T12:00:00Z",
+  "max_age_seconds": 60
+}
+```
+
+- The team and the app come from the verified credential, never from the
+  query, so an app reads only its own grant in the team that signed for.
+- `state` is `active`. Any other state grants no normal use.
+- `installation_id`, `generation` and `origin_verified` are always present and
+  `null` until installations carry them. A consumer that binds them refuses
+  `null`. `origin_verified` says whether the server verified the pinned bytes
+  against the app's origin; bytes being present is not that.
+- `as_of` is the server's time of the answer, in UTC seconds.
+- `max_age_seconds` is how long the app may reuse the answer, counted from
+  when it received it. It is `AWEB_APP_GRANT_MAX_AGE_SECONDS`, from 1 to 60
+  seconds, default 60; the server refuses to start with any other value.
+- A reinstall with new bytes is visible on the next read: keys belong to their
+  digest, so the old digest's keys are refused and the new digest's keys read
+  the new grant.
+- `401` means a malformed, mismatched or unsigned credential, including one
+  signed for another purpose. `403` with detail `app_key_not_registered` means
+  no key is active for `app-grant-read` under the team's installed digest,
+  which is also the answer once the app has no installation.
+
+Conformance: `test-vectors/app-read-credential-v1.json`.
+
 ## Operator reseed from manifest bytes
 
 ```sh

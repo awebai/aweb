@@ -792,6 +792,14 @@ async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
     ]
 
 
+async def get_installed_app(db, *, team_id: str, app_id: str, digest: str) -> AppInstall | None:
+    """The team's installation of ``app_id``, only while it is pinned to ``digest``."""
+    row = await get_installation_on(db, team_id=team_id, app_id=app_id)
+    if row is None or row["digest"] != normalize_digest(digest):
+        return None
+    return AppInstall(**{key: value for key, value in row.items() if key != "team_id"})
+
+
 async def get_installed_app_event_type(
     db,
     *,

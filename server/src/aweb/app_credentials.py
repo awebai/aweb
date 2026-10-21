@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -31,6 +32,11 @@ HOOK_RESOLVE = "hook-resolve"
 
 KeyLookup = Callable[..., Awaitable[dict | None]]
 
+# An Ed25519 signature in unpadded standard base64: 64 bytes, 86 characters.
+# The last character carries four spare bits, which must be zero (A, Q, g or w),
+# so every signature has exactly one accepted encoding.
+_ONE_ENCODING_SIGNATURE = re.compile(r"[A-Za-z0-9+/]{85}[AQgw]")
+
 
 @dataclass(frozen=True)
 class AppCredentialPurpose:
@@ -39,6 +45,9 @@ class AppCredentialPurpose:
     label: str
     key_not_registered: str
     lookup_key: KeyLookup
+    # The released app-event credential keeps the lenient decoder its signers
+    # were measured against; read purposes accept one encoding only.
+    one_encoding_signature: bool
 
 
 @dataclass(frozen=True)
@@ -48,6 +57,8 @@ class AppCredential:
     app_id: str
     kid: str
     did_key: str
+    # The installed digest the key is registered under.
+    digest: str
 
 
 async def _emit_key(db, *, purpose: str, team_id: str, app_id: str, kid: str, did_key: str) -> dict | None:
@@ -69,6 +80,7 @@ PURPOSES: dict[str, AppCredentialPurpose] = {
         label="app event",
         key_not_registered="App emit key is not registered",
         lookup_key=_emit_key,
+        one_encoding_signature=False,
     ),
     APP_GRANT_READ: AppCredentialPurpose(
         auth=APP_GRANT_READ,
@@ -76,6 +88,7 @@ PURPOSES: dict[str, AppCredentialPurpose] = {
         label="app grant read",
         key_not_registered="app_key_not_registered",
         lookup_key=_app_key,
+        one_encoding_signature=True,
     ),
     HOOK_RESOLVE: AppCredentialPurpose(
         auth=HOOK_RESOLVE,
@@ -83,6 +96,7 @@ PURPOSES: dict[str, AppCredentialPurpose] = {
         label="hook resolve",
         key_not_registered="app_key_not_registered",
         lookup_key=_app_key,
+        one_encoding_signature=True,
     ),
 }
 
@@ -109,6 +123,8 @@ async def verify_app_credential(request: Request, db, purpose: str) -> AppCreden
     if len(parts) != 2:
         raise HTTPException(status_code=401, detail=f"Malformed {label} Authorization header")
     did_key, signature_b64 = parts
+    if spec.one_encoding_signature and not _ONE_ENCODING_SIGNATURE.fullmatch(signature_b64):
+        raise HTTPException(status_code=401, detail=f"Invalid {label} signature")
 
     app_id = (request.headers.get("X-AWEB-App-ID") or "").strip().lower()
     kid = (request.headers.get("X-AWEB-App-Key-ID") or "").strip()
@@ -164,4 +180,6 @@ async def verify_app_credential(request: Request, db, purpose: str) -> AppCreden
     if row is None:
         raise HTTPException(status_code=403, detail=spec.key_not_registered)
 
-    return AppCredential(purpose=purpose, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key)
+    return AppCredential(
+        purpose=purpose, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key, digest=row["digest"]
+    )

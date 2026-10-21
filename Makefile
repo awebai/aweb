@@ -118,7 +118,7 @@ test-shipping:
 	python3 scripts/test_candidate_cleanup.py
 
 # AWID metadata is repeated in every committed Python lock that takes the in-repo
-# awid (awid, server, naapp-lib and naapp/folio). Check all four without repair,
+# awid (awid, server, naapp-lib and each naapp). Check them all without repair,
 # then prove stale and missing dependent-lock entries are rejected.
 test-python-locks:
 	bash scripts/check-python-locks.sh
@@ -518,10 +518,12 @@ test-candidate-ledger:
 _candidate-unit-suites:
 	python3 scripts/test-egress/docker.py --evidence "$$CANDIDATE_LOG_DIR/test-egress" --command bash scripts/candidate-suite.sh --isolated-suites
 
-candidate-gate:
+# The gate's own ledger test runs first, on the host, so a gate change that
+# breaks it stops every train and release candidate before any stage runs.
+candidate-gate: test-candidate-ledger
 	bash scripts/candidate-docker-gate.sh
 
-release-candidate:
+release-candidate: test-candidate-ledger
 	@test -n "$(TAGS)" || (echo "TAGS='server-vX.Y.Z ...' is required" >&2; exit 2)
 	python3 scripts/release_candidate.py $(TAGS)
 
@@ -604,9 +606,14 @@ _candidate-artifact-naapp-package: check-naapp-lib-package
 	cd naapp-lib && uv build
 	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION).tar.gz
 	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION)-py3-none-any.whl
+	rm -rf naapp-lib/testing/dist
+	cd naapp-lib/testing && uv build
+	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION).tar.gz
+	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION)-py3-none-any.whl
 
-# aweb-naapp's release artifacts as a consumer sees them: the wheel ships its
-# package files, pins awid-service, and installs and imports in a fresh environment.
+# aweb-naapp's and aweb-naapp-testing's release artifacts as a consumer sees them:
+# each wheel ships its package files, pins its dependencies, and installs and
+# imports in a fresh environment.
 check-naapp-lib-package:
 	python3 scripts/check-naapp-lib-package.py
 

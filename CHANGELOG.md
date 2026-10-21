@@ -29,6 +29,31 @@
 
 ## Release preparations
 
+### Release preparation: aweb-naapp 0.2.0
+
+- The `aweb-naapp-vX.Y.Z` tag also publishes PyPI `aweb-naapp-testing` from
+  `naapp-lib/testing/`, at the same version: dev-only test support (real AWID
+  routes on PostgreSQL, a team-auth v2 signer, a software WebAuthn
+  authenticator and a team owner-act signer). It requires exactly the
+  `aweb-naapp` it is released with and `awid-service>=0.5.30`. The release
+  candidate and the publisher refuse a tag when the two versions differ, and
+  `make check-naapp-lib-package` builds, installs and imports both.
+
+### Release preparation: server 1.27.31
+
+Server changes are since `server-v1.27.30`.
+
+- `GET /v1/apps/self/grant`: an app reads its own grant in a team, signed with
+  an `app-grant-read` credential. The team and app come only from the
+  credential, and the answer is read under the digest the key is registered
+  for. `installation_id`, `generation` and `origin_verified` are `null` until
+  installations carry them. `AWEB_APP_GRANT_MAX_AGE_SECONDS` (1 to 60,
+  default 60) sets `max_age_seconds`; any other value stops the server at
+  startup. Conformance: `test-vectors/app-read-credential-v1.json`.
+- **Security:** read-purpose credentials (`app-grant-read`, `hook-resolve`)
+  accept one signature encoding only: unpadded standard base64 with zero
+  spare bits. App-event credentials are unchanged.
+
 ### Release preparation: aweb-naapp 0.1.0
 
 The first release of `aweb-naapp`, the shared naapp toolkit in `naapp-lib/`.
