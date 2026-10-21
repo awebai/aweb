@@ -204,6 +204,14 @@ currency, and `decision-options`, `decision-missing-field` and
 and decision persistence are tested by their owners through the real Folio
 stack, rather than simulated by this gallery.
 
+`?case=authored-language` is a synthetic Catalan authored-content fixture:
+the page title, paragraph and long form label/description use the page language,
+while generated controls and English date/number formatting carry `lang="en"`.
+It does not translate the product chrome or add a locale switch. Control
+boundaries use `--page-control-border`, independently of neutral card borders;
+hosts overriding it must retain at least 3:1 contrast against the control fill
+and adjacent surface in both themes.
+
 ```sh
 cd renderer
 npx playwright install chromium

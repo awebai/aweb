@@ -112,6 +112,7 @@
   --page-radius: var(--radius);
   --page-focus: var(--run);
   --page-link: var(--accent-hover);
+  --page-control-border: var(--faint);
 }
 * {
   box-sizing: border-box;
@@ -605,7 +606,7 @@ polyline {
 .file-drop input {
   max-width: 100%;
   min-width: 0;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--page-control-border);
   border-radius: var(--radius-sm);
   padding: 0.65rem;
   color: var(--ink);

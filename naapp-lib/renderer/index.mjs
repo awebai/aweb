@@ -4,7 +4,7 @@ import { createActions } from "./actions.mjs";
 import { createDecision } from "./decisions.mjs";
 import { renderMedia, renderPresence } from "./media.mjs";
 import { safeLink } from "./sanitize.mjs";
-import { element } from "./dom.mjs";
+import { element, chrome } from "./dom.mjs";
 import { renderCollection } from "./collections.mjs";
 export { inertLinks } from "./sanitize.mjs";
 export {
@@ -57,6 +57,8 @@ export function createPageRenderer({
 }) {
   if (root.contains(destinations) || root.contains(announcements))
     throw new TypeError("Host chrome must be outside the page");
+  destinations.lang = "en";
+  announcements.lang = "en";
   let current,
     epoch = 0;
   const cache = new Map(),
@@ -98,7 +100,7 @@ export function createPageRenderer({
     destinations.replaceChildren(element("h2", t.destinations));
     destinations.hidden = true;
     if (page?.page_format !== "aweb.page/1" || !Array.isArray(page.layout)) {
-      const panel = element("section", null, "page-unavailable");
+      const panel = chrome("section", null, "page-unavailable");
       panel.setAttribute("role", "alert");
       panel.append(
         element("h1", t.unsupported),
@@ -158,22 +160,22 @@ export function createPageRenderer({
       }
       status.replaceChildren();
       const message = state.message || (state.busy ? t.busy : "");
-      if (message || state.progress !== undefined)
-        status.append(
-          element(
-            "p",
-            `${message}${state.progress !== undefined ? `${message ? " · " : ""}${state.progress}%` : ""}`,
-            "state-message",
-          ),
-        );
+      if (message || state.progress !== undefined) {
+        const line = state.message
+          ? element("p", state.message, "state-message")
+          : chrome("p", message, "state-message");
+        if (state.progress !== undefined)
+          line.append(
+            chrome("span", `${message ? " · " : ""}${state.progress}%`),
+          );
+        status.append(line);
+      }
       if (state.progress !== undefined) {
         const progress = element("progress");
+        progress.lang = "en";
         progress.max = 100;
         progress.value = state.progress;
-        progress.setAttribute(
-          "aria-label",
-          `${(known.has(w.type) && w.props?.label) || w.id}: ${t.progress}`,
-        );
+        progress.setAttribute("aria-label", t.progress);
         status.append(progress);
       }
       status.hidden = !status.childNodes.length;
@@ -227,7 +229,7 @@ export function createPageRenderer({
       box.dataset.widget = w.id;
       if (!supported)
         box.append(
-          element("p", t.unavailable, "widget-label"),
+          chrome("p", t.unavailable, "widget-label"),
           element("p", w.fallback),
         );
       else if (w.type === "heading") box.append(element(`h${p.level}`, p.text));
@@ -277,7 +279,7 @@ export function createPageRenderer({
           pageLink(link, url);
           box.append(link);
         } catch {
-          box.append(element("p", t.unavailable));
+          box.append(chrome("p", t.unavailable));
         }
       } else {
         const content = element("div", null, "bound-content");
@@ -332,7 +334,9 @@ export function createPageRenderer({
               if (value === undefined || value === null) {
                 figure.setAttribute("role", "img");
                 figure.setAttribute("aria-label", "No value");
+                figure.lang = "en";
               }
+              if (typeof value === "number") figure.firstChild.lang = "en";
               if (p.unit && value !== undefined && value !== null)
                 figure.append(element("span", p.unit, "stat-unit"));
               content.append(figure);
@@ -365,7 +369,7 @@ export function createPageRenderer({
           refresh = async () => {
             const request = ++serial;
             if (controller) controller.beginRefresh();
-            else content.replaceChildren(element("p", t.loading));
+            else content.replaceChildren(chrome("p", t.loading));
             try {
               const result = await read(queries.get(w.id) || w.bind);
               if (request === serial && box.isConnected)
@@ -375,7 +379,7 @@ export function createPageRenderer({
               const message =
                 error.code === "revision_conflict" ? t.conflict : t.unavailable;
               if (controller) controller.showError(message);
-              else content.replaceChildren(element("p", message));
+              else content.replaceChildren(chrome("p", message));
             }
           };
           refresh();
@@ -420,10 +424,18 @@ export function createPageRenderer({
         if (
           JSON.stringify(state) !==
           JSON.stringify(before.widget_state?.[id] || {})
-        )
-          changes.push(state.message || (state.busy ? t.busy : t.updated));
+        ) {
+          const message = state.message
+            ? element("span", state.message)
+            : chrome("span", state.busy ? t.busy : t.updated);
+          if (state.message) message.lang = page.locale || "en";
+          changes.push(message);
+        }
       }
-      if (changes.length) announcements.textContent = changes.join(". ");
+      if (changes.length)
+        announcements.replaceChildren(
+          ...changes.flatMap((node, i) => (i ? [". ", node] : [node])),
+        );
       window.scrollTo(...scroll);
     }
   }

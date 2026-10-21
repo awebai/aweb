@@ -324,9 +324,8 @@ for (const mode of ["current-old-rev", "answer-expired"]) {
     await expect(card).toContainText(
       "You approved this. The agent will apply it.",
     );
-    await expect(
-      card.getByRole("radio", { name: "Reject", exact: true }),
-    ).toBeDisabled();
+    await expect(card.getByRole("radio")).toHaveCount(0);
+    await expect(card.locator(".recorded-choice")).toBeVisible();
   });
 }
 test("a reopened old card shows its earlier answer as superseded and refuses new answers", async ({

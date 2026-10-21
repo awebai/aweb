@@ -275,6 +275,20 @@ def fixture(query: dict) -> dict:
             # independent collection widgets still exercise the empty state.
             if collection["id"] not in {"review-proposals", "review-bundles"}:
                 collection["records"] = []
+    if query.get("case") == ["authored-language"]:
+        # A synthetic authored-content fixture, never translated product chrome.
+        page["locale"] = "ca"
+        page["title"] = "Resum de les propietats"
+        page["layout"][0]["props"]["text"] = "Visió general"
+        page["layout"][1]["props"]["markdown"] = (
+            "Revisa les propietats i les propostes de l’agent. "
+            "[Més informació](https://example.com/about)."
+        )
+        form = next(w for w in page["layout"] if w["id"] == "note-form")
+        form["props"]["fields"][0].update(
+            label="Observacions sobre l’estat de la propietat i les reparacions pendents",
+            description="Escriu una observació per a la pròxima visita.",
+        )
     validation = validate_page(page)
     if not validation.valid:
         raise ValueError(validation.errors)

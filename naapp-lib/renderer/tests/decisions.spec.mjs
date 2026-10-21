@@ -41,9 +41,8 @@ test("recording a decision uses the separate host answer seam, exact stage bindi
     "You approved this. The agent will apply it.",
   );
   await expect(card.locator(".decision-status")).toBeFocused();
-  await expect(
-    card.getByRole("radio", { name: "Reject", exact: true }),
-  ).toBeDisabled();
+  await expect(card.getByRole("radio")).toHaveCount(0);
+  await expect(card.locator(".recorded-choice")).toBeVisible();
   await page.reload();
   await expect(page.locator('[data-widget="price-decision"]')).toContainText(
     "You approved this. The agent will apply it.",
@@ -149,7 +148,12 @@ for (const [scenario, text, answerable] of [
     await expect(card).toContainText(text);
     const approve = card.getByRole("radio", { name: "Approve", exact: true });
     if (answerable) await expect(approve).toBeEnabled();
-    else await expect(approve).toBeDisabled();
+    else if (
+      ["approved", "rejected", "applied", "apply-failed"].includes(scenario)
+    ) {
+      await expect(card.getByRole("radio")).toHaveCount(0);
+      await expect(card.locator(".recorded-choice")).toBeVisible();
+    } else await expect(approve).toBeDisabled();
   });
 }
 

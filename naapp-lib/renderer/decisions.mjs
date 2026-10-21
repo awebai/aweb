@@ -1,4 +1,4 @@
-import { element, valueText } from "./dom.mjs";
+import { element, chrome, formattedValue, valueText } from "./dom.mjs";
 import { decisionRows } from "./decision-display.mjs";
 import { inputErrors } from "./input.mjs";
 import { canonical, proposalDigest, bundleDigest } from "./digests.mjs";
@@ -43,10 +43,10 @@ export function createDecision({
     "dd",
     `${p.operation.summary} · ${p.operation.destination}`,
   );
-  const expiryLabel = element("dt", "Expires"),
-    expiryValue = element("dd");
+  const expiryLabel = chrome("dt", "Expires"),
+    expiryValue = chrome("dd");
   metadata.append(
-    element("dt", "What approving does"),
+    chrome("dt", "What approving does"),
     destination,
     expiryLabel,
     expiryValue,
@@ -79,7 +79,7 @@ export function createDecision({
   }
   const proposal = element("div", null, "decision-proposal");
   const details = element("details");
-  details.append(element("summary", "Proposal details"));
+  details.append(chrome("summary", "Proposal details"));
   for (const text of [
     `Operation: ${p.operation.kind}`,
     `Source version: ${p.source_version}`,
@@ -87,10 +87,14 @@ export function createDecision({
     `Revision: ${p.record_rev}`,
     `Digest: ${p.proposal_sha256}`,
   ])
-    details.append(element("p", text, "field-description"));
-  const bundleSummary = element("p", null, "field-description");
+    details.append(chrome("p", text, "field-description"));
+  const bundleSummary = chrome("p", null, "field-description");
   bundleSummary.hidden = !p.bundle;
-  const recommendation = element("p", null, "field-description");
+  const recommendation = chrome(
+    "p",
+    null,
+    "field-description decision-recommendation",
+  );
   recommendation.hidden = true;
   const form = element("form", null, "decision-form"),
     choices = element("fieldset");
@@ -115,9 +119,13 @@ export function createDecision({
       }
     const recommended = options.find((o) => o.value === p.recommendation);
     recommendation.hidden = !recommended;
-    recommendation.textContent = recommended
-      ? `The agent recommends ${recommended.label}.`
-      : "";
+    recommendation.replaceChildren();
+    if (recommended)
+      recommendation.append(
+        "The agent recommends ",
+        optionText(recommended.value),
+        ".",
+      );
   }
   const submit = element("button", "Record decision", "primary-button");
   submit.type = "submit";
@@ -139,7 +147,9 @@ export function createDecision({
     "field-description",
   );
   hint.lang = "en";
-  form.append(choices, stepup, hint, submit, check);
+  const recorded = element("div", null, "recorded-choice");
+  recorded.hidden = true;
+  form.append(recorded, choices, stepup, hint, submit, check);
   box.append(
     heading,
     status,
@@ -153,6 +163,11 @@ export function createDecision({
   );
   const labelFor = (value) =>
     trustedOptions.find((o) => o.value === value)?.label;
+  function optionText(value) {
+    const label = element("bdi", labelFor(value));
+    label.lang = getPage()?.locale || "en";
+    return label;
+  }
   const selected = () =>
     trustedOptions[radios.findIndex((r) => r.checked)]?.value;
   function paint() {
@@ -167,9 +182,24 @@ export function createDecision({
       radio.disabled = busy || !ready || !!answer || !!attempt;
     submit.hidden = !!answer;
     submit.disabled = busy || !ready || !selected() || isExpired();
-    submit.textContent = attempt
-      ? `Record ${labelFor(attempt.stage.choice)} again`
-      : labelFor(selected()) || "Record decision";
+    if (attempt)
+      submit.replaceChildren(
+        "Record ",
+        optionText(attempt.stage.choice),
+        " again",
+      );
+    else if (selected()) submit.replaceChildren(optionText(selected()));
+    else submit.textContent = "Record decision";
+    choices.hidden = !!answer;
+    recorded.hidden = !answer;
+    recorded.replaceChildren();
+    if (answer)
+      recorded.append(
+        chrome("p", "Your decision", "widget-label"),
+        optionText(answer.choice),
+      );
+    recommendation.hidden =
+      !!answer || !trustedOptions.some((o) => o.value === p.recommendation);
     hint.hidden = !!selected() || !ready || !!answer || !!attempt;
     status.hidden = !status.textContent;
     check.hidden = (!attempt && !needsCheck) || (!!answer && !needsCheck);
@@ -200,7 +230,7 @@ export function createDecision({
         p.bundle ? "bundle-item" : "proposal-record",
       );
       if (p.bundle)
-        section.append(element("h3", `${index + 1} of ${records.length}`));
+        section.append(chrome("h3", `${index + 1} of ${records.length}`));
       const fields = element("dl");
       for (const [label, value, format, currency] of decisionRows(
         p.options,
@@ -208,12 +238,7 @@ export function createDecision({
         item.value,
       )) {
         const dd = element("dd");
-        dd.append(
-          element(
-            "bdi",
-            valueText(value, format, "en", host.timeZone, currency),
-          ),
-        );
+        dd.append(formattedValue(value, format, "en", host.timeZone, currency));
         fields.append(element("dt", label), dd);
       }
       section.append(fields);
@@ -312,9 +337,13 @@ export function createDecision({
   function showHistory(evidence) {
     history.hidden = evidence.answer?.current !== false;
     const label = labelFor(evidence.answer?.choice);
-    history.textContent = label
-      ? `Earlier answer: ${label} · superseded.`
-      : "Earlier answer is superseded.";
+    if (label)
+      history.replaceChildren(
+        "Earlier answer: ",
+        optionText(evidence.answer.choice),
+        " · superseded.",
+      );
+    else history.textContent = "Earlier answer is superseded.";
   }
   function applyEvidence(evidence) {
     if (evidence.answer?.current === true) {
@@ -342,6 +371,16 @@ export function createDecision({
               : answer.choice === "reject"
                 ? "You rejected this. The agent will be told."
                 : `Your decision was recorded: ${labelFor(answer.choice)}.`;
+      if (
+        !pendingVerification &&
+        !["applied", "failed"].includes(evidence.application_state) &&
+        !["approve", "reject"].includes(answer.choice)
+      )
+        status.replaceChildren(
+          "Your decision was recorded: ",
+          optionText(answer.choice),
+          ".",
+        );
     } else if (evidence.task_rev !== p.task_rev) {
       ready = false;
       status.textContent = changed;
@@ -364,6 +403,12 @@ export function createDecision({
       status.textContent = attempt
         ? `Your decision wasn't recorded. Try again to record ${labelFor(attempt.stage.choice)}.`
         : "";
+      if (attempt)
+        status.replaceChildren(
+          "Your decision wasn't recorded. Try again to record ",
+          optionText(attempt.stage.choice),
+          ".",
+        );
     }
     stepup.textContent =
       evidence.authenticator === "passkey"
