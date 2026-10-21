@@ -147,7 +147,9 @@ async def team(real_stack):
 
 @pytest_asyncio.fixture
 async def outbox_db(test_db_factory):
-    database = await test_db_factory.create_db(suffix="producer_outbox")
+    # The isolated gate pins the role's default search_path to pg_catalog.
+    # Give this app-local outbox its own schema rather than relying on public.
+    database = await test_db_factory.create_db(suffix="producer_outbox", schema="producer_outbox")
     await apply_outbox_migrations(database)
     yield database
 
