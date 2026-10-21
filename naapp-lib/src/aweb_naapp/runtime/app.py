@@ -52,6 +52,7 @@ from aweb_naapp.manifest import (
     CATALOG_PATH,
     LEGACY_MANIFEST_PATH,
     Manifest,
+    ManifestError,
     canonical_bytes,
     fill_manifest,
     load_manifest,
@@ -406,8 +407,10 @@ def _refuse_the_hosted_app_id_elsewhere(settings: NaappSettings, template: Mappi
     hosted one there would claim the hosted app's identity. Only the hosted
     origin and a loopback origin, which no other team can reach, may serve it."""
     hosted = template.get("app")
-    if not isinstance(hosted, dict) or not isinstance(hosted.get("origin"), str):
+    if not isinstance(hosted, dict):
         return
+    if not isinstance(hosted.get("origin"), str):
+        raise ManifestError("manifest_template_invalid", "a manifest template names the hosted app.origin")
     origin = settings.public_origin.rstrip("/")
     if origin == hosted["origin"].rstrip("/") or is_loopback_host(urlsplit(origin).hostname or ""):
         return

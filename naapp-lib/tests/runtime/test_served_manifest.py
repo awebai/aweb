@@ -180,3 +180,10 @@ def test_the_filler_is_the_canonical_form_consumers_compare() -> None:
     document = json.loads(filled)
     assert filled == canonical_bytes(document)
     assert load_manifest(filled).app_keys_for("app-event") == {"example:events": _did_key(seed)}
+
+
+def test_a_template_without_its_hosted_origin_does_not_start(tmp_path: Path) -> None:
+    template = _v2_template()
+    del template["app"]["origin"]
+    with pytest.raises(ManifestError, match="origin"):
+        _runtime(tmp_path, template)
