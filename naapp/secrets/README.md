@@ -9,7 +9,8 @@ The service (`aweb_secrets.app.create_app`) runs on the shared naapp runtime,
 `aweb_naapp`, as one process on two origins:
 
 - **The agent API origin** (`SECRETS_PUBLIC_ORIGIN`) serves the manifest
-  (`/.well-known/aweb-app.json`), health and the manifest's tools. Every tool is
+  (catalog `/.well-known/aweb-app-versions.json`, variant `/manifests/v2.json`,
+  also `/aweb-app.json`), health and the manifest's tools. Every tool is
   admitted only through team-auth: signed by a member, declared by the manifest,
   covered by the team's installed grant and allowed by secrets' policy. This
   origin never reads or sets a cookie.
@@ -23,7 +24,37 @@ them fails. The database is the app's own pgdbm schema: the shared runtime's
 migrations first, then `src/aweb_secrets/migrations/` (module `aweb_secrets`).
 
 The manifest's authoring source is `src/aweb_secrets/manifest.py`. The committed
-`aweb-app.json` is its canonical bytes, and a test keeps the two equal.
+`aweb-app.json` is a canonical v2 template. The shared runtime fills the served
+`app.id` from `SECRETS_APP_ID`, the origin from `SECRETS_PUBLIC_ORIGIN`, and each
+`app_keys` entry's `did_key` from `SECRETS_APP_KEY_FILES`. The template fixes each
+kid and its purposes; it contains no signing key or deployment did:key. Configure
+all three keys with the shared K0 key-file format: a 32-byte Ed25519 seed as
+64 hex characters with an optional trailing newline. Files must be regular
+files and must not be group- or world-writable; symlinks to regular files are
+supported. Read permissions are left to the deployment platform. For example:
+
+```text
+SECRETS_APP_KEY_FILES={"secrets:hook-event-1":"/run/keys/hook-event","secrets:hook-delivery-1":"/run/keys/hook-delivery","secrets:grant-read-1":"/run/keys/grant-read"}
+```
+
+The keys sign hook content, hook delivery and team grant reads respectively.
+A declared key without a file, an undeclared configured kid or an invalid key
+stops startup. Hook production still needs owner activation; declaring it grants
+no authority. Every tool requires team-auth. `propose-change` and `activity` are
+surface-only; the other seven tools serve agents and surfaces. Widening drafts
+still require the console passkey confirmation, and no tool accepts a value.
+
+A reachable self-hosted deployment must set its own stable `SECRETS_APP_ID` and
+origin. The hosted identity `secrets` is valid only at its hosted origin or a
+loopback development origin. Choose that ID before installing: changing it later
+creates a different app identity and orphans existing installations; it does not
+rename or migrate them.
+
+Tests compare the filled served bytes against the shared canonical filler and
+load them with the X8/C3 interpreter. The shared conformance inputs are
+`test-vectors/app-manifests/app-manifest-v2-v1.json` and
+`test-vectors/app-manifests/app-manifest-discovery-v1.json`; their harness is
+`naapp-lib/tests/test_manifest_v2_vectors.py`.
 
 This package also holds secrets' own contract vectors (`vectors/`) and the
 tests that consume them (`tests/`). The runner protocol is a public interop
