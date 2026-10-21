@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -312,9 +313,36 @@ func TestGrantAppToolIgnoresLocalManifestDrift(t *testing.T) {
 
 func TestGrantAppToolRejectsDotSegmentParams(t *testing.T) {
 	f := setupAppCustodyFixture(t, []string{"get-thing"})
-	for _, value := range []string{"..", "."} {
-		if _, err := runAppTool(t, "get-thing", "--thing_id", value); err == nil || !strings.Contains(err.Error(), "app_request_not_allowed") {
-			t.Fatalf("value %q: err=%v, want app_request_not_allowed", value, err)
+	sessionKey, err := awid.LoadSigningKey(awconfig.GrantHomeSigningKeyPath(f.grantHome))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.svc.serviceID = "svc"
+	values := []string{"..", ".", " .. ", "x/../..", "%2e%2e", "..;", "a\nb"}
+	// The worker refuses before asking custody: custody records every
+	// signing request it receives in its replay table.
+	for _, value := range values {
+		if _, err := runAppTool(t, "get-thing", "--thing_id", value); err == nil {
+			t.Fatalf("value %q: worker sent the request", value)
+		}
+	}
+	f.svc.mu.Lock()
+	received := len(f.svc.replay)
+	f.svc.mu.Unlock()
+	if received != 0 {
+		t.Fatalf("custody received %d signing requests, want none", received)
+	}
+	// Custody refuses a session that asks for it directly, by its own check
+	// before it interprets the call.
+	for _, value := range values {
+		req := &awid.AppRequestSignRequest{Version: 1, Operation: "sign_app_request", GrantID: appTestGrantID, TeamID: "backend:acme.com", SubjectDIDAW: f.grant.Subject.DIDAW, SubjectDIDKey: f.residentDID, Audience: "local-resident-custody:svc", AppID: "testapp", Verb: "get-thing", Args: map[string]any{"thing_id": value}}
+		if err := awid.SignAppRequestCustodyProof(sessionKey, req); err != nil {
+			t.Fatal(err)
+		}
+		_, err := f.svc.signAppRequest(context.Background(), req)
+		var refusal *custodyRefusal
+		if err == nil || err.Error() != "app_request_not_allowed" || !errors.As(err, &refusal) || refusal.Reason != "unsafe_path_param_value" {
+			t.Fatalf("value %q: custody err=%v, want app_request_not_allowed refused as unsafe_path_param_value", value, err)
 		}
 	}
 	if seen, _ := f.app.requests(); len(seen) != 0 {

@@ -301,3 +301,42 @@ func TestInterpretObjectBodyParamRejectsMalformedJSON(t *testing.T) {
 		t.Fatalf("Interpret() error = %v, want a content body-param JSON error", err)
 	}
 }
+
+func TestInterpretRefusesDotSegmentPathParamValues(t *testing.T) {
+	manifest := Manifest{
+		ManifestVersion: 1,
+		App:             App{ID: "safe", Version: "1.0.0", Origin: "https://app.example"},
+		Tools: []Tool{{
+			Name:        "show",
+			Method:      "GET",
+			Path:        "/v1/workspaces/{page_id}/{a}/{b}/items",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{"page_id": map[string]any{"type": "string"}, "a": map[string]any{"type": "string"}, "b": map[string]any{"type": "string"}}},
+			Params:      []Param{{Name: "page_id", In: "path"}, {Name: "a", In: "path"}, {Name: "b", In: "path"}},
+			Body:        Body{Mode: "json"},
+		}},
+	}
+	for _, value := range []string{".", "..", " ", " .. ", "a/b", "x/../..", "..\\x", "%2e%2e", "a%2Fb", "x?", "a#b", "..;", "a;b", "a\x00b", "a\nb", "a\rb", "\tx", "a\x7fb"} {
+		got, err := Interpret(InterpretRequest{Manifest: manifest, Verb: "show", Args: map[string]any{"page_id": "P", "a": "x", "b": value}})
+		if err == nil {
+			t.Fatalf("path param value %q built %s; want refusal", value, got.PathQuery)
+		}
+	}
+	for _, value := range []string{"...", ".x", "x."} {
+		if _, err := Interpret(InterpretRequest{Manifest: manifest, Verb: "show", Args: map[string]any{"page_id": "P", "a": "x", "b": value}}); err != nil {
+			t.Fatalf("path param value %q refused: %v", value, err)
+		}
+	}
+}
+
+func TestSafePathParamValue(t *testing.T) {
+	for _, value := range []string{"", " ", ".", "..", " .. ", "a/b", "x/../..", "..\\x", "%2e%2e", "a%2Fb", "x?", "a#b", "..;", "a;b", "a\x00b", "a\nb", "a\rb", "\tx", "a\x7fb"} {
+		if SafePathParamValue(value) {
+			t.Errorf("%q accepted as a path parameter value", value)
+		}
+	}
+	for _, value := range []string{"...", ".x", "x.", "t1"} {
+		if !SafePathParamValue(value) {
+			t.Errorf("%q refused as a path parameter value", value)
+		}
+	}
+}

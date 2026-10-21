@@ -48,6 +48,9 @@ func TestDeployedManifestBinaryInstallAndAllVerbs(t *testing.T) {
 	var publicPaths atomic.Value
 	publicPaths.Store(map[string]bool{})
 	f.app.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		if r.URL.Path == "/.well-known/aweb-app.json" {
 			_, _ = w.Write(served.Load().([]byte))
 			return
