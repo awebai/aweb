@@ -777,6 +777,18 @@ class Approvals:
             )
         return revoked
 
+    async def lock_many(self, tx: TransactionManager, approval_ids: Sequence[str]) -> None:
+        """Hold existing approval rows in ID order through the caller's commit.
+
+        This takes no request advisory locks and makes no writes or audit events.
+        Before a multi-batch operation, supply the complete union (including any
+        confirming approval) before taking any individual B2 locks. The caller
+        must already hold its authority/coverage locks; this grants no authority.
+        Duplicate and missing IDs are harmless.
+        """
+        async with self._store.transaction(tx) as t:
+            await self._store.lock_many(approval_ids, t)
+
     async def revoke_many(
         self,
         approval_ids: Sequence[str],
