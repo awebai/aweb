@@ -200,7 +200,7 @@ REFUND_OPERATION = {
         },
     },
     "body": {"template": {"amount": {"$param": "amount_minor_units"}, "currency": "EUR"}},
-    "headers": {"fixed": {}, "allowed": ["idempotency-key"]},
+    "headers": {"fixed": {}, "allowed": ["x-request-id"]},
     "response": {
         "projection": ["/id", "/status"],
         "max_bytes": 65536,

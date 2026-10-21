@@ -39,7 +39,7 @@ REFUND: dict[str, Any] = {
             "reason": "requested_by_customer",
         }
     },
-    "headers": {"fixed": {"Stripe-Version": "2024-06-20"}, "allowed": ["idempotency-key"]},
+    "headers": {"fixed": {"Stripe-Version": "2024-06-20"}, "allowed": ["x-request-id"]},
     "response": {
         "projection": ["/id", "/status", "/amount"],
         "max_bytes": 65536,
@@ -176,6 +176,19 @@ def test_every_field_is_required(missing) -> None:
     del op[missing]
     with pytest.raises(OperationInvalid):
         OperationTemplate.from_after(op)
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"fixed": {"Idempotency-Key": "fixed-key"}, "allowed": []},
+        {"fixed": {"idempotency-key": "fixed-key"}, "allowed": []},
+        {"fixed": {}, "allowed": ["idempotency-key"]},
+    ],
+)
+def test_the_idempotency_header_is_never_also_a_fixed_or_agent_header(headers) -> None:
+    with pytest.raises(OperationInvalid):
+        OperationTemplate.from_after(_op(headers=headers))
 
 
 def test_a_token_issuing_operation_may_withhold_its_result() -> None:
