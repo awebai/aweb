@@ -271,7 +271,7 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "billing",
-            "description": "Get the team's billing tier, caps, and usage.",
+            "description": "Get the team's usage: documents and the most versions on any document.",
             "method": "GET",
             "path": "/v1/billing",
             "input_schema": {"type": "object", "properties": {}},
