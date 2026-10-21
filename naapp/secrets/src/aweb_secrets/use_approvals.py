@@ -541,17 +541,25 @@ async def void_use_approvals(
     secret_id: str,
     current_version: int,
     revoked_by: str,
+    descendant_secret_ids: Sequence[str] = (),
 ) -> Sequence[str]:
-    """Void the secret's use approvals made for any other version, pending or
-    approved and not yet dispatched, when its value is replaced or its
-    external item changes. Returns the approvals voided."""
+    """Void other root versions and all versions of the supplied descendants.
+
+    The caller holds installation/ancestry/coverage fences and selects the scoped
+    descendants, excluding the root. For a forest or confirmation, prelock the
+    complete B2 approval union with lock_many before any per-root call. One batch
+    revokes pending/approved decisions and NOT_SENT retries; dispatched attempts
+    remain retrievable. With no descendants, only other root versions are voided.
+    """
     rows = await tx.fetch_all(
         "SELECT approval_id FROM {{tables.use_approvals}} WHERE installation_id = $1 "
-        "AND team_id = $2 AND secret_id = $3 AND secret_version <> $4",
+        "AND team_id = $2 AND ((secret_id = $3 AND secret_version <> $4) "
+        "OR secret_id = ANY($5::text[])) ORDER BY approval_id",
         installation_id,
         team_id,
         secret_id,
         current_version,
+        list(descendant_secret_ids),
     )
     revoked = await approvals.revoke_many(
         [row["approval_id"] for row in rows],
