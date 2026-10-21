@@ -680,13 +680,19 @@
           "name": "run",
           "method": "GET",
           "path": "/v1/run",
-          "params": []
+          "params": [],
+          "scopes": [
+            "utility:read"
+          ]
         },
         {
           "name": "introspect",
           "method": "GET",
           "path": "/v1/inspect",
-          "params": []
+          "params": [],
+          "scopes": [
+            "utility:read"
+          ]
         }
       ]
     },
@@ -702,13 +708,19 @@
           "name": "run",
           "method": "GET",
           "path": "/v1/run",
-          "params": []
+          "params": [],
+          "scopes": [
+            "utility:read"
+          ]
         },
         {
           "name": "introspect",
           "method": "GET",
           "path": "/v1/inspect",
-          "params": []
+          "params": [],
+          "scopes": [
+            "utility:read"
+          ]
         }
       ]
     }
@@ -7349,7 +7361,9 @@
             "introspect"
           ],
           "hook_tools": [],
-          "install_scopes": [],
+          "install_scopes": [
+            "utility:read"
+          ],
           "app_keys": [],
           "surfaces": [],
           "usage": null,
@@ -7452,7 +7466,9 @@
             "introspect"
           ],
           "hook_tools": [],
-          "install_scopes": [],
+          "install_scopes": [
+            "utility:read"
+          ],
           "app_keys": [],
           "surfaces": [],
           "usage": null,
