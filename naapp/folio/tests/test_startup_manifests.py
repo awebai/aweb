@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from manifest_config import TEST_EMIT_DID_KEY
 
 import folio.api as folio_api
 from folio.config import Settings
@@ -37,10 +38,12 @@ def test_folio_starts_and_serves_a_v1_or_v2_manifest_declaring_its_emit_key(
 ) -> None:
     manifest_path = _deployment_manifest(tmp_path, manifest_version)
     monkeypatch.setattr(folio_api, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setenv("FOLIO_APP_KEY_FILES", "{}")
     settings = Settings(
         _env_file=None,
         public_origin="http://127.0.0.1:38765",
         app_events_origin="http://127.0.0.1:38000",
+        app_key_files={},
         app_emit_kid="folio:emit-test",
         app_emit_key_seed_hex=_SEED_HEX,
     )
@@ -48,4 +51,11 @@ def test_folio_starts_and_serves_a_v1_or_v2_manifest_declaring_its_emit_key(
     response = TestClient(folio_api.create_app(settings)).get("/aweb-app.json")
 
     assert response.status_code == 200
-    assert json.loads(response.content)["manifest_version"] == manifest_version
+    served = json.loads(response.content)
+    assert served["manifest_version"] == manifest_version
+    field = "app_keys" if manifest_version == 2 else "event_emitters"
+    entry = {"kid": "folio:emit-test", "did_key": TEST_EMIT_DID_KEY}
+    if manifest_version == 2:
+        entry["purposes"] = ["app-event"]
+    assert served[field] == [entry]
+    assert served["events"][0]["type"] == "doc.changed"

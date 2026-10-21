@@ -121,7 +121,8 @@ async def _resolve(event: StoredEvent) -> Sequence[Target]:
     return [_TARGET]
 
 
-def _is_loopback(host: str) -> bool:
+def is_loopback_host(host: str) -> bool:
+    """Whether ``host`` is localhost, a ``.localhost`` name or a loopback IP."""
     host = host.lower()
     if host == "localhost" or host.endswith(".localhost"):
         return True
@@ -165,7 +166,7 @@ class AppEvents:
             return cls(app_id=settings.app_id, origin=None, key=None, policy=policy)
         parts = urlsplit(origin)
         secure = parts.scheme == "https" or (
-            parts.scheme == "http" and _is_loopback(parts.hostname or "")
+            parts.scheme == "http" and is_loopback_host(parts.hostname or "")
         )
         if not parts.netloc or not secure:
             raise ValueError(

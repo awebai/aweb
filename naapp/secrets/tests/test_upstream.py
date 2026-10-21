@@ -133,6 +133,37 @@ async def test_the_echo_reports_what_arrived(client, creds) -> None:
     }
 
 
+async def test_the_issuing_endpoint_returns_fresh_temporary_credentials(client, creds) -> None:
+    before = datetime.now(UTC)
+    responses = [
+        await client.post("/bearer/issue", headers={"Authorization": f"Bearer {creds.bearer}"})
+        for _ in range(2)
+    ]
+    assert all(response.status_code == 200 for response in responses)
+    bodies = [response.json() for response in responses]
+    for body in bodies:
+        credential = body["Credentials"]
+        assert set(credential) == {"AccessKeyId", "SecretAccessKey", "SessionToken", "Expiration"}
+        assert credential["AccessKeyId"].startswith("ASIA")
+        assert len(credential["AccessKeyId"]) == 20
+        assert len(base64.b64decode(credential["SecretAccessKey"], validate=True)) == 30
+        assert len(credential["SessionToken"]) >= 32
+        assert datetime.fromisoformat(credential["Expiration"]) > before
+        assert body["AssumedRoleUser"]["Arn"].startswith("arn:aws:sts:")
+    # Compare inside all() so a failure never prints credential values.
+    assert all(
+        bodies[0]["Credentials"][key] != bodies[1]["Credentials"][key]
+        for key in ("AccessKeyId", "SecretAccessKey", "SessionToken")
+    )
+
+
+async def test_the_issuing_endpoint_refuses_missing_or_wrong_credentials(client, creds) -> None:
+    for headers in ({}, {"Authorization": f"Bearer {creds.bearer}x"}):
+        response = await client.post("/bearer/issue", headers=headers)
+        assert response.status_code == 401
+    assert (await client.post("/unknown/issue")).status_code == 404
+
+
 # --- OAuth2 client credentials -------------------------------------------------
 
 
