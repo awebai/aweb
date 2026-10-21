@@ -58,7 +58,8 @@ An app names its signing keys by kid, as key files:
 `<PREFIX>APP_KEY_FILES='{"<kid>": "/run/secrets/<file>"}'`. A key file holds the
 32-byte Ed25519 seed as 64 hex characters, with one trailing newline allowed. It
 must be a regular file of at most 1 KiB, and must not be group- or world-writable. The manifest
-declares which kid signs which purpose, and the app does not start unless the
+declares which kid signs which purpose: a version 2 manifest in `app_keys`, a version 1
+manifest's `event_emitters` as app-event keys. The app does not start unless the
 configured key is the declared one. An app with `<PREFIX>APP_EVENTS_ORIGIN` set
 (https, or http on loopback) must hold its declared app-event key. That key may instead be given as
 `<PREFIX>APP_EMIT_KEY_SEED_HEX` with `<PREFIX>APP_EMIT_KID`, a form that signs

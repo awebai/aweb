@@ -487,15 +487,25 @@ action whose page definition has `kind: "answer"` (D1 §4, C1). The naapp's
 own invoke handler refuses any request whose action, resolved from the
 page's action definitions, is `answer`-kind, whatever manifest validation
 and host filtering did. Only the naapp can resolve that; a manifest cannot
-express it. The shared naapp runtime (`aweb_naapp`) is to enforce it in
-`authorize_request` once the runtime loads its served manifest with
-`load_manifest`; that is not shipped yet. Its acceptance case is an
-answer-kind `action_id` submitted through the invoke tool and refused.
+express it. The shared naapp runtime (`aweb_naapp`) enforces it in
+`authorize_request`, through the app's `action_kind`, which resolves the
+kind of the page action a request performs. An `answer`-kind action is
+refused on every tool except the surface's `answer_tool`
+(`answer_action_refused`). On the `invoke_tool`, an action whose kind does
+not resolve is refused (`action_unresolved`). An app that guards its
+`invoke_tool` route without an `action_kind` does not start.
 
 As an additional cheap guard, a request body for any v2 tool except a
 surface `answer_tool` that carries a member named `answer`, top-level or in
 a top-level object member, is refused (`answer_payload_refused`). This guard
-does not recognise an answer-kind action, so it is not the guarantee.
+does not recognise an answer-kind action, so it is not the guarantee. The
+naapp runtime applies it to JSON bodies; a `raw` body is opaque bytes.
+
+The naapp runtime also enforces invocation contexts at call time: a request
+calls as an agent unless its principal attestation verifies and names the
+dashboard channel, which makes it a surface caller. A tool outside the
+caller's context is refused (`tool_context_denied`). No team-auth request
+calls in the `hook` context.
 
 ### Hooks slot
 
@@ -558,15 +568,20 @@ the selected variant, fails discovery; nothing falls back to another variant
 or to the legacy path. Catalog and variant fetches follow no redirects.
 
 `aw plugin install` and `aw plugin update` discover this way. A failed
-update keeps the installed manifest. An app that publishes v2 keeps serving
-its v1 variant's exact bytes at the legacy path, so released v1-only clients
-keep installing and updating. That v1 variant must be an agent-safe subset
-of v2. Its app and events must equal v2's. Every v1 tool must be a v2 agent
-tool with an identical mapping, since a v1 tool has no contexts and is
-always agent-visible. Every v1 event emitter must be a v2 `app-event` key.
+update keeps the installed manifest. An app that publishes v2 may also
+serve a v1 variant's exact bytes at the legacy path, for released v1-only
+clients. That v1 variant must be an agent-safe subset of v2. Its app and
+events must equal v2's. Every v1 tool must be a v2 agent tool with an
+identical mapping, since a v1 tool has no contexts and is always
+agent-visible. Every v1 event emitter must be a v2 `app-event` key.
 Publishers check this with `aweb_naapp.manifest.check_v1_variant`
-(`v1_variant_incompatible`). How long the legacy v1 variant must stay is
-not settled here.
+(`v1_variant_incompatible`).
+
+The shared naapp runtime (`aweb_naapp`) serves a v1 manifest at the legacy
+path and publishes no catalog for it. For a v2 manifest it serves the
+catalog, listing the exact bytes it serves at `/manifests/v2.json`, and no
+v1 variant, so the legacy path is not found. It computes both once at
+startup.
 
 ## CLI resident and grant access
 

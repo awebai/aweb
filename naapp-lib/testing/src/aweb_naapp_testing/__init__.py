@@ -17,10 +17,11 @@ import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
+from awid.attestation_records import ATTESTATION_HEADER, encode_attestation_header, sign_record
 from awid.did import did_from_public_key
 from awid.ratelimit import NoOpRateLimiter
 from awid.registry import RegistryClient
@@ -94,6 +95,32 @@ class Registry:
 
     async def rotate_did(self, did_aw: str, old: SigningKey, new: SigningKey) -> None:
         await self._client().rotate_key(did_aw, did_key(new), bytes(old), bytes(new))
+
+    async def add_custody(self, member: Member, *, custodian_id: str, issuer: SigningKey) -> None:
+        """Publish team-signed records: ``custodian_id`` attests with ``issuer``,
+        and holds ``member``'s certificate."""
+        name, domain = member.team_id.split(":", 1)
+        issued_at = datetime.now(UTC).replace(microsecond=0)
+        common = {"v": 1, "team_id": member.team_id, "team_did_key": member.team_did_key,
+                  "custodian_id": custodian_id, "issued_at": utc_timestamp(issued_at)}
+        custodian = {**common, "type": "aweb.team-custodian", "issuer_did_keys": [did_key(issuer)]}
+        custody = {**common, "type": "aweb.member-custody", "certificate_id": member.certificate_id,
+                   "member_did_key": member.did_key}
+        for table, key_column, record, extra in (
+            ("team_custodians", "custodian_id", custodian, {}),
+            ("member_custody", "certificate_id", custody, {"custodian_id": custodian_id}),
+        ):
+            columns = "".join(f", {column}" for column in extra)
+            values = "".join(f", ${8 + i}" for i in range(len(extra)))
+            await self.db.execute(
+                f"INSERT INTO {{{{tables.{table}}}}} "
+                f"(team_uuid, {key_column}, record_json, signature, team_did_key, issued_at{columns}) "
+                f"SELECT team_uuid, $1, $2, $3, $4, $5::timestamptz{values} FROM {{{{tables.teams}}}} "
+                "WHERE domain = $6 AND name = $7",
+                record[key_column], canonical_json_bytes(record).decode(),
+                sign_record(bytes(member.team_key), record), member.team_did_key,
+                issued_at, domain, name, *extra.values(),
+            )
 
     async def rotate_team_key(self, team_id: str, team_did_key: str) -> None:
         name, domain = team_id.split(":", 1)
@@ -202,6 +229,31 @@ class Member:
             signed_payload=canonical,
             cert=cert if cert is not None else self.certificate(),
         )
+
+
+def attested(
+    member: Member, headers: dict[str, str], *, issuer: SigningKey, custodian_id: str, channel: str
+) -> dict[str, str]:
+    """``headers`` plus a principal attestation by ``issuer``, bound to their signed payload."""
+    raw = headers["X-AWEB-Signed-Payload"]
+    signed_payload = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+    now = datetime.now(UTC).replace(microsecond=0)
+    payload = {
+        "v": 1,
+        "type": "aweb.principal-attestation",
+        "team_id": member.team_id,
+        "certificate_id": member.certificate_id,
+        "member_did_key": member.did_key,
+        "custody": "custodial",
+        "custodian_id": custodian_id,
+        "issuer_did_key": did_key(issuer),
+        "channel": channel,
+        "session_id": "session-1",
+        "iat": utc_timestamp(now),
+        "exp": utc_timestamp(now + timedelta(seconds=120)),
+        "request_binding": hashlib.sha256(signed_payload).hexdigest(),
+    }
+    return {**headers, ATTESTATION_HEADER: encode_attestation_header(bytes(issuer), payload)}
 
 
 def envelope_headers(
