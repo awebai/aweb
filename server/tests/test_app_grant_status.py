@@ -15,6 +15,7 @@ from httpx import ASGITransport, AsyncClient
 
 from aweb import app_credentials
 from aweb.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, PURPOSES
+from aweb.app_registry import get_installation_on
 from aweb.config import get_app_grant_max_age_seconds
 from aweb.hook_bindings import PRODUCTION, HookBindingDeclaration, write_pending_bindings
 from aweb.routes.app_hooks import router as app_hooks_router
@@ -290,9 +291,10 @@ async def vector_installed(aweb_cloud_db, monkeypatch):
     # production of that hook; owner activation is not built, so the row is
     # given the values a real activation must satisfy.
     async with db.transaction() as tx:
+        installation = await get_installation_on(tx, team_id=TEAM_ID, app_id="folio")
         [production] = await write_pending_bindings(
-            tx, team_id=TEAM_ID, app_id="folio", origin="https://folio.aweb.ai", digest=DIGEST,
-            installation_id="inst-folio", generation=1,
+            tx, team_id=TEAM_ID, app_id="folio", origin=installation["origin"], digest=installation["digest"],
+            installation_id=installation["installation_id"], generation=installation["generation"],
             declarations=[
                 HookBindingDeclaration(
                     kind=PRODUCTION, catalog_id="aweb.hooks", catalog_version=1, hook="post-secret-use-hook"
