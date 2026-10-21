@@ -1,6 +1,7 @@
 """A real CLI and TLS app origin against aweb, AWID, PostgreSQL and Redis."""
 
 import asyncio
+import base64
 import json
 import os
 from pathlib import Path
@@ -8,11 +9,11 @@ from pathlib import Path
 import pytest
 import test_app_manifest_fetch as manifest_fixture
 import test_dashboard_privacy as services
+from aweb.app_manifests import ManifestFetcher
 from aweb_naapp.egress import InternalDestinations, parse_destination
 from aweb_naapp_testing.network import local_address
+from awid.signing import canonical_json_bytes, sign_message
 from test_agent_activity_emitter_e2e import _team_home
-
-from aweb.app_manifests import ManifestFetcher
 
 origin = manifest_fixture.origin
 privacy_app = services.privacy_app
@@ -42,6 +43,13 @@ async def test_cli_member_request_admin_install_update_and_refused_update_preser
 
     env.app.state.install_admin_policy = policy
     home = _team_home(env, tmp_path, "alice")
+    # Local certificates produced by Go omit these empty optional fields. Sign
+    # the same shape the CLI re-encodes, as the existing CLI fixtures do.
+    certificate = json.loads(base64.b64decode(env.actors["alice"].certificate))
+    for field in ("member_did_aw", "member_address", "signature"):
+        certificate.pop(field)
+    certificate["signature"] = sign_message(env.team_sk, canonical_json_bytes(certificate))
+    next((home / "team-certs").glob("*.pem")).write_text(json.dumps(certificate))
     (home / "identity.yaml").write_text(json.dumps({
         "schema_version": 2, "did": env.actors["alice"].did,
         "custody": "self", "identity_scope": "local",
