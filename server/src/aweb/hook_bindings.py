@@ -15,6 +15,7 @@ spell them in, so a reader reports exactly what is stored.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -405,6 +406,7 @@ async def _apply_owner_act(
     binding_id: UUID | str,
     signing: bytes,
     signature: str,
+    in_transaction: Callable[[Any], Awaitable[None]] | None,
 ) -> HookBinding:
     team_id = validate_team_id(team_id)
     # Refusals that need no signature come first; the transaction checks them again.
@@ -457,25 +459,46 @@ async def _apply_owner_act(
                 binding.binding_id,
                 act_sha256,
             )
+        if in_transaction is not None:
+            await in_transaction(tx)
     return binding_from_row(row)
 
 
 async def activate_binding(
-    db, verifier: OwnerActVerifier, *, team_id: str, binding_id: UUID | str, signing: bytes, signature: str
+    db,
+    verifier: OwnerActVerifier,
+    *,
+    team_id: str,
+    binding_id: UUID | str,
+    signing: bytes,
+    signature: str,
+    in_transaction: Callable[[Any], Awaitable[None]] | None = None,
 ) -> HookBinding:
     """Activate a pending binding under the team owner's ``hook-binding.activate``
     act. It applies from 60 s after activation, so every producer has refreshed
-    its view before the binding receives anything."""
+    its view before the binding receives anything. ``in_transaction`` runs in
+    the transaction that changes the binding, where the change's hook event is
+    enqueued."""
     return await _apply_owner_act(
-        db, verifier, act=ACTIVATE, team_id=team_id, binding_id=binding_id, signing=signing, signature=signature
+        db, verifier, act=ACTIVATE, team_id=team_id, binding_id=binding_id, signing=signing, signature=signature,
+        in_transaction=in_transaction,
     )
 
 
 async def revoke_binding(
-    db, verifier: OwnerActVerifier, *, team_id: str, binding_id: UUID | str, signing: bytes, signature: str
+    db,
+    verifier: OwnerActVerifier,
+    *,
+    team_id: str,
+    binding_id: UUID | str,
+    signing: bytes,
+    signature: str,
+    in_transaction: Callable[[Any], Awaitable[None]] | None = None,
 ) -> HookBinding:
     """Revoke a pending or active binding under the team owner's
-    ``hook-binding.revoke`` act."""
+    ``hook-binding.revoke`` act. ``in_transaction`` runs in the
+    transaction that changes the binding."""
     return await _apply_owner_act(
-        db, verifier, act=REVOKE, team_id=team_id, binding_id=binding_id, signing=signing, signature=signature
+        db, verifier, act=REVOKE, team_id=team_id, binding_id=binding_id, signing=signing, signature=signature,
+        in_transaction=in_transaction,
     )

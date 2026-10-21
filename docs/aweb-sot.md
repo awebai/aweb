@@ -643,6 +643,7 @@ router entry.
 - `agent_status`
 - `agent_activity`
 - `apps`
+- `hook_bindings`
 - `connect`
 - `chat`
 - `dashboard`

@@ -28,11 +28,17 @@ from tests.test_hook_binding_activation import (  # noqa: F401
     _install,
     env,
 )
+from aweb.audit import AuditActor, set_verified_audit_actor
 from aweb.team_auth_deps import TeamIdentity
 
 
 def _identity(team_id: str):
     async def identity(request, db_infra) -> TeamIdentity:
+        # Real team-certificate auth sets the verified operator-audit actor.
+        set_verified_audit_actor(
+            request,
+            AuditActor(team_id=team_id, principal_type="c", auth_mode="team_auth_v2", did_key="did:key:z6Mkalice"),
+        )
         return TeamIdentity(
             team_id=team_id, alias="alice", did_key="did:key:z6Mkalice", did_aw="did:aw:alice",
             address="acme.com/alice", agent_id="00000000-0000-0000-0000-000000000123",
@@ -138,3 +144,12 @@ async def test_refusals_carry_their_status_and_code(env, monkeypatch):
     assert malformed.status_code == 422
     assert extra.status_code == 422
     assert unknown.status_code == 404
+
+
+def test_the_server_mounts_the_hook_binding_routes():
+    from aweb.api import create_app
+
+    paths = {(route.path, tuple(sorted(route.methods))) for route in create_app().routes if hasattr(route, "methods")}
+    assert ("/v1/apps/hook-bindings", ("GET",)) in paths
+    assert ("/v1/apps/hook-bindings/{binding_id}/activate", ("POST",)) in paths
+    assert ("/v1/apps/hook-bindings/{binding_id}/revoke", ("POST",)) in paths

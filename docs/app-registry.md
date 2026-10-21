@@ -170,6 +170,93 @@ Response:
 - `400` means invalid `team_id`; `401`/`403` means the caller cannot read that
   team; storage failures are server errors.
 
+## Hook bindings
+
+An installed app's declared hook registrations and productions are its hook
+bindings (`docs/design/audit-substrate.md` §A3; the catalog is
+`docs/hook-events.md`). Each install generation writes its bindings as
+`pending`. Only the team owner moves one to `active` or `revoked`, with an
+`aweb.owner-act/1` (`docs/owner-act.md`) whose subject names exactly the stored
+binding. A new generation supersedes every earlier binding (`superseded`), so an
+activation is never inherited, and uninstall revokes the live ones.
+
+```http
+GET /v1/apps/hook-bindings?team_id=<name:domain>&app_id=<app_id>
+```
+
+Authentication: team-certificate auth for the requested team, as for the
+installed-apps read. Every binding of the app in the team is returned, in every
+state:
+
+```json
+{
+  "team_id": "default:example.com",
+  "bindings": [
+    {
+      "binding_id": "6f1c4d2e-0b7a-4c55-9a51-2f6d0e8b1a90",
+      "kind": "registration",
+      "team_id": "default:example.com",
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "generation": 1,
+      "app_id": "logs",
+      "origin": "https://logs.example",
+      "digest": "sha256:4f3c000000000000000000000000000000000000000000000000000000000000",
+      "catalog_id": "aweb.hooks",
+      "catalog_version": 1,
+      "hook": "post-secret-use-hook",
+      "tool": "ingest",
+      "method": "POST",
+      "path": "/hooks/ingest",
+      "scopes": ["logs:append", "logs:write"],
+      "reads": [],
+      "state": "active",
+      "ended_by": null,
+      "activated_at": "2026-10-20T12:00:00.000Z",
+      "active_from": "2026-10-20T12:01:00.000Z",
+      "revoked_at": null
+    }
+  ]
+}
+```
+
+- A registration names its resolved `tool`, `method`, raw `path` and `scopes`;
+  a production has those null or empty and names its `reads`. Both lists are
+  sorted by code point and distinct, the order the owner act's subject uses.
+- Times are stored and returned to the millisecond. `active_from` is exactly
+  60 s after `activated_at`, so every producer has refreshed before the binding
+  receives an event, and no history is delivered to it.
+- `ended_by` is `owner_act`, `uninstall` or `generation` once a binding ends.
+
+```http
+POST /v1/apps/hook-bindings/{binding_id}/activate
+POST /v1/apps/hook-bindings/{binding_id}/revoke
+```
+
+Body: `{"act": "<standard base64 of the signed bytes>", "signature": "<standard
+base64, no padding>"}`, with no other field. The signed bytes are
+`aweb.owner-act/1\n` followed by the act's canonical JSON. Authentication:
+team-certificate auth; the caller's team scopes which bindings the request can
+name, and the owner act is the authority for the change.
+
+- The act's `act` is `hook-binding.activate` or `hook-binding.revoke` for the
+  matching route, its `aud` is the server's public origin, and its signature
+  verifies against the team's controller key read fresh from AWID. It is
+  single-use.
+- Its subject is the binding as listed, with `catalog_id` and `catalog_version`
+  flat. A registration's subject carries `tool`, `method`, `path` and `scopes`;
+  a production's carries `reads`.
+- Activation needs a `pending` binding whose install carries its installation
+  identity. A production activates only when its install registered, from its
+  pinned manifest bytes, a key declaring `hook-event` or `hook-delivery`.
+  Revocation takes a `pending` or `active` binding.
+- The answer is the changed binding. Refusals: `404` for a binding that is not
+  the caller's team's; `403` with the owner-act code (`owner_required`,
+  `bad_signature`, `audience_mismatch`, `expired`, `act_not_allowed`, ...) when
+  the act is not the team owner's for this change; `409` for `subject_mismatch`,
+  `nonce_reused`, or a binding that is superseded, ended, not pending, without
+  installation identity, or a production without hook keys; `422` for a
+  malformed body or act.
+
 ## Operator reseed from manifest bytes
 
 ```sh
