@@ -8,7 +8,9 @@ record v1 and stored through S8.
 
 from __future__ import annotations
 
+import asyncio
 import copy
+import os
 from dataclasses import replace
 from datetime import timedelta
 from typing import Any
@@ -20,9 +22,10 @@ from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from aweb_secrets import records
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_sets import ChangeSets, DraftLimit
-from aweb_secrets.custody import CustodyUnavailable
+from aweb_secrets.custody import CustodyUnavailable, ValueInvalid, encode_value
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
+from aweb_secrets.secret import SecretRecord
 from tests.test_change_sets import (  # noqa: F401
     ALICE,
     BOB,
@@ -38,11 +41,16 @@ from tests.test_change_sets import (  # noqa: F401
     enrol_owner,
     sealed_value,
     secret_value,
-    world,
 )
 from tests.test_change_sets import confirm as confirm_change
+from tests.test_change_sets import (
+    world as _world,
+)
 from tests.test_grant_record import TEMPLATE, USE
 from tests.test_operation_record import REFUND
+from tests.test_secret_record import KIND_PARAMS
+
+world = _world
 
 DESTINATION = {
     "v": 1,
@@ -88,8 +96,10 @@ def item(kind: str, op: str, ref: str, after: dict[str, Any]) -> dict[str, Any]:
     return {"kind": kind, "op": op, "ref": ref, "after": after}
 
 
-async def confirmed(world: World, changes: list[dict[str, Any]], sealed_values=(), base=0) -> None:  # noqa: F811
-    change = change_set(drafter=by_member(CAROL), changes=changes, base_revision=base)
+async def confirmed(  # noqa: F811
+    world: World, changes: list[dict[str, Any]], sealed_values=(), base=0, drafter=CAROL
+) -> None:
+    change = change_set(drafter=by_member(drafter), changes=changes, base_revision=base)
     await decide(world, await draft(world, change, sealed_values), "alice@acme.com")
     await confirm_change(world, change)
 
@@ -109,7 +119,9 @@ async def test_a_secret_and_its_first_value_arrive_together(world: World) -> Non
     )
     stored = await stored_secret(world)
     assert stored is not None and stored.active_version == first.version
-    assert (await world.custody.opener.open(first)).reveal() == b"first"
+    assert (await world.custody.opener.open(first)).reveal() == encode_value(
+        "bearer", {"value": "first"}
+    )
 
 
 async def test_a_new_value_replaces_and_destroys_the_old_one(world: World) -> None:  # noqa: F811
@@ -418,3 +430,240 @@ async def test_updating_an_unknown_secret_is_refused(world: World) -> None:  # n
     with pytest.raises(ChangeRefused) as refused:
         await confirm_change(world, change)
     assert refused.value.code == "record_missing"
+
+
+def updated(**changes: Any) -> dict[str, Any]:
+    return item("secret", "update", "payments-live", {**SECRET, **changes})
+
+
+RESHAPED = [
+    {"kind": "header", "kind_params": {"name": "X-Api-Key", "prefix": ""}},
+    {"backend": "1password"},
+]
+
+
+@pytest.mark.parametrize("changes", RESHAPED)
+async def test_a_sealed_secrets_kind_and_backend_are_fixed(  # noqa: F811
+    world: World, changes: dict[str, Any]
+) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    first = await sealed_value(world)
+    await confirmed(
+        world,
+        [item("secret", "create", "payments-live", SECRET), secret_value(first.version)],
+        [first],
+    )
+    with pytest.raises(ChangeRefused) as refused:
+        await draft(
+            world,
+            change_set(drafter=by_member(CAROL), changes=[updated(**changes)], base_revision=1),
+        )
+    assert refused.value.code == "sealed_secret_fixed"
+
+
+@pytest.mark.parametrize("changes", RESHAPED)
+async def test_a_reshape_drafted_before_any_value_is_refused_once_one_is_sealed(  # noqa: F811
+    world: World, changes: dict[str, Any]
+) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    await confirmed(world, [item("secret", "create", "payments-live", SECRET)])
+    change = change_set(drafter=by_member(CAROL), changes=[updated(**changes)], base_revision=1)
+    await decide(world, await draft(world, change), "alice@acme.com")
+    await sealed_value(world)
+    with pytest.raises(ChangeRefused) as refused:
+        await confirm_change(world, change)
+    assert refused.value.code == "sealed_secret_fixed"
+
+
+@pytest.mark.parametrize("changes", RESHAPED)
+async def test_a_secret_without_a_sealed_value_can_be_reshaped(  # noqa: F811
+    world: World, changes: dict[str, Any]
+) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    await confirmed(world, [item("secret", "create", "payments-live", SECRET)])
+    await confirmed(world, [updated(**changes)], base=1)
+    stored = await stored_secret(world)
+    assert stored is not None and stored.record.after == {**SECRET, **changes}
+
+
+async def test_a_sealed_secrets_sensitivity_and_approve_only_can_change(world: World) -> None:  # noqa: F811
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    first = await sealed_value(world)
+    await confirmed(
+        world,
+        [item("secret", "create", "payments-live", SECRET), secret_value(first.version)],
+        [first],
+    )
+    await confirmed(world, [updated(sensitivity="sensitive", approve_only=True)], base=1)
+    await confirmed(world, [updated()], base=2, drafter=BOB)
+    stored = await stored_secret(world)
+    assert stored is not None and stored.record.after == SECRET
+    assert stored.active_version == first.version
+
+
+PLACEMENT_CHANGES = [
+    ("header", "name", "X-Other-Key"),
+    ("header", "prefix", "Other "),
+    ("query", "param", "other_key"),
+    ("oauth2-client-credentials", "token_endpoint", "https://other.example.com/token"),
+    ("oauth2-client-credentials", "client_auth", "client_secret_post"),
+    ("aws-sigv4", "region", "us-east-1"),
+    ("aws-sigv4", "service", "s3"),
+]
+
+
+@pytest.mark.parametrize(("kind", "field", "replacement"), PLACEMENT_CHANGES)
+@pytest.mark.parametrize("stage", ["draft", "confirm"])
+async def test_value_placing_params_are_fixed_after_sealing(
+    world: World, kind: str, field: str, replacement: str, stage: str
+) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    original = {**SECRET, "kind": kind, "kind_params": KIND_PARAMS[kind]}
+    await confirmed(world, [item("secret", "create", "payments-live", original)])
+    altered = {**original, "kind_params": {**KIND_PARAMS[kind], field: replacement}}
+    change = change_set(
+        drafter=by_member(CAROL),
+        changes=[item("secret", "update", "payments-live", altered)],
+        base_revision=1,
+    )
+    if stage == "confirm":
+        await decide(world, await draft(world, change), "alice@acme.com")
+    await sealed_value(world)
+    with pytest.raises(ChangeRefused) as refused:
+        if stage == "draft":
+            await draft(world, change)
+        else:
+            await confirm_change(world, change)
+    assert refused.value.code == "sealed_secret_fixed"
+
+
+async def test_a_destroyed_value_still_fixes_the_secrets_shape(world: World) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    await confirmed(world, [item("secret", "create", "payments-live", SECRET)])
+    first = await sealed_value(world)
+    async with world.db.transaction() as tx:
+        await world.custody.destroy(tx, first)
+    assert not await world.db.fetch_value("SELECT 1 FROM {{tables.sealed_versions}}")
+    with pytest.raises(ChangeRefused) as refused:
+        await draft(
+            world,
+            change_set(drafter=by_member(CAROL), changes=[updated(**RESHAPED[0])], base_revision=1),
+        )
+    assert refused.value.code == "sealed_secret_fixed"
+
+
+async def wait_blocked(world: World, waiter: int, holder: int) -> None:
+    async with asyncio.timeout(5):
+        while holder not in await world.db.fetch_value("SELECT pg_blocking_pids($1)", waiter):
+            await asyncio.sleep(0.01)
+
+
+async def test_first_ingest_commits_before_reshape_checks_history(world: World) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    await confirmed(world, [item("secret", "create", "payments-live", SECRET)])
+    change = change_set(drafter=by_member(CAROL), changes=[updated(**RESHAPED[0])], base_revision=1)
+    await decide(world, await draft(world, change), "alice@acme.com")
+    ready = asyncio.get_running_loop().create_future()
+
+    async def reshape():
+        async with world.db.transaction() as tx:
+            ready.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
+            await world.change_sets.confirm(
+                tx,
+                change["change_id"],
+                operation_id="concurrent-reshape",
+                fence=world.fence,
+                admitted=world.admitted,
+            )
+
+    task = None
+    try:
+        async with world.db.transaction() as tx:
+            holder = await tx.fetch_value("SELECT pg_backend_pid()")
+            await world.custody.sealer.ingest(
+                tx,
+                installation_id=INSTALLATION_ID,
+                team_id=TEAM,
+                secret_id=SECRET_ID,
+                value=encode_value("bearer", {"value": os.urandom(24).hex()}),
+            )
+            task = asyncio.create_task(reshape())
+            waiter = await asyncio.wait_for(ready, 5)
+            await wait_blocked(world, waiter, holder)
+        with pytest.raises(ChangeRefused) as refused:
+            await asyncio.wait_for(task, 5)
+        assert refused.value.code == "sealed_secret_fixed"
+        assert (await stored_secret(world)).record.kind == "bearer"
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "changed", [{"kind": "basic", "kind_params": {}}, {"backend": "1password"}]
+)
+async def test_ingest_rechecks_the_record_after_waiting_for_reshape(world: World, changed) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    await confirmed(world, [item("secret", "create", "payments-live", SECRET)])
+    change = change_set(drafter=by_member(CAROL), changes=[updated(**changed)], base_revision=1)
+    await decide(world, await draft(world, change), "alice@acme.com")
+    ready = asyncio.get_running_loop().create_future()
+
+    async def ingest():
+        async with world.db.transaction() as tx:
+            ready.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
+            return await world.custody.sealer.ingest(
+                tx,
+                installation_id=INSTALLATION_ID,
+                team_id=TEAM,
+                secret_id=SECRET_ID,
+                value=encode_value("bearer", {"value": os.urandom(24).hex()}),
+                initial=SecretRecord.from_after(SECRET),
+            )
+
+    task = None
+    try:
+        async with world.db.transaction() as tx:
+            holder = await tx.fetch_value("SELECT pg_backend_pid()")
+            await world.change_sets.confirm(
+                tx,
+                change["change_id"],
+                operation_id="reshape-first",
+                fence=world.fence,
+                admitted=world.admitted,
+            )
+            task = asyncio.create_task(ingest())
+            waiter = await asyncio.wait_for(ready, 5)
+            await wait_blocked(world, waiter, holder)
+        with pytest.raises((ValueInvalid, CustodyUnavailable)):
+            await asyncio.wait_for(task, 5)
+        assert not await world.db.fetch_value("SELECT 1 FROM {{tables.custody_secrets}}")
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_an_oauth_scope_stays_editable_after_sealing(world: World) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    params = KIND_PARAMS["oauth2-client-credentials"]
+    original = {**SECRET, "kind": "oauth2-client-credentials", "kind_params": params}
+    await confirmed(world, [item("secret", "create", "payments-live", original)])
+    await sealed_value(world)
+    after = {**original, "kind_params": {**params, "scope": "payments:read"}}
+    await confirmed(world, [item("secret", "update", "payments-live", after)], base=1)
+    assert (await stored_secret(world)).record.after == after
+
+
+async def test_ingest_without_a_parent_requires_an_initial_create_candidate(world: World) -> None:
+    with pytest.raises(CustodyUnavailable):
+        async with world.db.transaction() as tx:
+            await world.custody.sealer.ingest(
+                tx,
+                installation_id=INSTALLATION_ID,
+                team_id=TEAM,
+                secret_id=SECRET_ID,
+                value=encode_value("bearer", {"value": os.urandom(24).hex()}),
+            )
+    assert not await world.db.fetch_value("SELECT 1 FROM {{tables.custody_secrets}}")

@@ -77,7 +77,7 @@ from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, approver_scope, owner_scope
 from aweb_secrets.policy import Policy
 from aweb_secrets.revisions import claim_config_revision, config_revision
-from aweb_secrets.secret import SecretRecord
+from aweb_secrets.secret import SecretRecord, sealed_shape_changed
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "change_set_migrations"
 MIGRATIONS_MODULE = "aweb_secrets_change_sets"
@@ -268,6 +268,11 @@ class ChangeSets:
                     "the sealed value belongs to another change set", code="sealed_value_taken"
                 )
         await self._bind_sealed(tx, change, sealed)
+        for item in change["changes"]:
+            if item["kind"] == "secret" and item["op"] == "update":
+                await self._check_sealed_shape(
+                    tx, installation_id, team_id, SecretRecord.from_after(item["after"]), lock=False
+                )
         for index, item in enumerate(change["changes"]):
             if item["kind"] == "destination":
                 self._destination(item["after"], f"change.changes[{index}]")
@@ -566,6 +571,7 @@ class ChangeSets:
                         record.secret_id,
                     ):
                         raise _exists(kind, record.ref)
+                    await self._check_sealed_shape(tx, installation_id, team_id, record, lock=True)
                     await records.update_secret(tx, installation_id, team_id, record)
             elif kind == "secret_value":
                 await self._replace_value(tx, change, after)
@@ -612,6 +618,36 @@ class ChangeSets:
             raise ChangeRefused(str(refused), code=refused.code) from None
         except records.RecordMissing as missing:
             raise ChangeRefused(str(missing), code="record_missing") from None
+
+    async def _check_sealed_shape(
+        self,
+        tx: TransactionManager,
+        installation_id: str,
+        team_id: str,
+        record: SecretRecord,
+        *,
+        lock: bool,
+    ) -> None:
+        # FOR UPDATE conflicts with ingest's KEY SHARE (NO KEY UPDATE does not).
+        # Read custody in a subsequent statement to see an ingest we waited for.
+        row = await tx.fetch_one(
+            "SELECT record FROM {{tables.secrets}}"
+            " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3"
+            + (" FOR UPDATE" if lock else ""),
+            installation_id,
+            team_id,
+            record.secret_id,
+        )
+        if row is None:
+            return  # Applying the update reports record_missing.
+        current = SecretRecord.from_after(_request(row["record"]))
+        if sealed_shape_changed(current, record) and await self._custody.ever_sealed(
+            tx, installation_id=installation_id, team_id=team_id, secret_id=record.secret_id
+        ):
+            raise ChangeRefused(
+                "a sealed secret's kind, backend and value placement are fixed",
+                code="sealed_secret_fixed",
+            )
 
     async def _replace_value(
         self, tx: TransactionManager, change: Mapping[str, Any], after: Mapping[str, Any]

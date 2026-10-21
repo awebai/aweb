@@ -187,3 +187,30 @@ class SecretRecord:
             "approve_only": self.approve_only,
             "backend": self.backend,
         }
+
+
+def widened_fields(current: SecretRecord, after: SecretRecord) -> frozenset[str]:
+    """The fields an update of ``current`` to ``after`` widens (§6.3): leaving
+    sensitive for standard, or turning approve_only off."""
+    widened = set()
+    if current.sensitivity == "sensitive" and after.sensitivity == "standard":
+        widened.add("sensitivity")
+    if current.approve_only and not after.approve_only:
+        widened.add("approve_only")
+    return frozenset(widened)
+
+
+def sealed_shape_changed(current: SecretRecord, after: SecretRecord) -> bool:
+    """Whether an update changes a sealed value's interpretation or destination
+    (decision 65). OAuth scope remains editable."""
+    if current.kind != after.kind or current.backend != after.backend:
+        return True
+    placement = {
+        "bearer": (),
+        "basic": (),
+        "header": ("name", "prefix"),
+        "query": ("param",),
+        "oauth2-client-credentials": ("token_endpoint", "client_auth"),
+        "aws-sigv4": ("region", "service"),
+    }[current.kind]
+    return any(current.kind_params[name] != after.kind_params[name] for name in placement)

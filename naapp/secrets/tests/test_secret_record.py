@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from aweb_secrets.principal import is_principal
-from aweb_secrets.secret import KINDS, SecretInvalid, SecretRecord, mint_secret_id
+from aweb_secrets.secret import KINDS, SecretInvalid, SecretRecord, mint_secret_id, widened_fields
 
 RECORD = {
     "v": 1,
@@ -177,3 +177,25 @@ def test_an_oauth2_scope_may_be_empty() -> None:
     params = {**OAUTH2, "scope": ""}
     record = SecretRecord.from_after(_record(kind="oauth2-client-credentials", kind_params=params))
     assert record.kind_params == params
+
+
+APPROVE_ONLY = _record(approve_only=True)
+STANDARD = _record(sensitivity="standard")
+
+
+@pytest.mark.parametrize(
+    ("current", "after", "widened"),
+    [
+        (RECORD, STANDARD, {"sensitivity"}),
+        (APPROVE_ONLY, RECORD, {"approve_only"}),
+        (APPROVE_ONLY, STANDARD, {"sensitivity", "approve_only"}),
+        (STANDARD, RECORD, set()),
+        (RECORD, APPROVE_ONLY, set()),
+        (RECORD, _record(description="Rotated quarterly"), set()),
+        (RECORD, RECORD, set()),
+    ],
+)
+def test_an_update_widens_when_it_leaves_sensitive_or_approve_only(current, after, widened) -> None:
+    assert (
+        widened_fields(SecretRecord.from_after(current), SecretRecord.from_after(after)) == widened
+    )

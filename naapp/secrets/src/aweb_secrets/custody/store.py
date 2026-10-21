@@ -4,11 +4,20 @@ The console holds a :class:`SecretSealer`, which can only add a value. The
 broker holds a :class:`SecretOpener`, which is the only way a stored value is
 unsealed. The app's composition hands each its own; :class:`Custody` holds
 both, with the operations that never reveal a value.
+
+Lock order (decisions 43, 59, 65c): installation fence, role hold, approval
+and candidates, four-eyes setting, revision, then record writes. Within record
+writes, lock the parent secrets row before custody rows: KEY SHARE for ingest,
+UPDATE for reshaping. Existing ingest validates against the record re-read under
+that lock; only initial-create drafts may have no parent yet. All callers run
+at READ COMMITTED. Reshape checks retained custody history in a separate
+statement after acquiring UPDATE, so an ingest it waited for is visible.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +25,8 @@ from typing import Literal
 
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
+
+from aweb_secrets.secret import SecretRecord
 
 from .sealing import (
     CustodyUnavailable,
@@ -27,6 +38,7 @@ from .sealing import (
     seal_canary,
     unseal,
 )
+from .values import decode_value
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_secrets_custody"
@@ -52,6 +64,7 @@ class SecretSealer:
         team_id: str,
         secret_id: str,
         value: bytes,
+        initial: SecretRecord | None = None,
     ) -> int:
         """Store ``value`` as the secret's next version, in the caller's transaction.
 
@@ -59,7 +72,30 @@ class SecretSealer:
         the transaction ends, so concurrent ingests take turns. A disabled
         secret takes no new value. Sealing makes one call to the key provider
         while that lock is held, so with KMS the transaction's latency includes
-        one KMS round trip, bounded by the client's timeouts."""
+        one KMS round trip, bounded by the client's timeouts.
+
+        ``value`` is encoded with encode_value. Existing records are re-read
+        under KEY SHARE and their current kind/backend/params govern validation.
+        ``initial`` is only for an inert first-create draft with no record yet;
+        if a parent exists, it always wins over that candidate."""
+        row = await tx.fetch_one(
+            "SELECT record FROM {{tables.secrets}}"
+            " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3 FOR KEY SHARE",
+            installation_id,
+            team_id,
+            secret_id,
+        )
+        if row is not None:
+            record = SecretRecord.from_after(json.loads(row["record"]))
+        elif initial is not None and initial.secret_id == secret_id:
+            # The candidate belongs to a first-create draft; confirmation will
+            # create its record. The existing-record path never trusts it.
+            record = SecretRecord.from_after(initial.after)
+        else:
+            raise CustodyUnavailable("no secret record or initial-create candidate")
+        if record.backend != "native":
+            raise CustodyUnavailable("the secret does not use native custody")
+        decode_value(record.kind, value)
         allocated = await tx.fetch_one(
             """
             INSERT INTO {{tables.custody_secrets}}
@@ -180,6 +216,24 @@ class Custody:
             version=row["version"],
             updated_at=row["created_at"],
             state="disabled" if row["disabled_at"] is not None else "active",
+        )
+
+    async def ever_sealed(
+        self, tx: TransactionManager, *, installation_id: str, team_id: str, secret_id: str
+    ) -> bool:
+        """Whether any version of the secret was ever sealed, destroyed or not,
+        whether or not any sealed versions survive. The caller must hold the
+        parent secrets row FOR UPDATE before using this to authorize a reshape;
+        this read alone cannot lock a custody row that does not yet exist."""
+        return bool(
+            await tx.fetch_value(
+                "SELECT 1 FROM {{tables.custody_secrets}}"
+                " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3"
+                " AND last_version > 0",
+                installation_id,
+                team_id,
+                secret_id,
+            )
         )
 
     async def disable(

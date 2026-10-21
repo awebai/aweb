@@ -8,6 +8,7 @@ transaction that admits its approval.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 import uuid
@@ -67,6 +68,7 @@ from aweb_secrets.custody import (
     LocalKeyFileProvider,
     SealContext,
     apply_custody_migrations,
+    encode_value,
 )
 from aweb_secrets.owners import (
     OWNER_ROLE,
@@ -185,6 +187,9 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
         owner_scopes=is_owner_scope,
     )
     await passkeys.migrate()
+    await AsyncMigrationManager(
+        db, migrations_path=str(MIGRATIONS_PATH), module_name=MODULE_NAME
+    ).apply_pending_migrations()
     for migrate in (
         apply_roles_migrations,
         apply_owner_act_migrations,
@@ -196,9 +201,6 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
         apply_installation_migrations,
     ):
         await migrate(db)
-    await AsyncMigrationManager(
-        db, migrations_path=str(MIGRATIONS_PATH), module_name=MODULE_NAME
-    ).apply_pending_migrations()
     installations = Installations()
     fence = InstallationFence(db, app_id=APP_ID, grants=installations)
     await fence.refresh(TEAM)
@@ -500,9 +502,22 @@ SECRET = {
 
 
 async def sealed_value(world: World, contents: bytes = b"v") -> SealContext:
+    from aweb_secrets.operation import CAPTURE_FIELDS
+    from aweb_secrets.secret import SecretRecord
+
     async with world.db.transaction() as tx:
+        body = await tx.fetch_value(
+            "SELECT record FROM {{tables.secrets}} WHERE secret_id = $1", SECRET_ID
+        )
+        candidate = SecretRecord.from_after(json.loads(body) if body else SECRET)
+        fields, _ = CAPTURE_FIELDS[candidate.kind]
         version = await world.custody.sealer.ingest(
-            tx, installation_id=INSTALLATION_ID, team_id=TEAM, secret_id=SECRET_ID, value=contents
+            tx,
+            installation_id=INSTALLATION_ID,
+            team_id=TEAM,
+            secret_id=SECRET_ID,
+            value=encode_value(candidate.kind, dict.fromkeys(fields, contents.decode())),
+            initial=candidate,
         )
     return SealContext(
         installation_id=INSTALLATION_ID, team_id=TEAM, secret_id=SECRET_ID, version=version
@@ -557,7 +572,9 @@ async def test_a_live_draft_keeps_its_sealed_versions(world: World) -> None:
     sealed = await sealed_value(world)
     await draft(world, change_set(drafter=by_member(CAROL), changes=new_secret(sealed)), [sealed])
     assert await world.change_sets.expire(now=datetime.now(UTC)) == 0
-    assert (await world.custody.opener.open(sealed)).reveal() == b"v"
+    assert (await world.custody.opener.open(sealed)).reveal() == encode_value(
+        "bearer", {"value": "v"}
+    )
 
 
 def designate_approver(ref: str, contact: str, covers: list[str]) -> dict[str, Any]:
@@ -643,7 +660,9 @@ async def test_a_draft_takes_only_its_own_installations_sealed_values(
             world, change_set(drafter=by_member(CAROL), changes=new_secret(sealed)), [foreign]
         )
     assert refused.value.code == "sealed_value_foreign"
-    assert (await world.custody.opener.open(sealed)).reveal() == b"v"
+    assert (await world.custody.opener.open(sealed)).reveal() == encode_value(
+        "bearer", {"value": "v"}
+    )
 
 
 async def test_a_sealed_value_belongs_to_one_draft(world: World) -> None:

@@ -37,3 +37,17 @@ make test
 ```
 
 The tests need PostgreSQL, as pgdbm's test fixtures configure it.
+
+Custody ingests structured values using `encode_value(kind, fields)`; the broker
+uses `decode_value(kind, opened.reveal())`. Both live in `aweb_secrets.custody`
+and share the fields in `operation.CAPTURE_FIELDS`. Decode failures carry no
+value bytes. The stored payload is UTF-8 JSON; callers never log it.
+
+Apply the app's record migrations before custody migrations. Existing-secret
+ingest locks and re-reads its secret record before validating and sealing. A
+first-create draft passes its candidate as `initial=record`, since the record
+is created only at confirmation. Once any value has been sealed, the kind,
+backend and parameters controlling where it goes are fixed, even if all value
+versions are destroyed. OAuth scope and descriptions remain editable. Both draft
+and confirmation refuse a reshape; confirmation serializes with ingest under the
+parent-then-custody lock order documented in `custody.store`.
