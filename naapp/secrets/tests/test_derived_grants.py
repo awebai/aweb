@@ -4,9 +4,11 @@ import pytest
 
 from aweb_secrets import derived_grants, derived_lineage, records
 from aweb_secrets.grant import GrantTemplate
+from aweb_secrets.jobs import JobDefinition, apply_job_migrations, create_job, job_by_digest
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
 from tests.test_derived_lineage import _child, _setup
+from tests.test_jobs import after as job_after
 from tests.test_operation_record import REFUND
 from tests.test_records_store import DID_AW, DID_KEY, INSTALLATION, POLICY, SECRET, TEAM
 from tests.test_records_store import db as db
@@ -82,7 +84,7 @@ async def test_missing_or_unpinned_template_refuses(db, missing):
             )
 
 
-async def test_run_job_template_is_typed_unavailable_until_s15a_registry_exists(db):
+async def test_missing_current_job_cannot_authorize_a_run_template(db):
     async with db.transaction() as tx:
         await _setup(tx)
         template = _template(
@@ -92,7 +94,7 @@ async def test_run_job_template_is_typed_unavailable_until_s15a_registry_exists(
         nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, SECRET.secret_id)
         with pytest.raises(derived_grants.DerivedGrantRefused) as refused:
             await _snapshot(tx, nodes, template)
-        assert refused.value.code == "job_unavailable"
+        assert refused.value.code == "job_not_allowed"
 
 
 @pytest.mark.parametrize("incompatibility", ["sensitive_open", "policy_open", "missing_policy"])
@@ -154,3 +156,148 @@ async def test_only_the_nearest_current_operation_and_both_pins_can_authorize_ch
             await derived_grants.fence_grant_snapshot(
                 tx, nodes, snapshot, expected_digest=template.digest
             )
+
+
+@pytest.fixture(autouse=True)
+async def job_registry(db):
+    await apply_job_migrations(db)
+
+
+def _job(refs, *, delivery="durable"):
+    body = job_after()
+    body["job_id"] = "backup"
+    body["credentials"] = [
+        {
+            "secret_ref": ref,
+            "delivery": delivery,
+            "mint": None
+            if delivery == "durable"
+            else {"operation_id": "mint-session", "digest": "c" * 64, "params": {}},
+        }
+        for ref in refs
+    ]
+    body["env"] = {"CREDENTIAL_" + str(i): {"$credential": ref} for i, ref in enumerate(refs)}
+    return JobDefinition.from_after(body)
+
+
+def _run_template(job, **changes):
+    return _template(
+        capability="run",
+        open_request=False,
+        jobs=[{"job_id": job.job_id, "digest": job.digest}],
+        **changes,
+    )
+
+
+@pytest.mark.parametrize("selector", ["root", "child"])
+async def test_run_template_accepts_its_current_job_and_one_lineage_slot(db, selector):
+    async with db.transaction() as tx:
+        await _setup(tx)
+        child = await _child(tx)
+        nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, child.secret_id)
+        job = _job([SECRET.ref if selector == "root" else child.ref])
+        await create_job(tx, INSTALLATION, TEAM, job)
+        template = _run_template(job)
+        await records.set_grant_template(tx, INSTALLATION, template)
+        snapshot = await _snapshot(tx, nodes, template)
+        assert (
+            await derived_grants.fence_grant_snapshot(
+                tx, nodes, snapshot, expected_digest=template.digest
+            )
+        ).after == template.after
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "two_ancestors",
+        "exact_plus_ancestor",
+        "unrelated",
+        "short_lived",
+        "other_installation",
+        "wrong_digest",
+    ],
+)
+async def test_run_template_refuses_incompatible_jobs_before_snapshot(db, boundary):
+    from tests.test_records_store import OTHER_INSTALLATION
+
+    async with db.transaction() as tx:
+        await _setup(tx)
+        child = await _child(tx)
+        grandchild = await _child(
+            tx, child.secret_id, child_id="sec_grand001", dispatch="dispatch-2"
+        )
+        nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, grandchild.secret_id)
+        selectors = {
+            "two_ancestors": [SECRET.ref, child.ref],
+            "exact_plus_ancestor": [SECRET.ref, grandchild.ref],
+            "unrelated": ["other-source"],
+        }.get(boundary, [SECRET.ref])
+        job = _job(selectors, delivery="short_lived" if boundary == "short_lived" else "durable")
+        await create_job(
+            tx, OTHER_INSTALLATION if boundary == "other_installation" else INSTALLATION, TEAM, job
+        )
+        template = _run_template(job)
+        if boundary == "wrong_digest":
+            template = _template(
+                capability="run",
+                open_request=False,
+                jobs=[{"job_id": job.job_id, "digest": "1" * 64}],
+            )
+        await records.set_grant_template(tx, INSTALLATION, template)
+        with pytest.raises(derived_grants.DerivedGrantRefused) as refused:
+            await _snapshot(tx, nodes, template)
+        assert refused.value.code == "job_not_allowed"
+
+
+async def test_current_job_edit_refuses_at_run_template_fence_without_history_fallback(db):
+    async with db.transaction() as tx:
+        await _setup(tx)
+        job = _job([SECRET.ref])
+        await create_job(tx, INSTALLATION, TEAM, job)
+        template = _run_template(job)
+        await records.set_grant_template(tx, INSTALLATION, template)
+        nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, SECRET.secret_id)
+        snapshot = await _snapshot(tx, nodes, template)
+        edited = job.after
+        edited["timeout_s"] += 1
+        await create_job(tx, INSTALLATION, TEAM, JobDefinition.from_after(edited))
+        assert await job_by_digest(tx, INSTALLATION, job.job_id, job.digest) is not None
+        with pytest.raises(derived_grants.DerivedGrantRefused) as refused:
+            await derived_grants.fence_grant_snapshot(
+                tx, nodes, snapshot, expected_digest=template.digest
+            )
+        assert refused.value.code == "job_not_allowed"
+
+
+async def test_run_template_still_requires_its_child_policy_pin(db):
+    async with db.transaction() as tx:
+        await _setup(tx)
+        job = _job([SECRET.ref])
+        await create_job(tx, INSTALLATION, TEAM, job)
+        template = _run_template(job, policy_digest="0" * 64)
+        await records.set_grant_template(tx, INSTALLATION, template)
+        nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, SECRET.secret_id)
+        with pytest.raises(derived_grants.DerivedGrantRefused) as refused:
+            await _snapshot(tx, nodes, template)
+        assert refused.value.code == "operation_not_allowed"
+
+
+async def test_every_job_pin_in_a_run_template_must_be_current_and_compatible(db):
+    async with db.transaction() as tx:
+        await _setup(tx)
+        job = _job([SECRET.ref])
+        await create_job(tx, INSTALLATION, TEAM, job)
+        template = _template(
+            capability="run",
+            open_request=False,
+            jobs=[
+                {"job_id": job.job_id, "digest": job.digest},
+                {"job_id": "zz-missing", "digest": "1" * 64},
+            ],
+        )
+        await records.set_grant_template(tx, INSTALLATION, template)
+        nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, SECRET.secret_id)
+        with pytest.raises(derived_grants.DerivedGrantRefused) as refused:
+            await _snapshot(tx, nodes, template)
+        assert refused.value.code == "job_not_allowed"

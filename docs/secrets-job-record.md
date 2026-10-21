@@ -86,3 +86,12 @@ at this stage. Adding the kind requires definition-time exact issuer parameter
 coverage, typed literals, same-type parameter references, CURRENT issuer digest
 and token-issuing `store_as_secret` checks; admission additionally validates the
 expanded actual values. A syntactically valid job cannot bypass that gate.
+
+Derived-grant template snapshots and their recording fence use this same CURRENT
+job registry. Every run-job pin must match, and every pinned job must have exactly
+one durable slot selected by the supplied recorded ancestry. A missing, edited,
+cross-installation or incompatible job refuses `job_not_allowed`; the child
+policy and complete template pins still apply. This replaces `job_unavailable`
+inside the existing compatibility helper only. It does not enable job changes,
+credential capture, internal minting or independent use of run-bound children;
+those keep their shared admission/capture/release gates.
