@@ -15,7 +15,6 @@ from aweb_naapp.css import FONT_NAMES
 from aweb_naapp.manifest import (
     ManifestError,
     canonical_bytes,
-    manifest_for_origin,
     select_variant,
     write_manifest_file,
 )
@@ -168,10 +167,11 @@ def test_manifest_is_the_committed_bytes_at_both_paths(tmp_path: Path) -> None:
         assert response.content == committed
 
 
-def test_the_committed_origin_serves_the_committed_file_byte_for_byte(tmp_path: Path) -> None:
+def test_the_hosted_origin_serves_the_canonical_filled_manifest(tmp_path: Path) -> None:
+    # The committed file is a template; every deployment serves its canonical filled bytes.
     committed = json.dumps(_MANIFEST, indent=2).encode("utf-8") + b"\n"
     response = _client(tmp_path, committed=committed).get("/.well-known/aweb-app.json")
-    assert response.content == committed
+    assert response.content == canonical_bytes(_MANIFEST)
 
 
 def test_request_headers_never_change_the_served_manifest(tmp_path: Path) -> None:
@@ -202,10 +202,10 @@ def test_the_manifest_is_fixed_at_startup_and_served_verbatim(tmp_path: Path) ->
 
 def test_manifest_follows_a_self_hosted_origin(tmp_path: Path) -> None:
     origin = "http://127.0.0.1:9876"
-    settings = ExampleSettings(_env_file=None, public_origin=origin)
+    settings = ExampleSettings(_env_file=None, public_origin=origin, app_id="self-example")
     response = _client(tmp_path, settings=settings).get("/.well-known/aweb-app.json")
-    assert response.content == canonical_bytes(manifest_for_origin(_MANIFEST, origin))
-    assert json.loads(response.content)["app"]["origin"] == origin
+    expected = {**_MANIFEST, "app": {"id": "self-example", "origin": origin}}
+    assert response.content == canonical_bytes(expected)
 
 
 def test_skills_are_served_and_unknown_skills_are_not_found(tmp_path: Path) -> None:
@@ -334,7 +334,7 @@ def test_a_v2_app_serves_no_v1_manifest(tmp_path: Path) -> None:
 
 
 def test_a_self_hosted_v2_app_lists_the_bytes_it_serves(tmp_path: Path) -> None:
-    settings = ExampleSettings(_env_file=None, public_origin="http://self.test")
+    settings = ExampleSettings(_env_file=None, public_origin="http://self.test", app_id="self-example")
     client = _client(tmp_path, committed=canonical_bytes(_MANIFEST_V2), settings=settings)
     variant = select_variant("http://self.test", (2,), _fetch(client))
     assert variant.source == "catalog"

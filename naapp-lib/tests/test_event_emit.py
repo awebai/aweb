@@ -446,7 +446,8 @@ async def test_the_runtime_drains_app_events_while_the_app_runs(
     tmp_path: Path, receiver: Receiver, seed: str, app_database_url: str
 ) -> None:
     manifest_path = tmp_path / "aweb-app.json"
-    write_manifest_file(manifest_path, _manifest_document(seed))
+    template = {**_manifest_document(seed), "event_emitters": [{"kid": _KID}]}
+    write_manifest_file(manifest_path, template)
     migrations = tmp_path / "migrations"
     migrations.mkdir()
     settings = _settings(seed, receiver.origin, database_url=app_database_url)
