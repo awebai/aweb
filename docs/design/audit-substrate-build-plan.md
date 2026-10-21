@@ -122,28 +122,33 @@ commit together; rollback and a lost recording fence emit no child pair.
 K4 supplies the generic framing/key helper once; S13 consumes it. No live
 producer is enabled before kit, ingest, resolution and owner activation.
 
-### Passkey evidence convention (aweb-acgh.39)
+### Decision 84: retained passkey proof (aweb-acgh.39)
 
-The public hook contract proposes one privacy projection and HMAC input for
-`approval_evidence_sha256` in governance and secret-use events. Its byte vector
-is `docs/vectors/passkey-evidence-v1.json`. It is on hold for Juan's ruling on
-the accepted secrets §10.4 later-verification promise: B3's current summary
-cannot fulfill it. No producer activation is authorized by this draft. Once
-the evidence claim/storage is settled, review is R+A. No actor field/mode
-or catalog wire shape is added. B3 supplies one shared canonical projection
-helper after this contract is ACKed, with the hook commitment/key helper
-reused for purpose-separated MAC/key loading rather than a producer-local
-codec. Assignment of that implementation follows the contract review.
+The shared contract/vectors preserve secrets §10.4's independent public-key
+check. The held summary-HMAC draft is superseded: approval_evidence_sha256 is
+SHA-256 of length-framed exact proof, key, challenge preimage and frozen
+verification context, with the B2 covered request bound transitively by its
+existing hash. No rotating commitment key is needed. Vector authority is
+`docs/vectors/passkey-evidence-v1.json`. Review is R+A, with B3, secrets-design,
+S13 and S14 fit checks before implementation.
 
-B3/S13/S14 implementation proofs must cover real restricted evidence lookup,
-session/candidate subject and purpose matching, authoritative scope and approval
-bindings, nullable-field omission, UTC microsecond preservation, exclusion of
-credential IDs/counters, each included field changing the MAC, separate keys,
-installation context, startup refusal and persist-once reuse across rotation.
-Any new stored association is an ordered migration. An unavailable audit target
-never blocks containment. Console governance uses the identity-free system
-actor; a different affected subject remains in payload subject_ref. The vector
-checks bytes and contract shape, not these runtime/lifecycle obligations.
+Juan assigns B3 the retention and sole canonical helper after acceptance.
+Thread scope, consumed challenge/preimage and exact StoredRequest.canonical
+bytes into verification. Capture raw assertion/key/context atomically with
+successful counter CAS/evidence insertion; an ordered migration adds retention.
+S13/S14 consume the reviewed helper only. Tests must distinguish trusted-key
+verification from an evidence lookup, preserve client-data bytes and the
+challenge's null task-answer spelling, verify request/policy/installation
+bindings, reject substituted valid proof, and recompute after rotation without
+a retired secret. Counters/timestamps/authority history must not be overstated
+as signed facts. Lifecycle deletion limits proof retrieval. The byte-vector
+reader uses real assertions; real B3 transaction/persistence/helper proofs
+remain its implementation responsibility.
+
+No actor field/mode or catalog wire shape is added. Console governance uses
+the identity-free system actor, retaining distinct authorizing and affected
+subjects; secret-use keeps its requesting-member actor. Audit target/delivery
+availability still never gates narrowing.
 
 ### Decision 76: independent K4 helper (aweb-acgh.16.8.1)
 

@@ -253,34 +253,30 @@ expectations change together; there is no parallel version. S13 builds on this
 shape after kit/ingest/resolution support and owner activation. B2's frozen
 approval bytes remain unchanged.
 
-**Proposed passkey evidence and console actors (aweb-acgh.39).** Pending
-Juan's ruling and R+A; no producer activation or supersession of the secrets
-design §10.4 later-verification promise is authorized. The current B3 summary
-cannot fulfill that promise. Retaining the verified assertion, frozen
-verification context and credential public key in restricted storage is the
-secrets-design recommendation; its impact on this commitment must be settled
-before freezing the projection below. Both hooks' historical
-`approval_evidence_sha256` means the independent-key HMAC-SHA-256 commitment
-specified in [the public hook contract](../hook-events.md#passkey-evidence-commitments-and-console-actors).
-It commits the restricted B3 verification record's purpose, authorizing subject
-and verification instant, optional approval bindings and authoritative
-installation/scope context. Credential IDs and sign counts are excluded;
-no raw WebAuthn proof is exposed by B3. The input, locator and scope stay
-restricted. A dedicated key and installation context prevent public dictionary
-testing and comparison across apps; reuse within one key epoch may link one
-authorization's effects. The original commitment is persisted before use,
-reused through retries and rotation, and the old key is destroyed.
+**Passkey proof and console actors (decision 84, aweb-acgh.39).** Juan
+preserves secrets §10.4: a reviewer holding the independently trusted approver
+public key can check the approval later without trusting B3's verdict. B3
+retains the exact assertion, COSE key, challenge preimage, frozen verification
+context and B2 covered-request sidecar in restricted storage. Both hooks'
+`approval_evidence_sha256` fields commit the exact proof and context through
+unkeyed SHA-256, with domain, fixed length framing and step-by-step independent
+verification in [the public contract](../hook-events.md#passkey-evidence-commitments-and-console-actors).
+This replaces the held summary HMAC, whose destroyed key could not support
+that verification. The verified assertion/context are non-secret proof
+artifacts; credential-bearing B2 request bytes stay outside the outer hash and
+are bound transitively through their existing hash in the signed challenge.
+The request/params audit HMACs and §A2 rules for agent bytes are unchanged.
 
-A console-only passkey governance effect uses the existing identity-free
-`system` actor and payload `authority: passkey_session`. This identifies a
-producer-verified app-local authorization, without inventing a team DID or a
-human/custody attestation. The authorizing subject stays in restricted evidence;
-payload `subject_ref` remains the affected subject. Approval evidence does not
-replace the requesting member actor in secret-use events. The commitment is
-not an independently verifiable WebAuthn proof. Narrowing acts remain ungated
-on audit target or delivery availability. Catalog v1's field sets and wire
-shapes stay unchanged; this defines their previously unspecified evidence
-encoding and updates both type labels together. No parallel codec is added.
+Only the proof commitment is published; raw bytes, authorizing subject,
+credential ID and counters remain restricted. Frozen proof verifies after key
+rotation, revocation or replacement without a live service or retired secret.
+App-lifecycle deletion ends proof retrieval; the surviving commitment alone
+cannot reconstruct it. Console governance uses the existing identity-free
+system actor; payload subject_ref stays the affected subject. Secret-use keeps
+the requesting-member actor. Authenticator-signed facts and service metadata
+are distinguished. No envelope mode, catalog field or containment gate is
+added. B3 implements the one shared helper after R+A; S13/S14 do not serialize
+it locally.
 
 ### A3. Registration and owner activation
 

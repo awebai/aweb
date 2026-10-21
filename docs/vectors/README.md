@@ -374,17 +374,18 @@ implemented them; changing them needs a new version.
 
 ### `passkey-evidence-v1.json`
 
-The privacy projection, canonical UTF-8 JSON and length-framed HMAC input of
-[`hook-events.md`](../hook-events.md#passkey-evidence-commitments-and-console-actors).
-Login and approval cases pin optional-null omission, all approval bindings,
-UTC microseconds, equivalent timezone offsets and Unicode preservation.
-Credential IDs and counters never enter the projection. The console example
-uses the existing identity-free system actor, with different authorizing and
-affected subjects. Tests generate HMAC keys only in memory; the vector contains
-no key. The byte-vector consumer is
-`naapp-lib/tests/hooks/test_passkey_evidence_vector.py`. Real B3 evidence lookup,
-authority checks, producer MAC persistence and rotation remain implementation
-proofs, including the refusal cases listed by the vector.
+Decision 84's retained assertion, frozen context, exact framed SHA-256 input
+and commitment of [the public hook contract](../hook-events.md#passkey-evidence-commitments-and-console-actors).
+Real ES256 login/approval assertions have public COSE keys and independent
+fixture trust anchors; private keys existed only in generator memory and are
+not retained. Cases cover raw client-data bytes, B2 domain/wrapper hashing,
+null task-answer challenge fields, UTF-8 scope, UTC microseconds and the
+identity-free console actor with a different affected subject. Single-fault
+cases reject missing/substituted proof/key/context, changed request/policy,
+reserialization, counters and commitments. The independent Python reader is
+`naapp-lib/tests/hooks/test_passkey_evidence_vector.py`. Verification needs no
+live service or commitment secret. B3's real retention transaction, shared
+helper and lifecycle/deletion proofs remain implementation obligations.
 
 ### `hook-catalog-v1.json`
 
