@@ -56,6 +56,7 @@ def test_make_test_uses_the_locked_uv_environment() -> None:
 
 def test_ci_provides_postgres_so_database_tests_cannot_skip() -> None:
     workflow = _workflow()
+    assert workflow["env"]["LIBRARY_REQUIRE_TEST_DATABASE"] == "1"
 
     assert any("postgres" in job.get("services", {}) for job in workflow["jobs"].values())
     commands = "\n".join(
@@ -146,15 +147,22 @@ def test_ci_runs_every_make_gate_on_pull_request_and_manual_retry() -> None:
         assert f"make {target}" in commands
 
 
-def test_ci_pins_the_released_aw_client_used_by_e2e() -> None:
-    workflow = _workflow()
-    steps = [step for job in workflow["jobs"].values() for step in job["steps"]]
+@pytest.mark.parametrize("filename", ["folio-ci.yml", "library-ci.yml"])
+def test_ci_builds_the_aw_client_from_the_checkout(filename: str) -> None:
+    workflow = yaml.load(
+        (_AWEB_ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    steps = workflow["jobs"]["quality"]["steps"]
     commands = "\n".join(step.get("run", "") for step in steps)
+    setup_go = [step for step in steps if step.get("uses", "").startswith("actions/setup-go@")]
 
-    assert workflow["env"]["AW_VERSION"]
-    assert workflow["env"]["LIBRARY_REQUIRE_TEST_DATABASE"] == "1"
-    assert '@awebai/aw@$AW_VERSION' in commands
-    assert "aw version" in commands
+    assert "AW_VERSION" not in workflow.get("env", {})
+    assert setup_go[0]["with"]["go-version-file"] == "cli/go/go.mod"
+    assert "make -C cli/go build" in commands
+    assert 'cli/go" >> "$GITHUB_PATH"' in commands
+    assert "scripts/check-naapp-e2e-aw.sh" in commands
+    assert "npm install" not in commands
 
 
 def test_ci_builds_the_e2e_stack_from_the_commit_under_test() -> None:
@@ -265,5 +273,12 @@ def test_ci_runs_library_targets_from_the_subtree_path() -> None:
     steps = _workflow()["jobs"]["quality"]["steps"]
     for step in steps:
         commands = step.get("run", "").splitlines()
-        if any(line.split()[:1] == ["make"] for line in commands if line.split()):
-            assert step.get("working-directory") == "naapp/library", step
+        for line in commands:
+            words = line.split()
+            if words[:1] != ["make"]:
+                continue
+            directory = Path(step.get("working-directory", "."))
+            if "-C" in words:
+                directory /= words[words.index("-C") + 1]
+            if any(target in words for target in ("lint", "aatk-spec-check", "test", "e2e")):
+                assert directory == Path("naapp/library"), step
