@@ -260,6 +260,21 @@ the approval, decision, policy and the app's own origin.
   pending one, is retired with its passkeys, unused enrolment links and live
   approvals. The scope then has no approver: its next designation is a first
   one and enrols a new passkey, and the retired passkeys stay dead.
+- Apps with a separately authorized containment path can call
+  `retire_in(tx, scope=..., subject=..., authorized_by=..., protect=...)` to retire
+  the full designation, including a compromised contact. To revoke one lost
+  device, use `revoke_passkey_in` with the same arguments plus `credential_id`
+  (bytes). Other usable credentials preserve the designation; losing the last
+  credential retires it. Both paths void that holder's pending/live decisions.
+  B3 checks the subject under the scope lock, so a stale target never retires a
+  replacement. These methods confer no authority and require no owner act or
+  passkey ceremony: the app authenticates and authorizes the actor first.
+  The optional async `protect(tx, scope, subject)` hook runs under that lock
+  before writes. The app holds its installation/role/coverage fences first and
+  enforces its own enrolled-owner population, for example by raising
+  `RetirementRefused("last_owner_protected")`. A credential-specific hook can
+  close over the credential ID to check siblings. Audit, key and decision changes
+  commit or roll back in the caller transaction; nothing is sent externally.
 - **Lock order when withdrawing an approver's authority.** An app that
   withdraws authority (a role, a membership, an owner) does it in one
   transaction, in this order: any installation fence; the authority's own

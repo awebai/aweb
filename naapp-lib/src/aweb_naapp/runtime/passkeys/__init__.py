@@ -19,6 +19,8 @@ from aweb_naapp.runtime.passkeys.service import (
     PasskeyEvidence,
     PasskeyLogin,
     Passkeys,
+    RetirementProtection,
+    RetirementRefused,
     contact_sha256,
 )
 from aweb_naapp.runtime.passkeys.webauthn import (
@@ -47,6 +49,8 @@ __all__ = [
     "PasskeyEvidence",
     "PasskeyLogin",
     "Passkeys",
+    "RetirementProtection",
+    "RetirementRefused",
     "RegisteredPasskey",
     "RelyingParty",
     "VerifiedAssertion",
