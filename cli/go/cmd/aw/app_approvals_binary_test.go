@@ -31,7 +31,13 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	t.Setenv("AW_HOME", filepath.Join(root, "host"))
 	var body atomic.Value
 	var gets atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gets.Add(1); w.Write(body.Load().([]byte)) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gets.Add(1)
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
+		w.Write(body.Load().([]byte))
+	}))
 	defer server.Close()
 	body.Store([]byte(appTestManifest(server.URL, "/v1/things/{thing_id}")))
 	writeResident := func(parent, scope string) string {

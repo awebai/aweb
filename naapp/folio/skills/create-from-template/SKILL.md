@@ -118,8 +118,8 @@ cat > metrics-template.json <<'JSON'
     "slots": {
       "cover": {"title": "Launch metrics"},
       "metrics": [
-        {"label": "Documents", "value": "3", "caption": "free-tier cap"},
-        {"label": "Versions", "value": "50", "caption": "per document"}
+        {"label": "Documents", "value": "12", "caption": "this team"},
+        {"label": "Versions", "value": "48", "caption": "on the busiest document"}
       ]
     }
   }

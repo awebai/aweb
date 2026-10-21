@@ -33,6 +33,7 @@ from aweb_secrets.change import (
     REENABLE_TARGETS,
     ChangeRefused,
     check_confirmable,
+    check_confirmer,
     covered_bytes,
     parse_change,
     validate_change,
@@ -42,6 +43,7 @@ VECTOR = json.loads((Path(__file__).parents[1] / "vectors" / "change-v1.json").r
 POSITIVE = VECTOR["positive_cases"]
 NEGATIVE = VECTOR["negative_cases"]
 CONFIRMATIONS = VECTOR["confirmation_cases"]
+CONFIRMERS = VECTOR["confirmer_cases"]
 
 
 def _bytes(value: str) -> bytes:
@@ -126,6 +128,18 @@ def test_confirmation_cases(case: dict) -> None:
         return
     with pytest.raises(ChangeRefused) as refused:
         check_confirmable(change, **current)
+    assert refused.value.code == case["expected"]
+
+
+@pytest.mark.parametrize("case", CONFIRMERS, ids=lambda case: case["name"])
+def test_confirmer_cases(case: dict) -> None:
+    change = _case(case["of"])["request"]
+    check = {"distinct_approver": case["distinct_approver"], "confirmer": case["confirmer"]}
+    if case["expected"] == "confirmable":
+        check_confirmer(change, **check)
+        return
+    with pytest.raises(ChangeRefused) as refused:
+        check_confirmer(change, **check)
     assert refused.value.code == case["expected"]
 
 

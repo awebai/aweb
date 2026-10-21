@@ -9,17 +9,27 @@ may perform it. After :func:`aweb_naapp.runtime.team_auth.authenticate_request`,
    no percent-encoded ``/``, ``\\`` or NUL, no dot segment raw or encoded, and the
    decoded scope path splits exactly as the raw path does;
 2. the method and raw external path match exactly one tool the app's manifest
-   declares (otherwise ``403 operation_undeclared``);
+   declares (otherwise ``403 operation_undeclared``), and the caller's context
+   (agent or surface) is one the tool declares (otherwise
+   ``403 tool_context_denied``);
 3. the app's grant source returns a fresh installed grant for the team
    (no installation: ``403 scope_denied``; stale or unreachable authority:
    ``503 authority_unavailable``, with no fallback);
 4. the grant contains every scope the tool declares (``403 scope_denied``);
-5. the app's resource/action policy allows this principal to act
+5. the request delivers no answer except through a surface's answer tool:
+   a JSON body for a version 2 tool carries no ``answer`` member
+   (``403 answer_payload_refused``), the app's ``action_kind`` resolves no
+   ``answer``-kind page action (``403 answer_action_refused``), and a surface's
+   invoke tool performs an action whose kind resolves (otherwise
+   ``403 action_unresolved``, including when the app supplies no
+   ``action_kind``);
+6. the app's resource/action policy allows this principal to act
    (``403 action_denied``).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -30,6 +40,8 @@ from urllib.parse import unquote
 
 from fastapi import HTTPException, Request
 
+from aweb_naapp.manifest import Manifest, ManifestError
+from aweb_naapp.runtime.attestation import VerifiedAttestation
 from aweb_naapp.runtime.team_auth import Principal, raw_request_target
 
 logger = logging.getLogger(__name__)
@@ -45,6 +57,14 @@ class DeclaredTool:
     method: str
     path: str
     scopes: frozenset[str]
+    # The caller contexts the tool serves: agent, surface and/or hook.
+    contexts: frozenset[str]
+    # A surface's invoke tool, which performs page actions.
+    invokes: bool = False
+    # A surface's answer tool, the one tool that takes answers.
+    answers: bool = False
+    # The request body is a JSON document (body mode json), not raw bytes.
+    json_body: bool = True
 
     @property
     def segments(self) -> tuple[str, ...]:
@@ -67,8 +87,9 @@ def _templates_overlap(a: DeclaredTool, b: DeclaredTool) -> bool:
     )
 
 
-def _declared_tool(tool: Mapping[str, Any]) -> DeclaredTool:
-    name = tool.get("name")
+def _declared_tool(
+    name: str, tool: Mapping[str, Any], contexts: frozenset[str], *, invokes: bool, answers: bool
+) -> DeclaredTool:
     method = tool.get("method")
     path = tool.get("path")
     scopes = tool.get("scopes")
@@ -83,25 +104,46 @@ def _declared_tool(tool: Mapping[str, Any]) -> DeclaredTool:
             raise ValueError(f"manifest tool {name!r} has a malformed path placeholder")
     if not isinstance(scopes, list) or not scopes or not all(isinstance(s, str) and s for s in scopes):
         raise ValueError(f"manifest tool {name!r} must declare the scopes it requires")
-    return DeclaredTool(name=name, method=method, path=path, scopes=frozenset(scopes))
+    # The manifest reader trims the mode and reads an empty one as json.
+    json_body = str((tool.get("body") or {}).get("mode") or "").strip() != "raw"
+    return DeclaredTool(
+        name=name, method=method, path=path, scopes=frozenset(scopes), contexts=contexts,
+        invokes=invokes, answers=answers, json_body=json_body,
+    )
 
 
 class DeclaredTools:
-    """The operations an app's manifest declares, matched by method and raw path."""
+    """The operations an app's manifest declares, matched by method and raw path.
 
-    def __init__(self, tools: list[DeclaredTool]) -> None:
+    Two tools whose templates can match the same request are refused, even in a
+    manifest the shared reader accepts: each request must authorize as exactly
+    one tool, with that tool's scopes and contexts.
+    """
+
+    def __init__(self, tools: list[DeclaredTool], manifest: Manifest) -> None:
         for i, a in enumerate(tools):
             for b in tools[i + 1 :]:
                 if _templates_overlap(a, b):
                     raise ValueError(f"manifest tools {a.name!r} and {b.name!r} match the same requests")
         self._tools = tuple(tools)
+        self.manifest = manifest
 
     def __iter__(self) -> Iterator[DeclaredTool]:
         return iter(self._tools)
 
     @classmethod
-    def from_manifest(cls, manifest: Mapping[str, Any]) -> DeclaredTools:
-        return cls([_declared_tool(tool) for tool in manifest["tools"]])
+    def from_manifest(cls, manifest: Manifest) -> DeclaredTools:
+        """The tools of a manifest that :func:`~aweb_naapp.manifest.load_manifest` resolved."""
+        invoke_tools = {surface["invoke_tool"] for surface in manifest.surfaces}
+        answer_tools = {surface["answer_tool"] for surface in manifest.surfaces}
+        tools = []
+        for name, tool in manifest.tools_by_name().items():
+            contexts = manifest.tool_contexts(name)
+            assert contexts is not None
+            tools.append(_declared_tool(
+                name, tool, contexts, invokes=name in invoke_tools, answers=name in answer_tools
+            ))
+        return cls(tools, manifest)
 
     def match(self, method: str, raw_path: str) -> DeclaredTool | None:
         segments = raw_path.split("/")
@@ -149,6 +191,17 @@ class ActionPolicy(Protocol):
         ...
 
 
+ANSWER_KIND = "answer"
+
+
+class ActionKind(Protocol):
+    async def __call__(self, request: Request, principal: Principal, tool: DeclaredTool) -> str | None:
+        """The kind of the page action this request performs, resolved from the
+        app's page action definitions, or ``None`` when it performs none or the
+        action cannot be resolved."""
+        ...
+
+
 @dataclass(frozen=True)
 class Authorization:
     """Evidence that one request was authenticated, declared, granted and allowed."""
@@ -156,6 +209,8 @@ class Authorization:
     principal: Principal
     tool: DeclaredTool
     grant: Grant
+    # The request's verified principal attestation; None when it carries none.
+    attestation: VerifiedAttestation | None = None
 
 
 def _refuse(status_code: int, code: str, message: str) -> HTTPException:
@@ -177,11 +232,20 @@ async def authorize_request(
     request: Request,
     *,
     principal: Principal,
+    caller: str,
     tools: DeclaredTools,
     grants: GrantSource,
     policy: ActionPolicy,
+    action_kind: ActionKind | None = None,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> Authorization:
+    """Admit one authenticated request, or raise the refusal.
+
+    ``caller`` is the request's invocation context, from
+    :func:`aweb_naapp.runtime.attestation.caller_context`. ``action_kind``
+    resolves the page action a request performs; without it, a surface's
+    invoke tool admits nothing.
+    """
     method = request.method.upper()
     raw_path = raw_request_target(request).split("?", 1)[0]
     if not _is_canonical_target(request, raw_path):
@@ -191,6 +255,9 @@ async def authorize_request(
     if tool is None:
         logger.warning("Refused undeclared operation %s %s for team %s", method, raw_path, principal.team_id)
         raise _refuse(403, "operation_undeclared", "This operation is not declared by the app manifest")
+    if caller not in tool.contexts:
+        logger.warning("Refused %s for team %s: not available to %s callers", tool.name, principal.team_id, caller)
+        raise _refuse(403, "tool_context_denied", "This operation is not available to this caller")
 
     try:
         grant = await grants.grant_for(principal.team_id)
@@ -213,7 +280,37 @@ async def authorize_request(
         )
         raise _refuse(403, "scope_denied", "The team's grant does not include this operation's scopes")
 
+    await _refuse_answers(request, principal, tool, tools.manifest, action_kind)
+
     if not await policy(request, principal, tool):
         logger.warning("Refused %s for %s in team %s by app policy", tool.name, principal.alias, principal.team_id)
         raise _refuse(403, "action_denied", "The app's policy does not allow this action")
     return Authorization(principal=principal, tool=tool, grant=grant)
+
+
+async def _refuse_answers(
+    request: Request, principal: Principal, tool: DeclaredTool, manifest: Manifest,
+    action_kind: ActionKind | None,
+) -> None:
+    """Refuse a request that would deliver an answer other than through a
+    surface's answer tool."""
+    if tool.answers:
+        return
+    if tool.json_body:
+        body = await request.body()
+        try:
+            payload = json.loads(body) if body else None
+        except ValueError:
+            payload = None
+        try:
+            manifest.check_answer_payload(tool.name, payload)
+        except ManifestError as refused:
+            logger.warning("Refused %s for team %s: body carries an answer", tool.name, principal.team_id)
+            raise _refuse(403, refused.code, "Answers reach this app only through its answer tool") from None
+    kind = None if action_kind is None else await action_kind(request, principal, tool)
+    if kind == ANSWER_KIND:
+        logger.warning("Refused %s for team %s: answer-kind action", tool.name, principal.team_id)
+        raise _refuse(403, "answer_action_refused", "Answers reach this app only through its answer tool")
+    if kind is None and tool.invokes:
+        logger.warning("Refused %s for team %s: unresolved page action", tool.name, principal.team_id)
+        raise _refuse(403, "action_unresolved", "The page action this request performs cannot be resolved")
