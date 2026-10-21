@@ -52,6 +52,17 @@ used as a filter or sort key. Unauthorized and absent pages share 404
 `resource_not_found`. The host still checks current app/installation grants:
 page ACLs cannot resurrect an uninstalled app.
 
+An owner may explicitly grant `Access(team_id=scope.team_id, team_read=True,
+team_write=True)`. Both flags default to false; `team_write` also permits reads.
+The ACL is persisted on this page's full installation/team/app/page scope, and
+its team ID must match. Public member paths check the verified principal's team
+before consulting it; the host still checks current membership/certificate and
+installation admission. Trusted creator-scoped link paths require the app's
+checked current creator identity, not an anonymous caller's invented principal.
+Per-principal hidden-row and field rules still narrow team grants. Team flags
+never grant owner-only layout, schema, ACL, import/export or deletion authority.
+Old stored ACLs without the flags retain their original named-member behavior.
+
 `create`, `mutate`, `sync`, `migrate_schema`, `append_layout` and
 `change_access` take an idempotency key. Changes require `expected_rev`; record
 changes also require `expected_rev` on each row (zero for creation). A batch

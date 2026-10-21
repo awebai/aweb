@@ -134,7 +134,8 @@ class PageStore(LifecycleMixin):
         if row is None or row["deleted"]:
             raise StoreError("resource_not_found", 404)
         access = Access.from_dict(decoded(row["access"]))
-        if not access.permits(actor, operation):
+        access.require_scope(scope)
+        if not access.permits(actor, operation, team_id=scope.team_id):
             raise StoreError("resource_not_found", 404)
         return decoded(row["document"]), access, actor
 
@@ -306,6 +307,7 @@ class PageStore(LifecycleMixin):
         self._policy()
         actor = identity(principal, scope)
         await self._fence(scope)
+        access.require_scope(scope)
         if access.owner != actor:
             raise StoreError("action_denied", 403)
         document = copy.deepcopy(document)
@@ -324,7 +326,9 @@ class PageStore(LifecycleMixin):
         existing = await tx.fetch_value(
             "SELECT access FROM {{tables.pages}} WHERE scope=$1", scope.key
         )
-        if existing is not None and not Access.from_dict(decoded(existing)).permits(actor, "read"):
+        if existing is not None and not Access.from_dict(decoded(existing)).permits(
+            actor, "read", team_id=scope.team_id
+        ):
             raise StoreError("resource_not_found", 404)
         transaction, replay = await self._claim(
             tx,
@@ -776,6 +780,7 @@ class PageStore(LifecycleMixin):
 
     async def change_access(self, scope, principal, *, expected_rev, key, access):
         self._policy()
+        access.require_scope(scope)
         async with self.db.transaction() as tx:
             document, _, _ = await self._load(tx, scope, principal, "owner")
             transaction, replay = await self._claim(
@@ -891,7 +896,7 @@ class PageStore(LifecycleMixin):
                             gathered[props["items_collection"]][item["record_id"]] = decoded(value)
         for collection in document["collections"]:
             collection["records"] = list(gathered[collection["id"]].values())
-        return self._redact_snapshot(document, access, actor)
+        return self._redact_snapshot(document, access, actor, team_id=scope.team_id)
 
     def _redact_snapshot(
         self,
@@ -902,6 +907,7 @@ class PageStore(LifecycleMixin):
         keep_records=False,
         allowed_action_ids=None,
         allowed_asset_ids=(),
+        team_id=None,
     ):
         definitions = {c["id"]: c for c in document["collections"]}
         records = {cid: {r["id"]: r for r in c["records"]} for cid, c in definitions.items()}
@@ -912,7 +918,7 @@ class PageStore(LifecycleMixin):
                 for action in document["actions"]
                 if action["id"] in allowed_action_ids
                 and action["kind"] in {"edit", "intent"}
-                and (action["kind"] != "edit" or access.permits(actor, "write"))
+                and (action["kind"] != "edit" or access.permits(actor, "write", team_id=team_id))
             ]
             allowed_action_ids = {a["id"] for a in document["actions"]}
         removed_state = set()
@@ -1279,6 +1285,7 @@ class PageStore(LifecycleMixin):
             keep_records=True,
             allowed_action_ids=set(allowed_action_ids),
             allowed_asset_ids=set(assets),
+            team_id=scope.team_id,
         )
         await self._fence(scope)
         return result

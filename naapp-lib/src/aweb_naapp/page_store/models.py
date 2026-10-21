@@ -81,12 +81,31 @@ class Access:
     hidden_rows: dict[str, dict[str, set[str]]] = field(default_factory=dict)
     fields: dict[str, dict[str, set[str]]] = field(default_factory=dict)
 
-    def permits(self, principal: str, operation: str) -> bool:
+    team_id: str | None = None
+    team_read: bool = False
+    team_write: bool = False
+
+    def __post_init__(self):
+        if type(self.team_read) is not bool or type(self.team_write) is not bool:
+            raise ValueError("team ACL flags must be explicit booleans")
+        if (
+            self.team_id is not None and (not isinstance(self.team_id, str) or not self.team_id)
+        ) or ((self.team_read or self.team_write) and self.team_id is None):
+            raise ValueError("team ACL grants require an explicit team ID")
+
+    def require_scope(self, scope: Scope) -> None:
+        if self.team_id is not None and self.team_id != scope.team_id:
+            raise StoreError("action_denied", 403)
+
+    def permits(self, principal: str, operation: str, *, team_id=None) -> bool:
         if principal == self.owner:
             return True
+        team = self.team_id is not None and self.team_id == team_id
         if operation == "read":
-            return principal in self.readers | self.writers
-        return operation == "write" and principal in self.writers
+            return principal in self.readers | self.writers or (
+                team and (self.team_read or self.team_write)
+            )
+        return operation == "write" and (principal in self.writers or (team and self.team_write))
 
     def visible_row(self, principal: str, collection: str, record_id: str) -> bool:
         return principal == self.owner or record_id not in self.hidden_rows.get(principal, {}).get(
@@ -140,4 +159,7 @@ class Access:
             set(value["writers"]),
             {p: {c: set(ids) for c, ids in cs.items()} for p, cs in value["hidden_rows"].items()},
             {p: {c: set(fs) for c, fs in cs.items()} for p, cs in value["fields"].items()},
+            team_id=value.get("team_id"),
+            team_read=value.get("team_read", False),
+            team_write=value.get("team_write", False),
         )
