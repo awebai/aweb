@@ -73,9 +73,14 @@ class Contacts:
     inbox: dict[str, list[str]] = field(default_factory=dict)
     by_approval: dict[str, str] = field(default_factory=dict)
     notices: dict[str, list[Notice]] = field(default_factory=dict)
+    proofs: dict[str, list[str]] = field(default_factory=dict)
 
     async def deliver_notice(self, contact: str, notice: Notice) -> DeliveryStatus:
         self.notices.setdefault(contact, []).append(notice)
+        return DeliveryStatus.DELIVERED
+
+    async def deliver_contact_proof(self, contact: str, proof_token: str) -> DeliveryStatus:
+        self.proofs.setdefault(contact, []).append(proof_token)
         return DeliveryStatus.DELIVERED
 
     async def deliver_enrolment_link(self, approver: Approver, link_token: str) -> DeliveryStatus:
@@ -906,6 +911,7 @@ async def test_a_contact_change_needs_the_approvers_passkey_and_waits_a_day(pw):
     assert pw.contacts.notices["human@example.com"] == [notice]
     assert pw.contacts.notices["new@example.com"] == [notice]
     assert (await pw.passkeys.designated_approver(SCOPE)).contact == "human@example.com"
+    await prove(pw, "new@example.com")
     pw.clock.advance(timedelta(hours=24))
     assert (await pw.passkeys.designated_approver(SCOPE)).contact == "new@example.com"
     approval = await mint(pw)
@@ -1316,6 +1322,7 @@ async def test_an_owner_approval_schedules_another_approvers_contact_change(pw):
     assert (await pw.passkeys.designated_approver("approvers.finance")).contact == (
         "finance@example.com"
     )
+    await prove(pw, "finance-new@example.com")
     pw.clock.now = change.effective_at
     assert (await pw.passkeys.designated_approver("approvers.finance")).contact == (
         "finance-new@example.com"
@@ -1347,6 +1354,7 @@ async def test_another_owners_contact_can_change_by_owner_approval(pw):
     change, _ = await owner_changes_contact(
         pw, "secrets.owner", "second-new@example.com", attempt=2
     )
+    await prove(pw, "second-new@example.com")
     pw.clock.now = change.effective_at
     assert (await pw.passkeys.designated_approver("secrets.owner")).contact == (
         "second-new@example.com"
@@ -1358,6 +1366,7 @@ async def test_a_contact_change_by_owner_never_enrols_at_the_new_contact(pw):
     change, _ = await owner_changes_contact(
         pw, "approvers.finance", "finance-new@example.com", attempt=2
     )
+    await prove(pw, "finance-new@example.com")
     pw.clock.now = change.effective_at
     assert pw.contacts.inbox.get("finance-new@example.com") is None
     with pytest.raises(EnrolmentRefused):
@@ -1482,3 +1491,124 @@ async def test_policy_may_lengthen_the_owner_contact_change_delay(pw):
         pw, "approvers.finance", "finance-new@example.com", attempt=2, passkeys=slower
     )
     assert change.effective_at == started + timedelta(hours=48)
+
+
+# A new contact counts only once its holder proves it (§10.2)
+
+
+async def prove(pw, contact: str) -> None:
+    await pw.passkeys.prove_contact(pw.contacts.proofs[contact][-1])
+
+
+async def test_a_proven_contact_change_takes_effect_after_the_delay(pw):
+    _, device = await enrol(pw, "human@example.com")
+    effective_at = await change_contact(pw, device, "new@example.com")
+    assert "new@example.com" in pw.contacts.proofs
+    assert "human@example.com" not in pw.contacts.proofs
+    await prove(pw, "new@example.com")
+    assert (await pw.passkeys.designated_approver(SCOPE)).contact == "human@example.com"
+    pw.clock.now = effective_at
+    assert (await pw.passkeys.designated_approver(SCOPE)).contact == "new@example.com"
+    assert "approver_contact_proven" in await pw.audit.kinds()
+
+
+async def test_an_unproven_contact_change_lapses_and_the_old_contact_stays(pw):
+    _, device = await enrol(pw, "human@example.com")
+    effective_at = await change_contact(pw, device, "new@example.com")
+    pw.clock.now = effective_at
+    assert (await pw.passkeys.designated_approver(SCOPE)).contact == "human@example.com"
+    with pytest.raises(ContactChangeRefused) as refused:
+        await prove(pw, "new@example.com")
+    assert refused.value.reason == "contact_proof_unavailable"
+    pw.clock.advance(timedelta(days=30))
+    assert (await pw.passkeys.designated_approver(SCOPE)).contact == "human@example.com"
+    later = await change_contact(pw, device, "newer@example.com")
+    await prove(pw, "newer@example.com")
+    pw.clock.now = later
+    assert (await pw.passkeys.designated_approver(SCOPE)).contact == "newer@example.com"
+
+
+async def test_a_proof_for_another_pending_contact_is_refused(pw):
+    _, device = await enrol(pw, "human@example.com")
+    await change_contact(pw, device, "first@example.com")
+    stale = pw.contacts.proofs["first@example.com"][-1]
+    await cancel(pw, device, SCOPE)
+    effective_at = await change_contact(pw, device, "second@example.com")
+    with pytest.raises(ContactChangeRefused):
+        await pw.passkeys.prove_contact(stale)
+    with pytest.raises(ContactChangeRefused):
+        await pw.passkeys.prove_contact("not-a-token")
+    pw.clock.now = effective_at
+    assert (await pw.passkeys.designated_approver(SCOPE)).contact == "human@example.com"
+
+
+async def test_a_contact_proof_is_used_once(pw):
+    _, device = await enrol(pw, "human@example.com")
+    await change_contact(pw, device, "new@example.com")
+    token = pw.contacts.proofs["new@example.com"][-1]
+    await pw.passkeys.prove_contact(token)
+    with pytest.raises(ContactChangeRefused):
+        await pw.passkeys.prove_contact(token)
+
+
+async def test_an_owner_contact_change_needs_the_new_holders_proof_too(pw):
+    await finance_approver(pw)
+    change, _ = await owner_changes_contact(
+        pw, "approvers.finance", "finance-new@example.com", attempt=2
+    )
+    pw.clock.now = change.effective_at
+    assert (await pw.passkeys.designated_approver("approvers.finance")).contact == (
+        "finance@example.com"
+    )
+
+
+async def test_the_owner_count_counts_only_proven_contacts(pw):
+    _, owner_device = await enrol(pw, "human@example.com")
+    pw.owner_device = owner_device
+    await designate(pw, "second-owner@example.com", scope="secrets.owner")
+    with pytest.raises(ContactChangeRefused) as refused:
+        await owner_changes_contact(pw, SCOPE, "pick@example.com", attempt=2)
+    assert refused.value.reason == "last_owner_protected"
+    token = pw.contacts.last("second-owner@example.com")
+    second = SoftAuthenticator(ORIGIN)
+    await pw.passkeys.complete_enrolment(
+        token, second.create(await pw.passkeys.enrolment_options(token))
+    )
+    options = await pw.passkeys.contact_change_options("secrets.owner", "unproven@example.com")
+    effective_at = await pw.passkeys.change_contact(
+        "secrets.owner", "unproven@example.com", second.get(dict(options))
+    )
+    pw.clock.now = effective_at
+    assert (await pw.passkeys.designated_approver("secrets.owner")).contact == (
+        "second-owner@example.com"
+    )
+    change, _ = await owner_changes_contact(pw, SCOPE, "pick@example.com", attempt=3)
+    assert change.scope == SCOPE
+
+
+async def test_recovery_notices_go_only_to_proven_contacts(pw):
+    _, device = await enrol(pw, "human@example.com")
+    await change_contact(pw, device, "unproven@example.com")
+    designation = await designate(pw, "new-phone@example.com")
+    notice = Notice(NoticeKind.RECOVERY_STARTED, SCOPE, designation.effective_at)
+    assert notice in pw.contacts.notices["human@example.com"]
+    assert notice not in pw.contacts.notices.get("unproven@example.com", [])
+
+
+async def test_recovery_notices_reach_a_proven_pending_contact(pw):
+    _, device = await enrol(pw, "human@example.com")
+    await change_contact(pw, device, "proven@example.com")
+    await prove(pw, "proven@example.com")
+    designation = await designate(pw, "new-phone@example.com")
+    notice = Notice(NoticeKind.RECOVERY_STARTED, SCOPE, designation.effective_at)
+    assert notice in pw.contacts.notices["proven@example.com"]
+
+
+async def test_an_approver_who_never_enrolled_gets_no_security_notice(pw):
+    await designate(pw, "never-enrolled@example.com")
+    designation = await designate(pw, "new-phone@example.com")
+    notice = Notice(NoticeKind.RECOVERY_STARTED, SCOPE, designation.effective_at)
+    assert notice not in pw.contacts.notices.get("never-enrolled@example.com", [])
+    async with pw.passkeys.db.transaction() as tx:
+        reissued = await pw.passkeys.reissue_enrolment(tx, scope=SCOPE)
+    assert "never-enrolled@example.com" not in {contact for contact, _ in reissued.notices}
