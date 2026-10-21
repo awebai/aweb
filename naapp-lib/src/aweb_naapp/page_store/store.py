@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import secrets
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,12 +25,24 @@ from aweb_naapp.outbox import OutboxEvent, apply_outbox_migrations, enqueue
 from aweb_naapp.page_store.lifecycle import LifecycleMixin
 from aweb_naapp.page_store.models import Access, RetentionPolicy, Scope, StoreError
 from aweb_naapp.page_store.support import canonical, decoded, identity, validated, widgets
+from aweb_naapp.pages import inline_schema_errors, inline_value_valid
 
 if TYPE_CHECKING:
     from aweb_naapp.runtime.team_auth import Principal
 
 ROOT = Path(__file__).parent
 MAX_REV = 2**53 - 1
+
+# Shared by widget queries and bounded live/snapshot-creation projections.
+AUTHORIZED_RECORDS = """WITH authorized AS MATERIALIZED (
+    SELECT (record-'value') || jsonb_build_object('value', COALESCE(
+        (SELECT jsonb_object_agg(key,value) FROM jsonb_each(record->'value')
+         WHERE $5::boolean OR key=ANY($4::text[])), '{}'::jsonb)) AS record
+    FROM {{tables.page_records}}
+    WHERE scope=$1 AND collection=$2 AND record IS NOT NULL
+      AND NOT(record_id=ANY($3::text[]))
+      AND ($6::text[] IS NULL OR record_id=ANY($6::text[]))
+) """
 
 
 async def apply_page_store_migrations(
@@ -97,9 +110,13 @@ class PageStore(LifecycleMixin):
 
     async def _load(self, tx, scope: Scope, principal: Principal, operation="read"):
         actor = identity(principal, scope)
+        return await self._load_actor(tx, scope, actor, operation)
+
+    async def _load_actor(self, tx, scope, actor, operation="read", *, shared=False):
         await self._fence(scope)
         row = await tx.fetch_one(
-            "SELECT document, access, deleted FROM {{tables.pages}} WHERE scope=$1 FOR UPDATE",
+            "SELECT document, access, deleted FROM {{tables.pages}} WHERE scope=$1 FOR "
+            + ("SHARE" if shared else "UPDATE"),
             scope.key,
         )
         if row is None or row["deleted"]:
@@ -784,6 +801,163 @@ class PageStore(LifecycleMixin):
             await self._fence(scope)
             return result
 
+    @staticmethod
+    def _record_access_args(scope, definition, access, actor, *, fields=None, record_ids=None):
+        allowed = (
+            access.visible_fields(actor, definition)
+            if fields is None
+            else access.value_fields(actor, definition, fields) & fields
+        )
+        return [
+            scope.key,
+            definition["id"],
+            sorted(access.hidden_rows.get(actor, {}).get(definition["id"], set()))
+            if actor != access.owner
+            else [],
+            sorted(allowed),
+            fields is None and access.all_value_fields(actor, definition),
+            record_ids,
+        ]
+
+    @staticmethod
+    def _projection_entries(projection):
+        if not isinstance(projection, Mapping) or set(projection) - {"collections", "assets"}:
+            raise StoreError("schema_invalid")
+        entries = projection.get("collections")
+        if not isinstance(entries, (list, tuple)) or len(entries) > 16:
+            raise StoreError("schema_invalid")
+        seen = set()
+        for entry in entries:
+            if not isinstance(entry, Mapping) or set(entry) != {
+                "collection",
+                "record_ids",
+                "fields",
+            }:
+                raise StoreError("schema_invalid")
+            cid = entry["collection"]
+            if not isinstance(cid, str) or not cid or cid in seen:
+                raise StoreError("schema_invalid")
+            seen.add(cid)
+            for name, maximum in (("record_ids", 200), ("fields", 64)):
+                values = entry[name]
+                if (
+                    not isinstance(values, (list, tuple))
+                    or not 1 <= len(values) <= maximum
+                    or any(not isinstance(v, str) or not v or v == "*" for v in values)
+                    or len(set(values)) != len(values)
+                ):
+                    raise StoreError("schema_invalid")
+        return entries
+
+    @staticmethod
+    def _snapshot_collections(source):
+        if (
+            not isinstance(source, Mapping)
+            or set(source) != {"page_rev", "collections"}
+            or type(source["page_rev"]) is not int
+            or not 1 <= source["page_rev"] <= MAX_REV
+            or not isinstance(source["collections"], (list, tuple))
+            or len(source["collections"]) > 16
+        ):
+            raise StoreError("schema_invalid")
+        result = {}
+        for collection in source["collections"]:
+            if (
+                not isinstance(collection, Mapping)
+                or set(collection) != {"id", "schema_version", "schema", "records"}
+                or not isinstance(collection["id"], str)
+                or not collection["id"]
+                or collection["id"] in result
+                or type(collection["schema_version"]) is not int
+                or collection["schema_version"] < 1
+                or not isinstance(collection["schema"], dict)
+                or inline_schema_errors(collection["schema"])
+                or not isinstance(collection["records"], (list, tuple))
+                or len(collection["records"]) > 200
+            ):
+                raise StoreError("schema_invalid")
+            seen = set()
+            for record in collection["records"]:
+                if (
+                    not isinstance(record, Mapping)
+                    or set(record) != {"id", "rev", "value"}
+                    or not isinstance(record["id"], str)
+                    or not record["id"]
+                    or record["id"] in seen
+                    or type(record["rev"]) is not int
+                    or not 1 <= record["rev"] <= MAX_REV
+                    or not isinstance(record["value"], dict)
+                    or not inline_value_valid(collection["schema"], record["value"])
+                ):
+                    raise StoreError("schema_invalid")
+                seen.add(record["id"])
+            result[collection["id"]] = collection
+        return result
+
+    async def read_projection_on(
+        self, tx, scope, *, creator_id, projection, expected_page_rev=None, source_snapshot=None
+    ):
+        """Project checked link data under the caller's transaction/link lock.
+
+        creator_id is the verified creator's ACL identity, never the anonymous
+        holder. The host binds scope and any immutable source to the checked
+        link. Pinned hosts must require a stored source; None reads live data.
+        """
+        entries = self._projection_entries(projection)
+        if not isinstance(creator_id, str) or not creator_id:
+            raise StoreError("schema_invalid")
+        document, access, actor = await self._load_actor(tx, scope, creator_id, shared=True)
+        current = {c["id"]: c for c in document["collections"]}
+        source = None if source_snapshot is None else self._snapshot_collections(source_snapshot)
+        revision = document["rev"] if source is None else source_snapshot["page_rev"]
+        if expected_page_rev is not None:
+            self._precondition({"rev": revision}, expected_page_rev)
+        selected = []
+        for entry in entries:
+            cid = entry["collection"]
+            if cid not in current or (source is not None and cid not in source):
+                raise StoreError("action_denied", 403)
+            definition = current[cid] if source is None else source[cid]
+            args = self._record_access_args(
+                scope,
+                current[cid],
+                access,
+                actor,
+                fields=set(entry["fields"]),
+                record_ids=list(entry["record_ids"]),
+            )
+            if source is None:
+                records = [
+                    decoded(row["record"])
+                    for row in await tx.fetch_all(
+                        AUTHORIZED_RECORDS + "SELECT record FROM authorized ORDER BY record->>'id'",
+                        *args,
+                    )
+                ]
+            else:
+                records = definition["records"]
+            fields, hidden, ids = set(args[3]), set(args[2]), set(args[5])
+            selected.append(
+                {
+                    "id": cid,
+                    "schema_version": definition["schema_version"],
+                    "schema": access.redact_schema(actor, definition, fields=fields),
+                    "records": [
+                        {
+                            "id": r["id"],
+                            "rev": r["rev"],
+                            "value": {
+                                k: copy.deepcopy(v) for k, v in r["value"].items() if k in fields
+                            },
+                        }
+                        for r in sorted(records, key=lambda r: r["id"])
+                        if r["id"] in ids and r["id"] not in hidden
+                    ],
+                }
+            )
+        await self._fence(scope)
+        return {"page_rev": revision, "collections": selected}
+
     async def read_widget(self, scope, principal, *, widget_id, expected_page_rev, bind):
         if not isinstance(bind, dict):
             raise StoreError("schema_invalid", details=[{"pointer": "/bind"}])
@@ -845,15 +1019,7 @@ class PageStore(LifecycleMixin):
                 if cursor is None:
                     raise StoreError("cursor_invalid", 409)
                 offset = cursor["row_offset"]
-            args = [
-                scope.key,
-                definition["id"],
-                sorted(access.hidden_rows.get(actor, {}).get(definition["id"], set()))
-                if actor != access.owner
-                else [],
-                sorted(fields),
-                access.all_value_fields(actor, definition),
-            ]
+            args = self._record_access_args(scope, definition, access, actor)
 
             def parameter(value):
                 args.append(value)
@@ -884,14 +1050,7 @@ class PageStore(LifecycleMixin):
                 orders.append(f"record->'value'->{field}::text {direction} NULLS FIRST")
             orders.append("record->>'id' ASC")
             where = " AND ".join(clauses) or "TRUE"
-            authorized = """WITH authorized AS MATERIALIZED (
-                SELECT (record-'value') || jsonb_build_object('value', COALESCE(
-                    (SELECT jsonb_object_agg(key,value) FROM jsonb_each(record->'value')
-                     WHERE $5::boolean OR key=ANY($4::text[])), '{}'::jsonb)) AS record
-                FROM {{tables.page_records}}
-                WHERE scope=$1 AND collection=$2 AND record IS NOT NULL
-                  AND NOT(record_id=ANY($3::text[]))
-            ) """
+            authorized = AUTHORIZED_RECORDS
             count = await tx.fetch_value(
                 authorized + "SELECT count(*) FROM authorized WHERE " + where, *filter_args
             )
