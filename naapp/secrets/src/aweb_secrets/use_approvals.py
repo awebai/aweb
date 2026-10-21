@@ -223,12 +223,25 @@ async def _locked_ancestry(
     nodes: tuple[derived_lineage.LineageNode, ...] = ()
     try:
         nodes = await derived_lineage.lock_ancestry(tx, installation_id, team_id, secret_id)
+    except derived_lineage.LineageRefused as exc:
+        return nodes, exc.code
+    return nodes, await _ancestry_refusal(tx, approvals, nodes, grant_id, max_ttl_s)
+
+
+async def _ancestry_refusal(
+    tx: TransactionManager,
+    approvals: Approvals,
+    nodes: Sequence[derived_lineage.LineageNode],
+    grant_id: str,
+    max_ttl_s: int,
+) -> str | None:
+    try:
         await derived_lineage.check_ancestry(
             tx, nodes, now=approvals.now(), max_ttl_s=max_ttl_s, candidate_grant_ids=[grant_id]
         )
     except derived_lineage.LineageRefused as exc:
-        return nodes, exc.code
-    return nodes, None
+        return exc.code
+    return None
 
 
 async def _covering_scopes(
@@ -354,6 +367,11 @@ async def request_use_approval(
         raise
     if any(candidate.scope not in scopes for candidate in pending.approval.candidates):
         raise UseApprovalRefused("no_eligible_approver", "coverage changed while minting")
+    # These grant locks are already held. Refresh expiry after any wait for
+    # coverage or B2's separate directory connection before committing a mint.
+    refusal = await _ancestry_refusal(tx, approvals, nodes, intent["grant_id"], max_ttl_s)
+    if refusal is not None:
+        raise UseApprovalRefused(refusal, "the secret expired while minting its approval")
     await tx.execute(
         "INSERT INTO {{tables.use_approvals}} (intent_id, dispatch_id, installation_id, team_id, "
         "secret_id, secret_version, approval_id, approval_ref, request) "
@@ -464,6 +482,11 @@ async def admit_approved_use(
                 eligible = any(candidate.scope in scopes for candidate in approval.candidates)
             if not eligible:
                 refusal = refusal or "approval_revoked"
+        # Ancestry/grants are held, so this takes no new locks. Time may have
+        # advanced while coverage, B2 or the read was blocked; recheck last.
+        refusal = refusal or await _ancestry_refusal(
+            tx, approvals, nodes, request["grant_id"], max_ttl_s
+        )
         if refusal is not None:
             await _void(tx, approvals, approval_id, refusal)
             return UseAdmission(admission=None, refusal=refusal)

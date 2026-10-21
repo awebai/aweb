@@ -76,6 +76,8 @@ role hold first; these functions then lock ancestry root to leaf, grants in
 ascending order, covering approver records, and B2 approvals. Coverage and
 ancestor authority are rechecked before first sends and `NOT_SENT` retries;
 already admitted dispatches remain retrievable without authorizing another send.
+Expiry is checked again after blocking coverage/approval reads, before mint
+commits or a new send is admitted.
 
 Containment calls `revoke_use_approvals(tx, approvals, installation_id=...,
 team_id=..., secret_ids=descendant_ids, revoked_by=..., reason=...)` in the same

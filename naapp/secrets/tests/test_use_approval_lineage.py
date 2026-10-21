@@ -98,9 +98,11 @@ async def child(
     return secret, grant
 
 
-async def request_child(context, secret, request_id=None, *, max_ttl_s=3600):
+async def request_child(context, secret, request_id=None, *, max_ttl_s=3600, started=None):
     dispatch_id = uuid.uuid4()
     async with context.world.db.transaction() as tx:
+        if started is not None:
+            started.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
         admission = await admit_use(
             tx,
             fence=context.world.fence,
@@ -124,8 +126,10 @@ async def request_child(context, secret, request_id=None, *, max_ttl_s=3600):
     return admission, dispatch_id, pending
 
 
-async def admit(context, admission, dispatch_id, *, max_ttl_s=3600):
+async def admit(context, admission, dispatch_id, *, max_ttl_s=3600, started=None):
     async with context.world.db.transaction() as tx:
+        if started is not None:
+            started.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
         await context.world.fence.admit(tx, context.grant)
         return await use_approvals.admit_approved_use(
             tx,
@@ -208,6 +212,54 @@ async def test_the_current_deployment_ttl_cap_is_used(uses, stage):  # noqa: F81
         assert (
             await admit(uses, admission, dispatch_id, max_ttl_s=60)
         ).refusal == "secret_disabled"
+
+
+@pytest.mark.parametrize(
+    "stage,lock", [("mint", "coverage"), ("admission", "coverage"), ("admission", "approval")]
+)
+async def test_expiry_during_a_later_lock_wait_refuses_new_authority(uses, stage, lock):  # noqa: F811
+    await seed(uses)
+    secret, _ = await child(uses)
+    if stage == "admission":
+        admission, dispatch_id, pending = await request_child(uses, secret)
+        await approve(uses, pending, "finance@acme.com")
+    db = uses.world.db
+    started = asyncio.get_running_loop().create_future()
+    task = None
+    try:
+        async with db.transaction() as holder:
+            blocker = await holder.fetch_value("SELECT pg_backend_pid()")
+            if lock == "coverage":
+                await holder.execute(
+                    "UPDATE {{tables.approvers}} SET covers=covers WHERE approver_ref='finance'"
+                )
+            else:
+                await holder.fetch_value(
+                    "SELECT approval_id FROM {{tables.approvals}} WHERE approval_id=$1 FOR UPDATE",
+                    pending.pending.approval.approval_id,
+                )
+            operation = (
+                request_child(uses, secret, max_ttl_s=60, started=started)
+                if stage == "mint"
+                else admit(uses, admission, dispatch_id, max_ttl_s=60, started=started)
+            )
+            task = asyncio.create_task(operation)
+            pid = await asyncio.wait_for(started, 5)
+            async with asyncio.timeout(5):
+                while blocker not in await db.fetch_value("SELECT pg_blocking_pids($1)", pid):
+                    await asyncio.sleep(0.01)
+            uses.clock.now += timedelta(seconds=61)
+        if stage == "mint":
+            with pytest.raises(UseApprovalRefused) as refused:
+                await asyncio.wait_for(task, 5)
+            assert refused.value.code == "secret_disabled"
+        else:
+            result = await asyncio.wait_for(task, 5)
+            assert result.refusal == "secret_disabled" and result.admission is None
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_an_unlisted_ancestor_approver_is_refused_before_mint(uses):  # noqa: F811
