@@ -513,3 +513,10 @@ func TestSignOwnerActRefusesAnImpossibleTime(t *testing.T) {
 		t.Fatalf("got %v, want invalid_value", err)
 	}
 }
+
+func TestSignOwnerActRefusesALifetimeOverTenMinutes(t *testing.T) {
+	act := ownerSet(ownerAct("hook-binding.activate", ownerCoreAud, registrationSubject(), nonceFor(0)), "expires_at", "2026-10-20T12:10:01Z")
+	if _, _, err := SignOwnerAct(ownerKey(ownerTeamSeed), act); strictjson.Code(err) != "lifetime_too_long" {
+		t.Fatalf("got %v, want lifetime_too_long", err)
+	}
+}
