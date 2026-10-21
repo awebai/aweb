@@ -22,6 +22,12 @@ from aweb_secrets.operation_request import render_operation
 from .test_operation_record import REFUND
 
 PARAMS = {"charge": "ch_3Pq9", "amount_minor_units": 500, "currency": "EUR"}
+KEY = "secrets-d1"
+
+
+def _render(template: OperationTemplate, params: Any, *, headers=(), idempotency_key: str | None = KEY):
+    """Render as the dispatcher does, with its upstream idempotency key."""
+    return render_operation(template, params, headers=list(headers), idempotency_key=idempotency_key)
 
 
 def _template(**changes: Any) -> OperationTemplate:
@@ -31,7 +37,7 @@ def _template(**changes: Any) -> OperationTemplate:
 
 
 def test_the_operation_renders_its_one_request() -> None:
-    request = render_operation(_template(), PARAMS, headers=[])
+    request = _render(_template(), PARAMS, headers=[])
     assert request.method == "POST"
     assert request.url == "https://api.payments.example/v1/charges/ch_3Pq9/refunds"
     assert json.loads(request.body) == {
@@ -50,7 +56,7 @@ def test_the_operation_renders_its_one_request() -> None:
 
 
 def test_the_request_matches_the_destination_it_carries() -> None:
-    request = render_operation(_template(), PARAMS, headers=[])
+    request = _render(_template(), PARAMS, headers=[])
     match_destination(
         request.destination,
         request.method,
@@ -64,7 +70,7 @@ def test_the_template_response_bound_applies_above_the_egress_default() -> None:
     template = _template(
         response={"projection": None, "max_bytes": 16 * 1024 * 1024, "content_types": ["application/json"]}
     )
-    request = render_operation(template, PARAMS, headers=[])
+    request = _render(template, PARAMS, headers=[])
     assert request.bounds.max_response_bytes == MAX_RESPONSE_BYTES == 16 * 1024 * 1024
     assert request.max_bytes == MAX_RESPONSE_BYTES
 
@@ -82,7 +88,7 @@ def test_the_template_response_bound_applies_above_the_egress_default() -> None:
 )
 def test_parameters_outside_their_slots_are_refused(params: dict) -> None:
     with pytest.raises(EgressRefused) as refused:
-        render_operation(_template(), params, headers=[])
+        _render(_template(), params, headers=[])
     assert refused.value.code == "params_invalid"
 
 
@@ -95,7 +101,7 @@ def _free_path_param() -> OperationTemplate:
 @pytest.mark.parametrize("value", ["a/b", "..", "a\\b", "%2F", "a?b", "a#b", "a b"])
 def test_a_path_parameter_never_becomes_a_separator(value: str) -> None:
     try:
-        request = render_operation(_free_path_param(), {**PARAMS, "charge": value}, headers=[])
+        request = _render(_free_path_param(), {**PARAMS, "charge": value}, headers=[])
     except EgressRefused as refused:
         assert refused.code in ("params_invalid", "destination_not_in_scope")
         return
@@ -109,7 +115,7 @@ def test_a_query_parameter_is_one_encoded_value() -> None:
     after["params"]["currency"]["placement"] = "query"
     after["body"]["template"].pop("currency")
     template = OperationTemplate.from_after(after)
-    request = render_operation(template, PARAMS, headers=[])
+    request = _render(template, PARAMS, headers=[])
     assert request.url.endswith("/refunds?currency=EUR")
 
 
@@ -117,18 +123,46 @@ def test_a_query_value_cannot_add_a_parameter() -> None:
     after = copy.deepcopy(REFUND)
     after["params"]["note"] = {"schema": {"type": "string", "maxLength": 32}, "charset": None, "placement": "query"}
     template = OperationTemplate.from_after(after)
-    request = render_operation(template, {**PARAMS, "note": "x&admin=1"}, headers=[])
+    request = _render(template, {**PARAMS, "note": "x&admin=1"}, headers=[])
     query = canonical_url(request.url).query
     assert [name for name, _ in query] == ["note"]
 
 
+def _allowing(*names: str) -> OperationTemplate:
+    after = copy.deepcopy(REFUND)
+    after["headers"]["allowed"] = sorted(names)
+    return OperationTemplate.from_after(after)
+
+
 def test_an_allowed_agent_header_passes_and_others_are_refused() -> None:
-    request = render_operation(_template(), PARAMS, headers=[("Idempotency-Key", "agent-1")])
-    assert ("Idempotency-Key", "agent-1") in request.headers
+    template = _allowing("idempotency-key", "x-request-id")
+    request = _render(template, PARAMS, headers=[("X-Request-Id", "agent-1")])
+    assert ("X-Request-Id", "agent-1") in request.headers
     for header in (("X-Other", "v"), ("Stripe-Version", "2099-01-01"), ("Content-Type", "text/plain")):
         with pytest.raises(EgressRefused) as refused:
-            render_operation(_template(), PARAMS, headers=[header])
+            _render(template, PARAMS, headers=[header])
         assert refused.value.code == "header_not_allowed"
+
+
+def test_the_declared_idempotency_header_is_never_the_agents() -> None:
+    # The template lists it as allowed too; it is still the broker's.
+    template = _allowing("idempotency-key", "x-request-id")
+    with pytest.raises(EgressRefused) as refused:
+        _render(template, PARAMS, headers=[("Idempotency-Key", "agent-chosen")])
+    assert refused.value.code == "header_not_allowed"
+
+
+def test_an_idempotent_operation_is_never_rendered_without_the_broker_key() -> None:
+    with pytest.raises(ValueError):
+        render_operation(_template(), PARAMS, headers=[], idempotency_key=None)
+
+
+def test_an_operation_without_idempotency_lets_an_allowed_agent_header_through() -> None:
+    after = copy.deepcopy(REFUND)
+    after["idempotency"] = None
+    template = OperationTemplate.from_after(after)
+    request = render_operation(template, PARAMS, headers=[("Idempotency-Key", "agent-1")])
+    assert ("Idempotency-Key", "agent-1") in request.headers
 
 
 def test_the_broker_idempotency_key_takes_the_declared_header() -> None:
@@ -147,6 +181,6 @@ def test_an_operation_without_a_body_sends_none() -> None:
     after["params"] = {"charge": REFUND["params"]["charge"]}
     after["body"] = None
     template = OperationTemplate.from_after(after)
-    request = render_operation(template, {"charge": "ch_1"}, headers=[])
+    request = _render(template, {"charge": "ch_1"}, headers=[])
     assert request.body == b""
     assert all(name != "Content-Type" for name, _ in request.headers)

@@ -82,7 +82,10 @@ async def test_an_undeclared_response_type_is_withheld(upstream: Upstream) -> No
         upstream, response={"projection": None, "max_bytes": 4096, "content_types": ["text/csv"]}
     )
     request = render_operation(
-        template, {"charge": "ch_1", "amount_minor_units": 5, "currency": "EUR"}, headers=[]
+        template,
+        {"charge": "ch_1", "amount_minor_units": 5, "currency": "EUR"},
+        headers=[],
+        idempotency_key="secrets-d2",
     )
     call = await _send(upstream, request)
     assert call.result.disposition == "withheld"
@@ -92,7 +95,10 @@ async def test_an_undeclared_response_type_is_withheld(upstream: Upstream) -> No
 
 async def test_a_wrong_credential_fails_at_the_upstream(upstream: Upstream) -> None:
     request = render_operation(
-        _template(upstream), {"charge": "ch_1", "amount_minor_units": 5, "currency": "EUR"}, headers=[]
+        _template(upstream),
+        {"charge": "ch_1", "amount_minor_units": 5, "currency": "EUR"},
+        headers=[],
+        idempotency_key="secrets-d3",
     )
     call = await _send(upstream, request, token="not-the-token")
     assert call.result.status == 401

@@ -11,8 +11,9 @@ their typed slots, each checked against its schema and character class:
 - a body parameter replaces one ``{"$param": name}`` slot.
 
 Of the agent's headers, only the template's ``allowed`` names pass, once
-each and never over a fixed header. The broker's upstream idempotency key
-goes in the header the template declares. The destination is the
+each and never over a fixed header. An operation that declares idempotency
+is rendered only with the broker's upstream key, in the declared header; the
+agent never sets that header, even when the template lists it as allowed. The destination is the
 template's exact target, and the guard matches the request against it
 again before sending.
 """
@@ -107,7 +108,10 @@ def render_operation(
     sent = [(name, value) for name, value in fixed.items()]
     names = {name.lower() for name in fixed}
     idempotency = after["idempotency"]
-    reserved = {idempotency["header"].lower()} if idempotency and idempotency_key else set()
+    if idempotency and not idempotency_key:
+        raise ValueError("an idempotent operation is sent only with the broker's idempotency key")
+    # The declared idempotency header is the broker's, even if the template allows it.
+    reserved = {idempotency["header"].lower()} if idempotency else set()
     body = b""
     if after["body"] is not None:
         body = json.dumps(
