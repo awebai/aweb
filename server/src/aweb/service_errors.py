@@ -11,7 +11,7 @@ class ServiceError(Exception):
 
     status_code: int = 500
 
-    def __init__(self, detail: str = "Internal service error") -> None:
+    def __init__(self, detail: str | dict = "Internal service error") -> None:
         self.detail = detail
         super().__init__(detail)
 
@@ -26,7 +26,7 @@ class NotFoundError(ServiceError):
 class ValidationError(ServiceError):
     status_code: int = 422
 
-    def __init__(self, detail: str = "Validation error") -> None:
+    def __init__(self, detail: str | dict = "Validation error") -> None:
         super().__init__(detail)
 
 

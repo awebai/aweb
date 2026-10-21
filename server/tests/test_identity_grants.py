@@ -1192,7 +1192,32 @@ def _route_grant_scope_table(app: FastAPI) -> list[tuple[str, str, str]]:
     return sorted(set(rows))
 
 
-def _direct_team_identity_calls() -> list[tuple[str, str, int]]:
+def _team_identity_call_sites(source: str, path_label: str) -> list[tuple[str, str]]:
+    """One (file, enclosing function) row per direct get_team_identity call.
+
+    Rows carry no line numbers, so an edit above a reviewed call moves
+    nothing; a new call, in a new function or a second one in a reviewed
+    function, adds a row.
+    """
+    tree = ast.parse(source)
+    parents: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+    rows: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name) or node.func.id != "get_team_identity":
+            continue
+        parent = parents.get(node)
+        while parent is not None and not isinstance(parent, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            parent = parents.get(parent)
+        rows.append((path_label, getattr(parent, "name", "<module>")))
+    return sorted(rows)
+
+
+def _direct_team_identity_calls() -> list[tuple[str, str]]:
     paths = [
         REPO_ROOT / "server/src/aweb/coordination/routes/tasks.py",
         REPO_ROOT / "server/src/aweb/coordination/routes/workspaces.py",
@@ -1204,22 +1229,9 @@ def _direct_team_identity_calls() -> list[tuple[str, str, int]]:
         REPO_ROOT / "server/src/aweb/routes/events.py",
         REPO_ROOT / "server/src/aweb/routes/hook_bindings.py",
     ]
-    rows: list[tuple[str, str, int]] = []
+    rows: list[tuple[str, str]] = []
     for path in paths:
-        tree = ast.parse(path.read_text())
-        parents: dict[ast.AST, ast.AST] = {}
-        for parent in ast.walk(tree):
-            for child in ast.iter_child_nodes(parent):
-                parents[child] = parent
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            if not isinstance(node.func, ast.Name) or node.func.id != "get_team_identity":
-                continue
-            parent = parents.get(node)
-            while parent is not None and not isinstance(parent, (ast.AsyncFunctionDef, ast.FunctionDef)):
-                parent = parents.get(parent)
-            rows.append((str(path.relative_to(REPO_ROOT)), getattr(parent, "name", "<module>"), node.lineno))
+        rows.extend(_team_identity_call_sites(path.read_text(), str(path.relative_to(REPO_ROOT))))
     return sorted(rows)
 
 
@@ -1268,15 +1280,35 @@ def test_route_grant_scope_declarations_are_known_and_reviewable():
     assert table == expected
 
 
+def test_the_call_site_guard_sees_every_call_with_its_enclosing_function():
+    source = """
+async def reviewed(request, db):
+    return await get_team_identity(request, db)
+
+async def unreviewed(request, db):
+    first = await get_team_identity(request, db)
+    second = await get_team_identity(request, db)
+    return first, second
+
+def unrelated(request):
+    return other(request)
+"""
+    assert _team_identity_call_sites(source, "x.py") == [
+        ("x.py", "reviewed"),
+        ("x.py", "unreviewed"),
+        ("x.py", "unreviewed"),
+    ]
+
+
 def test_direct_team_identity_calls_are_reviewed_root_only_sites():
     assert _direct_team_identity_calls() == [
-        ("server/src/aweb/routes/apps.py", "_authorized_team_id", 101),
-        ("server/src/aweb/routes/apps.py", "install_app_route", 161),
-        ("server/src/aweb/routes/connect.py", "get_team_info", 483),
-        ("server/src/aweb/routes/events.py", "_subscription_read_identity", 145),
-        ("server/src/aweb/routes/events.py", "delete_app_event_subscription_route", 652),
-        ("server/src/aweb/routes/events.py", "upsert_app_event_subscription_route", 617),
-        ("server/src/aweb/routes/hook_bindings.py", "_owner_act_route", 142),
+        ("server/src/aweb/routes/apps.py", "_authorized_team_id"),
+        ("server/src/aweb/routes/apps.py", "install_app_route"),
+        ("server/src/aweb/routes/connect.py", "get_team_info"),
+        ("server/src/aweb/routes/events.py", "_subscription_read_identity"),
+        ("server/src/aweb/routes/events.py", "delete_app_event_subscription_route"),
+        ("server/src/aweb/routes/events.py", "upsert_app_event_subscription_route"),
+        ("server/src/aweb/routes/hook_bindings.py", "_owner_act_route"),
     ]
 
 @pytest.mark.asyncio

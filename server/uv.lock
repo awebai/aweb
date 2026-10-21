@@ -84,7 +84,7 @@ wheels = [
 
 [[package]]
 name = "aweb"
-version = "1.27.30"
+version = "1.27.31"
 source = { editable = "." }
 dependencies = [
     { name = "aweb-naapp", extra = ["hooks"] },
@@ -109,6 +109,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "aweb-naapp" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -137,13 +138,14 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aweb-naapp", editable = "../naapp-lib" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
 ]
 
 [[package]]
 name = "aweb-naapp"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "../naapp-lib" }
 
 [package.optional-dependencies]

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import base64
 from contextlib import aclosing
+from dataclasses import replace
+from datetime import datetime
 
 import pytest
 from fastapi import FastAPI
@@ -279,3 +281,21 @@ async def test_a_misconfigured_verifier_is_logged_and_changes_nothing(env, monke
         "SELECT state FROM {{tables.app_hook_bindings}} WHERE binding_id = $1", registration.binding_id,
     ) == "pending"
     assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 0
+
+
+@pytest.mark.asyncio
+async def test_owner_and_app_binding_views_share_utc_times_and_safe_activation_rounding(env):
+    from aweb.routes.app_hooks import _binding_fields
+
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    binding = replace(
+        registration,
+        activated_at=datetime.fromisoformat("2026-10-20T16:59:59.123456-07:00"),
+        active_from=datetime.fromisoformat("2026-10-20T16:59:59.999999-07:00"),
+    )
+    owner_view = hook_routes._as_response(binding)
+    app_view = _binding_fields(binding)
+    assert owner_view.activated_at == "2026-10-20T23:59:59.123Z"
+    assert owner_view.active_from == app_view["active_from"] == "2026-10-21T00:00:00.000Z"
+    assert owner_view.revoked_at is None

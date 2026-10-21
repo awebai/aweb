@@ -11,7 +11,6 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -29,6 +28,7 @@ from aweb.hook_bindings import (
     list_app_bindings,
     revoke_binding,
 )
+from aweb.hook_times import format_hook_time
 from aweb.routes.apps import _authorized_team_id
 from aweb.service_errors import ServiceError
 from aweb.team_auth_deps import get_team_identity
@@ -81,13 +81,6 @@ class HookBindingsResponse(BaseModel):
     bindings: list[HookBindingResponse]
 
 
-def _time(value: datetime | None) -> str | None:
-    """The hook-event millisecond form, YYYY-MM-DDTHH:MM:SS.mmmZ."""
-    if value is None:
-        return None
-    return value.strftime("%Y-%m-%dT%H:%M:%S.") + f"{value.microsecond // 1000:03d}Z"
-
-
 def _as_response(binding: HookBinding) -> HookBindingResponse:
     return HookBindingResponse(
         binding_id=str(binding.binding_id),
@@ -108,9 +101,9 @@ def _as_response(binding: HookBinding) -> HookBindingResponse:
         reads=list(binding.reads),
         state=binding.state,
         ended_by=binding.ended_by,
-        activated_at=_time(binding.activated_at),
-        active_from=_time(binding.active_from),
-        revoked_at=_time(binding.revoked_at),
+        activated_at=format_hook_time(binding.activated_at),
+        active_from=format_hook_time(binding.active_from, round_up=True),
+        revoked_at=format_hook_time(binding.revoked_at),
     )
 
 

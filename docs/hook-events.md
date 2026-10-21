@@ -88,9 +88,16 @@ identifier such as `task:<uuid>`: at most 128 characters, with no spaces, `@`,
 `+` or `=`, so it cannot carry an email address or a padded base64 token.
 
 **Digest rule.** No payload digest is ever unsalted over bytes that contain, or
-may echo, a credential. `request_sha256` and `params_sha256` cover the request
-**before** credential injection. Response bytes are committed only through a
-producer-keyed HMAC (`upstream_response_hmac`, `returned_hmac`).
+may echo, a credential. For `post-secret-use-hook`, the historical names
+`request_sha256` and `params_sha256` mean separate producer-keyed HMAC-SHA-256
+commitments to the initial inbound request and typed parameters, as specified
+below (decision 73). Pre-injection bytes may already contain a credential. For
+`post-manifest-command-hook`, the historical field name `request_sha256`
+means a producer-keyed HMAC-SHA-256, as specified below: even an uninjected
+generic tool request may contain a credential. Response bytes are committed
+only through a producer-keyed HMAC (`upstream_response_hmac`, `returned_hmac`).
+See [audit-substrate §A2](design/audit-substrate.md#a2-the-catalog-v1),
+"Manifest request commitment".
 
 **Check order.** A consumer checks an event's payload in this order and reports
 the first fault:
@@ -126,17 +133,90 @@ the external call is sent. `op_kind` is `broker` or `run_job`.
   test that a request whose concrete path holds a credential-shaped segment
   emits only its configured template. A runner job names `runner_id`, `job_id` and
   `job_digest` instead, and the two sets exclude each other.
-- `refused` requires `refusal_code`, from the catalog's 30 codes; no other
+- `refused` requires `refusal_code`, from the catalog's 32 codes; no other
   action carries one.
 - `completed` requires `disposition` (`returned`, `withheld` or
   `stored_as_secret`) and `undeclared_credential`. A returned result carries
   `returned_hmac`, a withheld one never does, and a stored one names
-  `derived_secret_id`. An undeclared credential in the response forces
+  `derived_secret_id` and `derived_grant_id` together. Both fields are forbidden
+  on every other disposition or action. `grant_id` remains the authorizing
+  source grant; `derived_grant_id` is the child's actual newly minted grant,
+  never a grant template. The pair is emitted only in the transaction that
+  commits the child, custody value, new grant, result and outbox. A rollback or
+  lost recording fence emits no creation pair; replay preserves the committed
+  pair. An undeclared credential in the response forces
   `withheld`.
 - `approval_decided` requires `approval_id` and `approval_decision`.
 
 A withheld value and an undeclared credential are properties of the `completed`
 event, not separate events.
+
+**Request and parameter commitments (decision 73).** These two optional
+fields retain their historical names and 64-character lowercase hexadecimal
+shape, and are never plain SHA-256 values. The producer computes:
+
+```text
+request_sha256 = hex_lower(HMAC-SHA-256(K_request,
+    "aweb.post-secret-use.request/1\n" || canonical(context) || "\n" ||
+    canonical_request_bytes))
+params_sha256 = hex_lower(HMAC-SHA-256(K_params,
+    "aweb.post-secret-use.params/1\n" || canonical(context) || "\n" ||
+    frame(canonical_params_bytes)))
+```
+
+`context`, `frame` and `canonical_request_bytes` use the exact definitions
+under [the manifest-command hook](#post-manifest-command-hook). The context
+comes from authoritative installation and matched tool data. The request is
+the **initial authenticated inbound tool HTTP request**, with its original
+external raw target, received content-type values and exact body bytes. It
+is captured before injection and before rendering any upstream request. An
+upstream request may depend on a dispatch ID and need not exist at refusal.
+
+`canonical_params_bytes` is the canonical UTF-8 JSON of the validated typed
+operation/job input, using B2's integer-only canonical-JSON value rules but
+without B2's domain prefix or policy/request wrapper. Values have already
+been coerced to the operation/job's declared types. Open requests have no
+typed parameter object and omit `params_sha256`; they do not invent `{}`.
+Malformed or unavailable typed parameters on a refusal also omit that MAC.
+An otherwise attributable refusal with no complete input omits the
+corresponding optional commitment, never substitutes a plain digest or partial
+bytes, and still records its required audit event.
+
+`K_request` and `K_params` are separate independent random 32-byte secrets.
+Each is single-purpose and separate from the manifest-command K, signing
+seeds, team keys and the response/returned-value HMAC keys. They use the
+manifest-command key-file format, startup refusal and destruction-on-rotation
+rules. New commitments after rotation use the new key. All replicas of a
+producer share each configured purpose's key. A target verifies the signed
+producer statement and field shape; it cannot recompute the commitments or
+compare them across producers or key rotations.
+
+The producer computes and persists each available MAC and its context once
+with the initial logical use, before asynchronous approval or dispatch.
+Approval transitions, same-request re-submission, status and outbox retries
+reuse those stored commitments; they never recompute from later headers or a
+rotated key. The S8 local equality hash (`UseRequest.request_sha256`) and B2's
+approval request hash remain distinct from these audit MACs. Neither local
+hash is copied into these hook fields, and an audit MAC is never used as the
+idempotency comparator or passkey approval hash.
+
+An `idempotency_conflict` refusal describes the **attempted** request: it uses
+that attempt's MACs when the complete inputs exist and otherwise omits them.
+It neither borrows nor replaces the accepted use's persisted commitments.
+Refusals can roll back the inner admission savepoint, leaving no intent or
+claimed request key. Their required event is enqueued in the outer transaction
+without requiring an intent row. Existing configuration refusals
+`installation_identity_required` and `authority_unavailable` retain their
+no-use-event treatment; their installation/tool authority is not proven.
+
+**In-place re-freeze.** Decision 73 records that no deployed producer or
+consumer uses `post-secret-use-hook`, and there are no deployed pending uses.
+The catalog stays at version 1: its public file, package copy, transition
+fixtures and consumer expectations change together in this stack. S13 builds
+directly on this re-frozen shape; there is no parallel catalog or cutover.
+Kit, ingest and resolution support and owner activation are still prerequisites
+to emitting real events. Once a consumer is deployed, the normal versioning
+rule applies to subsequent payload changes.
 
 ### `post-governance-hook`
 
@@ -163,10 +243,88 @@ strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
 ### `post-manifest-command-hook`
 
 `app_id`, `tool`, `operation_kind` (`mutation`, `read` or `refusal`),
-`request_sha256` and `http_status` are required. `request_sha256` is the
-SHA-256 of the canonical request bytes of the manifest mapping. Parameter
-values are not copied; the digest commits to them. A refusal carries no
-`result_ref`.
+`request_sha256` and `http_status` are required. For this hook,
+`request_sha256` is a producer-keyed HMAC-SHA-256 commitment, encoded as 64
+lowercase hexadecimal characters. The historical name is retained; a plain
+SHA-256 is never emitted here. Surface-only secret ingress does not prove
+that a generic tool's parameters contain no credentials.
+
+The producer computes:
+
+```text
+request_sha256 = hex_lower(HMAC-SHA-256(K,
+    "aweb.post-manifest-command.request/1\n" || canonical(context) || "\n" ||
+    canonical_request_bytes))
+```
+
+`context` contains exactly `app_id`, `team_id`, `installation_id`, `generation`
+and `tool`, from the admitted installation and matched manifest tool, encoded
+with the envelope's canonical JSON rules.
+
+`canonical_request_bytes` is the following binary encoding of the request
+received by the producer, before any downstream credential injection:
+
+```text
+frame(method) || frame(raw_target) || u64be(content_type_count) ||
+    frame(content_type_1) || ... || frame(content_type_n) || frame(body)
+frame(bytes) = u64be(length_in_bytes(bytes)) || bytes
+```
+
+`u64be` is an unsigned 64-bit integer in big-endian byte order, with no textual
+separators. The fields are:
+
+- `method`: the uppercase ASCII HTTP method matched by tool admission.
+- `raw_target`: the ASCII external raw path plus raw query used by team-auth
+  verification, including any mount prefix. It uses the same request-target
+  reconstruction as admission; it is never percent-decoded, re-encoded or replaced
+  with the tool's path template. Query order and percent-encoding spelling
+  are preserved.
+- `content_type_1` through `content_type_n`: every received `Content-Type`
+  field value as bytes, in request header order, without parsing, case folding
+  or trimming by the producer. An absent header has count zero; one empty
+  value has count one and a zero-length frame. Header names match
+  case-insensitively. Normal manifest requests supply the mapping's explicit
+  content type (`application/json` or `body.content_type`).
+- `body`: the exact received pre-injection body bytes, including an empty
+  body. In JSON mode these are the bytes the manifest dispatcher serialized
+  and team-auth authenticated, without parsing and reserializing. In raw mode
+  they are the exact raw body, including binary bytes, without text decoding
+  or newline normalization.
+
+The framing binds field boundaries even when a value contains delimiters or
+binary bytes. K4 tests require identical inputs to yield the same MAC and
+independent changes to method, concrete path, raw query, content type or body
+to change it, with both JSON and raw-body cases. Only the commitment leaves
+the producer; parameter values and concrete paths or queries are never copied
+into event fields.
+
+`K` is an independent, randomly generated 32-byte producer-local secret,
+persisted in the producer's private configuration. K is used for no other
+purpose, including `returned_hmac` or `upstream_response_hmac`. It is never a signing seed,
+a public key, a team key or a manifest field, and is never sent to a target.
+The runtime loads it through the shared key-file reader as 64 hexadecimal
+characters, with one trailing newline allowed. A runtime configured to produce
+this hook fails startup if the key is absent or malformed. All
+replicas of that producer use the same key. Rotation changes subsequent
+commitments and destroys the old K; retries deliver the already-signed outbox
+bytes without recomputing them. Cross-key comparisons have no meaning.
+
+**Attributable refusals require a complete body.** The producer must have
+received the entire body within its configured request-size bound, verified
+the request's authentication, matched a declared tool and resolved its
+installation before a refusal can fire this hook. An oversized, interrupted
+or otherwise early refusal made before the body is fully read is not
+attributable for this hook and emits no manifest-command event. Its ordinary
+refusal status is preserved. The producer never drains an unbounded body to
+make a refusal attributable, and never substitutes a partial body, an empty
+body or a caller-supplied body digest for the complete bytes. K4 tests cover
+both an authenticated refusal with its complete body and an early refusal
+without one.
+
+The target verifies the event's signature and the commitment's shape. It
+cannot recompute this HMAC and does not obtain proof of the request's contents;
+the commitment is the authenticated producer's statement. A refusal carries
+no `result_ref`.
 
 ### `post-mutation-hook`
 

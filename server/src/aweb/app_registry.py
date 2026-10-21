@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from awid.team_ids import parse_team_id
+from aweb_naapp.manifest import ManifestError, load_manifest
 
 from aweb.service_errors import BadRequestError, ConflictError, ValidationError
 
@@ -49,6 +50,15 @@ class AppEventType:
 class AppEmitKey:
     kid: str
     did_key: str
+
+
+@dataclass(frozen=True)
+class AppKey:
+    """A manifest_version 2 app key and the purposes the pinned bytes declare for it."""
+
+    kid: str
+    did_key: str
+    purposes: tuple[str, ...]
 
 
 def _reserved_app_ids_source_path() -> Path:
@@ -289,8 +299,9 @@ async def install_app(
     granted_scopes = normalize_scopes(granted_scopes)
     event_types = normalize_event_types(event_types or [])
     emit_keys = normalize_emit_keys(emit_keys or [])
+    app_keys: list[AppKey] = []
     if manifest is not None:
-        event_types, emit_keys = _registrations_from_manifest(
+        event_types, emit_keys, app_keys = _registrations_from_manifest(
             manifest,
             app_id=app_id,
             origin=origin,
@@ -374,6 +385,7 @@ async def install_app(
             digest=digest,
             event_types=event_types,
             emit_keys=emit_keys,
+            app_keys=app_keys,
         )
         if audit is not None:
             await audit(tx)
@@ -399,7 +411,7 @@ def _registrations_from_manifest(
     granted_scopes: list[str],
     event_types: list[AppEventType],
     emit_keys: list[AppEmitKey],
-) -> tuple[list[AppEventType], list[AppEmitKey]]:
+) -> tuple[list[AppEventType], list[AppEmitKey], list[AppKey]]:
     registration = manifest_registration(manifest, app_id=app_id, origin=origin, digest=digest)
     if app_version != registration.app_version or manifest_version != registration.manifest_version:
         raise ValidationError("install version does not match the manifest bytes")
@@ -409,18 +421,48 @@ def _registrations_from_manifest(
         raise ValidationError("install event_emitters do not match the manifest bytes")
     if not set(granted_scopes) <= set(registration.requested_scopes):
         raise ValidationError("granted_scopes must be a subset of the scopes the manifest requests")
-    return registration.event_types, registration.emit_keys
+    return registration.event_types, registration.emit_keys, registration.app_keys
 
 
-def _revocation_carried_across_digests(table: str) -> str:
+_APP_KEY_HISTORY_SQL = """
+    SELECT team_id, app_id, key_id, did_key, revoked_at
+    FROM {{tables.team_app_emit_keys}}
+    UNION ALL
+    SELECT team_id, app_id, key_id, did_key, revoked_at
+    FROM {{tables.team_app_keys}}
+"""
+
+_ACTIVE_KEY_HISTORY_SQL = f"""
+    NOT EXISTS (
+        SELECT 1 FROM ({_APP_KEY_HISTORY_SQL}) AS history
+        WHERE history.team_id = k.team_id AND history.app_id = k.app_id
+          AND history.key_id = k.key_id
+          AND (history.did_key <> k.did_key OR history.revoked_at IS NOT NULL)
+    )
+"""
+
+
+async def _key_identity_conflicts(tx, *, team_id: str, app_id: str, kid: str, did_key: str) -> bool:
+    return await tx.fetch_one(
+        f"""
+        SELECT 1 FROM ({_APP_KEY_HISTORY_SQL}) AS history
+        WHERE team_id = $1 AND app_id = $2 AND key_id = $3 AND did_key <> $4
+        LIMIT 1
+        """,
+        team_id, app_id, kid, did_key,
+    ) is not None
+
+
+def _revocation_carried_across_digests() -> str:
     """The earliest revocation of one key in the team, under any of the app's digests.
 
     A team's revocation of a key outlives the digest it was made under, so new
-    bytes that list the same key register it already revoked. For an INSERT
-    whose parameters are $1 team_id, $2 app_id, $5 key_id and $6 did_key.
+    bytes that list the same key register it already revoked, including a
+    v1/v2 representation switch. For an INSERT whose parameters are $1 team_id,
+    $2 app_id, $5 key_id and $6 did_key.
     """
     return (
-        f"(SELECT MIN(revoked_at) FROM {{{{tables.{table}}}}} "
+        f"(SELECT MIN(revoked_at) FROM ({_APP_KEY_HISTORY_SQL}) AS history "
         "WHERE team_id = $1 AND app_id = $2 AND key_id = $5 AND did_key = $6)"
     )
 
@@ -434,8 +476,9 @@ async def _write_team_registrations(
     digest: str,
     event_types: list[AppEventType],
     emit_keys: list[AppEmitKey],
+    app_keys: list[AppKey],
 ) -> None:
-    """Write one team's event declarations and emit keys for an installed digest.
+    """Write one team's event declarations, emit keys and app keys for an installed digest.
 
     The caller holds the team's install row lock. Declarations are replaced;
     a key id keeps its first did_key and a revoked key stays revoked.
@@ -463,26 +506,18 @@ async def _write_team_registrations(
             event_type.description,
         )
     for emit_key in emit_keys:
-        conflicting = await tx.fetch_one(
-            """
-            SELECT 1 FROM {{tables.team_app_emit_keys}}
-            WHERE team_id = $1 AND app_id = $2 AND key_id = $3 AND did_key <> $4
-            LIMIT 1
-            """,
-            team_id,
-            app_id,
-            emit_key.kid,
-            emit_key.did_key,
-        )
-        if conflicting:
+        if await _key_identity_conflicts(
+            tx, team_id=team_id, app_id=app_id, kid=emit_key.kid, did_key=emit_key.did_key
+        ):
             raise ConflictError("emit key id is already registered with a different key")
         await tx.execute(
             f"""
-            INSERT INTO {{{{tables.team_app_emit_keys}}}} (
+            INSERT INTO {{{{tables.team_app_emit_keys}}}} AS registered (
                 team_id, app_id, origin, digest, key_id, did_key, revoked_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, {_revocation_carried_across_digests("team_app_emit_keys")})
-            ON CONFLICT (team_id, app_id, origin, digest, key_id) DO NOTHING
+            VALUES ($1, $2, $3, $4, $5, $6, {_revocation_carried_across_digests()})
+            ON CONFLICT (team_id, app_id, origin, digest, key_id) DO UPDATE SET
+                revoked_at = LEAST(registered.revoked_at, EXCLUDED.revoked_at)
             """,
             team_id,
             app_id,
@@ -490,6 +525,30 @@ async def _write_team_registrations(
             digest,
             emit_key.kid,
             emit_key.did_key,
+        )
+    for app_key in app_keys:
+        if await _key_identity_conflicts(
+            tx, team_id=team_id, app_id=app_id, kid=app_key.kid, did_key=app_key.did_key
+        ):
+            raise ConflictError("app key id is already registered with a different key")
+        # A team's revocation of a key outlives the digest it was made under:
+        # new bytes listing the same key register it already revoked.
+        await tx.execute(
+            f"""
+            INSERT INTO {{{{tables.team_app_keys}}}} AS registered (
+                team_id, app_id, origin, digest, key_id, did_key, purposes, revoked_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[], {_revocation_carried_across_digests()})
+            ON CONFLICT (team_id, app_id, origin, digest, key_id) DO UPDATE SET
+                revoked_at = LEAST(registered.revoked_at, EXCLUDED.revoked_at)
+            """,
+            team_id,
+            app_id,
+            origin,
+            digest,
+            app_key.kid,
+            app_key.did_key,
+            list(app_key.purposes),
         )
 
 
@@ -499,6 +558,7 @@ class ManifestRegistration:
     manifest_version: int
     event_types: list[AppEventType]
     emit_keys: list[AppEmitKey]
+    app_keys: list[AppKey]
     requested_scopes: list[str]
 
 
@@ -513,10 +573,12 @@ def _parse_manifest(manifest: bytes) -> dict:
 
 
 def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: str) -> ManifestRegistration:
-    """Read an install's event declarations and emit keys from its pinned bytes.
+    """Read an install's event declarations and keys from its pinned bytes.
 
-    The bytes must hash to the pinned digest and name the installed app id and
-    origin; nothing is taken from anywhere else.
+    The bytes must hash to the pinned digest, be valid to the one manifest
+    reader (``aweb_naapp.manifest``), and name the installed app id and origin;
+    nothing is taken from anywhere else. Version 1 ``event_emitters`` are emit
+    keys; version 2 ``app_keys`` are app keys with their declared purposes.
     """
 
     app_id = normalize_app_id(app_id)
@@ -524,30 +586,18 @@ def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: 
     digest = normalize_digest(digest)
     if "sha256:" + hashlib.sha256(manifest).hexdigest() != digest:
         raise ValidationError("manifest bytes do not match the pinned digest")
-    parsed = _parse_manifest(manifest)
-    if parsed.get("manifest_version") != 1:
-        raise ValidationError("manifest_version is not supported")
-    app = parsed["app"]
+    try:
+        resolved = load_manifest(manifest, reserved_names=reserved_app_ids())
+    except ManifestError as exc:
+        raise ValidationError({"code": exc.code, "message": str(exc)}) from exc
+    app = resolved.document["app"]
     if normalize_app_id(str(app.get("id") or "")) != app_id:
         raise ValidationError("manifest app id does not match the install")
     if normalize_origin(str(app.get("origin") or "")) != origin:
         raise ValidationError("manifest origin does not match the install")
-    events = parsed.get("events") or []
-    emitters = parsed.get("event_emitters") or []
-    tools = parsed.get("tools") or []
-    if not isinstance(events, list) or not isinstance(emitters, list) or not isinstance(tools, list):
-        raise ValidationError("manifest tools, events and event_emitters must be arrays")
-    requested_scopes: list[str] = []
-    for tool in tools:
-        scopes = tool.get("scopes") if isinstance(tool, dict) else None
-        if not isinstance(tool, dict) or not isinstance(scopes or [], list):
-            raise ValidationError("manifest tool scopes must be an array")
-        requested_scopes.extend(str(scope) for scope in scopes or [])
     prefix = app_id + "/"
     event_types = []
-    for event in events:
-        if not isinstance(event, dict):
-            raise ValidationError("manifest event must be an object")
+    for event in resolved.document.get("events") or []:
         event_type = str(event.get("type") or "").strip()
         event_types.append(
             AppEventType(
@@ -556,17 +606,22 @@ def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: 
                 description=str(event.get("description") or ""),
             )
         )
-    emit_keys = []
-    for emitter in emitters:
-        if not isinstance(emitter, dict):
-            raise ValidationError("manifest event emitter must be an object")
-        emit_keys.append(AppEmitKey(kid=str(emitter.get("kid") or ""), did_key=str(emitter.get("did_key") or "")))
+    if resolved.manifest_version == 1:
+        emit_keys = [
+            AppEmitKey(kid=str(emitter["kid"]), did_key=str(emitter["did_key"]))
+            for emitter in resolved.document.get("event_emitters") or []
+        ]
+        app_keys: list[AppKey] = []
+    else:
+        emit_keys = []
+        app_keys = [AppKey(kid=kid, did_key=did_key, purposes=tuple(purposes)) for kid, did_key, purposes in resolved.app_keys]
     return ManifestRegistration(
         app_version=normalize_app_version(str(app.get("version") or "")),
-        manifest_version=1,
+        manifest_version=resolved.manifest_version,
         event_types=normalize_event_types(event_types),
         emit_keys=normalize_emit_keys(emit_keys),
-        requested_scopes=normalize_scopes(requested_scopes),
+        app_keys=app_keys,
+        requested_scopes=normalize_scopes(list(resolved.install_scopes)),
     )
 
 
@@ -642,6 +697,7 @@ async def reseed_app_registrations(db, *, origin: str, manifest: bytes) -> Resee
                     digest=digest,
                     event_types=registration.event_types,
                     emit_keys=registration.emit_keys,
+                    app_keys=registration.app_keys,
                 )
         except ConflictError:
             key_conflict.append(team_id)
@@ -685,6 +741,35 @@ async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
         )
         for row in rows
     ]
+
+
+async def get_installed_app(db, *, team_id: str, app_id: str, digest: str) -> AppInstall | None:
+    """The team's installation of ``app_id``, only while it is pinned to ``digest``."""
+    team_id = validate_team_id(team_id)
+    app_id = normalize_app_id(app_id)
+    digest = normalize_digest(digest)
+    row = await db.fetch_one(
+        """
+        SELECT app_id, origin, app_version, manifest_version, digest, granted_scopes
+        FROM {{tables.team_app_installs}}
+        WHERE team_id = $1
+          AND app_id = $2
+          AND digest = $3
+        """,
+        team_id,
+        app_id,
+        digest,
+    )
+    if row is None:
+        return None
+    return AppInstall(
+        app_id=row["app_id"],
+        origin=row["origin"],
+        app_version=row["app_version"],
+        manifest_version=row["manifest_version"],
+        digest=row["digest"],
+        granted_scopes=list(row["granted_scopes"] or []),
+    )
 
 
 async def get_installed_app_event_type(
@@ -748,7 +833,7 @@ async def get_active_app_key(
           AND k.did_key = $4
           AND $5 = ANY(k.purposes)
           AND k.revoked_at IS NULL
-        """,
+          AND """ + _ACTIVE_KEY_HISTORY_SQL,
         team_id,
         app_id,
         kid,
@@ -783,7 +868,7 @@ async def get_active_app_emit_key(
           AND k.key_id = $3
           AND k.did_key = $4
           AND k.revoked_at IS NULL
-        """,
+          AND """ + _ACTIVE_KEY_HISTORY_SQL,
         team_id,
         app_id,
         kid,

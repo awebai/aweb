@@ -13,7 +13,9 @@ _SHARED_MODULE = "aweb_naapp"
 
 # A store is a shared table set the app's own migrations may build on, applied
 # by its own ``apply_*_migrations`` under its own module name, such as
-# aweb_naapp.idempotency's or aweb_naapp.roles'.
+# aweb_naapp.idempotency's or aweb_naapp.roles'. An app's own migrations never
+# create a table with a store's table name: stores apply first, so an app's
+# CREATE TABLE IF NOT EXISTS of that name would silently get the store's table.
 Store = Callable[[AsyncDatabaseManager], Awaitable[None]]
 
 

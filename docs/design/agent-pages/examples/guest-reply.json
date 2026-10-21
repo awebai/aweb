@@ -133,29 +133,6 @@
       "label": "Approve the exact reply",
       "input_schema": {
         "type": "object",
-        "properties": {
-          "choice": {
-            "enum": [
-              "approve",
-              "reject"
-            ]
-          },
-          "proposal_digest": {
-            "type": "string",
-            "minLength": 71,
-            "maxLength": 71
-          },
-          "expected_task_rev": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          }
-        },
-        "required": [
-          "choice",
-          "proposal_digest",
-          "expected_task_rev"
-        ],
         "additionalProperties": false
       },
       "policy_ref": "manager-approve",

@@ -1,6 +1,6 @@
 [project]
 name = "aweb"
-version = "1.27.30"
+version = "1.27.31"
 description = "Agent Web: self-hostable coordination server for AI agents (identity, presence, mail, chat, tasks, locks)"
 readme = "README.md"
 license = "MIT"
@@ -20,8 +20,8 @@ classifiers = [
 ]
 dependencies = [
     "awid-service>=0.5.30",
-    # The hooks kit core installs (decision 12): the owner-act verifier.
-    "aweb-naapp[hooks]>=0.1.0",
+    # The one manifest reader and shared hook primitives, without the runtime extra.
+    "aweb-naapp[hooks]>=0.2.0",
     "base58>=2.1.1",
     "cryptography>=45.0.6",
     "dnspython>=2.8.0",
@@ -74,6 +74,12 @@ include = [
 
 [dependency-groups]
 dev = [
+    # The naapp clients of this server's app API, driven against its real
+    # routes: the app-team-server API's acceptance (design §4, §5). No
+    # runtime extra: the modules these tests import need only what the server
+    # already depends on, and the extra's webauthn would pull a newer
+    # cryptography into the lock the server image installs from.
+    "aweb-naapp",
     "pytest>=9.0.0",
     "pytest-asyncio>=1.2.0",
 ]

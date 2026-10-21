@@ -104,6 +104,29 @@ help:
 	@echo "  release-publish TAG=<tag>             publish one local tag without GitHub Actions"
 	@echo "  clean        Remove all build artifacts and caches"
 
+.PHONY: e2e-naapp naapp-e2e-packages
+# A new package joins the integration gate by joining this list.
+NAAPP_E2E_PACKAGES := naapp/folio naapp/library
+
+naapp-e2e-packages:
+	@printf '%s\n' $(NAAPP_E2E_PACKAGES)
+
+e2e-naapp: export PATH := $(CURDIR)/cli/go:$(PATH)
+e2e-naapp:
+	bash scripts/check-naapp-e2e-aw.sh
+	@set -eu; for package in $(NAAPP_E2E_PACKAGES); do \
+		if [ -n "$${NAAPP_E2E_ALLOCATIONS:-}" ]; then \
+			allocation=$$(printf '%s\n' "$$NAAPP_E2E_ALLOCATIONS" | awk -v package="$$package" '$$1 == package { print $$2, $$3, $$4 }'); \
+			[ -n "$$allocation" ] || { echo "missing allocation for $$package" >&2; exit 1; }; \
+			set -- $$allocation; \
+			NAAPP_E2E_PROJECT="$$1" NAAPP_E2E_AWID_PORT="$$2" NAAPP_E2E_POSTGRES_PORT="$$3" \
+			NAAPP_E2E_HOST="$${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}" \
+			$(MAKE) -C "$$package" e2e; \
+		else \
+			$(MAKE) -C "$$package" e2e; \
+		fi; \
+	done
+
 build: sync-doc-copies
 	cd cli/go && $(MAKE) build
 
@@ -118,7 +141,7 @@ test-shipping:
 	python3 scripts/test_candidate_cleanup.py
 
 # AWID metadata is repeated in every committed Python lock that takes the in-repo
-# awid (awid, server, naapp-lib and naapp/folio). Check all four without repair,
+# awid (awid, server, naapp-lib and each naapp). Check them all without repair,
 # then prove stale and missing dependent-lock entries are rejected.
 test-python-locks:
 	bash scripts/check-python-locks.sh
@@ -512,16 +535,23 @@ check-awid-locked-suite:
 # ── awid.ai static-site deployment ─────────────────────────────────
 
 # Infrastructure acceptance for changes to the entry point (real Docker).
-test-candidate-ledger:
+.PHONY: test-naapp-e2e
+test-naapp-e2e:
+	$(MAKE) -C cli/go build
+	uv run --no-project python scripts/test_naapp_e2e.py
+
+test-candidate-ledger: test-naapp-e2e
 	python3 scripts/test_candidate_gate_ledger.py
 
 _candidate-unit-suites:
 	python3 scripts/test-egress/docker.py --evidence "$$CANDIDATE_LOG_DIR/test-egress" --command bash scripts/candidate-suite.sh --isolated-suites
 
-candidate-gate:
+# The gate's own ledger test runs first, on the host, so a gate change that
+# breaks it stops every train and release candidate before any stage runs.
+candidate-gate: test-candidate-ledger
 	bash scripts/candidate-docker-gate.sh
 
-release-candidate:
+release-candidate: test-candidate-ledger
 	@test -n "$(TAGS)" || (echo "TAGS='server-vX.Y.Z ...' is required" >&2; exit 2)
 	python3 scripts/release_candidate.py $(TAGS)
 
@@ -604,9 +634,14 @@ _candidate-artifact-naapp-package: check-naapp-lib-package
 	cd naapp-lib && uv build
 	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION).tar.gz
 	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION)-py3-none-any.whl
+	rm -rf naapp-lib/testing/dist
+	cd naapp-lib/testing && uv build
+	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION).tar.gz
+	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION)-py3-none-any.whl
 
-# aweb-naapp's release artifacts as a consumer sees them: the wheel ships its
-# package files, pins awid-service, and installs and imports in a fresh environment.
+# aweb-naapp's and aweb-naapp-testing's release artifacts as a consumer sees them:
+# each wheel ships its package files, pins its dependencies, and installs and
+# imports in a fresh environment.
 check-naapp-lib-package:
 	python3 scripts/check-naapp-lib-package.py
 

@@ -29,7 +29,8 @@ idle.
 A refusal is a :class:`Decision`, not an exception, and the limiter meters
 nothing: each caller maps it to its own refusal. The table lives in the
 calling app's own schema, through its own migration module, so two apps never
-share buckets.
+share buckets. The store owns ``{{tables.rate_buckets}}`` in the app's schema;
+an app's own migrations must not create or alter a table of that name.
 
 Imports only the standard library and pgdbm, so it needs no naapp runtime.
 """
