@@ -73,11 +73,11 @@ jobs:
           go-version-file: cli/go/go.mod
           cache-dependency-path: cli/go/go.sum
 
-      - name: Set up Go for the source CLI used by wakes
-        uses: actions/setup-go@v6
+      # The wakes acceptance builds channel-core with npm.
+      - name: Set up Node
+        uses: actions/setup-node@v6
         with:
-          go-version-file: cli/go/go.mod
-          cache-dependency-path: cli/go/go.sum
+          node-version: "22"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
