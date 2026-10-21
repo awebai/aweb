@@ -42,9 +42,14 @@ SECRET_USE = HookBindingDeclaration(kind=PRODUCTION, catalog_id="aweb.hooks", ca
 class Clock:
     def __init__(self) -> None:
         self.now = 1000.0
+        self.wall = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 
     def __call__(self) -> float:
         return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+        self.wall += timedelta(seconds=seconds)
 
 
 async def _install(db, app: dict, installation_id: str, declarations) -> dict:
@@ -108,6 +113,7 @@ async def team(real_stack):
             transport=real_stack.aweb,
             refresh_timeout=refresh_timeout,
             monotonic=clock,
+            clock=lambda: clock.wall,
         )
 
     return {
@@ -187,6 +193,50 @@ async def test_an_answer_is_reused_while_fresh_and_refetched_after(team):
     team["clock"].now += 61
     await resolver.registrations(TEAM, *HOOK)
     assert _aweb_calls(team) == calls + 1
+
+
+@pytest.mark.asyncio
+async def test_an_answer_carries_the_time_its_data_is_no_older_than(team):
+    resolver = await team["resolver_for"](SECRETS)
+    asked = team["clock"].wall
+    first = await resolver.registrations(TEAM, *HOOK)
+    assert (first.as_of, first.max_age_seconds) == (asked, 60)
+    team["clock"].advance(30)
+    cached = await resolver.registrations(TEAM, *HOOK)
+    assert (cached.as_of, cached.max_age_seconds) == (asked, 60)
+    team["clock"].advance(31)
+    refreshed = await resolver.registrations(TEAM, *HOOK)
+    assert refreshed.as_of == asked + timedelta(seconds=61)
+
+
+@pytest.mark.asyncio
+async def test_a_slow_answer_expires_when_its_data_does(team):
+    resolver = await team["resolver_for"](SECRETS)
+
+    def slow(request, response):
+        team["clock"].advance(3)
+
+    team["stack"].aweb.fault = slow
+    answer = await resolver.registrations(TEAM, *HOOK)
+    team["stack"].aweb.fault = None
+    data_expiry = answer.as_of + timedelta(seconds=answer.max_age_seconds)
+    team["clock"].advance(answer.max_age_seconds - 3 - 0.5)
+    assert team["clock"].wall < data_expiry
+    calls = _aweb_calls(team)
+    await resolver.registrations(TEAM, *HOOK)
+    assert _aweb_calls(team) == calls
+    team["clock"].advance(1)
+    assert team["clock"].wall > data_expiry
+    await resolver.registrations(TEAM, *HOOK)
+    assert _aweb_calls(team) == calls + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("offered", "used"), [(10, 10), (120, 60)])
+async def test_an_answer_carries_the_window_it_is_reused_for(team, offered, used):
+    resolver = await team["resolver_for"](SECRETS)
+    team["stack"].aweb.fault = _rewrite(lambda body: body.update(max_age_seconds=offered))
+    assert (await resolver.registrations(TEAM, *HOOK)).max_age_seconds == used
 
 
 @pytest.mark.asyncio

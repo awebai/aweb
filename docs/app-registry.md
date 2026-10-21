@@ -218,7 +218,7 @@ Response:
   against the app's origin; bytes being present is not that.
 - `as_of` is the server's time of the answer, in UTC seconds.
 - `max_age_seconds` is how long the app may reuse the answer, counted from
-  when it received it. It is `AWEB_APP_GRANT_MAX_AGE_SECONDS`, from 1 to 60
+  when it asked for it. It is `AWEB_APP_GRANT_MAX_AGE_SECONDS`, from 1 to 60
   seconds, default 60; the server refuses to start with any other value.
 - A reinstall with new bytes is visible on the next read: keys belong to their
   digest, so the old digest's keys are refused and the new digest's keys read
