@@ -132,7 +132,7 @@ def test_create_document_route_renders_template_body(monkeypatch) -> None:
     app, client = _create_document_test_app()
     captured: dict[str, object] = {}
 
-    async def fake_create_document(_database, *, principal, settings, slug: str, title: str, body: str) -> dict:
+    async def fake_create_document(_database, *, principal, slug: str, title: str, body: str) -> dict:
         captured.update(slug=slug, title=title, body=body)
         return {
             "document_id": "11111111-1111-4111-8111-111111111111",
@@ -177,7 +177,7 @@ def test_append_template_version_route_renders_template_body(monkeypatch) -> Non
     app.dependency_overrides[db_dependency] = lambda: object()
     captured: dict[str, object] = {}
 
-    async def fake_append_version(_database, *, principal, settings, slug: str, body: str) -> dict:
+    async def fake_append_version(_database, *, principal, slug: str, body: str) -> dict:
         captured.update(slug=slug, body=body)
         return {
             "document_id": "11111111-1111-4111-8111-111111111111",

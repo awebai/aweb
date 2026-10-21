@@ -282,6 +282,25 @@ def _checked_schema_errors(schema: object, path: Path) -> list[PageError]:
     return errors
 
 
+def inline_schema_errors(schema: object) -> list[PageError]:
+    """Why ``schema`` is outside the inline-schema subset, empty when it is inside.
+
+    The same check as for collection and action input schemas, with pointers
+    relative to the schema itself.
+    """
+    return _checked_schema_errors(schema, ())
+
+
+def inline_value_valid(schema: object, value: object) -> bool:
+    """Whether ``value`` satisfies an inline schema, its declared bounds checked first.
+
+    Raises ``ValueError`` for a schema outside the subset, whose validation cost is unbounded.
+    """
+    if inline_schema_errors(schema):
+        raise ValueError("the schema is outside the inline-schema subset")
+    return _within_bounds(schema, value) and Draft202012Validator(schema).is_valid(value)
+
+
 class _Page:
     def __init__(self, page: Mapping[str, Any]) -> None:
         self.page = page

@@ -293,6 +293,10 @@ ROOT_CONSUMERS = {
         "owner-act-v1.json",
         '(AWEB_ROOT / "docs" / "vectors" / "owner-act-v1.json")',
     ),
+    PurePosixPath("naapp-lib/tests/hooks/test_producer.py"): _consumer(
+        "hook-catalog-v1.json",
+        '(AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json")',
+    ),
     PurePosixPath("naapp-lib/tests/hooks/test_packaged_catalog.py"): _consumer(
         "hook-catalog-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',

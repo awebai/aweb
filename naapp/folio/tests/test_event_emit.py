@@ -66,7 +66,7 @@ def _template_route_app(settings: Settings, monkeypatch, *, version: int = 3):
     app.dependency_overrides[route.dependant.dependencies[0].call] = lambda: SimpleNamespace(team_id=_TEAM)
     app.dependency_overrides[route.dependant.dependencies[1].call] = lambda: object()
 
-    async def fake_append_version(_database, *, principal, settings, slug: str, body: str) -> dict:
+    async def fake_append_version(_database, *, principal, slug: str, body: str) -> dict:
         return _fake_document(slug, body, version)
 
     monkeypatch.setattr(folio_api, "append_version", fake_append_version)
