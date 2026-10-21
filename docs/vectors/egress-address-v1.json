@@ -1,0 +1,75 @@
+{
+  "name": "egress-address-v1",
+  "status": "frozen by its reviewed landing (aweb-acgh.18.2, S1); derived from secrets.md section 7.3 and the S1 review; a change needs a new version",
+  "scheme": {
+    "check": "every address a name resolves to is checked; one refused address refuses the name; no address at all is refused",
+    "floor": "addresses no destination may reach, internal or not: the floor ranges below, and any IPv6 address whose embedded IPv4 address (NAT64, 6to4, Teredo server or client) is in the floor",
+    "public": "for a public destination an IPv4 address must be outside denied_ipv4; an IPv6 address must be inside 2000::/3 and outside denied_ipv6, or inside the NAT64 prefix 64:ff9b::/96; an IPv6 address that embeds an IPv4 address (NAT64, 6to4, Teredo server or client) is refused when that IPv4 address is refused",
+    "internal": "a destination with network 'internal' needs internal_destinations 'allowed'; every address must then be inside its cidr and outside the floor",
+    "internal_cidr": "an internal cidr has no host bits set, a prefix of at least /8 for IPv4 and at least /32 for IPv6, and overlaps no floor range; a cidr inside the NAT64 prefix does not count as overlapping ::/8",
+    "deployment_denied": "a deployment may deny more ranges; they are refused for every destination, internal included, directly and as an embedded IPv4 address",
+    "codes": "an internal destination under 'disabled' is internal_destinations_disabled; every other refused address is destination_address_denied; a refused cidr is destination_not_in_scope with rule network"
+  },
+  "floor_ipv4": ["0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4"],
+  "floor_ipv6": ["::/8", "fe80::/10", "fd00:ec2::254/128", "ff00::/8"],
+  "nat64": "64:ff9b::/96",
+  "public_ipv6": "2000::/3",
+  "denied_ipv4": [
+    "0.0.0.0/8", "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10",
+    "169.254.0.0/16", "192.0.0.0/24", "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24",
+    "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4"
+  ],
+  "denied_ipv6": ["64:ff9b:1::/48", "2001:2::/48", "2001:db8::/32", "3fff::/20"],
+  "public_denied": [
+    "0.0.0.0", "0.1.2.3", "127.0.0.1", "127.255.255.254", "10.0.0.1", "172.16.0.1", "172.31.255.255",
+    "192.168.1.1", "100.64.0.1", "100.127.255.255", "169.254.169.254", "169.254.0.1", "224.0.0.1",
+    "239.255.255.250", "255.255.255.255", "240.0.0.1", "192.0.2.1", "198.51.100.7", "203.0.113.9",
+    "198.18.0.1", "198.19.255.255", "192.0.0.170", "192.0.0.192",
+    "::", "::1", "::127.0.0.1", "::8.8.8.8", "::ffff:127.0.0.1", "::ffff:10.0.0.1",
+    "::ffff:169.254.169.254", "::ffff:8.8.8.8", "::ffff:0:7f00:1", "::ffff:0:a9fe:a9fe", "::ffff:0:808:808",
+    "100::1", "1::1", "4000::1", "5f00::1", "fe80::1", "fc00::1", "fd12:3456::1", "fd00:ec2::254",
+    "fec0::1", "ff02::1", "2001:db8::1", "3fff::1", "2001:2::1",
+    "64:ff9b::a00:1", "64:ff9b::7f00:1", "64:ff9b::a9fe:a9fe", "64:ff9b:1::808:808",
+    "2002:a00:1::1", "2002:7f00:1::", "2002:a9fe:a9fe::1",
+    "2001:0:4136:e378:8000:63bf:f5ff:fffe", "2001:0:a00:1:8000:63bf:f7f7:f7f7"
+  ],
+  "public_allowed": [
+    "8.8.8.8", "1.1.1.1", "93.184.215.14", "100.63.255.255", "100.128.0.0", "172.32.0.1",
+    "2606:4700:4700::1111", "2a00:1450:4001:80b::200e", "64:ff9b::808:808", "2002:808:808::1",
+    "2001:0:4136:e378:8000:63bf:f7f7:f7f7"
+  ],
+  "mixed_records": [
+    {"name": "public_and_private", "addresses": ["8.8.8.8", "10.0.0.1", "1.1.1.1"]},
+    {"name": "public_v4_and_ula_v6", "addresses": ["93.184.215.14", "fd00::7"]}
+  ],
+  "internal": [
+    {"name": "inside_cidr", "setting": "allowed", "cidr": "10.20.0.0/24", "addresses": ["10.20.0.5"], "result": "allowed"},
+    {"name": "ipv6_inside_cidr", "setting": "allowed", "cidr": "fd12:3456::/32", "addresses": ["fd12:3456::9"], "result": "allowed"},
+    {"name": "nat64_inside_cidr", "setting": "allowed", "cidr": "64:ff9b::/96", "addresses": ["64:ff9b::a14:5"], "result": "allowed"},
+    {"name": "outside_cidr", "setting": "allowed", "cidr": "10.20.0.0/24", "addresses": ["10.20.0.5", "10.20.1.5"], "result": "destination_address_denied"},
+    {"name": "public_outside_cidr", "setting": "allowed", "cidr": "10.20.0.0/24", "addresses": ["8.8.8.8"], "result": "destination_address_denied"},
+    {"name": "nat64_floor_inside_cidr", "setting": "allowed", "cidr": "64:ff9b::/96", "addresses": ["64:ff9b::7f00:1"], "result": "destination_address_denied"},
+    {"name": "nat64_metadata_inside_cidr", "setting": "allowed", "cidr": "64:ff9b::/96", "addresses": ["64:ff9b::a9fe:a9fe"], "result": "destination_address_denied"},
+    {"name": "sixtofour_floor_inside_cidr", "setting": "allowed", "cidr": "2002:7f00::/32", "addresses": ["2002:7f00:1::"], "result": "destination_address_denied"},
+    {"name": "sixtofour_metadata_inside_cidr", "setting": "allowed", "cidr": "2002:a9fe::/32", "addresses": ["2002:a9fe:a9fe::1"], "result": "destination_address_denied"},
+    {"name": "teredo_floor_client_inside_cidr", "setting": "allowed", "cidr": "2001:0:4136:e378::/64", "addresses": ["2001:0:4136:e378:8000:63bf:80ff:fffe"], "result": "destination_address_denied"},
+    {"name": "sixtofour_private_inside_cidr", "setting": "allowed", "cidr": "2002:a14::/32", "addresses": ["2002:a14:5::1"], "result": "allowed"},
+    {"name": "disabled", "setting": "disabled", "cidr": "10.20.0.0/24", "addresses": ["10.20.0.5"], "result": "internal_destinations_disabled"}
+  ],
+  "deployment_denied": [
+    {"name": "public_direct", "denied": ["203.0.112.0/24"], "cidr": null, "addresses": ["203.0.112.5"], "result": "destination_address_denied"},
+    {"name": "public_mapped", "denied": ["203.0.112.0/24"], "cidr": null, "addresses": ["64:ff9b::cb00:7005"], "result": "destination_address_denied"},
+    {"name": "public_unlisted", "denied": [], "cidr": null, "addresses": ["203.0.112.5"], "result": "allowed"},
+    {"name": "inside_internal_cidr", "denied": ["10.20.0.1/32"], "cidr": "10.20.0.0/24", "addresses": ["10.20.0.1"], "result": "destination_address_denied"}
+  ],
+  "internal_cidrs": {
+    "valid": ["10.0.0.0/8", "10.20.0.0/24", "10.20.0.5/32", "192.168.1.0/24", "172.16.0.0/12", "fd12:3456::/32", "fd12:3456:1::/48", "64:ff9b::/96", "64:ff9b::a14:0/120"],
+    "refused": [
+      "0.0.0.0/0", "::/0", "10.0.0.0/7", "fd00::/31", "8.0.0.0/6",
+      "0.0.0.0/8", "0.0.0.1/32", "127.0.0.0/8", "127.0.0.1/32", "169.254.0.0/16", "169.254.169.254/32",
+      "224.0.0.0/4", "224.0.0.1/32",
+      "::/8", "::1/128", "::ffff:0:0/96", "fe80::/64", "fd00:ec2::/64", "fd00:ec2::254/128", "ff02::/16",
+      "10.20.0.5/24", "fd12::1/32", "not-a-cidr"
+    ]
+  }
+}

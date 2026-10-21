@@ -34,13 +34,37 @@ runtime = [
 outbox = [
   "pgdbm>=0.5.0",
 ]
+# The signing-key reader, aweb_naapp.signing_key: pynacl only, so the core
+# server can read its keys the same way without the naapp runtime.
+signing-key = [
+  "pynacl>=1.6.2",
+]
+# The shared dispatch state machine, aweb_naapp.dispatch: pgdbm only.
+dispatch = [
+  "pgdbm>=0.5.0",
+]
 # The shared idempotency store, aweb_naapp.idempotency: pgdbm only.
 idempotency = [
+  "pgdbm>=0.5.0",
+]
+# Shared role assignments, aweb_naapp.roles: pgdbm only.
+roles = [
   "pgdbm>=0.5.0",
 ]
 # The shared page-format validator, aweb_naapp.pages: JSON Schema only, no I/O.
 pages = [
   "jsonschema>=4.23",
+]
+# The shared egress guard, aweb_naapp.egress: URL canonicalization, its own
+# resolver and a pinned verified connection, without the naapp runtime.
+# publicsuffixlist is pinned exactly on purpose: the list decides which
+# wildcard destinations are refused, so it changes only by a reviewed bump of
+# this pin together with docs/vectors/egress-url-v1.json. Do not loosen it.
+egress = [
+  "dnspython>=2.7.0",
+  "httpcore[asyncio]>=1.0.9",
+  "idna>=3.10",
+  "publicsuffixlist==1.1.0.20261018",
 ]
 
 [project.urls]
@@ -61,6 +85,8 @@ awid-service = { path = "../awid" }
 [dependency-groups]
 dev = [
   "aweb-naapp[runtime,pages]",
+  "aweb-naapp[egress]",
+  "cryptography>=44.0.0",
   "pytest>=9.0.0",
   "pytest-asyncio>=1.2.0",
   "httpx2>=2.9.1",
