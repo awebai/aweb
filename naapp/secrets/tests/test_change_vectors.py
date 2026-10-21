@@ -138,13 +138,18 @@ class _Policies:
 
 
 class _Directory:
-    approver = Approver(subject="owner-1", subject_type="app_local", contact="owner@example.com")
+    approver = Approver(
+        scope="secrets.owner.fixture",
+        subject="owner-1",
+        subject_type="app_local",
+        contact="owner@example.com",
+    )
 
-    async def designated_approver(self, policy: ActionPolicy) -> Approver | None:
-        return self.approver
+    async def candidates(self, policy: ActionPolicy, request) -> list[Approver]:
+        return [self.approver]
 
-    async def is_current(self, approver_subject: str, policy: ActionPolicy) -> bool:
-        return approver_subject == self.approver.subject
+    async def is_current(self, scope: str, subject: str) -> bool:
+        return (scope, subject) == (self.approver.scope, self.approver.subject)
 
 
 class _Mailbox:
@@ -178,7 +183,7 @@ async def test_b2_mint_records_the_vector_digest(test_db_factory) -> None:
                 version=policy["version"],
                 min_assurance=Assurance.PASSKEY,
                 ttl=timedelta(minutes=15),
-                approver_scope="secrets.owner.fixture",
+                approver_scopes=("secrets.owner.fixture",),
             )
         ),
         approvers=_Directory(),
