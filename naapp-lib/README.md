@@ -124,6 +124,20 @@ human_origin=...)` is one ASGI app that dispatches on `Host`:
 A route exists on one origin because it is declared in one of the two apps. The
 lifespan is the agent app's.
 
+### Hook resolution
+
+`aweb_naapp.runtime.hook_resolver.HookResolver` asks a team's coordination
+server where to deliver its hook events (`registrations`), whom it accepts them
+from and with which keys (`productions`), its own bindings in every state
+(`own_bindings`), and the server's core producer keys (`core_producer_keys`).
+It signs with the app's `hook-resolve` key and reaches only the server the
+team's AWID `aweb.team-server/1` record names. Answers are reused for at most
+60 seconds and never past their freshness. Every failure raises
+`HookResolutionUnavailable`, except a missing complementary binding, which
+raises `HookBindingRequired`. A binding is listed while active, including
+before its `active_from`, which the caller compares with an event's
+`occurred_at`. The server's side is described in `docs/app-registry.md`.
+
 ## Approvals and passkeys
 
 `aweb_naapp.runtime.approvals` is the single-use human approval primitive that
