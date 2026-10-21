@@ -3,7 +3,8 @@
 The DNS server answers A and AAAA queries from a table the test controls and
 counts every query, so a test can change an answer between two lookups. The
 TLS server presents a certificate from a throwaway CA, records the SNI name,
-request line and headers of every request, and serves a few fixed paths.
+request line and headers of every request, and serves a few fixed paths, or
+whatever its ``respond`` callback answers.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import json
 import socket
 import ssl
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,22 +39,34 @@ def local_address() -> str:
     """This host's own non-loopback IPv4 address.
 
     The guard refuses loopback for every destination, internal ones included,
-    so the TLS server listens on the address of the host's outbound
-    interface. Connecting a UDP socket sends nothing; it only picks the route.
+    so the TLS server listens on one of the host's own addresses: the one its
+    outbound route uses, or, on a network with no route out (the gate's
+    isolated runner), one its own name resolves to locally. Connecting a UDP
+    socket sends nothing; it only picks the route.
     """
+    for address in _route_address(), *_named_addresses():
+        if address is not None and not ipaddress.ip_address(address).is_loopback:
+            return address
+    raise RuntimeError("the egress network tests need a non-loopback IPv4 address on this host")
+
+
+def _route_address() -> str | None:
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         probe.connect(("192.0.2.1", 9))
-        address = probe.getsockname()[0]
-    except OSError as error:
-        raise RuntimeError(
-            "the egress network tests need a non-loopback IPv4 address on this host"
-        ) from error
+        return str(probe.getsockname()[0])
+    except OSError:
+        return None
     finally:
         probe.close()
-    if ipaddress.ip_address(address).is_loopback:
-        raise RuntimeError("the egress network tests need a non-loopback IPv4 address")
-    return address
+
+
+def _named_addresses() -> list[str]:
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+    except OSError:
+        return []
+    return [str(info[4][0]) for info in infos]
 
 
 @dataclass
@@ -194,6 +207,9 @@ class Seen:
     body: bytes
 
 
+Reply = tuple[int, bytes, list[tuple[str, str]]]
+
+
 @dataclass
 class TlsServer:
     """An HTTPS/1.1 server on ``host`` with a few fixed paths.
@@ -201,12 +217,14 @@ class TlsServer:
     ``/ok`` answers JSON, ``/redirect`` answers 302 to another host,
     ``/big?n=`` answers ``n`` bytes, ``/slow`` never answers, ``/encoded``
     answers a gzip-encoded body, and ``/echo`` returns the request it saw as
-    JSON.
+    JSON. When ``respond`` is set it answers every request instead, with a
+    status, a body and headers.
     """
 
     certificates: Certificates
     host: str
     seen: list[Seen] = field(default_factory=list)
+    respond: Callable[[Seen], Awaitable[Reply]] | None = None
     port: int = 0
     _server: asyncio.Server | None = None
 
@@ -246,6 +264,10 @@ class TlsServer:
         body = await reader.readexactly(length) if length else b""
         seen = Seen(sni, lines[0], [(k, v) for k, v in headers], body)
         self.seen.append(seen)
+        if self.respond is not None:
+            status, reply, reply_headers = await self.respond(seen)
+            await _respond(writer, status, reply, reply_headers)
+            return
         path = lines[0].split(" ")[1]
         if path == "/slow":
             await asyncio.sleep(3600)

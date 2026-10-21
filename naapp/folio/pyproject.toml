@@ -16,7 +16,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-  "aweb-naapp",
+  "aweb-naapp[runtime,outbox]",
   "awid-service",
   "fastapi>=0.116.1",
   "httpx>=0.28.1",
@@ -49,9 +49,11 @@ packages = ["src/folio"]
 [tool.uv.sources]
 awid-service = { path = "../../awid", editable = true }
 aweb-naapp = { path = "../../naapp-lib", editable = true }
+aweb-naapp-testing = { path = "../../naapp-lib/testing", editable = true }
 
 [dependency-groups]
 dev = [
+  "aweb-naapp-testing",
   "pytest>=9.0.0",
   "pytest-asyncio>=1.2.0",
   "ruff>=0.14.0",

@@ -15,15 +15,25 @@ from __future__ import annotations
 from pathlib import Path
 
 import httpx
+from aweb_naapp.idempotency import apply_idempotency_migrations
+from aweb_naapp.ratelimit import apply_ratelimit_migrations
+from aweb_naapp.roles import apply_roles_migrations, purge_team
 from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes
 from aweb_naapp.runtime.authorization import ActionPolicy, GrantSource
 from aweb_naapp.runtime.health import HealthCheck, mount_health
+from aweb_naapp.runtime.installation import (
+    InstallationFence,
+    InstallationGrantSource,
+    apply_installation_migrations,
+)
 from aweb_naapp.runtime.origins import split_origins
 from fastapi import Depends, FastAPI, HTTPException
+from pgdbm import AsyncDatabaseManager
 from starlette.types import Receive, Scope, Send
 
 from aweb_secrets.config import SecretsSettings
 from aweb_secrets.manifest import MANIFEST_PATH
+from aweb_secrets.revisions import apply_revision_migrations
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MODULE_NAME = "aweb_secrets"
@@ -56,6 +66,29 @@ async def not_implemented() -> None:
     )
 
 
+# The shared table sets admission reads: request ids, role assignments, the
+# installation fence, the configuration revision and the rate buckets.
+STORES = (
+    apply_idempotency_migrations,
+    apply_roles_migrations,
+    apply_installation_migrations,
+    apply_revision_migrations,
+    apply_ratelimit_migrations,
+)
+
+
+def installation_fence(
+    db: AsyncDatabaseManager, *, app_id: str, grants: InstallationGrantSource
+) -> InstallationFence:
+    """The service's installation fence.
+
+    Retiring an installation, on a confirmed uninstall or when a new
+    installation id is admitted, purges the team's role assignments in the
+    same transaction, so a reinstall starts with no roles (decision 48b).
+    """
+    return InstallationFence(db, app_id=app_id, grants=grants, on_retire=purge_team)
+
+
 def create_app(
     settings: SecretsSettings,
     *,
@@ -72,6 +105,7 @@ def create_app(
         migrations_path=MIGRATIONS_PATH,
         manifest_path=MANIFEST_PATH,
         awid_transport=awid_transport,
+        stores=STORES,
     )
     checks = {**runtime.health_checks(), "kms": kms}
 

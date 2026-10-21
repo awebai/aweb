@@ -16,6 +16,8 @@ hash, idempotency key, accepted encodings), so a test can see what the broker ac
 - ``/sigv4/echo…``: AWS Signature Version 4, recomputed with the upstream's
   own secret key over the request as it arrived, with the region, service,
   key id and date checked, and the payload hash header checked when sent.
+- ``/{scheme}/issue``: the same authentication checks, returning fresh,
+  STS-shaped temporary credentials for response-handling tests.
 
 It is never deployed with secrets, and holds no credential of any real
 service.
@@ -48,7 +50,7 @@ _SIGV4_AUTHORIZATION = re.compile(
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class UpstreamCredentials:
     """The upstream's own copy of each scheme's credential."""
 
@@ -203,6 +205,28 @@ def create_upstream(
     @app.get("/oauth2/stats")
     async def oauth2_stats() -> dict[str, int]:
         return dict(stats)
+
+    @app.post("/{scheme}/issue")
+    async def issue(scheme: str, request: Request) -> Response:
+        if scheme not in schemes:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        _, check = schemes[scheme]
+        if not await check(request, await request.body()):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return JSONResponse(
+            {
+                "Credentials": {
+                    "AccessKeyId": "ASIA" + secrets.token_hex(8).upper(),
+                    "SecretAccessKey": base64.b64encode(secrets.token_bytes(30)).decode(),
+                    "SessionToken": secrets.token_urlsafe(48),
+                    "Expiration": (now() + timedelta(seconds=token_lifetime_seconds)).isoformat(),
+                },
+                "AssumedRoleUser": {
+                    "Arn": "arn:aws:sts::123456789012:assumed-role/e2e/test",
+                },
+            },
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.api_route("/{scheme}/echo{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     async def echo(scheme: str, rest: str, request: Request) -> Response:

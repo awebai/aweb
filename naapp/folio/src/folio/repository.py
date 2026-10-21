@@ -9,56 +9,15 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+from aweb_naapp.runtime.event_emit import AppEvents
+from aweb_naapp.runtime.team_auth import Principal
 from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 
-from folio.auth import Principal
 from folio.cloudflare_stream import CloudflareStreamClient, stream_direct_upload_expires_at
 from folio.config import Settings
+from folio.event_emit import emit_doc_changed
 from folio.presentation import builtin_preset, sanitize_theme_tokens
-
-ACTIVE_TIER = "active"
-
-
-def _caps_for_tier(*, tier: str, settings: Settings) -> dict[str, int | None]:
-    if tier == ACTIVE_TIER:
-        return {"max_documents": None, "max_versions_per_doc": None}
-    return {
-        "max_documents": settings.free_max_documents,
-        "max_versions_per_doc": settings.free_max_versions_per_doc,
-    }
-
-
-def _limit_exceeded(*, limit: str, current: int, maximum: int) -> HTTPException:
-    return HTTPException(
-        status_code=402,
-        detail={
-            "code": "free_tier_limit_exceeded",
-            "limit": limit,
-            "current": current,
-            "max": maximum,
-            "subscriptions_available": False,
-            "message": "Free tier limit reached; subscriptions are not yet available.",
-        },
-    )
-
-
-async def ensure_subscription(db: AsyncDatabaseManager, *, team_id: str) -> str:
-    await db.execute(
-        """
-        INSERT INTO {{tables.subscriptions}} (team_id, tier)
-        VALUES ($1, 'free')
-        ON CONFLICT (team_id) DO NOTHING
-        """,
-        team_id,
-    )
-    row = await db.fetch_one(
-        "SELECT tier FROM {{tables.subscriptions}} WHERE team_id = $1",
-        team_id,
-    )
-    if row is None:
-        return "free"
-    return str(row["tier"] or "free")
 
 
 async def _team_usage(db: AsyncDatabaseManager, *, team_id: str) -> dict[str, int]:
@@ -89,72 +48,22 @@ async def get_billing_status(
     db: AsyncDatabaseManager,
     *,
     principal: Principal,
-    settings: Settings,
 ) -> dict:
-    tier = await ensure_subscription(db, team_id=principal.team_id)
     return {
         "team_id": principal.team_id,
-        "tier": tier,
-        "caps": _caps_for_tier(tier=tier, settings=settings),
         "usage": await _team_usage(db, team_id=principal.team_id),
     }
-
-
-async def _enforce_document_cap(
-    db: AsyncDatabaseManager,
-    *,
-    principal: Principal,
-    settings: Settings,
-) -> None:
-    tier = await ensure_subscription(db, team_id=principal.team_id)
-    if tier == ACTIVE_TIER:
-        return
-    row = await db.fetch_one(
-        "SELECT COUNT(*) AS n FROM {{tables.documents}} WHERE team_id = $1",
-        principal.team_id,
-    )
-    current = int(row["n"] if row is not None else 0)
-    if current >= settings.free_max_documents:
-        raise _limit_exceeded(
-            limit="documents",
-            current=current,
-            maximum=settings.free_max_documents,
-        )
-
-
-async def _enforce_version_cap(
-    db: AsyncDatabaseManager,
-    *,
-    principal: Principal,
-    document_id: UUID,
-    settings: Settings,
-) -> None:
-    tier = await ensure_subscription(db, team_id=principal.team_id)
-    if tier == ACTIVE_TIER:
-        return
-    row = await db.fetch_one(
-        "SELECT COUNT(*) AS n FROM {{tables.document_versions}} WHERE document_id = $1",
-        document_id,
-    )
-    current = int(row["n"] if row is not None else 0)
-    if current >= settings.free_max_versions_per_doc:
-        raise _limit_exceeded(
-            limit="versions_per_doc",
-            current=current,
-            maximum=settings.free_max_versions_per_doc,
-        )
 
 
 async def create_document(
     db: AsyncDatabaseManager,
     *,
     principal: Principal,
-    settings: Settings,
+    events: AppEvents,
     slug: str,
     title: str,
     body: str,
 ) -> dict:
-    await _enforce_document_cap(db, principal=principal, settings=settings)
     document_id = uuid4()
     version_id = uuid4()
     try:
@@ -188,6 +97,9 @@ async def create_document(
                 principal.address,
                 principal.alias,
                 principal.certificate_id,
+            )
+            await emit_doc_changed(
+                events, tx, team_id=principal.team_id, slug=slug, version=1, source="api"
             )
     except Exception as exc:
         if "unique" in str(exc).lower():
@@ -258,7 +170,7 @@ async def append_version(
     db: AsyncDatabaseManager,
     *,
     principal: Principal,
-    settings: Settings,
+    events: AppEvents,
     slug: str,
     body: str,
 ) -> dict:
@@ -270,7 +182,6 @@ async def append_version(
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
     document_id: UUID = document["document_id"]
-    await _enforce_version_cap(db, principal=principal, document_id=document_id, settings=settings)
     version_id = uuid4()
     async with db.transaction() as tx:
         current = await tx.fetch_one(
@@ -298,6 +209,9 @@ async def append_version(
         await tx.execute(
             "UPDATE {{tables.documents}} SET updated_at = NOW() WHERE document_id = $1",
             document_id,
+        )
+        await emit_doc_changed(
+            events, tx, team_id=principal.team_id, slug=slug, version=next_version, source="api"
         )
     return await get_document(db, principal=principal, slug=slug)
 
@@ -481,8 +395,8 @@ async def get_presentation_state(db: AsyncDatabaseManager, *, token: str) -> dic
 async def edit_presented_document(
     db: AsyncDatabaseManager,
     *,
+    events: AppEvents,
     token: str,
-    settings: Settings,
     body: str,
     base_version: int,
     editor_name: str | None,
@@ -525,32 +439,6 @@ async def edit_presented_document(
                 detail={"version_number": latest_version, "body": latest["body"]},
             )
 
-        await tx.execute(
-            """
-            INSERT INTO {{tables.subscriptions}} (team_id, tier)
-            VALUES ($1, 'free')
-            ON CONFLICT (team_id) DO NOTHING
-            """,
-            str(link["team_id"]),
-        )
-        tier_row = await tx.fetch_one(
-            "SELECT tier FROM {{tables.subscriptions}} WHERE team_id = $1",
-            str(link["team_id"]),
-        )
-        tier = str(tier_row["tier"] if tier_row is not None else "free")
-        if tier != ACTIVE_TIER:
-            count = await tx.fetch_one(
-                "SELECT COUNT(*) AS n FROM {{tables.document_versions}} WHERE document_id = $1",
-                document_id,
-            )
-            current = int(count["n"] if count is not None else 0)
-            if current >= settings.free_max_versions_per_doc:
-                raise _limit_exceeded(
-                    limit="versions_per_doc",
-                    current=current,
-                    maximum=settings.free_max_versions_per_doc,
-                )
-
         new_version = latest_version + 1
         version_id = uuid4()
         await tx.execute(
@@ -574,7 +462,15 @@ async def edit_presented_document(
             "UPDATE {{tables.documents}} SET updated_at = NOW() WHERE document_id = $1",
             document_id,
         )
-    return {"version_number": new_version, "team_id": str(link["team_id"]), "slug": str(link["slug"])}
+        await emit_doc_changed(
+            events,
+            tx,
+            team_id=str(link["team_id"]),
+            slug=str(link["slug"]),
+            version=new_version,
+            source="present-link",
+        )
+    return {"version_number": new_version}
 
 
 def _json_value(value: Any) -> Any:

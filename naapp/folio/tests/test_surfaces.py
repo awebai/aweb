@@ -264,20 +264,21 @@ def test_llms_txt_getting_started_teaches_the_verified_spine() -> None:
     assert "aw team up" not in text
 
 
-def test_linked_manifest_paths_serve_committed_bytes() -> None:
-    from folio.aweb_manifest import read_manifest_bytes
+def test_linked_manifest_paths_serve_filled_bytes() -> None:
+    from aweb_naapp.manifest import canonical_bytes
+    from manifest_config import served_manifest
 
     client = _client()
-    committed = read_manifest_bytes()
+    expected = canonical_bytes(served_manifest("https://folio.aweb.ai"))
     # The docs surface links the canonical manifest at /aweb-app.json; the
     # dispatcher fetches /.well-known/aweb-app.json. Both must serve the exact
-    # committed bytes — nothing the surface links may 404.
+    # filled deployment bytes — nothing the surface links may 404.
     for path in ("/aweb-app.json", "/.well-known/aweb-app.json"):
         response = client.get(path)
         assert response.status_code == 200, path
         assert "application/json" in response.headers["content-type"], path
         assert response.headers.get("X-Content-Type-Options") == "nosniff", path
-        assert response.content == committed, path
+        assert response.content == expected, path
     # Guard against drift: the surfaces actually link /aweb-app.json.
     assert "/aweb-app.json" in client.get("/reference").text
     assert "/aweb-app.json" in client.get("/").text
@@ -315,7 +316,7 @@ def test_skills_surface_serves_index_and_individual_skills() -> None:
 def test_served_skills_do_not_reference_removed_python_cli() -> None:
     client = _client()
     forbidden = ("folio create", "folio version", "folio upload", "folio theme", "folio show", "folio revoke", "aw-folio")
-    for name in surfaces.skill_names():
+    for name in surfaces.SKILLS.names():
         response = client.get(f"/skills/{name}/SKILL.md")
         assert response.status_code == 200
         for needle in forbidden:
@@ -329,10 +330,9 @@ def test_skill_surface_rejects_symlink_escapes(monkeypatch, tmp_path) -> None:
     outside = tmp_path / "outside-secret.md"
     outside.write_text("secret outside skill root", encoding="utf-8")
     (leak_dir / "SKILL.md").symlink_to(outside)
-    monkeypatch.setattr(surfaces, "_SKILLS_DIR", skills_dir)
+    monkeypatch.setenv("FOLIO_SKILLS_DIR", str(skills_dir))
 
-    assert "leak" not in surfaces.skill_names()
-    assert surfaces.read_skill("leak") is None
+    assert "leak" not in _client().get("/skills/").text
 
     response = _client().get("/skills/leak/SKILL.md")
 
@@ -388,3 +388,15 @@ def test_present_route_keeps_noindex_header(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.headers["x-robots-tag"] == "noindex, nofollow, noarchive"
     assert '<meta name="robots" content="noindex,nofollow,noarchive">' in response.text
+
+
+def test_health_reports_the_deployed_commit(monkeypatch) -> None:
+    commit = "0123456789abcdef0123456789abcdef01234567"
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.setenv("FOLIO_GIT_SHA", commit)
+
+    response = _client().get("/live")
+
+    assert response.status_code == 200
+    assert response.json()["service"] == "folio"
+    assert response.json()["build"] == {"git_sha": commit}

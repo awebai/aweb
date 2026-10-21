@@ -67,6 +67,18 @@ def test_secret_kinds_are_the_auth_schemes():
 
 
 @pytest.mark.parametrize("case", POSITIVE, ids=lambda case: case["name"])
+def test_use_policy_reference_binds_the_installation_team_grant_and_digest(case):
+    request = case["request"]
+    assert case["policy"] == {
+        "ref": "|".join((
+            "secrets.use", request["installation_id"], request["team_id"],
+            request["grant_id"], request["policy_digest"],
+        )),
+        "version": 1,
+    }
+
+
+@pytest.mark.parametrize("case", POSITIVE, ids=lambda case: case["name"])
 def test_b2_canonical_form_reproduces_the_covered_bytes(case):
     covered = canonical_request(_covered(case))
     assert covered == _bytes(case["covered_bytes_b64url"])
@@ -147,13 +159,18 @@ class _Policies:
 
 
 class _Directory:
-    approver = Approver(subject="approver-1", subject_type="app_local", contact="owner@example.com")
+    approver = Approver(
+        scope="installation",
+        subject="approver-1",
+        subject_type="app_local",
+        contact="owner@example.com",
+    )
 
-    async def designated_approver(self, policy: ActionPolicy) -> Approver | None:
-        return self.approver
+    async def candidates(self, policy: ActionPolicy, request) -> list[Approver]:
+        return [self.approver]
 
-    async def is_current(self, approver_subject: str, policy: ActionPolicy) -> bool:
-        return approver_subject == self.approver.subject
+    async def is_current(self, scope: str, subject: str) -> bool:
+        return (scope, subject) == (self.approver.scope, self.approver.subject)
 
 
 class _Mailbox:
@@ -184,7 +201,7 @@ async def test_b2_mint_records_the_vector_digest(test_db_factory):
             version=case["policy"]["version"],
             min_assurance=Assurance.PASSKEY,
             ttl=timedelta(minutes=15),
-            approver_scope="installation",
+            approver_scopes=("installation",),
         )
         for case in POSITIVE
     ]

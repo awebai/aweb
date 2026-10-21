@@ -3,9 +3,9 @@
 # Brings up, from source, the services the profile/team/Library flow exercises:
 #   postgres (tmpfs, ephemeral) + redis + awid + aweb + library
 #
-# awid and aweb build from this repo (context `.`). library builds from the
-# in-repository naapp/library source. Its committed aweb.team fixture is selected
-# by the e2e stack script; both inputs remain overridable via the *_CONTEXT vars.
+# awid, aweb and library build from this repo (context `.`); library depends on
+# the in-repo awid and naapp-lib. Its committed aweb.team fixture is selected by
+# the e2e stack script and stays overridable via LIBRARY_E2E_BLUEPRINT_SRC.
 #
 # Rate limiting is disabled and DNS verification skipped (like folio's
 # docker-compose.e2e.yml) so a freshly created test team works offline.
@@ -103,8 +103,8 @@ services:
 
   library:
     build:
-      context: ${LIBRARY_E2E_LIBRARY_CONTEXT:-./naapp/library}
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: naapp/library/Dockerfile
     environment:
       LIBRARY_DATABASE_URL: postgresql://aweb:aweb@postgres:5432/library
       LIBRARY_AWID_REGISTRY_URL: http://awid:8010

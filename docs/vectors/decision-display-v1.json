@@ -1,0 +1,492 @@
+{
+  "version": 1,
+  "description": "What a decision card shows (docs/page-actions.md §5): the host's decision(task_id) evidence returns the task's signed `options` (app_request.choices) and `fields` (app_request.fields). The renderer refuses the card, showing no proposal, unless the card's options equal the evidence exactly (values, labels and order); it shows only the bound fields, in bound order, with the bound label and format, and refuses when a bound field is missing from the record or a money_minor field's record has no ISO 4217 `currency` (three uppercase letters). `show` lists [label, value, format, currency] in display order; `refuse` names the reason.",
+  "cases": [
+    {
+      "name": "matching",
+      "evidence": {
+        "options": [
+          {
+            "value": "approve",
+            "label": "Approve the new rates"
+          },
+          {
+            "value": "reject",
+            "label": "Keep the current rates"
+          }
+        ],
+        "fields": [
+          {
+            "field": "start",
+            "label": "From",
+            "format": "date"
+          },
+          {
+            "field": "end",
+            "label": "Until",
+            "format": "date"
+          },
+          {
+            "field": "price_per_night_minor",
+            "label": "Nightly price",
+            "format": "money_minor"
+          },
+          {
+            "field": "reason",
+            "label": "Reason",
+            "format": "text"
+          }
+        ]
+      },
+      "card_options": [
+        {
+          "value": "approve",
+          "label": "Approve the new rates"
+        },
+        {
+          "value": "reject",
+          "label": "Keep the current rates"
+        }
+      ],
+      "record_value": {
+        "currency": "EUR",
+        "start": "2026-10-24",
+        "end": "2026-10-30",
+        "price_per_night_minor": 12000,
+        "reason": "Test proposal for available dates.",
+        "internal_score": 7
+      },
+      "expect": {
+        "show": [
+          [
+            "From",
+            "2026-10-24",
+            "date",
+            null
+          ],
+          [
+            "Until",
+            "2026-10-30",
+            "date",
+            null
+          ],
+          [
+            "Nightly price",
+            12000,
+            "money_minor",
+            "EUR"
+          ],
+          [
+            "Reason",
+            "Test proposal for available dates.",
+            "text",
+            null
+          ]
+        ]
+      },
+      "note": "only bound fields, in bound order; internal_score is not shown"
+    },
+    {
+      "name": "option-label-differs",
+      "evidence": {
+        "options": [
+          {
+            "value": "approve",
+            "label": "Approve the new rates"
+          },
+          {
+            "value": "reject",
+            "label": "Keep the current rates"
+          }
+        ],
+        "fields": [
+          {
+            "field": "start",
+            "label": "From",
+            "format": "date"
+          },
+          {
+            "field": "end",
+            "label": "Until",
+            "format": "date"
+          },
+          {
+            "field": "price_per_night_minor",
+            "label": "Nightly price",
+            "format": "money_minor"
+          },
+          {
+            "field": "reason",
+            "label": "Reason",
+            "format": "text"
+          }
+        ]
+      },
+      "card_options": [
+        {
+          "value": "approve",
+          "label": "Keep the current rates"
+        },
+        {
+          "value": "reject",
+          "label": "Approve the new rates"
+        }
+      ],
+      "record_value": {
+        "currency": "EUR",
+        "start": "2026-10-24",
+        "end": "2026-10-30",
+        "price_per_night_minor": 12000,
+        "reason": "Test proposal for available dates.",
+        "internal_score": 7
+      },
+      "expect": {
+        "refuse": "options_mismatch"
+      },
+      "note": "the page swaps the labels of the signed options"
+    },
+    {
+      "name": "option-order-differs",
+      "evidence": {
+        "options": [
+          {
+            "value": "approve",
+            "label": "Approve the new rates"
+          },
+          {
+            "value": "reject",
+            "label": "Keep the current rates"
+          }
+        ],
+        "fields": [
+          {
+            "field": "start",
+            "label": "From",
+            "format": "date"
+          },
+          {
+            "field": "end",
+            "label": "Until",
+            "format": "date"
+          },
+          {
+            "field": "price_per_night_minor",
+            "label": "Nightly price",
+            "format": "money_minor"
+          },
+          {
+            "field": "reason",
+            "label": "Reason",
+            "format": "text"
+          }
+        ]
+      },
+      "card_options": [
+        {
+          "value": "reject",
+          "label": "Keep the current rates"
+        },
+        {
+          "value": "approve",
+          "label": "Approve the new rates"
+        }
+      ],
+      "record_value": {
+        "currency": "EUR",
+        "start": "2026-10-24",
+        "end": "2026-10-30",
+        "price_per_night_minor": 12000,
+        "reason": "Test proposal for available dates.",
+        "internal_score": 7
+      },
+      "expect": {
+        "refuse": "options_mismatch"
+      }
+    },
+    {
+      "name": "option-missing-on-card",
+      "evidence": {
+        "options": [
+          {
+            "value": "approve",
+            "label": "Approve the new rates"
+          },
+          {
+            "value": "reject",
+            "label": "Keep the current rates"
+          }
+        ],
+        "fields": [
+          {
+            "field": "start",
+            "label": "From",
+            "format": "date"
+          },
+          {
+            "field": "end",
+            "label": "Until",
+            "format": "date"
+          },
+          {
+            "field": "price_per_night_minor",
+            "label": "Nightly price",
+            "format": "money_minor"
+          },
+          {
+            "field": "reason",
+            "label": "Reason",
+            "format": "text"
+          }
+        ]
+      },
+      "card_options": [
+        {
+          "value": "approve",
+          "label": "Approve the new rates"
+        }
+      ],
+      "record_value": {
+        "currency": "EUR",
+        "start": "2026-10-24",
+        "end": "2026-10-30",
+        "price_per_night_minor": 12000,
+        "reason": "Test proposal for available dates.",
+        "internal_score": 7
+      },
+      "expect": {
+        "refuse": "options_mismatch"
+      }
+    },
+    {
+      "name": "bound-field-missing",
+      "evidence": {
+        "options": [
+          {
+            "value": "approve",
+            "label": "Approve the new rates"
+          },
+          {
+            "value": "reject",
+            "label": "Keep the current rates"
+          }
+        ],
+        "fields": [
+          {
+            "field": "start",
+            "label": "From",
+            "format": "date"
+          },
+          {
+            "field": "end",
+            "label": "Until",
+            "format": "date"
+          },
+          {
+            "field": "price_per_night_minor",
+            "label": "Nightly price",
+            "format": "money_minor"
+          },
+          {
+            "field": "reason",
+            "label": "Reason",
+            "format": "text"
+          }
+        ]
+      },
+      "card_options": [
+        {
+          "value": "approve",
+          "label": "Approve the new rates"
+        },
+        {
+          "value": "reject",
+          "label": "Keep the current rates"
+        }
+      ],
+      "record_value": {
+        "currency": "EUR",
+        "start": "2026-10-24",
+        "end": "2026-10-30",
+        "price_per_night_minor": 12000,
+        "internal_score": 7
+      },
+      "expect": {
+        "refuse": "field_missing"
+      }
+    },
+    {
+      "name": "money-without-currency",
+      "evidence": {
+        "options": [
+          {
+            "value": "approve",
+            "label": "Approve the new rates"
+          },
+          {
+            "value": "reject",
+            "label": "Keep the current rates"
+          }
+        ],
+        "fields": [
+          {
+            "field": "start",
+            "label": "From",
+            "format": "date"
+          },
+          {
+            "field": "end",
+            "label": "Until",
+            "format": "date"
+          },
+          {
+            "field": "price_per_night_minor",
+            "label": "Nightly price",
+            "format": "money_minor"
+          },
+          {
+            "field": "reason",
+            "label": "Reason",
+            "format": "text"
+          }
+        ]
+      },
+      "card_options": [
+        {
+          "value": "approve",
+          "label": "Approve the new rates"
+        },
+        {
+          "value": "reject",
+          "label": "Keep the current rates"
+        }
+      ],
+      "record_value": {
+        "start": "2026-10-24",
+        "end": "2026-10-30",
+        "price_per_night_minor": 12000,
+        "reason": "Test proposal for available dates.",
+        "internal_score": 7
+      },
+      "expect": {
+        "refuse": "currency_missing"
+      },
+      "note": "on a decision a money amount must show its currency; elsewhere the two-decimal fallback applies"
+    },
+    {
+      "name": "money-currency-not-iso",
+      "evidence": {
+        "options": [
+          {
+            "value": "approve",
+            "label": "Approve the new rates"
+          },
+          {
+            "value": "reject",
+            "label": "Keep the current rates"
+          }
+        ],
+        "fields": [
+          {
+            "field": "start",
+            "label": "From",
+            "format": "date"
+          },
+          {
+            "field": "end",
+            "label": "Until",
+            "format": "date"
+          },
+          {
+            "field": "price_per_night_minor",
+            "label": "Nightly price",
+            "format": "money_minor"
+          },
+          {
+            "field": "reason",
+            "label": "Reason",
+            "format": "text"
+          }
+        ]
+      },
+      "card_options": [
+        {
+          "value": "approve",
+          "label": "Approve the new rates"
+        },
+        {
+          "value": "reject",
+          "label": "Keep the current rates"
+        }
+      ],
+      "record_value": {
+        "currency": "EURO",
+        "start": "2026-10-24",
+        "end": "2026-10-30",
+        "price_per_night_minor": 12000,
+        "reason": "Test proposal for available dates.",
+        "internal_score": 7
+      },
+      "expect": {
+        "refuse": "currency_missing"
+      }
+    },
+    {
+      "name": "money-currency-lowercase",
+      "evidence": {
+        "options": [
+          {
+            "value": "approve",
+            "label": "Approve the new rates"
+          },
+          {
+            "value": "reject",
+            "label": "Keep the current rates"
+          }
+        ],
+        "fields": [
+          {
+            "field": "start",
+            "label": "From",
+            "format": "date"
+          },
+          {
+            "field": "end",
+            "label": "Until",
+            "format": "date"
+          },
+          {
+            "field": "price_per_night_minor",
+            "label": "Nightly price",
+            "format": "money_minor"
+          },
+          {
+            "field": "reason",
+            "label": "Reason",
+            "format": "text"
+          }
+        ]
+      },
+      "card_options": [
+        {
+          "value": "approve",
+          "label": "Approve the new rates"
+        },
+        {
+          "value": "reject",
+          "label": "Keep the current rates"
+        }
+      ],
+      "record_value": {
+        "currency": "eur",
+        "start": "2026-10-24",
+        "end": "2026-10-30",
+        "price_per_night_minor": 12000,
+        "reason": "Test proposal for available dates.",
+        "internal_score": 7
+      },
+      "expect": {
+        "refuse": "currency_missing"
+      }
+    }
+  ]
+}

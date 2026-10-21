@@ -5,7 +5,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 SOURCE_SHA="${CANDIDATE_SOURCE_SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
 refuse() { printf 'candidate gate refused: %s\n' "$*" >&2; exit 2; }
-LIBRARY_E2E_LIBRARY_CONTEXT="${LIBRARY_E2E_LIBRARY_CONTEXT:-$ROOT/naapp/library}"
+# Library builds from the candidate checkout, with its awid and naapp-lib.
+[[ -z "${LIBRARY_E2E_LIBRARY_CONTEXT:-}" ]] \
+  || refuse "LIBRARY_E2E_LIBRARY_CONTEXT is not an input: Library builds from the candidate checkout"
 LIBRARY_E2E_BLUEPRINT_SRC="${LIBRARY_E2E_BLUEPRINT_SRC:-$ROOT/naapp/library/test-vectors/blueprints/team}"
 canonical_git_input() {
   local name="$1" path="$2" top canonical
@@ -19,7 +21,6 @@ canonical_git_input() {
   esac
   printf '%s\n' "$canonical"
 }
-LIBRARY_E2E_LIBRARY_CONTEXT="$(canonical_git_input library "$LIBRARY_E2E_LIBRARY_CONTEXT")"
 LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC")"
 LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "CANDIDATE_SOURCE_SHA must be a full lowercase SHA"
@@ -36,7 +37,6 @@ if [[ -z "$STAGES" ]]; then
   git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
     || refuse "source SHA is not on the synchronized origin/main history"
 fi
-[[ -d "$LIBRARY_E2E_LIBRARY_CONTEXT" ]] || refuse "Library input is missing"
 [[ -d "$LIBRARY_E2E_BLUEPRINT_SRC" ]] || refuse "blueprint input is missing"
 CLI_VERSION="${CLI_VERSION:-$(python3 "$ROOT/scripts/next_tag_version.py" aw-v)}"
 A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-$(python3 "$ROOT/scripts/next_tag_version.py" a2a-gw-v)}"
@@ -61,7 +61,6 @@ input_identity() {
     external_inputs+="$name=source$relative"$'\n'
   fi
 }
-input_identity library "$LIBRARY_E2E_LIBRARY_CONTEXT" naapp/library
 input_identity blueprints "$LIBRARY_E2E_BLUEPRINT_SRC" naapp/library/test-vectors/blueprints/team
 gate_setting() {
   local name="$1" default="$2" value
@@ -199,12 +198,10 @@ record_input() {
   mkdir -p "$work/inputs/$name"
   git -C "$repo" archive "$tree" | tar -xf - -C "$work/inputs/$name"
 }
-record_input library "$LIBRARY_E2E_LIBRARY_CONTEXT"
 record_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC"
-LIBRARY_E2E_LIBRARY_CONTEXT="$work/inputs/library"
 LIBRARY_E2E_BLUEPRINT_SRC="$work/inputs/blueprints"
 printf '%s\n' "$SOURCE_SHA" > "$LOG_DIR/source-sha"
-printf 'NOT RELEVANT: OSS packages do not bundle Library; this input is used only by its activation journey.\n' \
+printf 'NOT RELEVANT: OSS packages do not bundle Library; it is built only for its activation journey.\n' \
   > "$LOG_DIR/compatibility.txt"
 
 python3 "$ROOT/scripts/candidate-host-pressure.py" capture "$LOG_DIR/host-before.json"
@@ -355,7 +352,6 @@ docker run --rm --init \
   -e GIT_CONFIG_VALUE_0="$checkout" \
   -e CLI_VERSION="${CLI_VERSION:-}" \
   -e A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-}" \
-  -e LIBRARY_E2E_LIBRARY_CONTEXT="$LIBRARY_E2E_LIBRARY_CONTEXT" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e CANDIDATE_LOG_DIR="$LOG_DIR" \
   -e CANDIDATE_RESOURCE_MANIFEST="$LOG_DIR/owned-resources.tsv" \

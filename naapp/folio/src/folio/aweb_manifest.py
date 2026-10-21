@@ -1,13 +1,12 @@
-"""folio's aweb-app.json manifest — the one declaration the aw CLI dispatcher and
-the hosted gateway interpret identically (frozen m1.1 schema). The committed
-``aweb-app.json`` is the byte-stable artifact served verbatim at
-``/.well-known/aweb-app.json``; this module is its authoring source. A test asserts
-the file equals ``canonical_bytes(MANIFEST)`` so the two never drift.
+"""Folio's manifest template, shared by the CLI and hosted gateway.
+
+The canonical committed aweb-app.json declares kids and local event types.
+NaappRuntime fills deployment app.id, origin and public keys from settings,
+validates the filled document and serves its exact bytes at both discovery URLs.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -271,7 +270,7 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "billing",
-            "description": "Get the team's billing tier, caps, and usage.",
+            "description": "Get the team's usage: documents and the most versions on any document.",
             "method": "GET",
             "path": "/v1/billing",
             "input_schema": {"type": "object", "properties": {}},
@@ -282,7 +281,7 @@ MANIFEST: dict[str, Any] = {
     ],
     "events": [
         {
-            "type": "folio/doc.changed",
+            "type": "doc.changed",
             "default_delivery_intent": "wake",
             "description": (
                 "A document gained a new version. resource_ref is the document slug; "
@@ -292,25 +291,7 @@ MANIFEST: dict[str, Any] = {
         }
     ],
     "event_emitters": [
-        {"kid": "folio:emit-1", "did_key": "did:key:z6MkhddL2VEzVjKeh36xFg4ULcfWN4Q9VgK6oQ3mdCNJEPWv"},
+        {"kid": "folio:emit-1"},
     ],
 }
 
-
-def canonical_bytes(obj: Any) -> bytes:
-    """Canonical JSON bytes: sorted keys, no insignificant whitespace, UTF-8.
-
-    Matches the awid signing CanonicalJSON convention (HTML-escaping off) so the
-    committed manifest and any consumer's serialization are byte-identical.
-    """
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-
-
-def read_manifest_bytes() -> bytes:
-    """The raw committed manifest bytes — served verbatim, never re-serialized."""
-    return MANIFEST_PATH.read_bytes()
-
-
-def write_manifest_file() -> None:
-    """Regenerate the committed canonical manifest file from MANIFEST."""
-    MANIFEST_PATH.write_bytes(canonical_bytes(MANIFEST))

@@ -12,7 +12,76 @@
   method for record publication. Legacy server acceptance remains measured
   until the operator's separate cutoff.
 
+- aw reads manifest version 2 as well as version 1. `aw plugin install` and
+  `aw plugin update` read an app's variant catalog first and select the
+  highest version they support. Only a missing catalog falls back to the
+  legacy manifest, and a failed update keeps the installed manifest.
+- Only agent tools of an installed app are aw verbs. aw refuses
+  surface-only and hook-only verbs (`tool_context_denied`), and grant
+  snapshots hold only agent tools.
+- aw refuses to install a manifest whose answer path is agent-visible.
+- Manifest version 2 can declare the roles a team admin may designate
+  (`roles`: name, label and optional description). aw and
+  `aweb_naapp.manifest` refuse a malformed declaration with `role_invalid`.
+- aw and `aweb_naapp.manifest` refuse v1 manifests nested deeper than 512
+  levels, as they do for v2.
+- `aweb_naapp.manifest.load_manifest` reads manifest bytes of either
+  version and passes the same vectors as aw.
+
+### Breaking changes
+
+- aw refuses a tool path parameter value that is blank, is `.` or `..`
+  once surrounding whitespace is trimmed, or contains `/`, `\`, `%`, `?`,
+  `#`, `;` or an ASCII control character, in manifest versions 1 and 2. Each value fills exactly one path segment, even
+  where an intermediary decodes the path. Send such values in the query or
+  body. The `path_param_percent_encoding` interpretation vector no longer
+  sends a `/`, and new `reject_path_param_*` cases pin the refusal.
+
+### Folio
+
+- Folio runs on the shared `aweb-naapp` runtime: its settings, database,
+  manifest serving, public surface (landing, reference, llms.txt, robots, skills,
+  fonts) and health routes are naapp-lib's, and `/health` reports the deployed
+  commit.
+- `folio/doc.changed` events are written to an outbox in the same transaction
+  as the document write and delivered from there: a failed delivery is retried
+  instead of dropped, and a rolled-back write leaves no event.
+- Folio checks a certificate's did:aw in **observe** mode
+  (`FOLIO_DID_AW_PROFILE=observe` is its default): every request is admitted
+  and each check's outcome is logged. It moves to require only once observe
+  measurement shows no refused live callers and Juan approves (aweb-acgh.11
+  rollout).
+- Deploy note: the shared settings cap `FOLIO_AUTH_CACHE_TTL_SECONDS` at 60 and
+  `FOLIO_TIMESTAMP_SKEW_SECONDS` at 300, and require `FOLIO_AWID_SERVICE_TOKEN`,
+  when set, to be at least 32 bytes; Folio refuses to start otherwise. The first
+  boot applies the shared naapp migrations (observed principals, outbox).
+
 ## Release preparations
+
+### Release preparation: aweb-naapp 0.2.0
+
+- The `aweb-naapp-vX.Y.Z` tag also publishes PyPI `aweb-naapp-testing` from
+  `naapp-lib/testing/`, at the same version: dev-only test support (real AWID
+  routes on PostgreSQL, a team-auth v2 signer, a software WebAuthn
+  authenticator and a team owner-act signer). It requires exactly the
+  `aweb-naapp` it is released with and `awid-service>=0.5.30`. The release
+  candidate and the publisher refuse a tag when the two versions differ, and
+  `make check-naapp-lib-package` builds, installs and imports both.
+
+### Release preparation: server 1.27.31
+
+Server changes are since `server-v1.27.30`.
+
+- `GET /v1/apps/self/grant`: an app reads its own grant in a team, signed with
+  an `app-grant-read` credential. The team and app come only from the
+  credential, and the answer is read under the digest the key is registered
+  for. `installation_id`, `generation` and `origin_verified` are `null` until
+  installations carry them. `AWEB_APP_GRANT_MAX_AGE_SECONDS` (1 to 60,
+  default 60) sets `max_age_seconds`; any other value stops the server at
+  startup. Conformance: `test-vectors/app-read-credential-v1.json`.
+- **Security:** read-purpose credentials (`app-grant-read`, `hook-resolve`)
+  accept one signature encoding only: unpadded standard base64 with zero
+  spare bits. App-event credentials are unchanged.
 
 ### Release preparation: aweb-naapp 0.1.0
 

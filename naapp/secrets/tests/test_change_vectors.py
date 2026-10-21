@@ -33,15 +33,21 @@ from aweb_secrets.change import (
     REENABLE_TARGETS,
     ChangeRefused,
     check_confirmable,
+    check_confirmer,
     covered_bytes,
     parse_change,
     validate_change,
 )
+from aweb_secrets.grant import GrantTemplate
+from aweb_secrets.operation import OperationInvalid, OperationTemplate, operation_digest
 
 VECTOR = json.loads((Path(__file__).parents[1] / "vectors" / "change-v1.json").read_text())
 POSITIVE = VECTOR["positive_cases"]
 NEGATIVE = VECTOR["negative_cases"]
 CONFIRMATIONS = VECTOR["confirmation_cases"]
+CONFIRMERS = VECTOR["confirmer_cases"]
+DERIVED_OPERATIONS = VECTOR["derived_operation_cases"]
+GRANT_TEMPLATES = VECTOR["grant_template_cases"]
 
 
 def _bytes(value: str) -> bytes:
@@ -97,6 +103,19 @@ def test_positive_cases_cover_both_drafters_and_every_shape_in_force() -> None:
     assert kinds == {kind for kind, _ in AFTER_SHAPES}
 
 
+@pytest.mark.parametrize("case", DERIVED_OPERATIONS, ids=lambda case: case["name"])
+def test_derived_operation_shapes_and_digest_pins(case: dict) -> None:
+    assert operation_digest(case["after"]) == case["operation_digest"]
+    with pytest.raises(OperationInvalid) as refused:
+        OperationTemplate.from_after(case["after"])
+    assert refused.value.code == case["expected_code"]
+
+
+@pytest.mark.parametrize("case", GRANT_TEMPLATES, ids=lambda case: case["name"])
+def test_issuance_pins_the_complete_grant_template(case: dict) -> None:
+    assert GrantTemplate.from_after(case["after"]).digest == case["digest"]
+
+
 @pytest.mark.parametrize("case", NEGATIVE, ids=lambda case: case["name"])
 def test_negative_cases_never_reach_the_covered_bytes(case: dict) -> None:
     reference = _case(case["of"])
@@ -129,6 +148,18 @@ def test_confirmation_cases(case: dict) -> None:
     assert refused.value.code == case["expected"]
 
 
+@pytest.mark.parametrize("case", CONFIRMERS, ids=lambda case: case["name"])
+def test_confirmer_cases(case: dict) -> None:
+    change = _case(case["of"])["request"]
+    check = {"distinct_approver": case["distinct_approver"], "confirmer": case["confirmer"]}
+    if case["expected"] == "confirmable":
+        check_confirmer(change, **check)
+        return
+    with pytest.raises(ChangeRefused) as refused:
+        check_confirmer(change, **check)
+    assert refused.value.code == case["expected"]
+
+
 class _Policies:
     def __init__(self, policy: ActionPolicy) -> None:
         self._policy = policy
@@ -138,13 +169,18 @@ class _Policies:
 
 
 class _Directory:
-    approver = Approver(subject="owner-1", subject_type="app_local", contact="owner@example.com")
+    approver = Approver(
+        scope="secrets.owner.fixture",
+        subject="owner-1",
+        subject_type="app_local",
+        contact="owner@example.com",
+    )
 
-    async def designated_approver(self, policy: ActionPolicy) -> Approver | None:
-        return self.approver
+    async def candidates(self, policy: ActionPolicy, request) -> list[Approver]:
+        return [self.approver]
 
-    async def is_current(self, approver_subject: str, policy: ActionPolicy) -> bool:
-        return approver_subject == self.approver.subject
+    async def is_current(self, scope: str, subject: str) -> bool:
+        return (scope, subject) == (self.approver.scope, self.approver.subject)
 
 
 class _Mailbox:
@@ -178,7 +214,7 @@ async def test_b2_mint_records_the_vector_digest(test_db_factory) -> None:
                 version=policy["version"],
                 min_assurance=Assurance.PASSKEY,
                 ttl=timedelta(minutes=15),
-                approver_scope="secrets.owner.fixture",
+                approver_scopes=("secrets.owner.fixture",),
             )
         ),
         approvers=_Directory(),
