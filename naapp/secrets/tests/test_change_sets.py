@@ -529,3 +529,29 @@ async def test_an_approver_change_set_that_fails_designates_nobody(world: World)
             == []
         )
     assert "finance@acme.com" not in world.inbox.enrolments
+
+
+@pytest.mark.parametrize(
+    "other", [{"installation_id": "inst_other"}, {"team_id": "backend:other.com"}]
+)
+async def test_a_draft_takes_only_its_own_installations_sealed_values(
+    world: World, other: dict[str, str]
+) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    sealed = await _sealed(world, "sec_1")
+    foreign = SealContext(**{**sealed.__dict__, **other})
+    with pytest.raises(ChangeRefused) as refused:
+        await draft(
+            world, change_set(drafter=by_member(CAROL), changes=[grant_role(CAROL)]), [foreign]
+        )
+    assert refused.value.code == "sealed_value_foreign"
+    assert (await world.custody.opener.open(sealed)).reveal() == b"v"
+
+
+async def test_a_sealed_value_belongs_to_one_draft(world: World) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    sealed = await _sealed(world, "sec_1")
+    await draft(world, change_set(drafter=by_member(CAROL), changes=[grant_role(CAROL)]), [sealed])
+    with pytest.raises(ChangeRefused) as refused:
+        await draft(world, change_set(drafter=by_member(BOB), changes=[grant_role(BOB)]), [sealed])
+    assert refused.value.code == "sealed_value_taken"

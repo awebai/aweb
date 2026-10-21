@@ -170,6 +170,23 @@ class ChangeSets:
                     code="change_kind_not_applicable",
                 )
         installation_id, team_id = change["installation_id"], change["team_id"]
+        for context in sealed:
+            if (context.installation_id, context.team_id) != (installation_id, team_id):
+                raise ChangeRefused(
+                    "a sealed value belongs to another installation or team",
+                    code="sealed_value_foreign",
+                )
+            if await tx.fetch_value(
+                "SELECT 1 FROM {{tables.change_set_sealed}} WHERE installation_id = $1"
+                " AND team_id = $2 AND secret_id = $3 AND version = $4",
+                context.installation_id,
+                context.team_id,
+                context.secret_id,
+                context.version,
+            ):
+                raise ChangeRefused(
+                    "the sealed value belongs to another change set", code="sealed_value_taken"
+                )
         if change["base_revision"] != await config_revision(tx, installation_id):
             raise ChangeRefused(
                 "the configuration changed after this change set was drafted",

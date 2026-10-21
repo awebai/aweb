@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS {{tables.change_set_sealed}} (
     team_id          TEXT NOT NULL,
     secret_id        TEXT NOT NULL,
     version          INTEGER NOT NULL,
-    PRIMARY KEY (change_id, installation_id, team_id, secret_id, version)
+    PRIMARY KEY (change_id, installation_id, team_id, secret_id, version),
+    -- A sealed value belongs to exactly one draft.
+    UNIQUE (installation_id, team_id, secret_id, version)
 );
 
 CREATE TABLE IF NOT EXISTS {{tables.approvers}} (
