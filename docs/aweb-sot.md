@@ -614,6 +614,16 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `app_hook_bindings`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
+The server also applies the hooks kit's own migration module, `aweb_naapp_hooks`
+(`naapp-lib/src/aweb_naapp/hooks/migrations/*.sql`), to the same `aweb` schema,
+after its own chain, at startup and so on every upgrade. It is one
+implementation shared with the naapps that verify owner acts, not a copy in
+core's chain, and pgdbm records it under its own module name. Its tables:
+
+<!-- BEGIN SOURCE INVENTORY: aweb-kit-tables -->
+- `owner_act_nonces`
+<!-- END SOURCE INVENTORY: aweb-kit-tables -->
+
 ---
 
 ## API routes
