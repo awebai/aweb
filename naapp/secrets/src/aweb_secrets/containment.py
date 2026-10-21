@@ -677,7 +677,16 @@ class Containment:
                 nodes = await derived_lineage.lock_ancestry(
                     attempt, installation_id, team_id, secret_id
                 )
-                await derived_lineage.check_ancestry(attempt, nodes)
+                # A confirmed empty root must be enabled before the owner can
+                # stage a new binding. This restores no version: admission still
+                # refuses it until a later confirmation activates a value.
+                empty_root = (
+                    len(nodes) == 1
+                    and nodes[0].parent_secret_id is None
+                    and nodes[0].secret.active_version is None
+                )
+                if not empty_root:
+                    await derived_lineage.check_ancestry(attempt, nodes)
                 await self.custody.enable(
                     attempt,
                     installation_id=installation_id,
