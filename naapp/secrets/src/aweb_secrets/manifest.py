@@ -117,7 +117,7 @@ MANIFEST: dict[str, Any] = {
             "scopes": ["secrets:run"],
             "mutation": True,
             "body": {"mode": "json"},
-            "params": _params("request_id", "runner", "params", "reason", path=("job",)),
+            "params": _params("request_id", "runner", "params", "reason", "secret", path=("job",)),
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -126,6 +126,10 @@ MANIFEST: dict[str, Any] = {
                     "runner": {"type": "string", "description": "The runner to run the job on."},
                     "params": {"type": "object", "description": "The job's parameters."},
                     "reason": {"type": "string", "description": "Shown to the approver as untrusted text."},
+                    "secret": {
+                        "type": "string",
+                        "description": "An ordinary derived child's ref for the unique durable slot; omit to use the job's fixed selectors.",
+                    },
                 },
                 "required": ["job", "request_id", "runner"],
             },

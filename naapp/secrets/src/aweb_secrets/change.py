@@ -27,7 +27,7 @@ from aweb_naapp.runtime.approvals import RequestNotCanonical, canonical_request
 from aweb_naapp.runtime.approvals.request import parse_request_json
 from awid.utc_timestamps import parse_utc_seconds
 
-from aweb_secrets import destination, grant, operation, policy, secret
+from aweb_secrets import destination, grant, jobs, operation, policy, runners, secret
 from aweb_secrets.principal import is_did_aw, is_did_key
 
 TYPE = "aweb.secrets.change"
@@ -254,6 +254,18 @@ AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
         ref_field="operation_id",
         identity=("operation_id", "digest"),
         derived=_record(operation.OperationTemplate.from_after, lambda record: record.digest),
+    ),
+    ("job", 1): AfterShape(
+        fields=_record_fields(jobs.FIELDS),
+        ref_field="job_id",
+        identity=("job_id", "digest"),
+        derived=_record(jobs.JobDefinition.from_after, lambda record: record.digest),
+    ),
+    ("runner", 1): AfterShape(
+        fields=_record_fields(runners.FIELDS),
+        ref_field="runner_id",
+        identity=("runner_id",),
+        derived=_record(runners.RunnerRecord.from_after),
     ),
     ("grant", 1): AfterShape(
         fields=_record_fields(grant.FIELDS),

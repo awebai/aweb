@@ -14,6 +14,7 @@ PUBLIC_ROOT = PurePosixPath("docs/vectors")
 EXPECTED_VECTOR_ROOTS = {
     PurePosixPath("cli/go/internal/conformance/vectors"),
     PUBLIC_ROOT,
+    PurePosixPath("naapp-lib/tests/vectors"),
     PurePosixPath("naapp/library/tests/vectors"),
     PurePosixPath("naapp/library/test-vectors"),
     PurePosixPath("naapp/secrets/vectors"),
@@ -225,6 +226,10 @@ ROOT_CONSUMERS = {
     PurePosixPath("naapp/secrets/tests/test_runner_protocol_vectors.py"): _consumer(
         "secrets-runner-protocol-v1.json",
         '(Path(__file__).parents[3] / "docs" / "vectors" / "secrets-runner-protocol-v1.json")',
+    ),
+    PurePosixPath("naapp/secrets/tests/test_runner_server_protocol.py"): _consumer(
+        "secrets-runner-protocol-v1.json",
+        '(Path(__file__).parents[3] / "docs/vectors/secrets-runner-protocol-v1.json")',
     ),
     PurePosixPath("naapp/secrets/tests/test_vector_identifiers.py"): _consumer(
         "secrets-runner-protocol-v1.json",
