@@ -72,7 +72,8 @@ class BrokerFence:
         derived_max_ttl_s: int,
         internal_destinations: InternalDestinations,
         open_call: BrokerOpen | None = None,
-        backend_version_check: Callable[[SealContext], Awaitable[None]] | None = None,
+        backend_version_check: Callable[[TransactionManager, SealContext], Awaitable[None]]
+        | None = None,
     ) -> None:
         if not callable(clock) or type(derived_max_ttl_s) is not int or derived_max_ttl_s <= 0:
             raise ValueError("broker fence requires a live clock and positive deployment cap")
@@ -280,14 +281,17 @@ class BrokerFence:
         if self._call.stored.record.backend == "onepassword":
             if self.backend_version_check is None:
                 raise AdmissionRefused("custody_unavailable", 503)
-            # M1 compares the live item version with this approved version.
-            # The callback takes no new authority locks. Custody open checks
-            # it again after dispatching commits, before credential release.
+            # The caller observes M1's backend BEFORE this transaction. This
+            # callback compares that immutable, value-free observation with
+            # the current scoped binding/token epoch through this tx only:
+            # no SDK/network I/O and no new authority locks. Custody open
+            # reads/checks again after commit, before credential release.
             version = self._call.secret
             await self.backend_version_check(
+                tx,
                 SealContext(
                     version.installation_id, version.team_id, version.secret_id, version.version
-                )
+                ),
             )
         # This is the final awaited authority read. The following expiry and
         # policy checks take no locks and use a live post-wait clock.
