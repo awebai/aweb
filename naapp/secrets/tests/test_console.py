@@ -19,8 +19,8 @@ from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from fastapi import FastAPI
 
-from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.change_policy import require_four_eyes
+from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from tests.test_change_sets import ALICE, BOB, CAROL, ORIGIN, TEAM, World, enrol_owner
 from tests.test_change_sets import world as _world

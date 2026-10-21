@@ -590,13 +590,19 @@ async def test_first_ingest_commits_before_reshape_checks_history(world: World) 
             task = asyncio.create_task(reshape())
             waiter = await asyncio.wait_for(ready, 5)
             await wait_blocked(world, waiter, holder)
+            assert not await world.db.fetch_value(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = $1"
+                " AND relation = '{{tables.custody_secrets}}'::regclass)",
+                waiter,
+            ), "the parent lock must be acquired before touching custody history"
         with pytest.raises(ChangeRefused) as refused:
             await asyncio.wait_for(task, 5)
         assert refused.value.code == "sealed_secret_fixed"
         assert (await stored_secret(world)).record.kind == "bearer"
     finally:
-        if task is not None and not task.done():
-            task.cancel()
+        if task is not None:
+            if not task.done():
+                task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
 
@@ -636,14 +642,20 @@ async def test_ingest_rechecks_the_record_after_waiting_for_reshape(world: World
             task = asyncio.create_task(ingest())
             waiter = await asyncio.wait_for(ready, 5)
             await wait_blocked(world, waiter, holder)
+            assert not await world.db.fetch_value(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = $1"
+                " AND relation = '{{tables.custody_secrets}}'::regclass)",
+                waiter,
+            ), "the parent lock must be acquired before touching custody history"
         with pytest.raises((ValueInvalid, CustodyUnavailable)):
             await asyncio.wait_for(task, 5)
         assert (
             await world.db.fetch_value("SELECT last_version FROM {{tables.custody_secrets}}") == 0
         )
     finally:
-        if task is not None and not task.done():
-            task.cancel()
+        if task is not None:
+            if not task.done():
+                task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
 
@@ -770,6 +782,7 @@ async def test_initial_ingest_and_creation_serialize_their_shape_binding(
         with pytest.raises((ChangeRefused, CustodyUnavailable)):
             await asyncio.wait_for(task, 5)
     finally:
-        if task is not None and not task.done():
-            task.cancel()
+        if task is not None:
+            if not task.done():
+                task.cancel()
             await asyncio.gather(task, return_exceptions=True)

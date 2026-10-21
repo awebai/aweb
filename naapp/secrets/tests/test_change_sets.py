@@ -236,7 +236,7 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
             change_sets,
             directory,
             custody,
-            await team_owner(registry),
+            await team_owner(registry, team_id=TEAM),
             inbox,
             fence,
             admitted,
