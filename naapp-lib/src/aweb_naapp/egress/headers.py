@@ -14,6 +14,12 @@ the refusals below applies, whatever the destination allows:
 The detector and the injected names belong to the caller's credential
 handling, so :class:`HeaderRules` has no defaults: a caller cannot leave a
 rule out by forgetting it. ``refuse`` can add refusals, never remove one.
+
+The headers that credential handling injects pass :func:`check_injected`
+instead: each must be a declared injected name, at most once, never one the
+guard sets, and well formed. They skip the allowlist and the credential
+detector, since carrying a credential is what they are for. A refusal names
+the header, never its value.
 """
 
 from __future__ import annotations
@@ -44,6 +50,7 @@ ALWAYS_REJECTED = frozenset(
         "X-Api-Key",
         "X-Amz-Security-Token",
         "Host",
+        "Accept-Encoding",
         "Content-Length",
         "Transfer-Encoding",
         "Connection",
@@ -54,6 +61,18 @@ ALWAYS_REJECTED = frozenset(
     )
 )
 ALWAYS_REJECTED_PREFIXES = ("x-forwarded-",)
+# The headers the guard writes itself; neither callers nor injection can set them.
+GUARD_SET = frozenset(
+    name.lower()
+    for name in (
+        "Host",
+        "User-Agent",
+        "Accept-Encoding",
+        "Connection",
+        "Content-Length",
+        "Transfer-Encoding",
+    )
+)
 AMZ_PREFIX = "x-amz-"
 
 _TOKEN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+\Z")
@@ -106,6 +125,22 @@ def check_headers(
         if rules.is_credential(value) or (refuse is not None and refuse(name, value)):
             raise EgressRefused("header_not_allowed", "header", name)
     return list(headers)
+
+
+def check_injected(
+    injected: Sequence[tuple[str, str]], *, rules: HeaderRules
+) -> list[tuple[str, str]]:
+    """Return ``injected`` unchanged, or refuse with ``header_not_allowed``."""
+    declared = {name.lower() for name in rules.injected}
+    seen: set[str] = set()
+    for name, value in injected:
+        if not _well_formed(name, value):
+            raise EgressRefused("header_not_allowed", "header", "malformed injected header")
+        lowered = name.lower()
+        if lowered in GUARD_SET or lowered not in declared or lowered in seen:
+            raise EgressRefused("header_not_allowed", "header", name)
+        seen.add(lowered)
+    return list(injected)
 
 
 def _well_formed(name: str, value: str) -> bool:
