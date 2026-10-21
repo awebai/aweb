@@ -56,7 +56,12 @@ async def migrated_db() -> AsyncIterator[AsyncDatabaseManager]:
 
 
 class _SchemaDatabases:
-    """pgdbm's test database factory, giving every database a schema unless the test names one."""
+    """pgdbm's test database factory, giving every database a schema unless the test names one.
+
+    A copy of aweb_naapp_testing.databases.SchemaDatabases: Library's lock pins
+    aweb-naapp from an external commit and cannot see the tree's testing
+    package until aweb-acgh.5 moves it to in-repo path sources.
+    """
 
     def __init__(self, factory: Any) -> None:
         self._factory = factory
