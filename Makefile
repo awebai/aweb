@@ -531,6 +531,7 @@ test-release-cli-version:
 # Internal steps consumed only by the complete local candidate map.
 _candidate-gate-docker-boundaries:
 	@test -n "$(CANDIDATE_GATE_IMAGE)" || (echo "CANDIDATE_GATE_IMAGE is required"; exit 2)
+	python3 scripts/test_postgres_storage.py
 	python3 scripts/e2e/test_candidate_gate_docker_boundaries.py --image "$(CANDIDATE_GATE_IMAGE)"
 
 _candidate-channel-version:

@@ -150,16 +150,20 @@ cat > "$COMPOSE_FILE" <<EOF
 services:
   postgres-a:
     image: postgres:16-alpine
+    tmpfs: ["/var/lib/postgresql/data:rw,nosuid,nodev,size=1g"]
+    mem_limit: 2g
+    memswap_limit: 2g
     environment: {POSTGRES_USER: aweb, POSTGRES_PASSWORD: disposable, POSTGRES_DB: aweb}
     ports: ["$POSTGRES_A_PORT:5432"]
-    volumes: [postgres-a-data:/var/lib/postgresql/data]
-    healthcheck: {test: ["CMD-SHELL", "pg_isready -U aweb -d aweb"], interval: 2s, timeout: 2s, retries: 45}
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U aweb -d aweb && test \"\$\$(psql -U \"\$\${POSTGRES_USER:-postgres}\" -d \"\$\${POSTGRES_DB:-postgres}\" -Atqc 'show data_directory')\" = /var/lib/postgresql/data && test \"\$\$(readlink -f /var/lib/postgresql/data)\" = /var/lib/postgresql/data && test \"\$\$(stat -f -c %T /var/lib/postgresql/data)\" = tmpfs && test \"\$\$(readlink -f /var/lib/postgresql/data/pg_wal)\" = /var/lib/postgresql/data/pg_wal && test \"\$\$(cat /sys/fs/cgroup/memory.swap.max)\" = 0"], interval: 2s, timeout: 2s, retries: 45}
   postgres-b:
     image: postgres:16-alpine
+    tmpfs: ["/var/lib/postgresql/data:rw,nosuid,nodev,size=1g"]
+    mem_limit: 2g
+    memswap_limit: 2g
     environment: {POSTGRES_USER: aweb, POSTGRES_PASSWORD: disposable, POSTGRES_DB: aweb}
     ports: ["$POSTGRES_B_PORT:5432"]
-    volumes: [postgres-b-data:/var/lib/postgresql/data]
-    healthcheck: {test: ["CMD-SHELL", "pg_isready -U aweb -d aweb"], interval: 2s, timeout: 2s, retries: 45}
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U aweb -d aweb && test \"\$\$(psql -U \"\$\${POSTGRES_USER:-postgres}\" -d \"\$\${POSTGRES_DB:-postgres}\" -Atqc 'show data_directory')\" = /var/lib/postgresql/data && test \"\$\$(readlink -f /var/lib/postgresql/data)\" = /var/lib/postgresql/data && test \"\$\$(stat -f -c %T /var/lib/postgresql/data)\" = tmpfs && test \"\$\$(readlink -f /var/lib/postgresql/data/pg_wal)\" = /var/lib/postgresql/data/pg_wal && test \"\$\$(cat /sys/fs/cgroup/memory.swap.max)\" = 0"], interval: 2s, timeout: 2s, retries: 45}
   redis-a:
     image: redis:7-alpine
     healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 2s, timeout: 2s, retries: 45}
@@ -256,9 +260,6 @@ services:
   aweb-b-2:
     <<: *aweb_b
     ports: ["$AWEB_B2_PORT:8000"]
-volumes:
-  postgres-a-data:
-  postgres-b-data:
 EOF
 
 compose down -v --remove-orphans >/dev/null 2>&1 || true

@@ -5,7 +5,8 @@
 services:
   postgres:
     cpus: "1"
-    mem_limit: "1g"
+    mem_limit: "2g"
+    memswap_limit: "2g"
     pids_limit: 512
     labels:
       aweb.acceptance: grant-app-tools

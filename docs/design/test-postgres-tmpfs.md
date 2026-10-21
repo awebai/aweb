@@ -1,6 +1,6 @@
 # Proposal: memory-backed PostgreSQL for disposable test stacks
 
-Status: proposed for aweb-aciq; acic.4 remains held. Production and development
+Status: implementation authorized by coordinator a0d0120b; acic.4 remains held. Production and development
 storage are outside this change.
 
 ## Evidence and unresolved cause
@@ -33,7 +33,10 @@ ENOSPC or OOM fails the run and retains the diagnostic evidence.
 
 Tmpfs is charged to the container memory limit and can swap. Therefore set
 memory-swap equal to memory (Compose memswap_limit equal to mem_limit), verify
-memory.swap.max is zero, and record mount type plus effective PGDATA. These
+memory.swap.max is zero, and assert mount type plus effective PGDATA and resolved
+WAL path. Missing swap accounting is a hard failure, including CI; there is no
+CI exception. The focused wrapper generates its password, publishes a random
+loopback port and cleans up only its captured container ID. These
 container controls do not prevent macOS from paging the Docker VM itself; the
 host still needs memory headroom. Pytest capture, source builds and artifact
 logs also retain their own disk-latency exposure; moving PostgreSQL alone is not
@@ -46,6 +49,7 @@ Initial budgets, to be validated by peak usage in the covering train:
 | --- | --- | --- |
 | Candidate gate shared PostgreSQL | 4 GiB | 6 GiB / 6 GiB |
 | Isolated test-egress runner PostgreSQL | 4 GiB | 6 GiB / 6 GiB |
+| Each GitHub Actions test service | 1 GiB | 2 GiB / 2 GiB |
 | Standalone CLI AWID fixture | 1 GiB | 2 GiB / 2 GiB |
 | Each federation, pooler or app e2e PostgreSQL | 1 GiB | 2 GiB / 2 GiB |
 | Disposable focused server/naapp PostgreSQL | 2 GiB | 4 GiB / 4 GiB |
@@ -104,7 +108,7 @@ reused up to 2 GiB, fsync after each MiB, removed afterward). Keep the original
 5-second SDK/client deadlines. Capture PG activity at 20 ms in RAM, flushing
 after the run, so logging cannot itself block the observer on the tested disk.
 
-Acceptance: all selected tests pass; zero observed DataFileExtend waits longer
+Configuration acceptance under this bounded load: all selected tests pass; zero observed DataFileExtend waits longer
 than 1 second; observer sampling gaps/errors are reported rather than treated
 as absence; the mount and no-swap controls are verified; no OOM or ENOSPC; and
 retained peak storage/memory fit the proposed budget. A passing bounded probe
@@ -133,7 +137,29 @@ persistent-pg-monitor.jsonl, mount-proof.txt, memory-storage-proof.txt,
 pg-settings.txt, writer.log, PostgreSQL log/inspect and per-run test logs.
 The disk-backed counterpart is tmp/acic4-stack.HJ7OGU/round-3.
 
-No repository runtime or launcher has been changed by this proposal. The
+The implementation changes only disposable test launchers. The
 coordinator's single covering train, after independent review, must exercise
 the actual changed launchers. Passing this bounded proof does not resolve the
 original untraced failure or lift the acic.4 hold.
+
+## Paired control follow-up
+
+The subsequent acic.4 disk-backed control used the same six naapp runs,
+addressless-sender file, container CPU/RAM and bounded 64 MiB/s writer as the
+tmpfs proof. It also reported zero DataFileExtend samples on statements older
+than 1 second (maximum 23.695 ms; 11,001 observations; no observer errors;
+maximum gap 38.8 ms). Thus this writer did not reproduce the live-train stall
+on disk-backed PostgreSQL. The tmpfs run demonstrates a working configuration
+under this load, not a demonstrated causal mitigation in a paired experiment.
+The original disk trace's 224 over-limit observations came from the live train
+window, not this synthetic writer. An attempted main synthetic control passed twelve common-file runs but then
+failed an extra server collection step because the partial archive omitted its
+collection helper; cleanup stopped the writer early. It is excluded as a
+completed paired experiment.
+
+The coordinator requested a new real-train comparison, without a synthetic
+writer: disk-backed acic.4, tmpfs acic.4 and disk-backed main run the same
+byte-identical 49-test envelope file side by side through the train window.
+Main has no acic.4 lifetime test file, so that file is excluded from all three
+sides of this comparison. Source-path receipts bind each import to its expected
+export or worktree. Results are pending; the landing hold remains.

@@ -7,6 +7,12 @@ cleanup() {
   set +e
   filters=("aweb.candidate-gate=$resource_label")
   for item in "${suite_projects[@]}"; do filters+=("com.docker.compose.project=$item"); done
+  # Preserve the run-owned PostgreSQL evidence before its tmpfs disappears.
+  if [[ -n "${pg_id:-}" ]] && docker container inspect "$pg_id" >/dev/null 2>&1; then
+    docker logs "$pg_id" > "$LOG_DIR/postgres.log" 2>&1 || cleanup_status=1
+    docker inspect "$pg_id" > "$LOG_DIR/postgres-inspect.json" || cleanup_status=1
+    docker exec "$pg_id" sh -c 'cat /sys/fs/cgroup/memory.peak; cat /sys/fs/cgroup/memory.events; du -sk /var/lib/postgresql/data' > "$LOG_DIR/postgres-usage.txt" 2>&1 || true
+  fi
   # Stop the runner before removing anything it could recreate.
   if docker container inspect "$runner_name" >/dev/null 2>&1; then
     docker rm -fv "$runner_name" >/dev/null 2>&1 || cleanup_status=1

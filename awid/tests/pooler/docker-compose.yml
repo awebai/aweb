@@ -4,12 +4,15 @@
 services:
   postgres:
     image: postgres:17
+    tmpfs: ["/var/lib/postgresql/data:rw,nosuid,nodev,size=1g"]
+    mem_limit: 2g
+    memswap_limit: 2g
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres && test \"$$(psql -U \"$${POSTGRES_USER:-postgres}\" -d \"$${POSTGRES_DB:-postgres}\" -Atqc 'show data_directory')\" = /var/lib/postgresql/data && test \"$$(readlink -f /var/lib/postgresql/data)\" = /var/lib/postgresql/data && test \"$$(stat -f -c %T /var/lib/postgresql/data)\" = tmpfs && test \"$$(readlink -f /var/lib/postgresql/data/pg_wal)\" = /var/lib/postgresql/data/pg_wal && test \"$$(cat /sys/fs/cgroup/memory.swap.max)\" = 0"]
       interval: 2s
       timeout: 5s
       retries: 30

@@ -37,7 +37,11 @@ def main():
                 ('postgres:17', 5432, ['-e', 'POSTGRES_PASSWORD=postgres']),
                 ('redis:7', 6379, []),
             ]:
-                container = run('docker', 'run', '-d', '--rm', '--cpus', '1', '--memory', '512m',
+                memory = '2g' if port == 5432 else '512m'
+                if port == 5432:
+                    extra += ['--tmpfs', '/var/lib/postgresql/data:rw,nosuid,nodev,size=1g']
+                container = run('docker', 'run', '-d', '--rm', '--cpus', '1',
+                                '--memory', memory, '--memory-swap', memory,
                                 '-p', f'127.0.0.1::{port}', *extra, image)
                 owned.append(container)
                 mapped = run('docker', 'port', container, str(port)).rsplit(':', 1)[1]
@@ -49,6 +53,8 @@ def main():
                 if subprocess.run(['docker', 'exec', owned[0], 'pg_isready', '-U', 'postgres'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
                     break
                 time.sleep(.25)
+            run('docker', 'exec', owned[0], 'sh', '-c',
+                (ROOT / 'scripts/test-postgres-storage.sh').read_text())
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]

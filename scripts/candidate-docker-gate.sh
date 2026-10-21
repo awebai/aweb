@@ -148,6 +148,8 @@ builder_memory_swap="${AWEB_CANDIDATE_BUILDER_MEMORY_SWAP:-$builder_memory}"
 builder_pids="${AWEB_CANDIDATE_BUILDER_PIDS:-2048}"
 service_cpus="${AWEB_CANDIDATE_SERVICE_CPUS:-1}"
 service_memory="${AWEB_CANDIDATE_SERVICE_MEMORY:-1g}"
+postgres_memory="${AWEB_CANDIDATE_POSTGRES_MEMORY:-6g}"
+postgres_tmpfs="${AWEB_CANDIDATE_POSTGRES_TMPFS:-4g}"
 service_pids="${AWEB_CANDIDATE_SERVICE_PIDS:-512}"
 redis_cpus="${AWEB_CANDIDATE_REDIS_CPUS:-0.5}"
 redis_memory="${AWEB_CANDIDATE_REDIS_MEMORY:-256m}"
@@ -237,18 +239,18 @@ printf 'runner\tcpus=%s\tmemory=%s\tpids=%s\nbuilder\tcpus=%s\tmemory=%s\tmemory
   "$service_cpus" "$service_memory" "$service_pids" \
   "$redis_cpus" "$redis_memory" "$redis_pids" \
   "$sibling_cpus" "$sibling_memory" "$sibling_pids" > "$LOG_DIR/resource-limits.tsv"
+printf 'postgres\tmemory=%s\tmemory_swap=%s\ttmpfs=%s\n' "$postgres_memory" "$postgres_memory" "$postgres_tmpfs" >> "$LOG_DIR/resource-limits.tsv"
 owned_network="$gate_run_id-network"
 docker network create --label "aweb.candidate-gate=$resource_label" "$owned_network" >/dev/null
 pg_name="${owned_network}-postgres"
 redis_name="${owned_network}-redis"
-docker volume create --label "aweb.candidate-gate=$resource_label" "$pg_name-data" >/dev/null
 docker volume create --label "aweb.candidate-gate=$resource_label" "$redis_name-data" >/dev/null
 pg_id="$(docker run --detach --network "$owned_network" --name "$pg_name" \
   --label "aweb.candidate-gate=$resource_label" \
-  --cpus "$service_cpus" --memory "$service_memory" --pids-limit "$service_pids" \
-  -v "$pg_name-data:/var/lib/postgresql/data" \
+  --cpus "$service_cpus" --memory "$postgres_memory" --memory-swap "$postgres_memory" --pids-limit "$service_pids" \
+  --tmpfs "/var/lib/postgresql/data:rw,nosuid,nodev,size=$postgres_tmpfs" \
   --env POSTGRES_USER=postgres --env POSTGRES_PASSWORD=postgres --env POSTGRES_DB=postgres \
-  --health-cmd 'pg_isready -U postgres -d postgres' \
+  --health-cmd "$(cat "$ROOT/scripts/test-postgres-storage.sh")" \
   --health-interval 2s --health-timeout 5s --health-retries 45 postgres:17)"
 redis_id="$(docker run --detach --network "$owned_network" --name "$redis_name" \
   --label "aweb.candidate-gate=$resource_label" \

@@ -41,7 +41,9 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d postgres"
+          --tmpfs /var/lib/postgresql/data:rw,nosuid,nodev,size=1g
+          --memory 2g --memory-swap 2g
+          --health-cmd "pg_isready -U postgres -d postgres && test \"$(psql -U \"${POSTGRES_USER:-postgres}\" -d \"${POSTGRES_DB:-postgres}\" -Atqc 'show data_directory')\" = /var/lib/postgresql/data && test \"$(readlink -f /var/lib/postgresql/data)\" = /var/lib/postgresql/data && test \"$(stat -f -c %T /var/lib/postgresql/data)\" = tmpfs && test \"$(readlink -f /var/lib/postgresql/data/pg_wal)\" = /var/lib/postgresql/data/pg_wal && test \"$(cat /sys/fs/cgroup/memory.swap.max)\" = 0"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5

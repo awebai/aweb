@@ -82,8 +82,14 @@ def main():
                         image, 'sleep', 'infinity')
         containers.append(runner)
         for name, command in [('postgres:17', ['-e', 'POSTGRES_PASSWORD=postgres']), ('redis:7', [])]:
+            memory = '6g' if name.startswith('postgres:') else '1g'
+            if name.startswith('postgres:'):
+                command += ['--tmpfs', '/var/lib/postgresql/data:rw,nosuid,nodev,size=4g',
+                            '--health-cmd', (ROOT / 'scripts/test-postgres-storage.sh').read_text(),
+                            '--health-interval', '2s', '--health-timeout', '5s', '--health-retries', '30']
             containers.append(docker('run', '-d', '--network', 'container:' + runner,
-                                     '--cpus', '1', '--memory', '1g', '--pids-limit', '512', *command, name))
+                                     '--cpus', '1', '--memory', memory, '--memory-swap', memory,
+                                     '--pids-limit', '512', *command, name))
         # The entrypoint's temporary initialization server has a socket but no TCP listener.
         for _ in range(60):
             if subprocess.run(['docker', 'exec', containers[-2], 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
@@ -91,6 +97,7 @@ def main():
             time.sleep(.5)
         else:
             raise RuntimeError('Postgres did not become ready')
+        docker('exec', containers[-2], 'sh', '-c', (ROOT / 'scripts/test-postgres-storage.sh').read_text())
         # Preserve the candidate gate's production role-default control.
         docker('exec', containers[-2], 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'postgres',
                '-c', 'ALTER ROLE postgres SET search_path = pg_catalog')
@@ -120,6 +127,15 @@ def main():
             return 1
         return result.returncode
     finally:
+        if len(containers) >= 3:
+            postgres = containers[2]
+            usage = subprocess.run(['docker', 'exec', postgres, 'sh', '-c',
+                                    'cat /sys/fs/cgroup/memory.peak; cat /sys/fs/cgroup/memory.events; du -sk /var/lib/postgresql/data'],
+                                   capture_output=True, text=True)
+            (evidence / 'postgres-usage.txt').write_text(usage.stdout + usage.stderr)
+            for suffix, command in [('log', ['logs', postgres]), ('inspect.json', ['inspect', postgres])]:
+                captured = subprocess.run(['docker', *command], capture_output=True, text=True)
+                (evidence / ('postgres.' + suffix)).write_text(captured.stdout + captured.stderr)
         for container in reversed(containers):
             subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=subprocess.DEVNULL, check=True)
         if network:
