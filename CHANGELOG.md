@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Server: an installed app's hook bindings and their owner activation
+  (`docs/app-registry.md`, "Hook bindings"). Migration 032 adds
+  `app_hook_bindings`. `GET /v1/apps/hook-bindings` lists them, and
+  `POST /v1/apps/hook-bindings/{binding_id}/activate` and `/revoke` take the
+  team owner's `aweb.owner-act/1`, verified against the team's controller key
+  read fresh from AWID. The server now depends on `aweb-naapp[hooks]>=0.1.0`
+  and applies its owner-act nonce migrations at startup; the image copies
+  `naapp-lib/` beside `awid/`. Release order: `awid-service`, then
+  `aweb-naapp`, then the server.
+- AWID SDK: `RegistryClient.get_team_fresh` reads a team without a stale cache
+  result, as `get_namespace_fresh` does.
+
 ## Release preparations
 
 ### Release preparation: aweb-naapp 0.1.0
