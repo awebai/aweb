@@ -13,8 +13,9 @@ import base64
 import json
 
 import pytest
+from aweb_naapp_testing import Member
 
-from tests.runtime.conftest import Member, relying_app
+from tests.runtime.conftest import relying_app
 
 ORIGIN = "https://app.example.com"
 TEAM_ID = "backend:example.com"

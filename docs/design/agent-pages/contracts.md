@@ -122,10 +122,11 @@ different answer bytes under that key conflict. Staged content without a task
 answer is not approved; a task answer without activated app approval is visibly
 pending and cannot dispatch. Rejection needs no external execution authority.
 
-The task remains the answer ledger; app-private answer bytes are a referenced
-artifact verified against its commitment, not another independently editable
-answer state. Comments/mail carry only safe references until Juan's Decision A
-settles team-visible answer content. No guest content is mirrored implicitly.
+The task remains the answer ledger. Its comment carries the answer's full text,
+which the team sees (Juan's ruling of 2026-10-20), and the app keeps its
+structured answer verified against that text's digest, not as another
+independently editable answer state. No other guest content is mirrored
+implicitly.
 The task's typed answer cannot be changed by plain comment/close; reopening
 creates a new question revision, invalidating prior approval before dispatch.
 Current page policy and eligibility as an approving human are checked from
@@ -235,8 +236,8 @@ consumes cannot both succeed. Reads/previews/failed challenges do not consume.
 Matching retries only retrieve the prior result. Store token verifier hashes,
 never raw bearer tokens. Approval-purpose links are issued/delivered outside
 requester authority; agent tool output is `{request_id,delivery_status}` with no
-link/token/capability. Safe task metadata contains opaque approval ref/commitment
-and outcome only. Other delegated read/action capabilities do not become human
+link/token/capability. Task metadata refers to an approval by its opaque reference
+and never carries its link, token or capability. Other delegated read/action capabilities do not become human
 approval capabilities.
 
 For the task adapter, earlier conditional-answer and exact-member-proof rules

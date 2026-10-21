@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, did_key
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 
@@ -29,7 +30,6 @@ from aweb_naapp.hooks.owner_act_nonces import (
 )
 from aweb_naapp.hooks.strictjson import canonical
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
-from tests.runtime.conftest import REGISTRY_URL, SERVICE_TOKEN, did_key
 
 TEAM_ID = "demo:example.com"
 AUDIENCE = "https://aweb.example.com"
@@ -136,6 +136,17 @@ async def test_an_act_takes_effect_once(db, registry, team_key) -> None:
         await apply_effect(db, verify, signing, signature)
     assert refused.value.code == "nonce_reused"
     assert await effects(db) == 1
+
+
+async def test_a_verified_act_names_the_transaction_that_consumed_it(
+    db, registry, team_key
+) -> None:
+    signing, signature = owner_act(team_key, issued=datetime.now(UTC))
+    verify = verifier(registry)
+    prepared = await verify.prepare(signing, signature, team_id=TEAM_ID)
+    async with db.transaction() as tx:
+        act = await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
+        assert act.transaction_id == await tx.fetch_value("SELECT txid_current()")
 
 
 async def test_concurrent_uses_of_one_act_produce_exactly_one_effect(

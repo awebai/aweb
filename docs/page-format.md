@@ -123,7 +123,7 @@ A page is an object with exactly these fields:
 | --- | --- |
 | `page_format` | `"aweb.page/1"`. Any other value is refused; a renderer shows a safe whole-page fallback. |
 | `page_id`, `owner`, `policy_ref` | Opaque identifiers (`[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`), never names or capabilities. |
-| `locale` | The page's content locale, a language tag of at most 64 characters. In-page chrome uses the member's locale setting, else this, else English. The passkey hand-off never uses it (design §7). |
+| `locale` | The language tag of the agent-written content, at most 64 characters. The renderer sets it as the page container's `lang` attribute, so assistive technology pronounces the content correctly, and never selects chrome by it: chrome is English (design §7). |
 | `title` | Plain text. |
 | `rev` | Monotonic page revision: every committed transaction increments it, including state, ACL, action progress and deletion. |
 | `layout_version` | The immutable layout version this snapshot renders. |
@@ -147,8 +147,8 @@ Bound widgets also have `bind`; containers also have `children`.
 | Widget | Props (required in bold) |
 | --- | --- |
 | `text` | **`markdown`**: Markdown with raw HTML disabled. Raw HTML renders as escaped text. |
-| `heading` | **`text`**, **`level`** 1–6. |
-| `stat` | **`label`**, `field` or `value`, `unit`. |
+| `heading` | **`text`**, **`level`** 1–6: the heading's rank under the page title, which is the page's only top-level heading. The renderer renders it one level down, so `level` 1 is an `h2`; `level` 6 renders as `role="heading"` with `aria-level="7"`. |
+| `stat` | **`label`**, `field` or `value`, `unit`. A string `value` is display text, rendered exactly as written: the agent formats it. An integer `value` is formatted by the renderer, in English. |
 | `status_badge` | **`label`**, **`tone`** (`neutral`, `info`, `success`, `warning`, `danger`), `field`. |
 | `table` | **`columns`** (`field`, `label`, `format`: `text`, `date`, `number`, `money_minor`, `status`), `row_actions`. Requires `bind`. |
 | `cards`, `list` | **`fields`** (display slot to field), `actions`. Requires `bind`. |
@@ -169,6 +169,13 @@ ordered `sort` of at most 8 `{field, direction}`, a `limit` of 1–200 and an
 opaque `cursor`. Fields are literal property names; there are no expressions,
 paths or queries. The naapp applies row and field ACLs before filtering,
 sorting or counting, and returns only authorized rows.
+
+**Money.** A `money_minor` column holds an integer amount in minor units. It
+renders with the currency of the same record's `currency` property, an ISO 4217
+code, and the minor-unit scale follows that currency (two decimals for EUR,
+none for JPY). A record with no `currency` property, or one that is not an ISO
+4217 code, shows the amount without a symbol at two decimals. Agents always
+include `currency` (the agent skill, N6, teaches it).
 
 **Unknown widgets.** A widget whose `type` this version does not define needs a
 `fallback`. It may carry `props` of at most 32 properties, which the renderer
@@ -204,9 +211,24 @@ record in `collection` whose value is exactly:
 ```
 
 - The card's `proposal_sha256` is `"sha256:" + hex(SHA-256(b"aweb.page-bundle/1\n" + C(items)))`,
-  where `\n` is a literal newline and `C` is canonical JSON: sorted keys, no
-  insignificant whitespace, UTF-8 without escaping non-ASCII, safe integers
-  and no floats. `bundle_hash` vectors pin it.
+  where `\n` is a literal newline and `C` is canonical JSON: keys sorted by
+  code point, no insignificant whitespace, UTF-8 with only the quotation
+  mark, reverse solidus and C0 control characters escaped (U+2028 and U+2029
+  stay raw), safe integers and no floats. `bundle_hash` vectors pin it.
+- A proposal's own digest, a single card's `proposal_sha256` and each bundle
+  item's, binds the record's identity and exact value:
+  `"sha256:" + hex(SHA-256(b"aweb.page-proposal/1\n" + C({"collection": <collection id>, "record_id": <record id>, "value": <record value>})))`,
+  with the same `C`. The record's `rev` is not hashed; it is bound next to the
+  digest as `record_rev`. The host computes the digest from the member-signed
+  read and refuses the card when it differs. `page-proposal-v1.json` vectors
+  pin it.
+- An approval binds `record_rev` together with `proposal_sha256`: the
+  approver's signed answer and the approval request both carry the pair. The
+  host that applies the approved operation re-reads the record at apply time,
+  not only when it shows the card, and requires its current `rev` and
+  recomputed digest to equal the approved pair. So an edit that returns a
+  record to an earlier value (A, then B, then A again) cannot reuse an
+  approval given at another revision.
 - Each item's `record_id` is an identifier, its `record_rev` a safe
   non-negative integer and its `proposal_sha256` `sha256:` plus 64 lowercase
   hex digits. A record appears at most once.
@@ -240,8 +262,8 @@ of segments of `[A-Za-z0-9._~-]`. It has no scheme, host, userinfo, query,
 fragment, percent-encoding, backslash or `.`/`..` segment, so no page can carry
 a token, capability or other destination in it. The host resolves the path
 against the installation's pinned origin, which comes from the installation
-and never from page data. It shows the normalized domain and opens a new
-top-level context with no opener and no referrer.
+and never from page data. Activating it opens the outbound confirmation of §7,
+then a new top-level context with no opener and no referrer.
 
 ## 7. Renderer obligations
 
@@ -256,6 +278,12 @@ meet every `render` expectation in the vectors:
 | `bidi_isolated` | Bound record values are isolated, so bidi controls cannot reorder surrounding text. |
 | `asset_origin_only` | Assets load only from the app's asset origin. |
 | `text_escaped` | Plain text renders verbatim as text. |
+
+Activating any outbound link, whether a `link_out` or a Markdown link with an
+active destination, first opens a host-owned confirmation outside the page
+container. It names the normalized destination domain, and the host navigates
+only after the person confirms it. Nothing in the page can submit or navigate
+without that step.
 
 Rendering also follows the design's origin rules: a Trusted Types policy owned
 by the shared sanitizer, a host CSRF token on every state change, and host

@@ -15,11 +15,12 @@ from pathlib import Path
 
 SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
 TAG_PATTERN = re.compile(
-    rf"^(server-v|awid-service-v|awid-v|aw-v|channel-v|pi-v|skills-v|a2a-gw-v)({SEMVER})$"
+    rf"^(server-v|awid-service-v|aweb-naapp-v|awid-v|aw-v|channel-v|pi-v|skills-v|a2a-gw-v)({SEMVER})$"
 )
 MANIFESTS = {
     "server-v": "server/pyproject.toml",
     "awid-service-v": "awid/pyproject.toml",
+    "aweb-naapp-v": "naapp-lib/pyproject.toml",
     "awid-v": "awid/pyproject.toml",
     "channel-v": "channel/package.json",
     "pi-v": "pi-extension/package.json",

@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from awid.atomic_claim import canonical_registry_origin, normalize_claim_custody
 from awid.did import validate_stable_id
 from awid.signing import canonical_json_bytes
+from awid.utc_timestamps import parse_utc_seconds
 
 A2A_PUBLICATION_OPERATION = "publish_a2a_route"
 A2A_DELEGATION_OPERATION = "delegate_a2a_bridge"
@@ -55,7 +56,6 @@ _ROUTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _ASSERTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _DIGEST_HEX_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _DIGEST_B64_RE = re.compile(r"^sha256:[A-Za-z0-9+/]+$")
-_RFC3339_Z_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 @dataclass(frozen=True)
@@ -134,10 +134,10 @@ def signed_assertion_digest(canonical: bytes, signature: str) -> str:
 
 
 def parse_contract_time(value: str, *, field_name: str) -> datetime:
-    value = (value or "").strip()
-    if not _RFC3339_Z_RE.match(value):
-        raise ValueError(f"{field_name} must be RFC3339 UTC seconds with Z")
-    return datetime.fromisoformat(value[:-1] + "+00:00").astimezone(timezone.utc)
+    try:
+        return parse_utc_seconds((value or "").strip())
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be RFC3339 UTC seconds with Z") from exc
 
 
 def canonical_address(address: str) -> tuple[str, str, str]:
