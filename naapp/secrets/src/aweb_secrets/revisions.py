@@ -65,7 +65,11 @@ async def claim_config_revision(tx: TransactionManager, installation_id: str, ba
     revision 0, its insert conflict), so the check against ``base`` cannot
     race another confirmation: of two change sets drafted at the same
     revision, exactly one is confirmed. Raises ``base_revision_stale``
-    otherwise; the caller's rollback then undoes the bump."""
+    otherwise; the caller's rollback then undoes the bump.
+
+    Call it at the start of the confirming transaction's write phase, after
+    the installation fence, the role hold and the approval admit, so the
+    revision row is the last lock the transaction takes."""
     revision = await bump_config_revision(tx, installation_id)
     if revision != base + 1:
         raise ChangeRefused(

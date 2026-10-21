@@ -176,6 +176,22 @@ class OwnerDirectory:
             owners.append(principal)
         return owners
 
+    async def owner_of(
+        self, db: AsyncDatabaseManager | TransactionManager, scope: str
+    ) -> PrincipalKey | None:
+        """The owner an owner scope stands for, while it holds secrets.owner,
+        read through ``db``; None for any other scope."""
+        if not is_owner_scope(scope):
+            return None
+        row = await db.fetch_one(
+            "SELECT team_id, principal_did FROM {{tables.owner_principals}} WHERE scope = $1",
+            scope,
+        )
+        if row is None:
+            return None
+        principal = PrincipalKey(team_id=row["team_id"], principal_did=row["principal_did"])
+        return principal if await has_role(db, principal, OWNER_ROLE) else None
+
     async def _owner(self, scope: str) -> PrincipalKey | None:
         """The owner a scope stands for, while it holds secrets.owner; None
         for a scope that is not an owner scope or whose owner lost the role."""
