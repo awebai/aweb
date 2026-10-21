@@ -17,7 +17,10 @@ from aweb_secrets.custody import encode_value
 from aweb_secrets.responses import resolve_pointer
 
 DEFAULT_MAX_TTL_S = 3600
-_ABSOLUTE = re.compile(r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})")
+_ABSOLUTE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?"
+    r"(?:[Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])"
+)
 
 
 class CaptureInvalid(ValueError):
