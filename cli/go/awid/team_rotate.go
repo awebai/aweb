@@ -27,10 +27,11 @@ type SignedAttestationRecord struct {
 
 // ResignedRecords is the rotate request's resigned_records object.
 type ResignedRecords struct {
-	TeamServer     *SignedAttestationRecord
-	TeamCustodians []SignedAttestationRecord
-	MemberCustody  []SignedAttestationRecord
-	MemberPerson   []SignedAttestationRecord
+	TeamServer           *SignedAttestationRecord
+	TeamCredentialPolicy *SignedAttestationRecord
+	TeamCustodians       []SignedAttestationRecord
+	MemberCustody        []SignedAttestationRecord
+	MemberPerson         []SignedAttestationRecord
 }
 
 func (r *ResignedRecords) wire() map[string]any {
@@ -48,20 +49,24 @@ func (r *ResignedRecords) wire() map[string]any {
 	if r.TeamServer != nil {
 		out["team_server"] = r.TeamServer
 	}
+	if r.TeamCredentialPolicy != nil {
+		out["team_credential_policy"] = r.TeamCredentialPolicy
+	}
 	return out
 }
 
 // ResignedRecordKeys names records per kind, as AWID's 409 does.
 type ResignedRecordKeys struct {
-	TeamServer     bool     `json:"team_server"`
-	TeamCustodians []string `json:"team_custodians"`
-	MemberCustody  []string `json:"member_custody"`
-	MemberPerson   []string `json:"member_person"`
+	TeamServer           bool     `json:"team_server"`
+	TeamCredentialPolicy bool     `json:"team_credential_policy"`
+	TeamCustodians       []string `json:"team_custodians"`
+	MemberCustody        []string `json:"member_custody"`
+	MemberPerson         []string `json:"member_person"`
 }
 
 // IsEmpty reports whether no record is named.
 func (k ResignedRecordKeys) IsEmpty() bool {
-	return !k.TeamServer && len(k.TeamCustodians) == 0 && len(k.MemberCustody) == 0 && len(k.MemberPerson) == 0
+	return !k.TeamServer && !k.TeamCredentialPolicy && len(k.TeamCustodians) == 0 && len(k.MemberCustody) == 0 && len(k.MemberPerson) == 0
 }
 
 // ResignedRecordsIncomplete is AWID's 409 resigned_records_incomplete detail.
@@ -111,12 +116,12 @@ func (c *RegistryClient) RotateTeamKey(
 		body["resigned_records"] = resigned.wire()
 	}
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/rotate"
-	headers := signedNamespaceHeaders(domain, "rotate_team_key", controllerKey, map[string]string{
+	claims := map[string]string{"operation": "rotate_team_key", "domain": domain,
 		"name":             name,
 		"new_team_did_key": newTeamDIDKey,
-	})
+	}
 	var out TeamRotateResponse
-	if err := c.requestJSON(ctx, http.MethodPost, registryURL, path, headers, body, &out); err != nil {
+	if err := c.ControllerRequest(ctx, http.MethodPost, registryURL, path, claims, controllerKey, body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -216,7 +221,7 @@ func ResignTeamServerRecord(newTeamKey ed25519.PrivateKey, record map[string]any
 const signedRecordsPageCap = 500
 
 // SignedRecordItem is one record of a team's paginated signed-records read.
-// Key is nil for the team-server record.
+// Key is nil for team-server and credential-policy records.
 type SignedRecordItem struct {
 	Kind string
 	Key  *string

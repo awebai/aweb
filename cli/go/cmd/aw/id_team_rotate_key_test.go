@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"strings"
@@ -122,6 +123,12 @@ func (f rotateKeyFixture) custodian(t *testing.T, custodianID string, at time.Ti
 	}, at), f.teamKey)
 }
 
+func (f rotateKeyFixture) credentialPolicy(at time.Time) map[string]any {
+	return map[string]any{"v": float64(1), "type": "aweb.team-credential-policy", "team_id": f.teamID, "team_did_key": f.teamDID,
+		"revision": float64(1), "issued_at": at.UTC().Format("2006-01-02T15:04:05Z"),
+		"member_certificate": nil, "ephemeral_certificate": nil, "identity_grant": float64(3600), "hosted_mcp_grant": nil}
+}
+
 // seedEveryKind stores one record of each kind plus a custodian with no
 // custody record.
 func (f rotateKeyFixture) seedEveryKind(t *testing.T, at time.Time) {
@@ -134,6 +141,10 @@ func (f rotateKeyFixture) seedEveryKind(t *testing.T, at time.Time) {
 	}
 	if _, err := f.registry.PublishTeamServerRecord(ctx, f.registryURL, f.domain, f.team, serverRecord, serverSignature); err != nil {
 		t.Fatalf("publish team server: %v", err)
+	}
+	policy := f.credentialPolicy(at)
+	if err := f.registry.SetTeamCredentialPolicy(ctx, f.registryURL, f.domain, f.team, policy, f.teamKey); err != nil {
+		t.Fatal(err)
 	}
 	f.custodian(t, "custodian.example", at)
 	f.custodian(t, "standby.example", at)
@@ -196,7 +207,7 @@ func TestRotateKeyReSignsEveryRecord(t *testing.T) {
 	if len(out.LearnedCustodians) != 0 {
 		t.Fatalf("learned custodians = %v, want none: the paginated read finds them all", out.LearnedCustodians)
 	}
-	if !out.ResignedTeamServer || out.ResignedCustodians != 2 || out.ResignedCustody != 1 || out.ResignedPerson != 1 {
+	if !out.ResignedTeamServer || !out.ResignedCredentialPolicy || out.ResignedCustodians != 2 || out.ResignedCustody != 1 || out.ResignedPerson != 1 {
 		t.Fatalf("re-signed counts = %+v", out)
 	}
 	local, err := awconfig.LoadTeamKey(f.domain, f.team)
@@ -219,6 +230,13 @@ func TestRotateKeyReSignsEveryRecord(t *testing.T) {
 	}
 	if _, err := awid.VerifyTeamServerRecord(server.Record, server.Signature, f.teamID, newDID, time.Now()); err != nil {
 		t.Fatalf("team server record does not verify under the new key: %v", err)
+	}
+	policy, err := f.registry.GetTeamCredentialPolicy(ctx, f.registryURL, f.domain, f.team, newDID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy["revision"] != float64(1) || policy["identity_grant"] != float64(3600) || policy["member_certificate"] != nil || policy["ephemeral_certificate"] != nil || policy["hosted_mcp_grant"] != nil {
+		t.Fatalf("rotation changed policy values: %v", policy)
 	}
 	for _, custodianID := range []string{"custodian.example", "standby.example"} {
 		record, err := f.registry.GetTeamCustodianRecord(ctx, f.registryURL, f.domain, f.team, custodianID)
@@ -508,5 +526,48 @@ func TestRateLimitedFixturesCountIndependently(t *testing.T) {
 	}
 	if code := read(second); code == http.StatusTooManyRequests {
 		t.Fatal("the second fixture is limited by the first one's reads: the fixtures share a limiter")
+	}
+}
+
+func TestRotateKeyRefusesForeignSignedCredentialPolicy(t *testing.T) {
+	f := newRotateKeyFixture(t, "rotate-policy-foreign.example")
+	record := f.credentialPolicy(time.Now().UTC().Add(-time.Minute))
+	_, foreign, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := awid.CanonicalJSONValue(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(foreign, []byte("aweb.team-credential-policy/1\n"+canonical)))
+	seedAWIDAttestationRecords(t, f.storage, f.domain, f.team, nil, []map[string]any{{"kind": "team_credential_policy", "record": record, "signature": signature}})
+	_, err = executeTeamRotateKey(context.Background(), f.options())
+	if err == nil || !strings.Contains(err.Error(), "credential policy does not verify") {
+		t.Fatalf("wanted policy signature refusal, got %v", err)
+	}
+	if f.currentTeamDID(t) != f.teamDID {
+		t.Fatal("a refused policy changed the team key")
+	}
+}
+
+func TestRotateKeyDoesNotRetryWhenCredentialPolicyIsMissing(t *testing.T) {
+	f := newRotateKeyFixture(t, "rotate-policy-midrun.example")
+	opts := f.options()
+	opts.AfterRead = func() {
+		record := f.credentialPolicy(time.Now().UTC().Add(-time.Minute))
+		if err := f.registry.SetTeamCredentialPolicy(context.Background(), f.registryURL, f.domain, f.team, record, f.teamKey); err != nil {
+			t.Fatal(err)
+		}
+	}
+	retried := false
+	opts.BeforeRetry = func() { retried = true }
+	_, err := executeTeamRotateKey(context.Background(), opts)
+	detail, ok := awid.ResignedRecordsIncompleteDetail(err)
+	if !ok || !detail.Missing.TeamCredentialPolicy || retried {
+		t.Fatalf("wanted missing-policy refusal without a custodian retry, got %v, retry %t", err, retried)
+	}
+	if f.currentTeamDID(t) != f.teamDID {
+		t.Fatal("incomplete policy rotation changed the team key")
 	}
 }

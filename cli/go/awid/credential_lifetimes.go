@@ -127,6 +127,23 @@ func (c *RegistryClient) GetTeamCredentialPolicy(ctx context.Context, registryUR
 	return record, nil
 }
 
+// policyInteger accepts the two representations used by the public JSON
+// readers, preserving the lossless numbers from the rotation collector.
+func policyInteger(value any) (int64, bool) {
+	switch value := value.(type) {
+	case json.Number:
+		n, err := value.Int64()
+		return n, err == nil
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 9007199254740991 || math.Trunc(value) != value {
+			return 0, false
+		}
+		return int64(value), true
+	default:
+		return 0, false
+	}
+}
+
 // VerifyTeamCredentialPolicy requires the current key obtained from the trusted
 // registry; the signed record cannot establish that key on its own.
 func VerifyTeamCredentialPolicy(record map[string]any, signature, teamID, teamKey string) error {
@@ -137,7 +154,8 @@ func VerifyTeamCredentialPolicy(record map[string]any, signature, teamID, teamKe
 	if len(record) != 10 {
 		return fmt.Errorf("invalid credential policy fields")
 	}
-	if record["v"] != float64(1) || record["type"] != "aweb.team-credential-policy" || record["team_id"] != teamID || record["team_did_key"] != teamKey {
+	version, versionOK := policyInteger(record["v"])
+	if !versionOK || version != 1 || record["type"] != "aweb.team-credential-policy" || record["team_id"] != teamID || record["team_did_key"] != teamKey {
 		return fmt.Errorf("credential policy binding mismatch")
 	}
 	for _, field := range []string{"member_certificate", "ephemeral_certificate", "identity_grant", "hosted_mcp_grant"} {
@@ -146,14 +164,14 @@ func VerifyTeamCredentialPolicy(record map[string]any, signature, teamID, teamKe
 			return fmt.Errorf("missing credential policy maximum")
 		}
 		if value != nil {
-			n, ok := value.(float64)
-			if !ok || n < 1 || n > math.MaxInt32 || math.Trunc(n) != n {
+			n, ok := policyInteger(value)
+			if !ok || n < 1 || n > math.MaxInt32 {
 				return fmt.Errorf("invalid credential policy maximum")
 			}
 		}
 	}
-	revision, ok := record["revision"].(float64)
-	if !ok || revision < 1 || revision > 9007199254740991 || math.Trunc(revision) != revision {
+	revision, ok := policyInteger(record["revision"])
+	if !ok || revision < 1 || revision > 9007199254740991 {
 		return fmt.Errorf("invalid credential policy revision")
 	}
 	issued, ok := record["issued_at"].(string)

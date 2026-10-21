@@ -1164,3 +1164,6 @@ audited; no values from the unverified old policy are copied.
 
 See [the full policy, renewal, SDK and hosted integration contract](design/team-credential-lifetimes.md)
 and [the additive cross-language vectors](vectors/certificate-lifetimes-v2.json).
+
+An unknown-team lookup is cached for at most 60 seconds; a team created during
+that interval can remain refused until the prior negative entry expires.

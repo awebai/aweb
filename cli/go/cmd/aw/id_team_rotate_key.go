@@ -46,17 +46,18 @@ type teamRotateKeyOptions struct {
 }
 
 type teamRotateKeyOutput struct {
-	Status             string   `json:"status"`
-	TeamID             string   `json:"team_id"`
-	OldTeamDIDKey      string   `json:"old_team_did_key"`
-	NewTeamDIDKey      string   `json:"new_team_did_key"`
-	RegistryURL        string   `json:"registry_url"`
-	ResignedTeamServer bool     `json:"resigned_team_server"`
-	ResignedCustodians int      `json:"resigned_custodians"`
-	ResignedCustody    int      `json:"resigned_member_custody"`
-	ResignedPerson     int      `json:"resigned_member_person"`
-	LearnedCustodians  []string `json:"learned_custodians,omitempty"`
-	Notice             string   `json:"notice"`
+	Status                   string   `json:"status"`
+	TeamID                   string   `json:"team_id"`
+	OldTeamDIDKey            string   `json:"old_team_did_key"`
+	NewTeamDIDKey            string   `json:"new_team_did_key"`
+	RegistryURL              string   `json:"registry_url"`
+	ResignedTeamServer       bool     `json:"resigned_team_server"`
+	ResignedCredentialPolicy bool     `json:"resigned_credential_policy"`
+	ResignedCustodians       int      `json:"resigned_custodians"`
+	ResignedCustody          int      `json:"resigned_member_custody"`
+	ResignedPerson           int      `json:"resigned_member_person"`
+	LearnedCustodians        []string `json:"learned_custodians,omitempty"`
+	Notice                   string   `json:"notice"`
 }
 
 var (
@@ -107,8 +108,8 @@ func formatTeamRotateKey(v any) string {
 		fmt.Fprintf(&b, "AWID already held the new team key for %s; it is now the local team key.\n", out.TeamID)
 	} else {
 		fmt.Fprintf(&b, "Rotated the team key of %s.\n", out.TeamID)
-		fmt.Fprintf(&b, "Re-signed: team server record %t, %d custodian, %d member-custody, %d member-person record(s).\n",
-			out.ResignedTeamServer, out.ResignedCustodians, out.ResignedCustody, out.ResignedPerson)
+		fmt.Fprintf(&b, "Re-signed: team server record %t, credential lifetime policy %t, %d custodian, %d member-custody, %d member-person record(s).\n",
+			out.ResignedTeamServer, out.ResignedCredentialPolicy, out.ResignedCustodians, out.ResignedCustody, out.ResignedPerson)
 	}
 	if len(out.LearnedCustodians) > 0 {
 		fmt.Fprintf(&b, "AWID named custodian records aw could not discover itself: %s.\n", strings.Join(out.LearnedCustodians, ", "))
@@ -168,6 +169,23 @@ func (r *teamRotation) addCustodian(ctx context.Context, custodianID string) err
 	return nil
 }
 
+// A re-sign must be newer even when two operations share a clock tick.
+func resignedIssuedAtForPolicy(record map[string]any, now time.Time) (time.Time, error) {
+	text, ok := record["issued_at"].(string)
+	if !ok {
+		return time.Time{}, fmt.Errorf("invalid credential policy issued_at")
+	}
+	old, err := time.Parse("2006-01-02T15:04:05Z", text)
+	if err != nil {
+		return time.Time{}, err
+	}
+	now = now.UTC().Truncate(time.Second)
+	if !now.After(old) {
+		return old.Add(time.Second), nil
+	}
+	return now, nil
+}
+
 // collect reads every record the team has stored at AWID, in pages, verifies
 // each against the current key and re-signs it with the new key.
 func (r *teamRotation) collect(ctx context.Context, currentKey ed25519.PrivateKey) error {
@@ -185,6 +203,21 @@ func (r *teamRotation) collect(ctx context.Context, currentKey ed25519.PrivateKe
 		"member_person":   {awid.MemberPersonRecordType, "certificate_id", &r.resigned.MemberPerson},
 	}
 	for _, item := range items {
+		if item.Kind == "team_credential_policy" {
+			if r.resigned.TeamCredentialPolicy != nil || item.Key != nil {
+				return fmt.Errorf("AWID returned an invalid or duplicate credential policy for %s", r.teamID)
+			}
+			at, err := resignedIssuedAtForPolicy(item.Record, r.now)
+			if err != nil {
+				return err
+			}
+			record, signature, err := awid.ResignTeamCredentialPolicy(item.Record, item.Signature, r.teamID, r.currentDID, r.newKey, at)
+			if err != nil {
+				return fmt.Errorf("the stored credential policy does not verify against the team's current key, so aw will not re-sign it: %w", err)
+			}
+			r.resigned.TeamCredentialPolicy = &awid.SignedAttestationRecord{Record: record, Signature: signature}
+			continue
+		}
 		if item.Kind == "team_server" {
 			if r.resigned.TeamServer != nil {
 				return fmt.Errorf("AWID returned more than one team server record for %s", r.teamID)
@@ -220,7 +253,7 @@ func (r *teamRotation) collect(ctx context.Context, currentKey ed25519.PrivateKe
 // records aw could not discover, and nothing else is wrong.
 func onlyMissingCustodians(detail *awid.ResignedRecordsIncomplete) bool {
 	missing := detail.Missing
-	return len(missing.TeamCustodians) > 0 && !missing.TeamServer && len(missing.MemberCustody) == 0 &&
+	return len(missing.TeamCustodians) > 0 && !missing.TeamServer && !missing.TeamCredentialPolicy && len(missing.MemberCustody) == 0 &&
 		len(missing.MemberPerson) == 0 && detail.Extra.IsEmpty() && detail.Changed.IsEmpty()
 }
 
@@ -336,6 +369,7 @@ func executeTeamRotateKey(ctx context.Context, opts teamRotateKeyOptions) (teamR
 	}
 	out.Status, out.NewTeamDIDKey = "rotated", newDID
 	out.ResignedTeamServer = rotation.resigned.TeamServer != nil
+	out.ResignedCredentialPolicy = rotation.resigned.TeamCredentialPolicy != nil
 	out.ResignedCustodians = len(rotation.resigned.TeamCustodians)
 	out.ResignedCustody = len(rotation.resigned.MemberCustody)
 	out.ResignedPerson = len(rotation.resigned.MemberPerson)

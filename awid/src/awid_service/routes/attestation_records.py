@@ -358,6 +358,7 @@ _SIGNED_RECORD_KINDS = (
     (1, "team_custodians", "team_custodians", "custodian_id"),
     (2, "member_custody", "member_custody", "certificate_id"),
     (3, "member_person", "member_person", "certificate_id"),
+    (4, "team_credential_policy", "team_credential_policies", None),
 )
 _TEAM_NOT_FOUND = "Team not found"
 
@@ -428,8 +429,9 @@ async def list_signed_records(
     )
     has_more = len(rows) > page_size
     rows = rows[:page_size]
+    key_columns = {kind: key_column for _, kind, _, key_column in _SIGNED_RECORD_KINDS}
     items = [
-        {"kind": row["kind"], "key": row["key"] if row["rank"] else None, **_stored(row)}
+        {"kind": row["kind"], "key": row["key"] if key_columns[row["kind"]] is not None else None, **_stored(row)}
         for row in rows
     ]
     next_cursor = encode_cursor({"rank": rows[-1]["rank"], "key": rows[-1]["key"]}) if has_more else None

@@ -15,6 +15,8 @@ from awid.attestation_records import sign_record
 from awid.pagination import MAX_LIMIT
 from awid.signing import canonical_json_bytes, sign_message
 from awid.team_server_record import record_signing_bytes
+from awid.credential_policy import policy_signing_bytes
+from test_credential_lifetimes_http import policy_body, set_policy
 from test_attestation_record_routes import (
     BASE,
     TEAM_ID,
@@ -78,6 +80,8 @@ async def _revoke(env, certificate_id: str) -> None:
 
 async def _every_kind(env):
     server = await _publish_server(env)
+    policy = policy_body(env, identity_grant=3600)
+    assert (await set_policy(env, policy)).status_code == 200
     custodian = _custodian(env)
     assert (await publish_custodian(env, custodian)).status_code == 200
     standby = _custodian(env, custodian_id="standby.example")
@@ -88,13 +92,13 @@ async def _every_kind(env):
     person = _person(env, bob)
     assert (await publish_person(env, person)).status_code == 200
     await _revoke(env, alice["certificate_id"])
-    return server, [custodian, standby], custody, person
+    return server, [custodian, standby], custody, person, policy
 
 
 @pytest.mark.asyncio
 async def test_the_controller_reads_every_kind_across_pages_including_revoked_certificates(controller_app):
     env = controller_app
-    server, custodians, custody, person = await _every_kind(env)
+    server, custodians, custody, person, policy = await _every_kind(env)
 
     items, pages = await _read_all(env, limit=2)
 
@@ -107,8 +111,11 @@ async def test_the_controller_reads_every_kind_across_pages_including_revoked_ce
     assert [i["record"] for i in by_kind["team_custodians"]] == custodians
     assert [(i["key"], i["record"]) for i in by_kind["member_custody"]] == [(custody["certificate_id"], custody)]
     assert [(i["key"], i["record"]) for i in by_kind["member_person"]] == [(person["certificate_id"], person)]
+    assert by_kind["team_credential_policy"] == [{"kind": "team_credential_policy", "key": None, **policy}]
     for item in items:
-        if item["kind"] != "team_server":
+        if item["kind"] == "team_credential_policy":
+            assert item["signature"] == sign_message(env.team[0], policy_signing_bytes(item["record"]))
+        elif item["kind"] != "team_server":
             assert item["signature"] == sign_record(env.team[0], item["record"])
 
 
@@ -190,6 +197,8 @@ async def test_five_hundred_records_page_at_the_production_limit(controller_app)
     team_uuid = await env.db.fetch_value(
         "SELECT team_uuid FROM {{tables.teams}} WHERE domain = 'local' AND name = 'base'"
     )
+    policy = policy_body(env, identity_grant=3600)
+    assert (await set_policy(env, policy)).status_code == 200
     expected = []
     for index in range(500):
         record = _custodian(env, custodian_id=f"c{index:03d}.example", issued_at=_now(-60))
@@ -204,5 +213,6 @@ async def test_five_hundred_records_page_at_the_production_limit(controller_app)
     items, pages = await _read_all(env, limit=MAX_LIMIT)
 
     assert pages == 3
-    assert [item["key"] for item in items] == expected
-    assert len({json.dumps(item, sort_keys=True) for item in items}) == 500
+    assert [item["key"] for item in items[:-1]] == expected
+    assert items[-1] == {"kind": "team_credential_policy", "key": None, **policy}
+    assert len({json.dumps(item, sort_keys=True) for item in items}) == 501

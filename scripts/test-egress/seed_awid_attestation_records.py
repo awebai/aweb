@@ -29,6 +29,7 @@ KEY_COLUMNS = {
     "team_custodians": ("custodian_id",),
     "member_custody": ("certificate_id", "custodian_id"),
     "member_person": ("certificate_id", "single_person"),
+    "team_credential_policy": ("revision",),
 }
 
 
@@ -57,10 +58,11 @@ async def seed(payload: dict) -> None:
         for entry in payload.get("records") or []:
             kind, record = entry["kind"], entry["record"]
             columns = KEY_COLUMNS[kind]
+            table = "team_credential_policies" if kind == "team_credential_policy" else kind
             names = ", ".join(("team_uuid", *columns, "record_json", "signature", "team_did_key", "issued_at"))
             values = ", ".join(f"${index}" for index in range(1, len(columns) + 6))
             await conn.execute(
-                f"INSERT INTO {schema}.{kind} ({names}) VALUES ({values})",
+                f"INSERT INTO {schema}.{table} ({names}) VALUES ({values})",
                 team_uuid, *(record[column] for column in columns),
                 canonical_json_bytes(record).decode("utf-8"), entry["signature"],
                 record["team_did_key"], issued_at(record["issued_at"]),
