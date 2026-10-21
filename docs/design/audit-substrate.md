@@ -253,7 +253,13 @@ expectations change together; there is no parallel version. S13 builds on this
 shape after kit/ingest/resolution support and owner activation. B2's frozen
 approval bytes remain unchanged.
 
-**Passkey evidence and console actors (aweb-acgh.39).** Both hooks' historical
+**Proposed passkey evidence and console actors (aweb-acgh.39).** Pending
+Juan's ruling and R+A; no producer activation or supersession of the secrets
+design §10.4 later-verification promise is authorized. The current B3 summary
+cannot fulfill that promise. Retaining the verified assertion, frozen
+verification context and credential public key in restricted storage is the
+secrets-design recommendation; its impact on this commitment must be settled
+before freezing the projection below. Both hooks' historical
 `approval_evidence_sha256` means the independent-key HMAC-SHA-256 commitment
 specified in [the public hook contract](../hook-events.md#passkey-evidence-commitments-and-console-actors).
 It commits the restricted B3 verification record's purpose, authorizing subject

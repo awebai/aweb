@@ -4,7 +4,7 @@ Status: **specified experimental public contract, not yet shipped**. Owner: the
 aweb OSS hooks lane (aweb-acgh.16). This document is the source of truth for the
 `aweb.hooks` catalog, version 1, for owner-activated hook bindings, and for how
 a producer signs and delivers hook events. Its machine-readable authority is
-four vectors:
+four frozen vectors and one proposed evidence vector:
 
 - `docs/vectors/hook-catalog-v1.json`: the hooks, their payload allowlists and
   rules, with positive and negative cases;
@@ -13,6 +13,8 @@ four vectors:
 - `docs/vectors/hook-event-envelope-v1.json`: the signed event envelope;
 - `docs/vectors/hook-delivery-credential-v1.json`: the request credential that
   carries an event to a target.
+- `docs/vectors/passkey-evidence-v1.json`: proposed evidence bytes, pending
+  the ruling described below; not an activated producer contract.
 
 The strict catalog reader is `aweb_naapp.hooks.catalog`
 (`naapp-lib/src/aweb_naapp/hooks/catalog.py`). The envelope and credential
@@ -242,6 +244,16 @@ strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
   `resource.replaced`.
 
 ### Passkey evidence commitments and console actors
+
+**Draft, aweb-acgh.39: awaiting Juan's audit-evidence ruling and R+A.**
+This proposal commits the verification summary exposed by B3 today. It does
+not fulfill or supersede the accepted secrets design §10.4 promise of later
+approval verification with the approver's public key. B3 does not currently
+retain/expose the assertion and frozen verification context needed for that
+promise. The proposed projection, commitment and corresponding catalog type
+labels must not be activated by S13/S14 before the ruling and contract review.
+If the promise is preserved through restricted proof retention, the projection
+must be reviewed again for its binding to that proof before it is frozen.
 
 `approval_evidence_sha256`, in both the governance and secret-use hooks, is
 an **HMAC-SHA-256** commitment encoded as 64 lowercase hexadecimal characters.

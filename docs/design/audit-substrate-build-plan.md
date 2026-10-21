@@ -124,9 +124,12 @@ producer is enabled before kit, ingest, resolution and owner activation.
 
 ### Passkey evidence convention (aweb-acgh.39)
 
-The public hook contract freezes one privacy projection and HMAC input for
+The public hook contract proposes one privacy projection and HMAC input for
 `approval_evidence_sha256` in governance and secret-use events. Its byte vector
-is `docs/vectors/passkey-evidence-v1.json`. Review is R+A. No actor field/mode
+is `docs/vectors/passkey-evidence-v1.json`. It is on hold for Juan's ruling on
+the accepted secrets §10.4 later-verification promise: B3's current summary
+cannot fulfill it. No producer activation is authorized by this draft. Once
+the evidence claim/storage is settled, review is R+A. No actor field/mode
 or catalog wire shape is added. B3 supplies one shared canonical projection
 helper after this contract is ACKed, with the hook commitment/key helper
 reused for purpose-separated MAC/key loading rather than a producer-local
