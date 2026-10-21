@@ -810,6 +810,10 @@ gives `audit_target_unavailable`. If every eligible target has an owed event
 older than the configured positive backlog-age bound that it has not received,
 it gives `audit_delivery_stalled`. One current target suffices; a stalled
 secondary alone does not block admission. Equality at the bound is current.
+The query returns each target's oldest outstanding local enqueue timestamp;
+view freshness and backlog ages are rechecked against the live clock after
+that awaited read returns, with no further wait before the result. A query
+blocked beyond either deadline must refuse rather than use its starting clock.
 
 Age is measured from the producer outbox's local `created_at`. Eligibility
 still uses `active_from <= occurred_at` for each event. Both unmaterialized

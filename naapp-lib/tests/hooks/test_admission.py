@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
@@ -139,6 +140,89 @@ async def test_unmaterialized_backlog_counts_for_every_owed_target(db):
 async def test_backlog_exactly_at_the_bound_is_current(db):
     await backlog(db, age=BOUND, states={BINDING: "pending"})
     await require(db)
+
+
+async def admit_after_blocked_query(db, elapsed):
+    """Advance the live clock only after PG confirms the real query is blocked."""
+    current = [NOW]
+    producer = app_producer(clock=lambda: current[0])
+    pid = asyncio.get_running_loop().create_future()
+
+    async def admit():
+        async with db.transaction() as tx:
+            pid.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
+            await producer.require_admission(
+                tx,
+                team_id=TEAM,
+                hook=HOOK,
+                occurred_at=NOW,
+                view=view(registrations=(PRIMARY,)),
+                max_backlog_age=BOUND,
+            )
+
+    task = None
+    try:
+        async with asyncio.timeout(5):
+            async with db.transaction() as blocker:
+                await blocker.execute(
+                    "LOCK TABLE {{tables.outbox_events}} IN ACCESS EXCLUSIVE MODE"
+                )
+                blocker_pid = await blocker.fetch_value("SELECT pg_backend_pid()")
+                task = asyncio.create_task(admit())
+                query_pid = await pid
+                while not await blocker.fetch_value(
+                    "SELECT $1 = ANY(pg_blocking_pids($2))", blocker_pid, query_pid
+                ):
+                    assert not task.done(), "admission ended before reaching the table lock"
+                    await asyncio.sleep(0.005)
+                assert not task.done()
+                current[0] += elapsed
+            # Releasing the table lock lets the actual outbox read complete.
+            await task
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    ("elapsed", "code"),
+    [
+        (timedelta(seconds=59), None),
+        (timedelta(seconds=60), None),
+        (timedelta(seconds=60, microseconds=1), "audit_target_unavailable"),
+    ],
+)
+async def test_blocked_query_rechecks_view_deadline_on_return(db, elapsed, code):
+    if code is None:
+        await admit_after_blocked_query(db, elapsed)
+    else:
+        with pytest.raises(Refused) as refused:
+            await admit_after_blocked_query(db, elapsed)
+        assert refused.value.code == code
+
+
+@pytest.mark.parametrize("materialized", [False, True])
+@pytest.mark.parametrize(
+    ("elapsed", "code"),
+    [
+        (timedelta(0), None),
+        (timedelta(seconds=1), None),
+        (timedelta(seconds=1, microseconds=1), "audit_delivery_stalled"),
+    ],
+)
+async def test_blocked_query_checks_backlog_age_on_return(db, materialized, elapsed, code):
+    await backlog(
+        db,
+        age=BOUND - timedelta(seconds=1),
+        states={BINDING: "pending"} if materialized else None,
+    )
+    if code is None:
+        await admit_after_blocked_query(db, elapsed)
+    else:
+        with pytest.raises(Refused) as refused:
+            await admit_after_blocked_query(db, elapsed)
+        assert refused.value.code == code
 
 
 async def test_a_new_target_is_not_owed_events_from_before_its_activation(db):

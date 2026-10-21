@@ -283,7 +283,9 @@ class HookProducer:
         failures. A stalled secondary does not block a current primary.
         Age starts at the local outbox's ``created_at``; target eligibility
         starts at the event's ``occurred_at``. No producer-local tracker is
-        needed. A refusal is recorded separately with ``enqueue_refusal``.
+        needed. Freshness and age are checked against the live clock after
+        the DB read returns, without another wait before returning. A refusal
+        is recorded separately with ``enqueue_refusal``.
         """
         if max_backlog_age <= timedelta(0):
             raise ValueError("max_backlog_age must be positive")
@@ -301,21 +303,23 @@ class HookProducer:
                 SELECT * FROM unnest($1::text[], $2::timestamptz[])
                     AS r(binding_id, active_from)
             )
-            SELECT r.binding_id, (
-                EXISTS (
-                    SELECT 1 FROM {{tables.outbox_deliveries}} d
+            SELECT r.binding_id, LEAST(
+                (
+                    SELECT e.created_at FROM {{tables.outbox_deliveries}} d
                     JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id
                     WHERE d.target_id = r.binding_id
                       AND d.state NOT IN ('delivered', 'duplicate')
                       AND e.channel = $3 AND e.team_id = $4 AND e.kind = $5
-                      AND r.active_from <= e.occurred_at AND e.created_at < $6
-                ) OR EXISTS (
-                    SELECT 1 FROM {{tables.outbox_events}} e
+                      AND r.active_from <= e.occurred_at
+                    ORDER BY e.created_at LIMIT 1
+                ), (
+                    SELECT e.created_at FROM {{tables.outbox_events}} e
                     WHERE e.materialized_at IS NULL
                       AND e.channel = $3 AND e.team_id = $4 AND e.kind = $5
-                      AND r.active_from <= e.occurred_at AND e.created_at < $6
+                      AND r.active_from <= e.occurred_at
+                    ORDER BY e.created_at LIMIT 1
                 )
-            ) AS stalled
+            ) AS oldest_outstanding_at
             FROM eligible r
             """,
             [r.binding_id for r in eligible],
@@ -323,9 +327,17 @@ class HookProducer:
             HOOKS_CHANNEL,
             team_id,
             hook,
-            now - max_backlog_age,
         )
-        if not any(not row["stalled"] for row in rows):
+        # The query may wait behind a table lock. Both the registration view
+        # and the oldest owed event must still be current when this returns.
+        now = self._clock()
+        _event_time(now)
+        self._gate(hook, team_id, occurred_at, now, view)
+        if not any(
+            row["oldest_outstanding_at"] is None
+            or row["oldest_outstanding_at"] >= now - max_backlog_age
+            for row in rows
+        ):
             raise Refused("audit_delivery_stalled", "no eligible audit target is current")
 
     async def _enqueue(

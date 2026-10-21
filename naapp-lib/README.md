@@ -78,7 +78,9 @@ authority locks. It reads that team's/hook's eligible target backlog directly
 from the shared outbox, including unmaterialized events. No target refuses
 with `audit_target_unavailable`; all eligible targets beyond the age bound
 refuse with `audit_delivery_stalled`. A healthy target next to a stalled
-secondary admits. Apply the outbox's new ordered admission-index migration.
+secondary admits. View freshness and backlog age are checked again using the
+live clock after the DB query returns, including after a lock wait. Apply the
+outbox's new ordered admission-index migration.
 The helper grants no use authority and replaces no dispatch fence.
 
 `HookProducer.enqueue_refusal(tx, *, team_id, payload, actor, occurred_at,
