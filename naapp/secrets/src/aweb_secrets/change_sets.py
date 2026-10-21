@@ -11,11 +11,14 @@ order every writer takes its locks:
 1. the installation fence (X9);
 2. a hold on the deciding owner's secrets.owner role, so a concurrent
    revocation either waits for the confirmation or makes it refuse;
-3. the change-set row, and the approval admitted once as owner evidence
+3. the change-set row, replacement/reenable ancestry root-first, the grant
+   union, and the complete forest/confirmation approval union in ID order;
+   then the approval admitted once as owner evidence
    (Passkeys.owner_approval);
 4. the four-eyes setting's row, read under its lock;
-5. the configuration revision, claimed atomically, the last lock taken;
-6. then each item applies.
+5. the configuration revision, claimed atomically;
+6. then each item applies, with parent secrets before custody rows. Existing
+   ingests hold parent KEY SHARE; reshapes take parent UPDATE before custody.
 The change set must still be for this installation, generation and team,
 unexpired, and confirmed by an owner the setting in force allows.
 A draft that expires or is cancelled revokes its approval and destroys its
@@ -70,6 +73,7 @@ from aweb_secrets.change import (
     validate_change,
 )
 from aweb_secrets.change_policy import four_eyes, lock_four_eyes, relax_four_eyes
+from aweb_secrets.containment import Containment, ContainmentRefused
 from aweb_secrets.custody import Custody, SealContext
 from aweb_secrets.destination import DestinationInvalid, DestinationRecord
 from aweb_secrets.grant import GrantRecord, GrantTemplate
@@ -99,6 +103,7 @@ APPLICABLE_KINDS = frozenset(
         "approver_contact",
         "change_set_policy",
         "runner",
+        "reenable",
     }
 )
 
@@ -143,6 +148,7 @@ class Confirmation:
     designations: tuple[Designation, ...]
     contact_changes: tuple[ContactChange, ...]
     runner_registrations: tuple[RunnerRegistration, ...] = field(default=(), repr=False)
+    affected_secret_ids: tuple[str, ...] = ()
 
 
 def change_policy_ref(installation_id: str, team_id: str, scope: str | None = None) -> str:
@@ -184,7 +190,7 @@ class ChangeSetPolicies:
 
 # The kinds stored as secrets' own records (S8).
 RECORD_KINDS = frozenset(
-    {"secret", "secret_value", "destination", "operation", "grant", "grant_template", "policy"}
+    {"secret", "destination", "operation", "grant", "grant_template", "policy"}
 )
 
 
@@ -235,6 +241,7 @@ class ChangeSets:
         passkeys: Passkeys,
         directory: OwnerDirectory,
         custody: Custody,
+        containment: Containment,
         draft_limit: DraftLimit,
         internal_destinations: InternalDestinations,
     ) -> None:
@@ -243,6 +250,7 @@ class ChangeSets:
         self._passkeys = passkeys
         self._directory = directory
         self._custody = custody
+        self._containment = containment
         self._draft_limit = draft_limit
         self._internal_destinations = internal_destinations
 
@@ -261,6 +269,13 @@ class ChangeSets:
                 raise ChangeRefused(
                     f"change.changes[{index}]: {item['kind']} cannot be applied yet",
                     code="change_kind_not_applicable",
+                )
+            if item["kind"] == "reenable" and item["after"]["target_kind"] not in {
+                "secret",
+                "installation",
+            }:
+                raise ChangeRefused(
+                    "unsupported reenable target", code="reenable_target_unsupported"
                 )
             if item["kind"] == "role" and item["after"]["role"] == OWNER_ROLE:
                 # Owners are designated only by the team owner act (§10.2).
@@ -461,6 +476,7 @@ class ChangeSets:
         if row is None or row["state"] != "pending":
             raise ChangeRefused("the change set is not pending", code="change_not_pending")
         change = _request(row["request"])
+        await self._prepare_containment(tx, row, change, admitted)
         try:
             evidence = await self._passkeys.owner_approval(
                 tx,
@@ -499,10 +515,13 @@ class ChangeSets:
         designations: list[Designation] = []
         contact_changes: list[ContactChange] = []
         runner_registrations: list[RunnerRegistration] = []
+        affected: set[str] = set()
         for item in change["changes"]:
-            applied = await self._apply(tx, change, item, evidence)
+            applied = await self._apply(tx, change, item, evidence, confirmer.principal_did)
             if isinstance(applied, RunnerRegistration):
                 runner_registrations.append(applied)
+            elif isinstance(applied, tuple):
+                affected.update(applied)
             elif isinstance(applied, ContactChange):
                 contact_changes.append(applied)
             else:
@@ -522,7 +541,70 @@ class ChangeSets:
             designations=tuple(designations),
             contact_changes=tuple(contact_changes),
             runner_registrations=tuple(runner_registrations),
+            affected_secret_ids=tuple(sorted(affected)),
         )
+
+    async def _prepare_containment(
+        self,
+        tx: TransactionManager,
+        row: Mapping[str, Any],
+        change: Mapping[str, Any],
+        admitted: AdmittedInstallation,
+    ) -> None:
+        if (change["installation_id"], change["install_generation"], change["team_id"]) != (
+            admitted.installation_id,
+            admitted.generation,
+            admitted.team_id,
+        ):
+            raise ChangeRefused(
+                "change is for another installation", code="change_wrong_installation"
+            )
+        # Canonical sealed bindings survive ref edits. Absent first-create parents
+        # stay inert and need no existing ancestry; discovery takes no child lock.
+        rows = await tx.fetch_all(
+            "SELECT DISTINCT b.secret_id FROM {{tables.change_set_sealed}} b"
+            " JOIN {{tables.secrets}} s USING (installation_id, team_id, secret_id)"
+            " WHERE b.change_id=$1 AND b.installation_id=$2 AND b.team_id=$3",
+            row["change_id"],
+            admitted.installation_id,
+            admitted.team_id,
+        )
+        roots = {record["secret_id"] for record in rows}
+        for item in change["changes"]:
+            if item["kind"] == "reenable" and item["after"]["target_kind"] == "secret":
+                roots.add(
+                    await self._reenable_id(
+                        tx, admitted.installation_id, admitted.team_id, item["after"]["target_ref"]
+                    )
+                )
+        try:
+            await self._containment.prepare_replacements(
+                tx,
+                installation_id=admitted.installation_id,
+                team_id=admitted.team_id,
+                secret_ids=tuple(sorted(roots)),
+                approval_ids=(row["approval_id"],),
+            )
+        except ContainmentRefused as refused:
+            raise ChangeRefused("containment preparation refused", code=refused.code) from None
+
+    async def _reenable_id(
+        self,
+        tx: TransactionManager,
+        installation_id: str,
+        team_id: str,
+        ref: str,
+    ) -> str:
+        secret_id = await tx.fetch_value(
+            "SELECT secret_id FROM {{tables.secrets}}"
+            " WHERE installation_id=$1 AND team_id=$2 AND ref=$3",
+            installation_id,
+            team_id,
+            ref,
+        )
+        if secret_id is None:
+            raise ChangeRefused("no secret with this ref", code="secret_unknown")
+        return str(secret_id)
 
     async def _apply(
         self,
@@ -530,11 +612,31 @@ class ChangeSets:
         change: Mapping[str, Any],
         item: Mapping[str, Any],
         evidence: OwnerApproval,
-    ) -> list[Designation] | ContactChange | RunnerRegistration:
+        confirmed_by: str,
+    ) -> list[Designation] | ContactChange | RunnerRegistration | tuple[str, ...]:
         installation_id, team_id = change["installation_id"], change["team_id"]
         after = item["after"]
         if item["kind"] == "runner":
             return await self._apply_runner(tx, change, item)
+        if item["kind"] == "secret_value":
+            try:
+                return await self._replace_value(tx, change, after, confirmed_by)
+            except records.RecordMissing as missing:
+                raise ChangeRefused(str(missing), code="record_missing") from None
+        if item["kind"] == "reenable":
+            try:
+                await self._containment.reenable(
+                    tx,
+                    installation_id=installation_id,
+                    team_id=team_id,
+                    target_kind=after["target_kind"],
+                    target_ref=after["target_ref"],
+                )
+            except ContainmentRefused as refused:
+                raise ChangeRefused("reenable refused", code=refused.code) from None
+            if after["target_kind"] == "secret":
+                return (await self._reenable_id(tx, installation_id, team_id, after["target_ref"]),)
+            return ()
         if item["kind"] == "role":
             await assign(
                 tx, PrincipalKey(team_id=team_id, principal_did=after["principal"]), after["role"]
@@ -657,8 +759,6 @@ class ChangeSets:
                         raise _exists(kind, record.ref)
                     await self._check_sealed_shape(tx, installation_id, team_id, record, lock=True)
                     await records.update_secret(tx, installation_id, team_id, record)
-            elif kind == "secret_value":
-                await self._replace_value(tx, change, after)
             elif kind == "destination":
                 destination = self._destination(after, "destination")
                 await _require_secret(tx, installation_id, team_id, destination.secret_id)
@@ -741,8 +841,12 @@ class ChangeSets:
             raise ChangeRefused("a sealed secret's shape is fixed", code="sealed_secret_fixed")
 
     async def _replace_value(
-        self, tx: TransactionManager, change: Mapping[str, Any], after: Mapping[str, Any]
-    ) -> None:
+        self,
+        tx: TransactionManager,
+        change: Mapping[str, Any],
+        after: Mapping[str, Any],
+        confirmed_by: str,
+    ) -> tuple[str, ...]:
         """Make the item's sealed version, bound to it at draft time, the secret's
         active one, and destroy the version it replaces."""
         installation_id, team_id = change["installation_id"], change["team_id"]
@@ -760,6 +864,17 @@ class ChangeSets:
             raise ChangeRefused(
                 "the sealed value does not match its secret record", code="sealed_secret_fixed"
             )
+        affected: tuple[str, ...] = ()
+        if stored.active_version is not None and stored.active_version != after["version"]:
+            try:
+                affected = await self._containment.replacement_consequences(
+                    tx,
+                    old=SealContext(installation_id, team_id, secret_id, stored.active_version),
+                    new=context,
+                    revoked_by=confirmed_by,
+                )
+            except ContainmentRefused as refused:
+                raise ChangeRefused("replacement refused", code=refused.code) from None
         await records.set_active_version(tx, installation_id, team_id, secret_id, after["version"])
         if stored.active_version is not None and stored.active_version != after["version"]:
             await self._custody.destroy(
@@ -771,6 +886,7 @@ class ChangeSets:
                     version=stored.active_version,
                 ),
             )
+        return affected
 
     async def deliver(self, confirmation: Confirmation) -> None:
         for designation in confirmation.designations:
