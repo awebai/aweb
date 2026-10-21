@@ -6,7 +6,7 @@ Read first:
 
 1. `docs/sot.md` — product, auth, data, and API source of truth.
 2. `README.md` — local run commands.
-3. `src/folio/auth.py` — BYOIDT team-certificate auth boundary.
+3. `naapp-lib/src/aweb_naapp/runtime/team_auth.py` (from the aweb repository root) — shared BYOIDT team-certificate auth boundary, used through `NaappRuntime.principal`.
 4. `src/folio/migrations/001_initial.sql` — canonical v1 schema.
 
 Core invariants:
