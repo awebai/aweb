@@ -396,7 +396,7 @@ func TestManifestRegistrationDerivesKeysOnTheServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := installRegistrationBody(resolved, "sha256:"+strings.Repeat("0", 64), nil)
+	body := installRegistrationBody(resolved, "sha256:"+strings.Repeat("0", 64), nil, resolved.InstallScopes)
 	for _, field := range []string{"event_emitters", "manifest_version", "events", "manifest", "app_version"} {
 		if _, ok := body[field]; ok {
 			t.Fatalf("separately supplied %s in confirmation: %#v", field, body)

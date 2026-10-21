@@ -48,7 +48,10 @@ async def test_cli_member_request_admin_install_update_and_refused_update_preser
     }))
     (home / "identity.yaml").chmod(0o600)
     process_env = {**os.environ, "AW_HOME": str(tmp_path / "plugin-store"), "AW_NO_UPDATE_CHECK": "1",
-                   "SSL_CERT_FILE": str(origin.tls.certificates.ca_file)}
+                   "SSL_CERT_FILE": str(origin.tls.certificates.ca_file),
+                   # On macOS, opt into the Go 1.27 SSL_CERT_FILE behavior even
+                   # when the module retains its earlier Go compatibility defaults.
+                   "GODEBUG": ",".join(filter(None, [os.environ.get("GODEBUG"), "x509sslcertoverrideplatform=1"]))}
     for name in ("AW_IDENTITY_HOME", "AW_TEAM", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
         process_env.pop(name, None)
 
@@ -70,11 +73,12 @@ async def test_cli_member_request_admin_install_update_and_refused_update_preser
     assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.team_app_installs}}") == 0
 
     await env.db.execute("INSERT INTO aweb.test_install_admins VALUES ($1,$2)", services.TEAM, env.actors["alice"].did)
-    code, out, error = await cli("install", origin.url)
+    code, out, error = await cli("install", origin.url, "--grant-scope", "fixture:read")
     assert code == 0, out + error
     installed = json.loads(out)
     assert installed["provenance"]["registered_generation"] == 1
     installation_id = installed["provenance"]["registered_installation_id"]
+    assert await env.db.fetch_value("SELECT granted_scopes FROM {{tables.team_app_installs}}") == ["fixture:read"]
     path = Path(installed["path"]) / "manifest.json"
     assert path.read_bytes() == origin.routes[manifest_fixture.VARIANT][1]
 
@@ -85,6 +89,7 @@ async def test_cli_member_request_admin_install_update_and_refused_update_preser
     assert updated["provenance"]["registered_generation"] == 2
     assert updated["provenance"]["registered_installation_id"] == installation_id
     saved = path.read_bytes()
+    assert await env.db.fetch_value("SELECT granted_scopes FROM {{tables.team_app_installs}}") == ["fixture:read"]
 
     await env.db.execute("DELETE FROM aweb.test_install_admins")
     origin.publish(origin.manifest(version="3.0.0"))

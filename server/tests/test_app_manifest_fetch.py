@@ -10,9 +10,18 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from aweb_naapp.egress import (
-    AddressPolicy, DnsResolver, Egress, InternalDestinations, parse_destination,
+    AddressPolicy,
+    DnsResolver,
+    Egress,
+    InternalDestinations,
+    parse_destination,
 )
-from aweb_naapp_testing.network import DnsServer, TlsServer, local_address, make_certificates
+from aweb_naapp_testing.network import (
+    DnsServer,
+    TlsServer,
+    local_address,
+    make_certificates,
+)
 
 from aweb.app_manifests import ManifestFetcher, ManifestFetchError
 

@@ -17,7 +17,7 @@ import (
 // local resident approval. A receipt is saved only after every requested write
 // succeeds. Failed registration can be retried with update; a partial initial
 // subscription failure is retried by repeating install.
-func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string, previous, next *pluginProvenance, update bool) error {
+func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string, previous, next *pluginProvenance, update bool, selectedScopes []string) error {
 	manifest := resolved.Manifest
 	client, selection, err := resolveClientSelection()
 	if err != nil {
@@ -39,13 +39,17 @@ func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string
 		}
 		expected = &current.Generation
 	}
-	if update && previous != nil && current.State == "active" && current.OriginVerified && current.Digest == fetchedDigest && slices.Equal(current.GrantedScopes, resolved.InstallScopes) && previous.RegisteredTeam == selection.TeamID && previous.RegisteredServer == selection.BaseURL {
+	grantedScopes, err := installationScopes(resolved.InstallScopes, current.GrantedScopes, update, selectedScopes)
+	if err != nil {
+		return err
+	}
+	if update && previous != nil && current.State == "active" && current.OriginVerified && current.Digest == fetchedDigest && slices.Equal(current.GrantedScopes, grantedScopes) && previous.RegisteredTeam == selection.TeamID && previous.RegisteredServer == selection.BaseURL {
 		saveInstallationReceipt(next, current, fetchedDigest, selection.TeamID, selection.BaseURL)
 		return nil
 	}
 
 	events := installRegistrationEvents(manifest)
-	body := installRegistrationBody(resolved, fetchedDigest, expected)
+	body := installRegistrationBody(resolved, fetchedDigest, expected, grantedScopes)
 	var installed appInstallationReceipt
 	if err := client.Post(ctx, "/v1/apps/install?team_id="+url.QueryEscape(selection.TeamID), body, &installed); err != nil {
 		return fmt.Errorf("register app installation (existing local installation retained; request approval with aw plugin request %s): %w", manifest.App.Origin, err)
@@ -95,12 +99,39 @@ func saveInstallationReceipt(next *pluginProvenance, receipt appInstallationRece
 // installRegistrationBody confirms the fetched pin and explicitly chosen scopes.
 // The server fetches its own bytes and derives versions, keys and events there.
 // An expected generation comes from the authenticated current-installation read.
-func installRegistrationBody(resolved *appmanifest.Resolved, fetchedDigest string, expectedGeneration *int64) map[string]any {
+func installRegistrationBody(resolved *appmanifest.Resolved, fetchedDigest string, expectedGeneration *int64, grantedScopes []string) map[string]any {
 	return map[string]any{
 		"app_id": resolved.Manifest.App.ID, "origin": resolved.Manifest.App.Origin,
-		"digest": fetchedDigest, "granted_scopes": append([]string{}, resolved.InstallScopes...),
+		"digest": fetchedDigest, "granted_scopes": append([]string{}, grantedScopes...),
 		"expected_generation": expectedGeneration,
 	}
+}
+
+func installationScopes(requested, current []string, update bool, selected []string) ([]string, error) {
+	chosen := selected
+	if chosen == nil {
+		chosen = requested
+		if update {
+			chosen = nil
+			for _, scope := range current {
+				if slices.Contains(requested, scope) {
+					chosen = append(chosen, scope)
+				}
+			}
+		}
+	}
+	result := []string{}
+	for _, scope := range chosen {
+		scope = strings.TrimSpace(scope)
+		if !slices.Contains(requested, scope) {
+			return nil, usageError("scope_not_requested: %s is not requested by the manifest", scope)
+		}
+		if !slices.Contains(result, scope) {
+			result = append(result, scope)
+		}
+	}
+	slices.Sort(result)
+	return result, nil
 }
 
 func init() {

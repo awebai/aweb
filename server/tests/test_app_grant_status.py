@@ -10,18 +10,17 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from awid.signing import canonical_json_bytes, sign_message
 from httpx import ASGITransport, AsyncClient
 
-from awid.signing import canonical_json_bytes, sign_message
 from aweb import app_credentials
 from aweb.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, PURPOSES
-from aweb.app_registry import install_app
 from aweb.config import get_app_grant_max_age_seconds
 from aweb.routes.apps import router as apps_router
+from tests.installation_fixtures import install_fixture_app as install_app
 from tests.test_app_credentials import _register_app_key
 from tests.test_app_events_http import (
     AGENT_ID,
-    DIGEST,
     OTHER_TEAM_ID,
     TEAM_ID,
     _build_events_app,
@@ -75,8 +74,8 @@ async def _get(app, headers: dict, path: str = GRANT_PATH):
         return await client.get(path, headers=headers)
 
 
-async def _reinstall_folio(db, *, team_id: str, digest: str, scopes: list[str], app_version: str) -> None:
-    await install_app(
+async def _reinstall_folio(db, *, team_id: str, digest: str, scopes: list[str], app_version: str):
+    return await install_app(
         db,
         team_id=team_id,
         app_id="folio",
@@ -111,6 +110,7 @@ async def test_grant_read_returns_the_installed_grant_of_the_credentials_team_an
     body = response.json()
     as_of = datetime.strptime(body.pop("as_of"), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     assert before <= as_of <= datetime.now(timezone.utc)
+    current = await installed["db"].fetch_one("SELECT installation_id,generation,digest FROM {{tables.team_app_installs}} WHERE team_id=$1", TEAM_ID)
     assert body == {
         "team_id": TEAM_ID,
         "app_id": "folio",
@@ -118,11 +118,11 @@ async def test_grant_read_returns_the_installed_grant_of_the_credentials_team_an
         "origin": "https://folio.aweb.ai",
         "app_version": "1.x",
         "manifest_version": 1,
-        "digest": DIGEST,
+        "digest": current["digest"],
         "granted_scopes": ["folio:read"],
-        "installation_id": None,
-        "generation": None,
-        "origin_verified": None,
+        "installation_id": current["installation_id"],
+        "generation": current["generation"],
+        "origin_verified": True,
         "max_age_seconds": 60,
     }
 
@@ -171,7 +171,7 @@ async def test_no_key_registered_for_grant_read_is_app_key_not_registered(instal
 @pytest.mark.asyncio
 async def test_a_digest_change_is_visible_on_the_next_read(installed):
     db = installed["db"]
-    await _reinstall_folio(db, team_id=TEAM_ID, digest=NEW_DIGEST, scopes=["folio:read", "folio:write"], app_version="2.0")
+    changed = await _reinstall_folio(db, team_id=TEAM_ID, digest=NEW_DIGEST, scopes=["folio:read", "folio:write"], app_version="2.0")
     new_key, new_did = _make_app_keypair()
     await db.execute(
         """
@@ -179,7 +179,7 @@ async def test_a_digest_change_is_visible_on_the_next_read(installed):
         VALUES ($1, 'folio', 'https://folio.aweb.ai', $2, 'read-2', $3, $4::TEXT[])
         """,
         TEAM_ID,
-        NEW_DIGEST,
+        changed.digest,
         new_did,
         [APP_GRANT_READ],
     )
@@ -191,7 +191,7 @@ async def test_a_digest_change_is_visible_on_the_next_read(installed):
     assert old_digest_key.json()["detail"] == "app_key_not_registered"
     assert new_digest_key.status_code == 200, new_digest_key.text
     body = new_digest_key.json()
-    assert (body["digest"], body["granted_scopes"], body["app_version"]) == (NEW_DIGEST, ["folio:read", "folio:write"], "2.0")
+    assert (body["digest"], body["granted_scopes"], body["app_version"]) == (changed.digest, ["folio:read", "folio:write"], "2.0")
 
 
 @pytest.mark.asyncio
@@ -241,6 +241,18 @@ async def test_an_app_without_an_installation_gets_app_key_not_registered(instal
 
     assert response.status_code == 403, response.text
     assert response.json()["detail"] == "app_key_not_registered"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["pending_origin_verification", "uninstalled"])
+async def test_non_active_installation_is_reported_with_its_real_identity(installed, state):
+    await installed["db"].execute("UPDATE {{tables.team_app_installs}} SET state=$1,origin_verified=FALSE", state)
+    response = await _get(installed["app"], _grant_read_headers(**installed["read"]))
+    assert response.status_code == 200, response.text
+    assert response.json()["state"] == state
+    assert response.json()["installation_id"]
+    assert response.json()["generation"] == 1
+    assert response.json()["origin_verified"] is False
 
 
 # --- app-read-credential-v1 ---

@@ -36,6 +36,8 @@ var (
 	pluginInstallAppVersion      string
 	pluginInstallOrigin          string
 	pluginInstallDevOrigin       string
+	pluginInstallGrantedScopes   []string
+	pluginUpdateGrantedScopes    []string
 )
 
 var pluginCmd = &cobra.Command{
@@ -133,6 +135,8 @@ func init() {
 	pluginInstallCmd.Flags().StringVar(&pluginInstallAppVersion, "app-version", "", "App version to record in plugin provenance")
 	pluginInstallCmd.Flags().StringVar(&pluginInstallOrigin, "origin", "", "App origin to record in plugin provenance")
 	pluginInstallCmd.Flags().StringVar(&pluginInstallDevOrigin, "dev-origin", "", "Override the app origin to this base URL for a self-hosted or dev service; the request base URL becomes this, bypassing the manifest origin self-consistency check")
+	pluginInstallCmd.Flags().StringSliceVar(&pluginInstallGrantedScopes, "grant-scope", nil, "Grant only these requested scopes (repeat or comma-separate; default: all requested scopes)")
+	pluginUpdateCmd.Flags().StringSliceVar(&pluginUpdateGrantedScopes, "grant-scope", nil, "Explicitly select granted scopes (default: preserve existing grants, dropping removed scopes)")
 
 	pluginCmd.GroupID = groupUtility
 	pluginCmd.AddCommand(pluginListCmd, pluginInstallCmd, pluginRemoveCmd, pluginUpdateCmd, pluginReservedNamesCmd)
@@ -168,6 +172,9 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 	}
 	if isManifestInstallSource(source) {
 		policy := manifestManagementPolicy{registerEvents: true}
+		if cmd.Flags().Changed("grant-scope") {
+			policy.grantedScopes = append([]string{}, pluginInstallGrantedScopes...)
+		}
 		if resident {
 			policy.residentHome = home.Root
 		}
@@ -313,6 +320,9 @@ func runPluginUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("plugin %q is missing manifest provenance", name)
 	}
 	policy := manifestManagementPolicy{expectedName: name, registerEvents: true}
+	if cmd.Flags().Changed("grant-scope") {
+		policy.grantedScopes = append([]string{}, pluginUpdateGrantedScopes...)
+	}
 	if resident {
 		policy.residentHome = home.Root
 	}
@@ -511,6 +521,7 @@ func installManifestPlugin(source, dir string) (*pluginInstallOutput, error) {
 type manifestManagementPolicy struct {
 	residentHome, expectedName string
 	registerEvents             bool
+	grantedScopes              []string
 }
 
 func installOrUpdateManifestPlugin(source, dir string, update bool, devOrigin string) (*pluginInstallOutput, error) {
@@ -644,7 +655,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		if err != nil || declared != registered {
 			return nil, usageError("origin_verification_required: install from the app's served origin without a --dev-origin rewrite")
 		}
-		if err := registerManifestEvents(resolved, fetchedDigest, previous, &provenance, update); err != nil {
+		if err := registerManifestEvents(resolved, fetchedDigest, previous, &provenance, update, policy.grantedScopes); err != nil {
 			return nil, err
 		}
 	}
