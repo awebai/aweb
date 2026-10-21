@@ -6,15 +6,11 @@ import json
 import re
 from urllib.parse import quote
 
+from aweb_naapp.manifest import canonical_bytes, read_manifest_bytes
 from fastapi.testclient import TestClient
 
 import folio.api as folio_api
-from folio.aweb_manifest import (
-    MANIFEST,
-    MANIFEST_PATH,
-    canonical_bytes,
-    read_manifest_bytes,
-)
+from folio.aweb_manifest import MANIFEST, MANIFEST_PATH
 from folio.config import Settings
 
 _METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
@@ -224,7 +220,7 @@ def test_committed_manifest_is_canonical_and_matches_source() -> None:
     # Canonical form is idempotent: re-canonicalizing the committed bytes is a no-op.
     assert committed == canonical_bytes(json.loads(committed))
     # The reader the route uses returns those exact bytes.
-    assert read_manifest_bytes() == committed
+    assert read_manifest_bytes(MANIFEST_PATH) == committed
 
 
 def test_manifest_conforms_to_m1_1_schema() -> None:

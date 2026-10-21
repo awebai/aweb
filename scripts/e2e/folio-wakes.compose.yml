@@ -123,6 +123,10 @@ services:
       FOLIO_APP_EMIT_KID: folio:emit-test
       FOLIO_APP_EMIT_KEY_SEED_HEX: '0101010101010101010101010101010101010101010101010101010101010101'
       PORT: '8765'
+    # This deployment's manifest, declaring the test emit key above; the harness
+    # writes it before Folio starts and rewrites it to change the manifest.
+    volumes:
+      - ${FOLIO_WAKES_MANIFEST:?set by scripts/e2e-folio-wakes.sh}:/app/naapp/folio/src/folio/aweb-app.json:ro
     depends_on:
       aweb:
         condition: service_healthy

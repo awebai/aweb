@@ -43,6 +43,7 @@ from aweb_naapp.egress import (
 
 from aweb_secrets.credential_shapes import is_credential_shaped_value
 from aweb_secrets.injection import Injection, inject
+from aweb_secrets.operation_request import OperationRequest
 from aweb_secrets.redaction import KnownValues
 from aweb_secrets.responses import BrokeredResult, handle_response
 from aweb_secrets.tokens import TokenCache, TokenKey
@@ -198,6 +199,7 @@ async def broker(
     token_destination: Destination | None = None,
     tokens: TokenCache | None = None,
     secret: SecretVersion | None = None,
+    content_types: Sequence[str] | None = None,
 ) -> BrokeredCall:
     """Send one request with ``value`` injected; ``headers`` are the agent's.
 
@@ -252,5 +254,43 @@ async def broker(
         projection=projection,
         known=injection.known,
         token_issuing=token_issuing,
+        content_types=content_types,
     )
     return BrokeredCall(result=result, recorded_url=injection.recorded_url, known=injection.known)
+
+
+async def broker_operation(
+    egress: Egress,
+    request: OperationRequest,
+    *,
+    kind: str,
+    value: Mapping[str, str],
+    kind_params: Mapping[str, str],
+    secret_ref: str,
+    token_destination: Destination | None = None,
+    tokens: TokenCache | None = None,
+    secret: SecretVersion | None = None,
+) -> BrokeredCall:
+    """Send a rendered named operation with ``value`` injected, bounded and
+    handled as its template says."""
+    return await broker(
+        egress,
+        method=request.method,
+        url=request.url,
+        destination=request.destination,
+        headers=request.headers,
+        body=request.body,
+        kind=kind,
+        value=value,
+        kind_params=kind_params,
+        secret_ref=secret_ref,
+        max_bytes=request.max_bytes,
+        projection=request.projection,
+        token_issuing=request.token_issuing,
+        amz_allowed=request.amz_allowed,
+        bounds=request.bounds,
+        token_destination=token_destination,
+        tokens=tokens,
+        secret=secret,
+        content_types=request.content_types,
+    )

@@ -14,7 +14,6 @@ PUBLIC_ROOT = PurePosixPath("docs/vectors")
 EXPECTED_VECTOR_ROOTS = {
     PurePosixPath("cli/go/internal/conformance/vectors"),
     PUBLIC_ROOT,
-    PurePosixPath("naapp/folio/tests/vectors"),
     PurePosixPath("naapp/library/tests/vectors"),
     PurePosixPath("naapp/library/test-vectors"),
     PurePosixPath("naapp/secrets/vectors"),
@@ -22,7 +21,6 @@ EXPECTED_VECTOR_ROOTS = {
 }
 APP_EMIT_COPIES = (
     PurePosixPath("cli/go/internal/conformance/vectors/app-emit-credential-v1.json"),
-    PurePosixPath("naapp/folio/tests/vectors/app-emit-credential-v1.json"),
     PurePosixPath("naapp/library/tests/vectors/app-emit-credential-v1.json"),
 )
 MANAGED_PUBLIC_COPIES = {
@@ -207,10 +205,6 @@ ROOT_CONSUMERS = {
         "team-auth-envelope-v2.json",
         'root / "docs" / "vectors" / "team-auth-envelope-v2.json"',
     ),
-    PurePosixPath("naapp/folio/tests/test_auth_v2_envelope.py"): _consumer(
-        "team-auth-envelope-v2.json",
-        'aweb_path("docs", "vectors", "team-auth-envelope-v2.json")',
-    ),
     PurePosixPath("naapp-lib/tests/runtime/test_principal_attestation.py"): _consumer(
         "principal-attestation-v1.json",
         '(Path(__file__).parents[3] / "docs" / "vectors" / "principal-attestation-v1.json")',
@@ -243,6 +237,15 @@ ROOT_CONSUMERS = {
         "page-format-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "page-format-v1.json"',
     ),
+    PurePosixPath("naapp-lib/tests/runtime/capability_links/conftest.py"): _consumer(
+        ("link-capability-v1.json", "link-request-v1.json"),
+        'AWEB_ROOT / "docs" / "vectors" / "link-capability-v1.json"',
+        'AWEB_ROOT / "docs" / "vectors" / "link-request-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/runtime/test_link_request_vectors.py"): _consumer(
+        "link-request-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "link-request-v1.json"',
+    ),
     PurePosixPath("naapp-lib/tests/pages/test_page_proposal_vectors.py"): _consumer(
         "page-proposal-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "page-proposal-v1.json"',
@@ -256,6 +259,11 @@ ROOT_CONSUMERS = {
     PurePosixPath("naapp-lib/tests/runtime/test_prepare_vectors.py"): _consumer(
         "page-action-prepare-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "page-action-prepare-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/runtime/test_usage_vectors.py"): _consumer(
+        ("usage-report-v1.json", "app-usage-credential-v1.json"),
+        'AWEB_ROOT / "docs" / "vectors" / "usage-report-v1.json"',
+        'AWEB_ROOT / "docs" / "vectors" / "app-usage-credential-v1.json"',
     ),
     PurePosixPath("naapp-lib/tests/runtime/test_team_auth_vectors.py"): _consumer(
         "team-auth-envelope-v2.json",
