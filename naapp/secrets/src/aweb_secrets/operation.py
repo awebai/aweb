@@ -357,6 +357,15 @@ def _check(after: Any) -> None:
     if idempotency is not None:
         idempotency = _exact(idempotency, frozenset({"header"}), "idempotency")
         _require(_matches(_TOKEN, idempotency["header"]), "the idempotency header is a token")
+        # The broker sets the idempotency header itself, so it is never also a
+        # fixed or an agent header: the request carries it exactly once.
+        named = {name.lower() for name in after["headers"]["fixed"]} | set(
+            after["headers"]["allowed"]
+        )
+        _require(
+            idempotency["header"].lower() not in named,
+            "the idempotency header is not also a fixed or an agent header",
+        )
     reconcile = after["reconcile"]
     _require(
         reconcile is None
