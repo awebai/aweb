@@ -11,13 +11,15 @@ from dataclasses import dataclass
 import httpx
 import pytest
 from aweb_naapp.manifest import canonical_bytes
+from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.runtime.authorization import DeclaredTool, Grant
 from aweb_naapp.runtime.health import CheckResult, HealthCheck
 from aweb_naapp.runtime.team_auth import Principal
 from aweb_naapp_testing import REGISTRY_URL, Member
 from fastapi import Request
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
-from aweb_secrets.app import SecretsService, create_app
+from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME, SecretsService, create_app
 from aweb_secrets.config import SecretsSettings
 from aweb_secrets.manifest import MANIFEST, MANIFEST_PATH
 
@@ -25,7 +27,12 @@ API = "https://api.secrets.test"
 CONSOLE = "https://console.secrets.test"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 TOOLS = MANIFEST["tools"]
-EXAMPLE_PATH_VALUES = {"secret": "stripe-test", "job": "deploy-staging", "ref": "req-1", "request_id": "req-1"}
+EXAMPLE_PATH_VALUES = {
+    "secret": "stripe-test",
+    "job": "deploy-staging",
+    "ref": "req-1",
+    "request_id": "req-1",
+}
 
 
 class InstalledTeams:
@@ -103,7 +110,9 @@ async def running(
     async with service.api_app.router.lifespan_context(service.api_app):
         async with (
             httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=API) as api,
-            httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=CONSOLE) as console,
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=service), base_url=CONSOLE
+            ) as console,
         ):
             yield Running(service, api, console)
 
@@ -121,6 +130,43 @@ async def test_the_database_holds_every_table_admission_reads(registry, database
             "config_revisions",
         ):
             assert await db.fetch_value(f"SELECT to_regclass('{table}') IS NOT NULL"), table
+
+
+async def test_records_migrations_leave_rate_buckets_to_the_shared_store(test_db_factory) -> None:
+    db = await test_db_factory.create_db(suffix="records_without_buckets")
+    await AsyncMigrationManager(
+        db, migrations_path=str(MIGRATIONS_PATH), module_name=MODULE_NAME
+    ).apply_pending_migrations()
+    assert not await db.fetch_value("SELECT to_regclass('rate_buckets') IS NOT NULL")
+
+
+async def _rate_bucket_shape(db: AsyncDatabaseManager) -> tuple[list[dict], list[dict]]:
+    columns = await db.fetch_all(
+        """
+        SELECT column_name, data_type, is_nullable, column_default
+        FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'rate_buckets'
+        ORDER BY ordinal_position
+        """
+    )
+    constraints = await db.fetch_all(
+        """
+        SELECT contype, pg_get_constraintdef(oid) AS definition FROM pg_constraint
+        WHERE conrelid = 'rate_buckets'::regclass ORDER BY contype, definition
+        """
+    )
+    return [dict(row) for row in columns], [dict(row) for row in constraints]
+
+
+async def test_startup_has_exactly_the_shared_rate_bucket_shape(
+    registry, database_url, test_db_factory
+) -> None:
+    reference = await test_db_factory.create_db(suffix="shared_rate_bucket_shape")
+    await apply_ratelimit_migrations(reference)
+    expected = await _rate_bucket_shape(reference)
+    assert expected[0]
+    async with running(registry, database_url, grants=InstalledTeams({})) as app:
+        assert await _rate_bucket_shape(app.service.runtime.db()) == expected
 
 
 def _path(tool: dict) -> str:

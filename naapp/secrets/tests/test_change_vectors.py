@@ -38,12 +38,16 @@ from aweb_secrets.change import (
     parse_change,
     validate_change,
 )
+from aweb_secrets.grant import GrantTemplate
+from aweb_secrets.operation import OperationInvalid, OperationTemplate, operation_digest
 
 VECTOR = json.loads((Path(__file__).parents[1] / "vectors" / "change-v1.json").read_text())
 POSITIVE = VECTOR["positive_cases"]
 NEGATIVE = VECTOR["negative_cases"]
 CONFIRMATIONS = VECTOR["confirmation_cases"]
 CONFIRMERS = VECTOR["confirmer_cases"]
+DERIVED_OPERATIONS = VECTOR["derived_operation_cases"]
+GRANT_TEMPLATES = VECTOR["grant_template_cases"]
 
 
 def _bytes(value: str) -> bytes:
@@ -97,6 +101,19 @@ def test_positive_cases_cover_both_drafters_and_every_shape_in_force() -> None:
     assert drafters == {("console", False), ("team_auth", True), ("team_auth", False)}
     kinds = {item["kind"] for c in POSITIVE for item in c["request"]["changes"]}
     assert kinds == {kind for kind, _ in AFTER_SHAPES}
+
+
+@pytest.mark.parametrize("case", DERIVED_OPERATIONS, ids=lambda case: case["name"])
+def test_derived_operation_shapes_and_digest_pins(case: dict) -> None:
+    assert operation_digest(case["after"]) == case["operation_digest"]
+    with pytest.raises(OperationInvalid) as refused:
+        OperationTemplate.from_after(case["after"])
+    assert refused.value.code == case["expected_code"]
+
+
+@pytest.mark.parametrize("case", GRANT_TEMPLATES, ids=lambda case: case["name"])
+def test_issuance_pins_the_complete_grant_template(case: dict) -> None:
+    assert GrantTemplate.from_after(case["after"]).digest == case["digest"]
 
 
 @pytest.mark.parametrize("case", NEGATIVE, ids=lambda case: case["name"])

@@ -38,6 +38,7 @@ from aweb_naapp.egress import (
     Egress,
     EgressNotSent,
     EgressOutcomeUnknown,
+    EgressRefused,
     HeaderRules,
 )
 
@@ -272,7 +273,13 @@ async def broker_operation(
     secret: SecretVersion | None = None,
 ) -> BrokeredCall:
     """Send a rendered named operation with ``value`` injected, bounded and
-    handled as its template says."""
+    handled as its template says. Token issuance is allowed only with
+    ``withhold`` handling; derived-secret custody is not available here yet.
+    Refusal precedes even an OAuth token exchange."""
+    if request.token_issuing and request.result_handling != "withhold":
+        raise EgressRefused(
+            "token_issuing_denied", "result_handling", "token issuance requires supported result handling"
+        )
     return await broker(
         egress,
         method=request.method,
