@@ -166,7 +166,7 @@ class Confirmation:
 
 
 def change_policy_ref(installation_id: str, team_id: str, scope: str | None = None) -> str:
-    """The B2 policy a change set mints under: every owner, or one console scope."""
+    """The B2 policy a change set mints under, optionally bound to a console drafter."""
     return "|".join([POLICY_PREFIX, installation_id, team_id, *([scope] if scope else [])])
 
 
@@ -183,9 +183,13 @@ class ChangeSetPolicies:
         if parts[0] != POLICY_PREFIX or len(parts) not in (3, 4):
             return None
         installation_id, team_id = parts[1], parts[2]
-        if len(parts) == 4:
+        allow_requester = await four_eyes(self._db, installation_id) == "not_required"
+        if len(parts) == 4 and allow_requester:
             scopes: tuple[str, ...] = (parts[3],)
         else:
+            # A console drafter normally confirms its own change. Four-eyes
+            # instead needs another owner; OwnerDirectory excludes the drafter
+            # from these current enrolled owners, as for a member draft.
             owners = await self._directory.enrolled_owners(
                 self._db, installation_id=installation_id, team_id=team_id
             )
@@ -198,7 +202,7 @@ class ChangeSetPolicies:
             min_assurance=Assurance.PASSKEY,
             ttl=MAX_LIFETIME,
             approver_scopes=scopes,
-            allow_requester_approval=await four_eyes(self._db, installation_id) == "not_required",
+            allow_requester_approval=allow_requester,
         )
 
 
