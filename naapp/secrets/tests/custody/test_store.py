@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 
 import pytest
@@ -14,7 +15,10 @@ from aweb_secrets.custody import (
     SecretOpener,
     SecretSealer,
     apply_custody_migrations,
+    decode_value,
+    encode_value,
 )
+from aweb_secrets.secret import SecretRecord
 from tests.custody.conftest import initial_record, record_tables, value_bytes
 
 INSTALLATION = "installation-1"
@@ -142,3 +146,29 @@ async def test_an_unknown_version_is_refused(
 
 def test_the_sealer_cannot_open() -> None:
     assert not hasattr(SecretSealer, "open")
+
+
+async def test_native_aws_key_pair_without_session_token_survives_sealing_and_opening(
+    db: AsyncDatabaseManager, provider: LocalKeyFileProvider
+) -> None:
+    secret_id = "sec_aws-keypair"
+    record = SecretRecord.from_after(
+        {
+            **initial_record(secret_id).after,
+            "kind": "aws-sigv4",
+            "kind_params": {"region": "eu-west-1", "service": "sts"},
+        }
+    )
+    value = {name: os.urandom(24).hex() for name in ("access_key_id", "secret_access_key")}
+    encoded = encode_value("aws-sigv4", value)
+    async with db.transaction() as tx:
+        version = await SecretSealer(provider).ingest(
+            tx,
+            installation_id=INSTALLATION,
+            team_id=TEAM,
+            secret_id=secret_id,
+            initial=record,
+            value=encoded,
+        )
+    opened = await SecretOpener(provider, db).open(_context(secret_id, version))
+    assert decode_value("aws-sigv4", opened.reveal()) == value

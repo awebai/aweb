@@ -1,5 +1,6 @@
 """The one value codec shared by console ingest, capture and broker opening."""
 
+import json
 import os
 
 import pytest
@@ -45,3 +46,14 @@ def test_decode_refuses_malformed_or_ambiguous_values(encoded: bytes) -> None:
 def test_basic_can_have_an_empty_username() -> None:
     value = {"username": "", "password": os.urandom(24).hex()}
     assert decode_value("basic", encode_value("basic", value)) == value
+
+
+@pytest.mark.parametrize("source", ["new_ingest", "previously_stored"])
+def test_native_aws_key_pairs_round_trip_without_a_session_token(source: str) -> None:
+    value = {name: os.urandom(24).hex() for name in ("access_key_id", "secret_access_key")}
+    encoded = (
+        encode_value("aws-sigv4", value)
+        if source == "new_ingest"
+        else json.dumps(value).encode("utf-8")
+    )
+    assert decode_value("aws-sigv4", encoded) == value
