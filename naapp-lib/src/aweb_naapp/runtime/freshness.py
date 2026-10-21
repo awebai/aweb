@@ -1,8 +1,9 @@
 """A bounded freshness cache for answers read from a remote authority.
 
 Grant status and hook resolution share one rule (app-team-server-api §3, §4):
-an answer is reused for at most ``min(max_age_seconds, 60)`` counted from the
-client's own receipt time, an expired answer is never served, not even while
+an answer is reused for at most ``min(max_age_seconds, 60)`` counted from when
+the client asked for it (the authority answers after that, so a slow answer
+gains no time), an expired answer is never served, not even while
 its refresh runs, a refresh that outlasts its timeout fails closed for every
 caller waiting on it, and concurrent misses for one key share one refresh.
 
@@ -68,7 +69,9 @@ class FreshnessCache[K: Hashable, V]:
             return entry
         refresh = self._refreshes.get(key)
         if refresh is None:
-            refresh = asyncio.ensure_future(self._refresh(key, fetch))
+            # The window starts once, when the shared refresh starts: a caller
+            # joining it later gets the same deadline.
+            refresh = asyncio.ensure_future(self._refresh(key, fetch, self._monotonic()))
             # A refresh whose every waiter was cancelled still completes; its
             # outcome is observed here so a failure is not reported as unretrieved.
             refresh.add_done_callback(lambda task: task.cancelled() or task.exception())
@@ -77,7 +80,7 @@ class FreshnessCache[K: Hashable, V]:
         # that other callers are waiting on.
         return await asyncio.shield(refresh)
 
-    async def _refresh(self, key: K, fetch: Fetch[V]) -> Fresh[V]:
+    async def _refresh(self, key: K, fetch: Fetch[V], asked_at: float) -> Fresh[V]:
         try:
             try:
                 value, max_age = await asyncio.wait_for(fetch(), self._refresh_timeout)
@@ -86,7 +89,7 @@ class FreshnessCache[K: Hashable, V]:
             if isinstance(max_age, bool) or not isinstance(max_age, int) or max_age < 1:
                 raise ValueError("an answer's max_age_seconds must be a positive whole number")
             fresh = Fresh(
-                value=value, fresh_until=self._monotonic() + min(max_age, FRESHNESS_CEILING_SECONDS)
+                value=value, fresh_until=asked_at + min(max_age, FRESHNESS_CEILING_SECONDS)
             )
             self._entries[key] = fresh
             return fresh
