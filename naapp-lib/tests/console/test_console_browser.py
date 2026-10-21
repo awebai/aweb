@@ -15,9 +15,7 @@ eagerly (no postponed annotations) for FastAPI to see the session dependency.
 
 import asyncio
 import socket
-import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any
@@ -25,7 +23,6 @@ from typing import Annotated, Any
 import pytest
 import uvicorn
 from fastapi import APIRouter, Depends, FastAPI, Response
-from pgdbm import AsyncDatabaseManager
 from playwright.async_api import Browser, CDPSession, Page, async_playwright
 
 from aweb_naapp.console import (
@@ -34,14 +31,11 @@ from aweb_naapp.console import (
     ConsoleSession,
     ConsoleSessions,
     LoginLimiter,
-    apply_console_migrations,
     console_login_router,
 )
-from aweb_naapp.runtime.approvals import ApprovalRevocation, PgApprovalStore
 from aweb_naapp.runtime.origins import split_origins
-from aweb_naapp.runtime.passkeys import OwnerActKind, Passkeys, RelyingParty
-from tests.runtime.approvals.support import AuditOutbox
-from tests.runtime.approvals.test_passkeys import Contacts, owner_act
+from aweb_naapp.runtime.passkeys import Passkeys
+from tests.console.support import Console, console_world
 
 SCOPE = "app.owner.a"
 CONTACT = "owner-a@example.com"
@@ -88,14 +82,6 @@ window.whoami = async () => {
 """
 
 
-@dataclass
-class Service:
-    db: AsyncDatabaseManager
-    passkeys: Passkeys
-    contacts: Contacts
-    origin: str
-
-
 def _free_socket() -> socket.socket:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -137,38 +123,21 @@ def _human_app(passkeys: Passkeys, sessions: ConsoleSessions, limiter: LoginLimi
 
 
 @pytest.fixture
-async def service(test_db_factory) -> AsyncIterator[Service]:
+async def service(test_db_factory, registry) -> AsyncIterator[Console]:
     sock = _free_socket()
     port = sock.getsockname()[1]
     human_origin = f"http://localhost:{port}"
-    db = await test_db_factory.create_db(suffix="naapp_console_browser", schema="app")
-    audit = AuditOutbox(db)
-    await audit.create()
-    store = PgApprovalStore(db)
-    await store.migrate()
-    contacts = Contacts()
-    passkeys = Passkeys(
-        db,
-        rp=RelyingParty(origin=human_origin, name="Console"),
-        delivery=contacts,
-        audit=audit,
-        retirement=ApprovalRevocation(store, audit),
-        enrolment_ttl=timedelta(hours=1),
-        challenge_ttl=timedelta(minutes=5),
+    console = await console_world(
+        test_db_factory, registry, "naapp_console_browser", origin=human_origin
     )
-    await passkeys.migrate()
-    await apply_console_migrations(db)
-
-    async def scopes(scope: str) -> bool:
-        return scope == SCOPE
-
-    sessions = ConsoleSessions(db, passkeys=passkeys, scopes=scopes)
+    console.allowed = {SCOPE}
+    sessions = console.sessions()
     limiter = LoginLimiter(
-        db, client_identity=ClientIdentity(), limit=20, window=timedelta(minutes=1)
+        console.db, client_identity=ClientIdentity(), limit=20, window=timedelta(minutes=1)
     )
     app = split_origins(
         FastAPI(),
-        _human_app(passkeys, sessions, limiter),
+        _human_app(console.passkeys, sessions, limiter),
         agent_origin=f"http://127.0.0.1:{port}",
         human_origin=human_origin,
     )
@@ -177,7 +146,7 @@ async def service(test_db_factory) -> AsyncIterator[Service]:
     while not server.started:
         await asyncio.sleep(0.01)
     try:
-        yield Service(db, passkeys, contacts, human_origin)
+        yield console
     finally:
         server.should_exit = True
         await serving
@@ -200,7 +169,7 @@ async def browser() -> AsyncIterator[Browser]:
             await browser.close()
 
 
-async def _console(browser: Browser, service: Service) -> tuple[Page, CDPSession, str]:
+async def _console(browser: Browser, service: Console) -> tuple[Page, CDPSession, str]:
     """The console page in a fresh browser, with an enrolled virtual authenticator."""
     context = await browser.new_context()
     page = await context.new_page()
@@ -220,17 +189,13 @@ async def _console(browser: Browser, service: Service) -> tuple[Page, CDPSession
         },
     )
     await page.goto(service.origin + "/")
-    await service.passkeys.designate(
-        scope=SCOPE,
-        contact=CONTACT,
-        owner_act=owner_act(OwnerActKind.DESIGNATE, CONTACT, SCOPE, str(uuid.uuid4())),
-    )
-    assert await page.evaluate("token => enrol(token)", service.contacts.last(CONTACT)) == 200
+    token = await service.designate(SCOPE, CONTACT)
+    assert await page.evaluate("token => enrol(token)", token) == 200
     return page, cdp, added["authenticatorId"]
 
 
 async def test_an_owner_logs_in_in_a_browser_with_user_verification(
-    service: Service, browser: Browser
+    service: Console, browser: Browser
 ) -> None:
     page, _, _ = await _console(browser, service)
     login = await page.evaluate("scope => login(scope)", SCOPE)
@@ -244,7 +209,7 @@ async def test_an_owner_logs_in_in_a_browser_with_user_verification(
 
 
 async def test_a_browser_login_without_user_verification_fails(
-    service: Service, browser: Browser
+    service: Console, browser: Browser
 ) -> None:
     page, cdp, authenticator = await _console(browser, service)
     await cdp.send(

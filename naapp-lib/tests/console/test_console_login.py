@@ -13,6 +13,7 @@ from typing import Annotated, Any
 
 import httpx
 import pytest
+from aweb_naapp_testing.webauthn import SoftAuthenticator
 from fastapi import APIRouter, Depends, FastAPI
 
 from aweb_naapp.console import (
@@ -25,7 +26,6 @@ from aweb_naapp.console import (
 )
 from aweb_naapp.runtime.origins import split_origins
 from tests.console.support import HUMAN, OWNER_A, OWNER_B, Console
-from tests.runtime.approvals.soft_authenticator import SoftAuthenticator
 
 AGENT = "https://api.console.example"
 
@@ -272,3 +272,15 @@ async def test_another_owners_session_survives_a_recovery(console: Console) -> N
         whoami = await client.get("/whoami", headers={"Cookie": cookie_b})
     assert whoami.status_code == 200
     assert whoami.json()["scope"] == OWNER_B
+
+
+async def test_a_session_ends_when_the_owner_retires_its_approver(console: Console) -> None:
+    subject, device = await console.enrol(OWNER_A)
+    async with _client(_app(console, _limiter(console))) as client:
+        cookie = _cookie(await _login(client, device, OWNER_A))
+        assert (await client.get("/whoami", headers={"Cookie": cookie})).status_code == 200
+        await console.retire(OWNER_A, subject)
+        after = await client.get("/whoami", headers={"Cookie": cookie})
+    assert after.status_code == 401
+    assert after.json() == {"detail": "console_session_required"}
+    assert await _closed(console) == 1
