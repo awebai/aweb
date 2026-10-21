@@ -1,5 +1,9 @@
 # App registry and team grants
 
+Status: **current experimental public contract**. Owner: the aweb OSS server
+extension surface. Implementation: `server/src/aweb/app_registry.py` and
+`server/src/aweb/routes/apps.py`.
+
 The registry records each team's installation identity, pinned manifest bytes,
 origin, generation, scopes and state. It is optional: core mail, chat and
 coordination do not require an app installation.

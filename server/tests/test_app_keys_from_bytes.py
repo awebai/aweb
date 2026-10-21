@@ -430,4 +430,3 @@ async def test_every_live_apps_committed_manifest_installs_through_the_reader(db
         assert await get_active_app_emit_key(
             db, team_id=TEAM_ID, app_id=app_id, kid=emitter["kid"], did_key=emitter["did_key"]
         ) is not None
-
