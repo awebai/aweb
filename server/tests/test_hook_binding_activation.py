@@ -69,7 +69,9 @@ class Owner:
         self.key = key
         self.team_id = team_id
 
-    def sign(self, act: str, binding, *, audience: str = AUDIENCE, **overrides) -> tuple[bytes, str]:
+    def sign(
+        self, act: str, binding, *, audience: str = AUDIENCE, issued: datetime | None = None, **overrides
+    ) -> tuple[bytes, str]:
         subject = {
             "binding_id": str(binding.binding_id),
             "installation_id": binding.installation_id,
@@ -87,7 +89,7 @@ class Owner:
         else:
             subject["reads"] = list(binding.reads)
         subject.update(overrides)
-        issued = datetime.now(UTC).replace(microsecond=0)
+        issued = issued or datetime.now(UTC).replace(microsecond=0)
         fields = {
             "v": 1,
             "type": "aweb.owner-act",
@@ -172,8 +174,9 @@ async def _hook_keys(db, *, purposes=("hook-event",), team_id=TEAM, digest=DIGES
     )
 
 
-async def _activate(env, binding, *, owner=None, team_id=TEAM, act="hook-binding.activate", **overrides):
-    signing, signature = (owner or env.owner).sign(act, binding, **overrides)
+async def _activate(env, binding, *, owner=None, team_id=TEAM, act="hook-binding.activate", audience=AUDIENCE,
+                    issued=None, **overrides):
+    signing, signature = (owner or env.owner).sign(act, binding, audience=audience, issued=issued, **overrides)
     return await activate_binding(
         env.db, env.verifier, team_id=team_id, binding_id=binding.binding_id, signing=signing, signature=signature,
     )
@@ -413,3 +416,47 @@ async def test_work_in_the_activating_transaction_commits_or_rolls_back_with_it(
         signing=signing, signature=signature, in_transaction=records,
     )
     assert active.state == "active" and seen == ["active"]
+
+
+@pytest.mark.asyncio
+async def test_an_act_for_another_team_is_refused_even_signed_by_that_teams_key(env):
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+
+    with pytest.raises(ForbiddenError, match="team_mismatch"):
+        await _activate(env, registration, owner=Owner(env.owner.key, team_id=OTHER_TEAM))
+
+
+@pytest.mark.asyncio
+async def test_the_core_verifier_refuses_another_audience_and_an_expired_act(env):
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+
+    with pytest.raises(ForbiddenError, match="audience_mismatch"):
+        await _activate(env, registration, audience="https://other.example")
+    with pytest.raises(ForbiddenError, match="expired"):
+        await _activate(env, registration, issued=datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=20))
+    assert (await list_app_bindings(env.db, team_id=TEAM, app_id="logs"))[0].state == "pending"
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_activations_of_one_binding_activate_it_once(env):
+    import asyncio
+
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    first = env.owner.sign("hook-binding.activate", registration)
+    second = env.owner.sign("hook-binding.activate", registration)
+
+    results = await asyncio.gather(
+        *(
+            activate_binding(env.db, env.verifier, team_id=TEAM, binding_id=registration.binding_id,
+                             signing=signing, signature=signature)
+            for signing, signature in (first, second)
+        ),
+        return_exceptions=True,
+    )
+
+    assert sorted(type(result).__name__ for result in results) == ["ConflictError", "HookBinding"]
+    assert [str(r) for r in results if isinstance(r, ConflictError)] == ["the binding is not pending"]
+    assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 1

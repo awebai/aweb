@@ -180,3 +180,26 @@ async def test_an_unreachable_registry_is_a_classified_503_and_changes_nothing(e
                                   registration.binding_id)
     assert [row["state"] for row in rows] == ["pending"]
     assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 0
+
+    # AWID back: the same act now succeeds, because nothing was consumed.
+    async with await _client(env, monkeypatch) as client:
+        retried = await client.post(
+            f"/v1/apps/hook-bindings/{registration.binding_id}/activate", json=_body(signing, signature),
+        )
+    assert retried.status_code == 200, retried.text
+
+
+@pytest.mark.asyncio
+async def test_a_server_without_a_registry_client_refuses_without_changing_anything(env, monkeypatch):
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    monkeypatch.setattr(hook_routes, "get_team_identity", _identity(TEAM))
+    app = _app(env, None)
+    signing, signature = env.owner.sign("hook-binding.activate", registration)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            f"/v1/apps/hook-bindings/{registration.binding_id}/activate", json=_body(signing, signature),
+        )
+    assert response.status_code == 500
+    assert "registry client not configured" in response.json()["detail"]
+    assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 0
