@@ -74,6 +74,36 @@ full projection, immutable shape, scope and versions to the server-staged row.
 A caller-supplied item version is not a verified SDK observation. Confirmation
 uses the single existing passkey-approved change path and revision claim.
 
+## Use-time opener API
+
+`aweb_secrets.custody.opening.UseSecretOpener(db, native=...,
+credential_opener=...)` is the common native/1Password read seam. Composition
+passes `custody.opener` and the active-only `custody.backend_credential_opener`;
+it never passes `backend_credential_preview`. The latter remains exclusively
+in the owner-console service for inert previews. Backend selection comes from
+the scoped, active secret record, never an input supplied by the requesting
+agent. The common opener is read-only and does not activate either new kind.
+
+Before S3, `await opener.observe(context)` returns an immutable, value-free
+`BackendObservation` for 1Password, or `None` for native custody. The binding
+includes the exact local context, pinned active credential context, immutable
+reference and shape, opaque version handle and stored item version. Observation
+adds the remotely validated item version and update time, retaining no value.
+The SDK accepts only the token/context pair returned by the dedicated opener.
+
+After separate reconciliation, S13 binds that observation into
+`await opener.check_observation(tx, context, observation)` under its held
+authority. The checker takes no new row locks and performs no network I/O or
+writes. A changed remote version raises `SecretVersionChanged`; a missing,
+disabled, destroyed, foreign or superseded binding/token refuses. Neither
+result activates a version. Native custody requires `observation is None`.
+
+After dispatching commits, `await opener.open(context)` returns the existing
+redacting `Plaintext`. For 1Password it reads the item afresh, requires the exact
+authorized item version, then rechecks the local binding/credential epoch
+before returning. There is no native fallback or value cache. Successful real
+vault reads and phase-correct S13 composition are separate release proofs.
+
 ## Token replacement and dependencies
 
 Activating another service-account version never silently substitutes it under
