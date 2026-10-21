@@ -5,11 +5,11 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from aweb_naapp_testing import Member, utc_timestamp
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 
 from aweb_naapp.runtime.certificate_client import TeamCertificateHTTPClient
-from aweb_naapp_testing import Member, utc_timestamp
 from tests.runtime.conftest import relying_app
 
 ORIGIN = 'https://app.example.com'

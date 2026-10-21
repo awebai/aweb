@@ -27,9 +27,9 @@ from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from awid_service.db import AwidDatabaseInfra
 from awid_service.routes.attestation_records import router as awid_attestation_records_router
-from awid_service.routes.did import router as awid_did_router
 from awid_service.routes.certificate_rollover import router as awid_rollover_router
 from awid_service.routes.credential_policy import router as awid_policy_router
+from awid_service.routes.did import router as awid_did_router
 from awid_service.routes.teams import router as awid_teams_router
 from fastapi import FastAPI
 from nacl.signing import SigningKey
