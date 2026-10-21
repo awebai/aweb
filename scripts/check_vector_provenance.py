@@ -14,7 +14,6 @@ PUBLIC_ROOT = PurePosixPath("docs/vectors")
 EXPECTED_VECTOR_ROOTS = {
     PurePosixPath("cli/go/internal/conformance/vectors"),
     PUBLIC_ROOT,
-    PurePosixPath("naapp/folio/tests/vectors"),
     PurePosixPath("naapp/library/tests/vectors"),
     PurePosixPath("naapp/library/test-vectors"),
     PurePosixPath("naapp/secrets/vectors"),
@@ -22,7 +21,6 @@ EXPECTED_VECTOR_ROOTS = {
 }
 APP_EMIT_COPIES = (
     PurePosixPath("cli/go/internal/conformance/vectors/app-emit-credential-v1.json"),
-    PurePosixPath("naapp/folio/tests/vectors/app-emit-credential-v1.json"),
     PurePosixPath("naapp/library/tests/vectors/app-emit-credential-v1.json"),
 )
 MANAGED_PUBLIC_COPIES = {

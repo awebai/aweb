@@ -29,17 +29,20 @@ The API defaults to `http://127.0.0.1:8765`.
 
 ## Configuration
 
-All runtime env vars use the `FOLIO_` prefix:
+All runtime env vars use the `FOLIO_` prefix; they are the shared naapp settings (`aweb_naapp.runtime.settings`) plus Folio's own:
 
 - `FOLIO_DATABASE_URL` — PostgreSQL connection string.
 - `FOLIO_AWID_REGISTRY_URL` — AWID registry URL, default `https://api.awid.ai`.
-- `FOLIO_AWID_SERVICE_TOKEN` — optional AWID service credential for private-team facts and revocation reads; provision as a secret. A denied private-team read returns `403 team_private_unreadable`; registry outages remain `503`.
+- `FOLIO_AWID_SERVICE_TOKEN` — optional AWID service credential for private-team facts and revocation reads, at least 32 bytes; provision as a secret. A denied private-team read returns `403 team_private_unreadable`; registry outages remain `503`.
 - `FOLIO_PUBLIC_ORIGIN` — public origin clients sign in the v2 team-auth `aud`, default `http://127.0.0.1:8765`.
 - `FOLIO_DB_POOL_MIN_CONNECTIONS` — default `1`.
 - `FOLIO_DB_POOL_MAX_CONNECTIONS` — default `5`.
 - `FOLIO_DB_STATEMENT_CACHE_SIZE` — default `0` for PgBouncer compatibility.
-- `FOLIO_AUTH_CACHE_TTL_SECONDS` — AWID auth cache TTL, default `600`.
-- `FOLIO_TIMESTAMP_SKEW_SECONDS` — signed request skew window, default `300`.
+- `FOLIO_AUTH_CACHE_TTL_SECONDS` — AWID auth cache TTL, default and maximum `60`.
+- `FOLIO_TIMESTAMP_SKEW_SECONDS` — signed request skew window, default and maximum `300`.
+- `FOLIO_DID_AW_PROFILE` — how a certificate's did:aw is checked against its current registry key, default `observe` (admit and log); `require` refuses a mismatch.
+- `FOLIO_APP_EVENTS_ORIGIN`, `FOLIO_APP_EMIT_KID`, `FOLIO_APP_EMIT_KEY_SEED_HEX` — where and with which declared key Folio emits `folio/doc.changed`; unset emits nothing.
+- `FOLIO_GIT_SHA` — the build commit `/health` reports when Render does not inject `RENDER_GIT_COMMIT`.
 - `FOLIO_DEFAULT_PRESENT_TTL_SECONDS` — default present-link TTL, default `86400`.
 - `FOLIO_MAX_PRESENT_TTL_SECONDS` — max present-link TTL, default `604800`.
 - `FOLIO_CLOUDFLARE_ACCOUNT_ID` — Cloudflare account id for Stream.

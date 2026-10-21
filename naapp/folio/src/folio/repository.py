@@ -9,12 +9,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+from aweb_naapp.runtime.event_emit import AppEvents
 from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 
 from folio.auth import Principal
 from folio.cloudflare_stream import CloudflareStreamClient, stream_direct_upload_expires_at
 from folio.config import Settings
+from folio.event_emit import emit_doc_changed
 from folio.presentation import builtin_preset, sanitize_theme_tokens
 
 
@@ -57,6 +59,7 @@ async def create_document(
     db: AsyncDatabaseManager,
     *,
     principal: Principal,
+    events: AppEvents,
     slug: str,
     title: str,
     body: str,
@@ -94,6 +97,9 @@ async def create_document(
                 principal.address,
                 principal.alias,
                 principal.certificate_id,
+            )
+            await emit_doc_changed(
+                events, tx, team_id=principal.team_id, slug=slug, version=1, source="api"
             )
     except Exception as exc:
         if "unique" in str(exc).lower():
@@ -164,6 +170,7 @@ async def append_version(
     db: AsyncDatabaseManager,
     *,
     principal: Principal,
+    events: AppEvents,
     slug: str,
     body: str,
 ) -> dict:
@@ -202,6 +209,9 @@ async def append_version(
         await tx.execute(
             "UPDATE {{tables.documents}} SET updated_at = NOW() WHERE document_id = $1",
             document_id,
+        )
+        await emit_doc_changed(
+            events, tx, team_id=principal.team_id, slug=slug, version=next_version, source="api"
         )
     return await get_document(db, principal=principal, slug=slug)
 
@@ -385,6 +395,7 @@ async def get_presentation_state(db: AsyncDatabaseManager, *, token: str) -> dic
 async def edit_presented_document(
     db: AsyncDatabaseManager,
     *,
+    events: AppEvents,
     token: str,
     body: str,
     base_version: int,
@@ -451,7 +462,15 @@ async def edit_presented_document(
             "UPDATE {{tables.documents}} SET updated_at = NOW() WHERE document_id = $1",
             document_id,
         )
-    return {"version_number": new_version, "team_id": str(link["team_id"]), "slug": str(link["slug"])}
+        await emit_doc_changed(
+            events,
+            tx,
+            team_id=str(link["team_id"]),
+            slug=str(link["slug"]),
+            version=new_version,
+            source="present-link",
+        )
+    return {"version_number": new_version}
 
 
 def _json_value(value: Any) -> Any:
