@@ -101,7 +101,7 @@ first public send/checkpoint integration waits for P0 and the implementing P tas
 
 - **Repo/files:** aweb `docs/human-channels-contract-proposal.md`,
   `docs/identity-messaging-contract.md`, `docs/e2e-messaging-contract.md`,
-  `docs/receiving-events.md`; new root `test-vectors/human-channels/` profiles.
+  `docs/receiving-events.md`; root `docs/vectors/human-channels-*.json` profiles (current public vector authority).
 - **Migrations:** none. Establish M-P3/M-P4/M-P5/M-P7/M-P9 ownership/order.
 - **Dependencies:** decided design; C0 agreement on request/result/capability DTOs.
 - **Result:** precise native via, typed-chat/group context, membership/control

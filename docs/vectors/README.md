@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 36
+`docs/vectors/*.json` is the only public protocol-vector authority for the
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the two classified
 package copies below. An unclassified hand-maintained copy is forbidden even when
@@ -588,3 +588,16 @@ npm test
 
 A vector change is incomplete until every listed consumer for that fixture
 passes and the lifecycle label above still describes what the bytes prove.
+
+## Human-channel P0 freeze candidate
+
+- `human-channels-profile-v1.json` — exact new DTO grammar/capability registry;
+  not an advertised service feature. Python/Go compiled grammar is checked against
+  this authority.
+- `human-channels-v1.json` — shared structural canonical bytes, digest/signature
+  and refusal vectors with a public synthetic key. These do not establish actual
+  owner, recipient, membership or custody authority.
+
+The [P0 contract](../human-channels-contract-v1.md) fixes the public embedding
+ports and signature boundary. X-E2/X-GF encrypted re-share/federation annexes
+remain refused until exact-SHA Athena review; current native fixtures are unchanged.

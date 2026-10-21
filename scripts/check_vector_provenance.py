@@ -50,6 +50,16 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("server/tests/test_human_channels_contract.py"): _consumer(
+        {"human-channels-v1.json", "human-channels-profile-v1.json"},
+        "ROOT / 'docs/vectors/human-channels-v1.json'",
+        "ROOT / 'docs/vectors/human-channels-profile-v1.json'",
+    ),
+    PurePosixPath("cli/go/awid/human_channels_contract_test.go"): _consumer(
+        {"human-channels-v1.json", "human-channels-profile-v1.json"},
+        '"../../../docs/vectors/human-channels-v1.json"',
+        '"../../../docs/vectors/human-channels-profile-v1.json"',
+    ),
     PurePosixPath("cli/go/awid/page_proposal_test.go"): _consumer(
         "page-proposal-v1.json",
         '"../../../docs/vectors/page-proposal-v1.json"',
@@ -466,6 +476,13 @@ PACKAGE_GUARDS = {
     ),
 }
 NON_CONSUMING_CODE_REFERENCES = {
+    PurePosixPath("scripts/freeze_human_channels_profile.py"): (
+        "docs/vectors/human-channels-profile-v1.json",
+        "docs/vectors/human-channels-v1.json",
+    ),
+    PurePosixPath("cli/go/awid/human_channels_contract.go"): (
+        "docs/vectors/human-channels-profile-v1.json",
+    ),
     PurePosixPath("naapp/folio/tests/test_surfaces.py"): (
         'decoy / "docs" / "vectors" / "team-auth-envelope-v2.json"',
         "assert not is_aweb_root(decoy)",

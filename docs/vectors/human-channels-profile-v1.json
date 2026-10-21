@@ -1,0 +1,1352 @@
+{
+  "profile": "aweb-human-channels-v1",
+  "schemas": {
+    "NativeParticipant": {
+      "required": {
+        "kind": {
+          "enum": [
+            "native"
+          ]
+        },
+        "did": "did"
+      },
+      "optional": {}
+    },
+    "BridgedParticipant": {
+      "required": {
+        "kind": {
+          "enum": [
+            "bridged"
+          ]
+        },
+        "bridge": "didaw",
+        "subject": "opaque"
+      },
+      "optional": {}
+    },
+    "SignedArtifact": {
+      "required": {
+        "signed_payload": "text",
+        "signature": "signature"
+      },
+      "optional": {}
+    },
+    "GroupContext": {
+      "required": {
+        "session_id": "uuid",
+        "membership_epoch": "uint",
+        "membership_hash": "hash",
+        "author_ref": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        },
+        "message_id": "uuid"
+      },
+      "optional": {}
+    },
+    "ServiceBinding": {
+      "required": {
+        "service": "did",
+        "signing_key_id": "didkey",
+        "audience": "text"
+      },
+      "optional": {}
+    },
+    "Capabilities": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-human-channels-capabilities-v1"
+          ]
+        },
+        "implemented": {
+          "array": "opaque"
+        },
+        "enabled": {
+          "array": "opaque"
+        },
+        "refused": {
+          "array": "opaque"
+        }
+      },
+      "optional": {}
+    },
+    "ResolveRequest": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-human-resolve-v1"
+          ]
+        },
+        "team_id": "uuid",
+        "selector": "text"
+      },
+      "optional": {
+        "session_id": "uuid",
+        "participant": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        }
+      }
+    },
+    "AuthorityFacts": {
+      "required": {
+        "principal": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        },
+        "signing_key_id": "didkey",
+        "route": {
+          "ref": "ServiceBinding"
+        },
+        "custody": {
+          "enum": [
+            "self_custodial",
+            "hosted_custodial",
+            "bridge_custodial"
+          ]
+        },
+        "active": "bool",
+        "access": {
+          "enum": [
+            "allowed",
+            "denied"
+          ]
+        },
+        "inbound": {
+          "enum": [
+            "allowed",
+            "consent_required",
+            "denied"
+          ]
+        },
+        "confidentiality": {
+          "enum": [
+            "end_to_end",
+            "hosted_readable",
+            "bridge_readable",
+            "server_readable"
+          ]
+        },
+        "capabilities": {
+          "array": "opaque"
+        },
+        "authorization_revision": "opaque"
+      },
+      "optional": {
+        "actor_id": "uuid",
+        "team_id": "uuid",
+        "key_assertion": "json_object",
+        "ownership_proof": {
+          "ref": "SignedArtifact"
+        }
+      }
+    },
+    "PrepareRequest": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-human-prepare-v1"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "mail",
+            "chat"
+          ]
+        },
+        "message_id": "uuid",
+        "author": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        },
+        "envelope": "text",
+        "format": {
+          "enum": [
+            "native_plaintext",
+            "native_encrypted_v2",
+            "managed_chat_plaintext"
+          ]
+        }
+      },
+      "optional": {
+        "target": {
+          "ref": "AuthorityFacts"
+        },
+        "conversation_id": "uuid",
+        "group_context": {
+          "ref": "GroupContext"
+        },
+        "attachment_refs": {
+          "array": "json_object"
+        }
+      }
+    },
+    "PreparedSend": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-prepared-send-v1"
+          ]
+        },
+        "prepared_id": "uuid",
+        "message_id": "uuid",
+        "kind": {
+          "enum": [
+            "mail",
+            "chat"
+          ]
+        },
+        "envelope": "text",
+        "envelope_hash": "hash",
+        "authority_revision": "opaque",
+        "expires_at": "timestamp",
+        "author": {
+          "ref": "AuthorProjection"
+        },
+        "recipients": {
+          "array": {
+            "ref": "AuthorityFacts"
+          }
+        }
+      },
+      "optional": {
+        "attachment_refs": {
+          "array": "json_object"
+        },
+        "conversation_id": "uuid",
+        "group_context": {
+          "ref": "GroupContext"
+        }
+      }
+    },
+    "IngressKey": {
+      "required": {
+        "issuer": "did",
+        "namespace": "opaque",
+        "key": "opaque",
+        "input_hash": "hash"
+      },
+      "optional": {}
+    },
+    "AcceptedSend": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-accepted-send-v1"
+          ]
+        },
+        "message_id": "uuid",
+        "kind": {
+          "enum": [
+            "mail",
+            "chat"
+          ]
+        },
+        "envelope_hash": "hash",
+        "replayed": "bool",
+        "publication": {
+          "enum": [
+            "durable_outbox"
+          ]
+        },
+        "mutation_ids": {
+          "array": "uuid"
+        }
+      },
+      "optional": {
+        "conversation_id": "uuid",
+        "acceptance": {
+          "ref": "SignedArtifact"
+        }
+      }
+    },
+    "IngressResult": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-ingress-result-v1"
+          ]
+        },
+        "key": {
+          "ref": "IngressKey"
+        },
+        "accepted": {
+          "ref": "AcceptedSend"
+        },
+        "result": "json_object"
+      },
+      "optional": {}
+    },
+    "Delegation": {
+      "required": {
+        "delegation_id": "uuid",
+        "delegate": "did",
+        "operations": {
+          "array": {
+            "enum": [
+              "add",
+              "remove",
+              "history_grant",
+              "export_checkpoint"
+            ]
+          }
+        },
+        "expires_at": "timestamp"
+      },
+      "optional": {
+        "bridge": "didaw",
+        "platform": {
+          "enum": [
+            "telegram",
+            "msteams",
+            "slack",
+            "whatsapp",
+            "discord"
+          ]
+        },
+        "max_guests": "uint"
+      }
+    },
+    "AdmissionConsent": {
+      "required": {
+        "consent_id": "uuid",
+        "policy_hash": "hash",
+        "version": {
+          "enum": [
+            "aweb-chat-consent-v1"
+          ]
+        },
+        "session_id": "uuid",
+        "participant": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        },
+        "operation_id": "uuid",
+        "membership_hash": "hash",
+        "control_history_disclosure": {
+          "enum": [
+            "shared_control_history_v1"
+          ]
+        },
+        "confidentiality": {
+          "enum": [
+            "end_to_end",
+            "hosted_readable",
+            "bridge_readable",
+            "server_readable"
+          ]
+        },
+        "audience": "text",
+        "signer": "did",
+        "signing_key_id": "didkey",
+        "issued_at": "timestamp",
+        "expires_at": "timestamp"
+      },
+      "optional": {}
+    },
+    "Member": {
+      "required": {
+        "participant": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        },
+        "consent_id": "uuid",
+        "joined_epoch": "uint"
+      },
+      "optional": {
+        "left_epoch": "uint"
+      }
+    },
+    "HistoryGrant": {
+      "required": {
+        "participant": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        },
+        "message_intervals": {
+          "array": {
+            "ref": "Interval"
+          }
+        },
+        "control_through_epoch": "uint",
+        "consent_id": "uuid"
+      },
+      "optional": {}
+    },
+    "Interval": {
+      "required": {
+        "after_seq": "uint",
+        "through_seq": "uint"
+      },
+      "optional": {}
+    },
+    "BridgeAdmission": {
+      "required": {
+        "bridge": "didaw",
+        "platforms": {
+          "array": {
+            "enum": [
+              "telegram",
+              "msteams",
+              "slack",
+              "whatsapp",
+              "discord"
+            ]
+          }
+        },
+        "guest_admission": "bool",
+        "max_guests": "uint",
+        "audience_digest": "commitment"
+      },
+      "optional": {}
+    },
+    "PolicyState": {
+      "required": {
+        "owner": "did",
+        "members": {
+          "array": {
+            "ref": "Member"
+          }
+        },
+        "delegations": {
+          "array": {
+            "ref": "Delegation"
+          }
+        },
+        "history_grants": {
+          "array": {
+            "ref": "HistoryGrant"
+          }
+        },
+        "bridges": {
+          "array": {
+            "ref": "BridgeAdmission"
+          }
+        },
+        "history": {
+          "enum": [
+            "join_forward"
+          ]
+        },
+        "control_history_disclosure": {
+          "enum": [
+            "shared_control_history_v1"
+          ]
+        },
+        "confidentiality": {
+          "enum": [
+            "end_to_end",
+            "hosted_readable",
+            "bridge_readable",
+            "server_readable"
+          ]
+        },
+        "authority_mode": {
+          "enum": [
+            "identity_chain",
+            "server_readable"
+          ]
+        },
+        "max_intent_ttl_seconds": "positive_uint",
+        "max_clock_skew_seconds": "uint",
+        "service": {
+          "ref": "ServiceBinding"
+        }
+      },
+      "optional": {}
+    },
+    "MembershipIntent": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-chat-policy-v1"
+          ]
+        },
+        "session_id": "uuid",
+        "operation_id": "uuid",
+        "operation": {
+          "enum": [
+            "create",
+            "add",
+            "remove",
+            "leave",
+            "delegate",
+            "revoke_delegation",
+            "transfer",
+            "history_grant"
+          ]
+        },
+        "epoch": "uint",
+        "previous_hash": "hash",
+        "subjects": {
+          "array": {
+            "one_of": [
+              {
+                "ref": "NativeParticipant"
+              },
+              {
+                "ref": "BridgedParticipant"
+              }
+            ]
+          }
+        },
+        "state": {
+          "ref": "PolicyState"
+        },
+        "consents": {
+          "array": {
+            "ref": "SignedArtifact"
+          }
+        },
+        "audience": "text",
+        "signer": "did",
+        "signing_key_id": "didkey",
+        "issued_at": "timestamp",
+        "expires_at": "timestamp"
+      },
+      "optional": {
+        "delegation_id": "uuid"
+      }
+    },
+    "CheckpointIntent": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-chat-export-checkpoint-v1"
+          ]
+        },
+        "session_id": "uuid",
+        "transition_id": "uuid",
+        "export_id": "uuid",
+        "bridge": "didaw",
+        "operation": {
+          "enum": [
+            "activate",
+            "pause",
+            "revoke"
+          ]
+        },
+        "audience": "text",
+        "authorization": {
+          "enum": [
+            "owner",
+            "bridge_attenuation",
+            "revoke_authority"
+          ]
+        },
+        "signer": "did",
+        "signing_key_id": "didkey",
+        "issued_at": "timestamp",
+        "expires_at": "timestamp"
+      },
+      "optional": {
+        "expected_membership_epoch": "uint",
+        "expected_membership_hash": "hash",
+        "expected_export_generation": "uint",
+        "generation": "positive_uint",
+        "policy_digest": "commitment"
+      }
+    },
+    "CheckpointReceipt": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-chat-export-receipt-v1"
+          ]
+        },
+        "session_id": "uuid",
+        "transition_id": "uuid",
+        "export_id": "uuid",
+        "bridge": "didaw",
+        "generation": "positive_uint",
+        "operation": {
+          "enum": [
+            "activate",
+            "pause",
+            "revoke"
+          ]
+        },
+        "authorization": {
+          "enum": [
+            "owner",
+            "bridge_attenuation",
+            "revoke_authority"
+          ]
+        },
+        "policy_digest": "commitment",
+        "intent_hash": "hash",
+        "membership_epoch": "uint",
+        "membership_hash": "hash",
+        "acceptance_seq": "positive_uint",
+        "effective_after_seq": "positive_uint",
+        "signer": "did",
+        "signing_key_id": "didkey"
+      },
+      "optional": {}
+    },
+    "ExportCapture": {
+      "required": {
+        "export_id": "uuid",
+        "bridge": "didaw",
+        "generation": "positive_uint",
+        "policy_digest": "commitment",
+        "transition_id": "uuid",
+        "checkpoint_seq": "positive_uint",
+        "state": {
+          "enum": [
+            "activate",
+            "pause",
+            "revoke"
+          ]
+        }
+      },
+      "optional": {}
+    },
+    "MessageAcceptance": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-chat-acceptance-v1"
+          ]
+        },
+        "session_id": "uuid",
+        "message_id": "uuid",
+        "capture_status": {
+          "enum": [
+            "recorded",
+            "legacy_unknown"
+          ]
+        }
+      },
+      "optional": {
+        "message_envelope_hash": "hash",
+        "acceptance_seq": "positive_uint",
+        "membership_epoch": "uint",
+        "membership_hash": "hash",
+        "exports": {
+          "array": {
+            "ref": "ExportCapture"
+          }
+        },
+        "signer": "did",
+        "signing_key_id": "didkey"
+      }
+    },
+    "PresenceScope": {
+      "required": {
+        "kind": {
+          "enum": [
+            "platform",
+            "session"
+          ]
+        }
+      },
+      "optional": {
+        "session_id": "uuid"
+      }
+    },
+    "PresenceIntent": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-presence-intent-v1"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "register",
+            "replace",
+            "remove"
+          ]
+        },
+        "subject": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        },
+        "platform": {
+          "enum": [
+            "telegram",
+            "msteams",
+            "slack",
+            "whatsapp",
+            "discord"
+          ]
+        },
+        "scope": {
+          "ref": "PresenceScope"
+        },
+        "mode": {
+          "enum": [
+            "native"
+          ]
+        },
+        "audience": "text",
+        "expected_generation": "uint",
+        "request_id": "uuid",
+        "authorization": {
+          "enum": [
+            "subject",
+            "owner"
+          ]
+        },
+        "signer": "did",
+        "signing_key_id": "didkey",
+        "issued_at": "timestamp",
+        "expires_at": "timestamp"
+      },
+      "optional": {
+        "ownership_proof": {
+          "ref": "SignedArtifact"
+        }
+      }
+    },
+    "NativeOperation": {
+      "required": {
+        "operation_id": "uuid",
+        "intent_hash": "hash",
+        "version": {
+          "enum": [
+            "aweb-native-operation-v1"
+          ]
+        },
+        "agent": "did",
+        "session_id": "uuid",
+        "input_id": "uuid",
+        "input_hash": "hash",
+        "owner": {
+          "enum": [
+            "native",
+            "aweb"
+          ]
+        },
+        "generation": "positive_uint",
+        "fence": "positive_uint",
+        "lease_until": "timestamp",
+        "state": {
+          "enum": [
+            "claimed",
+            "started",
+            "outcome_unknown",
+            "completed",
+            "blocked"
+          ]
+        },
+        "audience": "text",
+        "signer": "did",
+        "signing_key_id": "didkey"
+      },
+      "optional": {}
+    },
+    "NativeReply": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-native-reply-v1"
+          ]
+        },
+        "agent": "did",
+        "session_id": "uuid",
+        "input_id": "uuid",
+        "input_hash": "hash",
+        "generation": "positive_uint",
+        "fence": "positive_uint",
+        "slot": "opaque",
+        "message_id": "uuid",
+        "envelope_hash": "hash",
+        "envelope": "text",
+        "state": {
+          "enum": [
+            "committed",
+            "transport_unknown",
+            "accepted"
+          ]
+        },
+        "signer": "did",
+        "signing_key_id": "didkey"
+      },
+      "optional": {}
+    },
+    "PageRequest": {
+      "required": {
+        "resource": {
+          "enum": [
+            "mail",
+            "sessions",
+            "messages",
+            "participants",
+            "policy_chain",
+            "checkpoints",
+            "acceptances"
+          ]
+        },
+        "limit": "limit"
+      },
+      "optional": {
+        "session_id": "uuid",
+        "cursor": "opaque"
+      }
+    },
+    "PageResult": {
+      "required": {
+        "resource": {
+          "enum": [
+            "mail",
+            "sessions",
+            "messages",
+            "participants",
+            "policy_chain",
+            "checkpoints",
+            "acceptances"
+          ]
+        },
+        "items": {
+          "array": "json_object"
+        },
+        "authorization_revision": "opaque",
+        "has_more": "bool"
+      },
+      "optional": {
+        "next_cursor": "opaque"
+      }
+    },
+    "SessionCreate": {
+      "required": {
+        "session_id": "uuid",
+        "intent": {
+          "ref": "SignedArtifact"
+        }
+      },
+      "optional": {}
+    },
+    "SessionView": {
+      "required": {
+        "session_id": "uuid",
+        "membership_epoch": "uint",
+        "membership_hash": "hash",
+        "owner": "did",
+        "participants": {
+          "array": {
+            "one_of": [
+              {
+                "ref": "NativeParticipant"
+              },
+              {
+                "ref": "BridgedParticipant"
+              }
+            ]
+          }
+        },
+        "confidentiality": {
+          "enum": [
+            "end_to_end",
+            "hosted_readable",
+            "bridge_readable",
+            "server_readable"
+          ]
+        },
+        "control_history_grant": {
+          "enum": [
+            "consented",
+            "required",
+            "expired"
+          ]
+        },
+        "authorization_revision": "opaque",
+        "capabilities": {
+          "array": "opaque"
+        }
+      },
+      "optional": {}
+    },
+    "AuthorProjection": {
+      "required": {
+        "author": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        },
+        "author_assurance": {
+          "enum": [
+            "native",
+            "platform_attested"
+          ]
+        },
+        "trust_status": {
+          "enum": [
+            "verified",
+            "verified_custodial",
+            "external_untrusted"
+          ]
+        },
+        "verified": "bool",
+        "signer_verified": "bool",
+        "confidentiality": {
+          "enum": [
+            "end_to_end",
+            "hosted_readable",
+            "bridge_readable",
+            "server_readable"
+          ]
+        }
+      },
+      "optional": {
+        "via": {
+          "enum": [
+            "telegram",
+            "msteams",
+            "slack",
+            "whatsapp",
+            "discord"
+          ]
+        }
+      }
+    },
+    "Refusal": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-human-channels-error-v1"
+          ]
+        },
+        "family": {
+          "enum": [
+            "resolve",
+            "prepare",
+            "accept",
+            "membership",
+            "history",
+            "checkpoint",
+            "presence",
+            "native",
+            "attachment"
+          ]
+        },
+        "code": {
+          "enum": [
+            "invalid",
+            "unsupported",
+            "forbidden",
+            "consent_required",
+            "stale",
+            "replay_conflict",
+            "not_found",
+            "authority_unavailable",
+            "native_unavailable",
+            "outcome_unknown",
+            "limit_exceeded"
+          ]
+        },
+        "retry": {
+          "enum": [
+            "never",
+            "refresh",
+            "backoff",
+            "reconcile"
+          ]
+        },
+        "effects": {
+          "enum": [
+            "none"
+          ]
+        }
+      },
+      "optional": {}
+    },
+    "NarrowStopAck": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-chat-narrow-stop-ack-v1"
+          ]
+        },
+        "session_id": "uuid",
+        "transition_id": "uuid",
+        "export_id": "uuid",
+        "bridge": "didaw",
+        "operation": {
+          "enum": [
+            "pause",
+            "revoke"
+          ]
+        },
+        "result": {
+          "enum": [
+            "committed",
+            "already_stopped"
+          ]
+        },
+        "signer": "did",
+        "signing_key_id": "didkey"
+      },
+      "optional": {}
+    },
+    "VerifiedPresence": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-verified-presence-v1"
+          ]
+        },
+        "subject": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        },
+        "platform": {
+          "enum": [
+            "telegram",
+            "msteams",
+            "slack",
+            "whatsapp",
+            "discord"
+          ]
+        },
+        "scope": {
+          "ref": "PresenceScope"
+        },
+        "mode": {
+          "enum": [
+            "native"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "register",
+            "replace",
+            "remove"
+          ]
+        },
+        "expected_generation": "uint",
+        "request_id": "uuid",
+        "intent_hash": "hash",
+        "authorization_revision": "opaque",
+        "expires_at": "timestamp"
+      },
+      "optional": {}
+    },
+    "NativeOperationRequest": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-native-operation-intent-v1"
+          ]
+        },
+        "operation_id": "uuid",
+        "agent": "did",
+        "session_id": "uuid",
+        "input_id": "uuid",
+        "input_hash": "hash",
+        "owner": {
+          "enum": [
+            "native",
+            "aweb"
+          ]
+        },
+        "expected_generation": "uint",
+        "expected_fence": "uint",
+        "operation": {
+          "enum": [
+            "claim",
+            "start",
+            "renew",
+            "complete",
+            "reconcile",
+            "resolve"
+          ]
+        },
+        "audience": "text",
+        "signer": "did",
+        "signing_key_id": "didkey",
+        "issued_at": "timestamp",
+        "expires_at": "timestamp"
+      },
+      "optional": {
+        "evidence_hash": "hash",
+        "decision": {
+          "enum": [
+            "reuse_reply",
+            "resume_proved_safe",
+            "retry_duplicate_risk",
+            "keep_blocked"
+          ]
+        },
+        "owner_authorization": {
+          "ref": "SignedArtifact"
+        }
+      }
+    },
+    "MessageView": {
+      "required": {
+        "kind": {
+          "enum": [
+            "mail",
+            "chat"
+          ]
+        },
+        "message_id": "uuid",
+        "envelope": "text",
+        "envelope_hash": "hash",
+        "author": {
+          "ref": "AuthorProjection"
+        }
+      },
+      "optional": {
+        "conversation_id": "uuid",
+        "acceptance": {
+          "ref": "SignedArtifact"
+        }
+      }
+    },
+    "NativePlaintext": {
+      "required": {
+        "from": "text",
+        "from_did": "didkey",
+        "to": "text",
+        "to_did": "didkey",
+        "type": {
+          "enum": [
+            "mail",
+            "chat"
+          ]
+        },
+        "subject": "string",
+        "body": "string",
+        "timestamp": "timestamp"
+      },
+      "optional": {
+        "message_id": "uuid",
+        "conversation_id": "uuid",
+        "from_stable_id": "didaw",
+        "to_stable_id": "didaw",
+        "priority": {
+          "enum": [
+            "low",
+            "normal",
+            "high",
+            "urgent"
+          ]
+        },
+        "wait_seconds": "uint",
+        "reply_to": "text",
+        "sender_leaving": "bool",
+        "hang_on": "bool",
+        "via": {
+          "enum": [
+            "telegram",
+            "msteams",
+            "slack",
+            "whatsapp",
+            "discord"
+          ]
+        }
+      }
+    },
+    "NativeV2Content": {
+      "required": {
+        "inner_version": {
+          "integer_const": 2
+        },
+        "kind": {
+          "enum": [
+            "mail",
+            "chat"
+          ]
+        },
+        "message_id": "uuid",
+        "conversation_id": "string",
+        "created_at": "timestamp",
+        "from": "json_object",
+        "recipients": {
+          "array": "json_object"
+        },
+        "body": "string"
+      },
+      "optional": {
+        "subject": "string",
+        "attachments": {
+          "array": "json_object"
+        },
+        "reply_to_message_id": "uuid",
+        "via": {
+          "enum": [
+            "telegram",
+            "msteams",
+            "slack",
+            "whatsapp",
+            "discord"
+          ]
+        }
+      }
+    },
+    "ManagedPlaintext": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-managed-chat-plaintext-v1"
+          ]
+        },
+        "type": {
+          "enum": [
+            "chat"
+          ]
+        },
+        "message_id": "uuid",
+        "conversation_id": "uuid",
+        "group_context": {
+          "ref": "GroupContext"
+        },
+        "recipients": {
+          "array": {
+            "one_of": [
+              {
+                "ref": "NativeParticipant"
+              },
+              {
+                "ref": "BridgedParticipant"
+              }
+            ]
+          }
+        },
+        "body": "string",
+        "signer": "did",
+        "signing_key_id": "didkey",
+        "created_at": "timestamp"
+      },
+      "optional": {
+        "via": {
+          "enum": [
+            "telegram",
+            "msteams",
+            "slack",
+            "whatsapp",
+            "discord"
+          ]
+        },
+        "reply_to_message_id": "uuid"
+      }
+    },
+    "OwnershipProof": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-presence-owner-proof-v1"
+          ]
+        },
+        "subject": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        },
+        "owner": "did",
+        "platform": {
+          "enum": [
+            "telegram",
+            "msteams",
+            "slack",
+            "whatsapp",
+            "discord"
+          ]
+        },
+        "scope": {
+          "ref": "PresenceScope"
+        },
+        "operations": {
+          "array": {
+            "enum": [
+              "register",
+              "replace",
+              "remove"
+            ]
+          }
+        },
+        "audience": "text",
+        "authorization_revision": "opaque",
+        "signer": "did",
+        "signing_key_id": "didkey",
+        "issued_at": "timestamp",
+        "expires_at": "timestamp"
+      },
+      "optional": {}
+    }
+  },
+  "capabilities": [
+    "signed-via-v1",
+    "human-alias-v1",
+    "human-send-uow-v1",
+    "bridged-participants-v1",
+    "managed-chat-policy-v1",
+    "shared-control-history-v1",
+    "chat-export-checkpoints-v1",
+    "presence-intents-v1",
+    "native-chat-receipts-v1"
+  ],
+  "deferred_capabilities": [
+    "managed-chat-encrypted-v1",
+    "group-reshare-v1",
+    "group-federation-v1"
+  ]
+}
