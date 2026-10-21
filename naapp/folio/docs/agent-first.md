@@ -6,25 +6,28 @@ model when the user is an agent, the customer is a team, and the app should not
 invent accounts.
 
 Ground truth lives in code and tests. This doc points at it; do not fork the
-contract prose unless the code and SOT move first.
+contract prose unless the code and SOT move first. Paths beginning with
+`naapp-lib/` are relative to the aweb repository root; other paths are relative
+to `naapp/folio/`.
 
 ## The five properties folio proves
 
 1. **Relying party, not identity provider.** The auth surface is one
-   fail-closed verifier of AWID team certificates: `src/folio/auth.py:50-100`
-   resolves team facts, `src/folio/auth.py:176-222` binds the signed request,
-   and `src/folio/auth.py:238-301` builds the principal. There are no accounts,
+   shared fail-closed verifier in `naapp-lib/src/aweb_naapp/runtime/team_auth.py`.
+   Folio calls `NaappRuntime.principal`, then records the verified principal
+   (`src/folio/api.py`). There are no accounts,
    OAuth flows, API keys, passwords, or sessions.
 2. **The client is the `aw` CLI the agent already has.** The README recipes at
    `README.md:25-173` are the client contract. folio ships a server and docs;
    it ships zero client wrapper.
 3. **Team-as-customer.** The roster is teams, not app-local users. Membership
    and revocation belong to the customer's controller and AWID registry; folio
-   checks them per request (`src/folio/auth.py:58-100`, `src/folio/auth.py:283-289`).
+   checks them per request (`naapp-lib/src/aweb_naapp/runtime/team_auth.py`).
    The human appears exactly once: to pay. In v1 that payment door is absent;
    usage is measured per team and reported by `GET /v1/billing`, not capped.
 4. **Validation discipline.** Unit tests cover verifier reject paths and
-   byte-for-byte interop (`tests/test_auth_v2_envelope.py:208-343`). E2E tests
+   byte-for-byte interop (`naapp-lib/tests/runtime/test_team_auth_envelope.py` and
+   `naapp-lib/tests/runtime/test_team_auth_vectors.py`). E2E tests
    use local awid-service and real `aw id` certificates, not mocked crypto
    (`tests/test_e2e_smoke.py:376-451`, `tests/test_e2e_smoke.py:515-680`).
    The front-door recipes were validated verbatim before publication.
@@ -48,11 +51,13 @@ The shape is:
   `X-AWEB-Signed-Payload` (`docs/sot.md:70-84`).
 - The service verifies the signature over the presented payload bytes, then
   independently binds the signed claims to the actual request
-  (`src/folio/auth.py:176-222`). Request binding covers method, raw path + raw
+  (`naapp-lib/src/aweb_naapp/runtime/team_auth.py`). Request binding covers method, raw path + raw
   query, body hash, team id, timestamp, and canonical public origin.
 - AWID is authority for team public keys and certificate revocation
   (`docs/sot.md:45-59`). folio caches those public facts for performance
-  (`src/folio/auth.py:50-100`), but cache is not product authority.
+  (`naapp-lib/src/aweb_naapp/runtime/team_auth.py`), for at most 60 seconds.
+  Without a service token, status is cached per certificate; with a token,
+  facts are cached per team. Expired facts are never a fallback after refresh failure.
 - The principal's `team_id` comes from the verified certificate, not from a
   request body. Every repository query scopes by `principal.team_id`; a body
   field named `team_id` cannot write into another team (`src/folio/repository.py:139-203`,
@@ -65,8 +70,8 @@ The shape is:
 
 | File | Verdict | Why |
 | --- | --- | --- |
-| `src/folio/auth.py` | **Copy verbatim** | This is the relying-party verifier. Keep the cache, raw target, canonical audience, signature-over-presented-payload, AWID-resolved team key, revocation, and principal construction together (`src/folio/auth.py:50-301`). |
-| `tests/test_auth_v2_envelope.py` | **Copy + keep green** | This is the verifier spec by example: reject paths, replay negatives, raw-path/root-path parity with `aweb.team_auth_envelope`, AWID-key enforcement, revocation, and interop vectors (`tests/test_auth_v2_envelope.py:208-343`). Port it with `auth.py`. |
+| `naapp-lib/src/aweb_naapp/runtime/team_auth.py` | **Reuse through NaappRuntime** | The shared relying-party verifier keeps request binding, AWID authority, revocation and principal construction together. Do not fork it into each app. |
+| `naapp-lib/tests/runtime/` | **Read the shared verifier tests** | `test_team_auth_envelope.py`, `test_team_auth_vectors.py` and `test_awid_team_cache.py` cover request binding, interop, AWID authority, publication and revocation. Keep app integration tests in your app. |
 | `src/folio/api.py` | **Adapt** | Keep the FastAPI dependency pattern that authenticates once and passes `Principal` into routes (`src/folio/api.py:28-65`). Replace document routes with your domain routes. Preserve same-origin health/API assumptions; the app serves the landing at `/`, API under `/v1/*`, and agent surfaces at `/llms.txt` and `/skills/`. |
 | `src/folio/config.py` | **Adapt** | Keep `public_origin`, AWID registry URL, cache TTL, and timestamp skew knobs. Replace domain caps/settings with yours. Public origin must match what clients sign. |
 | `src/folio/repository.py` | **Replace with your domain** | The team-scoping and attribution pattern is useful, but documents/versions/caps are domain code. Keep the rule: every query scopes by `principal.team_id` and writes attribute the verified member. |
@@ -78,7 +83,7 @@ The shape is:
 | `README.md` | **Adapt, but keep recipes literal** | The README is the client contract. Recipes must be run verbatim before publication (`README.md:25-173`). Do not document blind copy-all when the setup has stop points. |
 | `src/folio/surfaces.py` | **Adapt the pattern** | Text-first human and agent surfaces served by the app: landing, reference, `/llms.txt`, `/skills/`, robots, and no private JS framework dependency. Keep it concise and command-oriented. |
 | `docs/sot.md` | **Write your own first** | This is the worked example of the source-of-truth doc: product, authority, envelope, data, API, validation, milestones. Your app needs its own SOT before code. |
-| `skills/team-cert-verification/SKILL.md` | **Copy/use when porting auth** | Load it when implementing or reviewing a verifier. It is the checklist version of `auth.py` plus SOT. |
+| `skills/team-cert-verification/SKILL.md` | **Use when integrating auth** | Load it when adopting or reviewing the shared verifier. It points to naapp-lib and the SOT. |
 
 ## Process that worked
 
@@ -99,10 +104,10 @@ The shape is:
 
 | Pitfall | What to do instead |
 | --- | --- |
-| Verifying the certificate against its own `team_did_key` field. | Resolve the team key from AWID and verify against that (`src/folio/auth.py:283-289`). The cert field is data, not authority. |
-| Using the router-normalized path. | Use raw on-the-wire path + query from ASGI `raw_path` and `query_string` (`src/folio/auth.py:149-173`). Percent encoding and query order matter. |
-| Reconstructing a payload for signature verification. | Verify the DIDKey signature over decoded `X-AWEB-Signed-Payload` bytes (`src/folio/auth.py:186-220`). Then compare claims to the request. |
-| Trusting cache past expiry when AWID is down. | Use unexpired cache only; after expiry fail closed with 503 (`src/folio/auth.py:58-87`, `tests/test_e2e_smoke.py:623-640`). |
+| Verifying the certificate against its own `team_did_key` field. | Resolve the team key from AWID and verify against that (`naapp-lib/src/aweb_naapp/runtime/team_auth.py`). The cert field is data, not authority. |
+| Using the router-normalized path. | Use raw on-the-wire path + query from ASGI `raw_path` and `query_string` (`naapp-lib/src/aweb_naapp/runtime/team_auth.py`). Percent encoding and query order matter. |
+| Reconstructing a payload for signature verification. | Verify the DIDKey signature over decoded `X-AWEB-Signed-Payload` bytes (`naapp-lib/src/aweb_naapp/runtime/team_auth.py`). Then compare claims to the request. |
+| Trusting cache past expiry when AWID is down. | Use unexpired cache only; after expiry fail closed with 503 (`naapp-lib/src/aweb_naapp/runtime/team_auth.py`, `tests/test_e2e_smoke.py:623-640`). |
 | Documenting commands that were never run verbatim. | Run each line from a fresh workspace and record the response. If setup has stop points, do not promise copy-all. |
 | Mocked crypto in e2e. | Provision real namespaces, teams, and certificates with `aw id`; send real signed requests (`tests/test_e2e_smoke.py:376-451`). |
 | A hidden fallback auth path for testing. | Do not add API keys, sessions, dashboard write paths, or trusted headers. Test the same verifier production uses. |

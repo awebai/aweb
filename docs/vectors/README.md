@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 42
+`docs/vectors/*.json` is the only public protocol-vector authority for the 46
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the two classified
 package copies below. An unclassified hand-maintained copy is forbidden even when
@@ -265,6 +265,26 @@ replay and renewal steps with the expected result of each. The responses and
 checks are checked by `aweb_naapp.runtime.task_requests`; the sequence is for a
 pages naapp. See [page actions](../page-actions.md) §3.
 
+### `link-request-v1.json`
+
+Capability-link requests (aweb-acgg.10): secret verifiers, and
+`aweb.link-request/1` payloads, signing bytes and Ed25519 signatures by a
+session key, with verification cases that give the request each payload must
+bind and the clock. The reference consumer is `aweb_naapp.runtime.link_requests`
+in `naapp-lib/tests/runtime/`. See [page links](../page-links.md) §2–§3.
+
+### `link-capability-v1.json`
+
+Capability-link semantics (aweb-acgg.10), for the app that serves links:
+delegation against the creator's authority, one link's ordered use steps
+(projection, constraints, nonce replay and idempotent retry, Origin and CSRF,
+narrowing when the creator loses authority, stream re-checks, revocation),
+receipt retries after use, revocation and expiry, asset grants for native
+media, revocation and one-use races under the link's row lock, and exchange
+rate limiting that a stranger cannot turn against a holder. The delegation and
+lockout cases are checked by `aweb_naapp.runtime.capability_links`. See
+[page links](../page-links.md) §1 and §4–§6.
+
 ### `page-proposal-v1.json`
 
 `proposal_sha256` for page proposals (aweb-acgg.8): canonical bytes and
@@ -290,6 +310,24 @@ wrapper, digests for page decisions and a generic request, challenge bindings
 with and without a task answer and per candidate, the requester rule at mint
 and decide each way, and refusals. Its consumer is the approval primitive in
 `aweb_naapp`. See [page actions](../page-actions.md) §6.
+### `usage-report-v1.json`
+
+`aweb.usage/1` report batches (aweb-acgg.11): valid batches with canonical
+bytes and `report_sha256`, refused batches, one installation's ordered
+collector steps (retry, conflict, gap and fill, overlap, out-of-order
+snapshot, reporter epoch) with the expected ack and totals, and the lifecycle
+grant of a retired installation, each case marked as decidable from the batch
+or needing the collector's state. The reference consumer is
+`aweb_naapp.runtime.usage` in `naapp-lib/tests/runtime/`. See
+[app usage](../app-usage.md).
+
+### `app-usage-credential-v1.json`
+
+The `app-usage` purpose of the app credential family (aweb-acgg.11): one
+report's signed payload, canonical bytes, signature and headers, and
+collector refusals, including purpose separation in both directions and a
+key that does not declare `app-usage`. See [app usage](../app-usage.md) §4.
+
 
 ### `agent-status-v1.json`
 
@@ -596,7 +634,7 @@ reference duplication are mutation-tested failures.
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` |
-| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; folio `test_auth_v2_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
+| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-authority-state-v1.json` | Python AWID `test_federation_authority_vectors.py`; Python aweb `test_federation_authority_core.py`, `test_federation_authority_schema.py`, and pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go`; generated `federation-error-reference.md` response-shape cross-check through `generate_federation_error_reference.py` (reason/status/retryability source is `awid/src/awid/federation_errors.py`); federation SOT/support coverage in `check-extension-docs.py` |
