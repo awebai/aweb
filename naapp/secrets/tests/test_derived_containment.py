@@ -9,22 +9,29 @@ from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from aweb_secrets import records
 from aweb_secrets.custody import CustodyUnavailable, SealContext, encode_value
 from aweb_secrets.derived_containment import revoke_grant_tree
+from aweb_secrets.secret import SecretRecord
 from tests.test_change_sets import TEAM, world  # noqa: F401
 from tests.test_use_approval_lineage import child, grant_record, request_child, seed
-from tests.test_use_approvals import SECRET_ID, approve, uses  # noqa: F401
+from tests.test_use_approvals import SECRET, SECRET_ID, approve, uses  # noqa: F401
 
 
 async def test_revoking_a_source_grant_atomically_contains_only_its_descendants(uses):  # noqa: F811
     source = await seed(uses)
+    root = SecretRecord.from_after(SECRET)
+    direct_pending = await request_child(uses, root)
+    direct_approved = await request_child(uses, root)
+    await approve(uses, direct_approved[2], "finance@acme.com")
     first, _ = await child(uses)
     grandchild, _ = await child(uses, secret_id="sec_grand001", parent=first.secret_id)
     async with uses.world.db.transaction() as tx:
         digest = await tx.fetch_value(
             "SELECT policy_digest FROM {{tables.grants}} WHERE grant_id=$1", source
         )
-        sibling_source = grant_record("grt_other_source", SECRET_ID, digest)
+        sibling_source = grant_record("grt_----control", SECRET_ID, digest)
         await records.create_grant(tx, INSTALLATION_ID, TEAM, sibling_source)
     sibling, _ = await child(uses, secret_id="sec_sibling01", source_grant=sibling_source.grant_id)
+    direct_control = await request_child(uses, root)
+    assert direct_control[0].grant_id == sibling_source.grant_id
     pending = await request_child(uses, first)
     approved = await request_child(uses, grandchild)
     await approve(uses, approved[2], "finance@acme.com")
@@ -75,6 +82,8 @@ async def test_revoking_a_source_grant_atomically_contains_only_its_descendants(
         )
         == "active"
     )
+    for item in (direct_pending, direct_approved, direct_control):
+        assert (await uses.approvals.get(item[2].pending.approval.approval_id)).revoked_at is None
     for context in contexts:
         await uses.world.custody.opener.open(context)
     async with uses.world.db.transaction() as tx:
@@ -86,6 +95,13 @@ async def test_revoking_a_source_grant_atomically_contains_only_its_descendants(
         await uses.approvals.get(approved[2].pending.approval.approval_id)
     ).state is ApprovalState.REVOKED
     assert (await uses.approvals.get(untouched[2].pending.approval.approval_id)).revoked_at is None
+    for item in (direct_pending, direct_approved):
+        assert (
+            await uses.approvals.get(item[2].pending.approval.approval_id)
+        ).state is ApprovalState.REVOKED
+    assert (
+        await uses.approvals.get(direct_control[2].pending.approval.approval_id)
+    ).revoked_at is None
     for context in contexts[:2]:
         with pytest.raises(CustodyUnavailable):
             await uses.world.custody.opener.open(context)
