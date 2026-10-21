@@ -691,7 +691,9 @@ def test_awid_unavailable_honors_cache_then_fails_closed(
     team = _provision_team(aw_workspace)
     assert _list_documents(folio, team) == []
 
-    _compose("stop", "awid")
+    # Killed rather than stopped: a graceful stop can outlast the 2 s cache TTL
+    # under load, which would expire the facts before the cached request.
+    _compose("kill", "awid")
     try:
         cached = _aw_request(team, "GET", f"{folio.origin}/v1/documents")
         assert _assert_aw_success(cached, context="cached request while awid stopped").strip() == "[]"

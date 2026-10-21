@@ -304,7 +304,12 @@ except urllib.error.HTTPError as exc:
     # for it, grants only the scopes of agent and surface tools, takes its
     # emitter from the app-event app key, and refuses its hook-only verb.
     configure_manifest('0.2.0', manifest_version=2)
-    raw = urllib.request.urlopen(FOLIO + '/.well-known/aweb-app.json').read()
+    # A v2 deployment is discovered through its variant catalog; the legacy
+    # well-known path serves only v1 bytes, so it is absent here.
+    catalog = json.loads(urllib.request.urlopen(FOLIO + '/.well-known/aweb-app-versions.json').read())
+    variant = next(v for v in catalog['variants'] if v['manifest_version'] == 2)
+    raw = urllib.request.urlopen(FOLIO + variant['url']).read()
+    assert variant['digest'] == 'sha256:' + hashlib.sha256(raw).hexdigest()
     assert json.loads(raw)['manifest_version'] == 2
     aw('alice', 'plugin', 'update', 'folio')
     apps = get('alice', '/v1/apps/installed?team_id=' + team)['apps']
