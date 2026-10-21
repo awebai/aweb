@@ -53,6 +53,20 @@ Server changes are since `server-v1.27.30`.
 - **Security:** read-purpose credentials (`app-grant-read`, `hook-resolve`)
   accept one signature encoding only: unpadded standard base64 with zero
   spare bits. App-event credentials are unchanged.
+- Installs read their manifest bytes with the one manifest reader that apps
+  and clients share (`aweb_naapp.manifest`), for both manifest versions. A
+  version 2 install registers the bytes' `app_keys` with their declared
+  purposes. A key id keeps its first `did_key` in the team (409 otherwise,
+  nothing written), revocation is one-way, and an unknown purpose label is
+  stored and grants nothing. A key declaring `app-event` signs app events;
+  version 1 `event_emitters` keys are unchanged. Reseed recreates app keys from
+  the bytes.
+- **Narrowing:** version 1 bytes are now validated by the strict v1 reader.
+  An install whose bytes it refuses is refused with 422 and the reader's
+  stable code. Installs without bytes are unchanged.
+- **Deploy order:** the server depends on `aweb-naapp`. Publish `awid-service`,
+  then `aweb-naapp`, then this server.
+
 
 ### Release preparation: aweb-naapp 0.1.0
 

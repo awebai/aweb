@@ -65,7 +65,11 @@ class AppCredential:
 
 
 async def _emit_key(db, *, purpose: str, team_id: str, app_id: str, kid: str, did_key: str) -> dict | None:
-    return await get_active_app_emit_key(db, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key)
+    """A v1 event_emitters key, or a v2 app key that declares app-event."""
+    row = await get_active_app_emit_key(db, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key)
+    if row is not None:
+        return row
+    return await get_active_app_key(db, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key, purpose=purpose)
 
 
 async def _app_key(db, *, purpose: str, team_id: str, app_id: str, kid: str, did_key: str) -> dict | None:
