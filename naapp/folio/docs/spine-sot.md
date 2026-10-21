@@ -227,18 +227,14 @@ The claweb pattern, team-shaped: **no human accounts, no passwords, no
 OAuth, no sessions.** The human appears exactly once here — to pay (the other
 appearance is as the audience of a present link).
 
-Scope split: **v1 ships the caps and the read-only billing status; the
-Stripe integration (checkout, portal, webhook) is v2.** Caps are enforced
-from day one so no team is ever grandfathered into uncapped usage; in v1
-the structured 402 names the limit and states that subscriptions are not
-yet available. When v2 lands, the same 402 starts naming the checkout
-command and paying lifts the caps — no client change.
+Scope split: **v1 measures usage and reports it read-only; the Stripe
+integration (checkout, portal, webhook) is v2.** Usage is measured, not
+enforced: there are no per-team document or version caps.
 
 - The subscription unit is the **team**. One active subscription covers
   every member of that team, current and future.
-- **Free tier** (v1): per-team caps enforced server-side —
-  `FREE_MAX_DOCUMENTS` (default 3) and `FREE_MAX_VERSIONS_PER_DOC`
-  (default 50). Caps return a structured 402 naming the limit.
+- **Usage** (v1): each team's document count and the most versions on any
+  of its documents are measured and reported; nothing is capped.
 - **Checkout** (v2): any verified member requests it.
   `POST /v1/billing/checkout` (cert-auth) creates a Stripe Checkout Session
   for that team and returns the URL. The agent hands the URL to its human
@@ -250,12 +246,11 @@ command and paying lifts the caps — no client change.
   projection. All members are covered on the next request; no client change.
 - **Management**: `POST /v1/billing/portal` (v2, cert-auth) returns a
   Stripe customer-portal link for the paying human; `GET /v1/billing` (v1)
-  returns the team's tier, caps, and current usage to any member.
+  returns the team's current usage to any member.
 - Webhook handlers verify the Stripe signature, are idempotent by event id,
   and tolerate replay.
 
-Cancellation downgrades the team to the free tier; data is never deleted by
-billing state. Over-cap teams keep read access and version history.
+Data is never deleted by billing state.
 
 ## Client: `aw id request --team-auth`
 
@@ -293,8 +288,7 @@ aw id request POST https://<atext-host>/v1/present/<token>/revoke --team-auth
 aw id request POST https://<atext-host>/v1/billing/checkout --team-auth
 ```
 
-- Errors are structured server codes; a 402 names the cap and the checkout
-  call.
+- Errors are structured server codes.
 - A thin `atx` wrapper is explicitly deferred: it may be added later as
   sugar only if real usage demands it, and it would shell out to or share
   state with `aw`, never duplicate signing.
@@ -433,7 +427,7 @@ Team-scoped (cert-auth):
 - `POST /v1/present` — mint a capability link for a document version.
 - `POST /v1/present/{token}/revoke` — revoke a link the team owns.
 - `GET /v1/theme` / `PUT /v1/theme` — read/set the team's presentation theme.
-- `GET /v1/billing` — subscription status, caps, usage.
+- `GET /v1/billing` — the team's usage.
 - `POST /v1/billing/checkout` — Stripe Checkout URL for this team (v2).
 - `POST /v1/billing/portal` — Stripe portal URL for this team (v2).
 
