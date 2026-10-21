@@ -7,19 +7,23 @@ transaction that admits its approval.
 
 from __future__ import annotations
 
+import asyncio
 import os
+import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
-from aweb_naapp.roles import PrincipalKey, apply_roles_migrations, assign, has_role
+from aweb_naapp.roles import PrincipalKey, apply_roles_migrations, assign, has_role, unassign
 from aweb_naapp.runtime.approvals import (
     Approval,
+    ApprovalRefused,
     ApprovalRevocation,
     Approvals,
     ApprovalState,
@@ -28,6 +32,12 @@ from aweb_naapp.runtime.approvals import (
     Decision,
     DeliveryStatus,
     PgApprovalStore,
+)
+from aweb_naapp.runtime.authorization import Grant
+from aweb_naapp.runtime.installation import (
+    AdmittedInstallation,
+    InstallationFence,
+    apply_installation_migrations,
 )
 from aweb_naapp.runtime.passkeys import Notice, Passkeys, RelyingParty
 from aweb_naapp_testing import awid_registry
@@ -46,7 +56,6 @@ from aweb_secrets.change_policy import apply_change_policy_migrations, four_eyes
 from aweb_secrets.change_sets import (
     ChangeSetPolicies,
     ChangeSets,
-    CurrentInstallation,
     DraftLimit,
     apply_change_set_migrations,
 )
@@ -76,7 +85,39 @@ BOB = PrincipalKey(team_id=TEAM, principal_did="did:aw:2Uq51iFVLnqmgbVY3vLZtMD5P
 CAROL = PrincipalKey(
     team_id=TEAM, principal_did="did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
 )
-INSTALLATION = CurrentInstallation(installation_id=INSTALLATION_ID, generation=1, team_id=TEAM)
+APP_ID = "secrets"
+
+
+class Installations:
+    """The installation's grant, as the app-to-team-server source reports it:
+    fresh for 55 seconds from each observation, inside the fence's 60."""
+
+    @property
+    def grant(self) -> Grant:
+        return Grant(
+            team_id=TEAM,
+            installation_id=INSTALLATION_ID,
+            generation=1,
+            scopes=frozenset({"secrets:use"}),
+            fresh_until=time.monotonic() + 55,
+        )
+
+    async def grant_for(self, team_id: str) -> Grant | None:
+        return self.grant if team_id == TEAM else None
+
+    async def status_for(self, team_id: str) -> SimpleNamespace | None:
+        if team_id != TEAM:
+            return None
+        grant = self.grant
+        return SimpleNamespace(
+            team_id=TEAM,
+            app_id=APP_ID,
+            state="active",
+            installation_id=INSTALLATION_ID,
+            generation=1,
+            granted_scopes=grant.scopes,
+            fresh_until=grant.fresh_until,
+        )
 
 
 @dataclass
@@ -108,6 +149,8 @@ class World:
     custody: Custody
     owner: TeamOwner
     inbox: Inbox
+    fence: InstallationFence
+    admitted: AdmittedInstallation
     devices: dict[str, SoftAuthenticator] = field(default_factory=dict)
 
 
@@ -141,8 +184,14 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
         apply_change_policy_migrations,
         apply_custody_migrations,
         apply_change_set_migrations,
+        apply_installation_migrations,
     ):
         await migrate(db)
+    installations = Installations()
+    fence = InstallationFence(db, app_id=APP_ID, grants=installations)
+    await fence.refresh(TEAM)
+    async with db.transaction() as tx:
+        admitted = await fence.admit(tx, installations.grant)
     directory = OwnerDirectory(passkeys, db)
     approvals = Approvals(
         store=store,
@@ -174,6 +223,8 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
             custody,
             await team_owner(registry),
             inbox,
+            fence,
+            admitted,
         )
 
 
@@ -283,7 +334,8 @@ async def confirm(world: World, change: dict[str, Any]) -> None:
             tx,
             change["change_id"],
             operation_id=f"apply-{change['change_id']}",
-            installation=INSTALLATION,
+            fence=world.fence,
+            admitted=world.admitted,
         )
 
 
@@ -490,7 +542,11 @@ async def test_a_confirmed_approver_is_designated_and_recorded(world: World) -> 
     await decide(world, await draft(world, change), "alice@acme.com")
     async with world.db.transaction() as tx:
         confirmation = await world.change_sets.confirm(
-            tx, change["change_id"], operation_id="apply-1", installation=INSTALLATION
+            tx,
+            change["change_id"],
+            operation_id="apply-1",
+            fence=world.fence,
+            admitted=world.admitted,
         )
         assert "finance@acme.com" not in world.inbox.enrolments
     await world.change_sets.deliver(confirmation)
@@ -555,3 +611,109 @@ async def test_a_sealed_value_belongs_to_one_draft(world: World) -> None:
     with pytest.raises(ChangeRefused) as refused:
         await draft(world, change_set(drafter=by_member(BOB), changes=[grant_role(BOB)]), [sealed])
     assert refused.value.code == "sealed_value_taken"
+
+
+async def test_the_role_kind_never_grants_the_owner_role(world: World) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    with pytest.raises(ChangeRefused) as refused:
+        await draft(
+            world,
+            change_set(drafter=by_member(CAROL), changes=[grant_role(CAROL, "secrets.owner")]),
+        )
+    assert refused.value.code == "role_not_grantable"
+
+
+async def test_a_confirm_by_an_owner_being_revoked_waits_and_is_refused(world: World) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    change = change_set(drafter=by_member(CAROL), changes=[grant_role(CAROL)])
+    await decide(world, await draft(world, change), "alice@acme.com")
+    held = asyncio.Event()
+
+    async def revoke_alice() -> None:
+        async with world.db.transaction() as tx:
+            await unassign(tx, ALICE, OWNER_ROLE)
+            await held.wait()
+
+    revoking = asyncio.create_task(revoke_alice())
+    await asyncio.sleep(0.2)
+    confirming = asyncio.create_task(confirm(world, change))
+    await asyncio.sleep(0.2)
+    held.set()
+    await revoking
+    with pytest.raises(ChangeRefused) as refused:
+        await confirming
+    assert refused.value.code == "owner_required"
+    assert not await has_role(world.db, CAROL, "secrets.role.deployers")
+
+
+async def test_a_second_approver_with_the_same_ref_is_refused(world: World) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    first = change_set(
+        drafter=by_member(CAROL), changes=[designate_approver("finance", "f@acme.com", ["sec_1"])]
+    )
+    await decide(world, await draft(world, first), "alice@acme.com")
+    await confirm(world, first)
+    second = change_set(
+        drafter=by_member(CAROL),
+        changes=[designate_approver("finance", "f2@acme.com", ["sec_2"])],
+        base_revision=1,
+    )
+    await decide(world, await draft(world, second), "alice@acme.com")
+    with pytest.raises(ChangeRefused) as refused:
+        await confirm(world, second)
+    assert refused.value.code == "approver_exists"
+
+
+async def test_a_refused_designation_is_a_coded_refusal(world: World) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    scope = approver_scope(INSTALLATION_ID, TEAM, "finance")
+    subject = designation_subject(scope, "f@acme.com")
+    prepared = await world.owner.prepare("app-role.designate", subject)
+    async with world.db.transaction() as tx:
+        act = await world.owner.consume(tx, prepared, subject)
+        await world.passkeys.designate(tx, scope=scope, contact="f@acme.com", evidence=act)
+    change = change_set(
+        drafter=by_member(CAROL), changes=[designate_approver("finance", "f@acme.com", ["sec_1"])]
+    )
+    await decide(world, await draft(world, change), "alice@acme.com")
+    with pytest.raises(ChangeRefused) as refused:
+        await confirm(world, change)
+    assert refused.value.code == "approver_designation_refused"
+
+
+async def test_four_eyes_turned_on_after_a_draft_refuses_its_confirmation(world: World) -> None:
+    alice = await enrol_owner(world, ALICE, "alice@acme.com")
+    await enrol_owner(world, BOB, "bob@acme.com")
+    change = change_set(drafter=on_console(alice), changes=[grant_role(CAROL)])
+    approval_id = await draft(world, change)
+    async with world.db.transaction() as tx:
+        await require_four_eyes(
+            tx, installation_id=INSTALLATION_ID, team_id=TEAM, directory=world.directory
+        )
+    # B2 already refuses the drafting owner's decision now; confirmation would too.
+    with pytest.raises((ApprovalRefused, ChangeRefused)):
+        await decide(world, approval_id, "alice@acme.com")
+        await confirm(world, change)
+    assert not await has_role(world.db, CAROL, "secrets.role.deployers")
+
+
+async def test_relaxing_and_requiring_four_eyes_at_once_do_not_deadlock(world: World) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    await enrol_owner(world, BOB, "bob@acme.com")
+    async with world.db.transaction() as tx:
+        await require_four_eyes(
+            tx, installation_id=INSTALLATION_ID, team_id=TEAM, directory=world.directory
+        )
+    revision = await config_revision(world.db, INSTALLATION_ID)
+    change = change_set(drafter=by_member(ALICE), changes=[RELAX_FOUR_EYES], base_revision=revision)
+    await decide(world, await draft(world, change), "bob@acme.com")
+
+    async def require() -> None:
+        async with world.db.transaction() as tx:
+            await require_four_eyes(
+                tx, installation_id=INSTALLATION_ID, team_id=TEAM, directory=world.directory
+            )
+
+    results = await asyncio.gather(confirm(world, change), require(), return_exceptions=True)
+    for result in results:
+        assert result is None or isinstance(result, ChangeRefused), result

@@ -78,3 +78,17 @@ async def approvers_for_secret(
         )
         for row in rows
     ]
+
+
+async def approver_exists(
+    tx: TransactionManager, *, installation_id: str, team_id: str, approver_ref: str
+) -> bool:
+    return bool(
+        await tx.fetch_value(
+            "SELECT 1 FROM {{tables.approvers}}"
+            " WHERE installation_id = $1 AND team_id = $2 AND approver_ref = $3",
+            installation_id,
+            team_id,
+            approver_ref,
+        )
+    )

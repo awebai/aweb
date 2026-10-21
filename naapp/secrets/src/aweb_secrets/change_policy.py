@@ -43,6 +43,12 @@ async def four_eyes(db: AsyncDatabaseManager | TransactionManager, installation_
     return str(value or "not_required")
 
 
+async def lock_four_eyes(tx: TransactionManager, installation_id: str) -> str:
+    """The installation's setting, read under its row lock. Every writer that
+    also claims or bumps the configuration revision takes this lock first."""
+    return await _locked_setting(tx, installation_id)
+
+
 async def _locked_setting(tx: TransactionManager, installation_id: str) -> str:
     await tx.execute(
         "INSERT INTO {{tables.change_set_settings}} (installation_id) VALUES ($1)"
