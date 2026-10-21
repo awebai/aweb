@@ -144,3 +144,46 @@ under that exact source grant in the same sorted B2 revocation union. It joins
 the intent in the same installation/team; direct approvals under other grants
 remain untouched. Omit it for the existing exact-secret, all-version selection.
 `void_use_approvals` remains the version-replacement operation.
+
+The first fresh-confirmation HTTP slice supports `backend_credential` items.
+Mount it only on the human application, sharing the same services:
+
+```python
+from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
+
+human_app.include_router(console_changes_router(ConsoleChanges(
+    console=owner_console,
+    changes=change_sets,
+    approvals=approvals,
+    registrations=hook_registrations,
+    after_commit=containment.evict,
+)))
+```
+
+All POSTs require JSON, the S4 cookie and this tab's `X-CSRF-Token`. Browser
+forms call `window.awebSecretsConsole.post(path, body)`. Under
+`/installations/{installation_id}/change-sets`:
+
+- `POST` takes exactly `{changes, sealed, reason}`. `changes` uses existing
+  change/1 items; `sealed` contains `{secret_id, version}` locators from ingress.
+  The server supplies the installation/team/generation, authenticated drafter,
+  current revision, random change ID and ten-minute lifetime. The response is
+  `{change_id, approval_id, state: "pending"}`, with no approval link or value.
+  Registered-contact delivery runs after the draft commits.
+- `GET /{change_id}` returns the persisted frozen change to an owner of this
+  installation, for rendering; it does not rebuild it from current records.
+- `POST /{change_id}/approval-options` takes `{token}` from the registered
+  contact's locator link and returns B2/B3's fresh APPROVE options.
+- `POST /{change_id}/approve` takes `{token, assertion}` and records the fresh
+  passkey decision. The logged-in owner must be that link's candidate.
+- `POST /{change_id}/confirm` takes `{}`. Only the deciding owner's current
+  session can consume the retained approval through `ChangeSets.confirm`.
+  The trusted governance registration view is fetched before authority locks;
+  required outbox recording and activation share the confirmation transaction.
+
+The protected confirmation response uses `owner_confirmation_result`; serve
+it with no-store and never log its body. Eviction receives only the committed
+Confirmation's installation/team/affected IDs, after commit. A cleanup failure
+never repeats confirmation; active-version and custody checks remain the
+release controls. Other record kinds, browser forms, reference staging and the
+root application mount are separate integration work.
