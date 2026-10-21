@@ -29,7 +29,13 @@ KIND_PARAMS = {
     "header": {"name": "X-Api-Key", "prefix": "Token "},
     "query": {"param": "api_key"},
     "aws-sigv4": {"region": "eu-west-1", "service": "sts"},
+    "oauth2-client-credentials": {
+        "token_endpoint": "https://auth.example.com/oauth/token",
+        "client_auth": "client_secret_basic",
+        "scope": "payments:read refunds:write",
+    },
 }
+OAUTH2 = KIND_PARAMS["oauth2-client-credentials"]
 
 
 def _record(**changes):
@@ -74,6 +80,36 @@ def test_the_record_round_trips_as_its_after() -> None:
         {"kind": "query", "kind_params": {"param": "api key"}},
         {"kind": "aws-sigv4", "kind_params": {"region": "EU-WEST-1", "service": "sts"}},
         {"kind": "aws-sigv4", "kind_params": {"region": "eu-west-1"}},
+        {
+            "kind": "oauth2-client-credentials",
+            "kind_params": {**OAUTH2, "token_endpoint": "http://auth.example.com/token"},
+        },
+        {
+            "kind": "oauth2-client-credentials",
+            "kind_params": {**OAUTH2, "token_endpoint": "https://AUTH.example.com/oauth/token"},
+        },
+        {
+            "kind": "oauth2-client-credentials",
+            "kind_params": {**OAUTH2, "token_endpoint": "https://auth.example.com/oauth/../token"},
+        },
+        {
+            "kind": "oauth2-client-credentials",
+            "kind_params": {**OAUTH2, "token_endpoint": "https://user@auth.example.com/token"},
+        },
+        {
+            "kind": "oauth2-client-credentials",
+            "kind_params": {**OAUTH2, "token_endpoint": "https://10.0.0.5/token"},
+        },
+        {
+            "kind": "oauth2-client-credentials",
+            "kind_params": {**OAUTH2, "client_auth": "private_key_jwt"},
+        },
+        {"kind": "oauth2-client-credentials", "kind_params": {**OAUTH2, "scope": "a\\b"}},
+        {"kind": "oauth2-client-credentials", "kind_params": {**OAUTH2, "scope": "a  b"}},
+        {
+            "kind": "oauth2-client-credentials",
+            "kind_params": {"token_endpoint": OAUTH2["token_endpoint"]},
+        },
         {"ref": "Payments Live"},
         {"ref": ""},
         {"secret_id": "19ab42"},
@@ -135,3 +171,9 @@ def test_use_approval_requesters_are_principals() -> None:
     cases = json.loads((VECTORS / "use-approval-v1.json").read_text())["positive_cases"]
     requesters = [case["request"]["requester"]["principal"] for case in cases]
     assert requesters and all(is_principal(principal) for principal in requesters)
+
+
+def test_an_oauth2_scope_may_be_empty() -> None:
+    params = {**OAUTH2, "scope": ""}
+    record = SecretRecord.from_after(_record(kind="oauth2-client-credentials", kind_params=params))
+    assert record.kind_params == params

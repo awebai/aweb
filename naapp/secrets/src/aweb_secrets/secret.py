@@ -13,6 +13,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from aweb_naapp.egress import EgressRefused, canonical_url
+
 KINDS = (
     "bearer",
     "basic",
@@ -23,6 +25,7 @@ KINDS = (
 )
 SENSITIVITIES = ("standard", "sensitive")
 BACKENDS = ("native", "1password")
+CLIENT_AUTHS = ("client_secret_basic", "client_secret_post")
 FIELDS = frozenset(
     {
         "v",
@@ -44,6 +47,8 @@ _HEADER_NAME = re.compile(r"[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}")
 _PREFIX = re.compile(r"[\x20-\x7e]{0,64}")
 _QUERY_PARAM = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 _AWS_NAME = re.compile(r"[a-z0-9-]{1,64}")
+# RFC 6749 §3.3: scope tokens separated by single spaces, or no scope.
+_SCOPE = re.compile(r"([\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*)?")
 _CONTROLS = re.compile(r"[\x00-\x1f\x7f‪-‮⁦-⁩]")
 
 # Headers that frame or route the request, which a credential may never set.
@@ -80,6 +85,20 @@ def _matches(pattern: re.Pattern[str], value: Any) -> bool:
     return isinstance(value, str) and pattern.fullmatch(value) is not None
 
 
+def _is_token_endpoint(value: Any) -> bool:
+    """Whether ``value`` is a named https URL already in the egress guard's canonical form.
+
+    The token exchange is a step of the dispatch and passes the same guard.
+    """
+    if not isinstance(value, str):
+        return False
+    try:
+        url = canonical_url(value)
+    except EgressRefused:
+        return False
+    return url.ip is None and str(url) == value
+
+
 def _check_kind_params(kind: str, params: Any) -> None:
     _require(isinstance(params, Mapping), "kind_params is an object")
     if kind in ("bearer", "basic"):
@@ -97,9 +116,19 @@ def _check_kind_params(kind: str, params: Any) -> None:
         _require(_matches(_AWS_NAME, params["region"]), "the region is a lowercase AWS name")
         _require(_matches(_AWS_NAME, params["service"]), "the service is a lowercase AWS name")
     else:
-        # The token endpoint is a destination: it is checked by the egress
-        # guard's canonical form, which this record does not yet carry.
-        raise SecretInvalid(f"{kind} parameters cannot be checked")
+        _require(
+            set(params) == {"token_endpoint", "client_auth", "scope"},
+            "oauth2-client-credentials takes token_endpoint, client_auth and scope",
+        )
+        _require(
+            _is_token_endpoint(params["token_endpoint"]),
+            "the token endpoint is a canonical https URL",
+        )
+        _require(
+            params["client_auth"] in CLIENT_AUTHS,
+            "client_auth is client_secret_basic or client_secret_post",
+        )
+        _require(_matches(_SCOPE, params["scope"]), "the scope is space-separated scope tokens")
 
 
 def _check(after: Any) -> None:
