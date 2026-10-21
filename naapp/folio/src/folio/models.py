@@ -168,11 +168,6 @@ class ThemeResponse(BaseModel):
     updated_at: datetime | None = None
 
 
-class BillingCaps(BaseModel):
-    max_documents: int | None
-    max_versions_per_doc: int | None
-
-
 class BillingUsage(BaseModel):
     documents: int
     max_versions_per_doc: int
@@ -180,6 +175,4 @@ class BillingUsage(BaseModel):
 
 class BillingResponse(BaseModel):
     team_id: str
-    tier: str
-    caps: BillingCaps
     usage: BillingUsage
