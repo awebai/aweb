@@ -194,6 +194,27 @@ def test_ci_builds_the_e2e_stack_from_the_commit_under_test() -> None:
     assert all("github.workspace" in context for context in contexts), contexts
 
 
+def test_cli_e2e_builds_library_from_the_commit_under_test() -> None:
+    """The CLI real-stack e2e builds this Library, not the old standalone repository.
+
+    Library builds from the repository root against the in-repo awid and naapp-lib,
+    so a separately checked-out Library would test other code. A change to Library
+    or naapp-lib must also trigger the workflow.
+    """
+    path = _AWEB_ROOT / ".github" / "workflows" / "cli-e2e.yml"
+    workflow = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    steps = [step for job in workflow["jobs"].values() for step in job["steps"]]
+    repositories = [
+        (step.get("with") or {}).get("repository")
+        for step in steps
+        if step.get("uses", "").startswith("actions/checkout@")
+    ]
+    assert "awebai/library" not in repositories, repositories
+    assert not any("LIBRARY_E2E_LIBRARY_CONTEXT" in (step.get("env") or {}) for step in steps)
+    triggers = workflow["on"]["pull_request"]["paths"]
+    assert {"naapp/library/**", "naapp-lib/**"} <= set(triggers), triggers
+
+
 def test_ci_also_covers_naapp_lib() -> None:
     """naapp-lib is a dependency of both movers and had no CI before the move.
 

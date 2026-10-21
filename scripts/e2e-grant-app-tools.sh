@@ -58,7 +58,6 @@ export LIBRARY_E2E_POSTGRES_PORT="${GRANT_APP_E2E_POSTGRES_PORT:-56432}"
 AWID_URL="http://127.0.0.1:$LIBRARY_E2E_AWID_PORT"
 AWEB_URL="http://127.0.0.1:$LIBRARY_E2E_AWEB_PORT"
 LIBRARY_URL="http://127.0.0.1:$LIBRARY_E2E_LIBRARY_PORT"
-export LIBRARY_E2E_LIBRARY_CONTEXT="$REPO_ROOT/naapp/library"
 export LIBRARY_E2E_AWEB_PUBLIC_ORIGIN="$AWEB_URL"
 export LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL="$AWID_URL"
 export LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN="$LIBRARY_URL"
@@ -150,7 +149,7 @@ docker buildx inspect "$BUILDER" >"$EVIDENCE/builder.txt" 2>&1 \
   || fatal "buildx builder '$BUILDER' not found (BUILDX_CONFIG=$BUILDX_CONFIG); refusing an unbounded build"
 docker compose build --help 2>/dev/null | grep -q -- '--builder' \
   || fatal "docker compose build does not support --builder; upgrade Compose rather than build unbounded"
-[[ -f "$COMPOSE_FILE" && -d "$LIBRARY_E2E_LIBRARY_CONTEXT" ]] || fatal "REPO_ROOT $REPO_ROOT lacks docker-compose.e2e.yml or naapp/library"
+[[ -f "$COMPOSE_FILE" && -f "$REPO_ROOT/naapp/library/Dockerfile" ]] || fatal "REPO_ROOT $REPO_ROOT lacks docker-compose.e2e.yml or naapp/library"
 
 if [[ -z "${AW_BIN:-}" ]]; then
   echo "=== Building aw from $REPO_ROOT ==="

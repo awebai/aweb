@@ -109,6 +109,12 @@ candidate-gate:
 
         gate = ("bash", "scripts/candidate-docker-gate.sh")
         ledger = evidence / "ledger.tsv"
+        # Library builds from the candidate checkout itself; a separate Library
+        # source is no longer an input, so naming one is refused, not ignored.
+        env["LIBRARY_E2E_LIBRARY_CONTEXT"] = str(repo / "naapp/library")
+        refused_library = invoke("library-context", *gate, stages="checks", success=False)
+        assert "LIBRARY_E2E_LIBRARY_CONTEXT" in refused_library and not ledger.exists()
+        del env["LIBRARY_E2E_LIBRARY_CONTEXT"]
         invoke("first-checks", *gate, stages="checks")
         rows = ledger.read_text().splitlines()
         assert len(rows) == 1 and rows[0].split("\t")[1:3] == ["checks", "passed"]

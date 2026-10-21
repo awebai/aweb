@@ -118,7 +118,7 @@ test-shipping:
 	python3 scripts/test_candidate_cleanup.py
 
 # AWID metadata is repeated in every committed Python lock that takes the in-repo
-# awid (awid, server, naapp-lib and naapp/folio). Check all four without repair,
+# awid (awid, server, naapp-lib and each naapp). Check them all without repair,
 # then prove stale and missing dependent-lock entries are rejected.
 test-python-locks:
 	bash scripts/check-python-locks.sh
