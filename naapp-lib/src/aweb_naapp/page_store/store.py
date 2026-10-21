@@ -573,8 +573,10 @@ class PageStore(LifecycleMixin):
         if replay:
             if row_request:
                 definition = next(
-                    c for c in document["collections"] if c["id"] == request["collection"]
+                    (c for c in document["collections"] if c["id"] == request["collection"]), None
                 )
+                if definition is None:
+                    raise StoreError("action_denied", 403)
                 original = replay.get("record", {}).get("value", {})
                 if not access.visible_row(actor, definition["id"], replay["record_id"]) or set(
                     original

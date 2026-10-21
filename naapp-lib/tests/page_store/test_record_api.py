@@ -282,3 +282,44 @@ async def test_retry_refuses_a_stored_value_after_current_field_visibility_narro
     with pytest.raises(StoreError, match="action_denied"):
         await store.patch_record(SCOPE, READER, **request)
     assert (await store.read(SCOPE, OWNER))["rev"] == 3
+
+
+@pytest.mark.parametrize("operation", ["add", "patch", "delete"])
+async def test_record_replay_refuses_a_collection_removed_by_a_document_migration(store, operation):
+    import json
+
+    from aweb_naapp.pages import validate_page
+
+    await create(store)
+    request = dict(collection="items", key="before-collection-removal")
+    if operation == "add":
+        method = store.add_record
+        request["values"] = {"label": "Added row", "checked": False}
+    else:
+        method = store.patch_record if operation == "patch" else store.delete_record
+        request.update(record_id="item-1", expected_rev=1)
+        if operation == "patch":
+            request["patch"] = {"checked": True}
+    receipt = await method(SCOPE, OWNER, **request)
+    document = await store.read(SCOPE, OWNER)
+    document.update(collections=[], layout=[], widget_state={}, actions=[])
+    document["rev"] += 1
+    assert validate_page(document).valid
+    # Simulate a committed document migration. There is no public collection
+    # removal API; the existing request receipt remains in the database.
+    await store.db.execute(
+        "UPDATE {{tables.pages}} SET document=$2::jsonb WHERE scope=$1",
+        SCOPE.key,
+        json.dumps(document),
+    )
+    with pytest.raises(StoreError) as refused:
+        await method(SCOPE, OWNER, **request)
+    assert (refused.value.code, refused.value.status) == ("action_denied", 403)
+    assert (await store.read(SCOPE, OWNER))["rev"] == document["rev"]
+    assert await store.db.fetch_value("SELECT count(*) FROM {{tables.page_audit}}") == 2
+    assert await store.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 2
+    stored = await store.db.fetch_value(
+        "SELECT receipt FROM {{tables.page_receipts}} WHERE transaction_id=$1::uuid",
+        receipt["transaction_id"],
+    )
+    assert json.loads(stored) == receipt
