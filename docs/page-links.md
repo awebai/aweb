@@ -55,7 +55,7 @@ The app stores, per link, an immutable record and its mutable lifecycle:
   "actions": [{"action_id": "mark-cleaned", "constraints": {"record_id": "b-17"}}],
   "intent_sponsor_did": null,
   "one_use": false,
-  "created_by": {"principal_did": "did:aw:…", "certificate_id": "…"},
+  "created_by": {"principal_did": "did:aw:…", "certificate_id": "…", "team_did_key": "did:key:…"},
   "created_at": "2026-10-20T12:00:00Z",
   "expires_at": "2026-10-27T12:00:00Z",
   "rate_policy": "link-default-v1"
@@ -72,8 +72,41 @@ Lifecycle: `revoked_at`, `used_at` (one-use links) and the stored receipts.
 | `projection` | The only collections, rows, fields and assets the link can read. 1–16 collections with 1–64 minted fields each; `record_ids` is a literal list of 0–200 IDs, or `"*"` with the mode-specific rules below. An empty list always means zero rows. 0–64 asset IDs. |
 | `actions` | 0–16 `{action_id, constraints}`: allowed page actions of kind `edit` or `intent`, each with fixed input values the submission must equal. Empty means read-only, the default. Never an `answer`-kind action. |
 | `intent_sponsor_did` | Required when `actions` contains an `intent`: the agent principal that routes the holder's intents (§5). `null` otherwise. |
+| `created_by` | Host-derived immutable mint evidence: canonical ACL `principal_did`, and `certificate_id` plus `team_did_key` from the verified mint-time Principal. Not grantable request fields; never returned to a holder. |
 | `one_use` | `true`: the first admitted action uses the link up (§4). Reads before it consume nothing. |
 | `expires_at` | After `created_at` and at most 30 days later. |
+
+**Current creator membership.** N5 retains the mint-time certificate ID and
+team key in `created_by`; a bare DID or historical observed-principal row is
+insufficient. Before any creator-scoped store/authority callback on exchange,
+read or admission, under the existing verified secret/session and link row
+lock, it invokes the required
+`authority.require_current_creator(tx, *, creator: LinkCreator)` callback.
+`LinkCreator` is immutable: `{scope: LinkScope, principal_did, certificate_id,
+team_did_key}`. The canonical `principal_did` is the shared PageStore identity
+helper's ACL input; it is separate from the membership evidence.
+
+The host delegates to `runtime.require_current_member(creator.scope.team_id,
+certificate_id=creator.certificate_id, team_did_key=creator.team_did_key)`.
+This uses the request verifier's current AWID facts/cache (at most 60 s),
+requires an active known certificate and the same current team key as at mint,
+and refuses unknown, revoked, rotated or incomplete evidence with 403
+`current_member_required`. AWID lookup unavailability remains 503
+`current_membership_unavailable`, never a successful fallback. Old records
+missing evidence fail closed, without reconstructing it from observations.
+No certificate bytes are retained, and no verifier, link SQL or fabricated
+member Principal is needed in the host or store. Only after this callback
+succeeds may other authority callbacks use the canonical creator string.
+`LinkRead.created_by` and `LinkAction.created_by` carry the same checked,
+internal context; hosts never serialize that evidence to holders.
+
+This membership check precedes even admission's receipt lookup. Matching
+retries still bypass link lifecycle and action-policy checks after the current
+creator passes membership, preserving receipt semantics for a used or revoked
+link without letting a departed creator continue authorizing holder requests.
+Management revocation by an authorized owner remains available after creator
+membership loss; it does not depend on that departed creator passing the check.
+Future asset and stream adapters must use this same boundary before content.
 
 **Rows in pinned and live views.** For pinned links, `record_ids:"*"` is
 expanded at mint to the creator's authorized named rows, including `[]` for an
@@ -304,12 +337,14 @@ trust of an AWID member signature.
 
 Each read, submit, stream subscription, asset fetch and dispatch takes the
 link's row lock (`FOR UPDATE` for writes, `FOR SHARE` for reads). Every request
-also requires its session to be unexpired. For a submit, the first step under
+also requires its session to be unexpired and the current creator membership
+check above to pass. For a submit, the first action-layer step under
 the lock is the **receipt lookup**: if the link has an admitted operation with
 this idempotency key, the same body returns its stored receipt, and a
 different body is 409 `idempotency_conflict`. Nothing else below runs for a
 matching retry, so a retry gets its receipt even after the link was used up
-or revoked, as long as its session is live; it never admits a second
+or revoked, as long as its session is live and the creator passes current
+membership; it never admits a second
 operation. A session never outlives its link, so once the link has expired
 there is no session left to retry with. Otherwise, in the same transaction, the request requires:
 
@@ -447,6 +482,8 @@ never locates an approval.
 | --- | --- | --- |
 | 401 | `signature_invalid` | A link request's shape, signature or binding fails. |
 | 401 | `authorization_expired` | `issued_at` is outside its window. |
+| 403 | `current_member_required` | Creator membership evidence is incomplete, unknown, revoked or rotated. |
+| 503 | `current_membership_unavailable` | Current AWID membership facts cannot be obtained. |
 | 403 | `action_denied` | Outside the projection or allowed actions, a constraint is not met, the creator's authority no longer covers it, or the `Origin` is wrong. |
 | 404 | `link_unavailable` | Unknown link, wrong secret, or an unusable link before any session. |
 | 409 | `idempotency_conflict` | A replayed nonce, or a known idempotency key with different content. |

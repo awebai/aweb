@@ -9,7 +9,7 @@ import pytest
 from aweb_naapp.runtime.capability_links import LinkCaller, LinkRefused, Readable, mint
 
 from . import test_lifecycle
-from .conftest import CAPABILITY, CREATOR, DEFAULT_LINK, SCOPE, T0, request_from
+from .conftest import CAPABILITY, CREATOR, DEFAULT_LINK, SCOPE, T0, TEAM_KEY, request_from
 from .test_exchange import _exchange, body
 from .test_lifecycle import get_projection, revoke_link, selection, submit
 from .test_snapshots import ProjectionSource
@@ -49,6 +49,7 @@ async def test_live_projection_vector(db, authority, action_app, case):
             scope=SCOPE,
             creator=CREATOR,
             creator_certificate_id="cert-test",
+            creator_team_did_key=TEAM_KEY,
             request=request,
             now=T0,
             snapshot_source=Source(),
@@ -159,6 +160,7 @@ async def test_pinned_wildcard_still_refuses_more_than_200_rows(db, authority):
                 scope=SCOPE,
                 creator=CREATOR,
                 creator_certificate_id="cert-test",
+                creator_team_did_key=TEAM_KEY,
                 request=request,
                 now=T0,
                 snapshot_source=Source(),

@@ -121,6 +121,20 @@ class LinkScope:
 
 
 @dataclass(frozen=True)
+class LinkCreator:
+    """Internal mint evidence, separate from the canonical page ACL identity.
+
+    The host verifies current membership through the shared runtime before any
+    creator-scoped store call. Never return this evidence to the link holder.
+    """
+
+    scope: LinkScope
+    principal_did: str
+    certificate_id: str
+    team_did_key: str
+
+
+@dataclass(frozen=True)
 class Readable:
     """The records and fields of one collection a creator can read now."""
 
@@ -129,7 +143,18 @@ class Readable:
 
 
 class LinkAuthority(Protocol):
-    """A creator's current authority on a page, as the serving app knows it."""
+    """A creator's current authority on a page, as the serving app knows it.
+
+    ``require_current_creator`` delegates to runtime.require_current_member
+    using the supplied certificate/team-key evidence, never historical rows.
+    Its 403/503 HTTPException propagates unchanged. On a holder use it must
+    succeed before other creator/store callbacks; it is not an action-policy
+    substitute. Mint already receives the authenticated member context.
+    """
+
+    async def require_current_creator(
+        self, tx: TransactionManager, *, creator: LinkCreator
+    ) -> None: ...
 
     async def readable(
         self, tx: TransactionManager, *, creator: str, page_id: str, collection: str
@@ -202,6 +227,7 @@ class LinkRead:
     mode: str
     page_rev: int | None
     projection: Mapping[str, Any]
+    created_by: LinkCreator
     source_snapshot: Mapping[str, Any] | None = None
     asset_versions: Mapping[str, str] | None = None
     allowed_action_ids: tuple[str, ...] = ()
@@ -261,6 +287,7 @@ class LinkAction:
     scope: LinkScope
     caller: LinkCaller
     creator: str
+    created_by: LinkCreator
     mode: str
     page_rev: int | None
     projection: Mapping[str, Any]
@@ -453,6 +480,7 @@ async def mint(
     scope: LinkScope,
     creator: str,
     creator_certificate_id: str,
+    creator_team_did_key: str,
     request: object,
     now: datetime,
     snapshot_source: SnapshotSource | None = None,
@@ -468,6 +496,11 @@ async def mint(
     """
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
+    if any(
+        not isinstance(value, str) or not value.strip()
+        for value in (creator, creator_certificate_id, creator_team_did_key)
+    ):
+        raise ValueError("verified creator membership evidence required")
     checked = _check_request(request, now)
     kinds = [
         await authority.action_kind(tx, page_id=scope.page_id, action_id=action["action_id"])
@@ -541,7 +574,11 @@ async def mint(
         "actions": checked["actions"],
         "intent_sponsor_did": checked["intent_sponsor_did"],
         "one_use": checked["one_use"],
-        "created_by": {"principal_did": creator, "certificate_id": creator_certificate_id},
+        "created_by": {
+            "principal_did": creator,
+            "certificate_id": creator_certificate_id,
+            "team_did_key": creator_team_did_key,
+        },
         "created_at": _timestamp(now),
         "expires_at": _timestamp(checked["expires_at"]),
         "rate_policy": RATE_POLICY,
@@ -717,7 +754,10 @@ async def exchange(
             and now < row["expires_at"]
             and not (row["one_use"] and row["used_at"] is not None)
         )
-        if not usable or not await _creator_still_reads(tx, authority, record):
+        if not usable:
+            raise _unavailable()
+        await _require_current_creator(tx, authority, record)
+        if not await _creator_still_reads(tx, authority, record):
             raise _unavailable()
         per_link = await take(tx, [Charge("link.exchange", link_id, *EXCHANGES_PER_LINK)], now=now)
         if not per_link.allowed:
@@ -846,6 +886,28 @@ def _scope(record: Mapping[str, Any]) -> LinkScope:
     return LinkScope(record["team_id"], record["installation_id"], record["page_id"])
 
 
+async def _require_current_creator(
+    tx: TransactionManager, authority: LinkAuthority, record: Mapping[str, Any]
+) -> LinkCreator:
+    """Consume immutable mint evidence under the caller's existing link lock."""
+    evidence = record.get("created_by")
+    if not isinstance(evidence, Mapping) or any(
+        not isinstance(evidence.get(name), str) or not evidence[name].strip()
+        for name in ("principal_did", "certificate_id", "team_did_key")
+    ):
+        raise LinkRefused(
+            "current_member_required", 403, reason="incomplete creator membership evidence"
+        )
+    creator = LinkCreator(
+        scope=_scope(record),
+        principal_did=evidence["principal_did"],
+        certificate_id=evidence["certificate_id"],
+        team_did_key=evidence["team_did_key"],
+    )
+    await authority.require_current_creator(tx, creator=creator)
+    return creator
+
+
 async def _locked_link(
     tx: TransactionManager, *, caller: LinkCaller, write: bool, now: datetime
 ) -> Mapping[str, Any]:
@@ -941,8 +1003,9 @@ async def read(
     record = _record(row["record"])
     if record["page_id"] != page_id:
         raise _denied()
+    created_by = await _require_current_creator(tx, authority, record)
     selected = _select_projection(projection, record["projection"])
-    creator = record["created_by"]["principal_did"]
+    creator = created_by.principal_did
     if record["mode"] == "live" and not record["actions"]:
         selected = await _current_projection(
             tx, authority, creator=creator, page_id=page_id, minted=selected, keep_empty=True
@@ -994,14 +1057,15 @@ async def read(
     if not limit.allowed:
         raise _limited(limit)
     return LinkRead(
-        _scope(record),
-        creator,
-        record["mode"],
-        record["page_rev"],
-        selected,
-        source,
-        versions,
-        tuple(allowed_actions),
+        scope=_scope(record),
+        creator=creator,
+        mode=record["mode"],
+        page_rev=record["page_rev"],
+        projection=selected,
+        created_by=created_by,
+        source_snapshot=source,
+        asset_versions=versions,
+        allowed_action_ids=tuple(allowed_actions),
     )
 
 
@@ -1081,10 +1145,12 @@ async def admit(
     """Admit an edit or anonymous intent (§4–§6), in the caller's transaction.
 
     The body is the same bytes :func:`authenticate` bound to the request.
-    Receipt lookup precedes lifecycle/authority under FOR UPDATE. An admitted
+    Current creator membership precedes receipt lookup under FOR UPDATE; the
+    lookup then precedes lifecycle/action policy. An admitted
     one-use operation and its receipt commit together; a failure rolls both
     back. Fresh nonces allow retries, whose result survives use or revocation
-    only while the session lives. ``client`` follows the trusted proxy rule.
+    only while the session lives and creator membership still holds.
+    ``client`` follows the trusted proxy rule.
     """
     request = _action_request(body)
     request_hash = hashlib.sha256(
@@ -1092,6 +1158,7 @@ async def admit(
     ).digest()
     row = await _locked_link(tx, caller=caller, write=True, now=now)
     record = _record(row["record"])
+    created_by = await _require_current_creator(tx, authority, record)
     key = (
         record["installation_id"],
         record["team_id"],
@@ -1117,7 +1184,7 @@ async def admit(
                 request["input"][field]
             ) != canonical_json_bytes(value):
                 raise _denied()
-        creator = record["created_by"]["principal_did"]
+        creator = created_by.principal_did
         kind = await authority.action_kind(tx, page_id=page_id, action_id=request["action_id"])
         if kind not in _LINK_KINDS or not await authority.can_act(
             tx,
@@ -1151,6 +1218,7 @@ async def admit(
                 scope=_scope(record),
                 caller=caller,
                 creator=creator,
+                created_by=created_by,
                 mode=record["mode"],
                 page_rev=record["page_rev"],
                 projection=projection,

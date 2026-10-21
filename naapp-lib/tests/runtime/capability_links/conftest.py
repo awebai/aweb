@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from awid.did import did_from_public_key
+from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
@@ -27,6 +29,7 @@ REQUESTS = json.loads((AWEB_ROOT / "docs" / "vectors" / "link-request-v1.json").
 
 T0 = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 CREATOR = "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+TEAM_KEY = did_from_public_key(bytes(SigningKey(b"T" * 32).verify_key))
 SPONSOR = "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
 SCOPE = LinkScope(team_id="backend:acme.com", installation_id="inst_01JB7Q", page_id="pg_4hd2")
 KINDS = {
@@ -45,6 +48,10 @@ class GrantedAuthority:
     actions: dict[str, set[str]] = field(default_factory=dict)
     assets: dict[str, set[str]] = field(default_factory=dict)
     agents: set[str] = field(default_factory=lambda: {SPONSOR})
+
+    async def require_current_creator(self, tx, *, creator) -> None:
+        assert creator.scope == SCOPE
+        assert creator.team_did_key == TEAM_KEY
 
     async def readable(self, tx, *, creator: str, page_id: str, collection: str) -> Readable | None:
         return self.reads.get(creator, {}).get(collection)
@@ -133,6 +140,7 @@ async def mint_link(
             scope=SCOPE,
             creator=CREATOR,
             creator_certificate_id="0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11",
+            creator_team_did_key=TEAM_KEY,
             request=request if request is not None else request_from(DEFAULT_LINK, now=now),
             now=now,
         )

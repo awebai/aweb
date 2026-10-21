@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable
 from datetime import datetime
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pgdbm import AsyncDatabaseManager
 
@@ -65,6 +65,14 @@ def mount_link_exchange(
         except LinkRefused as refused:
             logger.info("link exchange refused: %s (%s)", refused.code, refused.reason)
             return refusal_response(refused)
+        except HTTPException as refused:
+            # Preserve the shared runtime's public membership code/status and
+            # any retry header, with the same privacy headers as every link response.
+            return JSONResponse(
+                {"detail": refused.detail},
+                status_code=refused.status_code,
+                headers={**(refused.headers or {}), **LINK_RESPONSE_HEADERS},
+            )
         return JSONResponse(
             {
                 "session_id": session.session_id,

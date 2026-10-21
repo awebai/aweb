@@ -23,7 +23,7 @@ from aweb_naapp.runtime.capability_links import (
     retained_asset_versions_on,
 )
 
-from .conftest import CREATOR, DEFAULT_LINK, SCOPE, T0, request_from
+from .conftest import CREATOR, DEFAULT_LINK, SCOPE, T0, TEAM_KEY, request_from
 from .test_exchange import _exchange, body
 from .test_lifecycle import get_projection, revoke_link, selection
 
@@ -107,6 +107,7 @@ async def pinned(db, authority, snapshot_source, *, asset_source=None):
             scope=SCOPE,
             creator=CREATOR,
             creator_certificate_id="cert-test",
+            creator_team_did_key=TEAM_KEY,
             request=request,
             now=T0,
             snapshot_source=snapshot_source,
