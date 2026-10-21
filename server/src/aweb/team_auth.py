@@ -9,16 +9,17 @@ issued by the hosted dashboard for human dashboard access.
 
 from __future__ import annotations
 
-import base64
-import json
 import logging
 from typing import Any, Callable, Optional
 
 import jwt as pyjwt
 
-from awid.did import public_key_from_did
 from awid.certificates import validate_certificate_lifetime
-from awid.signing import canonical_json_bytes, verify_signature_with_public_key, VerifyResult
+from awid.team_certificate import (
+    TeamCertificateError,
+    decode_team_certificate,
+    verify_team_certificate_signature,
+)
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 
 logger = logging.getLogger(__name__)
@@ -37,21 +38,11 @@ def _verify_certificate_signature(cert: dict, team_did_key: str) -> bool:
     The team_did_key MUST come from a trusted source (the awid registry),
     never from the certificate itself.
     """
-    signature = cert.get("signature")
-    if not signature:
-        return False
-
-    # The signed payload is the entire certificate minus the signature field.
-    payload_fields = {k: v for k, v in cert.items() if k != "signature"}
-    payload_bytes = canonical_json_bytes(payload_fields)
-
     try:
-        public_key = public_key_from_did(team_did_key)
-    except Exception:
+        verify_team_certificate_signature(cert, team_did_key)
+    except TeamCertificateError:
         return False
-
-    result = verify_signature_with_public_key(public_key, payload_bytes, signature)
-    return result == VerifyResult.VERIFIED
+    return True
 
 
 def parse_and_verify_certificate(
@@ -81,9 +72,8 @@ def parse_and_verify_certificate(
         ValueError: If the certificate is invalid, tampered, revoked, or mismatched.
     """
     try:
-        cert_json = base64.b64decode(encoded_certificate)
-        cert = json.loads(cert_json)
-    except Exception:
+        cert = decode_team_certificate(encoded_certificate)
+    except TeamCertificateError:
         raise ValueError("Malformed certificate: invalid base64 or JSON")
 
     if not isinstance(cert, dict):

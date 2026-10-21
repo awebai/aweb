@@ -22,15 +22,23 @@ from pathlib import Path
 
 SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
 TAG_PATTERN = re.compile(
-    rf"^(server-v|awid-service-v|awid-v|aw-v|channel-v|pi-v|skills-v|a2a-gw-v)({SEMVER})$"
+    rf"^(server-v|awid-service-v|aweb-naapp-v|awid-v|aw-v|channel-v|pi-v|skills-v|a2a-gw-v)({SEMVER})$"
 )
 MANIFESTS = {
     "server-v": "server/pyproject.toml",
     "awid-service-v": "awid/pyproject.toml",
+    "aweb-naapp-v": "naapp-lib/pyproject.toml",
     "awid-v": "awid/pyproject.toml",
     "channel-v": "channel/package.json",
     "pi-v": "pi-extension/package.json",
     "skills-v": "packages/claude-skills/package.json",
+}
+# Each PyPI lane: the package, its directory, and whether it depends on the
+# in-repo awid-service, which must be public before the package is published.
+PYPI_LANES = {
+    "server-v": ("aweb", "server", True),
+    "awid-service-v": ("awid-service", "awid", False),
+    "aweb-naapp-v": ("aweb-naapp", "naapp-lib", True),
 }
 NPM_LANES = {
     "channel-v": ("channel", "@awebai/claude-channel", "channel"),
@@ -129,13 +137,11 @@ def sha256(path: Path) -> str:
 
 
 def publish_pypi(root: Path, prefix: str, version: str) -> None:
-    package, directory = (
-        ("aweb", "server") if prefix == "server-v" else ("awid-service", "awid")
-    )
+    package, directory, needs_awid = PYPI_LANES[prefix]
     token = os.environ.get("UV_PUBLISH_TOKEN", "").strip()
     if not token:
         raise PublishRefusal("UV_PUBLISH_TOKEN is required")
-    if prefix == "server-v":
+    if needs_awid:
         awid_version = manifest_version(root, "awid/pyproject.toml")
         deadline = time.monotonic() + 180
         while True:
@@ -146,7 +152,7 @@ def publish_pypi(root: Path, prefix: str, version: str) -> None:
                 break
             if time.monotonic() >= deadline:
                 raise PublishRefusal(
-                    f"awid-service {awid_version} is not publicly available before aweb publication"
+                    f"awid-service {awid_version} is not publicly available before {package} publication"
                 )
             time.sleep(6)
     with tempfile.TemporaryDirectory(prefix="aweb-pypi-") as temporary:
@@ -484,7 +490,7 @@ def publish(root: Path, tag: str) -> None:
         checkout = Path(temporary) / "source"
         run(root, "git", "worktree", "add", "--detach", str(checkout), source_sha, timeout=120)
         try:
-            if prefix in {"server-v", "awid-service-v"}:
+            if prefix in PYPI_LANES:
                 publish_pypi(checkout, prefix, version)
             elif prefix in NPM_LANES:
                 publish_npm(checkout, prefix, version)

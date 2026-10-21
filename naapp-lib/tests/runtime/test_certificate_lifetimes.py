@@ -9,7 +9,8 @@ from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 
 from aweb_naapp.runtime.certificate_client import TeamCertificateHTTPClient
-from tests.runtime.conftest import Member, relying_app, utc_timestamp
+from aweb_naapp_testing import Member, utc_timestamp
+from tests.runtime.conftest import relying_app
 
 ORIGIN = 'https://app.example.com'
 

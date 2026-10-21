@@ -12,11 +12,12 @@ from dataclasses import replace
 
 import httpx
 import pytest
+from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member
 from awid.pagination import decode_cursor, encode_cursor
 from fastapi import HTTPException
 
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
-from tests.runtime.conftest import REGISTRY_URL, SERVICE_TOKEN, Member, relying_app
+from tests.runtime.conftest import relying_app
 
 ORIGIN = "https://app.example.com"
 TEAM_ID = "backend:example.com"

@@ -190,6 +190,7 @@ _BUCKET_DEFAULTS: dict[str, tuple[int, int]] = {
     "attestation_record_publish": (3000, 3600),
     "attestation_record_publish_team": (2500, 3600),
     "attestation_record_get": (60, 60),
+    "attestation_record_list": (60, 60),
 }
 
 

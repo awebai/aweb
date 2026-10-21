@@ -813,6 +813,7 @@ Subcommands:
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `renew-certs` Controller: safely renew certificates due under the team's lifetime policy
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
+- `rotate-key` Rotate the team controller key, re-signing the team's AWID records with it
 - `set-server` Publish the team's coordination server at AWID, signed by the team controller key
 - `show-server` Show and verify the team's published coordination server
 - `switch` Switch the active team for this identity
@@ -1199,6 +1200,25 @@ Flags:
 - `-h, --help help for request`
 - `--name string Suggested member name for the new team membership`
 - `--team string Canonical team ID (<name>:<domain>)`
+
+## `id team rotate-key`
+
+### `id team rotate-key`
+
+Replace the team controller key at AWID with a new local key, under the namespace
+controller key. Every record the team key has signed at AWID (the team-server record,
+custodian, member-custody and member-person records) is verified, re-signed by the
+new key and swapped with the key in one atomic request.
+
+Every member certificate is signed by the team key, so after a rotation all of them are
+invalid: re-issue each with `aw id team reissue-cert`. If the command is interrupted,
+run it again: it resumes with the same new key.
+
+Flags:
+- `-h, --help help for rotate-key`
+- `--namespace string Namespace domain`
+- `--registry string Registry origin override`
+- `--team string Team name`
 
 ## `id team set-server`
 
