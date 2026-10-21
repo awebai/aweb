@@ -166,8 +166,10 @@ Internal principal type remains distinct from the attributed actor; the host
 decides which authenticated principal kinds may administer. Policy exceptions
 fail the mutation. Decisions are not cached. Install the policy on the actual
 serving/mounted application so certificate and internal ingress use the same
-check. The helper alone does not change the legacy install ingress described
-above; route enforcement and its product request flow are separate F6 work.
+check. Installation confirmation, request approval and queued re-verification
+use it on both certificate and internal ingress; uninstall uses it in the
+lifecycle service. Ordinary members can submit installation requests without
+granting authority. See [the installation API](app-installation-api.md).
 
 ## Installation identity and transactional reader
 
