@@ -131,7 +131,7 @@ the external call is sent. `op_kind` is `broker` or `run_job`.
   test that a request whose concrete path holds a credential-shaped segment
   emits only its configured template. A runner job names `runner_id`, `job_id` and
   `job_digest` instead, and the two sets exclude each other.
-- `refused` requires `refusal_code`, from the catalog's 30 codes; no other
+- `refused` requires `refusal_code`, from the catalog's 32 codes; no other
   action carries one.
 - `completed` requires `disposition` (`returned`, `withheld` or
   `stored_as_secret`) and `undeclared_credential`. A returned result carries
