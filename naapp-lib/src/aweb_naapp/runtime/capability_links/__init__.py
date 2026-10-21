@@ -192,6 +192,9 @@ class LinkRead:
     ``allowed_action_ids``. A pinned ``source_snapshot`` is internal app input,
     never a response before that narrowing. ``asset_versions`` stays outside
     the page; the asset adapter supplies only available captured-version URLs.
+    A live read-only collection may carry ``record_ids="*"``: only the app's
+    paginated query_widget_on may consume it, with the checked caller link ID.
+    Capture and bounded snapshot projection APIs never accept that marker.
     """
 
     scope: LinkScope
@@ -362,7 +365,7 @@ def _check_request(request: object, now: datetime) -> dict[str, Any]:
             raise _schema("collection")
         records = entry["record_ids"]
         if records != "*":
-            records = _identifiers(records, 1, MAX_RECORDS)
+            records = _identifiers(records, 0, MAX_RECORDS)
         checked.append(
             {
                 "collection": entry["collection"],
@@ -416,9 +419,9 @@ async def _freeze_projection(
     creator: str,
     page_id: str,
     projection: Mapping[str, Any],
+    follow_rows: bool = False,
 ) -> dict[str, Any] | None:
-    """The projection with "*" frozen to the creator's records, or None when the
-    creator cannot read all of it now."""
+    """Check mint authority; only live read-only queries retain the row marker."""
     frozen = []
     for entry in projection["collections"]:
         readable = await authority.readable(
@@ -428,12 +431,13 @@ async def _freeze_projection(
             return None
         records = entry["record_ids"]
         if records == "*":
-            records = sorted(readable.records)
-            if not 1 <= len(records) <= MAX_RECORDS:
-                return None
+            if not follow_rows:
+                records = sorted(readable.records)
+                if len(records) > MAX_RECORDS:
+                    return None
         elif not set(records) <= set(readable.records):
             return None
-        frozen.append({**entry, "record_ids": list(records)})
+        frozen.append({**entry, "record_ids": "*" if records == "*" else list(records)})
     for asset_id in projection["assets"]:
         if not await authority.can_read_asset(
             tx, creator=creator, page_id=page_id, asset_id=asset_id
@@ -473,7 +477,12 @@ async def mint(
     if has_intent != (checked["intent_sponsor_did"] is not None):
         raise _schema("intent_sponsor_did")
     projection = await _freeze_projection(
-        tx, authority, creator=creator, page_id=scope.page_id, projection=checked["projection"]
+        tx,
+        authority,
+        creator=creator,
+        page_id=scope.page_id,
+        projection=checked["projection"],
+        follow_rows=checked["mode"] == "live" and not checked["actions"],
     )
     if projection is None:
         raise _denied()
@@ -638,6 +647,10 @@ async def _pinned_source(
 async def _creator_still_reads(
     tx: TransactionManager, authority: LinkAuthority, record: Mapping[str, Any]
 ) -> bool:
+    # Read-only live views can narrow to nothing; the checked read and app query
+    # re-evaluate authority before exposing any content. Exchange grants no data.
+    if record["mode"] == "live" and not record["actions"]:
+        return True
     creator = record["created_by"]["principal_did"]
     frozen = await _freeze_projection(
         tx,
@@ -882,12 +895,17 @@ def _select_projection(
             raise _schema("collection")
         if not _identifier(entry["collection"]):
             raise _schema("collection")
-        records = _identifiers(entry["record_ids"], 1, MAX_RECORDS)
+        records = entry["record_ids"]
+        if records != "*":
+            records = _identifiers(records, 0, MAX_RECORDS)
         fields = _field_names(entry["fields"])
         grant = allowed.get(entry["collection"])
         if (
             grant is None
-            or not set(records) <= set(grant["record_ids"])
+            or (
+                grant["record_ids"] != "*"
+                and (records == "*" or not set(records) <= set(grant["record_ids"]))
+            )
             or not set(fields) <= set(grant["fields"])
         ):
             raise _denied()
@@ -925,22 +943,29 @@ async def read(
         raise _denied()
     selected = _select_projection(projection, record["projection"])
     creator = record["created_by"]["principal_did"]
-    if (
-        await _freeze_projection(
-            tx,
-            authority,
-            creator=creator,
-            page_id=page_id,
-            projection={"collections": selected["collections"], "assets": []},
+    if record["mode"] == "live" and not record["actions"]:
+        selected = await _current_projection(
+            tx, authority, creator=creator, page_id=page_id, minted=selected, keep_empty=True
         )
-        is None
-    ):
-        raise _denied()
-    selected["assets"] = [
-        asset_id
-        for asset_id in selected["assets"]
-        if await authority.can_read_asset(tx, creator=creator, page_id=page_id, asset_id=asset_id)
-    ]
+    else:
+        if (
+            await _freeze_projection(
+                tx,
+                authority,
+                creator=creator,
+                page_id=page_id,
+                projection={"collections": selected["collections"], "assets": []},
+            )
+            is None
+        ):
+            raise _denied()
+        selected["assets"] = [
+            asset_id
+            for asset_id in selected["assets"]
+            if await authority.can_read_asset(
+                tx, creator=creator, page_id=page_id, asset_id=asset_id
+            )
+        ]
     allowed_actions = []
     for action in record["actions"]:
         if await authority.action_kind(
@@ -1014,8 +1039,9 @@ async def _current_projection(
     creator: str,
     page_id: str,
     minted: Mapping[str, Any],
+    keep_empty: bool = False,
 ) -> dict[str, Any]:
-    """Only narrow the immutable grant; newly acquired access never widens it."""
+    """Intersect the immutable row/field ceiling with current creator access."""
     collections = []
     for entry in minted["collections"]:
         current = await authority.readable(
@@ -1023,9 +1049,13 @@ async def _current_projection(
         )
         if current is None:
             continue
-        records = [r for r in entry["record_ids"] if r in current.records]
+        records = (
+            "*"
+            if entry["record_ids"] == "*"
+            else [r for r in entry["record_ids"] if r in current.records]
+        )
         fields = [f for f in entry["fields"] if f in current.fields]
-        if records and fields:
+        if (records or keep_empty) and fields:
             collections.append(
                 {"collection": entry["collection"], "record_ids": records, "fields": fields}
             )

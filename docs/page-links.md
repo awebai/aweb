@@ -69,11 +69,52 @@ Lifecycle: `revoked_at`, `used_at` (one-use links) and the stored receipts.
 | `link_id` | Opaque, `^[A-Za-z0-9._-]{1,128}$`. Public: it names the link, it is not the capability. |
 | `verifier_sha256` | Bare hex SHA-256 of the secret's UTF-8 bytes. The secret itself is never stored. |
 | `mode`, `page_rev` | `pinned` serves the page at `page_rev` only. `live` serves the current revision, and `page_rev` is `null`. |
-| `projection` | The only records, fields and assets the link can read. 1–16 collections, each with 1–200 `record_ids` (or `"*"` for every record the creator could read at mint, frozen as that list) and 1–64 `fields`. 0–64 asset IDs. |
+| `projection` | The only collections, rows, fields and assets the link can read. 1–16 collections with 1–64 minted fields each; `record_ids` is a literal list of 0–200 IDs, or `"*"` with the mode-specific rules below. An empty list always means zero rows. 0–64 asset IDs. |
 | `actions` | 0–16 `{action_id, constraints}`: allowed page actions of kind `edit` or `intent`, each with fixed input values the submission must equal. Empty means read-only, the default. Never an `answer`-kind action. |
 | `intent_sponsor_did` | Required when `actions` contains an `intent`: the agent principal that routes the holder's intents (§5). `null` otherwise. |
 | `one_use` | `true`: the first admitted action uses the link up (§4). Reads before it consume nothing. |
 | `expires_at` | After `created_at` and at most 30 days later. |
+
+**Rows in pinned and live views.** For pinned links, `record_ids:"*"` is
+expanded at mint to the creator's authorized named rows, including `[]` for an
+empty collection, with at most 200 rows. An action-bearing link also expands
+its wildcard to a bounded named list. Named lists are always literal: `[]`
+means no rows, never all rows. Empty collections are valid in both modes and
+retain their authorized collection/schema, returning count zero and no cursor.
+
+Only a **live read-only** link (`mode:"live"`, `actions:[]`) may retain
+`record_ids:"*"` in its immutable record and checked read projection. This
+scopes the read to the minted collection and fields; its row set follows the
+creator's current visibility, so rows added later may become visible. Current
+ACLs, hidden rows, field narrowing and deletion are re-evaluated on every
+page; loss of collection access removes it from the view. No new collection,
+field or action is granted. The action list never grows. A live action must
+target a row currently exposed by its checked projection, re-check the
+creator's current write authority, and belong to the minted action set;
+otherwise it is refused. Action-bearing named-row grants do not gain targets
+added after mint.
+
+The dynamic marker is accepted **only** by the live query entry point:
+`query_widget_on(tx, scope, *, creator_id, widget_id, bind, link_id,
+expected_page_rev=None, projection=None)`. The app passes only the checked
+`LinkRead.projection` and the verified `LinkCaller.link_id`, never a link ID
+from request JSON. A missing projection is refused. The query intersects the
+minted collection/fields and current creator row/field ACLs before filtering,
+sorting, counting and pagination. Each page has at most 200 rows; a collection
+may contain more. Cursors bind to the link, creator, scope, complete checked
+projection, query and page revision. They never work across links, even for
+the same creator. A changed page revision invalidates the cursor: restart at
+page one within the capability's ceiling. N5 retains its caller transaction
+and link lock until the page is loaded; every page re-checks session, expiry
+and revocation. `read_projection_on`, `capture_link_snapshot_on` and
+`project_link_snapshot_on` remain bounded named-row APIs and never accept `"*"`.
+
+**Disclosure and mode choice.** Wherever a person mints a live link to share,
+the chooser and link view must say that anyone holding it sees rows added
+later, within the creator's current access, until expiry or revocation. Pinned
+is the default wherever a person chooses a mode. A dashboard Documents click
+that mints a short-lived link for the viewer is a self-view, with no share
+chooser; its view still labels the mode as live.
 
 At mint, pinned mode materializes one complete authorized `aweb.page/1`
 snapshot at `page_rev` in the same transaction as the link. It holds the
@@ -141,9 +182,10 @@ field outside the projection; no installation, ACL, schema or layout change;
 no link minting; no answer to a member's decision task; no approval evidence;
 no consumption or dispatch of an external-effect approval. An old pinned link
 never gains an action added to the page later. A link's authority is the
-intersection of what it was minted with and what its creator holds at each use:
-if the creator loses access to a record, field or action, the link loses it
-too.
+intersection of its minted ceiling and what its creator holds at each use.
+For live read-only wildcards, that ceiling is the collection and fields rather
+than a frozen row list. If the creator loses access to a row, field or action,
+the link loses it too.
 
 ## 2. Exchange: `POST /v1/links/{link_id}/session`
 
