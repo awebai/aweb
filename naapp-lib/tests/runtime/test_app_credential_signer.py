@@ -13,6 +13,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from awid.did import did_from_public_key
+from nacl.signing import SigningKey
+
 from aweb_naapp.runtime.app_credentials import (
     APP_EVENT,
     APP_GRANT_READ,
@@ -24,8 +27,6 @@ from aweb_naapp.runtime.app_credentials import (
 )
 from aweb_naapp.runtime.app_emit import sign_app_emit_credential
 from aweb_naapp.runtime.app_keys import AppKey
-from awid.did import did_from_public_key
-from nacl.signing import SigningKey
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 VECTOR = json.loads(
