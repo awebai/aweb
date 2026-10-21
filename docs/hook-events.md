@@ -249,13 +249,14 @@ strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
 
 ### Observed backend versions (decision 92)
 
-**Deployment verification pending.** Decision 92 fixes activation and its
-non-widening classification. Decision 93 permits this draft's in-place catalog
-v1 re-freeze only after concrete verification that no deployed hook producer or
-consumer exists. Otherwise it requires the next ordered catalog version with
-explicit consumer updates. No producer emits the new entries until that
-condition and the shared contract's R+A are complete. The decision-93 receipt
-is `0c3beb68-15c7-49d2-9799-4d45ff95ed07` (2026-10-21).
+Decision 93 re-freezes these pre-deployment entries in catalog v1, after
+verification that no deployed hook producer or consumer exists. The artifact
+and deployment findings are recorded in the freeze commit. Published parser
+or envelope libraries alone do not establish a deployed producer or consumer.
+Once such a deployment exists, a payload addition requires the next ordered
+catalog version with explicit consumer updates. The decision-93 receipt is
+`0c3beb68-15c7-49d2-9799-4d45ff95ed07` (2026-10-21). The shared contract's
+R+A and updated receiver support precede producer emission.
 
 For a 1Password-backed secret, the grant authorizes the immutable vault, item
 and field reference. The vault is the owner's value-ingress and rotation path.
