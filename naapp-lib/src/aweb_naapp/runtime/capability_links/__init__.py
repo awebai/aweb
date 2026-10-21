@@ -28,7 +28,7 @@ import math
 import re
 import secrets
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -47,7 +47,7 @@ from aweb_naapp.runtime.link_requests import (
     secret_verifier,
     verify_link_request_bytes,
 )
-from aweb_naapp.runtime.team_auth import MembershipProof
+from aweb_naapp.runtime.team_auth import MAX_TEAM_FACTS_TTL_SECONDS, MembershipProof
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_naapp_capability_links"
@@ -746,6 +746,20 @@ def _exchange_request(body: bytes) -> dict[str, Any]:
     return request
 
 
+def _exchange_record(row: Mapping[str, Any] | None, request: Mapping[str, Any], now: datetime):
+    stored = row["verifier_sha256"] if row is not None else _ABSENT_VERIFIER
+    matches = hmac.compare_digest(secret_verifier(request["secret"]), stored)
+    if row is None or not matches:
+        raise _unavailable()
+    if (
+        row["revoked_at"] is not None
+        or now >= row["expires_at"]
+        or (row["one_use"] and row["used_at"] is not None)
+    ):
+        raise _unavailable()
+    return _record(row["record"])
+
+
 async def exchange(
     db: AsyncDatabaseManager,
     authority: LinkAuthority,
@@ -755,6 +769,7 @@ async def exchange(
     client: str,
     now: datetime,
     proof: MembershipProof | None = None,
+    check_current_member: Callable[[LinkCreator], Awaitable[MembershipProof]] | None = None,
     proof_clock: Callable[[], float] = time.monotonic,
 ) -> LinkSession:
     """Exchange a link's secret for a session bound to a browser key (§2).
@@ -777,6 +792,17 @@ async def exchange(
     if not per_client.allowed:
         raise _limited(per_client)
 
+    # Finish all preliminary SQL before remote membership checks. A wrong
+    # secret/unknown link spends its client admission but never reaches AWID.
+    row = await db.fetch_one(
+        "SELECT verifier_sha256, record, expires_at, one_use, revoked_at, used_at "
+        "FROM {{tables.capability_links}} WHERE link_id = $1",
+        link_id,
+    )
+    record = _exchange_record(row, request, now)
+    if check_current_member is not None:
+        proof = await check_current_member(_link_creator(record))
+
     async with db.transaction() as tx:
         row = await tx.fetch_one(
             """
@@ -785,18 +811,8 @@ async def exchange(
             """,
             link_id,
         )
-        stored = row["verifier_sha256"] if row is not None else _ABSENT_VERIFIER
-        matches = hmac.compare_digest(secret_verifier(request["secret"]), stored)
-        if row is None or not matches:
-            raise _unavailable()
-        record = _record(row["record"])
-        usable = (
-            row["revoked_at"] is None
-            and now < row["expires_at"]
-            and not (row["one_use"] and row["used_at"] is not None)
-        )
-        if not usable:
-            raise _unavailable()
+        record = _exchange_record(row, request, now)
+        assert row is not None  # _exchange_record refuses an absent row.
         await _require_current_creator(tx, authority, record, proof=proof, clock=proof_clock)
         if not await _creator_still_reads(tx, authority, record):
             raise _unavailable()
@@ -981,7 +997,7 @@ async def _require_current_creator(
         or proof.certificate_id != creator.certificate_id
         or proof.team_did_key != creator.team_did_key
         or not all(math.isfinite(t) for t in (proof.checked_at, proof.fresh_until, checked_now))
-        or not 0 <= proof.fresh_until - proof.checked_at <= 60
+        or not 0 <= proof.fresh_until - proof.checked_at <= MAX_TEAM_FACTS_TTL_SECONDS
         or not proof.checked_at <= checked_now <= proof.fresh_until
     ):
         raise LinkRefused(

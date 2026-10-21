@@ -107,8 +107,15 @@ proofs refuse 403 `current_member_required`; a lock wait never refreshes them.
 Only then does `authority.require_current_creator(tx, *, creator, proof)` run.
 This callback performs local checks only: no AWID refresh or network operation
 inside the transaction. Subsequent creator/store callbacks use the canonical
-ACL identity. The exchange mount accepts a required phase-1 callback and
-preserves membership refusal statuses and link privacy headers.
+ACL identity. The exchange mount accepts a required phase-1 callback. It validates the body,
+commits exactly one per-client rate charge, and verifies the supplied secret and
+lifecycle locally before invoking that callback. Unknown links and wrong
+secrets therefore return the same `link_unavailable`, spend the failed-exchange
+budget and never trigger AWID. All short SQL operations finish before the
+network call. After phase 1, the joined transaction reloads and revalidates the
+secret/lifecycle under the link lock before its local proof gate. Valid-secret
+holders retain membership 403/503 and all link privacy headers; the per-link
+bucket is charged only on success.
 
 Old records missing evidence fail closed; nothing reconstructs membership from
 observations. No certificate bytes, copied verifier, private link SQL or

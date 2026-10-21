@@ -20,9 +20,7 @@ from aweb_naapp.runtime.capability_links import (
     LinkAuthority,
     LinkCreator,
     LinkRefused,
-    _exchange_request,
     exchange,
-    load_link_creator,
 )
 from aweb_naapp.runtime.team_auth import MembershipProof
 
@@ -59,18 +57,14 @@ def mount_link_exchange(
     ``client_address`` keys the per-client exchange bucket, as the deployment
     resolves its callers (the peer, or a proxy header it trusts).
     ``check_current_member`` calls the shared runtime with this internal evidence
-    before any transaction; never refresh membership in the authority callback.
+    after committed client admission and secret checks, before the joined
+    lifecycle transaction; never refresh membership in the authority callback.
     """
 
     @app.post("/v1/links/{link_id}/session", include_in_schema=False)
     async def exchange_route(link_id: str, request: Request) -> JSONResponse:
         try:
             body = await request.body()
-            _exchange_request(body)
-            creator = await load_link_creator(db, link_id=link_id)
-            # Phase 1 may reach AWID. It MUST finish before exchange opens its
-            # transaction; phase 2 reloads evidence and checks expiry under lock.
-            proof = await check_current_member(creator)
             session = await exchange(
                 db,
                 authority,
@@ -78,7 +72,7 @@ def mount_link_exchange(
                 body=body,
                 client=client_address(request),
                 now=clock(),
-                proof=proof,
+                check_current_member=check_current_member,
             )
         except LinkRefused as refused:
             logger.info("link exchange refused: %s (%s)", refused.code, refused.reason)

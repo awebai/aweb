@@ -216,7 +216,7 @@ async def test_freshness_boundary_accepts_original_expiry_without_refresh(db, au
     "status,code", [(403, "current_member_required"), (503, "current_membership_unavailable")]
 )
 async def test_http_phase_one_refusal_precedes_transaction_and_keeps_privacy_headers(
-    db, authority, monkeypatch, status, code
+    db, authority, status, code
 ):
     import httpx
     from fastapi import FastAPI, HTTPException
@@ -232,12 +232,15 @@ async def test_http_phase_one_refusal_precedes_transaction_and_keeps_privacy_hea
 
     async def phase_one(creator):
         checked.append(creator)
+        # The committed rate admission and secret read retain no lifecycle lock.
+        async with db.transaction() as tx:
+            await tx.execute("SET LOCAL lock_timeout='100ms'")
+            await tx.fetch_value(
+                "SELECT link_id FROM {{tables.capability_links}} WHERE link_id=$1 FOR UPDATE",
+                minted.link_id,
+            )
         raise HTTPException(status_code=status, detail={"code": code})
 
-    async def forbidden(*args, **kwargs):
-        raise AssertionError("phase-one refusal must precede exchange transactions")
-
-    monkeypatch.setattr(routes, "exchange", forbidden)
     app = FastAPI()
     routes.mount_link_exchange(
         app,
