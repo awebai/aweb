@@ -489,10 +489,12 @@ test-candidate-ledger:
 _candidate-unit-suites:
 	python3 scripts/test-egress/docker.py --evidence "$$CANDIDATE_LOG_DIR/test-egress" --command bash scripts/candidate-suite.sh --isolated-suites
 
-candidate-gate:
+# The gate's own ledger test runs first, on the host, so a gate change that
+# breaks it stops every train and release candidate before any stage runs.
+candidate-gate: test-candidate-ledger
 	bash scripts/candidate-docker-gate.sh
 
-release-candidate:
+release-candidate: test-candidate-ledger
 	@test -n "$(TAGS)" || (echo "TAGS='server-vX.Y.Z ...' is required" >&2; exit 2)
 	python3 scripts/release_candidate.py $(TAGS)
 
