@@ -633,6 +633,7 @@ router entry.
 - `agent_status`
 - `agent_activity`
 - `apps`
+- `app_hooks`
 - `connect`
 - `chat`
 - `dashboard`
@@ -1764,6 +1765,12 @@ AWEB_REDIS_URL=redis://localhost:6379/0
 AWEB_PRESENCE_TTL_SECONDS=1800
 AWEB_DATABASE_USES_TRANSACTION_POOLER=false
 AWEB_DATABASE_STATEMENT_CACHE_SIZE=
+
+# How long an app may reuse its grant answer (1-60 seconds)
+AWEB_APP_GRANT_MAX_AGE_SECONDS=60
+
+# The core hook producer's public keys, retired ones included (JSON list)
+AWEB_HOOK_PRODUCER_KEYS=
 ```
 
 `AWEB_REDIS_URL` falls back to `REDIS_URL`, `AWEB_DATABASE_USES_TRANSACTION_POOLER`
