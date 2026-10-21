@@ -21,7 +21,7 @@ import pytest_asyncio
 
 import aweb.routes.apps as apps_routes
 from awid.signing import canonical_json_bytes, sign_message
-from aweb_naapp.manifest import ManifestError, load_manifest, read_manifest_bytes
+from aweb_naapp.manifest import ManifestError, fill_manifest, load_manifest, template_kids
 
 from aweb.app_credentials import APP_EVENT, APP_GRANT_READ, HOOK_RESOLVE, PURPOSES
 from aweb.app_registry import (
@@ -515,7 +515,11 @@ def test_install_reads_bytes_exactly_as_the_shared_reader_does(name, data, expec
     [("folio", "https://folio.aweb.ai"), ("library", "https://library.aweb.ai")],
 )
 async def test_every_live_apps_committed_manifest_installs_through_the_reader(db, app_id, origin):
-    manifest = read_manifest_bytes(ROOT / "naapp" / app_id / "src" / app_id / "aweb-app.json", origin)
+    template = json.loads((ROOT / "naapp" / app_id / "src" / app_id / "aweb-app.json").read_bytes())
+    manifest = fill_manifest(
+        template, app_id=app_id, origin=origin,
+        did_keys={kid: _make_app_keypair()[1] for kid in template_kids(template)},
+    )
     document = json.loads(manifest)
 
     installed = await install_app(
