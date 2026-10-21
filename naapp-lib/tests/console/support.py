@@ -2,8 +2,9 @@
 designated, recovered and retired by real team owner acts, and enrolled
 through real WebAuthn ceremonies."""
 
+import os
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from aweb_naapp_testing import Registry
 from aweb_naapp_testing.owner_acts import (
@@ -12,13 +13,13 @@ from aweb_naapp_testing.owner_acts import (
     revocation_subject,
     team_owner,
 )
-from aweb_naapp_testing.webauthn import SoftAuthenticator
+from aweb_naapp_testing.webauthn import SoftAuthenticator, b64url
 from pgdbm import AsyncDatabaseManager
 
 from aweb_naapp.console import MAX_SESSION, ConsoleSessions, apply_console_migrations
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from aweb_naapp.runtime.approvals import ApprovalRevocation, PgApprovalStore
-from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
+from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty, verify_registration
 from tests.runtime.approvals.support import AuditOutbox
 from tests.runtime.approvals.test_passkeys import Contacts
 
@@ -46,6 +47,36 @@ class Console:
     async def enrol(self, scope: str, contact: str | None = None) -> tuple[str, SoftAuthenticator]:
         """Designate the scope's first approver and enrol its passkey."""
         return await self._designate("app-role.designate", scope, contact or f"{scope}@example.com")
+
+    async def add_passkey(self, subject: str) -> SoftAuthenticator:
+        """Verify a second software key, then seed B3's multi-credential store.
+
+        The enrolment-link API issues one credential per link; this exercises
+        the supported stored-key schema without adding a test-only B3 API.
+        """
+        device = SoftAuthenticator(self.origin)
+        challenge = os.urandom(32)
+        credential = verify_registration(
+            device.create(
+                {
+                    "rp": {"id": self.passkeys.rp.rp_id},
+                    "user": {"id": b64url(subject.encode())},
+                    "challenge": b64url(challenge),
+                }
+            ),
+            challenge=challenge,
+            rp=self.passkeys.rp,
+        )
+        await self.db.execute(
+            "INSERT INTO {{tables.passkey_credentials}} "
+            "(credential_id, subject, public_key, sign_count, created_at) VALUES ($1,$2,$3,$4,$5)",
+            credential.credential_id,
+            subject,
+            credential.public_key,
+            credential.sign_count,
+            datetime.now(UTC),
+        )
+        return device
 
     async def recover(self, scope: str, contact: str) -> tuple[str, SoftAuthenticator]:
         """Replace the scope's approver after a lockout; the old one is retired at once."""
