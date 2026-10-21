@@ -127,7 +127,8 @@ def _service_version() -> str:
 
 def mount_registry(app: FastAPI) -> None:
     """AWID's routes on ``app``, its ops routes and its registry, with the
-    configuration they read."""
+    configuration they read. The ops routes include ``/`` and ``/health``, so
+    a host that embeds AWID in its own app mounts it under a prefix."""
     service_version = _service_version()
 
     @app.get("/", tags=["ops"])
