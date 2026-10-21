@@ -99,15 +99,17 @@ class Access:
             return declared
         return declared & self.fields.get(principal, {}).get(collection["id"], declared)
 
-    def redact_schema(self, principal: str, collection: dict) -> dict:
+    def redact_schema(self, principal: str, collection: dict, *, fields=None) -> dict:
         schema = copy.deepcopy(collection["schema"])
         allowed = self.visible_fields(principal, collection)
+        if fields is not None:
+            allowed &= fields
         schema["properties"] = {
             k: v for k, v in schema.get("properties", {}).items() if k in allowed
         }
         if "required" in schema:
             schema["required"] = [field for field in schema["required"] if field in allowed]
-        if not self.all_value_fields(principal, collection):
+        if fields is not None or not self.all_value_fields(principal, collection):
             schema.pop("default", None)
             schema.pop("examples", None)
         return schema
