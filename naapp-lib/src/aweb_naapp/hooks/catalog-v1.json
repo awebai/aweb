@@ -749,7 +749,7 @@
           "required": true
         },
         "request_sha256": {
-          "type": "sha256_hex",
+          "type": "hmac_sha256_hex",
           "required": true
         },
         "http_status": {
