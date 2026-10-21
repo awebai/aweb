@@ -45,7 +45,14 @@ from aweb_naapp.runtime.installation import (
     InstallationFence,
     InstallationRefused,
 )
-from aweb_naapp.runtime.passkeys import Designation, DesignationRefused, OwnerApproval, Passkeys
+from aweb_naapp.runtime.passkeys import (
+    ContactChange,
+    ContactChangeRefused,
+    Designation,
+    DesignationRefused,
+    OwnerApproval,
+    Passkeys,
+)
 from awid.utc_timestamps import parse_utc_seconds
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
@@ -68,7 +75,7 @@ MIGRATIONS_MODULE = "aweb_secrets_change_sets"
 
 POLICY_PREFIX = "secrets.change"
 # Kinds whose apply exists. The rest are refused at draft time until theirs does.
-APPLICABLE_KINDS = frozenset({"role", "approver", "change_set_policy"})
+APPLICABLE_KINDS = frozenset({"role", "approver", "approver_contact", "change_set_policy"})
 
 
 async def apply_change_set_migrations(db: AsyncDatabaseManager) -> None:
@@ -88,10 +95,12 @@ class DraftLimit:
 @dataclass(frozen=True)
 class Confirmation:
     """A confirmed change set: the revision it moved to, and the approver
-    designations whose enrolment links :meth:`ChangeSets.deliver` sends after commit."""
+    designations and contact changes whose links and notices
+    :meth:`ChangeSets.deliver` sends after commit."""
 
     revision: int
     designations: tuple[Designation, ...]
+    contact_changes: tuple[ContactChange, ...] = ()
 
 
 def change_policy_ref(installation_id: str, team_id: str, scope: str | None = None) -> str:
@@ -335,14 +344,23 @@ class ChangeSets:
         )
         revision = await claim_config_revision(tx, installation_id, change["base_revision"])
         designations: list[Designation] = []
+        contact_changes: list[ContactChange] = []
         for item in change["changes"]:
-            designations.extend(await self._apply(tx, change, item, evidence))
+            applied = await self._apply(tx, change, item, evidence)
+            if isinstance(applied, ContactChange):
+                contact_changes.append(applied)
+            else:
+                designations.extend(applied)
         await tx.execute(
             "UPDATE {{tables.change_sets}} SET state = 'applied', closed_at = NOW()"
             " WHERE change_id = $1",
             change_id,
         )
-        return Confirmation(revision=revision, designations=tuple(designations))
+        return Confirmation(
+            revision=revision,
+            designations=tuple(designations),
+            contact_changes=tuple(contact_changes),
+        )
 
     async def _apply(
         self,
@@ -350,7 +368,7 @@ class ChangeSets:
         change: Mapping[str, Any],
         item: Mapping[str, Any],
         evidence: OwnerApproval,
-    ) -> list[Designation]:
+    ) -> list[Designation] | ContactChange:
         installation_id, team_id = change["installation_id"], change["team_id"]
         after = item["after"]
         if item["kind"] == "role":
@@ -386,6 +404,25 @@ class ChangeSets:
                 change_id=change["change_id"],
             )
             return [designation]
+        if item["kind"] == "approver_contact":
+            # The scope and contact come from the item of the request the owner's
+            # approval admitted, so they are exactly what the owner confirmed.
+            if not await approver_exists(
+                tx,
+                installation_id=installation_id,
+                team_id=team_id,
+                approver_ref=after["approver_ref"],
+            ):
+                raise ChangeRefused(f"no approver {after['approver_ref']}", code="approver_unknown")
+            try:
+                return await self._passkeys.change_contact_by_owner(
+                    tx,
+                    scope=approver_scope(installation_id, team_id, after["approver_ref"]),
+                    new_contact=after["contact"],
+                    evidence=evidence,
+                )
+            except ContactChangeRefused as refused:
+                raise ChangeRefused(str(refused), code=refused.reason) from None
         if item["kind"] == "change_set_policy":
             await relax_four_eyes(tx, installation_id=installation_id)
             return []
@@ -394,6 +431,8 @@ class ChangeSets:
     async def deliver(self, confirmation: Confirmation) -> None:
         for designation in confirmation.designations:
             await self._passkeys.deliver(designation)
+        for contact_change in confirmation.contact_changes:
+            await self._passkeys.send_notices(contact_change)
 
     async def cancel(self, tx: TransactionManager, change_id: str, *, cancelled_by: str) -> None:
         """Withdraw a pending change set: its approval is revoked and its sealed

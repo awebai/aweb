@@ -124,12 +124,14 @@ class Installations:
 class Inbox:
     links: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     enrolments: dict[str, list[str]] = field(default_factory=dict)
+    notices: dict[str, list[Notice]] = field(default_factory=dict)
 
     async def deliver_enrolment_link(self, approver: Approver, link_token: str) -> DeliveryStatus:
         self.enrolments.setdefault(approver.contact, []).append(link_token)
         return DeliveryStatus.DELIVERED
 
     async def deliver_notice(self, contact: str, notice: Notice) -> DeliveryStatus:
+        self.notices.setdefault(contact, []).append(notice)
         return DeliveryStatus.DELIVERED
 
     async def deliver_approval_link(
@@ -717,3 +719,78 @@ async def test_relaxing_and_requiring_four_eyes_at_once_do_not_deadlock(world: W
     results = await asyncio.gather(confirm(world, change), require(), return_exceptions=True)
     for result in results:
         assert result is None or isinstance(result, ChangeRefused), result
+
+
+def change_approver_contact(ref: str, contact: str) -> dict[str, Any]:
+    return {
+        "kind": "approver_contact",
+        "op": "update",
+        "ref": ref,
+        "after": {"v": 1, "approver_ref": ref, "contact": contact},
+    }
+
+
+async def _with_approver(world: World) -> None:
+    first = change_set(
+        drafter=by_member(CAROL), changes=[designate_approver("finance", "f@acme.com", ["sec_1"])]
+    )
+    await decide(world, await draft(world, first), "alice@acme.com")
+    await confirm(world, first)
+
+
+async def _confirm_and_deliver(world: World, change: dict[str, Any]):
+    async with world.db.transaction() as tx:
+        confirmation = await world.change_sets.confirm(
+            tx,
+            change["change_id"],
+            operation_id=f"apply-{change['change_id']}",
+            fence=world.fence,
+            admitted=world.admitted,
+        )
+        assert world.inbox.notices == {}
+    await world.change_sets.deliver(confirmation)
+
+
+async def test_a_confirmed_contact_change_is_scheduled_and_announced(world: World) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    await _with_approver(world)
+    change = change_set(
+        drafter=by_member(CAROL),
+        changes=[change_approver_contact("finance", "f-new@acme.com")],
+        base_revision=1,
+    )
+    await decide(world, await draft(world, change), "alice@acme.com")
+    await _confirm_and_deliver(world, change)
+    assert set(world.inbox.notices) == {"f@acme.com", "f-new@acme.com"}
+
+
+async def test_a_second_contact_change_waits_for_the_first(world: World) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    await _with_approver(world)
+    first = change_set(
+        drafter=by_member(CAROL),
+        changes=[change_approver_contact("finance", "f-new@acme.com")],
+        base_revision=1,
+    )
+    await decide(world, await draft(world, first), "alice@acme.com")
+    await _confirm_and_deliver(world, first)
+    second = change_set(
+        drafter=by_member(BOB),
+        changes=[change_approver_contact("finance", "f-other@acme.com")],
+        base_revision=2,
+    )
+    await decide(world, await draft(world, second), "alice@acme.com")
+    with pytest.raises(ChangeRefused) as refused:
+        await confirm(world, second)
+    assert refused.value.code == "contact_change_pending"
+
+
+async def test_a_contact_change_for_an_unknown_approver_is_refused(world: World) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    change = change_set(
+        drafter=by_member(CAROL), changes=[change_approver_contact("nobody", "n@acme.com")]
+    )
+    await decide(world, await draft(world, change), "alice@acme.com")
+    with pytest.raises(ChangeRefused) as refused:
+        await confirm(world, change)
+    assert refused.value.code == "approver_unknown"
