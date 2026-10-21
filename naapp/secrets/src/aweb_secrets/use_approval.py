@@ -190,6 +190,118 @@ def use_approval_request(
     }
 
 
+@dataclass(frozen=True)
+class OperationShown:
+    operation_id: str
+    operation_digest: str
+    params: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class OpenRequestShown:
+    """The full canonical URL, split so the console can emphasise its host."""
+
+    method: str
+    url_before_host: str
+    host: str
+    url_after_host: str
+    header_names: tuple[str, ...]
+    body_text: str
+
+
+@dataclass(frozen=True)
+class JobShown:
+    runner_id: str
+    job_id: str
+    job_digest: str
+    params: Mapping[str, Any]
+    credential_delivery: str
+
+
+@dataclass(frozen=True)
+class UseApprovalView:
+    """What the console shows an approver, from the frozen request alone: the
+    secret's reference and kind (never its value), exactly one action, who
+    asks, the policy and the times. `untrusted_reason` is the requester's own
+    text, to be shown escaped and labelled as unverified."""
+
+    secret_ref: str
+    secret_kind: str
+    secret_version: int
+    secret_backend: str
+    requester_alias: str
+    requester_did: str
+    policy_digest: str
+    grant_id: str
+    request_id: str
+    issued_at: str
+    expires_at: str
+    untrusted_reason: str
+    operation: OperationShown | None
+    open_request: OpenRequestShown | None
+    job: JobShown | None
+
+
+def _split_host(url: str) -> tuple[str, str, str]:
+    scheme, separator, rest = url.partition("://")
+    if not separator:
+        raise ApprovalUnrenderable("the canonical URL has no scheme")
+    host, slash, path = rest.partition("/")
+    return scheme + separator, host, slash + path
+
+
+def use_approval_view(request: Mapping[str, Any]) -> UseApprovalView:
+    """The console's view of a frozen use-approval request."""
+    if request.get("type") != REQUEST_TYPE or request.get("v") != REQUEST_VERSION:
+        raise ApprovalUnrenderable("not a use-approval request this console renders")
+    secret, requester = request["secret"], request["requester"]
+    operation = open_request = job = None
+    if request["action"] == "run_job":
+        frozen = request["run_job"]
+        job = JobShown(
+            runner_id=frozen["runner_id"],
+            job_id=frozen["job_id"],
+            job_digest=frozen["job_digest"],
+            params=frozen["params"],
+            credential_delivery=frozen["credential_delivery"],
+        )
+    elif "operation_id" in request["broker"]:
+        frozen = request["broker"]
+        operation = OperationShown(
+            operation_id=frozen["operation_id"],
+            operation_digest=frozen["operation_digest"],
+            params=frozen["params"],
+        )
+    else:
+        frozen = request["broker"]
+        before, host, after = _split_host(frozen["canonical_url"])
+        open_request = OpenRequestShown(
+            method=frozen["method"],
+            url_before_host=before,
+            host=host,
+            url_after_host=after,
+            header_names=tuple(frozen["header_names"]),
+            body_text=frozen["body_preview"],
+        )
+    return UseApprovalView(
+        secret_ref=secret["secret_ref"],
+        secret_kind=secret["kind"],
+        secret_version=secret["version"],
+        secret_backend=secret["backend"],
+        requester_alias=requester["alias"],
+        requester_did=requester["principal"],
+        policy_digest=request["policy_digest"],
+        grant_id=request["grant_id"],
+        request_id=request["request_id"],
+        issued_at=request["issued_at"],
+        expires_at=request["expires_at"],
+        untrusted_reason=request["reason"],
+        operation=operation,
+        open_request=open_request,
+        job=job,
+    )
+
+
 __all__ = [
     "MAX_REASON_LENGTH",
     "MAX_RENDERED_BODY_BYTES",
@@ -199,5 +311,10 @@ __all__ = [
     "BrokerOperation",
     "RunJob",
     "UseApprovalRefused",
+    "JobShown",
+    "OpenRequestShown",
+    "OperationShown",
+    "UseApprovalView",
     "use_approval_request",
+    "use_approval_view",
 ]
