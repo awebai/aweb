@@ -402,6 +402,20 @@ class PageStore(LifecycleMixin):
         )
 
     async def add_record(self, scope, principal, *, collection, values, key, record_id=None):
+        async with self.db.transaction() as tx:
+            return await self.add_record_on(
+                tx,
+                scope,
+                principal,
+                collection=collection,
+                values=values,
+                key=key,
+                record_id=record_id,
+            )
+
+    async def add_record_on(self, tx, scope, principal, *, collection, values, key, record_id=None):
+        """Add on the caller's transaction, retaining its installation fence."""
+        _require_transaction(tx)
         change = {
             "op": "create",
             "collection": collection,
@@ -409,7 +423,8 @@ class PageStore(LifecycleMixin):
             "expected_rev": 0,
             "value": values,
         }
-        return await self._record_write(
+        return await self._record_write_on(
+            tx,
             scope,
             principal,
             key=key,
@@ -425,6 +440,23 @@ class PageStore(LifecycleMixin):
     async def patch_record(
         self, scope, principal, *, collection, record_id, expected_rev, patch, key
     ):
+        async with self.db.transaction() as tx:
+            return await self.patch_record_on(
+                tx,
+                scope,
+                principal,
+                collection=collection,
+                record_id=record_id,
+                expected_rev=expected_rev,
+                patch=patch,
+                key=key,
+            )
+
+    async def patch_record_on(
+        self, tx, scope, principal, *, collection, record_id, expected_rev, patch, key
+    ):
+        """Patch on the caller's transaction; a refusal rolls back its savepoint."""
+        _require_transaction(tx)
         change = {
             "op": "patch",
             "collection": collection,
@@ -432,7 +464,8 @@ class PageStore(LifecycleMixin):
             "expected_rev": expected_rev,
             "patch": patch,
         }
-        return await self._record_write(
+        return await self._record_write_on(
+            tx,
             scope,
             principal,
             key=key,
@@ -447,13 +480,30 @@ class PageStore(LifecycleMixin):
         )
 
     async def delete_record(self, scope, principal, *, collection, record_id, expected_rev, key):
+        async with self.db.transaction() as tx:
+            return await self.delete_record_on(
+                tx,
+                scope,
+                principal,
+                collection=collection,
+                record_id=record_id,
+                expected_rev=expected_rev,
+                key=key,
+            )
+
+    async def delete_record_on(
+        self, tx, scope, principal, *, collection, record_id, expected_rev, key
+    ):
+        """Tombstone on the caller's transaction without committing it."""
+        _require_transaction(tx)
         change = {
             "op": "delete",
             "collection": collection,
             "id": record_id,
             "expected_rev": expected_rev,
         }
-        return await self._record_write(
+        return await self._record_write_on(
+            tx,
             scope,
             principal,
             key=key,
@@ -466,7 +516,7 @@ class PageStore(LifecycleMixin):
             },
         )
 
-    async def _record_write(self, scope, principal, *, key, change, request):
+    async def _record_write_on(self, tx, scope, principal, *, key, change, request):
         if (
             not isinstance(change["collection"], str)
             or not change["collection"]
@@ -476,7 +526,7 @@ class PageStore(LifecycleMixin):
             )
         ):
             raise StoreError("schema_invalid")
-        async with self.db.transaction() as tx:
+        async with tx.transaction() as tx:
             # Keep the current revision under the same lock, but never put this
             # derived revision in the original row request's retry identity.
             document, _, _ = await self._load(tx, scope, principal, "write")
@@ -1312,18 +1362,32 @@ class PageStore(LifecycleMixin):
     async def query_widget(self, scope, principal, *, widget_id, bind, expected_page_rev=None):
         """Query a stored widget at the current revision, or a requested revision."""
         async with self.db.transaction() as tx:
-            document, access, actor = await self._load(tx, scope, principal)
-            return await self._query_widget_on(
+            return await self.query_member_widget_on(
                 tx,
                 scope,
-                document,
-                access,
-                actor,
+                principal,
                 widget_id=widget_id,
-                expected_page_rev=expected_page_rev,
                 bind=bind,
-                allow_current=True,
+                expected_page_rev=expected_page_rev,
             )
+
+    async def query_member_widget_on(
+        self, tx, scope, principal, *, widget_id, bind, expected_page_rev=None
+    ):
+        """Query as an admitted member while retaining the caller's fence/locks."""
+        _require_transaction(tx)
+        document, access, actor = await self._load(tx, scope, principal)
+        return await self._query_widget_on(
+            tx,
+            scope,
+            document,
+            access,
+            actor,
+            widget_id=widget_id,
+            expected_page_rev=expected_page_rev,
+            bind=bind,
+            allow_current=True,
+        )
 
     async def query_widget_on(
         self,

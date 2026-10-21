@@ -160,6 +160,20 @@ expected_page_rev=None)` uses that same query engine for admitted members. An
 omitted revision selects the current page revision while holding its lock;
 `read_widget` still requires the renderer's expected revision.
 
+For caller-owned installation admission, use `add_record_on(tx, scope,
+principal, ...)`, `patch_record_on(tx, scope, principal, ...)` or
+`delete_record_on(tx, scope, principal, ...)`, with the same keyword arguments
+and receipts as the standalone record methods. Each requires a
+`TransactionManager` and uses a savepoint on its connection. The ordinary
+record methods delegate to these paths. Page writes, receipts, audit and
+outbox roll back with the caller; independent retry claims remain recoverable.
+`query_member_widget_on(tx, scope, principal, widget_id=..., bind=...,
+expected_page_rev=None)` reads uncommitted records on that same connection.
+The host admits/checks the installation fence before page locks, and owns
+commit/rollback. Make no network calls while these locks are held. These
+member entry points require an authenticated admitted member; link holders use
+the separately checked creator/projection path below.
+
 `query_widget_on(tx, scope, creator_id=..., widget_id=..., bind=...,
 link_id=..., expected_page_rev=None, projection=...)` serves a checked live link
 on the caller's `TransactionManager`. The host supplies the verified link ID,
