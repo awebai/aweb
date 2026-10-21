@@ -282,6 +282,14 @@ the approval, decision, policy and the app's own origin.
   `RetirementRefused("last_owner_protected")`. A credential-specific hook can
   close over the credential ID to check siblings. Audit, key and decision changes
   commit or roll back in the caller transaction; nothing is sent externally.
+- Sessions recheck `login_evidence_is_current(scope, subject, evidence_ref)` on
+  each request, along with their own expiry. It requires login-purpose evidence
+  for that scope/subject and an unrevoked exact credential. Revoking one key ends
+  its sessions while a surviving key's sessions remain eligible. For an action,
+  pass `tx=...` after the app's authority fences to hold the approver then the
+  credential `FOR SHARE` through commit; retirement waits for that transaction.
+  Without `tx`, it uses a short read transaction. `can_log_in` alone only checks
+  whether the holder has some usable credential.
 - **Lock order when withdrawing an approver's authority.** An app that
   withdraws authority (a role, a membership, an owner) does it in one
   transaction, in this order: any installation fence; the authority's own

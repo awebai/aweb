@@ -860,8 +860,8 @@ class Passkeys:
 
     async def can_log_in(self, scope: str, subject: str) -> bool:
         """Whether `subject` is `scope`'s in-effect approver and still holds an
-        unrevoked passkey: what a login needs, and what a session it opened
-        keeps needing for as long as it lasts."""
+        unrevoked passkey. Sessions also need login_evidence_is_current to
+        check the exact credential that opened them."""
         return bool(
             await self.db.fetch_value(
                 "SELECT EXISTS (SELECT 1 FROM {{tables.passkey_approvers}} "
@@ -871,6 +871,45 @@ class Passkeys:
                 subject,
                 self._clock(),
                 scope,
+            )
+        )
+
+    async def login_evidence_is_current(
+        self,
+        scope: str,
+        subject: str,
+        evidence_ref: str,
+        *,
+        tx: TransactionManager | None = None,
+    ) -> bool:
+        """Whether this login's exact credential still permits the session.
+
+        Bind scope, subject and login purpose, not just an evidence locator.
+        With tx, hold the approver then credential FOR SHARE through the caller's
+        fenced action transaction, in retirement order. Without tx, use a short
+        owned transaction. The caller separately checks its session expiry and
+        application authority. This read confers no additional authority.
+        """
+        if tx is None:
+            async with self.db.transaction() as own:
+                return await self.login_evidence_is_current(scope, subject, evidence_ref, tx=own)
+        current = await tx.fetch_value(
+            "SELECT subject FROM {{tables.passkey_approvers}} "
+            f"WHERE scope=$1 AND {_CURRENT} AND subject=$3 FOR SHARE",
+            scope,
+            self._clock(),
+            subject,
+        )
+        if current is None:
+            return False
+        return bool(
+            await tx.fetch_value(
+                "SELECT 1 FROM {{tables.passkey_assertions}} e "
+                "JOIN {{tables.passkey_credentials}} c ON c.credential_id=e.credential_id "
+                "AND c.subject=e.subject WHERE e.evidence_ref=$1 AND e.subject=$2 "
+                "AND e.purpose='login' AND c.revoked_at IS NULL FOR SHARE OF c",
+                evidence_ref,
+                subject,
             )
         )
 
