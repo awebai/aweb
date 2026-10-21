@@ -35,6 +35,11 @@ VENDOR_TOKENS = [
     "npm_" + _filler(36),
 ]
 CREDENTIAL_KEYS = [
+    "token",
+    "client_token",
+    "authToken",
+    "bearer-token",
+    "secret_key",
     "access_token",
     "refresh_token",
     "id_token",
@@ -53,6 +58,11 @@ CREDENTIAL_KEYS = [
 @pytest.mark.parametrize("key", CREDENTIAL_KEYS)
 def test_a_credential_named_json_field_with_a_value_is_detected(key: str) -> None:
     assert has_credential_shape(json.dumps({"data": {key: "some-value"}}).encode())
+
+
+@pytest.mark.parametrize("value", [["issued"], [{"value": "issued"}], {"value": ["issued"]}])
+def test_a_credential_field_keeps_its_meaning_for_nested_string_values(value) -> None:
+    assert has_credential_shape(json.dumps({"SessionToken": value}).encode())
 
 
 @pytest.mark.parametrize("key", ["access_token", "SecretAccessKey"])

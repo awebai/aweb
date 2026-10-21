@@ -1,9 +1,8 @@
-"""folio's aweb-app.json manifest — the one declaration the aw CLI dispatcher and
-the hosted gateway interpret identically (frozen m1.1 schema). The committed
-``aweb-app.json`` is the byte-stable artifact served verbatim at
-``/.well-known/aweb-app.json``; this module is its authoring source. A test asserts
-the file equals ``aweb_naapp.manifest.canonical_bytes(MANIFEST)`` so the two never
-drift; ``write_manifest_file(MANIFEST_PATH, MANIFEST)`` regenerates it.
+"""Folio's manifest template, shared by the CLI and hosted gateway.
+
+The canonical committed aweb-app.json declares kids and local event types.
+NaappRuntime fills deployment app.id, origin and public keys from settings,
+validates the filled document and serves its exact bytes at both discovery URLs.
 """
 
 from __future__ import annotations
@@ -282,7 +281,7 @@ MANIFEST: dict[str, Any] = {
     ],
     "events": [
         {
-            "type": "folio/doc.changed",
+            "type": "doc.changed",
             "default_delivery_intent": "wake",
             "description": (
                 "A document gained a new version. resource_ref is the document slug; "
@@ -292,7 +291,7 @@ MANIFEST: dict[str, Any] = {
         }
     ],
     "event_emitters": [
-        {"kid": "folio:emit-1", "did_key": "did:key:z6MkhddL2VEzVjKeh36xFg4ULcfWN4Q9VgK6oQ3mdCNJEPWv"},
+        {"kid": "folio:emit-1"},
     ],
 }
 

@@ -264,20 +264,21 @@ def test_llms_txt_getting_started_teaches_the_verified_spine() -> None:
     assert "aw team up" not in text
 
 
-def test_linked_manifest_paths_serve_committed_bytes() -> None:
-    from folio.aweb_manifest import MANIFEST_PATH
+def test_linked_manifest_paths_serve_filled_bytes() -> None:
+    from aweb_naapp.manifest import canonical_bytes
+    from manifest_config import served_manifest
 
     client = _client()
-    committed = MANIFEST_PATH.read_bytes()
+    expected = canonical_bytes(served_manifest("https://folio.aweb.ai"))
     # The docs surface links the canonical manifest at /aweb-app.json; the
     # dispatcher fetches /.well-known/aweb-app.json. Both must serve the exact
-    # committed bytes — nothing the surface links may 404.
+    # filled deployment bytes — nothing the surface links may 404.
     for path in ("/aweb-app.json", "/.well-known/aweb-app.json"):
         response = client.get(path)
         assert response.status_code == 200, path
         assert "application/json" in response.headers["content-type"], path
         assert response.headers.get("X-Content-Type-Options") == "nosniff", path
-        assert response.content == committed, path
+        assert response.content == expected, path
     # Guard against drift: the surfaces actually link /aweb-app.json.
     assert "/aweb-app.json" in client.get("/reference").text
     assert "/aweb-app.json" in client.get("/").text

@@ -90,7 +90,8 @@ _REFERENCE_COPY = naapp.ReferenceCopy(
     events_blurb=(
         "Subscribe an agent to be woken when a document changes. The payload is "
         "metadata only — never the document body — and each event is signed by the "
-        "emit key declared in the manifest."
+        "emit key declared in the manifest. Subscribe with the app-qualified type "
+        "folio/doc.changed; the manifest declares the local type doc.changed."
     ),
 )
 
@@ -444,6 +445,7 @@ def llms_txt(*, public_origin: str) -> str:
     operations = naapp.llms.cert_operations(MANIFEST, _VERB)
     auth = naapp.llms.auth_section(MANIFEST, origin)
     events = naapp.llms.events_section(MANIFEST)
+    events += "\nSubscribe with: aw events subscribe folio/doc.changed\n"
     return f"""# folio — agent-first documents and presentations for AWID teams
 
 folio is the app that owns agent-authored documents, their append-only versions,
