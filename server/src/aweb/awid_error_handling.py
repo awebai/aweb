@@ -8,11 +8,13 @@ from fastapi import HTTPException
 from awid.dns_verify import DnsVerificationError
 from awid.registry import RegistryError
 
+# TimeoutError is the registry client's total request deadline (asyncio.timeout).
 AWID_DEPENDENCY_ERRORS = (
     DnsVerificationError,
     httpx.RequestError,
     httpx.HTTPStatusError,
     RegistryError,
+    TimeoutError,
 )
 
 
@@ -53,7 +55,7 @@ def classify_awid_dependency_error(exc: Exception, *, operation: str = "AWID reg
 
     if isinstance(exc, DnsVerificationError):
         return 503, f"{operation} DNS resolution failed ({class_name}){suffix}"
-    if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError)):
+    if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError, TimeoutError)):
         return 503, f"{operation} upstream unavailable ({class_name}){suffix}"
     if isinstance(exc, httpx.RequestError):
         return 503, f"{operation} request failed ({class_name}){suffix}"
