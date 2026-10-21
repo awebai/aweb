@@ -153,3 +153,30 @@ def test_the_server_mounts_the_hook_binding_routes():
     assert ("/v1/apps/hook-bindings", ("GET",)) in paths
     assert ("/v1/apps/hook-bindings/{binding_id}/activate", ("POST",)) in paths
     assert ("/v1/apps/hook-bindings/{binding_id}/revoke", ("POST",)) in paths
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_registry_is_a_classified_503_and_changes_nothing(env, monkeypatch):
+    from awid.registry import RegistryClient
+
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    monkeypatch.setattr(hook_routes, "get_team_identity", _identity(TEAM))
+    # A real registry address nothing listens on: the read fails at the network.
+    unreachable = RegistryClient(registry_url="http://127.0.0.1:9", timeout_seconds=1.0)
+    app = _app(env, unreachable)
+    signing, signature = env.owner.sign("hook-binding.activate", registration)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/v1/apps/hook-bindings/{registration.binding_id}/activate", json=_body(signing, signature),
+            )
+    finally:
+        await unreachable.aclose()
+
+    assert response.status_code == 503, response.text
+    assert "AWID owner-act team key" in response.json()["detail"]
+    rows = await env.db.fetch_all("SELECT state FROM {{tables.app_hook_bindings}} WHERE binding_id = $1",
+                                  registration.binding_id)
+    assert [row["state"] for row in rows] == ["pending"]
+    assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 0

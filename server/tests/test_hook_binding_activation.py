@@ -164,7 +164,7 @@ async def _bindings(env, *, team_id=TEAM, installation_id=INSTALLATION, generati
         )
 
 
-async def _hook_keys(db, *, purposes=("hook-event", "hook-delivery"), team_id=TEAM, digest=DIGEST):
+async def _hook_keys(db, *, purposes=("hook-event",), team_id=TEAM, digest=DIGEST):
     await db.execute(
         "INSERT INTO {{tables.team_app_keys}} (team_id, app_id, origin, digest, key_id, did_key, purposes)"
         " VALUES ($1, 'logs', $2, $3, $4, $5, $6::TEXT[])",
@@ -212,6 +212,10 @@ async def test_a_production_activates_once_its_hook_keys_come_from_the_pinned_by
     with pytest.raises(ConflictError, match="hook keys"):
         await _activate(env, production)
     await _hook_keys(env.db, purposes=("app-event",))
+    with pytest.raises(ConflictError, match="hook keys"):
+        await _activate(env, production)
+    # Consumers verify a production's events with a hook-event key; delivery alone is not enough.
+    await _hook_keys(env.db, purposes=("hook-delivery",))
     with pytest.raises(ConflictError, match="hook keys"):
         await _activate(env, production)
 

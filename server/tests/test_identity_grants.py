@@ -1202,6 +1202,7 @@ def _direct_team_identity_calls() -> list[tuple[str, str, int]]:
         REPO_ROOT / "server/src/aweb/routes/apps.py",
         REPO_ROOT / "server/src/aweb/routes/connect.py",
         REPO_ROOT / "server/src/aweb/routes/events.py",
+        REPO_ROOT / "server/src/aweb/routes/hook_bindings.py",
     ]
     rows: list[tuple[str, str, int]] = []
     for path in paths:
