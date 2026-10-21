@@ -29,6 +29,7 @@ from aweb_secrets import records
 from aweb_secrets.admission import AdmissionRefused, UseRequest, admit_use
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME
 from aweb_secrets.grant import GrantRecord
+from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
 from aweb_secrets.revisions import apply_revision_migrations
 from aweb_secrets.secret import SecretRecord
@@ -106,6 +107,7 @@ def _request(request_id: str = "req_1", body: bytes = b"GET /v1/status", **chang
         request_id=request_id,
         request_sha256=hashlib.sha256(body).digest(),
         operation_id=None,
+        params=None,
     )
     return replace(request, **changes)
 
@@ -397,3 +399,143 @@ async def test_a_new_installation_finds_none_of_the_old_grants(db, fence) -> Non
     await _install(db)
     reinstalled = _grant_source_grant(installation_id="inst_new00001", generation=1)
     assert await _refusal(db, fence, grant=reinstalled) == "grant_missing"
+
+
+STATUS: dict[str, Any] = {
+    "v": 1,
+    "operation_id": "charge-status",
+    "secret_id": "sec_19ab42",
+    "method": "GET",
+    "url": {"host": "api.payments.example", "port": 443, "path": "/v1/charges/{charge}"},
+    "params": {
+        "charge": {
+            "schema": {"type": "string", "minLength": 3, "maxLength": 64},
+            "charset": "base64url",
+            "placement": "path",
+        }
+    },
+    "body": None,
+    "headers": {"fixed": {}, "allowed": []},
+    "response": {
+        "projection": ["/status"],
+        "max_bytes": 4096,
+        "content_types": ["application/json"],
+    },
+    "side_effect": "none",
+    "token_issuing": False,
+    "result_handling": "deny",
+    "store_as_secret": None,
+    "idempotency": None,
+    "reconcile": None,
+    "timeout_s": 10,
+}
+
+
+def _operation(**changes) -> OperationTemplate:
+    return OperationTemplate.from_after({**STATUS, **changes})
+
+
+async def _define(db, template: OperationTemplate) -> None:
+    async with db.transaction() as tx:
+        if await records.secret_by_ref(tx, INSTALLATION, TEAM, SECRET["ref"]) is None:
+            await records.create_secret(tx, INSTALLATION, TEAM, SecretRecord.from_after(SECRET))
+            await records.set_active_version(tx, INSTALLATION, TEAM, SECRET["secret_id"], 4)
+        await records.create_operation(tx, INSTALLATION, TEAM, template)
+
+
+async def _install_operation(
+    db, template: OperationTemplate, *, policy_changes=None, secret=None, **grant_changes
+) -> Policy:
+    pinned = [{"operation_id": template.operation_id, "digest": template.digest}]
+    body = {**POLICY_BODY, "operations": pinned, "open_request": False, **(policy_changes or {})}
+    async with db.transaction() as tx:
+        if secret is not None:
+            await records.create_secret(tx, INSTALLATION, TEAM, SecretRecord.from_after(secret))
+            await records.set_active_version(tx, INSTALLATION, TEAM, secret["secret_id"], 4)
+    await _define(db, template)
+    grant = {"operations": pinned, "open_request": False, **grant_changes}
+    return await _install(db, policy_body=body, secret=secret, **grant)
+
+
+def _named(request_id: str = "req_op1", **params) -> UseRequest:
+    return _request(
+        request_id,
+        body=b"charge-status " + request_id.encode(),
+        operation_id="charge-status",
+        params={"charge": "ch_3Pq", **params},
+    )
+
+
+async def test_a_granted_named_operation_is_admitted_at_its_digest(db, fence) -> None:
+    template = _operation()
+    await _install_operation(db, template)
+    admitted = await _admit(db, fence, request=_named())
+    row = await db.fetch_one(
+        "SELECT action, operation_id, operation_digest FROM {{tables.intents}} WHERE intent_id = $1",
+        admitted.intent_id,
+    )
+    assert dict(row) == {
+        "action": "operation",
+        "operation_id": "charge-status",
+        "operation_digest": template.digest,
+    }
+
+
+async def test_an_edited_operation_is_not_covered_by_the_old_grant(db, fence) -> None:
+    await _install_operation(db, _operation())
+    await _define(db, _operation(timeout_s=5))
+    assert await _refusal(db, fence, request=_named()) == "operation_not_allowed"
+
+
+async def test_an_unknown_operation_is_not_allowed(db, fence) -> None:
+    await _install_operation(db, _operation())
+    unknown = replace(_named(), operation_id="refund")
+    assert await _refusal(db, fence, request=unknown) == "operation_not_allowed"
+
+
+async def test_a_policy_that_does_not_list_the_operation_refuses_it(db, fence) -> None:
+    await _install_operation(db, _operation(), policy_changes={"operations": []})
+    assert await _refusal(db, fence, request=_named()) == "operation_not_allowed"
+
+
+async def test_an_open_request_grant_does_not_cover_a_named_operation(db, fence) -> None:
+    template = _operation()
+    await _install_operation(db, template, operations=[], open_request=True)
+    assert await _refusal(db, fence, request=_named()) == "operation_not_allowed"
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{"charge": "ch/3Pq"}, {"charge": "ch"}, {"charge": "ch_3Pq", "extra": 1}, {}],
+)
+async def test_parameters_outside_their_slots_are_invalid(db, fence, params) -> None:
+    await _install_operation(db, _operation())
+    request = replace(_named(), params=params)
+    assert await _refusal(db, fence, request=request) == "params_invalid"
+
+
+async def test_a_token_issuing_operation_without_result_handling_is_denied(db, fence) -> None:
+    await _install_operation(db, _operation(token_issuing=True))
+    assert await _refusal(db, fence, request=_named()) == "token_issuing_denied"
+
+
+async def test_a_token_issuing_operation_that_withholds_its_result_is_admitted(db, fence) -> None:
+    await _install_operation(db, _operation(token_issuing=True, result_handling="withhold"))
+    await _admit(db, fence, request=_named())
+
+
+async def test_approve_only_requires_approval_whatever_the_policy(db, fence) -> None:
+    approve_only = {**SECRET, "sensitivity": "sensitive", "approve_only": True}
+    await _install_operation(db, _operation(), secret=approve_only)
+    assert (await _admit(db, fence, request=_named())).approval_required
+
+
+async def test_a_secret_made_sensitive_refuses_its_unprojected_operations(db, fence) -> None:
+    unprojected = _operation(
+        response={"projection": None, "max_bytes": 4096, "content_types": ["application/json"]}
+    )
+    await _install_operation(db, unprojected)
+    sensitive = SecretRecord.from_after({**SECRET, "sensitivity": "sensitive"})
+    async with db.transaction() as tx:
+        await records.update_secret(tx, INSTALLATION, TEAM, sensitive)
+    assert await _refusal(db, fence, request=_named()) == "operation_not_allowed"

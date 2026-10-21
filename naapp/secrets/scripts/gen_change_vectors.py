@@ -20,6 +20,7 @@ from aweb_secrets.change import (
     covered_bytes,
     validate_change,
 )
+from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
 
 # Fixture identities, derived from fixed seeds the way AWID derives them.
@@ -162,6 +163,40 @@ POSITIVE = [
 
 # The records a refund operation is admitted by: the secret, its policy, a grant
 # to a principal, and a grant template for derived secrets.
+REFUND_OPERATION = {
+    "v": 1,
+    "operation_id": "refund",
+    "secret_id": "sec_19ab42",
+    "method": "POST",
+    "url": {"host": "api.payments.example", "port": 443, "path": "/v1/charges/{charge}/refunds"},
+    "params": {
+        "charge": {
+            "schema": {"type": "string", "minLength": 3, "maxLength": 64},
+            "charset": "base64url",
+            "placement": "path",
+        },
+        "amount_minor_units": {
+            "schema": {"type": "integer", "minimum": 1, "maximum": 5000},
+            "charset": None,
+            "placement": "body",
+        },
+    },
+    "body": {"template": {"amount": {"$param": "amount_minor_units"}, "currency": "EUR"}},
+    "headers": {"fixed": {}, "allowed": ["idempotency-key"]},
+    "response": {
+        "projection": ["/id", "/status"],
+        "max_bytes": 65536,
+        "content_types": ["application/json"],
+    },
+    "side_effect": "irreversible",
+    "token_issuing": False,
+    "result_handling": "deny",
+    "store_as_secret": None,
+    "idempotency": {"header": "Idempotency-Key"},
+    "reconcile": None,
+    "timeout_s": 20,
+}
+REFUND_DIGEST = OperationTemplate.from_after(REFUND_OPERATION).digest
 REFUND_POLICY = {
     "approval": "per_use",
     "approvers": ["finance-approver"],
@@ -174,12 +209,7 @@ REFUND_POLICY = {
         "time_zone": "Europe/Madrid",
         "ranges": [{"days": ["mon", "tue", "wed", "thu", "fri"], "from": "09:00", "to": "18:00"}],
     },
-    "operations": [
-        {
-            "operation_id": "refund",
-            "digest": "24252d809f32328585e0e05fa02bf474df2cab5ba52b840eba6941f80c1c7fe1",
-        }
-    ],
+    "operations": [{"operation_id": "refund", "digest": REFUND_DIGEST}],
     "open_request": False,
     "request": {"max_bytes": 65536},
     "result": {"max_bytes": 65536},
@@ -265,6 +295,7 @@ POSITIVE.append(
                         "cidr": None,
                     },
                 },
+                {"kind": "operation", "op": "create", "ref": "refund", "after": REFUND_OPERATION},
             ],
             "Set up refunds on the live payments key",
         ),
@@ -411,6 +442,20 @@ refused_records = [
         "destination-path-dot-segment",
         mutated_records(setitem(["changes", 4, "after", "path"], "/v1/../admin")),
     ),
+    ("operation-update", mutated_records(setitem(["changes", 5, "op"], "update"))),
+    ("operation-ref-not-its-id", mutated_records(setitem(["changes", 5, "ref"], "charge"))),
+    (
+        "operation-param-outside-its-slot",
+        mutated_records(setitem(["changes", 5, "after", "url", "path"], "/v1/refunds")),
+    ),
+    (
+        "operation-agent-sets-authorization",
+        mutated_records(setitem(["changes", 5, "after", "headers", "allowed"], ["authorization"])),
+    ),
+    (
+        "operation-result-handling-without-token-issuing",
+        mutated_records(setitem(["changes", 5, "after", "result_handling"], "withhold")),
+    ),
     (
         "grant-template-role-outside-secrets",
         mutated_records(setitem(["changes", 3, "after", "subject"], {"role": "logs.reader"})),
@@ -497,10 +542,11 @@ vector = {
         "fix when a change set can be confirmed: for the current installation, generation and "
         "team, at the revision it was drafted on, before it expires. A change set lives at most "
         "seven days. Principals are exact did:aw or Ed25519 did:key strings. A secret, destination, "
-        "grant, grant template or policy after is that record v1, checked whole; a policy is referenced "
-        'by the SHA-256 of "aweb.secrets.policy/1\\n" || canonical_json(after without v). The '
-        "after shape of operation is added by S8, and those of job and runner "
-        "by S15; until then those kinds are refused. Identifiers are fixtures; DIDs are "
+        "operation, grant, grant template or policy after is that record v1, checked whole; a policy is referenced "
+        'by the SHA-256 of "aweb.secrets.policy/1\\n" || canonical_json(after without v), and an '
+        'operation by operation_id and the SHA-256 of "aweb.secrets.operation/1\\n" || '
+        "canonical_json(after without v). The after shapes of job and runner are added by S15; "
+        "until then those kinds are refused. Identifiers are fixtures; DIDs are "
         "derived from fixed seeds."
     ),
     "prefix": "aweb.approval-request/1\n",

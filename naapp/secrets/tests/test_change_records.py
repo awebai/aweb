@@ -76,7 +76,42 @@ DESTINATION = {
     "cidr": None,
 }
 
+OPERATION = {
+    "v": 1,
+    "operation_id": "charge-status",
+    "secret_id": "sec_19ab42",
+    "method": "GET",
+    "url": {"host": "api.payments.example", "port": 443, "path": "/v1/charges/{charge}"},
+    "params": {
+        "charge": {
+            "schema": {"type": "string", "minLength": 3, "maxLength": 64},
+            "charset": "base64url",
+            "placement": "path",
+        }
+    },
+    "body": None,
+    "headers": {"fixed": {}, "allowed": []},
+    "response": {
+        "projection": ["/status"],
+        "max_bytes": 4096,
+        "content_types": ["application/json"],
+    },
+    "side_effect": "none",
+    "token_issuing": False,
+    "result_handling": "deny",
+    "store_as_secret": None,
+    "idempotency": None,
+    "reconcile": None,
+    "timeout_s": 10,
+}
+
 ITEMS = {
+    "operation": {
+        "kind": "operation",
+        "op": "create",
+        "ref": "charge-status",
+        "after": OPERATION,
+    },
     "destination": {
         "kind": "destination",
         "op": "create",
@@ -129,6 +164,7 @@ def test_the_record_kinds_and_their_widening_ops() -> None:
     assert KINDS["secret"] == {"create", "update"}
     assert KINDS["policy"] == {"create"}
     assert KINDS["destination"] == {"create"}
+    assert KINDS["operation"] == {"create"}
     assert KINDS["grant"] == {"create"}
     assert KINDS["grant_template"] == {"create", "update"}
 
@@ -158,6 +194,10 @@ def test_a_secret_and_a_grant_template_take_both_widening_ops(op) -> None:
         _item("policy", after={"approval": "sometimes"}),
         _item("policy", op="update"),
         _item("secret", after={"value": "fixture"}),
+        _item("operation", ref="refund"),
+        _item("operation", op="update"),
+        _item("operation", after={"timeout_s": 31}),
+        _item("operation", after={"method": "TRACE"}),
         _item("destination", ref="dst_other01"),
         _item("destination", op="update"),
         _item("destination", after={"host": "API.payments.example"}),
@@ -196,3 +236,10 @@ def test_a_derived_field_never_shadows_an_after_field(monkeypatch) -> None:
     monkeypatch.setitem(change.AFTER_SHAPES, ("grant", 1), shadowing)
     with pytest.raises(ChangeRefused):
         validate_change(_change(ITEMS["grant"]))
+
+
+def test_two_templates_of_one_operation_are_two_objects() -> None:
+    edited = {**OPERATION, "timeout_s": 5}
+    validate_change(_change(ITEMS["operation"], {**ITEMS["operation"], "after": edited}))
+    with pytest.raises(ChangeRefused):
+        validate_change(_change(ITEMS["operation"], ITEMS["operation"]))

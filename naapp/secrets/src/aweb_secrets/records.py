@@ -17,6 +17,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord, GrantTemplate
+from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
 from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.secret import SecretRecord
@@ -24,6 +25,14 @@ from aweb_secrets.secret import SecretRecord
 
 class RecordMissing(LookupError):
     """The record to change does not exist in this installation."""
+
+
+class RecordRefused(ValueError):
+    """The record cannot be stored as it stands; ``code`` is the refusal code."""
+
+    def __init__(self, message: str, code: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -304,3 +313,72 @@ async def remove_destination(
     )
     if removed is not None:
         await bump_config_revision(tx, installation_id)
+
+
+async def create_operation(
+    tx: TransactionManager, installation_id: str, team_id: str, template: OperationTemplate
+) -> None:
+    """Store a confirmed template and make it the operation's current one.
+
+    A sensitive secret admits named operations only with a response
+    projection (§7.6), so an unprojected template on one is refused.
+    """
+    sensitivity = await tx.fetch_value(
+        """
+        SELECT record->>'sensitivity' FROM {{tables.secrets}}
+        WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3
+        FOR SHARE
+        """,
+        installation_id,
+        team_id,
+        template.secret_id,
+    )
+    if sensitivity == "sensitive" and template.projection is None:
+        raise RecordRefused(
+            "an operation on a sensitive secret needs a response projection",
+            code="operation_not_allowed",
+        )
+    await tx.execute(
+        """
+        INSERT INTO {{tables.operation_templates}}
+            (installation_id, team_id, secret_id, operation_id, digest, record)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT DO NOTHING
+        """,
+        installation_id,
+        team_id,
+        template.secret_id,
+        template.operation_id,
+        template.digest,
+        json.dumps(dict(template.after)),
+    )
+    await tx.execute(
+        """
+        INSERT INTO {{tables.current_operations}}
+            (installation_id, secret_id, operation_id, digest)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (installation_id, secret_id, operation_id) DO UPDATE SET digest = EXCLUDED.digest
+        """,
+        installation_id,
+        template.secret_id,
+        template.operation_id,
+        template.digest,
+    )
+
+
+async def current_operation(
+    tx: TransactionManager, installation_id: str, secret_id: str, operation_id: str
+) -> OperationTemplate | None:
+    """The operation's current template, locked against replacement until the transaction ends."""
+    record = await tx.fetch_value(
+        """
+        SELECT t.record FROM {{tables.current_operations}} c
+        JOIN {{tables.operation_templates}} t USING (installation_id, secret_id, operation_id, digest)
+        WHERE c.installation_id = $1 AND c.secret_id = $2 AND c.operation_id = $3
+        FOR SHARE OF c
+        """,
+        installation_id,
+        secret_id,
+        operation_id,
+    )
+    return None if record is None else OperationTemplate.from_after(json.loads(record))

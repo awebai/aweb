@@ -127,6 +127,37 @@ CREATE OR REPLACE TRIGGER destinations_immutable
     BEFORE UPDATE ON {{tables.destinations}}
     FOR EACH ROW EXECUTE FUNCTION {{tables.secrets_refuse_change}}();
 
+-- Named operations (§8.1): every confirmed template, immutable and addressed by
+-- digest, and for each (secret, operation id) the digest now current. A grant
+-- covers the digest it was granted at, so an edited operation is covered by
+-- no existing grant.
+CREATE TABLE IF NOT EXISTS {{tables.operation_templates}} (
+    installation_id  TEXT NOT NULL,
+    team_id          TEXT NOT NULL,
+    secret_id        TEXT NOT NULL,
+    operation_id     TEXT NOT NULL,
+    digest           TEXT NOT NULL CHECK (digest ~ '^[0-9a-f]{64}$'),
+    record           JSONB NOT NULL,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (installation_id, secret_id, operation_id, digest),
+    FOREIGN KEY (installation_id, team_id, secret_id)
+        REFERENCES {{tables.secrets}} (installation_id, team_id, secret_id)
+);
+
+CREATE TABLE IF NOT EXISTS {{tables.current_operations}} (
+    installation_id  TEXT NOT NULL,
+    secret_id        TEXT NOT NULL,
+    operation_id     TEXT NOT NULL,
+    digest           TEXT NOT NULL,
+    PRIMARY KEY (installation_id, secret_id, operation_id),
+    FOREIGN KEY (installation_id, secret_id, operation_id, digest)
+        REFERENCES {{tables.operation_templates}} (installation_id, secret_id, operation_id, digest)
+);
+
+CREATE OR REPLACE TRIGGER operation_templates_immutable
+    BEFORE UPDATE ON {{tables.operation_templates}}
+    FOR EACH ROW EXECUTE FUNCTION {{tables.secrets_refuse_change}}();
+
 -- Token buckets of policies' rate limits (§4.4): one per (secret, principal) and
 -- one per secret, whose principal_did is ''. Charged in the admission transaction.
 CREATE TABLE IF NOT EXISTS {{tables.rate_buckets}} (

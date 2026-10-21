@@ -24,8 +24,10 @@ installation generation admitted.
 from __future__ import annotations
 
 import secrets as random
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired, claim
 from aweb_naapp.roles import principal_key, roles_of
@@ -37,6 +39,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_secrets import records
 from aweb_secrets.grant import GrantRecord, is_secrets_role
+from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
 from aweb_secrets.rate import RateLimited, charge
 
@@ -61,6 +64,7 @@ class UseRequest:
     request_id: str
     request_sha256: bytes
     operation_id: str | None
+    params: Mapping[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -78,14 +82,33 @@ def mint_intent_id() -> str:
 
 
 def _covers(
-    grant: GrantRecord, policy: Policy, request: UseRequest, sensitivity: str
+    grant: GrantRecord,
+    policy: Policy,
+    request: UseRequest,
+    sensitivity: str,
+    operation: OperationTemplate | None,
 ) -> str | None:
-    """The refusal code when the grant and its policy do not cover the action, else None."""
+    """The refusal code when the grant and its policy do not cover the action, else None.
+
+    A named operation is covered at its current digest only, so an edited
+    operation is covered by no grant made before the edit.
+    """
     if request.operation_id is None:
         if sensitivity != "standard" or not grant.open_request or not policy.body["open_request"]:
             return "open_request_not_allowed"
         return None
-    return "operation_not_allowed"
+    if operation is None:
+        return "operation_not_allowed"
+    pinned = (operation.operation_id, operation.digest)
+    if not grant.covers_operation(*pinned) or pinned not in policy.allowed_operations:
+        return "operation_not_allowed"
+    if sensitivity == "sensitive" and operation.projection is None:
+        return "operation_not_allowed"
+    if operation.token_issuing and operation.after["result_handling"] == "deny":
+        return "token_issuing_denied"
+    if request.params is None or not operation.params_valid(request.params):
+        return "params_invalid"
+    return None
 
 
 async def _replayed(
@@ -176,13 +199,20 @@ async def admit_use(
         raise AdmissionRefused("grant_missing")
     if stored.state != "active" or stored.active_version is None:
         raise AdmissionRefused("secret_disabled")
+    operation = (
+        None
+        if request.operation_id is None
+        else await records.current_operation(
+            tx, installation.installation_id, stored.record.secret_id, request.operation_id
+        )
+    )
 
     first_refusal: AdmissionRefused | None = None
     for candidate in candidates:
         policy = await records.policy(tx, installation.installation_id, candidate.policy_digest)
         if policy is None:
             raise RuntimeError("a grant references a policy that cannot be read")
-        refusal = _covers(candidate, policy, request, stored.record.sensitivity)
+        refusal = _covers(candidate, policy, request, stored.record.sensitivity, operation)
         if refusal is None and not policy.window_open(now):
             refusal = "policy_window_closed"
         if refusal is None and not policy.attestation_satisfied(attestation):
@@ -227,9 +257,9 @@ async def admit_use(
             stored.active_version,
             candidate.grant_id,
             policy.digest,
-            "open_request" if request.operation_id is None else "operation",
-            None,
-            None,
+            "open_request" if operation is None else "operation",
+            None if operation is None else operation.operation_id,
+            None if operation is None else operation.digest,
             approval_required,
         )
         return Admission(

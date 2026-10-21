@@ -15,6 +15,7 @@ from aweb_secrets import records
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord, GrantTemplate
+from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
 from aweb_secrets.revisions import apply_revision_migrations, bump_config_revision, config_revision
 from aweb_secrets.secret import SecretRecord
@@ -344,3 +345,90 @@ async def test_removing_a_destination_is_a_narrowing_act(db) -> None:
     async with db.transaction() as tx:
         await records.remove_destination(tx, INSTALLATION, "dst_charges01")
     assert await config_revision(db, INSTALLATION) == before + 1
+
+
+def _operation(**changes) -> OperationTemplate:
+    after = {
+        "v": 1,
+        "operation_id": "charge-status",
+        "secret_id": SECRET.secret_id,
+        "method": "GET",
+        "url": {"host": "api.payments.example", "port": 443, "path": "/v1/charges/{charge}"},
+        "params": {
+            "charge": {
+                "schema": {"type": "string", "minLength": 3, "maxLength": 64},
+                "charset": "base64url",
+                "placement": "path",
+            }
+        },
+        "body": None,
+        "headers": {"fixed": {}, "allowed": []},
+        "response": {
+            "projection": ["/status"],
+            "max_bytes": 4096,
+            "content_types": ["application/json"],
+        },
+        "side_effect": "none",
+        "token_issuing": False,
+        "result_handling": "deny",
+        "store_as_secret": None,
+        "idempotency": None,
+        "reconcile": None,
+        "timeout_s": 10,
+    }
+    after.update(changes)
+    return OperationTemplate.from_after(after)
+
+
+async def test_the_last_confirmed_template_of_an_operation_is_current(db) -> None:
+    await _setup(db)
+    first = _operation()
+    edited = _operation(timeout_s=5)
+    async with db.transaction() as tx:
+        await records.create_operation(tx, INSTALLATION, TEAM, first)
+        assert (
+            await records.current_operation(tx, INSTALLATION, SECRET.secret_id, "charge-status")
+            == first
+        )
+        await records.create_operation(tx, INSTALLATION, TEAM, edited)
+        assert (
+            await records.current_operation(tx, INSTALLATION, SECRET.secret_id, "charge-status")
+            == edited
+        )
+        assert (
+            await records.current_operation(
+                tx, OTHER_INSTALLATION, SECRET.secret_id, "charge-status"
+            )
+            is None
+        )
+        assert await records.current_operation(tx, INSTALLATION, SECRET.secret_id, "refund") is None
+
+
+async def test_an_operation_template_never_changes(db) -> None:
+    await _setup(db)
+    async with db.transaction() as tx:
+        await records.create_operation(tx, INSTALLATION, TEAM, _operation())
+    with pytest.raises(asyncpg.RaiseError):
+        async with db.transaction() as tx:
+            await tx.execute("UPDATE {{tables.operation_templates}} SET record = '{}'::jsonb")
+
+
+async def test_an_operation_needs_its_secret_in_the_same_installation(db) -> None:
+    await _setup(db)
+    with pytest.raises(asyncpg.ForeignKeyViolationError):
+        async with db.transaction() as tx:
+            await records.create_operation(tx, OTHER_INSTALLATION, TEAM, _operation())
+
+
+async def test_an_operation_on_a_sensitive_secret_needs_a_projection(db) -> None:
+    sensitive = SecretRecord.from_after({**SECRET.after, "sensitivity": "sensitive"})
+    async with db.transaction() as tx:
+        await records.create_secret(tx, INSTALLATION, TEAM, sensitive)
+        await records.create_operation(tx, INSTALLATION, TEAM, _operation())
+    unprojected = _operation(
+        response={"projection": None, "max_bytes": 4096, "content_types": ["application/json"]}
+    )
+    with pytest.raises(records.RecordRefused) as refused:
+        async with db.transaction() as tx:
+            await records.create_operation(tx, INSTALLATION, TEAM, unprojected)
+    assert refused.value.code == "operation_not_allowed"
