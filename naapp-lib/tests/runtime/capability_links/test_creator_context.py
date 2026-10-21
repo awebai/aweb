@@ -26,7 +26,7 @@ class CheckedAuthority:
         self.calls = []
         self.contexts = []
 
-    async def require_current_creator(self, tx, *, creator):
+    async def require_current_creator(self, tx, *, creator, proof):
         self.calls.append("member")
         self.contexts.append(creator)
         assert creator.scope == SCOPE
@@ -62,6 +62,7 @@ async def test_mint_retains_trusted_membership_evidence_separate_from_acl_identi
     )
     record = json.loads(record) if isinstance(record, str) else record
     assert record["created_by"] == {
+        "team_id": SCOPE.team_id,
         "principal_did": CREATOR,
         "certificate_id": "cert-minted",
         "team_did_key": TEAM_KEY,
@@ -146,7 +147,7 @@ async def test_membership_loss_also_refuses_a_matching_receipt_retry(db, authori
     await revoke_link(db, caller, actor="did:aw:owner", owner=True)
 
 
-@pytest.mark.parametrize("missing", ["certificate_id", "team_did_key", "principal_did"])
+@pytest.mark.parametrize("missing", ["certificate_id", "team_did_key", "principal_did", "team_id"])
 async def test_old_incomplete_creator_metadata_fails_closed_before_callback(db, authority, missing):
     caller = await holder(db, authority)
     await db.execute(

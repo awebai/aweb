@@ -49,7 +49,7 @@ class GrantedAuthority:
     assets: dict[str, set[str]] = field(default_factory=dict)
     agents: set[str] = field(default_factory=lambda: {SPONSOR})
 
-    async def require_current_creator(self, tx, *, creator) -> None:
+    async def require_current_creator(self, tx, *, creator, proof) -> None:
         assert creator.scope == SCOPE
         assert creator.team_did_key == TEAM_KEY
 
@@ -153,3 +153,20 @@ async def mint_link(
             request=request if request is not None else request_from(DEFAULT_LINK, now=now),
             now=now,
         )
+
+
+def proof_for(*, certificate_id="0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11"):
+    """Synthetic checked facts for N5 boundary tests; AWID/cache proof is separate."""
+    import time
+
+    from aweb_naapp.runtime.team_auth import MembershipProof
+
+    checked = time.monotonic()
+    return MembershipProof(SCOPE.team_id, certificate_id, TEAM_KEY, checked, checked + 60)
+
+
+async def proof_for_link(db, link_id):
+    from aweb_naapp.runtime.capability_links import load_link_creator
+
+    creator = await load_link_creator(db, link_id=link_id)
+    return proof_for(certificate_id=creator.certificate_id)

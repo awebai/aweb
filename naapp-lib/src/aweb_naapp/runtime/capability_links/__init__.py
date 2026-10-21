@@ -24,9 +24,11 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import re
 import secrets
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -45,6 +47,7 @@ from aweb_naapp.runtime.link_requests import (
     secret_verifier,
     verify_link_request_bytes,
 )
+from aweb_naapp.runtime.team_auth import MembershipProof
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_naapp_capability_links"
@@ -124,8 +127,9 @@ class LinkScope:
 class LinkCreator:
     """Internal mint evidence, separate from the canonical page ACL identity.
 
-    The host verifies current membership through the shared runtime before any
-    creator-scoped store call. Never return this evidence to the link holder.
+    The host obtains a runtime MembershipProof before opening its transaction.
+    N5 checks that proof locally under the link lock before creator-scoped store
+    calls. Never return this evidence to the link holder.
     """
 
     scope: LinkScope
@@ -149,15 +153,16 @@ class Readable:
 class LinkAuthority(Protocol):
     """A creator's current authority on a page, as the serving app knows it.
 
-    ``require_current_creator`` delegates to runtime.require_current_member
-    using the supplied certificate/team-key evidence, never historical rows.
-    Its 403/503 HTTPException propagates unchanged. On a holder use it must
-    succeed before other creator/store callbacks; it is not an action-policy
-    substitute. Mint already receives the authenticated member context.
+    The host calls runtime.check_current_member before opening the transaction.
+    N5 checks its in-process proof under the link lock. The required callback
+    ``require_current_creator`` then performs LOCAL checks only: no runtime
+    refresh or other network I/O under this transaction. It precedes creator
+    store callbacks and is not an action-policy substitute. Mint already
+    receives authenticated member context. Phase-1 403/503 stay distinct.
     """
 
     async def require_current_creator(
-        self, tx: TransactionManager, *, creator: LinkCreator
+        self, tx: TransactionManager, *, creator: LinkCreator, proof: MembershipProof
     ) -> None: ...
 
     async def readable(
@@ -600,6 +605,7 @@ async def mint(
         "intent_sponsor_did": checked["intent_sponsor_did"],
         "one_use": checked["one_use"],
         "created_by": {
+            "team_id": scope.team_id,
             "principal_did": creator,
             "certificate_id": creator_certificate_id,
             "team_did_key": creator_team_did_key,
@@ -725,6 +731,21 @@ async def _creator_still_reads(
     return frozen is not None
 
 
+def _exchange_request(body: bytes) -> dict[str, Any]:
+    """Validate before creator preflight or any database/network lookup."""
+    request = _strict_object(body)
+    if not isinstance(request, dict) or set(request) != {"secret", "session_did_key"}:
+        raise _schema("exchange fields")
+    if not isinstance(request["secret"], str):
+        raise _schema("secret")
+    try:
+        check_session_did_key(request["session_did_key"])
+    except LinkRequestRefused as exc:
+        raise _schema("session_did_key") from exc
+
+    return request
+
+
 async def exchange(
     db: AsyncDatabaseManager,
     authority: LinkAuthority,
@@ -733,6 +754,8 @@ async def exchange(
     body: bytes,
     client: str,
     now: datetime,
+    proof: MembershipProof | None = None,
+    proof_clock: Callable[[], float] = time.monotonic,
 ) -> LinkSession:
     """Exchange a link's secret for a session bound to a browser key (§2).
 
@@ -745,15 +768,7 @@ async def exchange(
     """
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
-    request = _strict_object(body)
-    if not isinstance(request, dict) or set(request) != {"secret", "session_did_key"}:
-        raise _schema("exchange fields")
-    if not isinstance(request["secret"], str):
-        raise _schema("secret")
-    try:
-        check_session_did_key(request["session_did_key"])
-    except LinkRequestRefused as exc:
-        raise _schema("session_did_key") from exc
+    request = _exchange_request(body)
 
     async with db.transaction() as tx:
         per_client = await take(
@@ -782,7 +797,7 @@ async def exchange(
         )
         if not usable:
             raise _unavailable()
-        await _require_current_creator(tx, authority, record)
+        await _require_current_creator(tx, authority, record, proof=proof, clock=proof_clock)
         if not await _creator_still_reads(tx, authority, record):
             raise _unavailable()
         per_link = await take(tx, [Charge("link.exchange", link_id, *EXCHANGES_PER_LINK)], now=now)
@@ -912,25 +927,67 @@ def _scope(record: Mapping[str, Any]) -> LinkScope:
     return LinkScope(record["team_id"], record["installation_id"], record["page_id"])
 
 
-async def _require_current_creator(
-    tx: TransactionManager, authority: LinkAuthority, record: Mapping[str, Any]
-) -> LinkCreator:
-    """Consume immutable mint evidence under the caller's existing link lock."""
+def _link_creator(record: Mapping[str, Any]) -> LinkCreator:
     evidence = record.get("created_by")
-    if not isinstance(evidence, Mapping) or any(
-        not isinstance(evidence.get(name), str) or not evidence[name].strip()
-        for name in ("principal_did", "certificate_id", "team_did_key")
+    if (
+        not isinstance(evidence, Mapping)
+        or any(
+            not isinstance(evidence.get(name), str) or not evidence[name].strip()
+            for name in ("team_id", "principal_did", "certificate_id", "team_did_key")
+        )
+        or evidence["team_id"] != record["team_id"]
     ):
         raise LinkRefused(
-            "current_member_required", 403, reason="incomplete creator membership evidence"
+            "current_member_required", 403, reason="incomplete or mismatched creator evidence"
         )
-    creator = LinkCreator(
+    return LinkCreator(
         scope=_scope(record),
         principal_did=evidence["principal_did"],
         certificate_id=evidence["certificate_id"],
         team_did_key=evidence["team_did_key"],
     )
-    await authority.require_current_creator(tx, creator=creator)
+
+
+async def load_link_creator(db: AsyncDatabaseManager, *, link_id: str) -> LinkCreator:
+    """Load immutable INTERNAL mint evidence before the host's joined transaction.
+
+    No lifecycle lock or authority claim: the host performs phase-1 runtime
+    check_current_member with this evidence. Every holder operation reloads it
+    under the link lock and matches the proof before exposing any content. Never
+    mount this as a holder endpoint or return its evidence in page data.
+    """
+    row = await db.fetch_one(
+        "SELECT record FROM {{tables.capability_links}} WHERE link_id = $1", link_id
+    )
+    if row is None:
+        raise _unavailable()
+    return _link_creator(_record(row["record"]))
+
+
+async def _require_current_creator(
+    tx: TransactionManager,
+    authority: LinkAuthority,
+    record: Mapping[str, Any],
+    *,
+    proof: MembershipProof | None,
+    clock: Callable[[], float],
+) -> LinkCreator:
+    """Consume the original runtime proof locally AFTER the existing link lock."""
+    creator = _link_creator(record)
+    checked_now = clock()
+    if (
+        not isinstance(proof, MembershipProof)
+        or proof.team_id != creator.scope.team_id
+        or proof.certificate_id != creator.certificate_id
+        or proof.team_did_key != creator.team_did_key
+        or not all(math.isfinite(t) for t in (proof.checked_at, proof.fresh_until, checked_now))
+        or not 0 <= proof.fresh_until - proof.checked_at <= 60
+        or not proof.checked_at <= checked_now <= proof.fresh_until
+    ):
+        raise LinkRefused(
+            "current_member_required", 403, reason="missing, mismatched or expired proof"
+        )
+    await authority.require_current_creator(tx, creator=creator, proof=proof)
     return creator
 
 
@@ -1014,6 +1071,8 @@ async def read(
     page_id: str,
     projection: Mapping[str, Any] | None = None,
     now: datetime,
+    proof: MembershipProof | None = None,
+    proof_clock: Callable[[], float] = time.monotonic,
 ) -> LinkRead:
     """Admit a projection read under FOR SHARE (§4–§6).
 
@@ -1029,7 +1088,9 @@ async def read(
     record = _record(row["record"])
     if record["page_id"] != page_id:
         raise _denied()
-    created_by = await _require_current_creator(tx, authority, record)
+    created_by = await _require_current_creator(
+        tx, authority, record, proof=proof, clock=proof_clock
+    )
     selected = _select_projection(projection, record["projection"])
     creator = created_by.principal_did
     if record["mode"] == "live" and not record["actions"]:
@@ -1183,6 +1244,8 @@ async def admit(
     body: bytes,
     client: str,
     now: datetime,
+    proof: MembershipProof | None = None,
+    proof_clock: Callable[[], float] = time.monotonic,
 ) -> ActionReceipt:
     """Admit an edit or anonymous intent (§4–§6), in the caller's transaction.
 
@@ -1200,7 +1263,9 @@ async def admit(
     ).digest()
     row = await _locked_link(tx, caller=caller, write=True, now=now)
     record = _record(row["record"])
-    created_by = await _require_current_creator(tx, authority, record)
+    created_by = await _require_current_creator(
+        tx, authority, record, proof=proof, clock=proof_clock
+    )
     key = (
         record["installation_id"],
         record["team_id"],

@@ -9,14 +9,22 @@ secret, so nothing here logs or echoes it.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pgdbm import AsyncDatabaseManager
 
-from aweb_naapp.runtime.capability_links import LinkAuthority, LinkRefused, exchange
+from aweb_naapp.runtime.capability_links import (
+    LinkAuthority,
+    LinkCreator,
+    LinkRefused,
+    _exchange_request,
+    exchange,
+    load_link_creator,
+)
+from aweb_naapp.runtime.team_auth import MembershipProof
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +50,7 @@ def mount_link_exchange(
     *,
     db: AsyncDatabaseManager,
     authority: LinkAuthority,
+    check_current_member: Callable[[LinkCreator], Awaitable[MembershipProof]],
     client_address: Callable[[Request], str],
     clock: Callable[[], datetime],
 ) -> None:
@@ -49,18 +58,27 @@ def mount_link_exchange(
 
     ``client_address`` keys the per-client exchange bucket, as the deployment
     resolves its callers (the peer, or a proxy header it trusts).
+    ``check_current_member`` calls the shared runtime with this internal evidence
+    before any transaction; never refresh membership in the authority callback.
     """
 
     @app.post("/v1/links/{link_id}/session", include_in_schema=False)
     async def exchange_route(link_id: str, request: Request) -> JSONResponse:
         try:
+            body = await request.body()
+            _exchange_request(body)
+            creator = await load_link_creator(db, link_id=link_id)
+            # Phase 1 may reach AWID. It MUST finish before exchange opens its
+            # transaction; phase 2 reloads evidence and checks expiry under lock.
+            proof = await check_current_member(creator)
             session = await exchange(
                 db,
                 authority,
                 link_id=link_id,
-                body=await request.body(),
+                body=body,
                 client=client_address(request),
                 now=clock(),
+                proof=proof,
             )
         except LinkRefused as refused:
             logger.info("link exchange refused: %s (%s)", refused.code, refused.reason)

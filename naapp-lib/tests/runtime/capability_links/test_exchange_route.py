@@ -8,7 +8,7 @@ from pgdbm import AsyncDatabaseManager
 
 from aweb_naapp.runtime.capability_links.routes import mount_link_exchange
 
-from .conftest import T0, mint_link
+from .conftest import T0, mint_link, proof_for
 from .test_exchange import body
 
 LINK_HEADERS = {"cache-control": "no-store", "referrer-policy": "no-referrer"}
@@ -16,10 +16,15 @@ LINK_HEADERS = {"cache-control": "no-store", "referrer-policy": "no-referrer"}
 
 def _client(db, authority) -> httpx.AsyncClient:
     app = FastAPI()
+
+    async def check_current_member(creator):
+        return proof_for(certificate_id=creator.certificate_id)
+
     mount_link_exchange(
         app,
         db=db,
         authority=authority,
+        check_current_member=check_current_member,
         client_address=lambda request: request.headers.get("x-test-client", "203.0.113.7"),
         clock=lambda: T0,
     )

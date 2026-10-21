@@ -55,7 +55,7 @@ The app stores, per link, an immutable record and its mutable lifecycle:
   "actions": [{"action_id": "mark-cleaned", "constraints": {"record_id": "b-17"}}],
   "intent_sponsor_did": null,
   "one_use": false,
-  "created_by": {"principal_did": "did:aw:…", "certificate_id": "…", "team_did_key": "did:key:…"},
+  "created_by": {"team_id": "backend:acme.com", "principal_did": "did:aw:…", "certificate_id": "…", "team_did_key": "did:key:…"},
   "created_at": "2026-10-20T12:00:00Z",
   "expires_at": "2026-10-27T12:00:00Z",
   "rate_policy": "link-default-v1"
@@ -72,33 +72,49 @@ Lifecycle: `revoked_at`, `used_at` (one-use links) and the stored receipts.
 | `projection` | The only collections, rows, fields and assets the link can read. 1–16 collections with 1–64 minted fields each; `record_ids` is a literal list of 0–200 IDs, or `"*"` with the mode-specific rules below. An empty list always means zero rows. 0–64 asset IDs. |
 | `actions` | 0–16 `{action_id, constraints}`: allowed page actions of kind `edit` or `intent`, each with fixed input values the submission must equal. Empty means read-only, the default. Never an `answer`-kind action. |
 | `intent_sponsor_did` | Required when `actions` contains an `intent`: the agent principal that routes the holder's intents (§5). `null` otherwise. |
-| `created_by` | Host-derived immutable mint evidence: canonical ACL `principal_did`, and `certificate_id` plus `team_did_key` from the verified mint-time Principal. Not grantable request fields; never returned to a holder. |
+| `created_by` | Host-derived immutable mint evidence: scope `team_id`, canonical ACL `principal_did`, and `certificate_id` plus `team_did_key` from the verified mint-time Principal. Not grantable request fields; never returned to a holder. |
 | `one_use` | `true`: the first admitted action uses the link up (§4). Reads before it consume nothing. |
 | `expires_at` | After `created_at` and at most 30 days later. |
 
-**Current creator membership.** N5 retains the mint-time certificate ID and
-team key in `created_by`; a bare DID or historical observed-principal row is
-insufficient. Before any creator-scoped store/authority callback on exchange,
-read or admission, under the existing verified secret/session and link row
-lock, it invokes the required
-`authority.require_current_creator(tx, *, creator: LinkCreator)` callback.
-`LinkCreator` is immutable: `{scope: LinkScope, principal_did, certificate_id,
-team_did_key}`. The canonical `principal_did` is the shared PageStore identity
-helper's ACL input; it is separate from the membership evidence.
+**Current creator membership uses two phases.** N5 retains the mint-time team,
+certificate ID and team key in immutable `created_by`; a bare DID or historical
+observed-principal row is insufficient. `load_link_creator(db, *, link_id)`
+loads the immutable internal `LinkCreator` evidence without retaining a lifecycle
+lock or claiming current authority. It is not a holder endpoint.
+`LinkCreator` is frozen: `{scope: LinkScope, principal_did, certificate_id,
+team_did_key}`. The canonical `principal_did` is PageStore's ACL identity,
+separate from the membership evidence.
 
-The host delegates to `runtime.require_current_member(creator.scope.team_id,
+Before opening the joined transaction, the host calls
+`runtime.check_current_member(creator.scope.team_id,
 certificate_id=creator.certificate_id, team_did_key=creator.team_did_key)`.
-This uses the request verifier's current AWID facts/cache (at most 60 s),
-requires an active known certificate and the same current team key as at mint,
-and refuses unknown, revoked, rotated or incomplete evidence with 403
-`current_member_required`. AWID lookup unavailability remains 503
-`current_membership_unavailable`, never a successful fallback. Old records
-missing evidence fail closed, without reconstructing it from observations.
-No certificate bytes are retained, and no verifier, link SQL or fabricated
-member Principal is needed in the host or store. Only after this callback
-succeeds may other authority callbacks use the canonical creator string.
-`LinkRead.created_by` and `LinkAction.created_by` carry the same checked,
-internal context; hosts never serialize that evidence to holders.
+It uses the request verifier's AWID facts/cache, requires an active known
+certificate and the same current team key, and returns the shared frozen
+`MembershipProof {team_id, certificate_id, team_did_key, checked_at, fresh_until}`.
+Both times are monotonic and retain the facts' original fetch-start and expiry;
+a cache hit never extends that expiry. The window is at most 60 seconds.
+The proof is an in-process object, never request JSON, stored data or a token.
+Phase 1 refuses unknown/revoked/rotated/incomplete evidence with 403
+`current_member_required`; unavailable facts remain 503
+`current_membership_unavailable`.
+
+The host supplies `proof` to `exchange`, `read` or `admit`. Under its existing
+verified secret/session and link lock, N5 reloads `created_by`, requires the
+proof's team to match both scope and stored creator team, and matches the
+certificate and team key exactly. It reads its injected `proof_clock` (default
+`time.monotonic`) **after acquiring the lock**. Missing, mismatched or expired
+proofs refuse 403 `current_member_required`; a lock wait never refreshes them.
+Only then does `authority.require_current_creator(tx, *, creator, proof)` run.
+This callback performs local checks only: no AWID refresh or network operation
+inside the transaction. Subsequent creator/store callbacks use the canonical
+ACL identity. The exchange mount accepts a required phase-1 callback and
+preserves membership refusal statuses and link privacy headers.
+
+Old records missing evidence fail closed; nothing reconstructs membership from
+observations. No certificate bytes, copied verifier, private link SQL or
+fabricated member Principal are needed in the host/store. `LinkRead.created_by`
+and `LinkAction.created_by` carry the checked internal context, never serialized
+to holders.
 
 This membership check precedes even admission's receipt lookup. Matching
 retries still bypass link lifecycle and action-policy checks after the current
