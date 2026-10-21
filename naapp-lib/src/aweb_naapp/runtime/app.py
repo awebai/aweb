@@ -29,12 +29,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -49,12 +52,14 @@ from aweb_naapp.manifest import (
     CATALOG_PATH,
     LEGACY_MANIFEST_PATH,
     Manifest,
+    ManifestError,
     canonical_bytes,
+    fill_manifest,
     load_manifest,
-    read_manifest_bytes,
 )
 from aweb_naapp.outbox import outbox_status, run_drain
 from aweb_naapp.robots import robots_txt
+from aweb_naapp.runtime.app_keys import declared_did_keys
 from aweb_naapp.runtime.attestation import (
     AttestationRefused,
     AWIDAttestationRecords,
@@ -71,8 +76,8 @@ from aweb_naapp.runtime.authorization import (
     authorize_request,
     is_placeholder,
 )
-from aweb_naapp.runtime.db import NaappDatabase
-from aweb_naapp.runtime.event_emit import AppEvents
+from aweb_naapp.runtime.db import NaappDatabase, Store
+from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
@@ -116,17 +121,26 @@ class NaappRuntime:
         manifest_path: Path,
         root_path: str = "",
         awid_transport: httpx.AsyncBaseTransport | None = None,
+        stores: Sequence[Store] = (),
     ) -> None:
         self.settings = settings
         # The external prefix the server serves the app under (its ASGI root path).
         self.root_path = root_path.rstrip("/")
         self.module_name = module_name
         self.migrations_path = migrations_path
+        self.stores = tuple(stores)
         self._awid_transport = awid_transport
         self._database: NaappDatabase | None = None
         self._team_cache: AWIDTeamCache | None = None
         self._attestation_records: AWIDAttestationRecords | None = None
-        self._manifest_bytes = read_manifest_bytes(manifest_path, settings.public_origin)
+        template = json.loads(manifest_path.read_bytes())
+        _refuse_the_hosted_app_id_elsewhere(settings, template)
+        self._manifest_bytes = fill_manifest(
+            template,
+            app_id=settings.app_id,
+            origin=settings.public_origin,
+            did_keys=declared_did_keys(settings, template),
+        )
         self._manifest = load_manifest(self._manifest_bytes)
         self._catalog_bytes = (
             _catalog_bytes(self._manifest, self._manifest_bytes)
@@ -169,7 +183,10 @@ class NaappRuntime:
     async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:
         self.check_authorized_routes(app)
         database = NaappDatabase(
-            self.settings, module_name=self.module_name, migrations_path=self.migrations_path
+            self.settings,
+            module_name=self.module_name,
+            migrations_path=self.migrations_path,
+            stores=self.stores,
         )
         await database.connect()
         self._database = database
@@ -387,6 +404,26 @@ class NaappRuntime:
         return any(
             dependency.call in self._guards or self._is_guarded(dependency)
             for dependency in dependant.dependencies
+        )
+
+
+def _refuse_the_hosted_app_id_elsewhere(settings: NaappSettings, template: Mapping[str, Any]) -> None:
+    """A deployment others can reach must configure its own app id: serving the
+    hosted one there would claim the hosted app's identity. Only the hosted
+    origin and a loopback origin, which no other team can reach, may serve it."""
+    hosted = template.get("app")
+    if not isinstance(hosted, dict):
+        return
+    if not isinstance(hosted.get("origin"), str):
+        raise ManifestError("manifest_template_invalid", "a manifest template names the hosted app.origin")
+    origin = settings.public_origin.rstrip("/")
+    if origin == hosted["origin"].rstrip("/") or is_loopback_host(urlsplit(origin).hostname or ""):
+        return
+    if settings.app_id == hosted.get("id"):
+        prefix = settings.model_config.get("env_prefix", "")
+        raise ValueError(
+            f"{prefix}APP_ID is the hosted app id {hosted['id']!r} but {prefix}PUBLIC_ORIGIN is not the "
+            "hosted origin; set the deployment's own app_id"
         )
 
 

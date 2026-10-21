@@ -583,6 +583,19 @@ catalog, listing the exact bytes it serves at `/manifests/v2.json`, and no
 v1 variant, so the legacy path is not found. It computes both once at
 startup.
 
+The manifest a deployment serves is its own. The committed manifest is a
+template: it declares the kids and the purposes each signs, local event types
+and the hosted `app.id` default, and commits no `did_key`. The runtime fills in
+the deployment's `app.id`, its origin and each declared kid's `did_key`, derived
+from the deployment's configured key, and serves the canonical bytes
+(`aweb_naapp.manifest.fill_manifest`). One configuration therefore serves
+byte-identical bytes on every replica. Event types, and the surface event
+bindings that reference them, are named locally in the template, without an
+`app.id/` prefix, because they resolve against the deployment's `app.id`; a
+prefixed one stops every deployment from starting. A deployment must keep its `app.id` for
+its lifetime, and rotates a key by adding a kid, which changes the digest every
+team pins.
+
 ## CLI resident and grant access
 
 See [CLI naapp access](naapp-access.md) for selected-home installation, resident
