@@ -66,6 +66,7 @@ def test_unavailable_oci_runtime_refuses_before_hpke_opening(tmp_path):
     body["kind"] = "oci"
     body["exec"] = None
     body["oci"] = {"image": "fixture/image@sha256:" + "a" * 64, "read_only_paths": []}
+    body["argv"].insert(0, "/bin/tool")
     config = RunnerConfig.load(config_file(tmp_path, body))
     with pytest.raises(Refused, match="runner_runtime_unavailable"):
         prepare(config, body, [encrypted("db", "fixture-password", wrong_dispatch=True)])

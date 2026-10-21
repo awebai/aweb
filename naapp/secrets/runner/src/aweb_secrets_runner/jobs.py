@@ -199,6 +199,9 @@ def _check(job: dict[str, Any]) -> None:
                 else:
                     _exact(mapping, {"value"})
     _need(len(refs) == len(set(refs)) and isinstance(job["argv"], list))
+    if job["kind"] == "oci":
+        # OCI argv is complete; image defaults never supply an executable.
+        _need(job["argv"] and _path(job["argv"][0]))
     for index, arg in enumerate(job["argv"]):
         if isinstance(arg, str):
             continue
