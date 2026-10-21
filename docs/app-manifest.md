@@ -518,8 +518,10 @@ tool's scopes are granted only at owner activation.
 
 A verifier accepts a key only for a purpose the key declares and the
 verifier implements. D1 uses `app-event`, `app-request` and `app-usage`, and
-the hooks lane defines its own. An unrecognized purpose is shown to the
-admin and grants nothing. A v1 `event_emitters` entry reads as an
+the hooks lane defines its own. logs signs its receipts and checkpoints with a
+key declaring `logs-receipt` and `logs-checkpoint` ([the logs
+chain](logs-chain.md)); only logs and the verifiers of its artefacts consume
+those two. An unrecognized purpose is shown to the admin and grants nothing. A v1 `event_emitters` entry reads as an
 `app-event` key only.
 
 ## Variant discovery
