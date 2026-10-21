@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from awid.identity_log_verify import (
     verify_identity_head,
     verify_identity_log,
 )
+from awid.log import log_entry_payload
+from awid.signing import sign_message
 
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -142,3 +145,25 @@ def test_full_log_bounds_stop_before_signature_work() -> None:
             entries=[wire] * 4097,
         )
     assert raised.value.reason == "sender_identity_evidence_too_large"
+
+
+def _resigned_genesis(timestamp: str) -> dict:
+    vectors = _load("identity-log-v1.json")
+    fields = dict(vectors["entries"][0]["entry_payload"], timestamp=timestamp)
+    payload = log_entry_payload(**fields)
+    seed = bytes.fromhex(vectors["key_seeds"]["initial_seed_hex"])
+    return {**fields, "entry_hash": hashlib.sha256(payload).hexdigest(), "signature": sign_message(seed, payload)}
+
+
+def test_resigned_genesis_with_ascii_timestamp_verifies() -> None:
+    vectors = _load("identity-log-v1.json")
+    verified = verify_identity_log(did_aw=vectors["mapping"]["did_aw"], entries=[_resigned_genesis("2026-04-18T12:00:00Z")])
+    assert verified.current_did_key == vectors["mapping"]["initial_did_key"]
+
+
+@pytest.mark.parametrize("timestamp", ["\uff12\uff10\uff12\uff16-04-18T12:00:00Z", "2026-02-30T12:00:00Z"])
+def test_log_timestamps_need_ascii_digits_and_a_real_date(timestamp: str) -> None:
+    vectors = _load("identity-log-v1.json")
+    with pytest.raises(FederationAuthorityError) as raised:
+        verify_identity_log(did_aw=vectors["mapping"]["did_aw"], entries=[_resigned_genesis(timestamp)])
+    assert raised.value.reason == "sender_did_log_invalid"

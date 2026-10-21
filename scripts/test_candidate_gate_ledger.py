@@ -19,7 +19,7 @@ check-cli-go-tidy check-cli-release-vcs-stamps test-python-locks
  test-federation-authority-mutations test-federation-harness test-cli-reference
  test-mcp-tools-reference _candidate-channel-version check-a2a-copy-guardrails
  test-go-vulnerability-audit test-release-cli-version _candidate-artifact-awid-package
- _candidate-artifact-awid-image _candidate-artifact-channel _candidate-artifact-pi
+ _candidate-artifact-awid-image _candidate-artifact-naapp-package _candidate-artifact-channel _candidate-artifact-pi
  _candidate-artifact-skills _candidate-artifact-a2a-image
  test-channel-core-process-guard _candidate-oats _candidate-oats-proof-helpers
  test-tmux-guard test-a2a-gateway-e2e test-channel-integration test-e2e

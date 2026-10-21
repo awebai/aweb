@@ -129,10 +129,10 @@ uses constant-time comparison. A matching credential is a confidential
 same-operator read capability: it may read and enumerate private-team metadata,
 certificate history, member references, and revocations so the aweb server can
 verify and reconcile memberships without holding every member key. It also
-exempts all 18 registry GET read buckets from public-IP rate limits: DID key,
+exempts all 19 registry GET read buckets from public-IP rate limits: DID key,
 addresses, head, full and log; namespace get/list; address get/list; A2A
 publication get; team get/list and member lookup; certificate list/fetch/status;
-attestation record get; and revocations. The exemption does not change identity-private or certificate-blob
+attestation record get and signed-records list; and revocations. The exemption does not change identity-private or certificate-blob
 authentication. The same credential also exempts exactly six provisioning
 write buckets from public-IP rate limits: `did_register` (POST `/v1/did`),
 `namespace_register` (POST `/v1/namespaces`), `did_encryption_key_publish`
@@ -747,6 +747,26 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/person
        Contracts: [principal-attestation.md](principal-attestation.md),
        [member-person.md](member-person.md). Conformance:
        [`vectors/principal-attestation-v1.json`](vectors/principal-attestation-v1.json).
+
+GET    /v1/namespaces/{domain}/teams/{name}/signed-records?limit=&cursor=
+       Every team-key-signed record the team has stored, for a team-key
+       rotation that must re-sign all of them: the aweb.team-server/1 record
+       and the custodian, member-custody and member-person records, including
+       those of revoked certificates.
+       Auth: whatever the team's visibility, a path signature (the
+       certificate-blob fetch scheme) by the team controller key, or the
+       trusted service token. Members are not readers: the list would show
+       them custodian records otherwise readable only by exact key. Anything
+       else, an unknown or deleted team included, is the identical 404
+       { "detail": "Team not found" }.
+       Response: { "items": [{ "kind", "key", "record", "signature" }],
+       "has_more", "next_cursor" }. kind is team_server, team_custodians,
+       member_custody or member_person; key is null for team_server, else the
+       custodian_id or certificate_id. Items are ordered by kind, then key, and
+       pages are keyset cursors over that order (limit default 50, clamped to
+       200; a malformed cursor is 400). Records are exactly as stored.
+       Rate limit: own attestation_record_list bucket, 60 reads per 60
+       seconds; trusted service reads exempt.
 ```
 
 ---

@@ -1,10 +1,15 @@
+# Template for a fresh Folio deployment on Render. It is NOT the production
+# identity: the live service is pinned in ops/render-production.json and operated
+# only through the Makefile's prod-* targets (docs/production-operations.md).
+# The build fields below must match that manifest; a test enforces it.
 services:
   - type: web
     name: folio-api
     env: docker
     region: oregon
     plan: starter
-    dockerfilePath: ./Dockerfile
+    rootDir: ""
+    dockerfilePath: ./naapp/folio/Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:

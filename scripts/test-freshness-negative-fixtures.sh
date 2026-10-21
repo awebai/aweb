@@ -22,7 +22,7 @@ run_self_test() {
 }
 
 run_self_test "Python lock" \
-  "self-test passed: clean locks pass; stale AWID versions in server, naapp-lib, naapp/folio and naapp/library and a missing dependent-lock dependency fail" \
+  "self-test passed: clean locks pass; stale AWID versions in server, naapp-lib, naapp/folio, naapp/library, naapp/secrets and naapp/logs and a missing dependent-lock dependency fail" \
   bash scripts/check-python-locks.sh --self-test
 run_self_test "generated CLI reference" \
   "self-test passed: clean generation plus visible-addition, removed-command, and stale-output controls" \

@@ -32,11 +32,11 @@ status=0
 section() { printf '\n=== %s ===\n' "$1"; }
 
 # 1. Python locks: an AWID version bump (or any dependency change) that the
-#    awid, server, naapp-lib, naapp/folio and naapp/library locks record must be
-#    reflected in the committed lock.
+#    locks that take the in-repo awid record (scripts/check-python-locks.sh
+#    lists them) must be reflected in the committed lock.
 #    --check is deliberately non-mutating: a verification gate must not repair
 #    the evidence before reporting it, and a clean run must leave git clean.
-section "python locks (awid, server, naapp-lib, naapp/folio, naapp/library)"
+section "python locks (every lock that takes the in-repo awid)"
 if scripts/check-python-locks.sh; then
   echo "locks are up to date"
 else
