@@ -1176,10 +1176,6 @@ class Passkeys:
         if evidence.transaction_id != await _transaction_id(tx):
             raise DesignationRefused("the owner approval was admitted in another transaction")
         act_id = f"approval:{evidence.approval_id}:contact:{scope}"
-        if await tx.fetch_value(
-            "SELECT 1 FROM {{tables.passkey_owner_acts}} WHERE act_id = $1", act_id
-        ):
-            raise DesignationRefused("this evidence has already taken effect")
         if self._owner_scopes(scope) and await self._last_owner(tx, scope):
             raise ContactChangeRefused("last_owner_protected")
         change = await self._schedule_contact(
