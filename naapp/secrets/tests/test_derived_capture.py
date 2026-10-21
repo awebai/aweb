@@ -79,6 +79,19 @@ def test_absolute_rfc3339_expiry_normalizes_the_timezone() -> None:
     assert captured.upstream_expires_at == START + timedelta(minutes=30)
 
 
+@pytest.mark.parametrize("offset", ["+00:60", "+01:99", "-00:60", "-01:99", "+24:00", "-24:00"])
+def test_absolute_expiry_refuses_out_of_range_offset_fields(offset: str) -> None:
+    store = {key: value for key, value in STORE.items() if key != "expires_in"}
+    store["expires_at"] = "/expires_at"
+    with pytest.raises(CaptureInvalid):
+        capture_response(
+            json.dumps(_answer(expires_at="2026-10-22T15:00:00" + offset)).encode(),
+            store=store,
+            dispatch_started_at=START,
+            now=NOW,
+        )
+
+
 @pytest.mark.parametrize("expiry", [None, True, False, "60", 60.0, 0, -1, 2**53, 2**53 - 1])
 def test_invalid_relative_expiry_is_never_guessed(expiry) -> None:
     with pytest.raises(CaptureInvalid):

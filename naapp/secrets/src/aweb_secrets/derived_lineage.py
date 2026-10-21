@@ -12,9 +12,10 @@ order and issuance can commit its mandatory audit event.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any
 
 from pgdbm.core import TransactionManager
 
@@ -22,6 +23,10 @@ from aweb_secrets import records
 from aweb_secrets.derived_capture import DEFAULT_MAX_TTL_S, effective_expiry
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.secret import SecretRecord
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class LineageRefused(Exception):
@@ -133,11 +138,29 @@ async def check_ancestry(
     tx: TransactionManager,
     nodes: Sequence[LineageNode],
     *,
-    now: datetime,
+    clock: Callable[[], datetime] = utc_now,
     max_ttl_s: int = DEFAULT_MAX_TTL_S,
     candidate_grant_ids: Sequence[str] = (),
 ) -> frozenset[str]:
-    """Hold relevant grants in sorted order, then recheck authority and deadlines."""
+    """Lock the grant union, then sample a live UTC clock and check authority.
+
+    Pass a callable, never a datetime captured before awaiting locks. Call again
+    after any later blocking phase before a new admission or recording write.
+    """
+    grants = await _lock_grants(tx, nodes, candidate_grant_ids)
+    _check_locked_ancestry(nodes, grants, now=clock(), max_ttl_s=max_ttl_s)
+    return frozenset(
+        grant_id
+        for grant_id, row in grants.items()
+        if row is not None and row["revoked_at"] is None
+    )
+
+
+async def _lock_grants(
+    tx: TransactionManager,
+    nodes: Sequence[LineageNode],
+    candidate_grant_ids: Sequence[str],
+) -> dict[str, Any]:
     if not nodes:
         raise LineageRefused("secret_disabled")
     installation_id, team_id = nodes[0].installation_id, nodes[0].team_id
@@ -145,13 +168,23 @@ async def check_ancestry(
     grants = {}
     for grant_id in sorted(source_ids | set(candidate_grant_ids)):
         row = await tx.fetch_one(
-            "SELECT secret_id, revoked_at FROM {{tables.grants}}"
+            "SELECT secret_id, policy_digest, revoked_at FROM {{tables.grants}}"
             " WHERE installation_id=$1 AND team_id=$2 AND grant_id=$3 FOR SHARE",
             installation_id,
             team_id,
             grant_id,
         )
         grants[grant_id] = row
+    return grants
+
+
+def _check_locked_ancestry(
+    nodes: Sequence[LineageNode],
+    grants: Mapping[str, Any],
+    *,
+    now: datetime,
+    max_ttl_s: int,
+) -> None:
     for node in nodes:
         if node.source_grant_id is not None:
             grant = grants[node.source_grant_id]
@@ -179,11 +212,6 @@ async def check_ancestry(
             )
             if deadline <= now:
                 raise LineageRefused("secret_disabled")
-    return frozenset(
-        grant_id
-        for grant_id, row in grants.items()
-        if row is not None and row["revoked_at"] is None
-    )
 
 
 async def record_lineage(
@@ -201,7 +229,8 @@ async def record_lineage(
     dispatch_started_at: datetime,
     upstream_expires_at: datetime,
     expires_at: datetime,
-    now: datetime,
+    clock: Callable[[], datetime] = utc_now,
+    max_ttl_s: int = DEFAULT_MAX_TTL_S,
 ) -> None:
     """Persist immutable provenance in the child-creation transaction.
 
@@ -210,7 +239,11 @@ async def record_lineage(
     database foreign keys enforce same-installation/team parent and child.
     """
     ancestry = await lock_ancestry(tx, installation_id, team_id, parent_secret_id)
-    await check_ancestry(tx, ancestry, now=now, candidate_grant_ids=[source_grant_id])
+    grants = await _lock_grants(tx, ancestry, [source_grant_id])
+    # Both the ancestors and prospective child use one clock sample, taken
+    # after the last relevant lock. The source policy was read under that lock.
+    now = clock()
+    _check_locked_ancestry(ancestry, grants, now=now, max_ttl_s=max_ttl_s)
     if secret_id in {node.secret.record.secret_id for node in ancestry}:
         raise LineageRefused("operation_not_allowed")
     if ancestry[-1].secret.active_version != parent_version:
@@ -218,13 +251,7 @@ async def record_lineage(
     deadlines = [node.expires_at for node in ancestry if node.expires_at is not None]
     if expires_at <= now or any(expires_at > deadline for deadline in deadlines):
         raise LineageRefused("secret_disabled")
-    source = await tx.fetch_one(
-        "SELECT secret_id, policy_digest, revoked_at FROM {{tables.grants}}"
-        " WHERE installation_id=$1 AND team_id=$2 AND grant_id=$3 FOR SHARE",
-        installation_id,
-        team_id,
-        source_grant_id,
-    )
+    source = grants[source_grant_id]
     if (
         source is None
         or source["revoked_at"] is not None

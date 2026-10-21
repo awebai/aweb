@@ -26,6 +26,22 @@ from tests.test_records_store import (
 NOW = datetime(2026, 10, 21, 12, tzinfo=UTC)
 
 
+class Clock:
+    at = NOW
+
+    def __call__(self):
+        return self.at
+
+
+async def _wait_for_database_lock(db, pid):
+    async with asyncio.timeout(3):
+        while not await db.fetch_value(
+            "SELECT wait_event_type = 'Lock' FROM pg_stat_activity WHERE pid=$1",
+            pid,
+        ):
+            await asyncio.sleep(0.01)
+
+
 async def _setup(tx):
     await records.create_secret(tx, INSTALLATION, TEAM, SECRET)
     await records.set_active_version(tx, INSTALLATION, TEAM, SECRET.secret_id, 1)
@@ -64,7 +80,7 @@ async def _child(tx, parent=SECRET.secret_id, *, child_id="sec_child001", dispat
         dispatch_started_at=NOW,
         upstream_expires_at=NOW + timedelta(hours=2),
         expires_at=NOW + timedelta(hours=1),
-        now=NOW,
+        clock=lambda: NOW,
     )
     return child
 
@@ -138,7 +154,7 @@ async def test_ancestor_authority_is_rechecked_under_locks(db, mutation, code) -
         nodes = await lineage.lock_ancestry(tx, INSTALLATION, TEAM, child.secret_id)
         with pytest.raises(lineage.LineageRefused) as refused:
             await lineage.check_ancestry(
-                tx, nodes, now=NOW + timedelta(hours=1) if mutation == "expire" else NOW
+                tx, nodes, clock=lambda: NOW + timedelta(hours=1) if mutation == "expire" else NOW
             )
         assert refused.value.code == code
 
@@ -149,9 +165,13 @@ async def test_a_tighter_current_cap_narrows_but_never_extends_stored_expiry(db)
         child = await _child(tx)
         nodes = await lineage.lock_ancestry(tx, INSTALLATION, TEAM, child.secret_id)
         with pytest.raises(lineage.LineageRefused):
-            await lineage.check_ancestry(tx, nodes, now=NOW + timedelta(seconds=61), max_ttl_s=60)
+            await lineage.check_ancestry(
+                tx, nodes, clock=lambda: NOW + timedelta(seconds=61), max_ttl_s=60
+            )
         with pytest.raises(lineage.LineageRefused):
-            await lineage.check_ancestry(tx, nodes, now=NOW + timedelta(hours=1), max_ttl_s=7200)
+            await lineage.check_ancestry(
+                tx, nodes, clock=lambda: NOW + timedelta(hours=1), max_ttl_s=7200
+            )
 
 
 async def test_operation_resolution_selects_nearest_current_definition_without_fallback(db) -> None:
@@ -189,3 +209,94 @@ async def test_lineage_is_immutable_and_rolls_back_with_creation(db) -> None:
             raise RuntimeError("roll back")
     async with db.transaction() as tx:
         assert await records.secret_by_ref(tx, INSTALLATION, TEAM, "sec_roll001") is None
+
+
+async def test_ancestry_expiry_is_checked_after_a_real_grant_lock_wait(db) -> None:
+    async with db.transaction() as tx:
+        await _setup(tx)
+        child = await _child(tx)
+    clock = Clock()
+    ready = asyncio.get_running_loop().create_future()
+
+    async def check():
+        async with db.transaction() as tx:
+            nodes = await lineage.lock_ancestry(tx, INSTALLATION, TEAM, child.secret_id)
+            ready.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
+            await lineage.check_ancestry(tx, nodes, clock=clock)
+
+    task = None
+    try:
+        async with db.transaction() as blocker:
+            await blocker.fetch_value(
+                "SELECT 1 FROM {{tables.grants}} WHERE grant_id='grt_issuer01' FOR UPDATE"
+            )
+            task = asyncio.create_task(check())
+            await _wait_for_database_lock(db, await ready)
+            clock.at = NOW + timedelta(hours=1)
+        with pytest.raises(lineage.LineageRefused) as refused:
+            await asyncio.wait_for(task, timeout=3)
+        assert refused.value.code == "secret_disabled"
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("blocked_on", ["ancestry", "grant"])
+async def test_child_expiry_is_checked_after_a_real_recording_lock_wait(db, blocked_on) -> None:
+    async with db.transaction() as tx:
+        await _setup(tx)
+    clock = Clock()
+    ready = asyncio.get_running_loop().create_future()
+
+    async def record():
+        async with db.transaction() as tx:
+            ready.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
+            # _child inserts the inert child and its lineage in one transaction.
+            # Its parent is a root without expiry, so only the new child's
+            # under-lock deadline check can refuse this attempt.
+            child = SecretRecord.from_after(
+                {**SECRET.after, "secret_id": "sec_wait001", "ref": "wait-child"}
+            )
+            await records.create_secret(tx, INSTALLATION, TEAM, child)
+            await lineage.record_lineage(
+                tx,
+                installation_id=INSTALLATION,
+                team_id=TEAM,
+                secret_id=child.secret_id,
+                parent_secret_id=SECRET.secret_id,
+                parent_version=1,
+                source_dispatch_id="dispatch-wait",
+                source_grant_id="grt_issuer01",
+                issuing_principal=DID_AW,
+                policy_digest=POLICY.digest,
+                dispatch_started_at=NOW,
+                upstream_expires_at=NOW + timedelta(hours=2),
+                expires_at=NOW + timedelta(hours=1),
+                clock=clock,
+            )
+
+    task = None
+    try:
+        async with db.transaction() as blocker:
+            if blocked_on == "ancestry":
+                await blocker.fetch_value(
+                    "SELECT 1 FROM {{tables.secrets}} WHERE secret_id=$1 FOR UPDATE",
+                    SECRET.secret_id,
+                )
+            else:
+                await blocker.fetch_value(
+                    "SELECT 1 FROM {{tables.grants}} WHERE grant_id='grt_issuer01' FOR UPDATE"
+                )
+            task = asyncio.create_task(record())
+            await _wait_for_database_lock(db, await ready)
+            clock.at = NOW + timedelta(hours=1)
+        with pytest.raises(lineage.LineageRefused) as refused:
+            await asyncio.wait_for(task, timeout=3)
+        assert refused.value.code == "secret_disabled"
+        async with db.transaction() as tx:
+            assert await records.secret_by_ref(tx, INSTALLATION, TEAM, "wait-child") is None
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
