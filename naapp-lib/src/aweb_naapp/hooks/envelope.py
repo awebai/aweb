@@ -47,8 +47,8 @@ HOOKS: dict[str, tuple[str, tuple[str, ...]]] = {
 UUID_PATTERN = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _TRACE_ID = re.compile(r"[0-9a-f]{32}")
 TEAM_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}:[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?")
-_ORIGIN = re.compile(r"https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?")
-_KID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+ORIGIN_PATTERN = re.compile(r"https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?")
+KID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 _DID_KEY = re.compile(r"did:key:z[1-9A-HJ-NP-Za-km-z]{40,60}")
 _DID_AW = re.compile(r"did:aw:[1-9A-HJ-NP-Za-km-z]{20,32}")
 _APP_ID = re.compile(r"[a-z][a-z0-9-]{0,62}")
@@ -219,11 +219,11 @@ def _check_producer(p: dict[str, Any]) -> tuple[str, str, str]:
         raise Refused("invalid_value", "producer.kind")
     kid = ""
     if kind != "client":
-        _match(p, "origin", _ORIGIN)
-        _match(p, "kid", _KID)
+        _match(p, "origin", ORIGIN_PATTERN)
+        _match(p, "kid", KID_PATTERN)
         _positive(p, "seq")
         kid = p["kid"]
-    _ed25519_did_key(p, "did_key", "producer.")
+    ed25519_did_key(p, "did_key", "producer.")
     return kind, name, kid
 
 
@@ -251,7 +251,7 @@ def _check_actor(a: dict[str, Any]) -> None:
         if name in a:
             _match(a, name, checks[name], "actor.")
     if "did_key" in a:
-        _ed25519_did_key(a, "did_key", "actor.")
+        ed25519_did_key(a, "did_key", "actor.")
     attestations = a["attestations"]
     if not isinstance(attestations, list) or len(attestations) > _MAX_ATTESTATIONS:
         raise Refused("invalid_value", "actor.attestations")
@@ -317,7 +317,7 @@ def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _ed25519_did_key(f: dict[str, Any], name: str, prefix: str) -> None:
+def ed25519_did_key(f: dict[str, Any], name: str, prefix: str) -> None:
     _match(f, name, _DID_KEY, prefix)
     try:
         public_key_from_did(f[name])

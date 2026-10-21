@@ -122,6 +122,16 @@ async def unassign(tx: TransactionManager, principal: PrincipalKey, role: str) -
     )
 
 
+async def purge_team(tx: TransactionManager, team_id: str) -> None:
+    """Remove every role assignment of the team in the caller's transaction.
+
+    Assignments are authority: an app purges them when its installation for the
+    team is uninstalled or replaced by a new one, so a reinstall starts with no
+    roles. A role resolved in a transaction still open is purged once it ends.
+    """
+    await tx.execute("DELETE FROM {{tables.role_assignments}} WHERE team_id = $1", team_id)
+
+
 async def has_role(db: Executor, principal: PrincipalKey, role: str) -> bool:
     _require_role_name(role)
     return bool(

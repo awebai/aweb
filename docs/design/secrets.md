@@ -208,8 +208,10 @@ Every agent-API request is verified in this order, and every step fails closed.
 2. **Installation status and scope.** B1's scope enforcement checks the tool's
    declared scope against the installed grant. Grant status comes from the
    generic app-to-team-server API (aweb-acgh.7) and D1's admission fence. The
-   admitted generation is recorded on the intent. B1's resource/action policy
-   hook is where secrets plugs in steps 3–5.
+   admitted generation is recorded on the intent. A request made under a grant
+   from an installation generation that a later one has superseded is refused
+   with `generation_superseded`, here and again at the fence (§11.3). B1's resource/action policy hook is where
+   secrets plugs in steps 3–5.
 3. **Principal.** The principal is keyed `(team_id, member_did_aw)` when the
    certificate carries `member_did_aw`, and never by `did:aw` alone across
    teams. Otherwise it is `(team_id, member_did_key)`, which covers local
@@ -1133,6 +1135,11 @@ same transaction:
 - runner registration;
 - whether the approval has been revoked.
 
+An installation generation that has changed since admission means the request
+was admitted under a superseded generation, so the fence refuses it with
+`generation_superseded`, as admission does (§4.1). `installation_disabled` is
+for an installation that is inactive or uninstalled.
+
 A revocation that commits before this point stops the dispatch (§12). After this
 point it cannot recall bytes already sent, and the record says so.
 
@@ -1149,6 +1156,12 @@ point it cannot recall bytes already sent, and the record says so.
   `reconciliation_pending`. The exception is operations declared
   `side_effect: none`. This is how "reconcile before retry" is enforced. secrets
   cannot tell a retry from a new request, so it blocks the pair.
+- **In flight.** While a principal has a dispatch of the same pair in
+  `dispatching`, a new request for that pair is refused at admission and at the
+  fence with `dispatch_in_flight`, under the same `side_effect: none`
+  exception. Unlike `reconciliation_pending`, it clears by itself when that
+  dispatch reaches `completed` or `not_sent`. If it becomes `outcome_unknown`
+  instead, the retry block above applies.
 - A new dispatch after reconciliation is a new intent. Under `approve_only` it
   needs a **fresh approval**, per the joint recommendation.
 
