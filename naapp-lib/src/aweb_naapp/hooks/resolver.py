@@ -23,6 +23,7 @@ from datetime import timedelta
 from aweb_naapp.hooks.envelope import CATALOG_ID, CATALOG_VERSION
 from aweb_naapp.hooks.producer import Registration, RegistrationView
 from aweb_naapp.runtime.hook_resolver import (
+    HookBinding,
     HookBindingRequired,
     HookResolutionUnavailable,
     HookResolver,
@@ -55,17 +56,20 @@ class TeamServerRegistrations:
             hook=hook,
             as_of=resolution.as_of,
             max_age=timedelta(seconds=resolution.max_age_seconds),
-            registrations=tuple(
-                Registration(
-                    binding_id=str(binding.binding_id),
-                    origin=binding.origin,
-                    method=binding.method,
-                    path=binding.path,
-                    active_from=binding.active_from,
-                )
-                for binding in resolution.items
-                # A registration always has its endpoint and active_from once
-                # active; one without them can be owed nothing.
-                if binding.method and binding.path and binding.active_from is not None
-            ),
+            registrations=tuple(_registration(binding) for binding in resolution.items),
         )
+
+
+def _registration(binding: HookBinding) -> Registration:
+    # HookResolver refuses a whole registrations answer in which any binding
+    # lacks its endpoint or active_from, so these always hold here; one that
+    # failed would be a broken resolver, never a binding to drop silently.
+    assert binding.method is not None and binding.path is not None
+    assert binding.active_from is not None
+    return Registration(
+        binding_id=str(binding.binding_id),
+        origin=binding.origin,
+        method=binding.method,
+        path=binding.path,
+        active_from=binding.active_from,
+    )
