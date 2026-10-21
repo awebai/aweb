@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import time
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 
 import httpx
 import pytest
@@ -26,7 +26,7 @@ ORIGIN = "https://example.test"
 @pytest.fixture(params=[None, SERVICE_TOKEN], ids=["certificate-status", "history"])
 def cache(registry, request):
     return AWIDTeamCache(
-        registry_url=REGISTRY_URL, ttl_seconds=0,
+        registry_url=REGISTRY_URL, ttl_seconds=60,
         service_token=request.param, transport=registry.transport,
     )
 
@@ -45,6 +45,48 @@ async def require(cache, member, **overrides):
     return await cache.require_current_member(TEAM, **evidence)
 
 
+def expire(cache):
+    for entries in (cache._cache, cache._certificate_cache):
+        for key, facts in entries.items():
+            entries[key] = replace(facts, expires_at=-1)
+
+
+async def test_preflight_proof_keeps_the_original_facts_deadline(registry, cache, member):
+    before = time.monotonic()
+    facts = await cache.get(TEAM, member.certificate_id)
+    after = time.monotonic()
+    calls = len(registry.transport.calls)
+    # Even a changed configured TTL cannot renew or reinterpret an existing entry.
+    cache.ttl_seconds = 1
+    proof = await cache.check_current_member(
+        TEAM, certificate_id=member.certificate_id, team_did_key=member.team_did_key
+    )
+    assert (proof.team_id, proof.certificate_id, proof.team_did_key) == (
+        TEAM, member.certificate_id, member.team_did_key,
+    )
+    assert before <= proof.checked_at == facts.fetched_at <= after
+    assert proof.fresh_until == facts.expires_at
+    assert 0 < proof.fresh_until - proof.checked_at <= 60
+    with pytest.raises(FrozenInstanceError):
+        proof.fresh_until = time.monotonic() + 60
+    await asyncio.sleep(0.01)
+    again = await cache.check_current_member(
+        TEAM, certificate_id=member.certificate_id, team_did_key=member.team_did_key
+    )
+    assert again == proof
+    assert len(registry.transport.calls) == calls
+
+
+async def test_facts_expired_during_lookup_cannot_issue_a_fresh_proof(cache, member):
+    cache.ttl_seconds = 0
+    with pytest.raises(HTTPException) as refused:
+        await cache.check_current_member(
+            TEAM, certificate_id=member.certificate_id, team_did_key=member.team_did_key
+        )
+    assert refused.value.status_code == 503
+    assert refused.value.detail["code"] == "current_membership_unavailable"
+
+
 async def test_current_member_passes_without_observed_principal_rows(cache, member):
     assert await require(cache, member) is None
 
@@ -60,6 +102,7 @@ async def test_lost_authority_refuses_on_refresh(registry, cache, member, change
         )
     else:
         await registry.rotate_team_key(TEAM, did_key(SigningKey.generate()))
+    expire(cache)
     with pytest.raises(HTTPException) as refused:
         await require(cache, member)
     assert refused.value.status_code == 403
@@ -77,7 +120,7 @@ async def test_another_teams_evidence_is_not_authority(registry, cache, member):
 
 async def test_unreadable_private_team_facts_are_retryable(registry, member):
     cache = AWIDTeamCache(
-        registry_url=REGISTRY_URL, ttl_seconds=0, service_token="wrong-service-token",
+        registry_url=REGISTRY_URL, ttl_seconds=60, service_token="wrong-service-token",
         transport=registry.transport,
     )
     visibility = await registry.db.fetch_value("SELECT visibility FROM {{tables.teams}}")
@@ -131,12 +174,17 @@ async def test_runtime_uses_the_request_verifiers_bounded_cache(registry, member
         assert response.status_code == 200, response.text
         evidence = response.json()
         calls = len(registry.transport.calls)
+        proof = await runtime.check_current_member(**evidence)
+        assert (proof.team_id, proof.certificate_id, proof.team_did_key) == (
+            TEAM, member.certificate_id, member.team_did_key,
+        )
         await runtime.require_current_member(**evidence)
         assert len(registry.transport.calls) == calls
         assert await runtime.db().fetch_value("SELECT count(*) FROM {{tables.agents}}") == 0
         cache = runtime.team_cache()
         key = (TEAM, member.certificate_id)
         cached = cache._certificate_cache[key]
+        assert proof.fresh_until == cached.expires_at
         assert 0 < cached.expires_at - time.monotonic() <= 60
         await registry.revoke(member.certificate_id)
         await runtime.require_current_member(**evidence)
@@ -159,12 +207,13 @@ async def test_stopped_awid_is_retryable_not_authority_loss(registry, member):
                 if serving.done():
                     await serving
                 await asyncio.sleep(0.01)
-        cache = AWIDTeamCache(registry_url=origin, ttl_seconds=0)
+        cache = AWIDTeamCache(registry_url=origin, ttl_seconds=60)
         await require(cache, member)
     finally:
         server.should_exit = True
         await serving
         listener.close()
+    expire(cache)
     with pytest.raises(HTTPException) as refused:
         await require(cache, member)
     assert refused.value.status_code == 503

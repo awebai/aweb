@@ -91,10 +91,30 @@ class Principal:
 
 
 @dataclass(frozen=True)
+class MembershipProof:
+    """Checked mint evidence and its original AWID facts' freshness window.
+
+    Both times use time.monotonic(): checked_at is the facts' fetch-start,
+    fresh_until their expiry, never renewed by issuing a proof on a cache hit.
+    This object is in-process only: never serialize, persist, accept it from a
+    request or compare it across processes. Under the link lock, the consumer
+    must match all three identity fields to immutable mint evidence and read
+    its monotonic clock again to reject an expired proof.
+    """
+
+    team_id: str
+    certificate_id: str
+    team_did_key: str
+    checked_at: float
+    fresh_until: float
+
+
+@dataclass(frozen=True)
 class CachedTeamFacts:
     team_did_key: str
     published_certificate_ids: frozenset[str]
     revoked_certificate_ids: frozenset[str]
+    fetched_at: float
     expires_at: float
 
 
@@ -167,7 +187,16 @@ class AWIDTeamCache:
     async def require_current_member(
         self, team_id: str, *, certificate_id: str, team_did_key: str
     ) -> None:
-        """Recheck immutable evidence from a previously verified mint-time Principal.
+        """Check membership without retaining a proof. May perform network I/O;
+        call before opening any transaction. See :meth:`check_current_member`."""
+        await self.check_current_member(
+            team_id, certificate_id=certificate_id, team_did_key=team_did_key
+        )
+
+    async def check_current_member(
+        self, team_id: str, *, certificate_id: str, team_did_key: str
+    ) -> MembershipProof:
+        """Check mint-time Principal evidence before any transaction or lock.
 
         The caller supplies its verified team scope and the recorded certificate
         id and signing team key, never an observed-principal row. AWID must still
@@ -177,6 +206,8 @@ class AWIDTeamCache:
         Incomplete evidence or authority loss raises 403/current_member_required;
         unreadable or unavailable registry facts raise 503/current_membership_unavailable.
         This checks membership only, not the creator's page or installation ACLs.
+        The returned proof retains the facts' original monotonic freshness
+        window; facts already past their expiry cannot issue a fresh proof.
         """
         if (
             not isinstance(certificate_id, str) or not certificate_id.strip()
@@ -200,6 +231,15 @@ class AWIDTeamCache:
             raise _current_member_refusal(503) from exc
         if team_did_key != facts.team_did_key:
             raise _current_member_refusal(403)
+        if time.monotonic() > facts.expires_at:
+            raise _current_member_refusal(503)
+        return MembershipProof(
+            team_id=team_id,
+            certificate_id=certificate_id,
+            team_did_key=team_did_key,
+            checked_at=facts.fetched_at,
+            fresh_until=facts.expires_at,
+        )
 
     async def get(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
         if not self._headers:
@@ -284,6 +324,7 @@ class AWIDTeamCache:
             team_did_key=team_did_key,
             published_certificate_ids=frozenset(published),
             revoked_certificate_ids=frozenset(revoked),
+            fetched_at=now,
             expires_at=now + self.ttl_seconds,
         )
         self._cache[team_id] = facts
@@ -340,6 +381,7 @@ class AWIDTeamCache:
             team_did_key=payload["team_did_key"],
             published_certificate_ids=frozenset({certificate_id}),
             revoked_certificate_ids=revoked,
+            fetched_at=now,
             expires_at=now + self.ttl_seconds,
         )
         self._certificate_cache[cache_key] = facts

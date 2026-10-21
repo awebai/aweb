@@ -82,6 +82,7 @@ from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
     AWIDTeamCache,
+    MembershipProof,
     Principal,
     authenticate_request,
     record_observed_principal,
@@ -267,12 +268,24 @@ class NaappRuntime:
     async def require_current_member(
         self, team_id: str, *, certificate_id: str, team_did_key: str
     ) -> None:
-        """Recheck a link creator's verified mint-time certificate evidence.
+        """Check membership before a transaction without retaining a proof.
 
-        Call before creator-scoped access on every link use. See
-        :meth:`AWIDTeamCache.require_current_member` for the cache and refusals.
+        May perform network I/O. For creator-scoped link access, retain the
+        result of :meth:`check_current_member` for local checking under the lock.
         """
-        await self.team_cache().require_current_member(
+        await self.check_current_member(
+            team_id, certificate_id=certificate_id, team_did_key=team_did_key
+        )
+
+    async def check_current_member(
+        self, team_id: str, *, certificate_id: str, team_did_key: str
+    ) -> MembershipProof:
+        """Fetch/check mint evidence before opening any transaction or lock.
+
+        Retain the in-process proof for a local evidence/expiry check after the
+        link lock is acquired. Its deadline is the original AWID facts' expiry.
+        """
+        return await self.team_cache().check_current_member(
             team_id, certificate_id=certificate_id, team_did_key=team_did_key
         )
 
