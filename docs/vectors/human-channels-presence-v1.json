@@ -3114,6 +3114,416 @@
         "signature": "Qw1U7EwmwzhLrr57h7ESLg4/v3S3OZxJA0CznwPD9gOLUhFtwykYyN6w2G54DJTn3lLlIoYXlTFDJg6+viD7Ag"
       },
       "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:d0a45c2dafbdf3a8845309b853df58cf786bdb5a95d6c1412f4901de69477a2f"
+      },
+      "key": "owner",
+      "name": "native_owner_without_proof",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "2YYWPijcbI0BvqSKHvWRvbXUmWPxmWHN488LQouBSNAZJdaJDjrw8nKmFzRhNUa2uxI92FyHApDL7eaDg9CxDA"
+      },
+      "error": "invalid"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:3a94e7567a4c9fa6bbc5c171572f921bf1aa2f0c25dbcf11ca0cb95466db50a0"
+      },
+      "key": "owner",
+      "name": "native_owner_cannot_be_issuer",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"R1Bn+BHCiW6I2mUp8RWztb0biuUczusd9KuswtJixBSyA0D/W0w/nxpwAz6NrunEfumuvDSJgkVAGjBURq6PCQ\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"signing_key_id\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "3lg3n5lIfRk/9frmnFVO/Ib0kBmEweKvjgpbDXk4WFccSJsUkFO8O37TTB5W47Bvgb/YktNRCKqslG7WA4hXCg"
+      },
+      "error": "authority_unavailable"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:c2adeaf0ea9bdda35164bce757d89e81ffeed9765e99f11a92c3a60052031fe9"
+      },
+      "key": "subject",
+      "name": "native_unknown_intent_field",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"unexpected_presence_field\":true,\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "EsIRIzbwwHspSMJdGUGpwpKlQIFO1hmFjp+PYvc96tQJFbJ/rJwTTUjobPeYYr8VerTZ4bcJmJwUhmarzBaoCw"
+      },
+      "error": "invalid"
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "dedicated",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_intent_hash": "sha256:7a741688bde4906c18c0407cfec0a019bc92642bda63a54c9b0039d72b104e86"
+      },
+      "key": "owner",
+      "name": "dedicated_owner_without_proof",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"dedicated\",\"operation\":\"bind\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "lOhFEdfeeMnvwHPw/ckD1lWFXSgFYsBNcOHAQvy3gqVBOFoEOrFTUc9Au/lGLPdK9tjYmT84oCRj0mv73rB5BQ"
+      },
+      "error": "invalid"
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "dedicated",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_intent_hash": "sha256:6e1118936bfc0c49c5af31823b1b9b50af87d830317a3e84db0b5cf26fcc544c"
+      },
+      "key": "owner",
+      "name": "dedicated_owner_cannot_be_issuer",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"dedicated\",\"operation\":\"bind\",\"ownership_proof\":{\"signature\":\"n0uW3/zTD948phzL9PokvnEy7KNYc2YEGBhGsNBFYW/vNXO9MP2GLB+r2KxPLa6RG+f4ChFx3GCfRGkmFmwYAg\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"mode\\\":\\\"dedicated\\\",\\\"operations\\\":[\\\"bind\\\",\\\"rebind\\\",\\\"unbind\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"signing_key_id\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-binding-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "odtJ8pgP0sPOD4zNNNK2dDQPtqDUSd4poa+rJMh6KYbYD1mpmfJG9q5VBfjb+VuwfP0jHInu8l9huIIfhALGBQ"
+      },
+      "error": "authority_unavailable"
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "dedicated",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_intent_hash": "sha256:397fb782a84382f5cd787cb68ec782b840b74d445e5abc2d821336ef06609e46"
+      },
+      "key": "subject",
+      "name": "dedicated_unknown_intent_field",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"dedicated\",\"operation\":\"bind\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"unexpected_presence_field\":true,\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "lg8YI88/LJpYQ0vg2ju+cSkDDIrAVG5DdqHWHCHkD4JioIA7XkIqUJtr+YxA/8L15nuC4AG0sHeAKrFrRYh8DA"
+      },
+      "error": "invalid"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:aw:owner-alias",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:2c013310deaec67ec5d46e92dc8c16765949250d5ab88e798c77b8cdc0065b68"
+      },
+      "key": "owner",
+      "name": "owner_and_issuer_share_current_key",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"J3QjDKJ69egccMU1v8giaSuzzixM/qYrzLai7bq1ngZ+1B9/vf24lSowFkSeHQ7wgtHC6hdmD5HmNE7i7MChCQ\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:aw:owner-alias\\\",\\\"signing_key_id\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "i1CDYAz5QSeRY+YUqtp+vFwu7a97Sm8nrDLBfBpY2uPDygUFFv6z0ywzPNF3Vv4PihEEd2Qu3+0wnfnfH+t7BQ"
+      },
+      "error": "authority_unavailable"
     }
   ]
 }

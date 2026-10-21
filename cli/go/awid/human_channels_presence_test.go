@@ -175,6 +175,9 @@ func TestHumanChannelsPresenceLiveSigner(t *testing.T) {
 		Intent    json.RawMessage `json:"intent"`
 		WrongSeed string          `json:"wrong_seed"`
 		WrongDID  string          `json:"wrong_did"`
+		OwnerLane bool            `json:"owner_lane"`
+		OldSeed   string          `json:"old_seed"`
+		OldDID    string          `json:"old_did"`
 	}
 	if err = json.Unmarshal(raw, &input); err != nil {
 		t.Fatal(err)
@@ -203,6 +206,41 @@ func TestHumanChannelsPresenceLiveSigner(t *testing.T) {
 	if result["version"] != "aweb-verified-presence-v1" || result["request_id"] != intent.Value["request_id"] {
 		t.Fatal("unexpected verified descriptor")
 	}
+	assertRefusal := func(err error, status int, code, field string) {
+		t.Helper()
+		if got, ok := HTTPStatusCode(err); !ok || got != status {
+			t.Fatalf("wanted HTTP %d: %v", status, err)
+		}
+		body, ok := HTTPErrorBody(err)
+		if !ok {
+			t.Fatalf("no refusal body: %v", err)
+		}
+		var refusal struct {
+			Detail struct{ Family, Code, Field string }
+		}
+		if err := json.Unmarshal([]byte(body), &refusal); err != nil {
+			t.Fatal(err)
+		}
+		if refusal.Detail.Family != "presence" || refusal.Detail.Code != code || refusal.Detail.Field != field {
+			t.Fatalf("unexpected refusal: %s", body)
+		}
+	}
+	if input.OwnerLane {
+		assertRefusal(client.Do(context.Background(), "POST", "/__p8/wrong-owner-pin", artifact.Value, &result), 403, "forbidden", "ownership proof target")
+	}
+	if input.OldSeed != "" {
+		oldSeed, err := hex.DecodeString(input.OldSeed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		intent.Value["signing_key_id"] = input.OldDID
+		old, err := SignHumanChannelsPresenceRecord(intent, ed25519.NewKeyFromSeed(oldSeed))
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertRefusal(client.Do(context.Background(), "POST", "/__p8/native", old.Value, &result), 409, "stale", "current signing key")
+		intent.Value["signing_key_id"] = input.DID
+	}
 	wrongSeed, err := hex.DecodeString(input.WrongSeed)
 	if err != nil {
 		t.Fatal(err)
@@ -211,19 +249,11 @@ func TestHumanChannelsPresenceLiveSigner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = wrong.Do(context.Background(), "POST", "/__p8/native", artifact.Value, &result); err == nil {
-		t.Fatal("unrelated authenticated caller accepted")
-	} else if code, ok := HTTPStatusCode(err); !ok || code != 403 {
-		t.Fatal(err)
-	}
+	assertRefusal(wrong.Do(context.Background(), "POST", "/__p8/native", artifact.Value, &result), 403, "forbidden", "signer principal")
 	intent.Value["expected_generation"] = json.Number("6")
 	stale, err := SignHumanChannelsPresenceRecord(intent, ed25519.NewKeyFromSeed(seed))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = client.Do(context.Background(), "POST", "/__p8/native", stale.Value, &result); err == nil {
-		t.Fatal("freshly signed stale generation accepted")
-	} else if code, ok := HTTPStatusCode(err); !ok || code != 409 {
-		t.Fatal(err)
-	}
+	assertRefusal(client.Do(context.Background(), "POST", "/__p8/native", stale.Value, &result), 409, "stale", "presence generation")
 }

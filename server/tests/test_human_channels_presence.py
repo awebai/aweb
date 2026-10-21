@@ -103,8 +103,8 @@ from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('global_subject,owner_lane', [(False, False), (True, False), (True, True)])
-async def test_live_go_signature_public_identity_and_python_host_verification(privacy_app, tmp_path, global_subject, owner_lane):
+@pytest.mark.parametrize('global_subject,owner_lane,rotated', [(False, False, False), (True, False, False), (True, True, False), (True, False, True)])
+async def test_live_go_signature_public_identity_and_python_host_verification(privacy_app, tmp_path, global_subject, owner_lane, rotated):
     env = privacy_app
     registry = env.app.state.awid_registry_client
     # Current public authority is read from the real AWID application. Test DB
@@ -119,35 +119,53 @@ async def test_live_go_signature_public_identity_and_python_host_verification(pr
         identities[name] = PresenceIdentity(stable if global_subject else actor.did, resolution.current_did_key, True)
         await env.db.execute("UPDATE {{tables.agents}} SET identity_scope=$1, did_aw=$2, certificate_id=$3 WHERE agent_id=$4",
                              'global' if global_subject else 'local', stable if global_subject else None, 'privacy-' + name, actor.id)
+    old_key = None
+    if rotated:
+        from test_messages_http import _make_keypair
+        actor = env.actors['alice']
+        old_key = (actor.sk, actor.did)
+        new_seed, _, new_did = _make_keypair()
+        stable = identities['alice'].principal
+        await registry.rotate_key(stable, new_did, actor.sk, new_seed)
+        current = await registry.resolve_key_fresh(stable)
+        assert current.current_did_key == new_did
+        await env.db.execute('UPDATE {{tables.agents}} SET did_key=$1 WHERE agent_id=$2', new_did, actor.id)
+        actor.sk, actor.did = new_seed, new_did
+        identities['alice'] = PresenceIdentity(stable, current.current_did_key, True)
     selected = identities['alice']
     subject_ref = subject({'kind': 'native', 'did': selected.principal})
     audience = str(env.client.base_url).rstrip('/')
     pin = PresenceOwnershipPin(subject_ref, audience, identities['bob'], identities['carol'], 'owner-4')
 
     class Provider:
+        def __init__(self, owner_pin):
+            self.owner_pin = owner_pin
+
         async def resolve(self, auth, intent):
-            current = await registry.resolve_key_fresh(stable_id_from_did_key(env.actors['alice'].did))
+            current = await registry.resolve_key_fresh(selected.principal if global_subject else stable_id_from_did_key(env.actors['alice'].did))
             assert current.current_did_key == selected.signing_key_id
-            acting = identities['bob'] if owner_lane else selected
             caller = PresenceIdentity(auth.did_aw or auth.did_key, auth.did_key, True)
-            # This fixture's configured resource owner/policy is independent of
-            # both the submitted proof issuer and any provider token.
-            allowed = auth.did_key == acting.signing_key_id and auth.team_id == TEAM
+            # Permit authenticated teammates at the action-policy layer so
+            # signer binding, not a fixture allowlist, must reject the outsider.
+            allowed = auth.team_id == TEAM
             return PresenceVerificationContext(
                 subject=subject_ref, subject_active=True, platform='telegram', scope=record('PresenceScope', {'kind':'platform'}),
                 mode='native', audience=audience, authorization_revision='policy-7', subject_identity=selected,
                 caller=PresenceCaller(caller, allowed), expected_intent_hash='sha256:' + hashlib.sha256(canonical_record(intent)).hexdigest(), expected_generation=7, consumed_request_ids=frozenset(),
-                now=datetime.now(timezone.utc), max_ttl_seconds=300, max_clock_skew_seconds=30, ownership_pin=pin)
-    verifier = PresenceVerifier(Provider())
+                now=datetime.now(timezone.utc), max_ttl_seconds=300, max_clock_skew_seconds=30, ownership_pin=self.owner_pin)
+    verifier = PresenceVerifier(Provider(pin))
+    wrong_pin_verifier = PresenceVerifier(Provider(replace(pin, owner=selected)))
 
     @env.app.post('/__p8/native')
+    @env.app.post('/__p8/wrong-owner-pin')
     async def host_verify(request: Request, auth=Depends(get_messaging_auth)):
         try:
             artifact = decode_record('SignedArtifact', await request.body())
-            result = await verifier.verify_presence(auth, artifact)
+            service = wrong_pin_verifier if request.url.path.endswith('wrong-owner-pin') else verifier
+            result = await service.verify_presence(auth, artifact)
             return result.value
         except ContractError as error:
-            raise HTTPException(status_code={'invalid':422,'unsupported':409,'forbidden':403,'stale':409,'replay_conflict':409,'authority_unavailable':503}[error.code], detail={'family':'presence','code':error.code})
+            raise HTTPException(status_code={'invalid':422,'unsupported':409,'forbidden':403,'stale':409,'replay_conflict':409,'authority_unavailable':503}[error.code], detail={'family':'presence','code':error.code,'field':error.field})
 
     now = datetime.now(timezone.utc).replace(microsecond=0)
     issued, expiry = now.isoformat().replace('+00:00','Z'), (now+timedelta(minutes=5)).isoformat().replace('+00:00','Z')
@@ -167,7 +185,8 @@ async def test_live_go_signature_public_identity_and_python_host_verification(pr
     # verifier/provider receive actual public identities and independently pinned facts.
     payload = dict(url=audience, seed=env.actors[acting_name].sk.hex(), did=env.actors[acting_name].did,
                    stable_id=acting.principal if global_subject else '', intent=value,
-                   wrong_seed=env.actors['carol'].sk.hex(), wrong_did=env.actors['carol'].did)
+                   wrong_seed=env.actors['carol'].sk.hex(), wrong_did=env.actors['carol'].did,
+                   owner_lane=owner_lane, old_seed=old_key[0].hex() if old_key else '', old_did=old_key[1] if old_key else '')
     path = tmp_path / 'presence-signer.json'
     path.write_text(json.dumps(payload)); path.chmod(0o600)
     child_env = os.environ.copy(); child_env['AW_TEST_P8_SIGNER_INPUT'] = str(path)

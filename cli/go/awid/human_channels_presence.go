@@ -256,6 +256,9 @@ func hcVerifyPresence(a HumanChannelsRecord, c HumanChannelsPresenceContext, bin
 			return bad, hcError("authority_unavailable", "subject identity binding")
 		}
 	} else {
+		if _, ok := v["ownership_proof"]; !ok {
+			return bad, hcError("invalid", "ownership proof")
+		}
 		pin := c.OwnershipPin
 		if pin == nil || pin.AuthorizationRevision == "" {
 			return bad, hcError("authority_unavailable", "ownership authority")
@@ -269,6 +272,9 @@ func hcVerifyPresence(a HumanChannelsRecord, c HumanChannelsPresenceContext, bin
 		}
 		if err = hcPresenceIdentity(pin.Issuer); err != nil {
 			return bad, err
+		}
+		if pin.Issuer.Principal == identity.Principal || pin.Issuer.SigningKeyID == identity.SigningKeyID {
+			return bad, hcError("authority_unavailable", "owner cannot issue its own ownership proof")
 		}
 		proofArtifact, err := hcPresenceRecord("SignedArtifact", v["ownership_proof"])
 		if err != nil {

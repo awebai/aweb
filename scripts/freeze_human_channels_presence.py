@@ -95,6 +95,11 @@ c=base('shared');c['context']['consumed_request_ids']=[ID];add('binding_reuses_c
 c=base();c['key']='other';c['value'].update(signer=identities['other']['principal'],signing_key_id=identities['other']['signing_key_id']);c['context']['caller']['identity']=identities['other'];add('other_admin_has_no_subject_authority',c,'forbidden')
 c=base();c['key']='other';c['value']['signing_key_id']=identities['other']['signing_key_id'];c['context']['caller']['grant']=dict(scopes=['presence.write'],expires_at=None,never_expires=True);add('grant_key_cannot_sign_root_intent',c,'stale')
 c=base();c['value']['subject']=c['context']['subject']=dict(kind='bridged',bridge='did:aw:bridge',subject='pairwise-subject');c['context']['subject_identity']=None;add('guest_cannot_use_native_subject_signature',c,'forbidden')
+for mode in ('native','dedicated'):
+ c=base(mode,owner=True);c['value'].pop('ownership_proof');add(mode+'_owner_without_proof',c,'invalid')
+ c=base(mode,owner=True);c['context']['ownership_pin']['issuer']=copy.deepcopy(identities['owner']);p=json.loads(c['value']['ownership_proof']['signed_payload']);p.update(signer=identities['owner']['principal'],signing_key_id=identities['owner']['signing_key_id']);c['value']['ownership_proof']=signed(p,'owner');add(mode+'_owner_cannot_be_issuer',c,'authority_unavailable')
+ c=base(mode);c['value']['unexpected_presence_field']=True;add(mode+'_unknown_intent_field',c,'invalid')
+c=base(owner=True);c['context']['ownership_pin']['issuer']=dict(principal='did:aw:owner-alias',signing_key_id=identities['owner']['signing_key_id'],active=True);p=json.loads(c['value']['ownership_proof']['signed_payload']);p.update(signer='did:aw:owner-alias',signing_key_id=identities['owner']['signing_key_id']);c['value']['ownership_proof']=signed(p,'owner');add('owner_and_issuer_share_current_key',c,'authority_unavailable')
 result=dict(profile='aweb-presence-verification-v1',context_status='trusted host facts for tests only; never parse from a request',public_test_seeds={k:v.hex() for k,v in keys.items()},valid=valid,invalid=invalid)
 (ROOT/'docs/vectors/human-channels-presence-v1.json').write_text(json.dumps(result,indent=2)+'\n')
 print(f'{len(valid)} valid, {len(invalid)} refusal cases')

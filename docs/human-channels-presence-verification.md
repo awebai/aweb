@@ -53,8 +53,9 @@ submitted proof as its own authority pin. The host supplies:
 - `expected_intent_hash`, SHA256 of the exact canonical typed intent the host's
   action decision covered; compute it from `canonical_record(intent)` after
   parsing, not from a submitted hash;
-- current per-(subject, platform, scope) generation, all consumed request IDs
-  across native/binding families, a current trusted clock, explicit maximum
+- current per-(subject, platform, scope) generation, consumed request IDs
+  across native/binding families (an exact lookup of this request ID is sufficient;
+  no historical ledger enumeration is required), a current trusted clock, explicit maximum
   intent/proof TTL and maximum future clock skew;
 - for binding approval, the blinded `binding_digest` of the private resource
   actually authorized, independently matched to the signed intent;
@@ -62,7 +63,9 @@ submitted proof as its own authority pin. The host supplies:
   `HumanChannelsPresenceOwnershipPin`: the exact subject/service, current owner
   principal/key, separately configured proof issuer principal/key and current
   ownership authorization revision. Missing owner, issuer, key or revision
-  refuses; route discovery or the proof's signer cannot supply the pin.
+  refuses; route discovery or the proof's signer cannot supply the pin. The
+  configured issuer must differ from the owner in both principal and current
+  signing key; self-issued ownership authority refuses as `authority_unavailable`.
 
 The caller must act as the signed subject or owner, using its current identity
 binding (stable principal or its verified current key). An unrelated authenticated
@@ -82,6 +85,8 @@ that grant in a purported root caller context.
 All inputs must match their exact target, purpose and current authority. The
 verifier checks canonical original bytes, key/signature, freshness, generation,
 consumed request ID and exact ownership-proof scope/mode/operations/revision.
+An owner-authorized intent without its ownership proof refuses as `invalid` in
+both languages; optional schema placement does not authorize omission in that lane.
 Owner proof expiry and caller grant expiry shorten the result's deadline.
 Expired or stale proof cannot be promoted by the longer lifetime of its intent.
 No private key, external account identifier or credential appears in a verified result.
@@ -134,8 +139,12 @@ The focused Python host integration starts actual OSS HTTP/AWID/PG/Redis,
 registers disposable identities through public AWID, resolves their current keys,
 and receives real Go-signed HTTP requests. Go's public signer and authenticated
 client call an embedding fixture that uses real request auth and the public
-Python port. Local, global subject and configured-owner requests pass; unrelated
-callers and freshly signed stale generations refuse. A separate test ensures
+Python port. Local, global subject and configured-owner requests pass, including
+the new current key after a public registry rotation. Unrelated authenticated
+teammates, freshly signed stale generations, a wrong configured owner pin and
+the non-current key refuse with the expected presence code and diagnostic field.
+The fixture's action policy permits the unrelated teammate, so the verifier's
+signer binding must enforce that refusal. A separate test ensures
 caller-retained input mutation across the authority await cannot change the
 operation whose context was authorized.
 

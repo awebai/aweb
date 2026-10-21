@@ -205,6 +205,8 @@ def _verify(artifact: ContractRecord, context: PresenceVerificationContext, *, b
         if context.subject.value['did'] not in (identity.principal, identity.signing_key_id):
             raise ContractError('authority_unavailable', 'subject identity binding')
     else:
+        if 'ownership_proof' not in value:
+            raise ContractError('invalid', 'ownership proof')
         pin = context.ownership_pin
         if pin is None or not pin.authorization_revision:
             raise ContractError('authority_unavailable', 'ownership authority')
@@ -216,6 +218,8 @@ def _verify(artifact: ContractRecord, context: PresenceVerificationContext, *, b
             raise ContractError('authority_unavailable', 'ownership pin target')
         identity = _identity(pin.owner)
         issuer = _identity(pin.issuer)
+        if issuer.principal == identity.principal or issuer.signing_key_id == identity.signing_key_id:
+            raise ContractError('authority_unavailable', 'owner cannot issue its own ownership proof')
         proof_artifact = decode_record('SignedArtifact', canonical_json_bytes(value['ownership_proof']))
         proof = _record(proof_artifact, 'BindingOwnershipProof' if binding else 'OwnershipProof').value
         if (proof['subject'], proof['owner'], proof['platform'], proof['scope'], proof['audience']) != (
