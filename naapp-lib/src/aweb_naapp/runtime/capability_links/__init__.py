@@ -65,6 +65,7 @@ MAX_FIELDS = 64
 MAX_ASSETS = 64
 MAX_ACTIONS = 16
 MAX_FIELD_NAME = 256
+MAX_SNAPSHOT_BYTES = 10 * 1024 * 1024
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
@@ -186,7 +187,10 @@ class LinkRead:
     """A checked projection; load it before releasing the caller's transaction.
 
     ``mode`` and ``page_rev`` select the pinned or live page version. The app
-    applies its row/field ACLs as ``creator`` as well as this projection.
+    applies its row/field ACLs as ``creator`` as well as this projection and
+    ``allowed_action_ids``. A pinned ``source_snapshot`` is internal app input,
+    never a response before that narrowing. ``asset_versions`` stays outside
+    the page; the asset adapter supplies only available captured-version URLs.
     """
 
     scope: LinkScope
@@ -194,6 +198,47 @@ class LinkRead:
     mode: str
     page_rev: int | None
     projection: Mapping[str, Any]
+    source_snapshot: Mapping[str, Any] | None = None
+    asset_versions: Mapping[str, str] | None = None
+    allowed_action_ids: tuple[str, ...] = ()
+
+
+class SnapshotSource(Protocol):
+    """The app's shared redactor captures one complete authorized aweb.page/1.
+
+    Creator identity is translated to its verified ACL identity by the app.
+    The source captures layout, state, schemas, values and only allowed action
+    definitions at expected_page_rev, in this transaction. It applies C1's
+    limits and C4's projection, 16-action and 64-asset bounds; excluded widgets
+    become inert placeholders. No asset URL or grant is stored in the page.
+    The same redactor narrows the stored source at use under current ACLs and
+    action authority, never substituting current layout, state or values.
+    """
+
+    async def capture_link_snapshot_on(
+        self,
+        tx: TransactionManager,
+        *,
+        scope: LinkScope,
+        creator_id: str,
+        projection: Mapping[str, Any],
+        allowed_action_ids: Sequence[str],
+        expected_page_rev: int,
+    ) -> Mapping[str, Any]: ...
+
+
+class AssetVersions(Protocol):
+    """Resolve captured asset IDs to immutable content versions on the mint tx.
+
+    The app holds its asset lifecycle lock while resolving versions and N5
+    records retention references on that same transaction. Ordinary GC takes
+    that lock and consults retained_asset_versions_on. Explicit owner deletion
+    overrides retention; phase-3 grants check each version's availability.
+    """
+
+    async def versions_on(
+        self, tx: TransactionManager, *, scope: LinkScope, asset_ids: Sequence[str]
+    ) -> Mapping[str, str]: ...
 
 
 @dataclass(frozen=True)
@@ -403,6 +448,8 @@ async def mint(
     creator_certificate_id: str,
     request: object,
     now: datetime,
+    snapshot_source: SnapshotSource | None = None,
+    asset_source: AssetVersions | None = None,
 ) -> MintedLink:
     """Mint a capability link for ``creator`` (§1 "Minting").
 
@@ -438,6 +485,36 @@ async def mint(
             raise _denied()
     if has_intent and not await authority.is_team_agent(tx, did=checked["intent_sponsor_did"]):
         raise _denied()
+
+    snapshot_bytes = None
+    asset_versions: Mapping[str, str] = {}
+    if checked["mode"] == "pinned":
+        if snapshot_source is None:
+            raise RuntimeError("pinned mint requires the app's shared snapshot source")
+        snapshot = await snapshot_source.capture_link_snapshot_on(
+            tx,
+            scope=scope,
+            creator_id=creator,
+            projection=projection,
+            allowed_action_ids=[a["action_id"] for a in checked["actions"]],
+            expected_page_rev=checked["page_rev"],
+        )
+        if snapshot.get("rev") != checked["page_rev"]:
+            raise LinkRefused("revision_conflict", 409, reason="snapshot source revision differs")
+        if snapshot.get("page_id") != scope.page_id:
+            raise ValueError("snapshot source returned another page")
+        snapshot_bytes = _snapshot_bytes(snapshot)
+        if projection["assets"]:
+            if asset_source is None:
+                raise RuntimeError("pinned assets require an immutable-version source")
+            asset_versions = await asset_source.versions_on(
+                tx, scope=scope, asset_ids=projection["assets"]
+            )
+            if set(asset_versions) != set(projection["assets"]) or any(
+                not isinstance(v, str) or re.fullmatch(r"[A-Za-z0-9._:-]{1,256}", v) is None
+                for v in asset_versions.values()
+            ):
+                raise ValueError("asset source must resolve every captured immutable version")
 
     link_id = "lnk_" + secrets.token_hex(16)
     secret = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode("ascii")
@@ -475,6 +552,26 @@ async def mint(
         checked["expires_at"],
         checked["one_use"],
     )
+    if snapshot_bytes is not None:
+        await tx.execute(
+            """
+            INSERT INTO {{tables.capability_link_snapshots}}
+                (link_id, page_rev, snapshot, snapshot_sha256)
+            VALUES ($1, $2, $3::jsonb, $4)
+            """,
+            link_id,
+            checked["page_rev"],
+            snapshot_bytes.decode("utf-8"),
+            hashlib.sha256(snapshot_bytes).digest(),
+        )
+        for asset_id, version in asset_versions.items():
+            await tx.execute(
+                "INSERT INTO {{tables.capability_link_asset_refs}} "
+                "(link_id, asset_id, content_version) VALUES ($1, $2, $3)",
+                link_id,
+                asset_id,
+                version,
+            )
     return MintedLink(link_id=link_id, secret=secret, expires_at=checked["expires_at"])
 
 
@@ -497,12 +594,62 @@ def _record(value: Any) -> Mapping[str, Any]:
     return json.loads(value) if isinstance(value, str) else value
 
 
+def _snapshot_bytes(snapshot: Mapping[str, Any]) -> bytes:
+    """Bound the trusted projection result; ACL/redaction stay in the app source."""
+    if (
+        not isinstance(snapshot, Mapping)
+        or snapshot.get("page_format") != "aweb.page/1"
+        or type(snapshot.get("rev")) is not int
+        or snapshot["rev"] < 0
+        or not isinstance(snapshot["collections"], list)
+    ):
+        raise ValueError("invalid pinned snapshot shape")
+    raw = canonical_json_bytes(dict(snapshot))
+    if len(raw) > MAX_SNAPSHOT_BYTES:
+        raise ValueError("pinned snapshot exceeds the page snapshot byte bound")
+    return raw
+
+
+async def _pinned_source(
+    tx: TransactionManager, record: Mapping[str, Any]
+) -> Mapping[str, Any] | None:
+    if record["mode"] != "pinned":
+        return None
+    stored = await tx.fetch_one(
+        "SELECT page_rev, snapshot, snapshot_sha256 FROM {{tables.capability_link_snapshots}} "
+        "WHERE link_id = $1",
+        record["link_id"],
+    )
+    try:
+        if stored is None or stored["page_rev"] != record["page_rev"]:
+            raise ValueError("missing pinned source or revision mismatch")
+        snapshot = _record(stored["snapshot"])
+        raw = _snapshot_bytes(snapshot)
+        if (
+            snapshot["rev"] != record["page_rev"]
+            or snapshot.get("page_id") != record["page_id"]
+            or not hmac.compare_digest(
+                hashlib.sha256(raw).digest(), bytes(stored["snapshot_sha256"])
+            )
+        ):
+            raise ValueError("pinned source revision or digest mismatch")
+    except (ValueError, TypeError, KeyError, UnicodeEncodeError, RecursionError) as exc:
+        raise LinkRefused(
+            "link_unavailable", 410, reason="missing or corrupt pinned snapshot"
+        ) from exc
+    return snapshot
+
+
 async def _creator_still_reads(
     tx: TransactionManager, authority: LinkAuthority, record: Mapping[str, Any]
 ) -> bool:
     creator = record["created_by"]["principal_did"]
     frozen = await _freeze_projection(
-        tx, authority, creator=creator, page_id=record["page_id"], projection=record["projection"]
+        tx,
+        authority,
+        creator=creator,
+        page_id=record["page_id"],
+        projection={"collections": record["projection"]["collections"], "assets": []},
     )
     return frozen is not None
 
@@ -763,7 +910,10 @@ async def read(
 
     ``caller`` comes from :func:`authenticate`. The app must load the returned
     projection within this same transaction, never after its lock is released.
-    A subset remains readable when the creator loses an unrelated field.
+    A subset remains readable when the creator loses an unrelated field. For
+    pinned mode ``source_snapshot`` is always present and verified. The app
+    projects that source through the same ACL/redaction path as live data,
+    within this transaction; it must not expose the unprojected source itself.
     """
     row = await _locked_link(tx, caller=caller, write=False, now=now)
     _check_lifecycle(row, now)
@@ -774,15 +924,57 @@ async def read(
     creator = record["created_by"]["principal_did"]
     if (
         await _freeze_projection(
-            tx, authority, creator=creator, page_id=page_id, projection=selected
+            tx,
+            authority,
+            creator=creator,
+            page_id=page_id,
+            projection={"collections": selected["collections"], "assets": []},
         )
         is None
     ):
         raise _denied()
+    selected["assets"] = [
+        asset_id
+        for asset_id in selected["assets"]
+        if await authority.can_read_asset(tx, creator=creator, page_id=page_id, asset_id=asset_id)
+    ]
+    allowed_actions = []
+    for action in record["actions"]:
+        if await authority.action_kind(
+            tx, page_id=page_id, action_id=action["action_id"]
+        ) in _LINK_KINDS and await authority.can_act(
+            tx,
+            creator=creator,
+            page_id=page_id,
+            action_id=action["action_id"],
+            constraints=action["constraints"],
+        ):
+            allowed_actions.append(action["action_id"])
+    source = await _pinned_source(tx, record)
+    versions = None
+    if source is not None:
+        versions = {
+            row["asset_id"]: row["content_version"]
+            for row in await tx.fetch_all(
+                "SELECT asset_id, content_version FROM {{tables.capability_link_asset_refs}} "
+                "WHERE link_id = $1",
+                caller.link_id,
+            )
+            if row["asset_id"] in selected["assets"]
+        }
     limit = await take(tx, [Charge("link.read", caller.session_id, *READS_PER_SESSION)], now=now)
     if not limit.allowed:
         raise _limited(limit)
-    return LinkRead(_scope(record), creator, record["mode"], record["page_rev"], selected)
+    return LinkRead(
+        _scope(record),
+        creator,
+        record["mode"],
+        record["page_rev"],
+        selected,
+        source,
+        versions,
+        tuple(allowed_actions),
+    )
 
 
 def _action_request(body: bytes) -> dict[str, Any]:
@@ -946,6 +1138,9 @@ async def revoke(
         link_id,
         now,
     )
+    await tx.execute(
+        "DELETE FROM {{tables.capability_link_asset_refs}} WHERE link_id = $1", link_id
+    )
 
 
 async def expire_sessions(db: AsyncDatabaseManager, *, now: datetime) -> int:
@@ -971,3 +1166,76 @@ async def expire_sessions(db: AsyncDatabaseManager, *, now: datetime) -> int:
             now,
         )
     return int(sessions) + int(nonces)
+
+
+async def purge_page_links_on(tx: TransactionManager, *, scope: LinkScope) -> int:
+    """Purge a page's links and cascade pinned content/sessions on caller's tx.
+
+    The app invokes this from its authorized content-purge/installation-delete
+    path under its declared retention policy. It records export/deletion
+    coverage and backup retention there; deleting these rows does not claim
+    that backups or app-owned action receipts have been erased.
+    """
+    count = await tx.fetch_value(
+        """
+        WITH gone AS (
+            DELETE FROM {{tables.capability_links}}
+            WHERE installation_id = $1 AND team_id = $2 AND page_id = $3 RETURNING 1
+        ) SELECT count(*) FROM gone
+        """,
+        scope.installation_id,
+        scope.team_id,
+        scope.page_id,
+    )
+    return int(count)
+
+
+async def expire_snapshots(db: AsyncDatabaseManager, *, now: datetime) -> int:
+    """Remove pinned content once its link has expired and no session can read it.
+
+    The app runs this cleanup alongside expire_sessions. Earlier page/content
+    deletion uses purge_page_links_on; this supplies no new retention default.
+    """
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    async with db.transaction() as tx:
+        await tx.execute(
+            "DELETE FROM {{tables.capability_link_asset_refs}} AS ref "
+            "USING {{tables.capability_links}} AS link WHERE ref.link_id=link.link_id "
+            "AND (link.revoked_at IS NOT NULL OR link.expires_at <= $1)",
+            now,
+        )
+        count = await tx.fetch_value(
+            """
+        WITH gone AS (
+            DELETE FROM {{tables.capability_link_snapshots}} AS snapshot
+            USING {{tables.capability_links}} AS link
+            WHERE snapshot.link_id = link.link_id AND link.expires_at <= $1 RETURNING 1
+        ) SELECT count(*) FROM gone
+        """,
+            now,
+        )
+    return int(count)
+
+
+async def retained_asset_versions_on(
+    tx: TransactionManager, *, scope: LinkScope, asset_id: str, now: datetime
+) -> frozenset[str]:
+    """Versions ordinary asset GC must retain for all pages in this installation.
+
+    The app calls this under its own asset lifecycle lock, on the same tx as
+    deleting unreferenced versions. Owner-directed deletion wins regardless.
+    """
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    rows = await tx.fetch_all(
+        "SELECT ref.content_version FROM {{tables.capability_link_asset_refs}} AS ref "
+        "JOIN {{tables.capability_links}} AS link ON link.link_id=ref.link_id "
+        "WHERE link.installation_id=$1 AND link.team_id=$2 "
+        "AND ref.asset_id=$3 AND link.revoked_at IS NULL AND link.expires_at>$4",
+        scope.installation_id,
+        scope.team_id,
+        asset_id,
+        now,
+    )
+    return frozenset(row["content_version"] for row in rows)

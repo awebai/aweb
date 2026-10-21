@@ -75,6 +75,41 @@ Lifecycle: `revoked_at`, `used_at` (one-use links) and the stored receipts.
 | `one_use` | `true`: the first admitted action uses the link up (§4). Reads before it consume nothing. |
 | `expires_at` | After `created_at` and at most 30 days later. |
 
+At mint, pinned mode materializes one complete authorized `aweb.page/1`
+snapshot at `page_rev` in the same transaction as the link. It holds the
+projected collection schemas and values, layout, widget state, and only the
+definitions of actions the link allows. N5 stores that immutable source with
+its link ID, revision and digest. Ordinary edits never replace its values,
+layout or state, or make the link break. The app's
+`capture_link_snapshot_on(tx, scope, creator_id, projection,
+allowed_action_ids, expected_page_rev)` uses its shared store redactor:
+excluded widgets become inert placeholders, action lists and definitions are
+narrowed to the whitelist, and only captured widget IDs retain state. No
+asset fetch URL or grant enters the snapshot.
+
+The whole snapshot obeys the page-format limits: at most 10 MiB, 2,000 widgets,
+widget depth 8, JSON depth 64 and 1,000,000 JSON values, plus this contract's
+16 actions, 64 distinct asset IDs and projection bounds. At use, that same
+redactor only narrows the stored view under the creator's **current** ACLs and
+action authority. It never substitutes current layout, state or values, or
+adds an action definition absent at mint. A missing or corrupt source fails
+closed as `link_unavailable`, with the cause logged; it never falls back to
+live data. Link expiry and revocation still apply.
+
+Captured asset IDs are bound to immutable content versions outside the page
+data. While a link is neither revoked nor expired, its references retain
+those versions against ordinary asset garbage collection. Revocation and
+expiry release the references. Explicit owner deletion of an asset or page
+wins; an unavailable asset produces an unavailable-media placeholder for that
+asset, not replacement bytes or failure of the rest of the view. The asset
+adapter resolves versions on the mint transaction under its lifecycle lock;
+ordinary garbage collection takes that lock and checks all live references
+in the installation before deleting an unreferenced version. Snapshot and
+retained-asset content belong to the page's export, content-purge and declared
+backup/retention coverage. Purging the page's links purges their snapshots,
+sessions and references in the same transaction; backup expiry remains
+separate coverage in the deletion receipt.
+
 ### Minting: `POST /v1/pages/{page_id}/links`
 
 Team-auth v2 by the creating member, with the record's grantable fields. The
