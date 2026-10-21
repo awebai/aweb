@@ -113,6 +113,9 @@ dev = [
   "ruff>=0.14.0",
   "mypy>=1.18.0",
   "hatchling>=1.32.4",
+  # Exact: the candidate gate's test image installs the Chromium this version
+  # drives, through this lock, so the two cannot drift.
+  "playwright==1.63.0",
 ]
 
 [tool.pytest.ini_options]
