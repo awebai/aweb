@@ -9467,6 +9467,15 @@ var known = /* @__PURE__ */ new Set([
   ...collectionTypes
 ]);
 var focusables = "a,button,input,select,textarea,[tabindex]";
+function contentHeading(level, text3) {
+  const rank = level + 1;
+  const heading2 = element(rank <= 6 ? `h${rank}` : "div", text3);
+  if (rank > 6) {
+    heading2.setAttribute("role", "heading");
+    heading2.setAttribute("aria-level", String(rank));
+  }
+  return heading2;
+}
 function setChildren(parent, children) {
   children.forEach((node, index) => {
     if (parent.childNodes[index] !== node)
@@ -9634,10 +9643,16 @@ function createPageRenderer({
           chrome("p", t.unavailable, "widget-label"),
           element("p", w.fallback)
         );
-      else if (w.type === "heading") box.append(element(`h${p.level}`, p.text));
-      else if (w.type === "text") {
+      else if (w.type === "heading") {
+        box.append(contentHeading(p.level, p.text));
+      } else if (w.type === "text") {
         const body = element("div", null, "markdown");
         renderMarkdown(body, p.markdown);
+        for (const original of body.querySelectorAll("h1,h2,h3,h4,h5,h6")) {
+          const heading2 = contentHeading(Number(original.tagName.slice(1)));
+          heading2.append(...original.childNodes);
+          original.replaceWith(heading2);
+        }
         for (const { node, url } of inertLinks(body)) pageLink(node, url);
         box.append(body);
       } else if (container) {

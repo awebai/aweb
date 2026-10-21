@@ -46,7 +46,7 @@ def gallery_page() -> dict:
             {
                 "id": "heading",
                 "type": "heading",
-                "props": {"level": 2, "text": "Property overview"},
+                "props": {"level": 1, "text": "Property overview"},
             },
             {
                 "id": "intro",

@@ -1,5 +1,46 @@
 import { test, expect } from "@playwright/test";
 
+test("authored heading ranks stay below the page title at both endpoints", async ({
+  page,
+}) => {
+  await page.route("**/api/page?*", async (route) => {
+    const response = await route.fetch();
+    const snapshot = await response.json();
+    snapshot.layout = [
+      {
+        id: "rank-one",
+        type: "heading",
+        props: { level: 1, text: "First authored rank" },
+      },
+      {
+        id: "rank-six",
+        type: "heading",
+        props: { level: 6, text: "Sixth authored rank" },
+      },
+      {
+        id: "markdown-ranks",
+        type: "text",
+        props: {
+          markdown: "# First Markdown rank\n\n###### Sixth Markdown rank",
+        },
+      },
+    ];
+    snapshot.widget_state = {};
+    await route.fulfill({ response, json: snapshot });
+  });
+  await page.goto("/");
+  await expect(page.locator('[data-widget="rank-one"] h2')).toBeVisible();
+  const deepest = page.locator('[data-widget="rank-six"] [role="heading"]');
+  await expect(deepest).toBeVisible();
+  await expect(deepest).toHaveAttribute("aria-level", "7");
+  await expect(page.locator('[data-widget="markdown-ranks"] h2')).toBeVisible();
+  await expect(
+    page.locator('[data-widget="markdown-ranks"] [role="heading"]'),
+  ).toHaveAttribute("aria-level", "7");
+  await expect(page.locator("h1")).toHaveCount(1);
+  await expect(page.locator("h1.page-title")).toBeVisible();
+});
+
 for (const colorScheme of ["light", "dark"]) {
   test(`unfocused controls have visible boundaries in ${colorScheme}`, async ({
     page,

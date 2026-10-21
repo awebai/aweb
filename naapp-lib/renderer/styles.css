@@ -65,7 +65,8 @@ h2,
 h3,
 h4,
 h5,
-h6 {
+h6,
+.widget [role="heading"] {
   line-height: 1.2;
   letter-spacing: -0.025em;
   margin: 0 0 0.6em;
@@ -82,8 +83,12 @@ h3 {
 }
 h4,
 h5,
-h6 {
+h6,
+.widget [role="heading"] {
   font-size: var(--step-0);
+}
+.widget [role="heading"] {
+  font-weight: 700;
 }
 p {
   margin: 0.3rem 0 1rem;
