@@ -37,6 +37,7 @@ FIELDS = frozenset(
         "cidr",
     }
 )
+SCOPE_FIELDS = FIELDS - {"destination_id", "secret_id"}
 DESTINATION_ID = re.compile(r"dst_[A-Za-z0-9_-]{4,64}")
 _HEADER_NAME = re.compile(r"[a-z0-9!#$%&'*+.^_`|~-]{1,64}")
 
@@ -67,7 +68,6 @@ def _check(after: Any) -> None:
         isinstance(after, Mapping) and set(after) == FIELDS,
         f"a destination needs exactly {sorted(FIELDS)}",
     )
-    _require(type(after["v"]) is int and after["v"] == 1, "this is destination record v1")
     _require(
         isinstance(after["destination_id"], str)
         and DESTINATION_ID.fullmatch(after["destination_id"]) is not None,
@@ -77,6 +77,10 @@ def _check(after: Any) -> None:
         isinstance(after["secret_id"], str) and SECRET_ID.fullmatch(after["secret_id"]) is not None,
         "secret_id is a minted secret id",
     )
+
+
+def _check_scope(after: Mapping[str, Any]) -> None:
+    _require(type(after["v"]) is int and after["v"] == 1, "this is destination record v1")
     _require(after["scheme"] == "https", "a destination is https")
     _require(type(after["port"]) is int, "the port is an integer")
     _require(_sorted_distinct(after["methods"]), "methods are sorted and distinct")
@@ -98,6 +102,27 @@ def _entry(after: Mapping[str, Any]) -> dict[str, Any]:
     return entry
 
 
+def _parse_scope(
+    after: Mapping[str, Any], *, internal_destinations: InternalDestinations
+) -> Destination:
+    _check_scope(after)
+    try:
+        return parse_destination(_entry(after), internal_destinations=internal_destinations)
+    except EgressRefused as refused:
+        raise DestinationInvalid(str(refused), refused.code) from None
+
+
+def parse_destination_scope(
+    after: Mapping[str, Any], *, internal_destinations: InternalDestinations
+) -> Destination:
+    """Validate a fixed destination/1 scope before its child IDs are minted."""
+    _require(
+        isinstance(after, Mapping) and set(after) == SCOPE_FIELDS,
+        f"a destination scope needs exactly {sorted(SCOPE_FIELDS)}",
+    )
+    return _parse_scope(after, internal_destinations=internal_destinations)
+
+
 @dataclass(frozen=True)
 class DestinationRecord:
     destination_id: str
@@ -112,12 +137,7 @@ class DestinationRecord:
         """The record for a change/1 ``after``, refused unless it is destination record v1
         that the deploy's ``internal_destinations`` setting allows."""
         _check(after)
-        try:
-            destination = parse_destination(
-                _entry(after), internal_destinations=internal_destinations
-            )
-        except EgressRefused as refused:
-            raise DestinationInvalid(str(refused), refused.code) from None
+        destination = _parse_scope(after, internal_destinations=internal_destinations)
         return cls(
             destination_id=after["destination_id"],
             secret_id=after["secret_id"],

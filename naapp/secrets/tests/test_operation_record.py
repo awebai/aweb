@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from aweb_secrets.operation import OperationInvalid, OperationTemplate
+from aweb_secrets.operation import OperationInvalid, OperationTemplate, operation_digest
 
 REFUND: dict[str, Any] = {
     "v": 1,
@@ -185,6 +185,7 @@ def test_a_token_issuing_operation_may_withhold_its_result() -> None:
 
 STORE_AS_SECRET = {
     "derived_kind": "aws-sigv4",
+    "kind_params": {"region": "us-east-1", "service": "s3"},
     "capture": {
         "access_key_id": "/Credentials/AccessKeyId",
         "secret_access_key": "/Credentials/SecretAccessKey",
@@ -192,16 +193,50 @@ STORE_AS_SECRET = {
     },
     "expires_at": "/Credentials/Expiration",
     "grant_template": "gtp_sts-derived",
+    "grant_template_digest": "c" * 64,
+    "destinations": [
+        {
+            "v": 1,
+            "scheme": "https",
+            "host": "assets.s3.example.com",
+            "port": 443,
+            "path": "/reports/**",
+            "methods": ["GET"],
+            "query_rules": {},
+            "header_allow": [],
+            "network": "public",
+            "cidr": None,
+        }
+    ],
 }
 
 
-def test_store_as_secret_is_refused_until_derived_secrets_exist() -> None:
+def _store_with(path: list[str | int], value: Any) -> dict[str, Any]:
+    store = copy.deepcopy(STORE_AS_SECRET)
+    target: Any = store
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    return store
+
+
+OAUTH_TOKEN_STORE = {
+    **{key: value for key, value in STORE_AS_SECRET.items() if key != "expires_at"},
+    "derived_kind": "bearer",
+    "kind_params": {},
+    "capture": {"value": "/access_token"},
+    "expires_in": "/expires_in",
+}
+
+
+@pytest.mark.parametrize("store", [STORE_AS_SECRET, OAUTH_TOKEN_STORE])
+def test_well_formed_store_as_secret_stays_unavailable_until_derived_paths_exist(store) -> None:
     with pytest.raises(OperationInvalid) as refused:
         OperationTemplate.from_after(
             _op(
                 token_issuing=True,
                 result_handling="store_as_secret",
-                store_as_secret=STORE_AS_SECRET,
+                store_as_secret=store,
             )
         )
     assert refused.value.code == "store_as_secret_unavailable"
@@ -214,6 +249,26 @@ def test_store_as_secret_is_refused_until_derived_secrets_exist() -> None:
         {**STORE_AS_SECRET, "capture": {"password": "/Credentials/AccessKeyId"}},
         {**STORE_AS_SECRET, "expires_at": "Credentials/Expiration"},
         {**STORE_AS_SECRET, "grant_template": "sts-derived"},
+        {**STORE_AS_SECRET, "grant_template_digest": "C" * 64},
+        {**STORE_AS_SECRET, "grant_template_digest": "c" * 63},
+        {**STORE_AS_SECRET, "expires_in": "/expires_in"},
+        {key: value for key, value in STORE_AS_SECRET.items() if key != "expires_at"},
+        _store_with(["expires_at"], None),
+        {**OAUTH_TOKEN_STORE, "expires_in": 3600},
+        {**OAUTH_TOKEN_STORE, "expires_in": "expires_in"},
+        _store_with(["kind_params"], {"region": "US-EAST-1", "service": "s3"}),
+        _store_with(["kind_params", "service"], {"$param": "service"}),
+        _store_with(["capture"], {"access_key_id": "/id", "secret_access_key": "/key"}),
+        _store_with(["destinations"], []),
+        _store_with(["destinations"], {}),
+        _store_with(["destinations", 0, "host"], "ASSETS.s3.example.com"),
+        _store_with(["destinations", 0, "host"], {"$param": "host"}),
+        _store_with(["destinations", 0, "methods"], ["CONNECT"]),
+        _store_with(["destinations", 0, "path"], "/reports/../admin"),
+        _store_with(["destinations", 0, "scheme"], "http"),
+        _store_with(["destinations", 0, "v"], 2),
+        _store_with(["destinations", 0, "destination_id"], "dst_agentchosen"),
+        _store_with(["destinations", 0, "secret_id"], "sec_agentchosen"),
     ],
 )
 def test_a_malformed_store_as_secret_is_refused_for_its_shape(store) -> None:
@@ -222,6 +277,37 @@ def test_a_malformed_store_as_secret_is_refused_for_its_shape(store) -> None:
             _op(token_issuing=True, result_handling="store_as_secret", store_as_secret=store)
         )
     assert refused.value.code == "operation_invalid"
+
+
+@pytest.mark.parametrize("missing", sorted(STORE_AS_SECRET))
+def test_every_derived_scope_field_is_required(missing) -> None:
+    store = copy.deepcopy(STORE_AS_SECRET)
+    del store[missing]
+    with pytest.raises(OperationInvalid) as refused:
+        OperationTemplate.from_after(
+            _op(token_issuing=True, result_handling="store_as_secret", store_as_secret=store)
+        )
+    assert refused.value.code == "operation_invalid"
+
+
+@pytest.mark.parametrize(
+    "store",
+    [
+        _store_with(["kind_params", "region"], "eu-west-1"),
+        _store_with(["destinations", 0, "host"], "other.s3.example.com"),
+        _store_with(["capture", "session_token"], "/other_token"),
+        _store_with(["expires_at"], "/other_expiry"),
+        _store_with(["grant_template"], "gtp_other01"),
+        _store_with(["grant_template_digest"], "d" * 64),
+        OAUTH_TOKEN_STORE,
+    ],
+)
+def test_the_issuer_operation_digest_binds_its_child_scope_and_pins(store) -> None:
+    original = _op(
+        token_issuing=True, result_handling="store_as_secret", store_as_secret=STORE_AS_SECRET
+    )
+    changed = {**original, "store_as_secret": store}
+    assert operation_digest(changed) != operation_digest(original)
 
 
 def test_store_as_secret_is_set_only_with_its_result_handling() -> None:
