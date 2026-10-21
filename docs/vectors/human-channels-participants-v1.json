@@ -1,0 +1,426 @@
+{
+  "profile": "aweb-participant-identity-readiness-v1",
+  "private_inputs": "synthetic adapter inputs for tests only; never message fields",
+  "derivations": [
+    {
+      "name": "same_session",
+      "key_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+      "bridge": "did:aw:bridge",
+      "platform": "telegram",
+      "account_scope": "private-fixture-scope",
+      "account_id": "private-fixture-account",
+      "subject_kind": "human",
+      "generation": "g1",
+      "session_id": "11111111-1111-4111-8111-111111111111",
+      "expected": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+      }
+    },
+    {
+      "name": "same_session_second_bot",
+      "key_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+      "bridge": "did:aw:bridge",
+      "platform": "telegram",
+      "account_scope": "private-fixture-scope",
+      "account_id": "private-fixture-account",
+      "subject_kind": "human",
+      "generation": "g1",
+      "session_id": "11111111-1111-4111-8111-111111111111",
+      "expected": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+      }
+    },
+    {
+      "name": "other_session",
+      "key_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+      "bridge": "did:aw:bridge",
+      "platform": "telegram",
+      "account_scope": "private-fixture-scope",
+      "account_id": "private-fixture-account",
+      "subject_kind": "human",
+      "generation": "g1",
+      "session_id": "22222222-2222-4222-8222-222222222222",
+      "expected": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "MbTfu9ve4ZtNOuhgZb916McXgQBGtMal6eK7X7WCWXM"
+      }
+    },
+    {
+      "name": "other_account",
+      "key_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+      "bridge": "did:aw:bridge",
+      "platform": "telegram",
+      "account_scope": "private-fixture-scope",
+      "account_id": "other-fixture-account",
+      "subject_kind": "human",
+      "generation": "g1",
+      "session_id": "11111111-1111-4111-8111-111111111111",
+      "expected": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "-cwD3boWSzd0VL5p80iiPPQr0C74Go_WNP-QgBwx0XI"
+      }
+    },
+    {
+      "name": "other_scope",
+      "key_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+      "bridge": "did:aw:bridge",
+      "platform": "telegram",
+      "account_scope": "other-fixture-scope",
+      "account_id": "private-fixture-account",
+      "subject_kind": "human",
+      "generation": "g1",
+      "session_id": "11111111-1111-4111-8111-111111111111",
+      "expected": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "-QrKBXiBKGklOOxXQjO9UA2H-Sma0FLfNCXdVqNDsfA"
+      }
+    },
+    {
+      "name": "bot_subject",
+      "key_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+      "bridge": "did:aw:bridge",
+      "platform": "telegram",
+      "account_scope": "private-fixture-scope",
+      "account_id": "private-fixture-account",
+      "subject_kind": "bot",
+      "generation": "g1",
+      "session_id": "11111111-1111-4111-8111-111111111111",
+      "expected": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "HIk00LKEOx4eMed7fZLj5rFn_DWnL1PgSfq1EXNcYhE"
+      }
+    },
+    {
+      "name": "new_generation",
+      "key_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+      "bridge": "did:aw:bridge",
+      "platform": "telegram",
+      "account_scope": "private-fixture-scope",
+      "account_id": "private-fixture-account",
+      "subject_kind": "human",
+      "generation": "g2",
+      "session_id": "11111111-1111-4111-8111-111111111111",
+      "expected": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "PtQoSq6nLFtMbPF1roewQiFQfRukyGf9na9h6N-3Bcw"
+      }
+    },
+    {
+      "name": "lost_key",
+      "key_hex": "4343434343434343434343434343434343434343434343434343434343434343",
+      "bridge": "did:aw:bridge",
+      "platform": "telegram",
+      "account_scope": "private-fixture-scope",
+      "account_id": "private-fixture-account",
+      "subject_kind": "human",
+      "generation": "g1",
+      "session_id": "11111111-1111-4111-8111-111111111111",
+      "expected": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "mqHruRSFtAX-xZq5-UuYNPV6uwwNxIupqF-_AK5g3HI"
+      }
+    },
+    {
+      "name": "other_bridge",
+      "key_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+      "bridge": "did:aw:other-bridge",
+      "platform": "telegram",
+      "account_scope": "private-fixture-scope",
+      "account_id": "private-fixture-account",
+      "subject_kind": "human",
+      "generation": "g1",
+      "session_id": "11111111-1111-4111-8111-111111111111",
+      "expected": {
+        "kind": "bridged",
+        "bridge": "did:aw:other-bridge",
+        "subject": "KFlcZwmVsUzzoqiW9Q35srVrNhN60-BDgSyVByDhaF8"
+      }
+    },
+    {
+      "name": "msteams_subject",
+      "key_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+      "bridge": "did:aw:bridge",
+      "platform": "msteams",
+      "account_scope": "private-tenant:chat-fixture",
+      "account_id": "private-fixture-account",
+      "subject_kind": "human",
+      "generation": "g1",
+      "session_id": "11111111-1111-4111-8111-111111111111",
+      "expected": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "Iv85ZOCuQeO8hSEMVoWLw0eivKYb1NqzT6X88kB3Ph4"
+      }
+    },
+    {
+      "name": "utf8_private_account",
+      "key_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+      "bridge": "did:aw:bridge",
+      "platform": "telegram",
+      "account_scope": "private-fixture-scope",
+      "account_id": "private-fixture-caf\u00e9\naccount",
+      "subject_kind": "human",
+      "generation": "g1",
+      "session_id": "11111111-1111-4111-8111-111111111111",
+      "expected": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "sFcb6Ec2ccG07aGSeXjcV61wIkDxpdaPX0w5ucL-Xb4"
+      }
+    }
+  ],
+  "projections": [
+    {
+      "name": "native",
+      "expected_session": "11111111-1111-4111-8111-111111111111",
+      "expected_participant": {
+        "kind": "native",
+        "did": "did:aw:alice"
+      },
+      "group": {
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "membership_epoch": 1,
+        "membership_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "author_ref": {
+          "kind": "native",
+          "did": "did:aw:alice"
+        },
+        "message_id": "33333333-3333-4333-8333-333333333333"
+      },
+      "signer_principal": "did:aw:alice",
+      "signer_verified": true,
+      "confidentiality": "end_to_end",
+      "expected": {
+        "author": {
+          "kind": "native",
+          "did": "did:aw:alice"
+        },
+        "author_assurance": "native",
+        "confidentiality": "end_to_end",
+        "signer_verified": true,
+        "trust_status": "verified",
+        "verified": true
+      }
+    },
+    {
+      "name": "custodial_native",
+      "expected_session": "11111111-1111-4111-8111-111111111111",
+      "expected_participant": {
+        "kind": "native",
+        "did": "did:aw:alice"
+      },
+      "group": {
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "membership_epoch": 1,
+        "membership_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "author_ref": {
+          "kind": "native",
+          "did": "did:aw:alice"
+        },
+        "message_id": "33333333-3333-4333-8333-333333333333"
+      },
+      "signer_principal": "did:aw:alice",
+      "signer_verified": true,
+      "confidentiality": "hosted_readable",
+      "expected": {
+        "author": {
+          "kind": "native",
+          "did": "did:aw:alice"
+        },
+        "author_assurance": "native",
+        "confidentiality": "hosted_readable",
+        "signer_verified": true,
+        "trust_status": "verified_custodial",
+        "verified": true
+      }
+    },
+    {
+      "name": "guest",
+      "expected_session": "11111111-1111-4111-8111-111111111111",
+      "expected_participant": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+      },
+      "group": {
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "membership_epoch": 1,
+        "membership_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "author_ref": {
+          "kind": "bridged",
+          "bridge": "did:aw:bridge",
+          "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+        },
+        "message_id": "33333333-3333-4333-8333-333333333333"
+      },
+      "signer_principal": "did:aw:bridge",
+      "signer_verified": true,
+      "confidentiality": "bridge_readable",
+      "expected": {
+        "author": {
+          "kind": "bridged",
+          "bridge": "did:aw:bridge",
+          "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+        },
+        "author_assurance": "platform_attested",
+        "confidentiality": "bridge_readable",
+        "signer_verified": true,
+        "trust_status": "external_untrusted",
+        "verified": false
+      }
+    },
+    {
+      "name": "wrong_session",
+      "expected_session": "22222222-2222-4222-8222-222222222222",
+      "expected_participant": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+      },
+      "group": {
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "membership_epoch": 1,
+        "membership_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "author_ref": {
+          "kind": "bridged",
+          "bridge": "did:aw:bridge",
+          "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+        },
+        "message_id": "33333333-3333-4333-8333-333333333333"
+      },
+      "signer_principal": "did:aw:bridge",
+      "signer_verified": true,
+      "confidentiality": "bridge_readable",
+      "error": "forbidden"
+    },
+    {
+      "name": "wrong_bridge",
+      "expected_session": "11111111-1111-4111-8111-111111111111",
+      "expected_participant": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+      },
+      "group": {
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "membership_epoch": 1,
+        "membership_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "author_ref": {
+          "kind": "bridged",
+          "bridge": "did:aw:bridge",
+          "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+        },
+        "message_id": "33333333-3333-4333-8333-333333333333"
+      },
+      "signer_principal": "did:aw:other",
+      "signer_verified": true,
+      "confidentiality": "bridge_readable",
+      "error": "forbidden"
+    },
+    {
+      "name": "wrong_subject",
+      "expected_session": "11111111-1111-4111-8111-111111111111",
+      "expected_participant": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "other"
+      },
+      "group": {
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "membership_epoch": 1,
+        "membership_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "author_ref": {
+          "kind": "bridged",
+          "bridge": "did:aw:bridge",
+          "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+        },
+        "message_id": "33333333-3333-4333-8333-333333333333"
+      },
+      "signer_principal": "did:aw:bridge",
+      "signer_verified": true,
+      "confidentiality": "bridge_readable",
+      "error": "forbidden"
+    },
+    {
+      "name": "unverified_bridge",
+      "expected_session": "11111111-1111-4111-8111-111111111111",
+      "expected_participant": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+      },
+      "group": {
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "membership_epoch": 1,
+        "membership_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "author_ref": {
+          "kind": "bridged",
+          "bridge": "did:aw:bridge",
+          "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+        },
+        "message_id": "33333333-3333-4333-8333-333333333333"
+      },
+      "signer_principal": "did:aw:bridge",
+      "signer_verified": false,
+      "confidentiality": "bridge_readable",
+      "error": "invalid"
+    },
+    {
+      "name": "guest_is_not_e2ee",
+      "expected_session": "11111111-1111-4111-8111-111111111111",
+      "expected_participant": {
+        "kind": "bridged",
+        "bridge": "did:aw:bridge",
+        "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+      },
+      "group": {
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "membership_epoch": 1,
+        "membership_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "author_ref": {
+          "kind": "bridged",
+          "bridge": "did:aw:bridge",
+          "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+        },
+        "message_id": "33333333-3333-4333-8333-333333333333"
+      },
+      "signer_principal": "did:aw:bridge",
+      "signer_verified": true,
+      "confidentiality": "end_to_end",
+      "error": "invalid"
+    },
+    {
+      "name": "link_does_not_promote_guest",
+      "expected_session": "11111111-1111-4111-8111-111111111111",
+      "expected_participant": {
+        "kind": "native",
+        "did": "did:aw:alice"
+      },
+      "group": {
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "membership_epoch": 1,
+        "membership_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "author_ref": {
+          "kind": "bridged",
+          "bridge": "did:aw:bridge",
+          "subject": "gOJeL1insvUsVKYudMV1EcDUmcURttRcUWiNF33IXq0"
+        },
+        "message_id": "33333333-3333-4333-8333-333333333333"
+      },
+      "signer_principal": "did:aw:bridge",
+      "signer_verified": true,
+      "confidentiality": "bridge_readable",
+      "error": "forbidden"
+    }
+  ]
+}

@@ -664,3 +664,12 @@ signatures, verified DTOs and refusal neighbors. Python and Go read the root
 bytes directly. The embedded contexts are **trusted test authority facts**, not
 a public request/context wire format; consumers must build those facts from
 independent authenticated current sources. No P0/native fixture is rewritten.
+
+## Human-channel participant identity readiness
+
+`human-channels-participants-v1.json` is shared by Python and Go participant
+helpers. Its synthetic **private** adapter inputs test session-pairwise HMAC
+derivation; they are never message/provenance fields. Author projections test
+exact session/subject/signer binding and external/untrusted guest assurance.
+They assume independently verified signer facts and do not authorize membership
+or activate managed chat. See [P3 readiness](../human-channels-participants.md).
