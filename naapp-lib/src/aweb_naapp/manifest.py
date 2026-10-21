@@ -47,6 +47,57 @@ def manifest_for_origin(manifest: dict[str, Any], public_origin: str) -> dict[st
     return retargeted
 
 
+def template_key_entries(template: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The template's kid entries, version 2 ``app_keys`` then version 1
+    ``event_emitters``. Entries of any other shape are left for
+    :func:`load_manifest` to refuse."""
+    entries = []
+    for field in ("app_keys", "event_emitters"):
+        value = template.get(field)
+        if isinstance(value, list):
+            entries += [entry for entry in value if isinstance(entry, dict) and isinstance(entry.get("kid"), str)]
+    return entries
+
+
+def template_kids(template: Mapping[str, Any]) -> tuple[str, ...]:
+    """The kids a committed manifest template declares, in manifest order: its
+    version 2 ``app_keys`` and its version 1 ``event_emitters``."""
+    return tuple(dict.fromkeys(entry["kid"] for entry in template_key_entries(template)))
+
+
+def fill_manifest(
+    template: Mapping[str, Any], *, app_id: str, origin: str, did_keys: Mapping[str, str]
+) -> bytes:
+    """The canonical bytes a deployment serves for its committed manifest template.
+
+    The template declares kids, their purposes and local event types, and carries
+    no did:key. The deployment supplies its ``app_id``, its ``origin`` and the
+    did:key of every declared kid; nothing else is taken from configuration.
+    A template refusal raises :class:`ManifestError` (``manifest_template_invalid``);
+    anything else wrong with it is left for :func:`load_manifest` to refuse.
+    """
+    entries = template_key_entries(template)
+    kids = template_kids(template)
+    if any("did_key" in entry for entry in entries):
+        raise ManifestError(
+            "manifest_template_invalid", "a manifest template commits no did_key; the deployment supplies it"
+        )
+    undeclared = sorted(set(did_keys) - set(kids))
+    if undeclared:
+        raise ManifestError(
+            "manifest_template_invalid", f"did:keys for kids the template does not declare: {', '.join(undeclared)}"
+        )
+    missing = [kid for kid in kids if kid not in did_keys]
+    if missing:
+        raise ManifestError("manifest_template_invalid", f"no did:key for declared kids: {', '.join(missing)}")
+    filled = copy.deepcopy(dict(template))
+    if isinstance(filled.get("app"), dict):
+        filled["app"] = {**filled["app"], "id": app_id, "origin": origin.rstrip("/")}
+    for entry in template_key_entries(filled):
+        entry["did_key"] = did_keys[entry["kid"]]
+    return canonical_bytes(filled)
+
+
 def read_manifest_bytes(path: Path, public_origin: str | None = None) -> bytes:
     """The manifest bytes to serve for a deployment origin.
 

@@ -21,13 +21,14 @@ from fastapi import Depends, FastAPI, Request
 from nacl.signing import SigningKey
 from pydantic_settings import SettingsConfigDict
 
-from aweb_naapp.manifest import write_manifest_file
+from aweb_naapp.manifest import canonical_bytes, write_manifest_file
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import ActionKind, Authorization, DeclaredTool, Grant
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import Principal
 
 from ..test_manifest_v2_vectors import V2
+from .test_runtime_manifest_vectors import _as_template
 
 MANIFEST = V2["base_manifests"]["v2"]
 ORIGIN = MANIFEST["app"]["origin"]
@@ -85,11 +86,15 @@ async def _running(
     manifest: dict[str, Any] = MANIFEST, routes: tuple[str, ...] = ROUTES,
 ) -> AsyncIterator[httpx.AsyncClient]:
     manifest_path = tmp_path / "aweb-app.json"
-    write_manifest_file(manifest_path, manifest)
+    template, key_files, _ = _as_template(canonical_bytes(manifest), tmp_path / "keys")
+    write_manifest_file(manifest_path, template)
     migrations = tmp_path / "migrations"
     migrations.mkdir()
     runtime = NaappRuntime(
-        FixtureSettings(_env_file=None, database_url=app_database_url, awid_registry_url=REGISTRY_URL),
+        FixtureSettings(
+            _env_file=None, database_url=app_database_url, awid_registry_url=REGISTRY_URL,
+            app_key_files=key_files,
+        ),
         module_name="fixture",
         migrations_path=migrations,
         manifest_path=manifest_path,

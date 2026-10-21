@@ -90,6 +90,8 @@ async def running(
         _env_file=None,
         database_url=database_url,
         public_origin=API,
+        # A reachable origin serves its own app id, never the hosted one (aweb-acin).
+        app_id="secrets-test",
         console_origin=CONSOLE,
         awid_registry_url=REGISTRY_URL,
     )
@@ -241,7 +243,7 @@ async def test_health_reports_the_commit_the_database_kms_and_the_outbox(
         response = await app.api.get("/health")
         assert response.status_code == 200
         body = response.json()
-        assert body["service"] == "secrets"
+        assert body["service"] == "secrets-test"
         assert body["build"] == {"git_sha": COMMIT}
         assert body["checks"] == {
             "database": {"ok": True},
@@ -267,6 +269,8 @@ async def test_a_failing_check_serves_no_error_detail(registry, database_url) ->
         _env_file=None,
         database_url=database_url,
         public_origin=API,
+        # A reachable origin serves its own app id, never the hosted one (aweb-acin).
+        app_id="secrets-test",
         console_origin=CONSOLE,
         awid_registry_url=REGISTRY_URL,
     )
