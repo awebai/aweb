@@ -8,8 +8,6 @@ manifest does not declare, does not start.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import httpx
 from aweb_naapp.manifest import Manifest
 from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes
@@ -37,14 +35,13 @@ def chain_signer(settings: LogsSettings, manifest: Manifest) -> LogsSigner:
 def create_app(
     settings: LogsSettings,
     *,
-    manifest_path: Path = MANIFEST_PATH,
     awid_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     runtime = NaappRuntime(
         settings,
         module_name=MIGRATIONS_MODULE,
         migrations_path=MIGRATIONS_PATH,
-        manifest_path=manifest_path,
+        manifest_path=MANIFEST_PATH,
         awid_transport=awid_transport,
     )
     chain_signer(settings, runtime.manifest)
@@ -53,3 +50,9 @@ def create_app(
     mount_manifest_routes(app, runtime=runtime)
     mount_health(app, settings, checks=runtime.health_checks())
     return app
+
+
+def serve() -> FastAPI:
+    """The app for this deployment, configured from its ``LOGS_`` environment:
+    ``uvicorn aweb_logs.app:serve --factory``."""
+    return create_app(LogsSettings())

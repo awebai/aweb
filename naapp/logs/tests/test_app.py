@@ -11,17 +11,24 @@ from pathlib import Path
 
 import httpx
 import pytest
-from aweb_naapp.manifest import canonical_bytes, load_manifest
+from aweb_naapp.manifest import load_manifest
 from aweb_naapp.runtime.app_keys import AppKeyError
 from awid.did import did_from_public_key
 from fastapi import FastAPI
 from pgdbm import AsyncDatabaseManager
 
-from aweb_logs.app import chain_signer, create_app
+from aweb_logs.app import chain_signer, create_app, serve
 from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE
 from aweb_logs.config import LogsSettings
 
-from .deployment import did_key_of, filled_manifest, template, write_key_file, write_key_files
+from .deployment import (
+    TEST_APP_ID,
+    did_key_of,
+    served_manifest,
+    template,
+    write_key_file,
+    write_key_files,
+)
 
 ORIGIN = "https://logs.example.test"
 
@@ -33,21 +40,18 @@ def _chain_kid() -> str:
 
 def _deployment(
     tmp_path: Path, database_url: str, *, db_schema: str = "public"
-) -> tuple[LogsSettings, Path]:
-    key_files = write_key_files(tmp_path)
-    manifest_path = tmp_path / "aweb-app.json"
-    manifest_path.write_bytes(filled_manifest(key_files))
-    settings = LogsSettings(
+) -> LogsSettings:
+    return LogsSettings(
         _env_file=None,
         database_url=database_url,
         db_schema=db_schema,
         public_origin=ORIGIN,
-        app_key_files=key_files,
+        app_id=TEST_APP_ID,
+        app_key_files=write_key_files(tmp_path),
     )
-    return settings, manifest_path
 
 
-def _deployment_on(tmp_path: Path, database: AsyncDatabaseManager) -> tuple[LogsSettings, Path]:
+def _deployment_on(tmp_path: Path, database: AsyncDatabaseManager) -> LogsSettings:
     """A deployment on the test database, in the schema the test database gives."""
     return _deployment(tmp_path, database.config.get_dsn(), db_schema=database.schema or "public")
 
@@ -65,8 +69,8 @@ async def running(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
 
 
 async def test_the_catalog_lists_the_served_manifest(tmp_path: Path, database) -> None:
-    settings, manifest_path = _deployment_on(tmp_path, database)
-    async with running(create_app(settings, manifest_path=manifest_path)) as client:
+    settings = _deployment_on(tmp_path, database)
+    async with running(create_app(settings)) as client:
         catalog = (await client.get("/.well-known/aweb-app-versions.json")).json()
         (variant,) = catalog["variants"]
         served = await client.get(variant["url"])
@@ -81,15 +85,15 @@ async def test_the_catalog_lists_the_served_manifest(tmp_path: Path, database) -
 
 
 async def test_logs_serves_no_docs_surface(tmp_path: Path, database) -> None:
-    settings, manifest_path = _deployment_on(tmp_path, database)
-    async with running(create_app(settings, manifest_path=manifest_path)) as client:
+    settings = _deployment_on(tmp_path, database)
+    async with running(create_app(settings)) as client:
         for path in ("/docs", "/redoc", "/openapi.json", "/"):
             assert (await client.get(path)).status_code == 404, path
 
 
 async def test_logs_is_ready_with_its_chain_tables(tmp_path: Path, database) -> None:
-    settings, manifest_path = _deployment_on(tmp_path, database)
-    async with running(create_app(settings, manifest_path=manifest_path)) as client:
+    settings = _deployment_on(tmp_path, database)
+    async with running(create_app(settings)) as client:
         ready = await client.get("/ready")
         assert ready.status_code == 200, ready.text
         tables = await database.fetch_all(
@@ -102,23 +106,27 @@ async def test_logs_is_ready_with_its_chain_tables(tmp_path: Path, database) -> 
 
 
 def test_logs_does_not_start_without_its_chain_key(tmp_path: Path) -> None:
-    settings, manifest_path = _deployment(tmp_path, "postgresql://localhost/logs")
+    settings = _deployment(tmp_path, "postgresql://localhost/logs")
     files = dict(settings.app_key_files)
     del files[_chain_kid()]
     with pytest.raises(AppKeyError):
-        create_app(settings.model_copy(update={"app_key_files": files}), manifest_path=manifest_path)
+        create_app(settings.model_copy(update={"app_key_files": files}))
 
 
-def test_logs_does_not_start_with_a_chain_key_the_manifest_does_not_declare(tmp_path: Path) -> None:
-    settings, manifest_path = _deployment(tmp_path, "postgresql://localhost/logs")
-    files = {**settings.app_key_files, _chain_kid(): write_key_file(tmp_path / "other")}
+def test_logs_does_not_start_with_a_key_for_a_kid_its_template_does_not_declare(
+    tmp_path: Path,
+) -> None:
+    settings = _deployment(tmp_path, "postgresql://localhost/logs")
+    files = {**settings.app_key_files, "logs-other": write_key_file(tmp_path / "other")}
     with pytest.raises(AppKeyError):
-        create_app(settings.model_copy(update={"app_key_files": files}), manifest_path=manifest_path)
+        create_app(settings.model_copy(update={"app_key_files": files}))
 
 
 def test_the_chain_signer_signs_with_the_configured_key_for_this_origin(tmp_path: Path) -> None:
-    settings, manifest_path = _deployment(tmp_path, "postgresql://localhost/logs")
-    signer = chain_signer(settings, load_manifest(manifest_path.read_bytes()))
+    settings = _deployment(tmp_path, "postgresql://localhost/logs")
+    signer = chain_signer(
+        settings, load_manifest(served_manifest(settings.app_key_files, origin=ORIGIN))
+    )
     assert (signer.logs_origin, signer.kid) == (ORIGIN, _chain_kid())
     assert did_from_public_key(bytes(signer.signing_key.verify_key)) == did_key_of(
         settings.app_key_files[_chain_kid()]
@@ -126,16 +134,29 @@ def test_the_chain_signer_signs_with_the_configured_key_for_this_origin(tmp_path
 
 
 def test_receipts_and_checkpoints_under_two_keys_are_refused(tmp_path: Path) -> None:
-    settings, _ = _deployment(tmp_path, "postgresql://localhost/logs")
+    settings = _deployment(tmp_path, "postgresql://localhost/logs")
     manifest = template()
     (chain,) = (e for e in manifest["app_keys"] if e["kid"] == _chain_kid())
     chain["purposes"] = [RECEIPT_PURPOSE]
     manifest["app_keys"].append({"kid": "logs-checkpoints", "purposes": [CHECKPOINT_PURPOSE]})
     files = {**settings.app_key_files, "logs-checkpoints": write_key_file(tmp_path / "checkpoints")}
-    for entry in manifest["app_keys"]:
-        entry["did_key"] = did_key_of(files[entry["kid"]])
     with pytest.raises(AppKeyError):
         chain_signer(
             settings.model_copy(update={"app_key_files": files}),
-            load_manifest(canonical_bytes(manifest)),
+            load_manifest(served_manifest(files, origin=ORIGIN, manifest=manifest)),
         )
+
+
+async def test_logs_starts_from_its_environment_and_serves_its_committed_template(
+    tmp_path: Path, database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key_files = write_key_files(tmp_path)
+    monkeypatch.setenv("LOGS_DATABASE_URL", database.config.get_dsn())
+    monkeypatch.setenv("LOGS_DB_SCHEMA", database.schema or "public")
+    monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", ORIGIN)
+    monkeypatch.setenv("LOGS_APP_ID", TEST_APP_ID)
+    monkeypatch.setenv("LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()}))
+    async with running(serve()) as client:
+        catalog = (await client.get("/.well-known/aweb-app-versions.json")).json()
+        served = await client.get(catalog["variants"][0]["url"])
+    assert served.content == served_manifest(key_files, origin=ORIGIN)

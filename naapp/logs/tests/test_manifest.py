@@ -17,14 +17,15 @@ from aweb_naapp.runtime.app_keys import load_app_key
 from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE
 from aweb_logs.config import LogsSettings
 
-from .deployment import did_key_of, filled_manifest, template, write_key_files
+from .deployment import did_key_of, served_manifest, template, write_key_files
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
+ORIGIN = "https://logs.example.test"
 CATALOG = load_catalog((AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json").read_bytes())
 
 
 def _filled(tmp_path: Path) -> Any:
-    return load_manifest(filled_manifest(write_key_files(tmp_path)))
+    return load_manifest(served_manifest(write_key_files(tmp_path), origin=ORIGIN))
 
 
 def test_the_template_commits_no_keys() -> None:
@@ -75,10 +76,10 @@ def test_kids_and_purposes_come_from_the_file_and_keys_from_configuration(
     settings = LogsSettings(
         _env_file=None,
         database_url="postgresql://localhost/logs",
-        public_origin="https://logs.example.test",
+        public_origin=ORIGIN,
         app_key_files=key_files,
     )
-    manifest = load_manifest(filled_manifest(key_files))
+    manifest = load_manifest(served_manifest(key_files, origin=ORIGIN))
 
     assert {kid: list(purposes) for kid, _, purposes in manifest.app_keys} == template_keys
     for purpose in (RECEIPT_PURPOSE, CHECKPOINT_PURPOSE, "hook-resolve"):
