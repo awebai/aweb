@@ -4,6 +4,22 @@
 
 ## Release preparations
 
+### Release preparation: aweb-naapp 0.1.0
+
+The first release of `aweb-naapp`, the shared naapp toolkit in `naapp-lib/`.
+
+- Publishes PyPI `aweb-naapp` from the new `aweb-naapp-vX.Y.Z` tag lane. Its
+  `runtime` extra requires `awid-service>=0.5.30`, the first AWID release with
+  the principal-attestation records the runtime reads, so `awid-service` 0.5.30
+  must be public first. The publisher waits for it.
+- `make check-naapp-lib-package` builds the sdist and wheel, checks that the
+  wheel ships every package data file and names no path dependency, and
+  installs every extra from the built wheel into a fresh environment and
+  imports every module.
+- The PyPI publisher now maps each tag lane to its package and directory. A
+  new PyPI lane could otherwise have published `awid-service` instead of its
+  own package.
+
 ### Release preparation: server 1.27.30
 
 Server changes are since `server-v1.27.29`.

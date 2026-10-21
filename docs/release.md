@@ -8,6 +8,7 @@ commit.
 |---|---|
 | `server-vX.Y.Z` | PyPI `aweb` |
 | `awid-service-vX.Y.Z` | PyPI `awid-service` |
+| `aweb-naapp-vX.Y.Z` | PyPI `aweb-naapp`, the shared naapp toolkit in `naapp-lib/` |
 | `awid-vX.Y.Z` | `ghcr.io/awebai/awid` image |
 | `aw-vX.Y.Z` | `aw` CLI distributions and npm platform packages |
 | `channel-vX.Y.Z` | npm Claude channel; the unpinned marketplace resolves the public package |
@@ -109,10 +110,11 @@ the complete release action—there is no marketplace-pointer commit or follow-u
 command.
 
 GitHub omits tag-push events when more than three tags are pushed together, so
-never batch this step. When `awid-service` and `aweb` move together, push both
-tags separately. The `aweb`
-publisher waits for the exact declared AWID dependency to become public before
-publishing its package.
+never batch this step. When `awid-service` moves together with `aweb` or
+`aweb-naapp`, push each tag separately, `awid-service` first. The `aweb` and
+`aweb-naapp` publishers wait for the in-repo AWID version to become public
+before publishing their package, and `make check-naapp-lib-package` refuses an
+`aweb-naapp` whose `awid-service` floor is newer than the in-repo AWID.
 
 ## Runnerless publication
 
