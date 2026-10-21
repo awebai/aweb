@@ -2,12 +2,12 @@
 the hosted gateway interpret identically (frozen m1.1 schema). The committed
 ``aweb-app.json`` is the byte-stable artifact served verbatim at
 ``/.well-known/aweb-app.json``; this module is its authoring source. A test asserts
-the file equals ``canonical_bytes(MANIFEST)`` so the two never drift.
+the file equals ``aweb_naapp.manifest.canonical_bytes(MANIFEST)`` so the two never
+drift; ``write_manifest_file(MANIFEST_PATH, MANIFEST)`` regenerates it.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -271,7 +271,7 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "billing",
-            "description": "Get the team's billing tier, caps, and usage.",
+            "description": "Get the team's usage: documents and the most versions on any document.",
             "method": "GET",
             "path": "/v1/billing",
             "input_schema": {"type": "object", "properties": {}},
@@ -296,21 +296,3 @@ MANIFEST: dict[str, Any] = {
     ],
 }
 
-
-def canonical_bytes(obj: Any) -> bytes:
-    """Canonical JSON bytes: sorted keys, no insignificant whitespace, UTF-8.
-
-    Matches the awid signing CanonicalJSON convention (HTML-escaping off) so the
-    committed manifest and any consumer's serialization are byte-identical.
-    """
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-
-
-def read_manifest_bytes() -> bytes:
-    """The raw committed manifest bytes — served verbatim, never re-serialized."""
-    return MANIFEST_PATH.read_bytes()
-
-
-def write_manifest_file() -> None:
-    """Regenerate the committed canonical manifest file from MANIFEST."""
-    MANIFEST_PATH.write_bytes(canonical_bytes(MANIFEST))

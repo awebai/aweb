@@ -29,21 +29,22 @@ The API defaults to `http://127.0.0.1:8765`.
 
 ## Configuration
 
-All runtime env vars use the `FOLIO_` prefix:
+All runtime env vars use the `FOLIO_` prefix; they are the shared naapp settings (`aweb_naapp.runtime.settings`) plus Folio's own:
 
 - `FOLIO_DATABASE_URL` — PostgreSQL connection string.
 - `FOLIO_AWID_REGISTRY_URL` — AWID registry URL, default `https://api.awid.ai`.
-- `FOLIO_AWID_SERVICE_TOKEN` — optional AWID service credential for private-team facts and revocation reads; provision as a secret. A denied private-team read returns `403 team_private_unreadable`; registry outages remain `503`.
+- `FOLIO_AWID_SERVICE_TOKEN` — optional AWID service credential for private-team facts and revocation reads, at least 32 bytes; provision as a secret. A denied private-team read returns `403 team_private_unreadable`; registry outages remain `503`.
 - `FOLIO_PUBLIC_ORIGIN` — public origin clients sign in the v2 team-auth `aud`, default `http://127.0.0.1:8765`.
 - `FOLIO_DB_POOL_MIN_CONNECTIONS` — default `1`.
 - `FOLIO_DB_POOL_MAX_CONNECTIONS` — default `5`.
 - `FOLIO_DB_STATEMENT_CACHE_SIZE` — default `0` for PgBouncer compatibility.
-- `FOLIO_AUTH_CACHE_TTL_SECONDS` — AWID auth cache TTL, default `600`.
-- `FOLIO_TIMESTAMP_SKEW_SECONDS` — signed request skew window, default `300`.
+- `FOLIO_AUTH_CACHE_TTL_SECONDS` — AWID auth cache TTL, default and maximum `60`.
+- `FOLIO_TIMESTAMP_SKEW_SECONDS` — signed request skew window, default and maximum `300`.
+- `FOLIO_DID_AW_PROFILE` — how a certificate's did:aw is checked against its current registry key, default `observe` (admit and log); `require` refuses a mismatch.
+- `FOLIO_APP_EVENTS_ORIGIN`, `FOLIO_APP_EMIT_KID`, `FOLIO_APP_EMIT_KEY_SEED_HEX` — where and with which declared key Folio emits `folio/doc.changed`; unset emits nothing.
+- `FOLIO_GIT_SHA` — the build commit `/health` reports when Render does not inject `RENDER_GIT_COMMIT`.
 - `FOLIO_DEFAULT_PRESENT_TTL_SECONDS` — default present-link TTL, default `86400`.
 - `FOLIO_MAX_PRESENT_TTL_SECONDS` — max present-link TTL, default `604800`.
-- `FOLIO_FREE_MAX_DOCUMENTS` — inherited free-tier cap, default `3`.
-- `FOLIO_FREE_MAX_VERSIONS_PER_DOC` — inherited version cap, default `50`.
 - `FOLIO_CLOUDFLARE_ACCOUNT_ID` — Cloudflare account id for Stream.
 - `FOLIO_CLOUDFLARE_STREAM_API_TOKEN` — Stream API token for direct uploads/status.
 - `FOLIO_CLOUDFLARE_STREAM_PLAYBACK_HOST` — signed playback host, for example `customer-<code>.cloudflarestream.com`.
@@ -120,32 +121,11 @@ make e2e
 
 `make e2e` starts local Postgres + AWID via Docker Compose, runs real `aw id request --team-auth` tests, and tears the stack down.
 
-**The suite needs `aweb` and `aweb-naapp` checked out next to folio.** Four tests read the
-neighbouring repositories directly rather than through a package:
-
-| test | needs | why |
-| --- | --- | --- |
-| 3 in `tests/test_auth_v2_envelope.py` | `../aweb` | they check folio's request signing against aweb's own implementation, using conformance vectors that live in aweb |
-| 1 in `tests/test_surfaces.py` | `../aweb-naapp` | it checks that `aweb_naapp` was imported from the pinned package and not from a local source tree, so it needs a local source tree to look for |
-
-```
-prj/
-  aweb/
-  aweb-naapp/
-  folio/
-```
-
-The bind is to the canonical checkout, not to whatever branch you are testing. Every folio
-worktree on a machine resolves to the same `aweb` directory, so changing a conformance vector
-on an aweb branch does not change what folio reads — folio still reads the canonical
-checkout's copy. That is usually what you want for a conformance vector, and it is worth
-knowing during a coordinated cross-repo change, when "folio agreed with the vector" means it
-agreed with the canonical one.
-
-Without them those four fail with a message naming every path searched; the other 164 tests
-still run. They fail rather than skip on purpose: a cross-repo conformance check that
-quietly stops comparing is indistinguishable from one that passes, and the guard that
-checked a location which could not exist is the defect this arrangement exists to prevent.
+Folio uses the in-repo `naapp-lib/` and `awid/` through its locked path sources.
+Run it from an aweb checkout; separate sibling clones are unnecessary. Shared
+verifier coverage lives in `naapp-lib/tests/runtime/test_team_auth_envelope.py`,
+`test_team_auth_vectors.py` and `test_awid_team_cache.py`. Folio's own
+`tests/test_e2e_smoke.py` exercises its integration with real AWID and `aw`.
 
 ## Docker / Render
 

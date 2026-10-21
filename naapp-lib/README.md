@@ -52,6 +52,16 @@ denied address, and sends a request only to the destination it matches,
 through one pinned, verified connection. Redirects come back as responses, no proxy is read from
 the environment, and a failure is classed as not sent or of unknown outcome.
 
+The email sender, `aweb_naapp.email`, sends a naapp's links and notices, one
+recipient per message, over SMTP with TLS required and the certificate
+verified. It is pure standard library and needs no extra.
+`EmailSettings.from_env(prefix)` reads `<PREFIX>EMAIL_SMTP_HOST`, `_SMTP_PORT`,
+`_TLS` (`starttls` or `implicit`), `_USERNAME`, `_FROM`, an optional
+`_CA_FILE`, and the password from the key file named by `_PASSWORD_FILE`
+(`aweb_naapp.key_file`), never from the environment; anything missing or
+malformed fails at startup. A failed send raises `EmailNotSent` with a code, and
+neither errors nor logs carry the body or the full recipient.
+
 A server that produces hook events (`docs/hook-events.md`) uses
 `aweb_naapp.hooks.producer` and `aweb_naapp.hooks.transport`, with the `hooks`,
 `outbox` and `egress` extras. `HookProducer.enqueue(tx, ...)` signs an event and
@@ -83,13 +93,21 @@ role's default search_path is. A new app should set its own schema: apps that
 share one database also share the runtime's own tables (the outbox, observed
 principals) unless their schemas differ.
 
+Each shared store, meaning every `aweb_naapp` module with its own migration
+module (the outbox, idempotency and rate limits among them), owns its tables in
+the app's schema, and its migrations apply before the app's own. An app's migrations
+never create or alter a store's table: `CREATE TABLE IF NOT EXISTS` under the
+same name collides silently, and which shape wins depends on which migration
+applied first.
+
 ### App keys
 
 An app names its signing keys by kid, as key files:
 `<PREFIX>APP_KEY_FILES='{"<kid>": "/run/secrets/<file>"}'`. A key file holds the
 32-byte Ed25519 seed as 64 hex characters, with one trailing newline allowed. It
 must be a regular file of at most 1 KiB, and must not be group- or world-writable. The manifest
-declares which kid signs which purpose, and the app does not start unless the
+declares which kid signs which purpose: a version 2 manifest in `app_keys`, a version 1
+manifest's `event_emitters` as app-event keys. The app does not start unless the
 configured key is the declared one. An app with `<PREFIX>APP_EVENTS_ORIGIN` set
 (https, or http on loopback) must hold its declared app-event key. That key may instead be given as
 `<PREFIX>APP_EMIT_KEY_SEED_HEX` with `<PREFIX>APP_EMIT_KID`, a form that signs
@@ -273,7 +291,26 @@ the approval, decision, policy and the app's own origin.
   approval. Retiring approvals before removing the authority inverts that
   order and can deadlock with such a path.
 - A contact change needs the approver's own passkey, takes effect after a delay
-  (at least 24 h) and is notified to the old and the new contact.
+  (at least 24 h) and is notified to the old and the new contact. An owner can
+  also schedule one through an owner-confirmed change, with
+  `change_contact_by_owner(tx, scope=..., new_contact=..., evidence=...)` on an
+  `OwnerApproval` admitted in that transaction. The delay and notices are the
+  same, and the notices go out with `send_notices` after the commit. It
+  changes the contact only: no passkey is enrolled at the new contact without
+  a recovery. The last owner's own contact is refused (`last_owner_protected`).
+  Only one change may be pending at a time (`contact_change_pending`). The
+  approver cancels a pending change from either path with their own passkey
+  (`contact_cancel_options`, `cancel_pending_contact`), and the cancel wins.
+- A new contact counts only once its holder proves it. Every contact change,
+  from either path, sends a single-use proof to the new contact alone, through
+  `PasskeyDelivery.deliver_contact_proof`, bound to that contact's digest. The
+  holder confirms it with `prove_contact(token)` before the change's time; a
+  change still unproven by then lapses, and the old contact stays. A contact
+  given at designation is proven by the enrolment completed through it. So an
+  approver's effective contact is always a proven one, which is what the owner
+  count behind `last_owner_protected` relies on. Security notices, such as recovery
+  notices, go only to proven contacts; the one message an unproven pending
+  contact receives is its own proof.
 - These durations are floors. App or owner policy may lengthen them, and
   deploy configuration may raise the floor itself (`lockout_floor`); nothing
   can go below 72 h and 24 h.

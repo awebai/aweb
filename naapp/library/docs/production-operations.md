@@ -21,7 +21,9 @@ service's reviewed targets rather than improvising production mutations.
 
 `ops/render-production.json` is the fail-closed topology allowlist. The tooling refuses
 to proceed if Render reports a different service ID, name, region, repository, branch,
-origin URL, suspension state, or auto-deploy setting.
+root directory, Dockerfile path, Docker build context, origin URL, suspension state, or
+auto-deploy setting. An absent root directory and an empty one both mean the repository
+root.
 
 The Render API key is read from `~/.aweb-render/env`. The file must have mode `0600` and
 contain exactly one nonempty `RENDER_API_KEY`. Commands never print the key, headers, or
@@ -62,6 +64,55 @@ Region drift is therefore checked at the credentialed operations boundary, by de
 `make prod-status` reads the live Render API and fails closed unless every field in
 `ops/render-production.json` matches, including `virginia`. Run that preflight before any
 production operation; do not describe the public health response as region attestation.
+
+## Build
+
+Library depends on the awid and naapp-lib of the aweb checkout it lives in
+(`[tool.uv.sources]` in `pyproject.toml` names `../../awid` and `../../naapp-lib`). The
+Docker build therefore needs the **repository root** as its context; a context of
+`naapp/library` cannot see those directories.
+
+```sh
+docker build -f naapp/library/Dockerfile .    # from the aweb repository root
+```
+
+The Dockerfile copies only the paths the service needs: `awid/` and `naapp-lib/`, and
+Library's `pyproject.toml`, `uv.lock`, `README.md`, `src/`, `skills/` and `site/static/`.
+Those trees are copied whole, so `naapp/library/Dockerfile.dockerignore` is what keeps
+files local to a checkout out of the build context and the image: `.env` files,
+virtualenvs, bytecode, tool caches, `.aw` identity homes (aw's signing key, encryption keys
+and team certificates), and `*.key` and `*.pem` files. `/app` mirrors the repository
+layout (`/app/naapp/library`, `/app/awid`, `/app/naapp-lib`), so the path sources resolve
+in the image as they do in a checkout.
+
+### Render settings
+
+| Setting | Value |
+| --- | --- |
+| Repository | `https://github.com/awebai/aweb`, branch `main` |
+| Root directory | the repository root (empty) |
+| Dockerfile path | `./naapp/library/Dockerfile` |
+| Docker build context | `.` (the repository root) |
+| Health check path | `/health` |
+
+`ops/render-production.json` pins these values. Until the live service's settings move to
+this build, `make prod-status` fails closed and names `rootDir`, `dockerfilePath` and
+`dockerContext`, so the move is visible before it is made.
+
+### Moving the live service onto this build
+
+The settings change and the first deploy of a commit with this Dockerfile go together:
+
+1. Before the change, a build of any commit with this Dockerfile under the
+   `naapp/library` root directory fails at the first `COPY awid/...`. A failed build does
+   not replace the running deploy.
+2. After the change, a build of an older commit whose Dockerfile expects the
+   `naapp/library` context fails the same way. Rollback across the change therefore uses
+   `make prod-rollback`, which redeploys an earlier deploy's built artifact and does not
+   rebuild; a commit deploy of a pre-change commit is not a rollback path.
+3. Record the live deploy ID and commit before the change as the rollback target.
+4. Verify the new deploy with `make prod-verify` and an authenticated read, which
+   exercises team-certificate verification through the in-repo awid.
 
 ## Required release record
 
