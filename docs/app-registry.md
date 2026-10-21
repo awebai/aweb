@@ -251,6 +251,51 @@ serving/mounted application so certificate and internal ingress use the same
 check. The helper alone does not change the legacy install ingress described
 above; route enforcement and its product request flow are separate F6 work.
 
+## Installation identity and transactional reader
+
+Migration `029_team_app_installation_identity` adds an opaque, unique
+`installation_id`, a positive `BIGINT` generation, install state, per-install
+`origin_verified`, a bounded verification error code and exact pinned manifest
+bytes. State is `pending_origin_verification`, `active` or `uninstalled`.
+Active rows require origin verification and bytes matching their pinned SHA-256
+digest. Existing rows receive new IDs and generation 1 without changing their
+origin, digest or granted scopes.
+
+Existing rows begin in `pending_origin_verification`: installer-supplied bytes
+were not proof that this server fetched the origin. Migrations perform no
+network access. A separate operator/admin verification job must fetch the
+original pinned bytes before activating a pending row, preserving its ID,
+generation and scopes. Until then normal app authority fails closed; core mail
+and chat are unaffected. Deploy plans must run the pending-row verifier
+immediately after migration to keep the app interruption short. The schema and
+reader ship with origin-fetch enforcement and state guards on existing registry
+lookups; a schema-only cutover is not supported.
+
+`aweb.app_registry.get_installation_on(tx, *, team_id, app_id,
+for_update=False)` returns the current row or `None`. Its projection includes
+`installation_id`, `generation`, `state`, `origin`, `digest`, `granted_scopes`,
+`origin_verified`, version metadata and `origin_verification_error`. It does not
+load manifest bytes for ordinary authority reads.
+
+Task ingress, authorized receipt reads and lifecycle mutations pass
+`for_update=True`. They lock the same current installation row with
+`FOR UPDATE OF i` inside their own transaction. Retirement therefore serializes
+with task admission; both services use this reader. Generations change on
+updates or scope changes; reinstall uses a new ID. Neither an absent row nor
+a non-active state confers normal app authority.
+
+
+Generation is strictly increasing per `(team_id, app_id)`, across installation
+IDs. A new installation ID continues the order rather than resetting it.
+`next_installation_generation_on(tx, team_id=..., app_id=...)` allocates the next
+value in the same registry transaction. Existing-installation writers hold the
+installation row lock and validate the caller's expected generation first.
+`team_app_install_counters` survives uninstall and removal of the installation
+row, and also survives deletion and recreation of the team itself. Counter
+rows are never deleted, so reusing a team ID cannot reset app authority. Every install,
+update and scope change uses the allocator. A rolled-back transaction issues
+no generation. Migrated current installations and their counters start at 1.
+
 ## App-side installation admission and dispatch fence (X9)
 
 `aweb_naapp.runtime.installation` supplies the shared PostgreSQL fence. Apply
