@@ -22,11 +22,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.runtime.approvals import RequestNotCanonical, canonical_request
 from aweb_naapp.runtime.approvals.request import parse_request_json
 from awid.utc_timestamps import parse_utc_seconds
 
-from aweb_secrets import grant, policy, secret
+from aweb_secrets import destination, grant, policy, secret
 from aweb_secrets.principal import is_did_aw, is_did_key
 
 TYPE = "aweb.secrets.change"
@@ -213,6 +214,14 @@ def _record(
     return derived
 
 
+def _destination(after: Mapping[str, Any]) -> destination.DestinationRecord:
+    # The deploy's internal-destinations setting is applied when the confirmed
+    # change set is stored, and again at dispatch; the shape checks the form.
+    return destination.DestinationRecord.from_after(
+        after, internal_destinations=InternalDestinations.ALLOWED
+    )
+
+
 def _policy(after: Mapping[str, Any]) -> policy.Policy:
     return policy.Policy.from_body({k: v for k, v in after.items() if k != "v"})
 
@@ -226,6 +235,12 @@ AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
         ref_field="ref",
         identity=("ref",),
         derived=_record(secret.SecretRecord.from_after),
+    ),
+    ("destination", 1): AfterShape(
+        fields=_record_fields(destination.FIELDS),
+        ref_field="destination_id",
+        identity=("destination_id",),
+        derived=_record(_destination),
     ),
     ("grant", 1): AfterShape(
         fields=_record_fields(grant.FIELDS),

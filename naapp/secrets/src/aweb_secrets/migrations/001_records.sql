@@ -107,6 +107,26 @@ CREATE OR REPLACE TRIGGER grants_only_revoked
     BEFORE UPDATE ON {{tables.grants}}
     FOR EACH ROW EXECUTE FUNCTION {{tables.secrets_grant_only_revoked}}();
 
+-- Where a secret may be sent (§7.2), each entry in the egress guard's form.
+-- Immutable: broadening is a new entry, and removing one is a narrowing act.
+CREATE TABLE IF NOT EXISTS {{tables.destinations}} (
+    destination_id   TEXT PRIMARY KEY,
+    installation_id  TEXT NOT NULL,
+    team_id          TEXT NOT NULL,
+    secret_id        TEXT NOT NULL,
+    record           JSONB NOT NULL,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (installation_id, team_id, secret_id)
+        REFERENCES {{tables.secrets}} (installation_id, team_id, secret_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_destinations_by_secret
+    ON {{tables.destinations}} (installation_id, secret_id);
+
+CREATE OR REPLACE TRIGGER destinations_immutable
+    BEFORE UPDATE ON {{tables.destinations}}
+    FOR EACH ROW EXECUTE FUNCTION {{tables.secrets_refuse_change}}();
+
 -- Token buckets of policies' rate limits (§4.4): one per (secret, principal) and
 -- one per secret, whose principal_did is ''. Charged in the admission transaction.
 CREATE TABLE IF NOT EXISTS {{tables.rate_buckets}} (

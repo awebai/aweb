@@ -246,6 +246,25 @@ POSITIVE.append(
                         **REFUND_GRANT_TERMS,
                     },
                 },
+                {
+                    "kind": "destination",
+                    "op": "create",
+                    "ref": "dst_refunds01",
+                    "after": {
+                        "v": 1,
+                        "destination_id": "dst_refunds01",
+                        "secret_id": "sec_19ab42",
+                        "scheme": "https",
+                        "host": "api.payments.example",
+                        "port": 443,
+                        "path": "/v1/refunds/**",
+                        "methods": ["POST"],
+                        "query_rules": {},
+                        "header_allow": ["idempotency-key"],
+                        "network": "public",
+                        "cidr": None,
+                    },
+                },
             ],
             "Set up refunds on the live payments key",
         ),
@@ -382,6 +401,16 @@ refused_records = [
         mutated_records(setitem(["changes", 2, "after", "open_request"], True)),
     ),
     ("grant-update", mutated_records(setitem(["changes", 2, "op"], "update"))),
+    ("destination-update", mutated_records(setitem(["changes", 4, "op"], "update"))),
+    (
+        "destination-host-not-canonical",
+        mutated_records(setitem(["changes", 4, "after", "host"], "API.payments.example")),
+    ),
+    ("destination-not-https", mutated_records(setitem(["changes", 4, "after", "scheme"], "http"))),
+    (
+        "destination-path-dot-segment",
+        mutated_records(setitem(["changes", 4, "after", "path"], "/v1/../admin")),
+    ),
     (
         "grant-template-role-outside-secrets",
         mutated_records(setitem(["changes", 3, "after", "subject"], {"role": "logs.reader"})),
@@ -467,10 +496,10 @@ vector = {
         "never reach them: refused encodings and shapes, or other bytes. Confirmation cases "
         "fix when a change set can be confirmed: for the current installation, generation and "
         "team, at the revision it was drafted on, before it expires. A change set lives at most "
-        "seven days. Principals are exact did:aw or Ed25519 did:key strings. A secret, grant, "
-        "grant template or policy after is that record v1, checked whole; a policy is referenced "
+        "seven days. Principals are exact did:aw or Ed25519 did:key strings. A secret, destination, "
+        "grant, grant template or policy after is that record v1, checked whole; a policy is referenced "
         'by the SHA-256 of "aweb.secrets.policy/1\\n" || canonical_json(after without v). The '
-        "after shapes of destination and operation are added by S8, and those of job and runner "
+        "after shape of operation is added by S8, and those of job and runner "
         "by S15; until then those kinds are refused. Identifiers are fixtures; DIDs are "
         "derived from fixed seeds."
     ),

@@ -61,7 +61,28 @@ TEMPLATE = {
     "policy_digest": POLICY_DIGEST,
 }
 
+DESTINATION = {
+    "v": 1,
+    "destination_id": "dst_refunds01",
+    "secret_id": "sec_19ab42",
+    "scheme": "https",
+    "host": "api.payments.example",
+    "port": 443,
+    "path": "/v1/refunds/**",
+    "methods": ["POST"],
+    "query_rules": {},
+    "header_allow": ["idempotency-key"],
+    "network": "public",
+    "cidr": None,
+}
+
 ITEMS = {
+    "destination": {
+        "kind": "destination",
+        "op": "create",
+        "ref": "dst_refunds01",
+        "after": DESTINATION,
+    },
     "secret": {"kind": "secret", "op": "create", "ref": "payments-live", "after": SECRET},
     "policy": {
         "kind": "policy",
@@ -107,6 +128,7 @@ def _item(name: str, **changes: Any) -> dict[str, Any]:
 def test_the_record_kinds_and_their_widening_ops() -> None:
     assert KINDS["secret"] == {"create", "update"}
     assert KINDS["policy"] == {"create"}
+    assert KINDS["destination"] == {"create"}
     assert KINDS["grant"] == {"create"}
     assert KINDS["grant_template"] == {"create", "update"}
 
@@ -136,6 +158,11 @@ def test_a_secret_and_a_grant_template_take_both_widening_ops(op) -> None:
         _item("policy", after={"approval": "sometimes"}),
         _item("policy", op="update"),
         _item("secret", after={"value": "fixture"}),
+        _item("destination", ref="dst_other01"),
+        _item("destination", op="update"),
+        _item("destination", after={"host": "API.payments.example"}),
+        _item("destination", after={"scheme": "http"}),
+        _item("destination", after={"methods": ["POST", "GET"]}),
     ],
 )
 def test_a_malformed_record_item_is_refused(item) -> None:

@@ -12,8 +12,10 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from aweb_naapp.egress import InternalDestinations
 from pgdbm.core import TransactionManager
 
+from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord, GrantTemplate
 from aweb_secrets.policy import Policy
 from aweb_secrets.revisions import bump_config_revision
@@ -241,3 +243,64 @@ async def grant_template(
         grant_template_id,
     )
     return None if record is None else GrantTemplate.from_after(json.loads(record))
+
+
+async def create_destination(
+    tx: TransactionManager, installation_id: str, team_id: str, record: DestinationRecord
+) -> None:
+    """Store a destination already checked under the deploy's internal-destinations setting."""
+    await tx.execute(
+        """
+        INSERT INTO {{tables.destinations}}
+            (destination_id, installation_id, team_id, secret_id, record)
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        record.destination_id,
+        installation_id,
+        team_id,
+        record.secret_id,
+        json.dumps(dict(record.after)),
+    )
+
+
+async def destinations(
+    tx: TransactionManager, installation_id: str, secret_id: str
+) -> list[DestinationRecord]:
+    """A secret's destinations, by id.
+
+    They are read as stored; the egress guard checks the deploy's
+    internal-destinations setting again when it matches one at dispatch.
+    """
+    rows = await tx.fetch_all(
+        """
+        SELECT record FROM {{tables.destinations}}
+        WHERE installation_id = $1 AND secret_id = $2
+        ORDER BY destination_id
+        """,
+        installation_id,
+        secret_id,
+    )
+    return [
+        DestinationRecord.from_after(
+            json.loads(row["record"]), internal_destinations=InternalDestinations.ALLOWED
+        )
+        for row in rows
+    ]
+
+
+async def remove_destination(
+    tx: TransactionManager, installation_id: str, destination_id: str
+) -> None:
+    """Remove a destination, a narrowing act that moves the installation to its next
+    configuration revision; removing an absent destination changes nothing."""
+    removed = await tx.fetch_value(
+        """
+        DELETE FROM {{tables.destinations}}
+        WHERE installation_id = $1 AND destination_id = $2
+        RETURNING destination_id
+        """,
+        installation_id,
+        destination_id,
+    )
+    if removed is not None:
+        await bump_config_revision(tx, installation_id)

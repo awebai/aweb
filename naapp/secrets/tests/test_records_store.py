@@ -6,12 +6,14 @@ from collections.abc import AsyncIterator
 
 import asyncpg
 import pytest
+from aweb_naapp.egress import InternalDestinations
 from awid.did import did_from_public_key, stable_id_from_public_key
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_secrets import records
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME
+from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord, GrantTemplate
 from aweb_secrets.policy import Policy
 from aweb_secrets.revisions import apply_revision_migrations, bump_config_revision, config_revision
@@ -281,3 +283,64 @@ async def test_a_revocation_rolled_back_leaves_the_revision_alone(db) -> None:
             await records.revoke_grant(tx, INSTALLATION, "grt_member01")
             raise RuntimeError("the narrowing act failed later")
     assert await config_revision(db, INSTALLATION) == 0
+
+
+def _destination(destination_id: str = "dst_charges01", **changes) -> DestinationRecord:
+    after = {
+        "v": 1,
+        "destination_id": destination_id,
+        "secret_id": SECRET.secret_id,
+        "scheme": "https",
+        "host": "api.payments.example",
+        "port": 443,
+        "path": "/v1/charges/**",
+        "methods": ["GET", "POST"],
+        "query_rules": {},
+        "header_allow": [],
+        "network": "public",
+        "cidr": None,
+    }
+    after.update(changes)
+    return DestinationRecord.from_after(after, internal_destinations=InternalDestinations.ALLOWED)
+
+
+async def test_a_secrets_destinations_are_listed_in_its_installation(db) -> None:
+    await _setup(db)
+    charges = _destination()
+    refunds = _destination("dst_refunds01", path="/v1/refunds/**")
+    async with db.transaction() as tx:
+        await records.create_destination(tx, INSTALLATION, TEAM, refunds)
+        await records.create_destination(tx, INSTALLATION, TEAM, charges)
+        listed = await records.destinations(tx, INSTALLATION, SECRET.secret_id)
+        assert [d.after for d in listed] == [charges.after, refunds.after]
+        assert await records.destinations(tx, OTHER_INSTALLATION, SECRET.secret_id) == []
+
+
+async def test_a_destination_needs_its_secret_in_the_same_installation(db) -> None:
+    await _setup(db)
+    with pytest.raises(asyncpg.ForeignKeyViolationError):
+        async with db.transaction() as tx:
+            await records.create_destination(tx, OTHER_INSTALLATION, TEAM, _destination())
+
+
+async def test_a_destination_never_changes(db) -> None:
+    await _setup(db)
+    async with db.transaction() as tx:
+        await records.create_destination(tx, INSTALLATION, TEAM, _destination())
+    with pytest.raises(asyncpg.RaiseError):
+        async with db.transaction() as tx:
+            await tx.execute("UPDATE {{tables.destinations}} SET record = '{}'::jsonb")
+
+
+async def test_removing_a_destination_is_a_narrowing_act(db) -> None:
+    await _setup(db)
+    async with db.transaction() as tx:
+        await records.create_destination(tx, INSTALLATION, TEAM, _destination())
+    before = await config_revision(db, INSTALLATION)
+    async with db.transaction() as tx:
+        await records.remove_destination(tx, INSTALLATION, "dst_charges01")
+        assert await records.destinations(tx, INSTALLATION, SECRET.secret_id) == []
+    assert await config_revision(db, INSTALLATION) == before + 1
+    async with db.transaction() as tx:
+        await records.remove_destination(tx, INSTALLATION, "dst_charges01")
+    assert await config_revision(db, INSTALLATION) == before + 1
