@@ -1,0 +1,13 @@
+{
+  "service_id": "srv-d8o229r7uimc73a8vsr0",
+  "service_name": "folio",
+  "region": "virginia",
+  "repo": "https://github.com/awebai/aweb",
+  "branch": "main",
+  "root_dir": "",
+  "dockerfile_path": "./naapp/folio/Dockerfile",
+  "docker_context": ".",
+  "origin_url": "https://folio-tmd1.onrender.com",
+  "public_url": "https://folio.aweb.ai",
+  "health_path": "/health"
+}

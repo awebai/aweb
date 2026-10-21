@@ -105,6 +105,23 @@ def test_malformed_field_shapes_are_refused_as_invalid_values(changes):
     assert refused.value.code == "invalid_value"
 
 
+FULLWIDTH_DIGITS = str.maketrans("0123456789", "０１２３４５６７８９")
+
+
+@pytest.mark.parametrize("field", ["observed_at", "valid_until"])
+def test_times_with_non_ascii_digits_are_refused_as_invalid_values(field):
+    year, rest = VECTOR["valid"][0]["document"][field].split("-", 1)
+    signed_payload, signature = _signed_variant(**{field: year.translate(FULLWIDTH_DIGITS) + "-" + rest})
+    with pytest.raises(StatusDocumentError) as refused:
+        verify_status_document(
+            signed_payload,
+            signature,
+            signer_did=VECTOR["publisher_did_key"],
+            now=_now(VECTOR["valid"][0]),
+        )
+    assert refused.value.code == "invalid_value"
+
+
 def test_well_formed_neighbour_of_the_malformed_shapes_verifies():
     signed_payload, signature = _signed_variant(
         reachable="no",

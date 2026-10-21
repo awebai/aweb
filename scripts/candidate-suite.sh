@@ -22,6 +22,7 @@ stages="${1:-checks unit artifacts integration}"
 checks() {
   run _candidate-gate-docker-boundaries
   run test-shipping
+  run check-page-renderer-bundle
   run check-aw-commit-repo-stamp
   run check-cli-go-tidy
   run check-cli-release-vcs-stamps
@@ -45,6 +46,7 @@ artifacts() {
   run _candidate-artifact-server
   run _candidate-artifact-awid-package
   run _candidate-artifact-awid-image
+  run _candidate-artifact-naapp-package
   run _candidate-artifact-channel
   run _candidate-artifact-pi
   run _candidate-artifact-skills
