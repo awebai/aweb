@@ -2,6 +2,7 @@
 
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
@@ -96,10 +97,38 @@ def test_result_recording_is_allowed_after_the_assignment_execution_deadline(tmp
     store = journal(tmp_path)
     store.accept(DISPATCH, expires_at=200)
     later = journal(tmp_path, now=300)
+    later.accept("dsp_" + "b" * 22, expires_at=400)
     later.save_result(DISPATCH, BODY)
     assert later.pending_results()[0].body == BODY
     with pytest.raises(Refused, match="assignment_expired"):
         later.accept(DISPATCH, expires_at=200)
+
+
+def test_late_report_survives_concurrent_unrelated_acceptance_then_ack(tmp_path):
+    store = journal(tmp_path)
+    store.accept(DISPATCH, expires_at=200)
+    barrier = Barrier(2)
+    body = b"\n" + BODY + b" "
+
+    def action(kind):
+        reopened = journal(tmp_path, now=300)
+        barrier.wait(timeout=5)
+        if kind == "result":
+            reopened.save_result(DISPATCH, body)
+        else:
+            reopened.accept("dsp_" + "c" * 22, expires_at=400)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(action, ["result", "accept"]))
+    reopened = journal(tmp_path, now=300)
+    assert reopened.pending_results()[0].body == body
+    reopened.ack_result(DISPATCH)
+    reopened.save_result(DISPATCH, body)
+    assert reopened.pending_results() == ()
+    reopened.accept("dsp_" + "d" * 22, expires_at=400)
+    with pytest.raises(Refused, match="journal_state_invalid"):
+        reopened.save_result(DISPATCH, body)
+    assert reopened.pending_results() == ()
 
 
 @pytest.mark.parametrize("body", [b"", "not-bytes"])

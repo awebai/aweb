@@ -89,8 +89,10 @@ class Journal:
                 now = self.clock()
                 if now >= expires_at:
                     raise Refused("assignment_expired")
+                # A job can outlive assignment expiry without a saved report.
+                # Only an explicitly acknowledged result is safe to prune.
                 connection.execute(
-                    "DELETE FROM dispatches WHERE expires_at <= ? AND result_body IS NULL", (now,)
+                    "DELETE FROM dispatches WHERE expires_at <= ? AND result_acked=1", (now,)
                 )
                 try:
                     connection.execute(
