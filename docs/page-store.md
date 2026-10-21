@@ -61,6 +61,21 @@ verifies the source adapter. Schema migration validates every retained row,
 including rows past the first snapshot. Deleted record IDs remain tombstones.
 There is no generic patch path to policy, provenance, revisions or schemas.
 
+`mutate_on(tx, scope, principal, expected_rev=..., key=..., records=..., state=...)`
+uses a caller-owned transaction from the content database. It applies the same
+owned-record, field, revision and idempotency checks as `mutate`, so the caller
+can join page effects and its own outbox or journal writes in one commit. The
+caller commits or rolls back; a refusal rolls back the page changes to a
+savepoint even when the caller catches it to record a failure. The independent
+request claim survives a rollback and follows the same retry rules below.
+An accepted retry returns the first receipt without rewriting the page. The
+caller must also make its joined writes idempotent: key journal entries by that
+receipt's `transaction_id`, and derive a distinct stable event ID for each
+joined outbox event. The page-change event already uses the transaction ID.
+The argument must be a pgdbm `TransactionManager`, not a database manager.
+Locks remain held until the caller commits or rolls back. Make no network
+calls between the mutation and the end of that transaction.
+
 The content transaction writes data, audit, receipt and the shared outbox
 together. The independent request claim commits first; a failed content
 transaction leaves a recoverable claim rather than an invented success receipt.
@@ -92,6 +107,34 @@ layout edits append immutable versions and cannot change an existing ID's type.
 Widget state accepts only `message`, `progress` and `busy`. Unsent form input,
 focus and scroll belong to the renderer's local state. The host clears the
 renderer before any actor or authority change.
+
+`read_projection_on(tx, scope, creator_id=..., projection=...,
+expected_page_rev=None, source_snapshot=None)` loads bounded collection data on
+the caller's content transaction and requires a pgdbm `TransactionManager`
+before loading any data. The app supplies the creator's verified ACL
+identity from its checked link context; it never constructs a member principal
+for the anonymous holder. The app retains its link lock through loading the
+view. The store also holds a page `FOR SHARE` lock until the transaction ends,
+so the revision and current ACL remain stable while the projection is loaded.
+Current row/field ACLs intersect the explicit named collection/record/field
+projection; SQL uses the same authorized-record projection as widget reads.
+Schema annotation redaction is shared with ordinary reads and exports.
+
+The result is `{page_rev, collections: [{id, schema_version, schema, records}]}`;
+each record contains only `id`, `rev` and its projected `value`. Assets are
+handled separately by the app's asset adapter. With no source, values and
+schemas come from the current page, and `expected_page_rev`, when supplied,
+checks that revision. This is the live-read and mint-time data capture path.
+
+With a stored `source_snapshot` in that result shape, the same projection path
+uses its immutable values, schemas and revision, rechecking current page access,
+deletion and row/field ACLs. `expected_page_rev` then checks the source revision.
+The app must bind the source to the checked link scope and require it for pinned
+mode; an absent or corrupt pinned source must never fall back to live values.
+The input source is neither modified nor supplemented with current values.
+This data projection returns only bounded collection data. N5 owns the complete
+immutable pinned-page record and asset-version retention; full view capture
+through the shared redactor remains a separate integration delta.
 
 `lint_page(snapshot, allowed_actions=..., projections=...)` returns JSON-pointer
 validation errors or accessible text: labels, values, state, policy-disabled

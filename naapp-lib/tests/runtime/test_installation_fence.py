@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import timedelta
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
+from aweb_naapp.dispatch import Dispatches, State, apply_dispatch_migrations
 from aweb_naapp.runtime.authorization import Grant, GrantUnavailable
 from aweb_naapp.runtime.installation import (
     InstallationFence,
@@ -558,3 +561,62 @@ async def test_admission_lock_wait_deducts_freshness_only_once(db, setup):
     assert stored > 0
     assert abs(float(stored) - remaining) < 0.15
     await check(db, fence, admitted)
+
+
+async def test_real_s3_admission_and_dispatch_take_the_installation_fence_first(db, setup):
+    fence, source = setup
+    await apply_dispatch_migrations(db)
+
+    async def on_transition(tx, transition):
+        pass
+
+    dispatches = Dispatches(
+        on_transition=on_transition,
+        max_dispatch=timedelta(seconds=30), sweep_margin=timedelta(seconds=30),
+    )
+    async def run_round(round_number):
+        action = f"fixture:write:{round_number}"
+        running, newcomer = uuid4(), uuid4()
+        async with db.transaction() as tx:
+            for dispatch_id in (running, newcomer):
+                await dispatches.create(tx, dispatch_id=dispatch_id, subject=TEAM, action=action)
+        admitted_fence = fence.for_admission(source.current)
+        async with db.transaction() as tx:
+            await dispatches.admit(tx, running, fence=admitted_fence)
+
+        admission_prepared = asyncio.Event()
+        new_fence = fence.for_admission(source.current)
+
+        class HoldAdmission:
+            async def prepare(self, tx):
+                await new_fence.prepare(tx)
+                admission_prepared.set()
+                # Keep F6's real UPDATE lock before S3 asks for the pair lock.
+                # With the reversed order, dispatch holds the pair while it
+                # waits for this row, and admission waits for that pair.
+                await asyncio.sleep(0.1)
+
+            async def check(self, tx, dispatch):
+                await new_fence.check(tx, dispatch)
+
+        async def admission():
+            async with db.transaction() as tx:
+                await dispatches.admit(tx, newcomer, fence=HoldAdmission())
+
+        async def dispatch():
+            await admission_prepared.wait()
+            async with db.transaction() as tx:
+                await dispatches.begin_dispatch(
+                    tx, running, fence=fence.for_installation(admitted_fence.admitted),
+                )
+
+        # Unexpected exceptions, including PostgreSQL deadlock_detected, fail
+        # the test. Both real operations must commit for every fresh pair.
+        await asyncio.wait_for(asyncio.gather(admission(), dispatch()), 5)
+        async with db.transaction() as tx:
+            assert (await dispatches.get(tx, newcomer)).state is State.ADMITTED
+            assert (await dispatches.get(tx, running)).state is State.DISPATCHING
+            await fence.check(tx, new_fence.admitted)
+
+    for round_number in range(10):
+        await run_round(round_number)
