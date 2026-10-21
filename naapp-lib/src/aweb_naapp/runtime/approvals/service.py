@@ -65,6 +65,7 @@ from aweb_naapp.runtime.approvals.store import (
     ApprovalLink,
     ApprovalStore,
     LinkAlreadyUsed,
+    LockedApproval,
     StoredRequest,
 )
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind, AuditSink
@@ -85,6 +86,17 @@ def _covered(request: Mapping[str, Any], policy_ref: str, policy_version: int) -
 
 def _sha256(canonical: bytes) -> str:
     return hashlib.sha256(canonical).hexdigest()
+
+
+def _locked_request(locked: LockedApproval, request: Mapping[str, Any]) -> Approval:
+    """The locked approval, provided it exists and covers exactly `request`."""
+    approval = locked.approval
+    if approval is None:
+        raise ApprovalRefused(Refusal.NOT_FOUND)
+    covered = _covered(request, approval.policy_ref, approval.policy_version)
+    if _sha256(covered) != approval.request_sha256:
+        raise ApprovalRefused(Refusal.REQUEST_MISMATCH)
+    return approval
 
 
 def _is_requester(approver: Approver | Candidate, requested_by: str) -> bool:
@@ -218,6 +230,7 @@ class Approvals:
         requested_by: str,
         presentation: PresentationKind = ...,
         presentation_ref: str | None = ...,
+        expires_at: datetime | None = ...,
         tx: None = ...,
     ) -> RequesterView: ...
 
@@ -230,6 +243,7 @@ class Approvals:
         requested_by: str,
         presentation: PresentationKind = ...,
         presentation_ref: str | None = ...,
+        expires_at: datetime | None = ...,
         tx: TransactionManager,
     ) -> PendingApproval: ...
 
@@ -241,10 +255,15 @@ class Approvals:
         requested_by: str,
         presentation: PresentationKind = PresentationKind.LINK,
         presentation_ref: str | None = None,
+        expires_at: datetime | None = None,
         tx: TransactionManager | None = None,
     ) -> RequesterView | PendingApproval:
         """Freeze the request and its eligible approvers and record a pending
         approval. When presented by link, each candidate gets their own.
+
+        A request that shows its approver an expiry passes it as `expires_at`:
+        the approval then ends at the earlier of it and the policy's ttl, so it
+        is never admitted after the instant the approver was shown.
 
         Without `tx` the approval commits at once and its links are sent.
         With `tx` it commits with the caller's transaction, and nothing is
@@ -269,7 +288,8 @@ class Approvals:
         canonical = _covered(request, policy.policy_ref, policy.version)
         digest = _sha256(canonical)
         approval_id = str(uuid.uuid4())
-        expires_at = now + policy.ttl
+        ends = now + policy.ttl
+        expires_at = ends if expires_at is None else min(ends, expires_at)
         sending: list[tuple[Approver, str]] = []
         links: list[ApprovalLink] = []
         if presentation is PresentationKind.LINK:
@@ -395,6 +415,10 @@ class Approvals:
         )
 
     # Trusted reads by the app
+
+    def now(self) -> datetime:
+        """The time on the clock these approvals expire by."""
+        return self._clock()
 
     async def get(self, approval_id: str) -> Approval | None:
         return await self._store.get(approval_id)
@@ -787,12 +811,7 @@ class Approvals:
         new approval.
         """
         async with self._store.locked(approval_id, tx) as locked:
-            approval = locked.approval
-            if approval is None:
-                raise ApprovalRefused(Refusal.NOT_FOUND)
-            covered = _covered(request, approval.policy_ref, approval.policy_version)
-            if _sha256(covered) != approval.request_sha256:
-                raise ApprovalRefused(Refusal.REQUEST_MISMATCH)
+            approval = _locked_request(locked, request)
             if approval.state is ApprovalState.CONSUMED:
                 if approval.consumed_operation_id != operation_id:
                     raise ApprovalRefused(Refusal.CONSUMED)
@@ -843,6 +862,28 @@ class Approvals:
                 attempt="first",
             )
         return self._admission(consumed, first=True, may_send=True)
+
+    async def retrieve(
+        self,
+        approval_id: str,
+        request: Mapping[str, Any],
+        operation_id: str,
+        *,
+        tx: TransactionManager | None = None,
+    ) -> Admission | None:
+        """The stable result of the attempt already admitted under this
+        operation ID, or None when asking `admit` again would send: the attempt
+        was never admitted, or it was not sent. Retrieves without admitting,
+        and holds the approval locked in `tx` until it ends."""
+        async with self._store.locked(approval_id, tx) as locked:
+            approval = _locked_request(locked, request)
+            if (
+                approval.state is not ApprovalState.CONSUMED
+                or approval.consumed_operation_id != operation_id
+                or approval.dispatch_outcome is DispatchOutcome.NOT_SENT
+            ):
+                return None
+            return self._admission(approval, first=False, may_send=False)
 
     @staticmethod
     def _admission(approval: Approval, *, first: bool, may_send: bool) -> Admission:

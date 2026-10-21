@@ -24,7 +24,7 @@ KINDS = (
     "aws-sigv4",
 )
 SENSITIVITIES = ("standard", "sensitive")
-BACKENDS = ("native", "1password")
+BACKENDS = ("native", "onepassword")
 CLIENT_AUTHS = ("client_secret_basic", "client_secret_post")
 FIELDS = frozenset(
     {
@@ -154,7 +154,7 @@ def _check(after: Any) -> None:
         not after["approve_only"] or after["sensitivity"] == "sensitive",
         "approve_only implies sensitive",
     )
-    _require(after["backend"] in BACKENDS, "backend is native or 1password")
+    _require(after["backend"] in BACKENDS, "backend is native or onepassword")
 
 
 @dataclass(frozen=True)
