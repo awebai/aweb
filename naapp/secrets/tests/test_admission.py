@@ -399,8 +399,11 @@ async def test_a_grant_without_installation_identity_is_refused(db, fence) -> No
 
 async def test_a_new_installation_finds_none_of_the_old_grants(db, fence) -> None:
     await _install(db)
-    reinstalled = _grant_source_grant(installation_id="inst_new00001", generation=1)
-    assert await _refusal(db, fence, grant=reinstalled) == "grant_missing"
+    await _admit(db, fence)
+    reinstalled = _grant_source_grant(installation_id="inst_new00001", generation=GENERATION + 1)
+    assert (
+        await _refusal(db, fence, grant=reinstalled, request=_request("req_2")) == "grant_missing"
+    )
 
 
 STATUS: dict[str, Any] = {
