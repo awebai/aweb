@@ -1,11 +1,9 @@
-"""secrets' aweb-app.json manifest: the tools the aw CLI dispatcher and a
-gateway render, each signed with team-auth (secrets §13.1). The committed
-``aweb-app.json`` is the byte-stable file served at
-``/.well-known/aweb-app.json``; this module is its authoring source, and a test
-asserts the file equals ``canonical_bytes(MANIFEST)``.
+"""secrets' manifest v2 template (secrets §13.1).
 
-No tool reads, sets or exports a secret value. Values enter and change only on
-the console.
+The authoring source fixes tools, contexts, hook productions and key purposes.
+The shared runtime fills the deployment's app identity, origin and did:keys
+from configured key files, validates with the X8 interpreter, and serves the
+resolved bytes through the v2 catalog. No secret value enters a tool.
 """
 
 from __future__ import annotations
@@ -29,11 +27,23 @@ def _params(*names: str, path: tuple[str, ...] = ()) -> list[dict[str, str]]:
 
 
 MANIFEST: dict[str, Any] = {
-    "manifest_version": 1,
+    "manifest_version": 2,
     "app": {
         "id": "secrets",
         "version": "0.1.0",
         "origin": "https://secrets.aweb.ai",
+    },
+    "app_keys": [
+        {"kid": "secrets:hook-event-1", "purposes": ["hook-event"]},
+        {"kid": "secrets:hook-delivery-1", "purposes": ["hook-delivery"]},
+        {"kid": "secrets:grant-read-1", "purposes": ["app-grant-read"]},
+    ],
+    "hooks": {
+        "registration_version": 1,
+        "productions": [
+            {"catalog": {"id": "aweb.hooks", "version": 1}, "hook": "post-secret-use-hook", "reads": []},
+            {"catalog": {"id": "aweb.hooks", "version": 1}, "hook": "post-governance-hook", "reads": []},
+        ],
     },
     "tools": [
         {
@@ -178,5 +188,35 @@ MANIFEST: dict[str, Any] = {
                 "required": ["request_id", "action"],
             },
         },
+        {
+            "name": "propose-change",
+            "description": "Draft a widening metadata or authority change. It takes effect only after an owner's passkey confirmation on the console. Never accepts a secret value.",
+            "method": "POST",
+            "path": "/v1/changes",
+            "scopes": ["secrets:admin"],
+            "mutation": True,
+            "body": {"mode": "json"},
+            "params": _params("request_id", "change"),
+            "input_schema": {
+                "type": "object",
+                "properties": {"request_id": _REQUEST_ID, "change": {"type": "object"}},
+                "required": ["request_id", "change"],
+            },
+        },
+        {
+            "name": "activity",
+            "description": "Show the owner's operational record of requests, approvals and dispatches, including outcomes that need reconciliation. Never values.",
+            "method": "GET",
+            "path": "/v1/activity",
+            "scopes": ["secrets:read"],
+            "mutation": False,
+            "params": [],
+            "input_schema": {"type": "object", "properties": {}},
+        },
     ],
 }
+
+for _tool in MANIFEST["tools"]:
+    _tool["invocation_contexts"] = (
+        ["surface"] if _tool["name"] in {"propose-change", "activity"} else ["agent", "surface"]
+    )

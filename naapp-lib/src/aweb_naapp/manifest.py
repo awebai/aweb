@@ -40,28 +40,76 @@ def write_manifest_file(path: Path, manifest: dict[str, Any]) -> None:
     path.write_bytes(canonical_bytes(manifest))
 
 
-def manifest_for_origin(manifest: dict[str, Any], public_origin: str) -> dict[str, Any]:
-    """A copy of the manifest with ``app.origin`` set to this deployment's origin."""
-    retargeted = copy.deepcopy(manifest)
-    retargeted["app"]["origin"] = public_origin.rstrip("/")
-    return retargeted
+def template_key_entries(template: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The template's kid entries, version 2 ``app_keys`` then version 1
+    ``event_emitters``. Entries of any other shape are left for
+    :func:`load_manifest` to refuse."""
+    entries = []
+    for field in ("app_keys", "event_emitters"):
+        value = template.get(field)
+        if isinstance(value, list):
+            entries += [entry for entry in value if isinstance(entry, dict) and isinstance(entry.get("kid"), str)]
+    return entries
 
 
-def read_manifest_bytes(path: Path, public_origin: str | None = None) -> bytes:
-    """The manifest bytes to serve for a deployment origin.
+def _template_event_types(template: Mapping[str, Any]) -> list[str]:
+    """The event types a template names: its ``events`` and its surfaces' event bindings."""
+    types: list[str] = []
+    for event in template.get("events") or ():
+        if isinstance(event, dict) and isinstance(event.get("type"), str):
+            types.append(event["type"])
+    for surface in template.get("surfaces") or ():
+        if isinstance(surface, dict):
+            for event in surface.get("events") or ():
+                if isinstance(event, dict) and isinstance(event.get("type"), str):
+                    types.append(event["type"])
+    return types
 
-    The committed file's own origin (the hosted one) gets the committed bytes
-    verbatim, never re-serialized. Any other origin, such as a self-hosted
-    deployment, gets the same manifest in canonical form with only ``app.origin``
-    changed.
+
+def template_kids(template: Mapping[str, Any]) -> tuple[str, ...]:
+    """The kids a committed manifest template declares, in manifest order: its
+    version 2 ``app_keys`` and its version 1 ``event_emitters``."""
+    return tuple(dict.fromkeys(entry["kid"] for entry in template_key_entries(template)))
+
+
+def fill_manifest(
+    template: Mapping[str, Any], *, app_id: str, origin: str, did_keys: Mapping[str, str]
+) -> bytes:
+    """The canonical bytes a deployment serves for its committed manifest template.
+
+    The template declares kids, their purposes and event types named locally
+    (no ``<app.id>/`` prefix, since they resolve against the deployment's
+    app.id), and carries no did:key. The deployment supplies its ``app_id``, its ``origin`` and the
+    did:key of every declared kid; nothing else is taken from configuration.
+    A template refusal raises :class:`ManifestError` (``manifest_template_invalid``);
+    anything else wrong with it is left for :func:`load_manifest` to refuse.
     """
-    committed = path.read_bytes()
-    if public_origin is None:
-        return committed
-    manifest = json.loads(committed)
-    if public_origin.rstrip("/") == manifest["app"]["origin"]:
-        return committed
-    return canonical_bytes(manifest_for_origin(manifest, public_origin))
+    entries = template_key_entries(template)
+    kids = template_kids(template)
+    if any("did_key" in entry for entry in entries):
+        raise ManifestError(
+            "manifest_template_invalid", "a manifest template commits no did_key; the deployment supplies it"
+        )
+    undeclared = sorted(set(did_keys) - set(kids))
+    if undeclared:
+        raise ManifestError(
+            "manifest_template_invalid", f"did:keys for kids the template does not declare: {', '.join(undeclared)}"
+        )
+    missing = [kid for kid in kids if kid not in did_keys]
+    if missing:
+        raise ManifestError("manifest_template_invalid", f"no did:key for declared kids: {', '.join(missing)}")
+    prefixed = [event_type for event_type in _template_event_types(template) if "/" in event_type]
+    if prefixed:
+        raise ManifestError(
+            "manifest_template_invalid",
+            f"a manifest template names its event types locally, without an app prefix: {', '.join(prefixed)}",
+        )
+    filled = copy.deepcopy(dict(template))
+    if isinstance(filled.get("app"), dict):
+        filled["app"] = {**filled["app"], "id": app_id, "origin": origin.rstrip("/")}
+    for entry in template_key_entries(filled):
+        entry["did_key"] = did_keys[entry["kid"]]
+    return canonical_bytes(filled)
 
 
 def public_tools(manifest: dict[str, Any]) -> list[dict[str, Any]]:
