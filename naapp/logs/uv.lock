@@ -176,6 +176,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "aweb-naapp-testing" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -192,6 +193,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aweb-naapp-testing", editable = "../../naapp-lib/testing" },
     { name = "mypy", specifier = ">=1.18.0" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
@@ -256,9 +258,32 @@ dev = [
     { name = "hatchling", specifier = ">=1.32.4" },
     { name = "httpx2", specifier = ">=2.9.1" },
     { name = "mypy", specifier = ">=1.18.0" },
+    { name = "playwright", specifier = "==1.63.0" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
     { name = "ruff", specifier = ">=0.14.0" },
+    { name = "uvicorn", specifier = ">=0.35.0" },
+]
+
+[[package]]
+name = "aweb-naapp-testing"
+version = "0.1.0"
+source = { editable = "../../naapp-lib/testing" }
+dependencies = [
+    { name = "aweb-naapp", extra = ["hooks", "runtime"] },
+    { name = "awid-service" },
+    { name = "cbor2" },
+    { name = "cryptography" },
+    { name = "dnspython" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aweb-naapp", extras = ["hooks", "runtime"], editable = "../../naapp-lib" },
+    { name = "awid-service", editable = "../../awid" },
+    { name = "cbor2", specifier = ">=5.6.0" },
+    { name = "cryptography", specifier = ">=46.0.0" },
+    { name = "dnspython", specifier = ">=2.7.0" },
 ]
 
 [[package]]

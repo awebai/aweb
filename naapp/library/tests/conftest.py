@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -16,6 +17,11 @@ from test_e2e_smoke import (  # noqa: F401
 )
 
 _MIGRATIONS = Path(__file__).resolve().parent.parent / "src" / "library" / "migrations"
+
+# A naapp runs in its own schema: the candidate gate's role carries
+# production's search_path=pg_catalog, where an unqualified table resolves to
+# no user schema at all.
+TEST_SCHEMA = "naapp_test"
 
 _TEST_DB_CONFIG = DatabaseTestConfig(
     host=os.environ.get("TEST_DB_HOST", "localhost"),
@@ -39,7 +45,7 @@ async def migrated_db() -> AsyncIterator[AsyncDatabaseManager]:
         pytest.skip(f"real Postgres not available: {exc}")
 
     try:
-        async with test_database.get_test_db_manager() as db:
+        async with test_database.get_test_db_manager(schema=TEST_SCHEMA) as db:
             migrations = AsyncMigrationManager(
                 db, migrations_path=str(_MIGRATIONS), module_name="library"
             )
@@ -47,3 +53,25 @@ async def migrated_db() -> AsyncIterator[AsyncDatabaseManager]:
             yield db
     finally:
         await test_database.drop_test_database()
+
+
+class _SchemaDatabases:
+    """pgdbm's test database factory, giving every database a schema unless the test names one.
+
+    A copy of aweb_naapp_testing.databases.SchemaDatabases: Library's lock pins
+    aweb-naapp from an external commit and cannot see the tree's testing
+    package until aweb-acgh.5 moves it to in-repo path sources.
+    """
+
+    def __init__(self, factory: Any) -> None:
+        self._factory = factory
+
+    async def create_db(
+        self, suffix: str | None = None, schema: str | None = None, **kwargs: Any
+    ) -> AsyncDatabaseManager:
+        return await self._factory.create_db(suffix, schema or TEST_SCHEMA, **kwargs)
+
+
+@pytest.fixture
+async def test_db_factory(test_db_factory: Any) -> _SchemaDatabases:
+    return _SchemaDatabases(test_db_factory)
