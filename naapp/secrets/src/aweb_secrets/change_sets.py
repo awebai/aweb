@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -60,7 +60,7 @@ from awid.utc_timestamps import parse_utc_seconds
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
-from aweb_secrets import records
+from aweb_secrets import records, runners
 from aweb_secrets.approvers import approver_exists, record_approver
 from aweb_secrets.change import (
     MAX_LIFETIME,
@@ -77,6 +77,7 @@ from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, approver_scope, owner_scope
 from aweb_secrets.policy import Policy
 from aweb_secrets.revisions import claim_config_revision, config_revision
+from aweb_secrets.runner_protocol import RunnerRefused
 from aweb_secrets.secret import SecretRecord, sealed_shape_changed
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "change_set_migrations"
@@ -97,6 +98,7 @@ APPLICABLE_KINDS = frozenset(
         "approver",
         "approver_contact",
         "change_set_policy",
+        "runner",
     }
 )
 
@@ -116,14 +118,31 @@ class DraftLimit:
 
 
 @dataclass(frozen=True)
+class RunnerRegistration:
+    """One-time material for the confirming owner's console after commit."""
+
+    runner_id: str
+    registration_code: str = field(repr=False)
+    reenabled: bool
+    keys_replaced: bool
+
+
+@dataclass(frozen=True)
 class Confirmation:
     """A confirmed change set: the revision it moved to, and the approver
     designations and contact changes whose links and notices
-    :meth:`ChangeSets.deliver` sends after commit."""
+    :meth:`ChangeSets.deliver` sends after commit. Runner codes belong only
+    in the owner-console projection; never serialize this internal object."""
 
+    change_id: str
+    installation_id: str
+    team_id: str
+    confirmed_scope: str
+    confirmed_subject: str
     revision: int
     designations: tuple[Designation, ...]
     contact_changes: tuple[ContactChange, ...]
+    runner_registrations: tuple[RunnerRegistration, ...] = field(default=(), repr=False)
 
 
 def change_policy_ref(installation_id: str, team_id: str, scope: str | None = None) -> str:
@@ -479,9 +498,12 @@ class ChangeSets:
         revision = await claim_config_revision(tx, installation_id, change["base_revision"])
         designations: list[Designation] = []
         contact_changes: list[ContactChange] = []
+        runner_registrations: list[RunnerRegistration] = []
         for item in change["changes"]:
             applied = await self._apply(tx, change, item, evidence)
-            if isinstance(applied, ContactChange):
+            if isinstance(applied, RunnerRegistration):
+                runner_registrations.append(applied)
+            elif isinstance(applied, ContactChange):
                 contact_changes.append(applied)
             else:
                 designations.extend(applied)
@@ -491,9 +513,15 @@ class ChangeSets:
             change_id,
         )
         return Confirmation(
+            change_id=change_id,
+            installation_id=admitted.installation_id,
+            team_id=admitted.team_id,
+            confirmed_scope=evidence.approver_scope,
+            confirmed_subject=evidence.approver_subject,
             revision=revision,
             designations=tuple(designations),
             contact_changes=tuple(contact_changes),
+            runner_registrations=tuple(runner_registrations),
         )
 
     async def _apply(
@@ -502,9 +530,11 @@ class ChangeSets:
         change: Mapping[str, Any],
         item: Mapping[str, Any],
         evidence: OwnerApproval,
-    ) -> list[Designation] | ContactChange:
+    ) -> list[Designation] | ContactChange | RunnerRegistration:
         installation_id, team_id = change["installation_id"], change["team_id"]
         after = item["after"]
+        if item["kind"] == "runner":
+            return await self._apply_runner(tx, change, item)
         if item["kind"] == "role":
             await assign(
                 tx, PrincipalKey(team_id=team_id, principal_did=after["principal"]), after["role"]
@@ -564,6 +594,39 @@ class ChangeSets:
             await self._apply_record(tx, change, item)
             return []
         raise ChangeRefused(f"{item['kind']} cannot be applied", code="change_kind_not_applicable")
+
+    async def _apply_runner(
+        self, tx: TransactionManager, change: Mapping[str, Any], item: Mapping[str, Any]
+    ) -> RunnerRegistration:
+        installation_id, team_id = change["installation_id"], change["team_id"]
+        try:
+            record = runners.RunnerRecord.from_after(item["after"])
+            if item["op"] == "create":
+                if await tx.fetch_value(
+                    "SELECT 1 FROM {{tables.runners}} WHERE runner_id = $1", record.runner_id
+                ):
+                    raise _exists("runner", record.runner_id)
+                code = await runners.create_runner(
+                    tx, installation_id, team_id, record, now=datetime.now(UTC)
+                )
+                return RunnerRegistration(record.runner_id, code, False, False)
+            current = await tx.fetch_one(
+                "SELECT deregistered_at FROM {{tables.runners}}"
+                " WHERE runner_id = $1 AND installation_id = $2 AND team_id = $3 FOR UPDATE",
+                record.runner_id,
+                installation_id,
+                team_id,
+            )
+            if current is None:
+                raise ChangeRefused("no runner in this installation", code="runner_unknown")
+            code = await runners.replace_runner(
+                tx, installation_id, team_id, record, now=datetime.now(UTC)
+            )
+            return RunnerRegistration(
+                record.runner_id, code, current["deregistered_at"] is not None, True
+            )
+        except RunnerRefused as refused:
+            raise ChangeRefused("runner change refused", code=refused.code) from None
 
     async def _apply_record(
         self, tx: TransactionManager, change: Mapping[str, Any], item: Mapping[str, Any]
