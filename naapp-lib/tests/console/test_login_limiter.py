@@ -7,7 +7,7 @@ the login routes call it.
 
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -48,6 +48,19 @@ def _app(limiter: LoginLimiter) -> FastAPI:
 def _client(limiter: LoginLimiter, peer: str) -> httpx.AsyncClient:
     transport = httpx.ASGITransport(app=_app(limiter), client=(peer, 40000))
     return httpx.AsyncClient(transport=transport, base_url=ORIGIN)
+
+
+class Clock:
+    """The limiter's clock, moved by the test."""
+
+    def __init__(self) -> None:
+        self.now = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, delta: timedelta) -> None:
+        self.now += delta
 
 
 def _limiter(db: AsyncDatabaseManager, **changes) -> LoginLimiter:
@@ -104,14 +117,6 @@ async def test_a_missing_trusted_header_falls_back_to_the_peer(db: AsyncDatabase
         assert await _codes(client, 4) == [200, 200, 200, 429]
 
 
-async def test_the_window_resets(db: AsyncDatabaseManager) -> None:
-    limiter = _limiter(db, limit=1, window=timedelta(seconds=1))
-    async with _client(limiter, "203.0.113.7") as client:
-        assert await _codes(client, 2) == [200, 429]
-        await asyncio.sleep(1.1)
-        assert await _codes(client, 1) == [200]
-
-
 async def test_login_volume_is_metered_per_scope(db: AsyncDatabaseManager) -> None:
     limiter = _limiter(db)
     async with (
@@ -129,18 +134,6 @@ async def test_limits_must_be_positive(db: AsyncDatabaseManager) -> None:
     for changes in ({"limit": 0}, {"window": timedelta(0)}):
         with pytest.raises(ValueError):
             _limiter(db, **changes)
-
-
-async def test_attempts_from_past_windows_are_pruned(db: AsyncDatabaseManager) -> None:
-    limiter = _limiter(db, limit=5, window=timedelta(seconds=1))
-    for n in range(4):
-        async with _client(limiter, f"203.0.113.{n}") as client:
-            await _codes(client, 1)
-    await asyncio.sleep(1.1)
-    async with _client(limiter, "198.51.100.9") as client:
-        await _codes(client, 1)
-    rows = await db.fetch_value("SELECT count(*) FROM {{tables.console_login_attempts}}")
-    assert rows == 1
 
 
 async def test_volume_older_than_its_retention_is_pruned(db: AsyncDatabaseManager) -> None:
@@ -200,23 +193,6 @@ async def _held(db: AsyncDatabaseManager, statement: str):
     return tx_context
 
 
-async def test_a_login_does_not_wait_on_a_locked_stale_attempt(db: AsyncDatabaseManager) -> None:
-    limiter = _limiter(db, window=timedelta(seconds=1))
-    async with _client(limiter, "203.0.113.7") as client:
-        await _codes(client, 1)
-    await db.execute(
-        "UPDATE {{tables.console_login_attempts}} SET window_start = NOW() - interval '1 hour'"
-    )
-    held = await _held(db, "SELECT * FROM {{tables.console_login_attempts}} FOR UPDATE")
-    try:
-        async with _client(limiter, "198.51.100.9") as client:
-            assert await asyncio.wait_for(_codes(client, 1), timeout=5) == [200]
-    finally:
-        await held.__aexit__(None, None, None)
-    rows = await db.fetch_value("SELECT count(*) FROM {{tables.console_login_attempts}}")
-    assert rows == 2
-
-
 async def test_a_login_does_not_wait_on_a_locked_old_volume_bucket(
     db: AsyncDatabaseManager,
 ) -> None:
@@ -234,16 +210,6 @@ async def test_a_login_does_not_wait_on_a_locked_old_volume_bucket(
         await held.__aexit__(None, None, None)
 
 
-async def test_a_client_whose_window_ended_starts_a_new_one(db: AsyncDatabaseManager) -> None:
-    limiter = _limiter(db, limit=1, window=timedelta(minutes=1))
-    async with _client(limiter, "203.0.113.7") as client:
-        assert await _codes(client, 2) == [200, 429]
-        await db.execute(
-            "UPDATE {{tables.console_login_attempts}} SET window_start = NOW() - interval '2 minutes'"
-        )
-        assert await _codes(client, 2) == [200, 429]
-
-
 async def _refuse_deletes(db: AsyncDatabaseManager, table: str) -> None:
     """Make every delete from `table` raise, as a lost connection or a lock error would."""
     await db.execute(
@@ -256,19 +222,89 @@ async def _refuse_deletes(db: AsyncDatabaseManager, table: str) -> None:
     )
 
 
-async def test_a_failing_prune_does_not_fail_the_login(
-    db: AsyncDatabaseManager, caplog: pytest.LogCaptureFixture
+# The per-client limit is the shared token bucket (aweb_naapp.ratelimit).
+
+
+async def test_a_throttled_client_is_admitted_again_once_its_bucket_refills(
+    db: AsyncDatabaseManager,
 ) -> None:
-    limiter = _limiter(db, window=timedelta(seconds=1))
+    clock = Clock()
+    limiter = _limiter(db, limit=1, window=timedelta(minutes=1), clock=clock)
+    async with _client(limiter, "203.0.113.7") as client:
+        assert await _codes(client, 2) == [200, 429]
+        clock.advance(timedelta(minutes=1))
+        assert await _codes(client, 2) == [200, 429]
+
+
+async def test_a_bucket_refills_continuously(db: AsyncDatabaseManager) -> None:
+    clock = Clock()
+    limiter = _limiter(db, limit=2, window=timedelta(minutes=1), clock=clock)
+    async with _client(limiter, "203.0.113.7") as client:
+        assert await _codes(client, 3) == [200, 200, 429]
+        clock.advance(timedelta(seconds=29))
+        throttled = await client.post("/login/options")
+        clock.advance(timedelta(seconds=1))
+        assert await _codes(client, 2) == [200, 429]
+    assert throttled.status_code == 429
+    assert throttled.headers["retry-after"] == "1"
+
+
+async def _buckets(db: AsyncDatabaseManager) -> int:
+    return int(await db.fetch_value("SELECT count(*) FROM {{tables.rate_buckets}}"))
+
+
+async def test_full_buckets_are_swept_after_a_login(db: AsyncDatabaseManager) -> None:
+    clock = Clock()
+    limiter = _limiter(db, limit=5, window=timedelta(minutes=1), clock=clock)
+    for n in range(4):
+        async with _client(limiter, f"203.0.113.{n}") as client:
+            await _codes(client, 1)
+    assert await _buckets(db) == 4
+    clock.advance(timedelta(minutes=1))
+    async with _client(limiter, "198.51.100.9") as client:
+        await _codes(client, 1)
+    assert await _buckets(db) == 1
+
+
+async def test_a_login_does_not_wait_on_a_locked_full_bucket(db: AsyncDatabaseManager) -> None:
+    clock = Clock()
+    limiter = _limiter(db, limit=5, window=timedelta(minutes=1), clock=clock)
     async with _client(limiter, "203.0.113.7") as client:
         await _codes(client, 1)
-    await db.execute(
-        "UPDATE {{tables.console_login_attempts}} SET window_start = NOW() - interval '1 hour'"
-    )
-    await _refuse_deletes(db, "console_login_attempts")
+    clock.advance(timedelta(minutes=1))
+    held = await _held(db, "SELECT * FROM {{tables.rate_buckets}} FOR UPDATE")
+    try:
+        async with _client(limiter, "198.51.100.9") as client:
+            assert await asyncio.wait_for(_codes(client, 1), timeout=5) == [200]
+    finally:
+        await held.__aexit__(None, None, None)
+    assert await _buckets(db) == 2
+
+
+async def test_a_failing_sweep_does_not_fail_the_login(
+    db: AsyncDatabaseManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    clock = Clock()
+    limiter = _limiter(db, limit=5, window=timedelta(minutes=1), clock=clock)
+    async with _client(limiter, "203.0.113.7") as client:
+        await _codes(client, 1)
+    clock.advance(timedelta(minutes=1))
+    await _refuse_deletes(db, "rate_buckets")
     with caplog.at_level("WARNING", logger="aweb_naapp.console"):
         async with _client(limiter, "198.51.100.9") as client:
             assert await _codes(client, 1) == [200]
     [record] = [r for r in caplog.records if r.name == "aweb_naapp.console"]
-    assert "console_login_attempts" in record.getMessage()
+    assert "rate_buckets" in record.getMessage()
     assert "203.0.113.7" not in record.getMessage()
+
+
+async def test_the_fixed_window_table_is_gone(db: AsyncDatabaseManager) -> None:
+    present = await db.fetch_value(
+        "SELECT to_regclass('{{tables.console_login_attempts}}') IS NOT NULL"
+    )
+    assert present is False
+
+
+async def test_the_window_is_whole_seconds(db: AsyncDatabaseManager) -> None:
+    with pytest.raises(ValueError):
+        _limiter(db, window=timedelta(milliseconds=1500))
