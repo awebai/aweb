@@ -25,6 +25,7 @@ from aweb_naapp.runtime.freshness import FreshnessCache, RefreshTimedOut
 from aweb_naapp.runtime.team_server import TeamServerDirectory, TeamServerUnavailable
 
 MAX_ANSWER_BYTES = 1 << 20
+MISSING_KEY_MAX_AGE_SECONDS = 5
 _AS_OF = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|\+00:00)"
 )
@@ -148,7 +149,8 @@ class TeamGrantSource:
                         code = detail.get("code") if isinstance(detail, dict) else detail
                         if code == "app_key_not_registered":
                             # A denial grants no use and carries no installation identity.
-                            return None, 60
+                            # Let a new install become usable promptly on retry.
+                            return None, MISSING_KEY_MAX_AGE_SECONDS
                 raise GrantUnavailable(f"grant_server_status_{response.status_code}")
             body = json.loads(content)
             status = self._parse(body, team_id)

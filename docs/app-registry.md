@@ -246,6 +246,8 @@ same read and cache to return `GrantStatus`, preserving non-active and unknown
 states and nullable installation identity, generation and origin provenance.
 `None` means the calling key has no grant; it does not prove an uninstall.
 Only a typed `uninstalled` status confirms that state to the installation fence.
+The explicit missing-key denial is cached for at most five seconds, so an app
+called before installation can become usable promptly after installation.
 
 The freshness deadline uses the client's monotonic clock, counting from the
 start of the shared read, with a ceiling of 60 seconds. A slow answer earns no

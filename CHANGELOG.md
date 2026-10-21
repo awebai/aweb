@@ -8,6 +8,8 @@
   the team and served-manifest identity, and fail closed on expired or
   unavailable authority. `status_for` preserves installation state and
   nullable id, generation and origin provenance for the installation fence.
+  Missing-key denials are cached for at most five seconds so a post-install
+  retry can discover the new grant promptly.
 
 ## Release preparations
 

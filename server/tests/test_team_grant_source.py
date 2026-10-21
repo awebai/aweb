@@ -203,6 +203,36 @@ async def test_revoked_key_means_no_grant_without_claiming_uninstall(installed):
     assert await source.grant_for(TEAM) is None
 
 
+async def test_install_retry_refreshes_a_missing_key_denial_after_five_seconds(installed):
+    stack, source, clock, _ = installed
+    # The key's registry entry alone grants nothing before the team installs.
+    await stack.aweb_db.execute(
+        "DELETE FROM {{tables.team_app_installs}} WHERE team_id = $1 AND app_id = $2",
+        TEAM, IDENTITY.app_id,
+    )
+    assert await source.grant_for(TEAM) is None
+    assert await source.status_for(TEAM) is None
+    assert len(stack.aweb.calls) == 1
+
+    await install_app(
+        stack.aweb_db,
+        team_id=TEAM, app_id=IDENTITY.app_id, origin=IDENTITY.origin,
+        digest=IDENTITY.digest, app_version="1.0", manifest_version=2,
+        granted_scopes=["notebook:read"],
+    )
+    clock.now += 4
+    assert await source.grant_for(TEAM) is None
+    assert len(stack.aweb.calls) == 1
+
+    clock.now += 1
+    grant = await source.grant_for(TEAM)
+    assert grant is not None
+    assert grant.scopes == frozenset({"notebook:read"})
+    assert len(stack.aweb.calls) == 2
+    assert (await source.status_for(TEAM)).state == "active"
+    assert len(stack.aweb.calls) == 2
+
+
 async def test_expired_grant_never_survives_failed_refresh(installed):
     stack, source, clock, _ = installed
     assert await source.grant_for(TEAM) is not None

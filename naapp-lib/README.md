@@ -139,6 +139,7 @@ the same cache and returns a `GrantStatus` with the installation's state,
 identity, generation, scopes and origin provenance. Unknown states grant no
 use; `None` is never evidence of uninstall. Discovery failures, malformed or
 mismatched answers, and failed refreshes raise `GrantUnavailable`.
+Missing-key denials expire after five seconds to allow prompt post-install retries.
 
 Answers expire at most 60 seconds after the shared read starts; the server
 may specify less. Expired answers are never served. The default total timeout
