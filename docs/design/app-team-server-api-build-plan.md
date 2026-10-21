@@ -310,7 +310,14 @@ Hosted-side item H1, on the board as L6 (aweb-acgg.31).
     app's pinned bytes.
   - `TeamGrantSource.grant_for(team_id)` implements B1's `GrantSource`
     (`runtime/authorization.py`). It returns a `Grant` with `fresh_until` set
-    to receipt time plus `min(max_age, 60)`, and `None` for not granted.
+    to the shared read's start plus `min(max_age, 60)`, and `None` for not granted
+    (freshness ruling A).
+  - `status_for(team_id)` shares that read and cache and returns a typed
+    `GrantStatus`, including inactive states and nullable installation id,
+    generation and origin provenance (decision 48b). Unknown states disable
+    use; a missing-key `None` is not proof of uninstall.
+  - The directory is the runtime's shared `TeamServerDirectory`, supplied to
+    the source rather than constructed again (decision 69).
   - It raises `GrantUnavailable` for an outage, unpublished discovery, a key
     mismatch or a malformed answer.
   - An expired entry is never served, the refresh is bounded by a timeout,

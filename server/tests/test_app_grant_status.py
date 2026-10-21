@@ -17,6 +17,8 @@ from aweb import app_credentials
 from aweb.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, PURPOSES
 from aweb.app_registry import install_app
 from aweb.config import get_app_grant_max_age_seconds
+from aweb.hook_bindings import PRODUCTION, HookBindingDeclaration, write_pending_bindings
+from aweb.routes.app_hooks import router as app_hooks_router
 from aweb.routes.apps import router as apps_router
 from tests.test_app_credentials import _register_app_key
 from tests.test_app_events_http import (
@@ -269,11 +271,38 @@ async def vector_installed(aweb_cloud_db, monkeypatch):
     await _seed_team_and_agent(db)
     await _install_folio(db, did_key=_make_app_keypair()[1], kid="emit-1")
     case = VECTOR["cases"][0]
-    await _register_app_key(db, did_key=VECTOR["did_key"], kid=case["payload"]["kid"], purposes=[APP_GRANT_READ])
+    await _register_app_key(
+        db, did_key=VECTOR["did_key"], kid=case["payload"]["kid"], purposes=[APP_GRANT_READ, HOOK_RESOLVE]
+    )
+    # The hook-resolve case reads registrations, which needs an active
+    # production of that hook; owner activation is not built, so the row is
+    # given the values a real activation must satisfy.
+    async with db.transaction() as tx:
+        [production] = await write_pending_bindings(
+            tx, team_id=TEAM_ID, app_id="folio", origin="https://folio.aweb.ai", digest=DIGEST,
+            installation_id="inst-folio", generation=1,
+            declarations=[
+                HookBindingDeclaration(
+                    kind=PRODUCTION, catalog_id="aweb.hooks", catalog_version=1, hook="post-secret-use-hook"
+                )
+            ],
+        )
+    await db.execute(
+        """
+        UPDATE {{tables.app_hook_bindings}}
+        SET state = 'active', activated_at = date_trunc('milliseconds', NOW()),
+            active_from = date_trunc('milliseconds', NOW()) + INTERVAL '60 seconds',
+            activation_act_sha256 = $2
+        WHERE binding_id = $1
+        """,
+        production.binding_id, "ab" * 32,
+    )
     # The vector's timestamp is fixed for byte parity. Skew is covered by the
     # verifier's own tests; here every other check runs on the frozen bytes.
     monkeypatch.setattr(app_credentials, "enforce_timestamp_skew", lambda _timestamp: None)
-    return _app(db, public_origin=case["payload"]["aud"])
+    app = _app(db, public_origin=case["payload"]["aud"])
+    app.include_router(app_hooks_router)
+    return app
 
 
 async def _send_case(app, case: dict):
@@ -283,11 +312,16 @@ async def _send_case(app, case: dict):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", VECTOR["cases"], ids=lambda case: case["name"])
-async def test_vector_positive_cases_verify_at_the_grant_route(vector_installed, case):
+async def test_vector_positive_cases_verify_at_their_routes(vector_installed, case):
     response = await _send_case(vector_installed, case)
 
     assert response.status_code == 200, response.text
-    assert (response.json()["team_id"], response.json()["app_id"]) == (case["payload"]["team_id"], case["payload"]["app_id"])
+    assert response.json()["team_id"] == case["payload"]["team_id"]
+    if case["purpose"] == APP_GRANT_READ:
+        assert response.json()["app_id"] == case["payload"]["app_id"]
+    else:
+        assert case["purpose"] == HOOK_RESOLVE
+        assert response.json()["bindings"] == []
 
 
 @pytest.mark.asyncio
