@@ -26,7 +26,16 @@ from aweb_naapp.runtime.capability_links import (
     revoke,
 )
 
-from .conftest import CAPABILITY, CREATOR, SCOPE, T0, mint_link, request_from
+from .conftest import (
+    CAPABILITY,
+    CREATOR,
+    SCOPE,
+    T0,
+    mint_link,
+    proof_for,
+    proof_for_link,
+    request_from,
+)
 from .test_exchange import _exchange, body
 
 
@@ -107,6 +116,7 @@ def action_body(key="k1", *, action_id="mark-cleaned", record_id="b-17", **chang
 
 
 async def submit(db, authority, action_app, caller, *, key="k1", now=T0, **changes):
+    proof = await proof_for_link(db, caller.link_id)
     async with db.transaction() as tx:
         return await admit(
             tx,
@@ -117,13 +127,21 @@ async def submit(db, authority, action_app, caller, *, key="k1", now=T0, **chang
             body=action_body(key, **changes),
             client="203.0.113.7",
             now=now,
+            proof=proof,
         )
 
 
 async def get_projection(db, authority, caller, *, projection=None, now=T0):
+    proof = await proof_for_link(db, caller.link_id)
     async with db.transaction() as tx:
         return await read(
-            tx, authority, caller=caller, page_id=SCOPE.page_id, projection=projection, now=now
+            tx,
+            authority,
+            caller=caller,
+            page_id=SCOPE.page_id,
+            projection=projection,
+            now=now,
+            proof=proof,
         )
 
 
@@ -361,10 +379,13 @@ async def test_revocation_serializes_with_actions_and_reads(db, authority, actio
                 body=action_body(),
                 client="203.0.113.7",
                 now=T0,
+                proof=proof_for(),
             )
             pending = asyncio.create_task(revoke_link(db, caller))
         else:
-            await read(tx, authority, caller=caller, page_id=SCOPE.page_id, now=T0)
+            await read(
+                tx, authority, caller=caller, page_id=SCOPE.page_id, now=T0, proof=proof_for()
+            )
             pending = asyncio.create_task(revoke_link(db, caller))
         # Yield through a real query while the first transaction retains its lock.
         await db.fetch_value("SELECT 1")

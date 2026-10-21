@@ -55,7 +55,7 @@ The app stores, per link, an immutable record and its mutable lifecycle:
   "actions": [{"action_id": "mark-cleaned", "constraints": {"record_id": "b-17"}}],
   "intent_sponsor_did": null,
   "one_use": false,
-  "created_by": {"principal_did": "did:aw:…", "certificate_id": "…"},
+  "created_by": {"team_id": "backend:acme.com", "principal_did": "did:aw:…", "certificate_id": "…", "team_did_key": "did:key:…"},
   "created_at": "2026-10-20T12:00:00Z",
   "expires_at": "2026-10-27T12:00:00Z",
   "rate_policy": "link-default-v1"
@@ -69,11 +69,108 @@ Lifecycle: `revoked_at`, `used_at` (one-use links) and the stored receipts.
 | `link_id` | Opaque, `^[A-Za-z0-9._-]{1,128}$`. Public: it names the link, it is not the capability. |
 | `verifier_sha256` | Bare hex SHA-256 of the secret's UTF-8 bytes. The secret itself is never stored. |
 | `mode`, `page_rev` | `pinned` serves the page at `page_rev` only. `live` serves the current revision, and `page_rev` is `null`. |
-| `projection` | The only records, fields and assets the link can read. 1–16 collections, each with 1–200 `record_ids` (or `"*"` for every record the creator could read at mint, frozen as that list) and 1–64 `fields`. 0–64 asset IDs. |
+| `projection` | The only collections, rows, fields and assets the link can read. 1–16 collections with 1–64 minted fields each; `record_ids` is a literal list of 0–200 IDs, or `"*"` with the mode-specific rules below. An empty list always means zero rows. 0–64 asset IDs. |
 | `actions` | 0–16 `{action_id, constraints}`: allowed page actions of kind `edit` or `intent`, each with fixed input values the submission must equal. Empty means read-only, the default. Never an `answer`-kind action. |
 | `intent_sponsor_did` | Required when `actions` contains an `intent`: the agent principal that routes the holder's intents (§5). `null` otherwise. |
+| `created_by` | Host-derived immutable mint evidence: scope `team_id`, canonical ACL `principal_did`, and `certificate_id` plus `team_did_key` from the verified mint-time Principal. Not grantable request fields; never returned to a holder. |
 | `one_use` | `true`: the first admitted action uses the link up (§4). Reads before it consume nothing. |
 | `expires_at` | After `created_at` and at most 30 days later. |
+
+**Current creator membership uses two phases.** N5 retains the mint-time team,
+certificate ID and team key in immutable `created_by`; a bare DID or historical
+observed-principal row is insufficient. `load_link_creator(db, *, link_id)`
+loads the immutable internal `LinkCreator` evidence without retaining a lifecycle
+lock or claiming current authority. It is not a holder endpoint.
+`LinkCreator` is frozen: `{scope: LinkScope, principal_did, certificate_id,
+team_did_key}`. The canonical `principal_did` is PageStore's ACL identity,
+separate from the membership evidence.
+
+Before opening the joined transaction, the host calls
+`runtime.check_current_member(creator.scope.team_id,
+certificate_id=creator.certificate_id, team_did_key=creator.team_did_key)`.
+It uses the request verifier's AWID facts/cache, requires an active known
+certificate and the same current team key, and returns the shared frozen
+`MembershipProof {team_id, certificate_id, team_did_key, checked_at, fresh_until}`.
+Both times are monotonic and retain the facts' original fetch-start and expiry;
+a cache hit never extends that expiry. The window is at most 60 seconds.
+The proof is an in-process object, never request JSON, stored data or a token.
+Phase 1 refuses unknown/revoked/rotated/incomplete evidence with 403
+`current_member_required`; unavailable facts remain 503
+`current_membership_unavailable`.
+
+The host supplies `proof` to `exchange`, `read` or `admit`. Under its existing
+verified secret/session and link lock, N5 reloads `created_by`, requires the
+proof's team to match both scope and stored creator team, and matches the
+certificate and team key exactly. It reads its injected `proof_clock` (default
+`time.monotonic`) **after acquiring the lock**. Missing, mismatched or expired
+proofs refuse 403 `current_member_required`; a lock wait never refreshes them.
+Only then does `authority.require_current_creator(tx, *, creator, proof)` run.
+This callback performs local checks only: no AWID refresh or network operation
+inside the transaction. Subsequent creator/store callbacks use the canonical
+ACL identity. The exchange mount accepts a required phase-1 callback. It validates the body,
+commits exactly one per-client rate charge, and verifies the supplied secret and
+lifecycle locally before invoking that callback. Unknown links and wrong
+secrets therefore return the same `link_unavailable`, spend the failed-exchange
+budget and never trigger AWID. All short SQL operations finish before the
+network call. After phase 1, the joined transaction reloads and revalidates the
+secret/lifecycle under the link lock before its local proof gate. Valid-secret
+holders retain membership 403/503 and all link privacy headers; the per-link
+bucket is charged only on success.
+
+Old records missing evidence fail closed; nothing reconstructs membership from
+observations. No certificate bytes, copied verifier, private link SQL or
+fabricated member Principal are needed in the host/store. `LinkRead.created_by`
+and `LinkAction.created_by` carry the checked internal context, never serialized
+to holders.
+
+This membership check precedes even admission's receipt lookup. Matching
+retries still bypass link lifecycle and action-policy checks after the current
+creator passes membership, preserving receipt semantics for a used or revoked
+link without letting a departed creator continue authorizing holder requests.
+Management revocation by an authorized owner remains available after creator
+membership loss; it does not depend on that departed creator passing the check.
+Future asset and stream adapters must use this same boundary before content.
+
+**Rows in pinned and live views.** For pinned links, `record_ids:"*"` is
+expanded at mint to the creator's authorized named rows, including `[]` for an
+empty collection, with at most 200 rows. An action-bearing link also expands
+its wildcard to a bounded named list. Named lists are always literal: `[]`
+means no rows, never all rows. Empty collections are valid in both modes and
+retain their authorized collection/schema, returning count zero and no cursor.
+
+Only a **live read-only** link (`mode:"live"`, `actions:[]`) may retain
+`record_ids:"*"` in its immutable record and checked read projection. This
+scopes the read to the minted collection and fields; its row set follows the
+creator's current visibility, so rows added later may become visible. Current
+ACLs, hidden rows, field narrowing and deletion are re-evaluated on every
+page; loss of collection access removes it from the view. No new collection,
+field or action is granted. The action list never grows. A live action must
+target a row currently exposed by its checked projection, re-check the
+creator's current write authority, and belong to the minted action set;
+otherwise it is refused. Action-bearing named-row grants do not gain targets
+added after mint.
+
+The dynamic marker is accepted **only** by the live query entry point:
+`query_widget_on(tx, scope, *, creator_id, widget_id, bind, link_id,
+expected_page_rev=None, projection=None)`. The app passes only the checked
+`LinkRead.projection` and the verified `LinkCaller.link_id`, never a link ID
+from request JSON. A missing projection is refused. The query intersects the
+minted collection/fields and current creator row/field ACLs before filtering,
+sorting, counting and pagination. Each page has at most 200 rows; a collection
+may contain more. Cursors bind to the link, creator, scope, complete checked
+projection, query and page revision. They never work across links, even for
+the same creator. A changed page revision invalidates the cursor: restart at
+page one within the capability's ceiling. N5 retains its caller transaction
+and link lock until the page is loaded; every page re-checks session, expiry
+and revocation. `read_projection_on`, `capture_link_snapshot_on` and
+`project_link_snapshot_on` remain bounded named-row APIs and never accept `"*"`.
+
+**Disclosure and mode choice.** Wherever a person mints a live link to share,
+the chooser and link view must say that anyone holding it sees rows added
+later, within the creator's current access, until expiry or revocation. Pinned
+is the default wherever a person chooses a mode. A dashboard Documents click
+that mints a short-lived link for the viewer is a self-view, with no share
+chooser; its view still labels the mode as live.
 
 At mint, pinned mode materializes one complete authorized `aweb.page/1`
 snapshot at `page_rev` in the same transaction as the link. It holds the
@@ -141,9 +238,10 @@ field outside the projection; no installation, ACL, schema or layout change;
 no link minting; no answer to a member's decision task; no approval evidence;
 no consumption or dispatch of an external-effect approval. An old pinned link
 never gains an action added to the page later. A link's authority is the
-intersection of what it was minted with and what its creator holds at each use:
-if the creator loses access to a record, field or action, the link loses it
-too.
+intersection of its minted ceiling and what its creator holds at each use.
+For live read-only wildcards, that ceiling is the collection and fields rather
+than a frozen row list. If the creator loses access to a row, field or action,
+the link loses it too.
 
 ## 2. Exchange: `POST /v1/links/{link_id}/session`
 
@@ -262,12 +360,14 @@ trust of an AWID member signature.
 
 Each read, submit, stream subscription, asset fetch and dispatch takes the
 link's row lock (`FOR UPDATE` for writes, `FOR SHARE` for reads). Every request
-also requires its session to be unexpired. For a submit, the first step under
+also requires its session to be unexpired and the current creator membership
+check above to pass. For a submit, the first action-layer step under
 the lock is the **receipt lookup**: if the link has an admitted operation with
 this idempotency key, the same body returns its stored receipt, and a
 different body is 409 `idempotency_conflict`. Nothing else below runs for a
 matching retry, so a retry gets its receipt even after the link was used up
-or revoked, as long as its session is live; it never admits a second
+or revoked, as long as its session is live and the creator passes current
+membership; it never admits a second
 operation. A session never outlives its link, so once the link has expired
 there is no session left to retry with. Otherwise, in the same transaction, the request requires:
 
@@ -405,6 +505,8 @@ never locates an approval.
 | --- | --- | --- |
 | 401 | `signature_invalid` | A link request's shape, signature or binding fails. |
 | 401 | `authorization_expired` | `issued_at` is outside its window. |
+| 403 | `current_member_required` | Creator membership evidence is incomplete, unknown, revoked or rotated. |
+| 503 | `current_membership_unavailable` | Current AWID membership facts cannot be obtained. |
 | 403 | `action_denied` | Outside the projection or allowed actions, a constraint is not met, the creator's authority no longer covers it, or the `Origin` is wrong. |
 | 404 | `link_unavailable` | Unknown link, wrong secret, or an unusable link before any session. |
 | 409 | `idempotency_conflict` | A replayed nonce, or a known idempotency key with different content. |
@@ -428,3 +530,21 @@ Errors carry no record values, no other link's existence and no secret.
 
 `aweb_naapp.runtime.link_requests` computes verifiers and builds and verifies
 link requests, and runs `link-request-v1.json`.
+
+### Current collection metadata for checked link adapters
+
+`LinkAuthority.readable(tx, *, creator, page_id, collection, link_mode,
+record_ids)` receives the checked link mode and selection. The host passes them
+as `collection_access_on(..., link_mode=link_mode, record_ids=record_ids)`;
+the store's returned `mode` describes an owned/synced collection, not the link.
+`Readable.records=None` explicitly means dynamic rows and is valid only for a
+live read-only wildcard. The outer `Readable | None` result still uses `None`
+for an unavailable collection or no visible fields. A live wildcard metadata
+check must not enumerate record IDs; `query_widget_on` applies current row
+permissions before filtering, counting and paging.
+
+Named selections, including `[]`, require a tuple of at most 200 current visible
+IDs. Pinned wildcard mint inspects at most 201 IDs and refuses above 200. An
+action-bearing wildcard mint requests this same bounded expansion with
+`link_mode="pinned"`, even when the content mode is live; its stored rows remain
+named. Dynamic results cannot satisfy named, pinned or action-bearing checks.
