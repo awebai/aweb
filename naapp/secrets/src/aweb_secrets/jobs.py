@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -42,6 +43,8 @@ FIELDS = frozenset(
     }
 )
 DIGEST_PREFIX = b"aweb.secrets.job/1\n"
+# S13 must configure runner dispatch sweeping strictly beyond this plus its margin.
+MAX_TIMEOUT_S = 3600
 _ENV = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _PARAM = re.compile(r"[a-z_][a-z0-9_]{0,63}")
 _IMAGE = re.compile(r"[A-Za-z0-9][A-Za-z0-9./:_-]*@sha256:[0-9a-f]{64}")
@@ -58,6 +61,18 @@ _DANGEROUS_ENV = frozenset(
         "RUBYOPT",
         "SSH_ASKPASS",
         "IFS",
+        "NODE_PATH",
+        "PERL5LIB",
+        "PERLLIB",
+        "RUBYLIB",
+        "PYTHONHOME",
+        "PYTHONBREAKPOINT",
+        "CLASSPATH",
+        "GCONV_PATH",
+        "BASHOPTS",
+        "SHELLOPTS",
+        "PS4",
+        "PROMPT_COMMAND",
     }
 )
 
@@ -93,10 +108,33 @@ def _safe_env(name: Any) -> bool:
         and name not in _DANGEROUS_ENV
         and not name.startswith(("LD_", "DYLD_", "GIT_"))
         and not name.endswith("_OPTIONS")
+        and not name.upper().endswith("_PROXY")
+    )
+
+
+def _no_nul(value: Any) -> None:
+    if isinstance(value, str):
+        _require("\0" not in value, "job record strings contain no NUL")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _no_nul(key)
+            _no_nul(item)
+    elif isinstance(value, list):
+        for item in value:
+            _no_nul(item)
+
+
+def _mount_path(path: Any) -> bool:
+    return (
+        _absolute(path)
+        and path != "/"
+        and not path.startswith("//")
+        and posixpath.normpath(path) == path
     )
 
 
 def _check(after: dict[str, Any]) -> None:
+    _no_nul(after)
     _require(set(after) == FIELDS and type(after["v"]) is int and after["v"] == 1, "job/1 shape")
     _require(
         isinstance(after["job_id"], str) and IDENTIFIER.fullmatch(after["job_id"]) is not None,
@@ -142,10 +180,16 @@ def _check(after: dict[str, Any]) -> None:
             "image by digest",
         )
         paths = oci["read_only_paths"]
-        _require(isinstance(paths, list) and all(_absolute(p) for p in paths), "readonly paths")
+        _require(
+            isinstance(paths, list) and all(_mount_path(p) for p in paths),
+            "normalized nonroot readonly paths",
+        )
         _require(paths == sorted(set(paths)), "readonly paths sorted and distinct")
     _require(_absolute(after["cwd"]), "absolute working directory")
-    _require(type(after["timeout_s"]) is int and 1 <= after["timeout_s"], "bounded timeout")
+    _require(
+        type(after["timeout_s"]) is int and 1 <= after["timeout_s"] <= MAX_TIMEOUT_S,
+        "bounded timeout",
+    )
     output = after["output"]
     _exact(output, {"max_bytes", "projection"}, "output")
     _require(
@@ -241,6 +285,7 @@ def _check(after: dict[str, Any]) -> None:
                 and isinstance(argv[i - 1], str)
                 and argv[i - 1].startswith("-")
                 and argv[i - 1] != "--"
+                and "=" not in argv[i - 1]
                 and "--" not in argv[:i],
                 "option value follows a fixed option",
             )

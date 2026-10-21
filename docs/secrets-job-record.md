@@ -18,7 +18,7 @@ The change/1 item's `ref` is `job_id`. Its `after` has exactly these fields:
 | `argv` | Ordered strings or `{$param:name, slot:positional\|option_value}` |
 | `env` | Names to strings, `{$param:name}`, or `{$credential:secret_ref}` |
 | `cwd` | Absolute path |
-| `timeout_s` | Positive safe integer |
+| `timeout_s` | Integer 1 to 3600 seconds |
 | `output` | `{max_bytes, projection}`; 1 byte to 16 MiB, nonempty distinct JSON pointers |
 | `params` | Parameter names to `{schema, charset}`; bounded inline schemas, optional fixed string character class |
 | `credentials` | Ordered distinct `{secret_ref, delivery, mint}` slots |
@@ -26,12 +26,24 @@ The change/1 item's `ref` is `job_id`. Its `after` has exactly these fields:
 
 Executable and declared-file paths are absolute, with SHA-256 pins. Declared file
 paths and read-only OCI paths are sorted and distinct; OCI images name a digest.
-Paths contain no NUL or `..` segment. Parameters used as arguments or environment
-values are scalar. Positional argument slots follow a literal `--`, and their
+Paths contain no NUL or `..` segment. Read-only mounts additionally refuse `/`,
+repeated separators, `.` segments and trailing separators; they must already be
+normalized. Every string in the record, including nested literals and schema
+values, is NUL-free before it reaches PostgreSQL JSONB. Parameters used as
+arguments or environment values are scalar. Positional argument slots follow a literal `--`, and their
 string values cannot start with `-`. An option-value slot immediately follows a
-fixed option name, before the `--`. Code-loading and resolution-changing environment
-names listed by §9.4 are refused. Every parameter and credential has a declared
-use; a credential is placed only in a declared environment target.
+fixed option name with no `=`, before the `--`. Code-loading and
+resolution-changing environment names listed by §9.4 are refused. The denylist also includes `NODE_PATH`,
+`PERL5LIB`, `PERLLIB`, `RUBYLIB`, `PYTHONHOME`, `PYTHONBREAKPOINT`, `CLASSPATH`,
+`GCONV_PATH`, `BASHOPTS`, `SHELLOPTS`, `PS4` and `PROMPT_COMMAND`.
+Names ending in `_PROXY` in any case are refused because they can redirect a
+job's credential-bearing network traffic. These refusals deliberately cover
+fixed literals too, including `PATH` and `GIT_*`: a pinned job cannot declare a
+loader or resolution override through this environment surface. Its executable
+and declared files already use absolute paths. The runner starts with an empty
+environment. S13's runner dispatch sweep bound must exceed the exported
+`MAX_TIMEOUT_S` plus its sweep margin. Every parameter and credential has a
+declared use; a credential is placed only in a declared environment target.
 
 For `durable`, `mint` is null and `allow_durable` is true. For `short_lived`,
 `secret_ref` is the fixed parent/slot label and `mint` is exactly
@@ -61,3 +73,11 @@ any of those refs and requires exactly one; zero or multiple matches refuse with
 The frozen run plan stores that unique ordinal and actual child ID; other slots
 keep their fixed selectors. This pure selection helper is not a grant, lineage or
 run-binding check: the shared admission/release path still checks them all.
+
+Jobs remain excluded from `ChangeSets.APPLICABLE_KINDS` until the confirming
+source/issuer validation and trusted dispatch integration are implemented and
+reviewed. Both durable and short-lived drafts refuse `change_kind_not_applicable`
+at this stage. Adding the kind requires definition-time exact issuer parameter
+coverage, typed literals, same-type parameter references, CURRENT issuer digest
+and token-issuing `store_as_secret` checks; admission additionally validates the
+expanded actual values. A syntactically valid job cannot bypass that gate.

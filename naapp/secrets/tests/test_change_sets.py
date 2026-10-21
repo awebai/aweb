@@ -801,3 +801,22 @@ async def test_a_contact_change_for_an_unknown_approver_is_refused(world: World)
     with pytest.raises(ChangeRefused) as refused:
         await confirm(world, change)
     assert refused.value.code == "approver_unknown"
+
+
+@pytest.mark.parametrize("delivery", ["durable", "short_lived"])
+async def test_job_definitions_cannot_apply_before_source_validation_is_wired(world, delivery):
+    from tests.test_jobs import after as job_after
+
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    # The same real confirmed-writer service can draft an implemented kind.
+    await draft(world, change_set(drafter=by_member(CAROL), changes=[grant_role(CAROL)]))
+    body = job_after()
+    if delivery == "short_lived":
+        body["credentials"][0].update(
+            delivery=delivery,
+            mint={"operation_id": "mint-session", "digest": "c" * 64, "params": {}},
+        )
+    item = {"kind": "job", "op": "create", "ref": body["job_id"], "after": body}
+    with pytest.raises(ChangeRefused) as refused:
+        await draft(world, change_set(drafter=by_member(CAROL), changes=[item]))
+    assert refused.value.code == "change_kind_not_applicable"

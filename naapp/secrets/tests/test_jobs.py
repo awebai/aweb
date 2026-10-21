@@ -302,3 +302,93 @@ def test_unique_slot_keeps_other_slots_fixed_and_preserves_the_ordinal():
     job = JobDefinition.from_after(body)
     assert unique_durable_slot(job, lineage_refs=["db-admin", "fresh-child"]) == 1
     assert job.after == body
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "PATH",
+        "GIT_SSH_COMMAND",
+        "NODE_PATH",
+        "PERL5LIB",
+        "PERLLIB",
+        "RUBYLIB",
+        "PYTHONHOME",
+        "PYTHONBREAKPOINT",
+        "CLASSPATH",
+        "GCONV_PATH",
+        "BASHOPTS",
+        "SHELLOPTS",
+        "PS4",
+        "PROMPT_COMMAND",
+        "HTTP_PROXY",
+        "https_proxy",
+        "NO_PROXY",
+    ],
+)
+def test_additional_loader_and_proxy_env_names_are_refused_for_all_values(name):
+    for value in ["fixed-owner-value", {"$param": "database"}, {"$credential": "db-admin"}]:
+        body = after()
+        body["env"][name] = value
+        with pytest.raises(JobInvalid):
+            JobDefinition.from_after(body)
+
+
+def test_option_with_attached_value_cannot_take_a_parameter_as_another_argument():
+    body = after()
+    body["argv"] = ["--database=orders", {"$param": "database", "slot": "option_value"}]
+    with pytest.raises(JobInvalid):
+        JobDefinition.from_after(body)
+    body["argv"][0] = "--database"
+    assert JobDefinition.from_after(body).params_valid({"database": "-x"})
+
+
+@pytest.mark.parametrize(
+    "path", ["/", "//etc", "/etc/", "/etc//config", "/etc/./config", "/etc/../config"]
+)
+def test_oci_mount_paths_are_normalized_nonroot_paths(path):
+    body = after()
+    body.update(
+        kind="oci",
+        exec=None,
+        oci={"image": "registry.example/backup@sha256:" + "b" * 64, "read_only_paths": [path]},
+    )
+    with pytest.raises(JobInvalid):
+        JobDefinition.from_after(body)
+    body["oci"]["read_only_paths"] = ["/etc/config"]
+    JobDefinition.from_after(body)
+
+
+def test_job_timeout_has_an_exported_bound_for_dispatch_sweeping():
+    from aweb_secrets.jobs import MAX_TIMEOUT_S
+
+    body = after()
+    body["timeout_s"] = MAX_TIMEOUT_S
+    JobDefinition.from_after(body)
+    body["timeout_s"] += 1
+    with pytest.raises(JobInvalid):
+        JobDefinition.from_after(body)
+
+
+@pytest.mark.parametrize("field", ["cwd", "output", "env", "params", "credentials"])
+def test_nul_is_refused_in_all_record_strings_before_jsonb(field):
+    body = after()
+    if field == "cwd":
+        body["cwd"] = "/tmp/\0"
+    elif field == "output":
+        body["output"]["projection"] = ["/bad\0field"]
+    elif field == "env":
+        body["env"]["VISIBLE"] = "bad\0value"
+    elif field == "params":
+        body["params"]["database"]["schema"]["enum"] = ["bad\0value"]
+    else:
+        body["credentials"][0].update(
+            delivery="short_lived",
+            mint={
+                "operation_id": "mint-session",
+                "digest": "c" * 64,
+                "params": {"argument": {"value": "bad\0value"}},
+            },
+        )
+    with pytest.raises(JobInvalid):
+        JobDefinition.from_after(body)
