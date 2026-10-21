@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 from aweb_naapp.idempotency import apply_idempotency_migrations
+from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.roles import principal_key
 from aweb_naapp.runtime.approvals import (
     Approvals,
@@ -203,6 +204,7 @@ async def install(uses: Uses, **policy_changes) -> Policy:
 async def uses(world: World) -> Uses:  # noqa: F811
     db = world.db
     await apply_idempotency_migrations(db)
+    await apply_ratelimit_migrations(db)
     await AsyncMigrationManager(
         db, migrations_path=str(MIGRATIONS_PATH), module_name=MODULE_NAME
     ).apply_pending_migrations()

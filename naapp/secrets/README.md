@@ -67,3 +67,19 @@ The console posts that token in JSON to its B2 ceremonies and requires a passkey
 to show the frozen request and decide. SMTP failures return `FAILED` without an
 automatic retry. The shared sender reads `SECRETS_EMAIL_*` configuration and its
 password file through `EmailSettings.from_env("SECRETS_")`.
+
+Use approvals resolve coverage through `derived_lineage.ancestry_ids`: an
+ancestor's approver is eligible only when the child's policy also lists it.
+`request_use_approval` and `admit_approved_use` take the current deployment cap
+as `max_ttl_s` (default 3600). The caller holds the installation fence and any
+role hold first; these functions then lock ancestry root to leaf, grants in
+ascending order, covering approver records, and B2 approvals. Coverage and
+ancestor authority are rechecked before first sends and `NOT_SENT` retries;
+already admitted dispatches remain retrievable without authorizing another send.
+
+Containment calls `revoke_use_approvals(tx, approvals, installation_id=...,
+team_id=..., secret_ids=descendant_ids, revoked_by=..., reason=...)` in the same
+fenced transaction as the grant revocation and descendant state changes. The
+caller supplies the exact descendant IDs from stored lineage. The selector
+uses the existing scoped approval registry and leaves other siblings untouched.
+`void_use_approvals` remains the version-replacement operation.
