@@ -210,6 +210,7 @@ async def test_recovery_counts_the_recovering_owner_out_of_four_eyes(world: Worl
         response = await human.post(f"/installations/{INSTALLATION_ID}/owner-acts", json=body)
         assert response.status_code == (403 if owners == 2 else 200)
         if owners == 2:
+            assert response.json() == {"detail": "four_eyes_needs_two_owners"}
             assert await world.passkeys.login_options(alice)
         else:
             assert world.inbox.notices["alice@acme.com"]

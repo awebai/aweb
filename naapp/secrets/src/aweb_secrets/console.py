@@ -165,7 +165,9 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
                     )
         except InstallationRefused as refused:
             raise HTTPException(status_code=refused.status, detail=refused.code) from None
-        except (ValueError, Refused, DesignationRefused, ChangeRefused):
+        except ChangeRefused as refused:
+            raise HTTPException(status_code=403, detail=refused.code) from None
+        except (ValueError, Refused, DesignationRefused):
             raise HTTPException(status_code=403, detail="owner_required") from None
         await services.passkeys.deliver(designation)
         return {"scope": scope, "effective_at": designation.effective_at.isoformat()}
