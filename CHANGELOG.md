@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `aweb_naapp.runtime.team_grants.TeamGrantSource` reads an app's own grant
+  through the shared AWID-backed team-server directory and an `app-grant-read`
+  signer. Grant and installation-status reads share one bounded cache, verify
+  the team and served-manifest identity, and fail closed on expired or
+  unavailable authority. `status_for` preserves installation state and
+  nullable id, generation and origin provenance for the installation fence.
+  Missing-key denials are cached for at most five seconds so a post-install
+  retry can discover the new grant promptly.
+
 - **Security:** app keys retain their identity and revocation history across
   v1 `event_emitters` and v2 `app_keys`. Switching manifest versions cannot
   reactivate a revoked event key or bind its key id to a different `did_key`;
