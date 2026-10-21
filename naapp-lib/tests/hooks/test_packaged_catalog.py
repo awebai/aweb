@@ -21,8 +21,18 @@ def test_the_packaged_catalog_is_the_public_vector() -> None:
 
 
 def test_an_installed_wheel_loads_the_catalog_without_a_checkout(tmp_path: Path) -> None:
+    # Build with the locked hatchling in this environment, not an isolated one
+    # that would fetch the backend: the test then runs offline on a cold cache.
     subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(tmp_path / "dist"), str(NAAPP_LIB)],
+        [
+            "uv",
+            "build",
+            "--wheel",
+            "--no-build-isolation",
+            "--out-dir",
+            str(tmp_path / "dist"),
+            str(NAAPP_LIB),
+        ],
         capture_output=True,
         check=True,
     )
