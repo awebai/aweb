@@ -4,20 +4,21 @@ import json
 import os
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import httpx
 from aweb_naapp.roles import PrincipalKey, assign
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.origins import split_origins
-from aweb_naapp_testing import REGISTRY_URL, Member
+from aweb_naapp_testing import Member
 from fastapi import FastAPI
 
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME, STORES
-from aweb_secrets.config import SecretsSettings
 from aweb_secrets.containment_routes import containment_api_router
 from aweb_secrets.manifest import MANIFEST_PATH
 from aweb_secrets.owners import OWNER_ROLE
-from tests.test_app import allow_all
+from tests.test_app import _settings, allow_all
 from tests.test_change_sets import TEAM, Installations, world  # noqa: F401
 from tests.test_containment_service import service
 from tests.test_use_approval_lineage import seed
@@ -39,34 +40,30 @@ class AdminInstallations(Installations):
 @asynccontextmanager
 async def running(uses, registry):
     svc = await service(uses)
-    runtime = NaappRuntime(
-        SecretsSettings(
-            _env_file=None,
-            database_url=uses.world.db.config.get_dsn(),
-            db_schema="naapp_test",
-            public_origin=API,
-            console_origin=CONSOLE,
-            awid_registry_url=REGISTRY_URL,
-        ),
-        module_name=MODULE_NAME,
-        migrations_path=MIGRATIONS_PATH,
-        manifest_path=MANIFEST_PATH,
-        awid_transport=registry.transport,
-        stores=STORES,
-    )
-    api = FastAPI(lifespan=runtime.lifespan)
-    api.include_router(
-        containment_api_router(
-            svc,
-            authorized=runtime.authorized(grants=AdminInstallations(), policy=allow_all),
+    with TemporaryDirectory() as directory:
+        runtime = NaappRuntime(
+            _settings(uses.world.db.config.get_dsn(), Path(directory)).model_copy(
+                update={"db_schema": "naapp_test"}
+            ),
+            module_name=MODULE_NAME,
+            migrations_path=MIGRATIONS_PATH,
+            manifest_path=MANIFEST_PATH,
+            awid_transport=registry.transport,
+            stores=STORES,
         )
-    )
-    app = split_origins(api, FastAPI(), agent_origin=API, human_origin=CONSOLE)
-    async with runtime.lifespan(api):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API
-        ) as client:
-            yield client
+        api = FastAPI(lifespan=runtime.lifespan)
+        api.include_router(
+            containment_api_router(
+                svc,
+                authorized=runtime.authorized(grants=AdminInstallations(), policy=allow_all),
+            )
+        )
+        app = split_origins(api, FastAPI(), agent_origin=API, human_origin=CONSOLE)
+        async with runtime.lifespan(api):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url=API
+            ) as client:
+                yield client
 
 
 async def test_signed_owner_can_contain_and_unsigned_cookie_or_console_cannot(uses, registry):
