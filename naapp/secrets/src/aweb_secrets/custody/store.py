@@ -4,11 +4,24 @@ The console holds a :class:`SecretSealer`, which can only add a value. The
 broker holds a :class:`SecretOpener`, which is the only way a stored value is
 unsealed. The app's composition hands each its own; :class:`Custody` holds
 both, with the operations that never reveal a value.
+
+Lock order (decisions 43, 59, 65c): installation fence, role hold, approval
+and candidates, four-eyes setting, revision, then record writes. Within record
+writes, lock the parent secrets row before custody rows: KEY SHARE for ingest,
+UPDATE for reshaping. Existing ingest validates against the record re-read under
+that lock; only initial-create drafts may have no parent yet. All callers run
+at READ COMMITTED. Reshape checks retained custody history in a separate
+statement after acquiring UPDATE, so an ingest it waited for is visible.
+Initial drafts also pin their immutable shape in custody history. Confirmation
+pins a zero-version custody row after creating the parent, so a concurrent
+initial ingest and create serialize on the same key even before a parent is
+visible. A zero-version pin may be reshaped; a sealed history may not.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +29,8 @@ from typing import Literal
 
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
+
+from aweb_secrets.secret import SecretRecord, sealed_shape
 
 from .sealing import (
     CustodyUnavailable,
@@ -27,6 +42,7 @@ from .sealing import (
     seal_canary,
     unseal,
 )
+from .values import decode_value
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_secrets_custody"
@@ -52,6 +68,7 @@ class SecretSealer:
         team_id: str,
         secret_id: str,
         value: bytes,
+        initial: SecretRecord | None = None,
     ) -> int:
         """Store ``value`` as the secret's next version, in the caller's transaction.
 
@@ -59,21 +76,47 @@ class SecretSealer:
         the transaction ends, so concurrent ingests take turns. A disabled
         secret takes no new value. Sealing makes one call to the key provider
         while that lock is held, so with KMS the transaction's latency includes
-        one KMS round trip, bounded by the client's timeouts."""
+        one KMS round trip, bounded by the client's timeouts.
+
+        ``value`` is encoded with encode_value. Existing records are re-read
+        under KEY SHARE and their current kind/backend/params govern validation.
+        ``initial`` is only for an inert first-create draft with no record yet;
+        if a parent exists, it always wins over that candidate."""
+        row = await tx.fetch_one(
+            "SELECT record FROM {{tables.secrets}}"
+            " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3 FOR KEY SHARE",
+            installation_id,
+            team_id,
+            secret_id,
+        )
+        if row is not None:
+            record = SecretRecord.from_after(json.loads(row["record"]))
+        elif initial is not None and initial.secret_id == secret_id:
+            # The candidate belongs to a first-create draft; confirmation will
+            # create its record. The existing-record path never trusts it.
+            record = SecretRecord.from_after(initial.after)
+        else:
+            raise CustodyUnavailable("no secret record or initial-create candidate")
+        if record.backend != "native":
+            raise CustodyUnavailable("the secret does not use native custody")
+        decode_value(record.kind, value)
         allocated = await tx.fetch_one(
             """
             INSERT INTO {{tables.custody_secrets}}
-                (installation_id, team_id, secret_id, last_version)
-            VALUES ($1, $2, $3, 1)
+                (installation_id, team_id, secret_id, last_version, immutable_shape)
+            VALUES ($1, $2, $3, 1, $4)
             ON CONFLICT (installation_id, team_id, secret_id) DO UPDATE
                 SET last_version = {{tables.custody_secrets}}.last_version + 1
+                WHERE {{tables.custody_secrets}}.immutable_shape = EXCLUDED.immutable_shape
             RETURNING last_version, disabled_at
             """,
             installation_id,
             team_id,
             secret_id,
+            json.dumps(sealed_shape(record)),
         )
-        assert allocated is not None
+        if allocated is None:
+            raise CustodyUnavailable("the sealed secret's immutable shape differs")
         if allocated["disabled_at"] is not None:
             raise CustodyUnavailable("the secret is disabled")
         version = int(allocated["last_version"])
@@ -180,6 +223,84 @@ class Custody:
             version=row["version"],
             updated_at=row["created_at"],
             state="disabled" if row["disabled_at"] is not None else "active",
+        )
+
+    async def shape_allows(
+        self, tx: TransactionManager, *, installation_id: str, team_id: str, record: SecretRecord
+    ) -> bool:
+        """Draft-time check only. Confirmation must atomically bind_shape."""
+        row = await tx.fetch_one(
+            "SELECT last_version, immutable_shape FROM {{tables.custody_secrets}}"
+            " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3",
+            installation_id,
+            team_id,
+            record.secret_id,
+        )
+        return (
+            row is None
+            or row["last_version"] == 0
+            or (
+                row["immutable_shape"] is not None
+                and json.loads(row["immutable_shape"]) == sealed_shape(record)
+            )
+        )
+
+    async def bind_shape(
+        self, tx: TransactionManager, *, installation_id: str, team_id: str, record: SecretRecord
+    ) -> bool:
+        """Pin a confirmed record after locking its parent. Initial ingest and
+        initial creation take turns on this key, even with no visible parent.
+        Only a history that never sealed a version may change its shape."""
+        return bool(
+            await tx.fetch_value(
+                "INSERT INTO {{tables.custody_secrets}} AS c"
+                " (installation_id, team_id, secret_id, last_version, immutable_shape)"
+                " VALUES ($1, $2, $3, 0, $4)"
+                " ON CONFLICT (installation_id, team_id, secret_id) DO UPDATE"
+                " SET immutable_shape = EXCLUDED.immutable_shape"
+                " WHERE c.last_version = 0 OR c.immutable_shape = EXCLUDED.immutable_shape"
+                " RETURNING 1",
+                installation_id,
+                team_id,
+                record.secret_id,
+                json.dumps(sealed_shape(record)),
+            )
+        )
+
+    async def value_matches(
+        self, tx: TransactionManager, context: SealContext, record: SecretRecord
+    ) -> bool:
+        """Whether a live sealed version was ingested for this immutable shape."""
+        return bool(
+            await tx.fetch_value(
+                "SELECT 1 FROM {{tables.custody_secrets}} c"
+                " JOIN {{tables.sealed_versions}} v USING (installation_id, team_id, secret_id)"
+                " WHERE c.installation_id = $1 AND c.team_id = $2 AND c.secret_id = $3"
+                " AND v.version = $4 AND c.immutable_shape = $5::jsonb",
+                context.installation_id,
+                context.team_id,
+                context.secret_id,
+                context.version,
+                json.dumps(sealed_shape(record)),
+            )
+        )
+
+    async def ever_sealed(
+        self, tx: TransactionManager, *, installation_id: str, team_id: str, secret_id: str
+    ) -> bool:
+        """Whether any version of the secret was ever sealed, destroyed or not,
+        whether or not any sealed versions survive. The caller must hold the
+        parent secrets row FOR UPDATE before using this to authorize a reshape;
+        this read alone cannot lock a custody row that does not yet exist."""
+        return bool(
+            await tx.fetch_value(
+                "SELECT 1 FROM {{tables.custody_secrets}}"
+                " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3"
+                " AND last_version > 0",
+                installation_id,
+                team_id,
+                secret_id,
+            )
         )
 
     async def disable(

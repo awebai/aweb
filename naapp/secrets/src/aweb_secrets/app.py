@@ -16,6 +16,7 @@ from pathlib import Path
 
 import httpx
 from aweb_naapp.idempotency import apply_idempotency_migrations
+from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.roles import apply_roles_migrations, purge_team
 from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes
 from aweb_naapp.runtime.authorization import ActionPolicy, GrantSource
@@ -66,12 +67,13 @@ async def not_implemented() -> None:
 
 
 # The shared table sets admission reads: request ids, role assignments, the
-# installation fence and the configuration revision.
+# installation fence, the configuration revision and the rate buckets.
 STORES = (
     apply_idempotency_migrations,
     apply_roles_migrations,
     apply_installation_migrations,
     apply_revision_migrations,
+    apply_ratelimit_migrations,
 )
 
 
