@@ -237,7 +237,9 @@ outage apart.
 A team-key rotation invalidates every record signed with the old key: the
 team's `aweb.team-server/1` record ([app-team-server-api.md](design/app-team-server-api.md)),
 its custodian records, one member-custody record per custodial certificate,
-and the member-person records of [member-person.md](member-person.md). The
+the member-person records of [member-person.md](member-person.md), and the
+credential-lifetime policy of
+[team-credential-lifetimes.md](design/team-credential-lifetimes.md). The
 batch grows with the number of custodial members.
 
 **Atomic path.** The rotate request
@@ -252,7 +254,8 @@ authority) takes an optional `resigned_records` object alongside
     "team_server":     {"record": {…}, "signature": "…"},
     "team_custodians": [{"record": {…}, "signature": "…"}],
     "member_custody":  [{"record": {…}, "signature": "…"}],
-    "member_person":   [{"record": {…}, "signature": "…"}]
+    "member_person":   [{"record": {…}, "signature": "…"}],
+    "team_credential_policy": {"record": {…}, "signature": "…"}
   }
 }
 ```
@@ -264,10 +267,13 @@ authority) takes an optional `resigned_records` object alongside
   stored one.
 - **The set is complete.** There is exactly one re-signed record for every
   record the team has stored, of each kind, and `team_server` is required
-  whenever the team has a stored server record. A missing, extra, duplicated
+  whenever the team has a stored server record. The keyless
+  `team_credential_policy` is required whenever a policy is stored; its revision
+  and all four limits are preserved. A missing, extra, duplicated
   or changed record refuses the whole request with `409`, and nothing changes.
   The `409` body names the offending keys per kind, as
-  `{"missing": {…}, "extra": {…}, "changed": {…}}`: `team_server` as a boolean,
+  `{"missing": {…}, "extra": {…}, "changed": {…}}`: `team_server` and
+  `team_credential_policy` as booleans,
   `custodian_id` for custodian records, and `certificate_id` for custody and
   person records. The request is already authenticated by the namespace
   controller, so this exposes nothing new.
@@ -279,8 +285,8 @@ authority) takes an optional `resigned_records` object alongside
   refuses the rotation instead of being left on the old key. `aw` always sends
   it.
 - **Size.** The limit is deploy-configurable. Its default accepts one server
-  record, up to two custodian records, 1,000 member-custody records and 1,000
-  member-person records per team, which covers 1,000 custodial certificates.
+  record, one credential-policy record, up to two custodian records, 1,000
+  member-custody records and 1,000 member-person records per team, which covers 1,000 custodial certificates.
   The default assumes each record with its signature is at most 2 KiB, so the
   route's default body limit is 4 MiB. A batch over the configured limit is
   refused with `413`, which is distinct from `409`. Chunked rotation is future

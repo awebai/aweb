@@ -539,18 +539,20 @@ POST   /v1/namespaces/{domain}/teams/{name}/rotate
                  "team_server":     { "record", "signature" },
                  "team_custodians": [{ "record", "signature" }],
                  "member_custody":  [{ "record", "signature" }],
-                 "member_person":   [{ "record", "signature" }] } }
+                 "member_person":   [{ "record", "signature" }],
+                 "team_credential_policy": { "record", "signature" } } }
        Note: invalidates ALL existing certificates (they were
        signed by the old key). Members need new certificates.
        resigned_records carries every team-key-signed record of the team
        re-signed with the NEW key: unchanged apart from team_did_key and a
        newer issued_at, exactly one per stored record of each kind, and
-       team_server whenever a server record is stored. AWID swaps the key
+       team_server whenever a server record is stored, and team_credential_policy
+       whenever a lifetime policy is stored. AWID swaps the key
        and replaces the records in one transaction. A record that does not
        verify: 422. An incomplete, extra or changed set: 409
        resigned_records_incomplete with { missing, extra, changed } naming
-       the keys per kind (team_server as a boolean, custodian_id,
-       certificate_id), and nothing changes. The body is streamed against
+       the keys per kind (team_server and team_credential_policy as booleans,
+       custodian_id, certificate_id), and nothing changes. The body is streamed against
        AWID_ROTATE_MAX_BODY_BYTES (default 4 MiB, never configurable lower):
        413 above it. Without resigned_records the rotation still succeeds,
        and verifiers refuse the old-key records until they are re-published.
@@ -751,8 +753,8 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/person
 GET    /v1/namespaces/{domain}/teams/{name}/signed-records?limit=&cursor=
        Every team-key-signed record the team has stored, for a team-key
        rotation that must re-sign all of them: the aweb.team-server/1 record
-       and the custodian, member-custody and member-person records, including
-       those of revoked certificates.
+       and the custodian, member-custody, member-person and credential-policy
+       records, including those of revoked certificates.
        Auth: whatever the team's visibility, a path signature (the
        certificate-blob fetch scheme) by the team controller key, or the
        trusted service token. Members are not readers: the list would show
@@ -761,7 +763,8 @@ GET    /v1/namespaces/{domain}/teams/{name}/signed-records?limit=&cursor=
        { "detail": "Team not found" }.
        Response: { "items": [{ "kind", "key", "record", "signature" }],
        "has_more", "next_cursor" }. kind is team_server, team_custodians,
-       member_custody or member_person; key is null for team_server, else the
+       member_custody, member_person or team_credential_policy; key is null for
+       team_server and team_credential_policy, else the
        custodian_id or certificate_id. Items are ordered by kind, then key, and
        pages are keyset cursors over that order (limit default 50, clamped to
        200; a malformed cursor is 400). Records are exactly as stored.
