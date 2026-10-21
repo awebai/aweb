@@ -41,7 +41,7 @@ class NaappDatabase:
         self.db = AsyncDatabaseManager(
             DatabaseConfig(
                 connection_string=settings.database_url,
-                schema=None,
+                schema=settings.db_schema,
                 min_connections=settings.db_pool_min_connections,
                 max_connections=settings.db_pool_max_connections,
                 statement_cache_size=settings.db_statement_cache_size,

@@ -100,7 +100,7 @@ async def test_an_app_that_already_created_the_shared_tables_keeps_its_rows(
         " first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
         " last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW());\n"
     )
-    existing = AsyncDatabaseManager(DatabaseConfig(connection_string=database_url))
+    existing = AsyncDatabaseManager(DatabaseConfig(connection_string=database_url, schema="public"))
     await existing.connect()
     try:
         await AsyncMigrationManager(
@@ -221,3 +221,29 @@ async def test_reconnecting_with_stores_applies_nothing_twice(
         count = await database.db.fetch_value("SELECT count(*) FROM schema_migrations")
         await database.disconnect()
         assert count == 5
+
+
+async def _default_search_path_is_pg_catalog(database_url: str) -> None:
+    """Model a role whose default search_path resolves no user schema."""
+    admin = await asyncpg.connect(database_url)
+    try:
+        name = await admin.fetchval("SELECT current_database()")
+        await admin.execute(f'ALTER DATABASE "{name}" SET search_path = pg_catalog')
+    finally:
+        await admin.close()
+
+
+@pytest.mark.parametrize("db_schema,expected", [(None, "public"), ("example_app", "example_app")])
+async def test_the_runtime_migrates_into_its_schema_whatever_the_roles_search_path(
+    database_url: str, tmp_path: Path, db_schema: str | None, expected: str
+) -> None:
+    await _default_search_path_is_pg_catalog(database_url)
+    values = {} if db_schema is None else {"db_schema": db_schema}
+    settings = ExampleSettings(_env_file=None, database_url=database_url, **values)
+    database = NaappDatabase(settings, module_name="example", migrations_path=_migrations(tmp_path))
+    await database.connect()
+    try:
+        for table in ("things", "teams", "outbox_events", "schema_migrations"):
+            assert await database.db.fetch_value(f"SELECT to_regclass('{expected}.{table}') IS NOT NULL")
+    finally:
+        await database.disconnect()
