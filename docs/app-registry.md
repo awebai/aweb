@@ -199,6 +199,11 @@ until commit. Certificate membership and member-writable agent/workspace role
 labels or prompt-role bundles do not confer this authority. Internal-auth
 hosts must provide their own policy; no internal actor is guessed into a DID.
 
+Grants are keyed by the member's `did:key`. After a member rotates keys, the
+new key has no install-admin authority until the server operator re-grants it
+with `aweb install-admin grant`. Key rotation does not transfer the old grant;
+the operator should also revoke the grant for the old key.
+
 ## Installation identity and transactional reader
 
 Migration `033_team_app_installation_identity` adds an opaque, unique
