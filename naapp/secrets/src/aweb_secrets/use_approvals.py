@@ -571,17 +571,25 @@ async def revoke_use_approvals(
     secret_ids: Sequence[str],
     revoked_by: str,
     reason: str,
+    source_grant_id: str | None = None,
 ) -> Sequence[str]:
     """Revoke all versions for exactly these scoped secret IDs, in the
     caller's containment transaction. The caller selects descendants through
     stored lineage and holds the installation/ancestry/grant fences first.
+    source_grant_id also includes direct approvals admitted under that exact
+    grant. The scoped union goes to B2 once, in approval-ID order, before any
+    revocation writes. Without it, selection remains exact-secret/all-version.
     Consumed attempts stay retrievable; NOT_SENT transport retries stop."""
     rows = await tx.fetch_all(
-        "SELECT approval_id FROM {{tables.use_approvals}} WHERE installation_id=$1 "
-        "AND team_id=$2 AND secret_id=ANY($3::text[])",
+        "SELECT u.approval_id FROM {{tables.use_approvals}} u "
+        "JOIN {{tables.intents}} i ON i.intent_id=u.intent_id "
+        "AND i.installation_id=u.installation_id AND i.team_id=u.team_id "
+        "WHERE u.installation_id=$1 AND u.team_id=$2 "
+        "AND (u.secret_id=ANY($3::text[]) OR i.grant_id=$4::text) ORDER BY u.approval_id",
         installation_id,
         team_id,
         list(secret_ids),
+        source_grant_id,
     )
     revoked = await approvals.revoke_many(
         [row["approval_id"] for row in rows], revoked_by=revoked_by, reason=reason, tx=tx
