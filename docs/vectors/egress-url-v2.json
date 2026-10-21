@@ -1,6 +1,6 @@
 {
-  "name": "egress-url-v1",
-  "status": "frozen by its reviewed landing (aweb-acgh.18.2, S1); derived from secrets.md section 7.2 and the section 16 scope rows; a change needs a new version",
+  "name": "egress-url-v2",
+  "status": "frozen by its reviewed landing (aweb-acgh.18.2, S1, with decision 47: injected credential headers and the identity encoding); derived from secrets.md section 7.2 and the section 16 scope rows; supersedes egress-url-v1; a change needs a new version",
   "scheme": {
     "url": "https only (scheme compared case-insensitively, written lowercase); no userinfo, no fragment, no backslash, no whitespace or control character anywhere; only the host may hold non-ASCII characters",
     "host": "IDNA2008 with UTS46 mapping (non-transitional, STD3 rules) to lowercase A-labels; empty labels and a trailing dot are refused; a host whose last label is numeric or 0x-hex is refused unless it is a dotted-quad IPv4 address without leading zeros; an IPv6 literal is bracketed, has no zone and is written in RFC 5952 form (compressed, lowercase, an IPv4-mapped address in dotted notation)",
@@ -190,9 +190,9 @@
   ],
   "headers": {
     "default_allow": ["Accept", "Accept-Language", "Content-Type", "If-Match", "If-None-Match", "X-Request-Id"],
-    "always_rejected": ["Authorization", "Proxy-Authorization", "Cookie", "X-Api-Key", "X-Amz-Security-Token", "Host", "Content-Length", "Transfer-Encoding", "Connection", "TE", "Upgrade", "Forwarded", "User-Agent"],
+    "always_rejected": ["Authorization", "Proxy-Authorization", "Cookie", "X-Api-Key", "X-Amz-Security-Token", "Host", "Accept-Encoding", "Content-Length", "Transfer-Encoding", "Connection", "TE", "Upgrade", "Forwarded", "User-Agent"],
     "always_rejected_prefixes": ["X-Forwarded-"],
-    "rules": "the guard itself sets Host, User-Agent, Connection and Content-Length; names compare case-insensitively; a name must be an RFC 9110 token and a value must be latin-1 with no control character other than tab; duplicate names are refused; a header passes only if it is in default_allow, the destination's header_allow or the operation's amz_allowed, and is never always rejected, never one of the names the caller's credential injects, and never an X-Amz-* header outside amz_allowed (X-Amz-Security-Token is always rejected); its value must not look like a credential to the caller's detector, which every caller supplies; a caller may refuse more but cannot allow what these rules refuse",
+    "rules": "the guard itself sets Host, User-Agent, Accept-Encoding (always identity), Connection and Content-Length; names compare case-insensitively; a name must be an RFC 9110 token and a value must be latin-1 with no control character other than tab; duplicate names are refused; a header passes only if it is in default_allow, the destination's header_allow or the operation's amz_allowed, and is never always rejected, never one of the names the caller's credential injects, and never an X-Amz-* header outside amz_allowed (X-Amz-Security-Token is always rejected); its value must not look like a credential to the caller's detector, which every caller supplies; a caller may refuse more but cannot allow what these rules refuse",
     "allowed": [
       {"name": "accept", "header_allow": [], "headers": [["Accept", "application/json"]]},
       {"name": "case_insensitive", "header_allow": [], "headers": [["content-type", "application/json"]]},
@@ -206,6 +206,7 @@
       {"name": "cookie", "header_allow": [], "headers": [["Cookie", "a=b"]], "code": "header_not_allowed"},
       {"name": "amz_security_token", "header_allow": ["X-Amz-Security-Token"], "headers": [["X-Amz-Security-Token", "x"]], "code": "header_not_allowed"},
       {"name": "host", "header_allow": ["Host"], "headers": [["Host", "evil.example"]], "code": "header_not_allowed"},
+      {"name": "accept_encoding_even_if_allowed", "header_allow": ["Accept-Encoding"], "headers": [["Accept-Encoding", "gzip"]], "code": "header_not_allowed"},
       {"name": "user_agent_even_if_allowed", "header_allow": ["User-Agent"], "headers": [["User-Agent", "agent/1"]], "code": "header_not_allowed"},
       {"name": "x_forwarded_for", "header_allow": ["X-Forwarded-For"], "headers": [["X-Forwarded-For", "10.0.0.1"]], "code": "header_not_allowed"},
       {"name": "unlisted", "header_allow": [], "headers": [["X-Custom", "1"]], "code": "header_not_allowed"},
@@ -217,12 +218,33 @@
       {"name": "amz_undeclared", "header_allow": ["X-Amz-Date"], "headers": [["X-Amz-Date", "20261020T000000Z"]], "code": "header_not_allowed"},
       {"name": "amz_target_undeclared", "header_allow": ["X-Amz-Target"], "headers": [["X-Amz-Target", "a"]], "code": "header_not_allowed"},
       {"name": "amz_security_token_declared", "header_allow": [], "amz_allowed": ["X-Amz-Security-Token"], "headers": [["X-Amz-Security-Token", "a"]], "code": "header_not_allowed"},
-      {"name": "injected_name", "header_allow": ["X-Vendor-Key"], "injected": ["X-Vendor-Key"], "headers": [["x-vendor-key", "a"]], "code": "header_not_allowed"},
       {"name": "control_soh_value", "header_allow": [], "headers": [["Accept", "a\u0001b"]], "code": "header_not_allowed"},
       {"name": "control_del_value", "header_allow": [], "headers": [["Accept", "ab"]], "code": "header_not_allowed"},
       {"name": "non_latin1_value", "header_allow": [], "headers": [["Accept", "a☃"]], "code": "header_not_allowed"},
       {"name": "name_with_trailing_newline", "header_allow": [], "headers": [["Accept\n", "a"]], "code": "header_not_allowed"},
       {"name": "allowlisted_name_with_trailing_newline", "header_allow": ["X-Vendor\n"], "headers": [["X-Vendor\n", "a"]], "code": "header_not_allowed"}
-    ]
+    ],
+    "injected": {
+      "rules": "the headers the caller's credential handling sets are sent after the caller's headers and skip the allowlist and the credential detector; each name must be one the caller declares as injected, compared case-insensitively, and appear at most once; a name the guard sets is refused even when declared; the name must be an RFC 9110 token and the value latin-1 with no control character other than tab; a refusal names the header and never carries its value; a caller header with a declared injected name is refused in any case, even when the destination allows the name",
+      "guard_set": ["Host", "User-Agent", "Accept-Encoding", "Connection", "Content-Length", "Transfer-Encoding"],
+      "caller_refused": [
+        {"name": "caller_sends_declared_name", "header_allow": ["X-Vendor-Key"], "declared": ["X-Vendor-Key"], "headers": [["X-Vendor-Key", "a"]], "code": "header_not_allowed"},
+        {"name": "caller_sends_declared_name_other_case", "header_allow": ["X-Vendor-Key"], "declared": ["X-Vendor-Key"], "headers": [["x-vendor-key", "a"]], "code": "header_not_allowed"}
+      ],
+      "allowed": [
+        {"name": "declared_bearer", "declared": ["Authorization"], "headers": [["Authorization", "Bearer x"]]},
+        {"name": "declared_case_insensitive", "declared": ["X-Vendor-Key"], "headers": [["x-vendor-key", "k"]]},
+        {"name": "two_declared", "declared": ["X-Amz-Date", "Authorization"], "headers": [["X-Amz-Date", "20261020T000000Z"], ["Authorization", "AWS4-HMAC-SHA256 x"]]}
+      ],
+      "refused": [
+        {"name": "undeclared", "declared": ["Authorization"], "headers": [["X-Api-Key", "k"]], "code": "header_not_allowed"},
+        {"name": "duplicate", "declared": ["Authorization"], "headers": [["Authorization", "Bearer a"], ["authorization", "Bearer b"]], "code": "header_not_allowed"},
+        {"name": "host_declared", "declared": ["Host"], "headers": [["Host", "evil.example"]], "code": "header_not_allowed"},
+        {"name": "accept_encoding_declared", "declared": ["Accept-Encoding"], "headers": [["Accept-Encoding", "gzip"]], "code": "header_not_allowed"},
+        {"name": "crlf_value", "declared": ["Authorization"], "headers": [["Authorization", "Bearer a\r\nX-Smuggled: 1"]], "code": "header_not_allowed"},
+        {"name": "non_latin1_value", "declared": ["Authorization"], "headers": [["Authorization", "Bearer \u2603"]], "code": "header_not_allowed"},
+        {"name": "bad_name", "declared": ["Bad Name"], "headers": [["Bad Name", "v"]], "code": "header_not_allowed"}
+      ]
+    }
   }
 }

@@ -5,8 +5,8 @@ AAAA record is checked. The connection then goes to one validated address
 and nowhere else: the network backend ignores the name it is handed, so a
 second resolution cannot happen. TLS verifies the certificate against the
 canonical name, and SNI and ``Host`` carry that name. Redirects come back as
-responses, no proxy is read from the environment, and the bounds can only be
-lowered.
+responses, no proxy is read from the environment, and no bound can exceed its
+module ceiling.
 
 A failure before any byte of the request was written raises
 :class:`EgressNotSent`; a failure after raises :class:`EgressOutcomeUnknown`,
@@ -30,14 +30,16 @@ import dns.resolver
 import httpcore
 
 from .addresses import AddressPolicy, IPAddress
-from .headers import HeaderRefusal, HeaderRules, check_headers
+from .headers import HeaderRefusal, HeaderRules, check_headers, check_injected
 from .refused import EgressRefused
 from .urls import CanonicalURL, Destination, Network, canonical_url, match_destination
 
 CONNECT_TIMEOUT_SECONDS = 5.0
 TOTAL_TIMEOUT_SECONDS = 30.0
 MAX_REQUEST_BYTES = 1024 * 1024
-MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+# The hard maximum any caller may ask for; a caller that sets no bound gets the default.
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+DEFAULT_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
 class EgressNotSent(Exception):
@@ -50,12 +52,16 @@ class EgressOutcomeUnknown(Exception):
 
 @dataclass(frozen=True)
 class Bounds:
-    """Timeouts and sizes for one request. Each may only be lowered."""
+    """Timeouts and sizes for one request, each above 0 and at most its ceiling.
+
+    The response bound defaults to 4 MiB; a caller may set it up to the 16 MiB
+    ceiling. The others default to their ceilings.
+    """
 
     connect_timeout: float = CONNECT_TIMEOUT_SECONDS
     total_timeout: float = TOTAL_TIMEOUT_SECONDS
     max_request_bytes: int = MAX_REQUEST_BYTES
-    max_response_bytes: int = MAX_RESPONSE_BYTES
+    max_response_bytes: int = DEFAULT_RESPONSE_BYTES
 
     def __post_init__(self) -> None:
         for value, ceiling in (
@@ -147,6 +153,7 @@ class Egress:
         *,
         header_rules: HeaderRules,
         headers: Sequence[tuple[str, str]] = (),
+        injected: Sequence[tuple[str, str]] = (),
         refuse_header: HeaderRefusal | None = None,
         body: bytes = b"",
         bounds: Bounds | None = None,
@@ -157,6 +164,13 @@ class Egress:
         method, against the destination under the deploy setting, so a caller
         that skipped either step is still refused. Whether the destination is
         internal, and its CIDR, come from the destination alone.
+
+        ``headers`` are the caller's and pass the header rules. ``injected``
+        are the headers the caller's credential handling sets, each a name
+        ``header_rules.injected`` declares; they are sent after the caller's
+        headers, and their values reach only the wire. The guard sets
+        ``Host`` to the canonical authority, so a signature over the request
+        signs ``canonical_url(url).authority``.
         """
         bounds = bounds or self.bounds
         canonical = canonical_url(str(url))
@@ -172,6 +186,7 @@ class Egress:
             rules=header_rules,
             refuse=refuse_header,
         )
+        injected = check_injected(injected, rules=header_rules)
         if len(body) > bounds.max_request_bytes:
             raise EgressRefused("params_invalid", "request_body", "over the request bound")
         internal = destination.cidr if destination.network is Network.INTERNAL else None
@@ -184,7 +199,7 @@ class Egress:
             addresses = await self._resolve(canonical.host, bounds, deadline)
         self.addresses.check(addresses, internal=internal)
         return await self._exchange(
-            method, canonical, addresses[0], headers, body, bounds, deadline
+            method, canonical, addresses[0], [*headers, *injected], body, bounds, deadline
         )
 
     async def _resolve(self, host: str, bounds: Bounds, deadline: float) -> list[IPAddress]:
@@ -216,6 +231,8 @@ class Egress:
         request_headers = [
             ("Host", url.authority),
             ("User-Agent", self.user_agent),
+            # The guard never decodes a body, so it asks for none to be encoded.
+            ("Accept-Encoding", "identity"),
             *headers,
             ("Connection", "close"),
         ]

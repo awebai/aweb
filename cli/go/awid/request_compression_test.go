@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,7 +52,7 @@ func TestClientRequestCompressionNegotiation(t *testing.T) {
 			var probes atomic.Int32
 			input := map[string]string{"body": "`curl https://example.test`"}
 			expected, _ := json.Marshal(input)
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := newCompressionTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/health" {
 					probes.Add(1)
 					if r.Method != "GET" || r.Header.Get("Authorization") != "" || r.Header.Get("X-AWID-Team-Certificate") != "" || r.Header.Get("Cookie") != "" {
@@ -97,7 +96,7 @@ func TestClientRequestCompressionSignsDecodedBytes(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			input := map[string]string{"body": "signed original"}
 			original, _ := json.Marshal(input)
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := newCompressionTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/health" {
 					w.Header().Set("Accept-Encoding", "gzip")
 					return
@@ -119,7 +118,7 @@ func TestClientRequestCompressionSignsDecodedBytes(t *testing.T) {
 				if err := json.Unmarshal(signed, &fields); err != nil {
 					t.Error(err)
 				}
-				if fields["body_sha256"] != bodyHash || fields["path"] != r.URL.RequestURI() || fields["timestamp"] != timestamp {
+				if fields["body_sha256"] != bodyHash || fields["path"] != r.RequestURI || fields["timestamp"] != timestamp {
 					t.Errorf("request binding = %v", fields)
 				}
 				if kind == "grant" {
@@ -175,7 +174,7 @@ func TestClientRequestCompressionRefusalDisablesWithoutReplay(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var probes, writes atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := newCompressionTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Accept-Encoding", "gzip")
 				if r.URL.Path == "/health" {
 					probes.Add(1)
@@ -218,7 +217,7 @@ func TestClientRequestCompressionRefusalDisablesWithoutReplay(t *testing.T) {
 
 func TestClientRequestCompressionConcurrentCacheAndMountIsolation(t *testing.T) {
 	var probes [2]atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newCompressionTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mount := 0
 		if strings.HasPrefix(r.URL.Path, "/other/") {
 			mount = 1

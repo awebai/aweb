@@ -8,16 +8,16 @@ from __future__ import annotations
 
 import base64
 import binascii
-from datetime import datetime, timezone
+from datetime import datetime
 import json
 import re
 from typing import Any
 
 from awid.signing import canonical_json_bytes
+from awid.utc_timestamps import parse_utc_seconds
 
 MAX_SAFE_INTEGER = 2**53 - 1
 
-_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 # Base64url without padding, as the host encodes the canonical bytes.
 _B64URL = re.compile(r"^[A-Za-z0-9_-]*$")
 
@@ -71,9 +71,7 @@ def is_safe_positive_integer(value: Any) -> bool:
 
 
 def parse_timestamp(name: str, value: Any, *, error: type[SignedDocumentError]) -> datetime:
-    if not isinstance(value, str) or not _TIMESTAMP.fullmatch(value):
-        raise error("invalid_value", f"{name} must be YYYY-MM-DDTHH:MM:SSZ")
     try:
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return parse_utc_seconds(value)
     except ValueError as exc:
-        raise error("invalid_value", f"{name} is not a valid time") from exc
+        raise error("invalid_value", f"{name} must be a valid YYYY-MM-DDTHH:MM:SSZ time") from exc

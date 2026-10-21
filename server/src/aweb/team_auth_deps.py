@@ -7,8 +7,6 @@ a TeamIdentity from the request's certificate headers.
 
 from __future__ import annotations
 
-import base64
-import json
 import logging
 from dataclasses import dataclass
 
@@ -22,6 +20,7 @@ from aweb.deps import get_db
 from pgdbm import AsyncDatabaseManager
 
 from awid.signing import verify_did_key_signature
+from awid.team_certificate import TeamCertificateError, decode_team_certificate
 from awid.team_ids import parse_team_id
 from awid.dns_auth import parse_didkey_auth, require_timestamp, enforce_timestamp_skew
 from aweb.awid_error_handling import (
@@ -171,8 +170,8 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
         raise HTTPException(status_code=401, detail="Missing X-AWID-Team-Certificate header")
 
     try:
-        cert_data = json.loads(base64.b64decode(cert_header))
-    except Exception:
+        cert_data = decode_team_certificate(cert_header)
+    except TeamCertificateError:
         raise HTTPException(status_code=401, detail="Malformed certificate")
 
     cert_team_id = cert_data.get("team_id", "")
