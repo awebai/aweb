@@ -37,7 +37,7 @@ Server changes are since `server-v1.27.29`.
 
 ### Release preparation: aw 1.36.45
 
-CLI changes are since `aw-v1.36.44`.
+CLI changes are since `aw-v1.36.44`. Prepared alongside server 1.27.30 and AWID 0.5.30.
 
 - **Security:** all root-authenticated SDK and CLI requests now sign
   target-bound v2 envelopes, including identity-only `aw id request`.
@@ -51,6 +51,29 @@ CLI changes are since `aw-v1.36.44`.
 - `aw plugin install` and `aw plugin update` send the exact fetched manifest
   bytes with the install, for v1 manifests whose declared origin is the
   install origin. Other installs are sent without bytes, as before.
+- `aw id team rotate-key --team <name> --namespace <domain>` rotates the team
+  controller key under the namespace controller key, on AWID's atomic path.
+  It reads every record the team key has signed at AWID in a few pages
+  (`/signed-records`): the `aweb.team-server/1` record and the custodian,
+  member-custody and member-person records, those of revoked certificates
+  included. It verifies each against the team's current key before
+  re-signing it with the new key, and sends them with the key change in one
+  request, so the team-server record stays valid across the rotation instead of
+  having to be republished with `aw id team set-server`.
+  - If AWID's `409 resigned_records_incomplete` names custodian records the
+    command did not send, for example ones published during the run, it
+    fetches and verifies those and retries exactly once. Any other refusal, or
+    a second one, leaves the key unchanged and exits non-zero with AWID's
+    detail.
+  - The new key is stored as pending before AWID sees it and becomes the team
+    key once AWID holds it. Running the command again after an interruption
+    resumes with the same key.
+  - Every member certificate is signed by the team key, so after a rotation all
+    of them are invalid. The command says so; re-issue each with
+    `aw id team reissue-cert`.
+- **Deploy order:** the atomic rotation needs AWID 0.5.30. An older AWID
+  refuses the request with `422`, because its rotate body forbids unknown
+  fields, and the team key stays unchanged.
 
 ### Release preparation: AWID 0.5.30
 
@@ -88,6 +111,14 @@ Publishes PyPI `awid-service` 0.5.30 and the `awid` image 0.5.30.
   before: the team's records, including its `aweb.team-server/1` record, stay
   signed by the old key and verifiers refuse them until they are published
   again under the new key. No released `aw` sends `resigned_records` yet.
+- `GET /v1/namespaces/{domain}/teams/{name}/signed-records` returns, in
+  keyset pages, every team-key-signed record the team has stored, including
+  those of revoked certificates. A team-key rotation must re-sign all of them,
+  and reading them one by one ran into the per-record read limit for any team
+  of more than about 30 certificates. Only the team key (a path signature) or
+  the trusted service token may read it, whatever the team's visibility; every
+  refusal is the 404 of an unknown team.
+  It has its own `attestation_record_list` bucket.
 - Nothing consumes these records yet: they are inputs for apps that verify
   `X-AWEB-Principal-Attestation` with the in-repo `aweb_naapp` verifier,
   which refuses an attestation whose records are not registered.

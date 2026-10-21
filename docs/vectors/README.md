@@ -78,7 +78,8 @@ Signed bytes and signatures of the team-key-signed `aweb.team-custodian/1`,
 `aweb.principal-attestation/1` header, and the verification cases of
 [principal attestation](../principal-attestation.md) §4 with their refusal
 codes. Keys are fixed seeds, so every signature can be recomputed. The AWID
-codec and the `aweb_naapp` verifier consume these bytes.
+codec, the `aweb_naapp` verifier and aw's Go record codec
+(`attestation_records_test.go`) consume these bytes.
 
 ### `message-signing-v1.json`
 
