@@ -221,6 +221,25 @@ item, that task is cited. X4 and X5 are operations tasks.
 | X5 | Core hook producer key configuration and rotation, with retired keys kept listed. Also the same-operator AWID read credential for the M3 observer, the drain worker in the deployed server, and the operator-disclosed delivery horizon. | aweb-acgh.13 | S2, S4, P1 |
 | X6 | Publish and backfill `aweb.team-server/1` records for every team whose controller key the deployment holds, before any naapp depends on discovery (decision 3). | D1 L6, aweb-acgg.31 | acgh.7 G1-a |
 
+## Decision 92: observed backend versions
+
+The shared catalog maps a successful validated backend observation to
+`post-governance-hook` / `resource.version_observed`, non-widening (`narrowing`)
+with exclusive `backend_observation` authority. Its refs name the scoped secret
+and old/new opaque local versions. Invalid shape or missing/deleted references
+activate nothing: pre-S3 use refusals carry `secret_value_invalid` or
+`custody_unavailable`; after `dispatching` commits, a final reread failure is
+`not_sent`, without a refusal code. See the normative
+[observed-version contract](../hook-events.md#observed-backend-versions-decision-92).
+
+M1/M2/S13 retain implementation ownership: prove immutable reference/shape,
+monotonic version/CAS and stale-no-event behavior, complete prelocks, old approval
+and token-cache invalidation, fresh next-use policy, system attribution and
+transition/outbox atomic rollback. Target/delivery unavailability never gates
+the non-widening transition; storage failure still refuses the use. Shared
+codec/ingest support must precede emission. Contract vectors and focused codec
+checks do not substitute for these producer and end-to-end release proofs.
+
 ## Cross-lane dependencies
 
 - **aweb-acgh.6:** the outbox `channel` addition (approved, not yet on main)
