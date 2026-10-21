@@ -149,8 +149,9 @@ through X6.
 - **Depends on:** X1 (to match the action mapping), B2's canonical-bytes rules
   (X5).
 - **Scope:** freeze positive and negative vectors for secrets' own contracts:
-  - `aweb.secrets.use-approval/1` and `aweb.secrets.change/1` canonical bytes
-    (§10.4, §6.3), including integer minor-unit amounts and a refused float;
+  - `aweb.secrets.use-approval/1` canonical bytes under B2's prefix (§10.4),
+    including integer minor-unit amounts and a refused float;
+    `aweb.secrets.change/1` is frozen by S10;
   - the runner protocol: `aweb.secrets.runner-request/1` and
     `aweb.secrets.runner-assignment/1` signatures, the HPKE suite and `info`
     binding (§9.3);
@@ -354,7 +355,10 @@ through X6.
   cooling-off as floors (decision 8): app or owner policy may lengthen them,
   never shorten them, and only deploy configuration sets the floor; freezing `approve_only` uses and widening
   changes during a cooling-off; email notifications.
-- **Acceptance:** a policy that sets either timing below its floor is refused;
+- **Acceptance:** freeze `aweb.secrets.change/1` canonical bytes and vectors
+  (envelope, closed kind/op enums, per-kind `after` with its own `v`,
+  `base_revision` refusal) under B2's prefix, before the console renders a
+  change; a policy that sets either timing below its floor is refused;
   a value enters only through the console with a passkey; a
   `propose-change` draft stays inert until confirmed; bootstrap with an admin or
   member signature is refused with `owner_required`; a valid owner act starts the

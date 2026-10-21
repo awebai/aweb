@@ -34,10 +34,13 @@ import httpx
 from awid.did import public_key_from_did, validate_stable_id
 from awid.log import canonical_server_origin
 from awid.signing import (
-    VerifyResult,
     canonical_json_bytes,
     verify_did_key_signature,
-    verify_signature_with_public_key,
+)
+from awid.team_certificate import (
+    TeamCertificateError,
+    decode_team_certificate,
+    verify_team_certificate_signature,
 )
 from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
@@ -389,13 +392,9 @@ def _parse_rfc3339_utc(value: str) -> datetime:
 
 def _decode_certificate(header: str) -> dict[str, Any]:
     try:
-        decoded = base64.b64decode(header, validate=True)
-        cert = json.loads(decoded.decode("utf-8"))
-    except Exception as exc:
+        return decode_team_certificate(header)
+    except TeamCertificateError as exc:
         raise HTTPException(status_code=401, detail="Malformed team certificate") from exc
-    if not isinstance(cert, dict):
-        raise HTTPException(status_code=401, detail="Malformed team certificate")
-    return cert
 
 
 def _decode_signed_payload_header(value: str) -> bytes:
@@ -408,6 +407,13 @@ def _decode_signed_payload_header(value: str) -> bytes:
         return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload") from exc
+
+
+def signed_payload_bytes(request: Request) -> bytes:
+    """The request's team-auth v2 signed-payload bytes, the bytes
+    :func:`authenticate_request` verified the signature over."""
+    signed_payload_header = request.headers.get("X-AWEB-Signed-Payload") or ""
+    return _decode_signed_payload_header(signed_payload_header)
 
 
 def raw_request_target(request: Request) -> str:
@@ -453,13 +459,15 @@ def _verified_signed_payload(
     team_id: str,
     body: bytes,
 ) -> dict[str, Any]:
-    signed_payload_header = request.headers.get("X-AWEB-Signed-Payload") or request.headers.get("x-aweb-signed-payload") or ""
-    canonical = _decode_signed_payload_header(signed_payload_header)
+    canonical = signed_payload_bytes(request)
     try:
         payload = json.loads(canonical)
-    except Exception as exc:
+        # A value that does not encode, such as a lone surrogate, can never be
+        # the canonical bytes the member signed.
+        recanonical = canonical_json_bytes(payload) if isinstance(payload, dict) else None
+    except (ValueError, TypeError, RecursionError) as exc:
         raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload") from exc
-    if not isinstance(payload, dict) or canonical_json_bytes(payload) != canonical:
+    if recanonical != canonical:
         raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload")
 
     if payload.get("v") != TEAM_AUTH_ENVELOPE_V2:
@@ -492,17 +500,20 @@ def _verified_signed_payload(
     return payload
 
 
+_CERTIFICATE_REFUSALS = {
+    "malformed": (401, "Malformed team certificate"),
+    "missing_signature": (401, "Team certificate missing signature"),
+    "invalid_team_key": (503, "Invalid AWID team public key"),
+    "bad_signature": (401, "Team certificate signature verification failed"),
+}
+
+
 def _verify_certificate_signature(cert: dict[str, Any], team_did_key: str) -> None:
-    signature = str(cert.get("signature") or "")
-    if not signature:
-        raise HTTPException(status_code=401, detail="Team certificate missing signature")
-    payload = {k: v for k, v in cert.items() if k != "signature"}
     try:
-        public_key = public_key_from_did(team_did_key)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="Invalid AWID team public key") from exc
-    if verify_signature_with_public_key(public_key, canonical_json_bytes(payload), signature) != VerifyResult.VERIFIED:
-        raise HTTPException(status_code=401, detail="Team certificate signature verification failed")
+        verify_team_certificate_signature(cert, team_did_key)
+    except TeamCertificateError as exc:
+        status_code, detail = _CERTIFICATE_REFUSALS[exc.reason]
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 async def authenticate_request(

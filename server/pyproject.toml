@@ -1,6 +1,6 @@
 [project]
 name = "aweb"
-version = "1.27.29"
+version = "1.27.31"
 description = "Agent Web: self-hostable coordination server for AI agents (identity, presence, mail, chat, tasks, locks)"
 readme = "README.md"
 license = "MIT"
@@ -19,10 +19,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 dependencies = [
-    "awid-service>=0.5.19",
-    # The one manifest reader (aweb_naapp.manifest), standard library only;
-    # no extra, so none of the naapp runtime's dependencies.
-    "aweb-naapp>=0.2.0",
+    "awid-service>=0.5.30",
+    # The one manifest reader and shared hook primitives, without the runtime extra.
+    "aweb-naapp[hooks]>=0.2.0",
     "base58>=2.1.1",
     "cryptography>=45.0.6",
     "dnspython>=2.8.0",

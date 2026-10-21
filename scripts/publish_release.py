@@ -22,15 +22,24 @@ from pathlib import Path
 
 SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
 TAG_PATTERN = re.compile(
-    rf"^(server-v|awid-service-v|awid-v|aw-v|channel-v|pi-v|skills-v|a2a-gw-v)({SEMVER})$"
+    rf"^(server-v|awid-service-v|aweb-naapp-v|awid-v|aw-v|channel-v|pi-v|skills-v|a2a-gw-v)({SEMVER})$"
 )
 MANIFESTS = {
     "server-v": "server/pyproject.toml",
     "awid-service-v": "awid/pyproject.toml",
+    "aweb-naapp-v": "naapp-lib/pyproject.toml",
     "awid-v": "awid/pyproject.toml",
     "channel-v": "channel/package.json",
     "pi-v": "pi-extension/package.json",
     "skills-v": "packages/claude-skills/package.json",
+}
+# Each PyPI lane: whether it depends on the in-repo awid-service, which must be
+# public first, and the (package, directory) pairs it publishes, in order. A
+# lane's packages share the tag's version.
+PYPI_LANES = {
+    "server-v": (True, (("aweb", "server"),)),
+    "awid-service-v": (False, (("awid-service", "awid"),)),
+    "aweb-naapp-v": (True, (("aweb-naapp", "naapp-lib"), ("aweb-naapp-testing", "naapp-lib/testing"))),
 }
 NPM_LANES = {
     "channel-v": ("channel", "@awebai/claude-channel", "channel"),
@@ -98,11 +107,13 @@ def tag_identity(root: Path, tag: str) -> tuple[str, str, str]:
         source_sha = run(root, "git", "rev-parse", f"{tag}^{{commit}}", timeout=60)
     except PublishRefusal as error:
         raise PublishRefusal(f"local candidate tag {tag} is absent") from error
-    manifest = MANIFESTS.get(prefix)
-    if manifest and manifest_version_at(root, source_sha, manifest) != version:
-        raise PublishRefusal(
-            f"{tag} does not match {manifest} version {manifest_version_at(root, source_sha, manifest)}"
-        )
+    manifests = [MANIFESTS[prefix]] if prefix in MANIFESTS else []
+    manifests += [f"{directory}/pyproject.toml" for _, directory in PYPI_LANES.get(prefix, (False, ()))[1]]
+    for manifest in dict.fromkeys(manifests):
+        if manifest_version_at(root, source_sha, manifest) != version:
+            raise PublishRefusal(
+                f"{tag} does not match {manifest} version {manifest_version_at(root, source_sha, manifest)}"
+            )
     return prefix, version, source_sha
 
 
@@ -129,13 +140,11 @@ def sha256(path: Path) -> str:
 
 
 def publish_pypi(root: Path, prefix: str, version: str) -> None:
-    package, directory = (
-        ("aweb", "server") if prefix == "server-v" else ("awid-service", "awid")
-    )
+    needs_awid, packages = PYPI_LANES[prefix]
     token = os.environ.get("UV_PUBLISH_TOKEN", "").strip()
     if not token:
         raise PublishRefusal("UV_PUBLISH_TOKEN is required")
-    if prefix == "server-v":
+    if needs_awid:
         awid_version = manifest_version(root, "awid/pyproject.toml")
         deadline = time.monotonic() + 180
         while True:
@@ -146,59 +155,60 @@ def publish_pypi(root: Path, prefix: str, version: str) -> None:
                 break
             if time.monotonic() >= deadline:
                 raise PublishRefusal(
-                    f"awid-service {awid_version} is not publicly available before aweb publication"
+                    f"awid-service {awid_version} is not publicly available before {prefix} publication"
                 )
             time.sleep(6)
-    with tempfile.TemporaryDirectory(prefix="aweb-pypi-") as temporary:
-        dist = Path(temporary)
-        run(root, "uv", "build", "--sdist", "--wheel", "--out-dir", str(dist), directory)
-        (dist / ".gitignore").unlink(missing_ok=True)
-        run(
-            root,
-            "bash",
-            "scripts/pypi-exact-publish.sh",
-            "inspect-staged",
-            "--dist",
-            str(dist),
-            "--package",
-            package,
-            "--version",
-            version,
-        )
-        status, observed = request_json(f"https://pypi.org/pypi/{package}/{version}/json")
-        observed_path = dist / "observed.json"
-        observed_path.write_text(json.dumps(observed), encoding="utf-8")
-        plan = run(
-            root,
-            "bash",
-            "scripts/pypi-exact-publish.sh",
-            "plan-publish",
-            "--dist",
-            str(dist),
-            "--package",
-            package,
-            "--version",
-            version,
-            "--observed-status",
-            str(status),
-            "--observed-json",
-            str(observed_path),
-        )
-        files = [dist / name for name in plan.splitlines() if name]
-        if files:
-            run(root, "uv", "publish", *(str(path) for path in files), capture=False)
-        run(
-            root,
-            "bash",
-            "scripts/pypi-exact-publish.sh",
-            "verify-published",
-            "--dist",
-            str(dist),
-            "--package",
-            package,
-            "--version",
-            version,
-        )
+    for package, directory in packages:
+        with tempfile.TemporaryDirectory(prefix="aweb-pypi-") as temporary:
+            dist = Path(temporary)
+            run(root, "uv", "build", "--sdist", "--wheel", "--out-dir", str(dist), directory)
+            (dist / ".gitignore").unlink(missing_ok=True)
+            run(
+                root,
+                "bash",
+                "scripts/pypi-exact-publish.sh",
+                "inspect-staged",
+                "--dist",
+                str(dist),
+                "--package",
+                package,
+                "--version",
+                version,
+            )
+            status, observed = request_json(f"https://pypi.org/pypi/{package}/{version}/json")
+            observed_path = dist / "observed.json"
+            observed_path.write_text(json.dumps(observed), encoding="utf-8")
+            plan = run(
+                root,
+                "bash",
+                "scripts/pypi-exact-publish.sh",
+                "plan-publish",
+                "--dist",
+                str(dist),
+                "--package",
+                package,
+                "--version",
+                version,
+                "--observed-status",
+                str(status),
+                "--observed-json",
+                str(observed_path),
+            )
+            files = [dist / name for name in plan.splitlines() if name]
+            if files:
+                run(root, "uv", "publish", *(str(path) for path in files), capture=False)
+            run(
+                root,
+                "bash",
+                "scripts/pypi-exact-publish.sh",
+                "verify-published",
+                "--dist",
+                str(dist),
+                "--package",
+                package,
+                "--version",
+                version,
+            )
 
 
 def build_npm_lane(root: Path, prefix: str) -> tuple[str, str, str]:
@@ -484,7 +494,7 @@ def publish(root: Path, tag: str) -> None:
         checkout = Path(temporary) / "source"
         run(root, "git", "worktree", "add", "--detach", str(checkout), source_sha, timeout=120)
         try:
-            if prefix in {"server-v", "awid-service-v"}:
+            if prefix in PYPI_LANES:
                 publish_pypi(checkout, prefix, version)
             elif prefix in NPM_LANES:
                 publish_npm(checkout, prefix, version)

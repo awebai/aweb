@@ -634,13 +634,15 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		InstalledAt:     installedAt,
 		UpdatedAt:       now,
 	}
-	if policy.residentHome != "" {
-		if err := changeAppApproval(policy.residentHome, name, origin); err != nil {
+	if policy.registerEvents && policy.residentHome != "" && (len(manifest.Events) > 0 || (update && previous != nil && previous.RegisteredDigest != "")) {
+		if err := registerManifestEvents(resolved, fetchedDigest, registrationManifestBytesFor(fetchedBytes, manifest.ManifestVersion, declaredOrigin, manifest.App.Origin), previous, &provenance, update); err != nil {
 			return nil, err
 		}
 	}
-	if policy.registerEvents && policy.residentHome != "" && (len(manifest.Events) > 0 || (update && previous != nil && previous.RegisteredDigest != "")) {
-		if err := registerManifestEvents(resolved, fetchedDigest, registrationManifestBytesFor(fetchedBytes, manifest.ManifestVersion, declaredOrigin, manifest.App.Origin), previous, &provenance, update); err != nil {
+	// The resident approves the app's origin only once its registration
+	// succeeded, so a refused install leaves the earlier approval in force.
+	if policy.residentHome != "" {
+		if err := changeAppApproval(policy.residentHome, name, origin); err != nil {
 			return nil, err
 		}
 	}

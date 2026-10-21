@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,20 +12,24 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = "checks unit artifacts integration"
-# Unrelated product targets check the fixture's committed source; the four
-# stage assertions below use real tools/services, never a replacement runner.
-SOURCE_CHECKS = """_candidate-gate-docker-boundaries check-aw-commit-repo-stamp
-check-cli-go-tidy check-cli-release-vcs-stamps test-python-locks
- test-sot-source-inventories test-vector-provenance test-federation-error-reference
- test-federation-authority-mutations test-federation-harness test-cli-reference
- test-mcp-tools-reference _candidate-channel-version check-a2a-copy-guardrails
- test-go-vulnerability-audit test-release-cli-version _candidate-artifact-awid-package
- _candidate-artifact-awid-image _candidate-artifact-channel _candidate-artifact-pi
- _candidate-artifact-skills _candidate-artifact-a2a-image
- test-channel-core-process-guard _candidate-oats _candidate-oats-proof-helpers
- test-tmux-guard test-a2a-gateway-e2e test-channel-integration test-e2e
- test-federation-e2e cli-e2e test-npm-exact-publish test-pypi-exact-publish
- test-oci-exact-publish""".split()
+# The targets the fixture gives real recipes: the four stage assertions below
+# use real tools and services, never a replacement runner.
+REAL_RECIPES = frozenset({
+    "test-shipping", "_candidate-node-deps", "build", "_candidate-unit-suites",
+    "_candidate-artifact-server", "freshness",
+})
+
+
+def source_checks() -> list[str]:
+    """Every other product target the candidate suite runs, read from the suite
+    itself. The fixture stubs each one to check its committed source, so a
+    target a stage adds is stubbed here without anyone editing this list."""
+    suite = (ROOT / "scripts" / "candidate-suite.sh").read_text(encoding="utf-8")
+    targets = re.findall(r"^\s*run ([A-Za-z0-9_.-]+)\s*$", suite, flags=re.MULTILINE)
+    return [target for target in dict.fromkeys(targets) if target not in REAL_RECIPES]
+
+
+SOURCE_CHECKS = source_checks()
 
 
 def run(root: Path, *args: str, env: dict[str, str] | None = None):
@@ -104,6 +109,12 @@ candidate-gate:
 
         gate = ("bash", "scripts/candidate-docker-gate.sh")
         ledger = evidence / "ledger.tsv"
+        # Library builds from the candidate checkout itself; a separate Library
+        # source is no longer an input, so naming one is refused, not ignored.
+        env["LIBRARY_E2E_LIBRARY_CONTEXT"] = str(repo / "naapp/library")
+        refused_library = invoke("library-context", *gate, stages="checks", success=False)
+        assert "LIBRARY_E2E_LIBRARY_CONTEXT" in refused_library and not ledger.exists()
+        del env["LIBRARY_E2E_LIBRARY_CONTEXT"]
         invoke("first-checks", *gate, stages="checks")
         rows = ledger.read_text().splitlines()
         assert len(rows) == 1 and rows[0].split("\t")[1:3] == ["checks", "passed"]

@@ -1,0 +1,594 @@
+# Page actions, decisions and approvals
+
+Status: **draft contract** (C2, aweb-acgg.8). It defines what a pages naapp
+does with the actions an `aweb.page/1` page declares
+([page-format.md](page-format.md)), how a person's decision on a proposal
+becomes an approval, and which approval adapters accept it. Task creation and
+task answers are [app-task-requests.md](app-task-requests.md). The design is
+[agent-pages.md](design/agent-pages.md) §4.
+
+Routes are the pages naapp's. A manifest maps tools to them, and other apps
+may use other paths. Every member request is team-auth v2
+([team-auth-envelope-v2.md](team-auth-envelope-v2.md)), with the typed body
+below.
+
+## 1. Action kinds
+
+A page's `actions` define each action's `id`, `kind`, `label`,
+`input_schema` and `policy_ref`, and optionally `target`, `operation` and
+`requires_approval`. Layout only references them, and the naapp acts on its
+own stored definition, never on the copy a caller sends.
+
+- **`edit`** changes only declared local data or display state, immediately,
+  without an agent. It is validated against the input schema, the field
+  policy, the expected revisions and the idempotency key, and commits in one
+  naapp transaction.
+- **`intent`** asks an agent for work. The naapp journals it and creates a
+  task for the resolved target ([app-task-requests.md](app-task-requests.md)).
+  It returns a receipt before any agent runs.
+- **`answer`** answers the existing task assigned to the signed-in person,
+  tied to the exact proposal on the card (§4). It never creates a new
+  request. Answers arrive only through the surface's `answer_tool`. The
+  invoke handler refuses any request whose action, resolved from the stored
+  definitions, is `answer`-kind ([app-manifest.md](app-manifest.md),
+  "Surfaces and answers").
+
+## 2. Targets
+
+A target is resolved once, when the naapp accepts the action, and is then
+frozen in the journal and in the task authorization's `target_dids`:
+
+- **Absent:** the page owner's agent principal.
+- **`did:aw:…` or `did:key:…`:** that principal. It must be a current member of
+  the team.
+- **Anything else:** a role name in the grammar of `aweb_naapp.roles`
+  (dot-separated, lowercase, at most 128 bytes), resolved through the app's
+  current role assignments:
+  - for an `intent`, to exactly one principal;
+  - for a decision (a proposal a person answers), to the role's current
+    designated holders, at most 16, frozen at acceptance as the task's
+    `eligible_dids` with the role name as its `role`. Each holder is one
+    individually designated person. The assignee is one of them, shown as the
+    task's owner.
+
+No principal, or several for an `intent`, or more than 16 for a decision, is
+422 `target_unresolved`. There is no fallback and no silent reassignment. A later retarget is a separate, audited
+operation by an authorized member.
+
+## 3. Submitting an action: `POST /v1/pages/{page_id}/actions`
+
+```json
+{
+  "action_id": "request-cleaner",
+  "input": {"date": "2026-10-24"},
+  "expected_page_rev": 12,
+  "expected_record_revs": {"bookings/b-17": 3},
+  "idempotency_key": "k_8e1…",
+  "task_authorization": {"payload": { … }, "signature": "…", "certificate": "…"}
+}
+```
+
+- `input` validates against the stored `input_schema`, using the same bounded
+  checks as record values ([page-format.md](page-format.md)).
+- `expected_page_rev` is required: missing is 428 `precondition_required`.
+  `expected_record_revs` maps `<collection>/<record_id>` to revisions the
+  action depends on.
+- `idempotency_key` (`^[A-Za-z0-9._-]{1,128}$`) is scoped to
+  `(installation_id, team_id, principal_id, key)`, as for every mutation
+  ([agent-pages.md §3](design/agent-pages.md)). It is stored with the
+  canonical hash of the request's identity (below). The same key with the
+  same identity returns the first result. With a different identity,
+  including the same key on another page or action, it is 409
+  `idempotency_conflict`.
+- `task_authorization` is required for an `intent`, and is refused for `edit`
+  and `answer`. Its bindings come from the intent's preparation (§3.1), which
+  must exist: an `intent` with no preparation for its key and identity is 409
+  `preparation_required`.
+
+**Request identity.** An action request's identity is `page_id`, an
+operation constant naming this route, `action_id`, `input`,
+`expected_page_rev` and `expected_record_revs`, and for an `intent` the
+preparation's `external_request_id` and `task_body_sha256`. The task bytes
+carry the target and the proposal. `task_authorization` is not part of the
+identity. It is evidence, verified on every request that carries it, so a
+renewed authorization (new times, nonce, signature, or the same principal's
+current certificate) never conflicts with its own request. A changed input,
+precondition, task, target or proposal is a different identity.
+
+**Accepting an intent**, in one naapp transaction, after the checks every
+action gets (policy, input, revisions):
+
+1. Find the preparation by the key and the identity. The key with another
+   identity is 409 `idempotency_conflict`, and a key with no preparation is
+   409 `preparation_required`. Re-derive it from current state (§3.1); any
+   difference is 409 `preparation_stale`.
+2. Verify `task_authorization` with `verify_task_authorization`
+   ([app-task-requests.md](app-task-requests.md) §1, §3 steps 3 to 6), with
+   the preparation's bindings as `expected`. Its `actor_did_key` and
+   `certificate_id` must equal this request's verified signer, whose
+   certificate is current. A binding that differs is 403 `target_mismatch`.
+3. Commit the journal entry, the outbox row and the page revision. Store the
+   authorization exactly as received, as the request's first evidence, and the
+   receipt. Mark the preparation accepted.
+
+**A replay** is the same key with the same identity after acceptance. The
+naapp recognizes it before any other check, so a revision that the request
+itself moved does not refuse it ([agent-pages.md §3](design/agent-pages.md)).
+It re-checks the caller's current read permission, then returns the stored
+receipt and admits nothing new. When it carries an authorization not yet
+stored and the request's `delivery` is still `pending`, the naapp verifies it
+as in step 2, against the caller's current certificate and authority, and
+then appends it to the request's evidence, never overwriting earlier
+evidence. A request stores at most 8 authorizations: once it holds 8, a
+replay carrying a new one is 409 `evidence_limit` and stores nothing. The
+outbox delivers with the newest stored authorization that is still in its
+time window and binds the installation's current generation. A failure is that check's error, and nothing is
+stored. Once `delivery` is `queued`, a replay stores nothing. An expired
+authorization never creates a missing task. It can only take part in a
+matching replay at the task service (app-task-requests.md §3 step 7).
+
+### 3.1 Preparing an intent: `POST /v1/pages/{page_id}/actions/prepare`
+
+A member cannot sign a task authorization without its bindings, and the naapp
+alone knows them: the target it resolves, the task body it will send and the
+request id it allocates. Preparing an intent fixes them before the member
+signs. It is the same team-auth v2 member request as a submit, with the
+submit's body minus `task_authorization`:
+
+```json
+{
+  "action_id": "request-cleaner",
+  "input": {"date": "2026-10-24"},
+  "expected_page_rev": 12,
+  "expected_record_revs": {"bookings/b-17": 3},
+  "idempotency_key": "k_8e1…"
+}
+```
+
+The naapp first authenticates the caller and looks up the key. An accepted
+request with this identity is answered as "After acceptance" below, after the
+caller's current read permission is re-checked and before any check that
+would admit new work, since the acceptance itself moved the page's revision.
+Otherwise it runs the submit's checks (policy, input, revisions, §2's target)
+for an `intent` action. Any other kind is 422 `schema_invalid`. Then, by the
+key and the identity (§3):
+
+- **No preparation:** it allocates `external_request_id`, an opaque
+  `act_` followed by 32 lowercase hex characters (128 random bits), never
+  derived from or equal to the idempotency key. It builds the task
+  ([app-task-requests.md](app-task-requests.md) §3), whose `resource_ref` is
+  the `page_id` and whose `action_ref` is the `action_id`, and stores the
+  preparation durably: the identity, `external_request_id`, the task bytes,
+  `task_body_sha256`, the bindings and the context fingerprint (below). This record is separate from the
+  action's receipt, and the key is not consumed: the submit later consumes it
+  under the same identity.
+- **A preparation with this identity:** it returns the stored preparation
+  unchanged, after re-deriving it from current state. Any difference is 409
+  `preparation_stale`, and nothing changes: the person starts again with a new
+  key.
+- **The key with another identity:** 409 `idempotency_conflict`. No second
+  `external_request_id` is allocated.
+
+Preparing creates no task, journal entry, outbox row or page revision.
+
+Re-deriving rebuilds the task, the bindings and the context fingerprint from
+current state: the stored action, its policy, §2's target resolution, and the
+installation's active state and current generation. The result must equal the
+stored preparation byte for byte. The context fingerprint is internal, never
+in a response or a signature. It is the stored action definition with its
+effective `policy_ref` and policy version, so a policy change that leaves the
+task bytes unchanged still makes the preparation stale. The prepared facts are
+never silently updated, because the member's signature binds them.
+
+Response 200:
+
+```json
+{
+  "status": "prepared",
+  "request_id": "act_9f2c…",
+  "task": { … },
+  "task_body_sha256": "<64 hex>",
+  "bindings": {
+    "aud": "https://app.aweb.ai", "app_origin": "https://pages.example.com",
+    "team_id": "backend:acme.com", "app_id": "pages",
+    "installation_id": "inst_01JB…", "installation_generation": 3,
+    "external_request_id": "act_9f2c…", "task_body_sha256": "<64 hex>",
+    "target_dids": ["did:aw:…"], "action_id": "request-cleaner",
+    "proposal_rev": null, "proposal_sha256": null
+  }
+}
+```
+
+`bindings` holds exactly the twelve `TASK_AUTHORIZATION_BINDINGS`
+(`aweb_naapp.runtime.task_requests`).
+
+**After acceptance**, a prepare with the same key and identity is recognized
+before the revision check, as a replay is, and re-checks the caller's read
+permission. It returns `"status": "accepted"` with the same `request_id`,
+`task` and `task_body_sha256`, the current `bindings`, and `receipt`, the
+submit's 202 body with the current `delivery`. While `delivery` is `pending`,
+the naapp first re-derives the preparation:
+
+- **Unchanged:** the stored bindings, so the member can renew an expired
+  authorization.
+- **Only `installation_generation` differs,** because the installation is
+  active at a newer generation: the naapp **rebinds**. It first re-checks that
+  the caller can still perform the action, under its policy and §2's target,
+  not only read it; if not, it is 403 `action_denied` and nothing is rebound.
+  It then stores bindings carrying the current generation, keeping the earlier
+  ones, and returns them.
+  `installation_generation` is the only transport binding. The task bytes,
+  `external_request_id`, the context fingerprint, the stored evidence and
+  every other binding never change: `aud`, `app_origin`, `team_id`, `app_id`,
+  `installation_id`, `external_request_id`, `task_body_sha256`,
+  `target_dids`, `action_id` and the proposal pair. The member then signs a
+  new authorization over the rebound bindings, which a replay verifies against
+  the current authority and the current bindings (§3). An authorization over
+  an earlier generation stays stored and is never delivered.
+- **Anything else differs:** 409 `preparation_stale`. The naapp sets
+  `delivery` to `failed`, the request ends there, and the person starts again
+  with a new key.
+
+Once `delivery` is `queued` or `failed`, a prepare returns the stored
+bindings without re-deriving.
+
+**The signer** completes the payload with `v`, `type`, its own
+`actor_did_key` and current `certificate_id`, `issued_at`, `expires_at` and a
+fresh `nonce`, and signs it (app-task-requests.md §1). Before signing it
+checks, as the reference `check_prepared_intent` does, that `task_body_sha256`
+is the digest of `task`, and that the bindings agree with the task as §3 step
+5 requires:
+`target_dids`, `external_request_id`, `action_id` against `action_ref`, and
+the proposal pair. It also checks values from its own context, never echoed
+back from the response: `aud` is the task service it expects; the app and
+installation are those of the page the member acts on; and the task's
+`resource_ref` and `action_ref` are the `page_id` and `action_id` it asked to
+prepare. A response for another page or action is refused, even when it is
+self-consistent. A hosted signer shows the person the task's title, description,
+choices and fields before signing. Renewal is the same step again: prepare,
+which returns the same preparation, then sign anew.
+
+**Actor switch.** A preparation, its signature and its acceptance belong to
+the principal that prepared it. The key namespace keeps them from serving any
+other principal. A host that switches the acting member or its authority
+discards every in-flight preparation, signature and submit result of the
+previous one.
+
+Responses:
+
+- `edit`: 200 `{transaction_id, page_rev, record_revs, audit_id}`.
+- `intent`: 202 `{request_id, page_rev, delivery: "pending", execution:
+  "not_started"}`. `request_id` is the task request's
+  `external_request_id`. `delivery` becomes `queued` only once the naapp has
+  stored a verified task receipt, and `failed` only when the request can no
+  longer be delivered (§3.1, "After acceptance").
+
+A stale revision is 409 `revision_conflict`, and nothing is partially
+committed.
+
+## 4. Proposals and their digest
+
+A proposal is a record that a person decides on. Its digest binds the
+record's identity and exact value, as [page-format.md](page-format.md) §5
+defines it:
+
+```text
+proposal_sha256 = "sha256:" || hex(SHA-256("aweb.page-proposal/1\n" || C(proposal)))
+proposal        = {"collection": <collection id>, "record_id": <record id>, "value": <record value>}
+```
+
+`C` is the canonical JSON of [app-task-requests.md](app-task-requests.md),
+and the prefix ends in one literal newline byte. The record's `rev` is not
+hashed. It is bound next to the digest, in the decision card's `record_rev`,
+the bundle item's `record_rev` and the task's `proposal_rev`. So the same
+content at a new revision has the same digest, while any change to the
+content, to the record it lives in or to its collection has a different one.
+Re-editing a proposal therefore needs a fresh answer.
+
+A bundle's digest is the C1 rule ([page-format.md](page-format.md) §5): the
+digest of its ordered `{record_id, record_rev, proposal_sha256}` items, each
+item's `proposal_sha256` computed as above over its record in
+`items_collection`.
+
+The host computes the digest from the member-signed read and refuses the card
+if it differs from the card's `proposal_sha256`. For a bundle, it refuses if
+any item's revision or digest differs.
+
+## 5. Deciding: the page answer flow
+
+A decision card renders an `answer`-kind task assigned to the signed-in
+person. Answering takes three member-signed steps, each idempotent and
+recoverable. Steps 1 and 3 are two bodies of the one route the surface's
+`answer_tool` maps, `POST /v1/pages/{page_id}/decisions/{task_id}/answer`, so
+the answer path stays a single surface-only tool that the manifest's
+answer-route checks cover:
+
+1. **Stage.** A body `{"stage": {expected_task_rev, choice, input,
+   proposal_rev, proposal_sha256, answer_key}}`. `input` is only the
+   answer action's additional input, validated against its `input_schema`. It
+   never repeats `choice`, the proposal or the task revision, which the stage
+   body carries. An answer action with no additional input declares
+   `{"type": "object", "additionalProperties": false}` and stages `{}`; a
+   renderer fills only fields the person entered, and refuses visibly when the
+   schema requires input it has no control for. The naapp checks that the task
+   is the card's and that the proposal is still current. It then stores the
+   answer (choice and input) with the page, and returns
+   `{answer_key, body_md, answer_sha256, approval_id, challenge, stage_receipt}`. `body_md`
+   is the answer's full text as the naapp renders it from the choice and
+   input, deterministically, and `answer_sha256` is the bare hex SHA-256 of its
+   UTF-8 bytes. The task comment shows that text to the team
+   ([app-task-requests.md](app-task-requests.md) §4).
+
+   `challenge` is the approval adapter's challenge (§7). Before staging, the
+   naapp checks, in the same transaction, that the signed-in member's
+   principal is in the task's `eligible_dids`, still holds its `role` when it
+   has one (`aweb_naapp.roles.has_role`), and is a current approval candidate.
+   Only then does it sign `stage_receipt`, the `aweb.app-answer-stage/1` that
+   the task service requires for this one answer
+   ([app-task-requests.md](app-task-requests.md) §4). A member removed from
+   the role gets no receipt, so the others can still answer.
+2. **Answer the task.** The same member answers the task with that
+   `answer_key`, `body_md`, `answer_sha256` and `stage_receipt` ([app-task-requests.md](app-task-requests.md)
+   §4). A host that embeds the task service calls `answer_task_on`; any other
+   caller uses `POST /v1/tasks/{ref}/answer`. The result is the answer receipt.
+3. **Confirm.** A body `{"confirm": {answer_key, task_answer_ref, proof}}`,
+   where `proof` is the adapter's proof. A body carrying both or neither of
+   `stage` and `confirm` is 422 `schema_invalid`. The naapp reads the
+   receipt itself (`GET /v1/tasks/answers/{task_answer_ref}`) and requires it
+   to be `current`, with the staged `answer_sha256`, `choice` and proposal
+   fields, and `answered_by` equal to the signer. It then decides the approval
+   (§6) in one local transaction.
+
+**What the card shows.** The host's `decision(task_id)` evidence returns, from
+the stored task and never from the page:
+- `options`: the task's `choices`, `{value, label}` in order;
+- `fields`: the task's `fields`, `{field, label, format}` in order;
+- the revisions, digests, status and authority the renderer checks;
+- `application_state`, when the naapp knows it: `pending` until the executor
+  resolves the action (§8), then `applied` or `failed`. Only `applied` may be
+  shown as applied; a recorded approval is not an applied one.
+
+The renderer refuses the card, showing no proposal and a host status saying
+why, unless the card's options equal `options` exactly (values, labels and
+order). It shows only the bound fields, in bound order, with the bound label
+and format, and nothing else from the record. It also refuses when a bound
+field is missing from the record at the verified revision, or when a
+`money_minor` field's record has no ISO 4217 `currency` (three uppercase
+letters): a person approving an amount sees its currency. Elsewhere on a page
+the two-decimal fallback of [page-format.md](page-format.md) §3 applies. For a
+bundle, `fields` describes every item record. The host checks the chosen value
+against the task's `choices`, never the page. `decision-display-v1.json`
+pins these cases.
+
+This moves trust in labels from the page to the requester: the labels and
+formats are the ones the requesting member signed, and the audit record holds
+that signature. It cannot stop a requester from mislabelling its own question;
+nothing here claims to.
+
+Staged content with no task answer is not approved. A task answer whose
+approval is not yet decided is visibly pending and cannot dispatch. If step 3
+is lost, the naapp finds the answer through its reconciliation read of the
+task request and completes it; the person does not answer again. A rejection
+closes the request without any execution authority.
+
+Approve-and-edit stages a new immutable proposal record, so it has its own
+digest. The person's approval covers the resulting bytes.
+
+## 6. Approvals for page decisions
+
+Page decisions use the shared approval primitive in `aweb_naapp` (B2). Its
+request digest is:
+
+```text
+request_sha256 = hex(SHA-256("aweb.approval-request/1\n" ||
+                 C({"policy": {"ref": <policy_ref>, "version": <policy version>}, "request": <request>})))
+```
+
+This is bare lowercase hex. The policy reference and version are inside the
+hash, so changing the policy version needs a new approval. For a page
+decision, `request` is:
+
+```json
+{
+  "v": 1,
+  "type": "aweb.page-decision",
+  "app_id": "pages",
+  "installation_id": "inst_01JB…",
+  "page_id": "pg_4hd…",
+  "action_id": "approve-price",
+  "task_id": "…",
+  "collection": "proposals",
+  "record_id": "week-43",
+  "record_rev": 2,
+  "proposal_sha256": "sha256:<64 hex>",
+  "operation": {"kind": "pms.rate.update", "destination": "pms:listing/7"},
+  "source_version": "pms-sync-2026-10-20T11:58Z",
+  "executor_did": "did:aw:…",
+  "expires_at": "2026-10-21T12:00:00Z"
+}
+```
+
+`operation` and `source_version` are `null` for an internal decision with no
+external effect. For a bundle, `record_id` and `record_rev` name the bundle
+record and `proposal_sha256` is the bundle digest. The request is fixed when
+the card is shown. Changing any covered value needs a new approval.
+
+- The approval is minted when the decision task is created, with
+  `presentation: task` and `requested_by` set to the proposing principal's key
+  (derived as below). Its candidates come only from the app's approver
+  directory (`ApproverDirectory.candidates`), which reads the stored task named
+  by the request's `task_id` and returns one candidate per principal in its
+  frozen `eligible_dids` who holds its `role` at mint. Each candidate is
+  `{scope, subject, subject_type, principal_did}` in the subject space the
+  policy's assurance needs: for `member_session`, `subject` is the principal's
+  `did_aw` (a `did:key`-only principal gives no candidate); for `passkey`, the
+  app-local designation the owner mapped to that principal. The primitive
+  freezes them at mint; they are not part of `request_sha256`, and they are an
+  upper bound only.
+- On decide, the primitive records `decided_by` (`{scope, subject, assurance,
+  evidence_ref}`), which every later check reads. For a page decision, the
+  caller names the deciding candidate, and the primitive requires all of: the
+  task receipt's `answered_by.principal_did` (derived from the answering
+  certificate, never a caller field) equals that candidate's `principal_did`;
+  the candidate is in the frozen set; and the directory still reports it
+  current (designated, a member, certificate valid). Decision 53b.
+- It is decided only at step 3 of §5, with the receipt's `task_answer_ref`.
+- It is executable only while that receipt is `current`. A reopen therefore
+  invalidates it before dispatch.
+- The executor admits it through the primitive's atomic consume before any
+  external effect, under one stable operation ID. An unknown outcome
+  reconciles before any retry, and a new dispatch needs a new approval.
+
+**Requester and approver.** At mint the primitive excludes the requester from
+the candidates, unless the action policy sets `allow_requester_approval`
+(default false), which a policy may do only for an internal reversible action
+(aweb-acgh.25). A mint left with no candidate is refused with
+`no_eligible_approver`; for a page decision, that is a proposal whose only
+eligible answerer is its own proposer. At decide, the
+decider must be one of the frozen candidates, still designated and enrolled at
+the policy's assurance, and not the requester unless the policy sets
+`allow_requester_approval`, the same exception as at mint. Mint-time filtering
+alone is not enough (decision 53, approver sets in the B2 primitive).
+`approval-request-v1.json` `requester_cases` pin both rules each way.
+The comparison is of raw strings, so both sides are derived the same way,
+from the verified certificate, with `aweb_naapp.roles.principal_key`: the
+certificate's `member_did_aw` when it carries one, otherwise its
+`member_did_key`. A `member_session` approver always has a `did_aw` (§7), so a
+member whose certificate carries one cannot approve their own request under a
+different spelling of themselves. Test, on the real path: a member whose
+certificate carries a `did_aw` proposes, the designated `member_session`
+approver is that same member, and mint is refused. Until that change lands, the
+pages naapp makes the same refusal before minting.
+
+## 7. Approval adapters and minimum assurance
+
+**Minimum assurance** (Juan's decision of 2026-10-19):
+
+- `passkey` for every external or irreversible effect and every secrets
+  approval.
+- `member_session` only for internal, reversible decisions that the action's
+  policy allows.
+
+The action policy, held by the naapp, sets `min_assurance`. A caller cannot
+choose it. The approval records the verified assurance as
+`decided_by.assurance`, and admission rechecks it.
+
+### `member_session`
+
+A B2 `Authenticator` with assurance `member_session`. It returns evidence only
+when every check passes. Otherwise it raises `AuthenticationFailed`, and never
+returns partial evidence:
+
+1. **Team-auth v2** verifies the confirm request and yields the member's
+   certificate.
+2. **Caller context.** The request carries an `aweb.principal-attestation`
+   with `channel: dashboard`, verified per
+   [principal-attestation.md](principal-attestation.md) §4. No attestation,
+   or any other channel, fails. A member's own agent signs as the same
+   custodial member, so this is what tells a person at the surface from that
+   agent.
+3. **One person.** `read_member_person` returns a valid record with
+   `single_person: true` for the certificate
+   ([member-person.md](member-person.md)). Absence, `false`, a stale record or
+   an invalid one fails. A registry failure is `authority_unavailable`.
+4. **Stable subject.** The certificate carries `member_did_aw`. A member
+   without one cannot give a `member_session` approval, because a `did:key`
+   rotation would orphan pending approvals.
+5. **The task answer.** The receipt is current, `answered_by` derives the same
+   principal and certificate, and the approval's challenge binding
+   (`aweb.approval-challenge/1`, which commits to the purpose,
+   `task_answer_ref` and the candidate's `subject` and `subject_type`) is the one the surface committed to when it requested
+   the decision.
+
+Evidence: `subject` is the member's `did_aw`, `subject_type` is `member`, and
+`evidence_ref` references the stored request and attestation. The approver
+directory returns the same pair for member approvers, so the candidate the
+primitive froze at mint and the `decided_by` it records match exactly.
+
+### `passkey`
+
+The app-local WebAuthn adapter in `aweb_naapp` (B3), at the app's own origin.
+For a page decision, its challenge binds the same `task_answer_ref`, and the
+credential maps to the owner-designated person for this action. The host
+opens the app origin for the ceremony and accepts only the naapp's verified
+status on return. A return URL or parameter never approves anything.
+
+### What a requester can never do
+
+The requesting principal, and any agent, can propose. It can never:
+
+- approve;
+- designate an approver or contact;
+- control how an approval reaches the approver;
+- mint, read or consume an approval token or link;
+- dispatch.
+
+Tools and responses an agent can see return only `{request_id,
+delivery_status}`. Task text, comments and agent-readable projections never
+carry an approval link, token or capability.
+
+## 8. Progress and resolution
+
+- `POST /v1/pages/{page_id}/actions/{request_id}/progress`: the assigned
+  executor only, with expected revisions and a key. Records explicit
+  picked-up evidence.
+- `POST /v1/pages/{page_id}/actions/{request_id}/resolve`: the assigned
+  executor only, signed, with `{result, patches, expected_action_rev,
+  expected_page_rev, expected_record_revs, operation_id?, idempotency_key}`.
+  It requires the admitted approval when the action has one. In one naapp
+  revision it writes the execution status, the local data changes, audit,
+  usage and the event and task-mirror outbox. A conflicting patch commits
+  nothing.
+
+External writes and task closure are outside that transaction. A delayed
+task mirror shows "result saved; task sync pending" and reconciles.
+
+## 9. Designatable roles
+
+An app declares the roles a person can be designated to in its v2 manifest:
+`roles: [{name, label, description?}]` ([app-manifest.md](app-manifest.md),
+"Designatable roles"; shared vectors `roles_*` in
+`test-vectors/app-manifests/app-manifest-v2-v1.json`). The resolved view lists
+`[{name, label, description|null}]`, empty when the manifest declares none. The
+admin approves the roles as part of the exact-digest install.
+
+- The host reads `roles` only from the installation's verified manifest
+  bytes, and renders each role's `label` and `description` in its own chrome.
+- Every host surface that shows a role shows it as the pair (app, name), and
+  never the bare name. That covers the install diff, the designation UI,
+  audit and member views. A role name means nothing without its app: an app
+  `evil` may declare `secrets.owner`, and must not be mistaken for the secrets
+  app's owner role. Test: install two apps that both declare
+  `secrets.owner`, designate a member to one, and require every surface to
+  identify it by app, and audit to record the pair.
+- `app-role.designate` accepts only a `name` declared by the installation's
+  current generation. Any other name is refused (422 `schema_invalid`), so
+  roles are never free entry.
+- When a new generation drops a role, existing designations of it become
+  inert. They grant nothing until a generation declares the role again and
+  the owner re-approves.
+
+## Errors
+
+The codes of [app-task-requests.md](app-task-requests.md) "Errors" apply, plus:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 401 | `attestation_required`, `attestation_invalid` | The `member_session` caller-context check fails. |
+| 403 | `action_denied` | The action's policy refuses this member, or a requester tries to approve. |
+| 409 | `approval_changed` | The proposal digest or revision on the card is no longer current. |
+| 409 | `preparation_required` | An `intent` submit has no preparation for its key and identity (§3.1). |
+| 409 | `evidence_limit` | A replay carries a new authorization for a request that already stores 8 (§3). |
+| 409 | `preparation_stale` | Current state no longer re-derives the stored preparation: the action, its policy, the target or the installation changed (§3.1). Only a generation change of an accepted, pending request is rebound instead. |
+
+## Conformance vectors
+
+- `docs/vectors/page-action-prepare-v1.json`: a preparation's task, digest
+  and bindings; the signer's completion and pre-signing checks; and the
+  prepare, submit, replay and renewal sequence with its refusals.
+- `docs/vectors/page-proposal-v1.json`: `proposal_sha256` over single records
+  (with non-ASCII, nested and boundary integer values), and the refusal cases.
+- `docs/vectors/approval-request-v1.json`: `request_sha256` for page
+  decisions and generic requests, the challenge binding (a raw 32-byte
+  digest, a hex nonce, and a `task_answer_ref` that is always present and
+  `null` when there is no task answer), and the refusal cases.
