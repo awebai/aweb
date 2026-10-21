@@ -70,6 +70,16 @@ explicit slot and field; every slot must use one consistent field family. Missin
 fields and NUL-bearing selected values refuse work. This never stringifies a
 credential object or chooses a field by dictionary order.
 
+The execution input retains each signed actual `secret_ref` with its sealed HPKE
+value, recipient key and dispatch binding. Local pin, parameter, executable and
+declared-file checks complete before any HPKE opening. The entire credential
+count and fixed-selector label order are checked before the first opening; a
+same-family positional swap refuses too. The current release supports fixed
+selectors only, while the server's ordinary-child and mint paths remain guarded.
+When those paths are enabled, their accepted signed-ordinal substitution rules
+must be composed explicitly; equality between a child ref and its parent label
+is not a permanent restriction on that contract.
+
 Host execution uses literal argument elements, an empty starting environment
 plus the declared names, closed stdin, and a separate process group. Both output
 pipes are drained under one combined byte bound, with strict UTF-8 validation,
@@ -79,6 +89,9 @@ process group and closes the runner's pipes. A delayed `started` report cannot
 extend that deadline. A trusted job can escape a Unix process group, so this is
 not a process sandbox. Use the required dedicated user/container deployment
 boundary. OCI jobs currently refuse rather than falling back to host execution.
+If the runner is PID 1 in a container, use an init process, such as Docker's
+`--init` or `tini`, to reap orphaned descendants after process-group cleanup.
+The runner is not a child subreaper.
 
 Run the focused checks from this directory:
 

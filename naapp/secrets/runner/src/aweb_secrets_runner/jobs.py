@@ -11,10 +11,11 @@ from typing import Any
 from aweb_naapp.pages import inline_schema_errors, inline_value_valid
 from aweb_secrets_values import CAPTURE_FIELDS, ValueInvalid, decode_value
 from aweb_secrets_values.redaction import KnownValues
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from .errors import Refused
 from .filesystem import FileGuard, require_separate_users
-from .protocol import HASH, ID, canonical, parse_json
+from .protocol import HASH, ID, canonical, decrypt_credential, parse_json
 
 FIELDS = {
     "v",
@@ -263,6 +264,19 @@ class PreparedJob:
 
 
 @dataclass(frozen=True, repr=False)
+class CredentialInput:
+    """An actual signed ref and a deferred, local HPKE opening operation."""
+
+    secret_ref: str
+    sealed: str
+    key: X25519PrivateKey
+    dispatch_id: str
+
+    def open(self) -> bytes:
+        return decrypt_credential(self.sealed, self.key, self.dispatch_id)
+
+
+@dataclass(frozen=True, repr=False)
 class RunnerConfig:
     _raw: bytes
     _source: Path
@@ -296,7 +310,7 @@ class RunnerConfig:
         digest: str,
         runner_id: str,
         params: dict[str, Any],
-        credentials: list[bytes],
+        credentials: list[CredentialInput],
     ) -> PreparedJob:
         try:
             current = canonical(parse_json(FileGuard().read_config(self._source)))
@@ -337,12 +351,30 @@ class RunnerConfig:
                     raise ValueError("charset")
         except (ValueError, TypeError, RecursionError):
             raise Refused("params_invalid") from None
+        # No credential is opened until every local pin, parameter and file
+        # check is complete. OCI stays closed until its image runtime exists.
+        guard = FileGuard()
+        if job["kind"] != "exec":
+            raise Refused("runner_runtime_unavailable")
+        spec = job["exec"]
+        executable = guard.pinned_file(spec["path"], spec["sha256"], executable=True)
+        for item in spec["files"]:
+            guard.pinned_file(item["path"], item["sha256"])
+        guard.directory(job["cwd"])
         known = KnownValues()
-        opened: dict[str, dict[str, str]] = {}
-        if len(credentials) != len(job["credentials"]):
+        opened: dict[str, tuple[str, dict[str, str]]] = {}
+        if len(credentials) != len(job["credentials"]) or any(
+            not isinstance(credential, CredentialInput)
+            or credential.secret_ref != job["credentials"][index]["secret_ref"]
+            for index, credential in enumerate(credentials)
+        ):
+            # First-release FIXED-selector release only. Accepted substituted
+            # child paths remain guarded; enabling them needs the reviewed
+            # signed-ordinal rules, never a global ref==parent-label rule.
             raise Refused("credential_invalid")
         try:
-            for slot, raw in zip(job["credentials"], credentials, strict=True):
+            for index, slot in enumerate(job["credentials"]):
+                credential = credentials[index]
                 ref = slot["secret_ref"]
                 fields = {
                     binding["field"]
@@ -350,10 +382,10 @@ class RunnerConfig:
                     if isinstance(binding, dict) and binding.get("$credential") == ref
                 }
                 kind = _family(fields)
-                value = decode_value(kind, raw)
+                value = decode_value(kind, credential.open())
                 if any(name not in value or "\0" in value[name] for name in fields):
                     raise ValueError("selected field")
-                opened[ref] = value
+                opened[ref] = (credential.secret_ref, value)
                 for item in value.values():
                     if item:
                         known.add(ref, item)
@@ -371,15 +403,8 @@ class RunnerConfig:
             elif "$param" in binding:
                 env[name] = _scalar(params[binding["$param"]])
             else:
-                env[name] = opened[binding["$credential"]][binding["field"]]
-        guard = FileGuard()
-        if job["kind"] == "exec":
-            spec = job["exec"]
-            executable = guard.pinned_file(spec["path"], spec["sha256"], executable=True)
-            for item in spec["files"]:
-                guard.pinned_file(item["path"], item["sha256"])
-            guard.directory(job["cwd"])
-            argv.insert(0, str(executable))
+                env[name] = opened[binding["$credential"]][1][binding["field"]]
+        argv.insert(0, str(executable))
         return PreparedJob(
             kind=job["kind"],
             argv=tuple(argv),

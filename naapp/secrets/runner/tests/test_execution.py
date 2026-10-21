@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from aweb_secrets_values import encode_value
+from runner_helpers import credential as sealed_credential
 
 from aweb_secrets_runner.errors import Refused
 from aweb_secrets_runner.execution import execute
@@ -67,7 +68,11 @@ def run_job(path, body, *, arg="literal", credential="fixture-password", started
             digest=job_digest(body),
             runner_id=RUNNER,
             params={"arg": arg},
-            credentials=[encode_value("basic", {"username": "", "password": credential})],
+            credentials=[
+                sealed_credential(
+                    "db", encode_value("basic", {"username": "", "password": credential})
+                )
+            ],
             expires_at=time.time() + 300,
             started=started,
         )
@@ -180,7 +185,11 @@ def test_expired_assignment_does_not_start_a_process(tmp_path):
                 digest=job_digest(body),
                 runner_id=RUNNER,
                 params={"arg": "literal"},
-                credentials=[encode_value("basic", {"username": "", "password": "fixture"})],
+                credentials=[
+                    sealed_credential(
+                        "db", encode_value("basic", {"username": "", "password": "fixture"})
+                    )
+                ],
                 expires_at=time.time() - 1,
             )
         )
@@ -216,7 +225,11 @@ def test_cancellation_kills_and_reaps_the_real_child(tmp_path):
                 digest=job_digest(body),
                 runner_id=RUNNER,
                 params={"arg": "literal"},
-                credentials=[encode_value("basic", {"username": "", "password": "fixture"})],
+                credentials=[
+                    sealed_credential(
+                        "db", encode_value("basic", {"username": "", "password": "fixture"})
+                    )
+                ],
                 expires_at=time.time() + 300,
                 started=started,
             )

@@ -4,6 +4,7 @@ import os
 
 import pytest
 from aweb_secrets_values import encode_value
+from runner_helpers import credential
 
 from aweb_secrets_runner.jobs import RunnerConfig, job_digest
 from aweb_secrets_runner.protocol import Refused, canonical
@@ -52,14 +53,21 @@ def config_file(tmp_path, body):
 
 
 def prepared(config, body, params=None, credentials=None):
+    raw = (
+        [encode_value("basic", {"username": "", "password": "fixture-password"})]
+        if credentials is None
+        else credentials
+    )
+    inputs = [
+        credential(body["credentials"][index]["secret_ref"], value)
+        for index, value in enumerate(raw)
+    ]
     return config.prepare(
         job_id="fixture",
         digest=job_digest(body),
         runner_id=RUNNER,
         params={"name": "orders"} if params is None else params,
-        credentials=[encode_value("basic", {"username": "", "password": "fixture-password"})]
-        if credentials is None
-        else credentials,
+        credentials=inputs,
     )
 
 
@@ -94,7 +102,9 @@ def test_service_assignment_cannot_expand_the_local_pin(tmp_path, change):
         digest=job_digest(body),
         runner_id=RUNNER,
         params={"name": "orders"},
-        credentials=[encode_value("basic", {"username": "", "password": "fixture"})],
+        credentials=[
+            credential("db", encode_value("basic", {"username": "", "password": "fixture"}))
+        ],
     )
     if change == "unlisted":
         kwargs["job_id"] = "other"

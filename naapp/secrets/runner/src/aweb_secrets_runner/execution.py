@@ -12,7 +12,7 @@ from typing import Any
 from aweb_secrets_values.credential_shapes import has_credential_shape
 
 from .errors import Refused
-from .jobs import PreparedJob, RunnerConfig
+from .jobs import CredentialInput, PreparedJob, RunnerConfig
 
 
 @dataclass(repr=False)
@@ -139,7 +139,7 @@ async def execute(
     digest: str,
     runner_id: str,
     params: dict[str, Any],
-    credentials: list[bytes],
+    credentials: list[CredentialInput],
     expires_at: float,
     started: Callable[[int], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
@@ -152,8 +152,6 @@ async def execute(
     job = config.prepare(
         job_id=job_id, digest=digest, runner_id=runner_id, params=params, credentials=credentials
     )
-    if job.kind != "exec":
-        raise Refused("runner_runtime_unavailable")
     # Preparation includes disk reads/hash checks. Sample after that last wait.
     if time.time() >= expires_at:
         raise Refused("assignment_expired")
