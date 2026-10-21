@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -176,20 +175,19 @@ func TestFetchManifestBounds(t *testing.T) {
 		_, _ = w.Write([]byte(body))
 	}))
 	defer okSrv.Close()
-	data, digest, err := fetchManifest(okSrv.URL)
-	if err != nil || len(data) != 50 {
-		t.Fatalf("at-limit manifest: len=%d err=%v", len(data), err)
+	status, data, err := fetchManifestURL(okSrv.URL, maxManifestBytes, false)
+	if err != nil || status != http.StatusOK || len(data) != 50 {
+		t.Fatalf("at-limit manifest: status=%d len=%d err=%v", status, len(data), err)
 	}
-	sum := sha256.Sum256([]byte(body))
-	if digest != "sha256:"+hex.EncodeToString(sum[:]) {
-		t.Fatal("digest does not cover the complete accepted bytes")
+	if string(data) != body {
+		t.Fatal("accepted bytes are not the complete served bytes")
 	}
 
 	bigSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(strings.Repeat("m", 51)))
 	}))
 	defer bigSrv.Close()
-	if _, _, err := fetchManifest(bigSrv.URL); err == nil {
+	if _, _, err := fetchManifestURL(bigSrv.URL, maxManifestBytes, false); err == nil {
 		t.Fatal("oversized manifest accepted")
 	}
 }

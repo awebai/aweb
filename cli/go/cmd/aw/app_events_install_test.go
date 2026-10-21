@@ -14,7 +14,7 @@ func TestInstallRegistrationBodyCarriesTheExactFetchedBytes(t *testing.T) {
 	manifest.App.Version = "1.0"
 	manifest.App.Origin = "https://notes.example"
 
-	body := installRegistrationBody(manifest, "sha256:abc", fetched)
+	body := installRegistrationBody(&appmanifest.Resolved{Manifest: manifest}, "sha256:abc", fetched)
 
 	if body["manifest"] != base64.StdEncoding.EncodeToString(fetched) {
 		t.Fatalf("manifest = %v", body["manifest"])
@@ -28,7 +28,7 @@ func TestInstallRegistrationBodyOmitsBytesWhenThereAreNone(t *testing.T) {
 	manifest := appmanifest.Manifest{ManifestVersion: 1}
 	manifest.App.ID = "notes"
 
-	body := installRegistrationBody(manifest, "sha256:abc", nil)
+	body := installRegistrationBody(&appmanifest.Resolved{Manifest: manifest}, "sha256:abc", nil)
 
 	if _, ok := body["manifest"]; ok {
 		t.Fatalf("manifest sent without bytes: %v", body["manifest"])
