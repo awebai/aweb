@@ -111,12 +111,12 @@ func (c *RegistryClient) RotateTeamKey(
 		body["resigned_records"] = resigned.wire()
 	}
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/rotate"
-	headers := signedNamespaceHeaders(domain, "rotate_team_key", controllerKey, map[string]string{
-		"name":             name,
+	claims := map[string]string{
+		"domain": domain, "operation": "rotate_team_key", "name": name,
 		"new_team_did_key": newTeamDIDKey,
-	})
+	}
 	var out TeamRotateResponse
-	if err := c.requestJSON(ctx, http.MethodPost, registryURL, path, headers, body, &out); err != nil {
+	if err := c.ControllerRequest(ctx, http.MethodPost, registryURL, path, claims, controllerKey, body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

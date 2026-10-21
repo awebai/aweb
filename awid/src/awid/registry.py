@@ -12,6 +12,7 @@ from json import loads as json_loads
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urlparse
 
@@ -293,6 +294,12 @@ class RegistryClient:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "service_token", normalize_service_token(self.service_token))
+        try:
+            client_version = version("awid-service")
+        except PackageNotFoundError:
+            client_version = "dev"
+        # Unsigned diagnostics only; never an authority or feature claim.
+        client_token = f"aweb-python/{client_version}"
         object.__setattr__(
             self,
             "_http_client",
@@ -300,6 +307,7 @@ class RegistryClient:
                 timeout=self.timeout_seconds,
                 transport=self.transport,
                 follow_redirects=False,
+                headers={"User-Agent": client_token, "X-AWEB-Client-Version": client_token},
             ),
         )
 

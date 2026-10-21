@@ -36,6 +36,8 @@ func main() {
 	switch c.Action {
 	case "create_team":
 		_, err = client.CreateTeam(ctx, c.URL, "local", "new", "Review — <safe>", c.TeamDID, key)
+	case "rotate_team_key":
+		_, err = client.RotateTeamKey(ctx, c.URL, "local", "base", c.Claims["new_team_did_key"], nil, key)
 	case "set_team_visibility":
 		_, err = client.SetTeamVisibility(ctx, c.URL, "local", "base", "private", key)
 	case "delete_team":
