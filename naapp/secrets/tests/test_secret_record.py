@@ -199,3 +199,24 @@ def test_an_update_widens_when_it_leaves_sensitive_or_approve_only(current, afte
     assert (
         widened_fields(SecretRecord.from_after(current), SecretRecord.from_after(after)) == widened
     )
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "widened"),
+    [
+        ("payments:read", "payments:read payments:write", {"kind_params.scope"}),
+        ("payments:read payments:write", "payments:write payments:read", set()),
+        ("payments:read payments:write", "payments:read", set()),
+        ("", "payments:read", {"kind_params.scope"}),
+        ("payments:read", "", set()),
+        ("payments:read", "payments:write", {"kind_params.scope"}),
+    ],
+)
+def test_oauth_scope_widening_compares_token_sets(before, after, widened) -> None:
+    current = SecretRecord.from_after(
+        _record(kind="oauth2-client-credentials", kind_params={**OAUTH2, "scope": before})
+    )
+    proposed = SecretRecord.from_after(
+        _record(kind="oauth2-client-credentials", kind_params={**OAUTH2, "scope": after})
+    )
+    assert widened_fields(current, proposed) == widened

@@ -191,12 +191,16 @@ class SecretRecord:
 
 def widened_fields(current: SecretRecord, after: SecretRecord) -> frozenset[str]:
     """The fields an update of ``current`` to ``after`` widens (§6.3): leaving
-    sensitive for standard, or turning approve_only off."""
+    sensitive for standard, turning approve_only off, or adding OAuth scopes."""
     widened = set()
     if current.sensitivity == "sensitive" and after.sensitivity == "standard":
         widened.add("sensitivity")
     if current.approve_only and not after.approve_only:
         widened.add("approve_only")
+    if after.kind == "oauth2-client-credentials" and (
+        set(after.kind_params["scope"].split()) - set(current.kind_params.get("scope", "").split())
+    ):
+        widened.add("kind_params.scope")
     return frozenset(widened)
 
 
