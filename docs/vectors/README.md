@@ -656,3 +656,11 @@ ports and signature boundary. X-E2/X-GF encrypted re-share/federation annexes
 remain refused until exact-SHA Athena review; current native fixtures are unchanged.
 
 `human-channels-e2ee-spike.json` is an **unfrozen** X-E2 laboratory fixture, consumed by `server/tests/test_human_channels_e2ee_spike.py` and `cli/go/awid/human_channels_e2ee_spike_test.go`. It enables no profile.
+
+## Human-channel presence verification
+
+`human-channels-presence-v1.json` supplies P8's exact native/binding approval
+signatures, verified DTOs and refusal neighbors. Python and Go read the root
+bytes directly. The embedded contexts are **trusted test authority facts**, not
+a public request/context wire format; consumers must build those facts from
+independent authenticated current sources. No P0/native fixture is rewritten.
