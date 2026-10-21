@@ -29,7 +29,6 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
@@ -355,7 +354,8 @@ class LoginLimiter:
 
 class ConsoleRoute(APIRoute):
     """A route on the console origin: every response, refusals included,
-    carries the console headers."""
+    carries the console headers. Validation errors expose only location and
+    type, never submitted input or validator metadata."""
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         handler = super().get_route_handler()
@@ -368,7 +368,11 @@ class ConsoleRoute(APIRoute):
                     {"detail": error.detail}, error.status_code, headers=error.headers
                 )
             except RequestValidationError as error:
-                response = JSONResponse({"detail": jsonable_encoder(error.errors())}, 422)
+                detail = [
+                    {"loc": problem["loc"], "type": problem["type"]}
+                    for problem in error.errors()
+                ]
+                response = JSONResponse({"detail": detail}, 422)
             response.headers.update(CONSOLE_HEADERS)
             return response
 

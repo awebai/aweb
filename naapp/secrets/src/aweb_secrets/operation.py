@@ -26,9 +26,10 @@ from aweb_naapp.egress.headers import ALWAYS_REJECTED, ALWAYS_REJECTED_PREFIXES,
 from aweb_naapp.pages import inline_schema_errors, inline_value_valid
 from awid.signing import canonical_json_bytes
 
+from aweb_secrets.destination import DestinationInvalid, parse_destination_scope
 from aweb_secrets.grant import GRANT_TEMPLATE_ID
-from aweb_secrets.policy import IDENTIFIER
-from aweb_secrets.secret import KINDS, SECRET_ID
+from aweb_secrets.policy import DIGEST, IDENTIFIER
+from aweb_secrets.secret import KINDS, SECRET_ID, SecretInvalid, validate_kind_params
 
 DIGEST_PREFIX = b"aweb.secrets.operation/1\n"
 
@@ -247,13 +248,42 @@ def _check_response(response: Any) -> None:
 
 
 def _check_store_as_secret(store: Any) -> None:
+    _require(isinstance(store, Mapping), "store_as_secret is an object")
+    expiry_fields = set(store) & {"expires_at", "expires_in"}
+    _require(len(expiry_fields) == 1, "store_as_secret declares exactly one expiry extractor")
     store = _exact(
         store,
-        frozenset({"derived_kind", "capture", "expires_at", "grant_template"}),
+        frozenset(
+            {
+                "derived_kind",
+                "kind_params",
+                "capture",
+                "destinations",
+                "grant_template",
+                "grant_template_digest",
+            }
+            | expiry_fields
+        ),
         "store_as_secret",
     )
     _require(store["derived_kind"] in KINDS, "the stored secret's kind is an auth scheme")
+    try:
+        validate_kind_params(store["derived_kind"], store["kind_params"])
+        destinations = store["destinations"]
+        _require(
+            isinstance(destinations, list) and bool(destinations), "child destinations are nonempty"
+        )
+        for destination in destinations:
+            # Definition validates canonical scope. The app's deployment network
+            # policy is checked again at issuance and at the child's dispatch.
+            parse_destination_scope(destination, internal_destinations=InternalDestinations.ALLOWED)
+    except (SecretInvalid, DestinationInvalid) as refused:
+        raise OperationInvalid(str(refused)) from None
     required, optional = CAPTURE_FIELDS[store["derived_kind"]]
+    # Native AWS values may be static key pairs. Every derived AWS credential
+    # is temporary, so only the derived capture requires a session token.
+    if store["derived_kind"] == "aws-sigv4":
+        required = required | {"session_token"}
     capture = store["capture"]
     _require(
         isinstance(capture, Mapping) and required <= set(capture) <= required | optional,
@@ -263,10 +293,15 @@ def _check_store_as_secret(store: Any) -> None:
         all(_matches(_POINTER, pointer) for pointer in capture.values()),
         "each captured field is a JSON pointer",
     )
-    _require(_matches(_POINTER, store["expires_at"]), "expires_at is a JSON pointer")
+    expiry_field = next(iter(expiry_fields))
+    _require(_matches(_POINTER, store[expiry_field]), f"{expiry_field} is a JSON pointer")
     _require(
         _matches(GRANT_TEMPLATE_ID, store["grant_template"]),
         "grant_template is a grant template id",
+    )
+    _require(
+        _matches(DIGEST, store["grant_template_digest"]),
+        "grant_template_digest is 64 lowercase hex characters",
     )
 
 
@@ -308,6 +343,10 @@ def _check(after: Any) -> None:
         handling == "deny" or after["token_issuing"],
         "only a token-issuing operation handles its result",
     )
+    _require(
+        handling != "withhold" or after["response"]["projection"] is not None,
+        "a withheld result returns only its projection, so withhold needs one",
+    )
     if handling == "store_as_secret":
         _check_store_as_secret(after["store_as_secret"])
     else:
@@ -318,6 +357,15 @@ def _check(after: Any) -> None:
     if idempotency is not None:
         idempotency = _exact(idempotency, frozenset({"header"}), "idempotency")
         _require(_matches(_TOKEN, idempotency["header"]), "the idempotency header is a token")
+        # The broker sets the idempotency header itself, so it is never also a
+        # fixed or an agent header: the request carries it exactly once.
+        named = {name.lower() for name in after["headers"]["fixed"]} | set(
+            after["headers"]["allowed"]
+        )
+        _require(
+            idempotency["header"].lower() not in named,
+            "the idempotency header is not also a fixed or an agent header",
+        )
     reconcile = after["reconcile"]
     _require(
         reconcile is None

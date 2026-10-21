@@ -22,8 +22,12 @@ from .store import (
     SecretSealer,
     apply_custody_migrations,
 )
+from .values import ValueInvalid, decode_value, encode_value
 
 __all__ = [
+    "ValueInvalid",
+    "decode_value",
+    "encode_value",
     "AwsKmsProvider",
     "Custody",
     "CustodyUnavailable",

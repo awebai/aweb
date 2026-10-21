@@ -14,6 +14,7 @@ from typing import Any
 import asyncpg
 import pytest
 from aweb_naapp.idempotency import apply_idempotency_migrations
+from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.roles import apply_roles_migrations, assign, principal_key, unassign
 from aweb_naapp.runtime.attestation import VerifiedAttestation
 from aweb_naapp.runtime.authorization import Grant
@@ -120,6 +121,7 @@ async def db(test_db_factory) -> AsyncIterator[AsyncDatabaseManager]:
     await apply_installation_migrations(database)
     await apply_idempotency_migrations(database)
     await apply_roles_migrations(database)
+    await apply_ratelimit_migrations(database)
     await AsyncMigrationManager(
         database, migrations_path=str(MIGRATIONS_PATH), module_name=MODULE_NAME
     ).apply_pending_migrations()
@@ -665,3 +667,32 @@ async def test_admissions_under_reversed_policy_orders_never_deadlock(db, fence)
         *(admit(ALICE if n % 2 else BOB, n) for n in range(24)), return_exceptions=True
     )
     assert [o for o in outcomes if isinstance(o, BaseException)] == []
+
+
+async def test_concurrent_admissions_never_take_more_than_a_bucket_holds(db, fence) -> None:
+    shared = {**POLICY_BODY, "rate": [{"per": "secret", "capacity": 3, "window_s": 3600}]}
+    await _install(db, subject={"role": "secrets.role.deployers"}, policy_body=shared)
+    members = [_member(seed) for seed in range(10, 18)]
+    async with db.transaction() as tx:
+        for member in members:
+            await assign(tx, principal_key(member), "secrets.role.deployers")
+
+    async def attempt(member: Principal) -> str:
+        try:
+            await _admit(db, fence, member, request=_request(f"req_{member.alias}"))
+        except AdmissionRefused as refused:
+            return refused.code
+        return "admitted"
+
+    outcomes = await asyncio.gather(*(attempt(member) for member in members))
+    assert sorted(outcomes) == ["admitted"] * 3 + ["policy_rate_limited"] * 5
+
+
+async def test_a_rate_refusal_says_when_to_retry(db, fence) -> None:
+    once = {**POLICY_BODY, "rate": [{"per": "principal_secret", "capacity": 1, "window_s": 3600}]}
+    await _install(db, policy_body=once)
+    await _admit(db, fence)
+    with pytest.raises(AdmissionRefused) as refused:
+        await _admit(db, fence, request=_request("req_2"))
+    assert (refused.value.code, refused.value.status) == ("policy_rate_limited", 429)
+    assert 1 <= refused.value.retry_after_s <= 3600
