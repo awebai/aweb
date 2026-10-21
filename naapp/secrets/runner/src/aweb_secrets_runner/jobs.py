@@ -276,6 +276,18 @@ class CredentialInput:
         return decrypt_credential(self.sealed, self.key, self.dispatch_id)
 
 
+def _checked_executable(job: dict[str, Any]) -> Path:
+    guard = FileGuard()
+    if job["kind"] != "exec":
+        raise Refused("runner_runtime_unavailable")
+    spec = job["exec"]
+    executable = guard.pinned_file(spec["path"], spec["sha256"], executable=True)
+    for item in spec["files"]:
+        guard.pinned_file(item["path"], item["sha256"])
+    guard.directory(job["cwd"])
+    return executable
+
+
 @dataclass(frozen=True, repr=False)
 class RunnerConfig:
     _raw: bytes
@@ -303,6 +315,26 @@ class RunnerConfig:
         except (ValueError, KeyError, TypeError, RecursionError):
             raise Refused("job_invalid") from None
 
+    def _current(self) -> dict[str, Any]:
+        try:
+            current = canonical(parse_json(FileGuard().read_config(self._source)))
+        except (ValueError, TypeError, RecursionError):
+            raise Refused("config_invalid") from None
+        if current != self._raw:
+            raise Refused("config_changed")
+        config = json.loads(self._raw)
+        require_separate_users(config["agent_uids"])
+        return dict(config)
+
+    def doctor(self, runner_id: str) -> tuple[str, ...]:
+        config = self._current()
+        for pin in config["jobs"].values():
+            job = pin["definition"]
+            if runner_id not in job["runner_ids"]:
+                raise Refused("job_not_allowed")
+            _checked_executable(job)
+        return tuple(sorted(config["jobs"]))
+
     def prepare(
         self,
         *,
@@ -312,14 +344,7 @@ class RunnerConfig:
         params: dict[str, Any],
         credentials: list[CredentialInput],
     ) -> PreparedJob:
-        try:
-            current = canonical(parse_json(FileGuard().read_config(self._source)))
-        except (ValueError, TypeError, RecursionError):
-            raise Refused("config_invalid") from None
-        if current != self._raw:
-            raise Refused("config_changed")
-        config = json.loads(self._raw)
-        require_separate_users(config["agent_uids"])
+        config = self._current()
         pin = config["jobs"].get(job_id)
         if (
             pin is None
@@ -353,14 +378,7 @@ class RunnerConfig:
             raise Refused("params_invalid") from None
         # No credential is opened until every local pin, parameter and file
         # check is complete. OCI stays closed until its image runtime exists.
-        guard = FileGuard()
-        if job["kind"] != "exec":
-            raise Refused("runner_runtime_unavailable")
-        spec = job["exec"]
-        executable = guard.pinned_file(spec["path"], spec["sha256"], executable=True)
-        for item in spec["files"]:
-            guard.pinned_file(item["path"], item["sha256"])
-        guard.directory(job["cwd"])
+        executable = _checked_executable(job)
         known = KnownValues()
         opened: dict[str, tuple[str, dict[str, str]]] = {}
         if len(credentials) != len(job["credentials"]) or any(

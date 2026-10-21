@@ -25,8 +25,16 @@ def main() -> int:
     registration.add_argument("--origin", required=True)
     registration.add_argument("--state-dir", required=True, type=Path)
     registration.add_argument("--ca-file", type=Path)
+    preflight = commands.add_parser("doctor", help="check local identity, user and job pins")
+    preflight.add_argument("--config", required=True, type=Path)
+    preflight.add_argument("--state-dir", required=True, type=Path)
     args = parser.parse_args()
     try:
+        if args.command == "doctor":
+            from .doctor import doctor
+
+            print(json.dumps(doctor(args.config, args.state_dir), sort_keys=True))
+            return 0
         if sys.stdin.isatty():
             with warnings.catch_warnings():
                 warnings.simplefilter("error", getpass.GetPassWarning)

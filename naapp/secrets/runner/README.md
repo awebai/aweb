@@ -6,9 +6,9 @@ uses its own signing and encryption keys; it is not an AWID team member.
 The implementation provides the client side of the published
 [S0 protocol](../../../docs/secrets-runner-protocol.md): signed requests,
 assignment verification, HPKE opening and a durable SQLite replay journal.
-Registration is available as a command. The local execution library checks job
-pins and runs host executables with bounded, sanitized output. The claim/report
-loop, OCI runtime and separate-user end-to-end acceptance remain subsequent
+Registration and `doctor` are available as commands. The local execution library
+checks job pins and runs host executables with bounded, sanitized output. The
+claim/report loop, OCI runtime and separate-user end-to-end acceptance remain subsequent
 slices of S15b; this package does not yet execute service assignments.
 
 Run registration as the dedicated runner OS user:
@@ -93,6 +93,21 @@ If the runner is PID 1 in a container, use an init process, such as Docker's
 `--init` or `tini`, to reap orphaned descendants after process-group cleanup.
 The runner is not a child subreaper.
 
+Check a registered identity and all local job pins before starting a worker:
+
+```sh
+uv run aweb-secrets-runner doctor --config /absolute/runner-config.json \
+  --state-dir /absolute/private/runner-state
+```
+
+`doctor` checks the actual UID, protected configuration, runner membership,
+executable and declared-file hashes, working directories and private journal. It
+does not contact the service, request an enrolment code, open credentials or
+execute a job. Success prints only the runner ID and checked job IDs. Refusals
+print a fixed code. A pending unregistered identity and an unavailable OCI runtime
+refuse preflight. This local preflight does not establish current server authority;
+the service and worker still recheck each assignment.
+
 Run the focused checks from this directory:
 
 ```sh
@@ -100,6 +115,7 @@ uv sync --locked
 uv run pytest tests/test_protocol.py tests/test_journal.py
 uv run pytest tests/test_registration.py
 uv run pytest tests/test_filesystem.py tests/test_jobs.py tests/test_execution.py
+uv run pytest tests/test_credential_opening.py tests/test_doctor.py
 uv run ruff check src tests
 uv run mypy src
 ```
