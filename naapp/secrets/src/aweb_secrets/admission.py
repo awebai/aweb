@@ -25,7 +25,7 @@ installation generation admitted.
 from __future__ import annotations
 
 import secrets as random
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -43,7 +43,8 @@ from aweb_naapp.runtime.installation import (
 from aweb_naapp.runtime.team_auth import Principal
 from pgdbm.core import TransactionManager
 
-from aweb_secrets import records
+from aweb_secrets import derived_lineage, records
+from aweb_secrets.derived_capture import DEFAULT_MAX_TTL_S
 from aweb_secrets.grant import GrantRecord, is_secrets_role
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
@@ -151,6 +152,8 @@ async def _replayed(
     intent_id: str,
     principal_did: str,
     roles: list[str],
+    clock: Callable[[], datetime],
+    derived_max_ttl_s: int,
 ) -> Admission:
     row = await tx.fetch_one(
         """
@@ -167,10 +170,23 @@ async def _replayed(
         raise InstallationRefused(
             "generation_superseded", 409, "The request was admitted under an older generation"
         )
-    still_granted = await records.active_grants(
-        tx, installation.installation_id, row["secret_id"], principal_did=principal_did, roles=roles
+    nodes = await derived_lineage.lock_ancestry(
+        tx, installation.installation_id, installation.team_id, row["secret_id"]
     )
-    if row["grant_id"] not in {grant.grant_id for grant in still_granted}:
+    still_granted = await records.active_grants(
+        tx,
+        installation.installation_id,
+        row["secret_id"],
+        principal_did=principal_did,
+        roles=roles,
+        lock=False,
+    )
+    alive = await _check_lineage(
+        tx, nodes, clock, derived_max_ttl_s, [g.grant_id for g in still_granted]
+    )
+    if row["grant_id"] not in alive or row["grant_id"] not in {
+        grant.grant_id for grant in still_granted
+    }:
         raise AdmissionRefused("grant_revoked")
     return Admission(
         intent_id=intent_id,
@@ -191,8 +207,13 @@ async def admit_use(
     request: UseRequest,
     attestation: VerifiedAttestation | None,
     now: datetime,
+    derived_max_ttl_s: int = DEFAULT_MAX_TTL_S,
+    clock: Callable[[], datetime] = derived_lineage.utc_now,
 ) -> Admission:
     """Admit ``request`` in the caller's transaction, or raise :class:`AdmissionRefused`.
+
+    ``clock`` stays live across database waits; it is separate from the policy
+    and rate timestamp ``now``. Pass the current deployment's derived TTL cap.
 
     ``attestation`` is the verified principal attestation that accompanied the
     request, or None when it carried none. The principal's secrets roles are
@@ -211,8 +232,55 @@ async def admit_use(
     ]
     async with tx.transaction() as attempt:
         return await _admit_once(
-            attempt, installation, key, roles, principal, request, attestation, now
+            attempt,
+            installation,
+            key,
+            roles,
+            principal,
+            request,
+            attestation,
+            now,
+            derived_max_ttl_s,
+            clock,
         )
+
+
+async def _check_lineage(
+    tx: TransactionManager,
+    nodes: Sequence[derived_lineage.LineageNode],
+    clock: Callable[[], datetime],
+    max_ttl_s: int,
+    grant_ids: Sequence[str],
+) -> frozenset[str]:
+    try:
+        return await derived_lineage.check_ancestry(
+            tx,
+            nodes,
+            clock=clock,
+            max_ttl_s=max_ttl_s,
+            candidate_grant_ids=grant_ids,
+        )
+    except derived_lineage.LineageRefused as refused:
+        raise AdmissionRefused(refused.code) from None
+
+
+async def _ancestor_charges(
+    tx: TransactionManager,
+    installation: AdmittedInstallation,
+    nodes: Sequence[derived_lineage.LineageNode],
+) -> list[ratelimit.Charge]:
+    charges = []
+    for node in nodes:
+        if node.policy_digest is None:
+            continue
+        policy = await records.policy(tx, installation.installation_id, node.policy_digest)
+        if policy is None:
+            raise AdmissionRefused("operation_not_allowed")
+        assert node.parent_secret_id is not None and node.issuing_principal is not None
+        charges.extend(
+            _charges(installation, node.parent_secret_id, node.issuing_principal, policy)
+        )
+    return charges
 
 
 async def _admit_once(
@@ -224,6 +292,8 @@ async def _admit_once(
     request: UseRequest,
     attestation: VerifiedAttestation | None,
     now: datetime,
+    derived_max_ttl_s: int,
+    clock: Callable[[], datetime],
 ) -> Admission:
     intent_id = mint_intent_id()
     try:
@@ -239,11 +309,31 @@ async def _admit_once(
     except IdempotencyExpired:
         raise AdmissionRefused("idempotency_expired", 410) from None
     if not receipt.created:
-        return await _replayed(tx, installation, receipt.receipt_ref, key.principal_did, roles)
+        return await _replayed(
+            tx,
+            installation,
+            receipt.receipt_ref,
+            key.principal_did,
+            roles,
+            clock,
+            derived_max_ttl_s,
+        )
 
     stored = await records.secret_by_ref(
-        tx, installation.installation_id, installation.team_id, request.secret_ref
+        tx, installation.installation_id, installation.team_id, request.secret_ref, lock=False
     )
+    nodes = (
+        ()
+        if stored is None
+        else await derived_lineage.lock_ancestry(
+            tx,
+            installation.installation_id,
+            installation.team_id,
+            stored.record.secret_id,
+        )
+    )
+    if nodes:
+        stored = nodes[-1].secret
     grants = (
         []
         if stored is None
@@ -253,6 +343,7 @@ async def _admit_once(
             stored.record.secret_id,
             principal_did=key.principal_did,
             roles=roles,
+            lock=False,
         )
     )
     candidates = sorted(
@@ -261,15 +352,20 @@ async def _admit_once(
     )
     if stored is None or not candidates:
         raise AdmissionRefused("grant_missing")
+    alive = await _check_lineage(
+        tx, nodes, clock, derived_max_ttl_s, [g.grant_id for g in candidates]
+    )
+    candidates = [candidate for candidate in candidates if candidate.grant_id in alive]
+    if not candidates:
+        raise AdmissionRefused("grant_missing")
     if stored.state != "active" or stored.active_version is None:
         raise AdmissionRefused("secret_disabled")
     operation = (
         None
         if request.operation_id is None
-        else await records.current_operation(
-            tx, installation.installation_id, stored.record.secret_id, request.operation_id
-        )
+        else await derived_lineage.current_operation(tx, nodes, request.operation_id)
     )
+    inherited = await _ancestor_charges(tx, installation, nodes)
 
     policies: list[Policy] = []
     for candidate in candidates:
@@ -288,6 +384,11 @@ async def _admit_once(
         retry_after_s = 0
         if refusal is None:
             charges = _charges(installation, stored.record.secret_id, key.principal_did, policy)
+            # Preserve the original ancestor secret/principal/policy keys, and
+            # charge a repeated bucket once even through multiple derivations.
+            charges = list(
+                {(charge.bucket, charge.key): charge for charge in [*charges, *inherited]}.values()
+            )
             # Candidates take their buckets one after another. The installation
             # fence's row lock, taken first, serializes every admission that can
             # charge these buckets, which are all keyed by this installation, so
@@ -329,6 +430,10 @@ async def _admit_once(
             None if operation is None else operation.digest,
             approval_required,
         )
+        # SQL reads/writes may block after the first authority check. Keep
+        # this last check inside the admission savepoint so expiry rolls back
+        # the intent, idempotency claim and all tentative rate charges.
+        await _check_lineage(tx, nodes, clock, derived_max_ttl_s, [candidate.grant_id])
         return Admission(
             intent_id=intent_id,
             replayed=False,

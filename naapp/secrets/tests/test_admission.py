@@ -179,6 +179,7 @@ async def _admit(
     grant: Grant | None = None,
     attestation: VerifiedAttestation | None = None,
     now: datetime = NOW,
+    clock=None,
 ):
     async with db.transaction() as tx:
         return await admit_use(
@@ -189,6 +190,7 @@ async def _admit(
             request=request or _request(),
             attestation=attestation,
             now=now,
+            **({} if clock is None else {"clock": clock}),
         )
 
 
