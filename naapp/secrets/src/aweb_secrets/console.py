@@ -49,6 +49,13 @@ from aweb_secrets.principal import is_principal
 InstallationLookup = Callable[[str], Awaitable[AdmittedInstallation]]
 
 
+async def _require_json(request: Request) -> None:
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if media_type != "application/json":
+            raise HTTPException(status_code=415, detail="json_required")
+
+
 async def _body(request: Request, fields: set[str]) -> dict[str, Any]:
     try:
         body = await request.json()
@@ -154,7 +161,9 @@ class OwnerConsole:
 
 def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRouter:
     """Mount only on the human-origin application. Never mount on the agent API."""
-    router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
+    router = APIRouter(
+        prefix=prefix, route_class=ConsoleRoute, dependencies=[Depends(_require_json)]
+    )
     router.include_router(
         console_login_router(sessions=services.sessions, limiter=services.limiter)
     )

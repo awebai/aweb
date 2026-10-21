@@ -6,6 +6,7 @@ Authored during Juan's execution pause; run after explicit resume.
 import asyncio
 import base64
 import hashlib
+import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -101,9 +102,11 @@ async def test_console_logout_requires_the_sessions_csrf_token(world: World):
     scope = await enrol_owner(world, ALICE, "alice@acme.com")
     async with clients(world) as (human, _):
         response = await login(world, human, scope)
-        assert (await human.post("/logout")).status_code == 403
+        assert (await human.post("/logout", json={})).status_code == 403
         assert (
-            await human.post("/logout", headers={"X-CSRF-Token": response.json()["csrf_token"]})
+            await human.post(
+                "/logout", json={}, headers={"X-CSRF-Token": response.json()["csrf_token"]}
+            )
         ).status_code == 200
         assert (await human.get("/session")).status_code == 401
 
@@ -338,3 +341,45 @@ async def test_owner_acts_preserve_typed_fence_refusals(world: World, failure, s
             if task is not None and not task.done():
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("content_type", [None, "text/plain", "application/x-www-form-urlencoded"])
+async def test_console_ceremonies_require_json_without_echoing_the_body(world: World, content_type):
+    canary = os.urandom(24).hex()
+    headers = {} if content_type is None else {"Content-Type": content_type}
+    bodies = {
+        "/login/options": {"scope": canary},
+        "/login": {"scope": canary, "assertion": {}},
+        "/logout": {},
+        "/enrolment/options": {"link_token": canary},
+        "/enrolment": {"link_token": canary, "credential": {}},
+        "/contact-proof": {"proof_token": canary},
+        f"/installations/{INSTALLATION_ID}/owner-acts": {"signing": canary},
+    }
+    async with clients(world) as (human, _):
+        for path, body in bodies.items():
+            response = await human.post(path, content=json.dumps(body), headers=headers)
+            assert response.status_code == 415, path
+            assert response.json() == {"detail": "json_required"}
+            assert canary not in response.text
+    for table in ("owner_act_nonces", "role_assignments", "owner_principals"):
+        assert not await world.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}")
+    assert world.inbox.enrolments == {}
+
+
+async def test_json_content_type_parameters_are_allowed(world: World):
+    scope = await enrol_owner(world, ALICE, "alice@acme.com")
+    async with clients(world) as (human, _):
+        response = await human.post(
+            "/login/options",
+            content=json.dumps({"scope": scope}),
+            headers={"Content-Type": "application/json; charset=utf-8"},
+        )
+        assert response.status_code == 200
+        response = await human.post(
+            "/contact-proof",
+            content=json.dumps({"proof_token": os.urandom(24).hex()}),
+            headers={"Content-Type": "application/json; charset=utf-8"},
+        )
+        assert response.status_code == 403
+        assert response.json() == {"detail": "contact_proof_refused"}
