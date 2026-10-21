@@ -15,7 +15,7 @@ from aweb_naapp.runtime.audit import AuditKind
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 
 from aweb_secrets import derived_lineage, records, use_approvals
-from aweb_secrets.admission import admit_use
+from aweb_secrets.admission import AdmissionRefused, admit_use
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
@@ -112,6 +112,7 @@ async def request_child(context, secret, request_id=None, *, max_ttl_s=3600, sta
             request=replace(use_request(request_id or str(uuid.uuid4())), secret_ref=secret.ref),
             attestation=None,
             now=context.clock(),
+            clock=context.clock,
         )
         pending = await use_approvals.request_use_approval(
             tx,
@@ -380,7 +381,7 @@ async def test_an_ancestor_grant_revoked_before_mint_refuses_the_request(uses): 
     secret, _ = await child(uses)
     async with uses.world.db.transaction() as tx:
         await records.revoke_grant(tx, INSTALLATION_ID, source)
-    with pytest.raises(UseApprovalRefused) as refused:
+    with pytest.raises(AdmissionRefused) as refused:
         await request_child(uses, secret)
     assert refused.value.code == "grant_revoked"
 
