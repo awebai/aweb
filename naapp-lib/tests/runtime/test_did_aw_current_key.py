@@ -13,12 +13,13 @@ from dataclasses import replace
 
 import httpx
 import pytest
+from aweb_naapp_testing import REGISTRY_URL, Member, did_key
 from awid.did import stable_id_from_did_key
 from awid.log import canonical_server_origin
 from nacl.signing import SigningKey
 
 from aweb_naapp.runtime.team_auth import AWIDTeamCache, DidAwProfile
-from tests.runtime.conftest import REGISTRY_URL, Member, did_key, relying_app
+from tests.runtime.conftest import relying_app
 
 ORIGIN = "https://app.example.com"
 TEAM_ID = "backend:example.com"

@@ -92,6 +92,13 @@ def require_registered_certificates() -> bool:
     return _env_bool("AWEB_REQUIRE_REGISTERED_CERTIFICATES")
 
 
+def get_public_origin() -> str:
+    """Resolve only the public endpoint, without loading infrastructure settings."""
+    return canonical_server_origin(
+        os.getenv("AWEB_PUBLIC_ORIGIN") or f"http://localhost:{int(os.getenv('AWEB_PORT', '8000'))}"
+    )
+
+
 def get_settings() -> Settings:
     """
     Load settings from environment at call time.
@@ -148,9 +155,7 @@ def get_settings() -> Settings:
         presence_ttl_seconds=presence_ttl,
         awid_registry_url=get_awid_registry_url(),
         awid_service_token=get_awid_service_token(),
-        public_origin=canonical_server_origin(
-            os.getenv("AWEB_PUBLIC_ORIGIN") or f"http://localhost:{port}"
-        ),
+        public_origin=get_public_origin(),
         dashboard_jwt_secret=os.getenv("AWEB_DASHBOARD_JWT_SECRET", ""),
         require_registered_certificates=require_registered_certificates(),
     )

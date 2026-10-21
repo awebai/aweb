@@ -1,8 +1,8 @@
 {
   "page_format": "aweb.page/1",
   "page_id": "price-fixture",
-  "locale": "ca",
-  "title": "Proposta de preus — dades fictícies",
+  "locale": "en",
+  "title": "Price proposal — synthetic data",
   "rev": 1,
   "layout_version": 1,
   "owner": "agent-fixture",
@@ -12,7 +12,7 @@
       "id": "title",
       "type": "heading",
       "props": {
-        "text": "Revisió de preus",
+        "text": "Price review",
         "level": 1
       }
     },
@@ -38,17 +38,17 @@
         "columns": [
           {
             "field": "start",
-            "label": "Des de",
+            "label": "From",
             "format": "date"
           },
           {
             "field": "end",
-            "label": "Fins a",
+            "label": "To",
             "format": "date"
           },
           {
             "field": "price_minor",
-            "label": "Preu per nit (EUR)",
+            "label": "Price per night (EUR)",
             "format": "money_minor"
           }
         ]
@@ -70,11 +70,11 @@
         "options": [
           {
             "value": "approve",
-            "label": "Aprovar"
+            "label": "Approve"
           },
           {
             "value": "reject",
-            "label": "Rebutjar"
+            "label": "Reject"
           }
         ],
         "recommendation": "approve",
@@ -82,7 +82,7 @@
         "proposal_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "operation": {
           "kind": "pms.price.set",
-          "destination": "PMS · tarifa canal Airbnb",
+          "destination": "PMS · Airbnb channel rate",
           "summary": "Synthetic: exact values shown in the bound record."
         },
         "source_version": "pms-v7",
@@ -153,7 +153,7 @@
             "end": "2026-11-08",
             "price_minor": 18500,
             "currency": "EUR",
-            "reason": "Proposta de prova per a dates disponibles.",
+            "reason": "Test proposal for available dates.",
             "channel": "pms-fixture",
             "source_version": "pms-v7"
           }
@@ -166,7 +166,7 @@
     {
       "id": "answer-price",
       "kind": "answer",
-      "label": "Respondre a la proposta",
+      "label": "Answer the proposal",
       "input_schema": {
         "type": "object",
         "properties": {
