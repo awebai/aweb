@@ -15,6 +15,7 @@ from aweb_secrets.change import (
     KINDS,
     ChangeRefused,
     check_confirmable,
+    check_confirmer,
     covered_bytes,
     parse_change,
     validate_change,
@@ -83,6 +84,7 @@ def test_a_well_formed_change_is_accepted() -> None:
 
 def test_the_kinds_are_exactly_the_widening_items() -> None:
     assert set(KINDS) == {
+        "change_set_policy",
         "secret",
         "secret_value",
         "destination",
@@ -293,6 +295,7 @@ def test_an_expired_change_is_refused() -> None:
 
 def test_only_a_secret_is_widened_by_update() -> None:
     assert {kind: set(ops) for kind, ops in KINDS.items()} == {
+        "change_set_policy": {"update"},
         "secret": {"create", "update"},
         "secret_value": {"create"},
         "destination": {"create"},
@@ -449,3 +452,55 @@ def test_a_member_did_key_must_be_a_did_key() -> None:
 def test_a_drafter_principal_is_its_did_aw_else_its_did_key(drafter: dict[str, Any]) -> None:
     with pytest.raises(ChangeRefused):
         validate_change(_change(drafter=_member(**drafter)))
+
+
+# Four eyes for change sets (decision 61)
+
+
+def _relax_four_eyes(ref: str = "inst_1", distinct_approver: str = "not_required") -> dict:
+    return _item(
+        "change_set_policy",
+        "update",
+        ref,
+        {"v": 1, "distinct_approver": distinct_approver},
+    )
+
+
+def test_a_change_set_may_relax_four_eyes_for_its_installation() -> None:
+    validate_change(_change(changes=[_relax_four_eyes()]))
+
+
+def test_a_change_set_never_carries_requiring_four_eyes() -> None:
+    # Requiring four eyes narrows, so it is applied directly, never confirmed.
+    with pytest.raises(ChangeRefused):
+        validate_change(_change(changes=[_relax_four_eyes(distinct_approver="required")]))
+
+
+def test_the_four_eyes_setting_belongs_to_the_change_sets_installation() -> None:
+    with pytest.raises(ChangeRefused):
+        validate_change(_change(changes=[_relax_four_eyes(ref="inst_2")]))
+
+
+def test_while_four_eyes_is_required_the_drafter_cannot_confirm() -> None:
+    member = _change(drafter=_member())
+    with pytest.raises(ChangeRefused) as refused:
+        check_confirmer(member, distinct_approver="required", confirmer=DID_KEY)
+    assert refused.value.code == "distinct_approver_required"
+    check_confirmer(member, distinct_approver="required", confirmer=OTHER_DID_KEY)
+    check_confirmer(member, distinct_approver="not_required", confirmer=DID_KEY)
+
+
+def test_a_console_drafter_is_compared_by_the_principal_behind_its_scope() -> None:
+    console = _change()
+    with pytest.raises(ChangeRefused):
+        check_confirmer(
+            console, distinct_approver="required", confirmer=DID_KEY, drafter_principal=DID_KEY
+        )
+    check_confirmer(
+        console, distinct_approver="required", confirmer=OTHER_DID_KEY, drafter_principal=DID_KEY
+    )
+
+
+def test_an_unknown_four_eyes_setting_is_refused() -> None:
+    with pytest.raises(ValueError):
+        check_confirmer(_change(), distinct_approver="sometimes", confirmer=DID_KEY)

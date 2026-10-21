@@ -13,7 +13,15 @@ from aweb_naapp.runtime.approvals import canonical_request
 from awid.did import did_from_public_key, stable_id_from_public_key
 from nacl.signing import SigningKey
 
-from aweb_secrets.change import KINDS, REENABLE_TARGETS, covered_bytes, validate_change
+from aweb_secrets.change import (
+    AFTER_SHAPES,
+    KINDS,
+    REENABLE_TARGETS,
+    ChangeRefused,
+    check_confirmer,
+    covered_bytes,
+    validate_change,
+)
 
 # Fixture identities, derived from fixed seeds the way AWID derives them.
 _KEY_A = bytes(SigningKey(b"\x01" * 32).verify_key)
@@ -150,6 +158,22 @@ POSITIVE = [
             base_revision=0,
         ),
     ),
+    (
+        "member-relaxes-four-eyes",
+        envelope(
+            "chg_7a04",
+            MEMBER,
+            [
+                {
+                    "kind": "change_set_policy",
+                    "op": "update",
+                    "ref": "inst_5d2a9c31",
+                    "after": {"v": 1, "distinct_approver": "not_required"},
+                },
+            ],
+            "One owner is on leave",
+        ),
+    ),
 ]
 
 
@@ -237,6 +261,22 @@ refused = [
         mutated(setitem(["drafter"], {**MEMBER, "principal": DID_KEY_A})),
     ),
     (
+        "four-eyes-required-in-a-change-set",
+        mutated(
+            setitem(
+                ["changes"],
+                [
+                    {
+                        "kind": "change_set_policy",
+                        "op": "update",
+                        "ref": "inst_5d2a9c31",
+                        "after": {"v": 1, "distinct_approver": "required"},
+                    }
+                ],
+            )
+        ),
+    ),
+    (
         "kind-without-frozen-after",
         mutated(
             lambda c: c["changes"].append(
@@ -296,6 +336,35 @@ CONFIRMATION_CASES = [
         "change_wrong_installation",
     ),
 ]
+CONFIRMER_CASES = [
+    ("drafter-confirms-under-four-eyes", "required", DID_AW_A, "distinct_approver_required"),
+    ("another-owner-confirms-under-four-eyes", "required", DID_KEY_B, "confirmable"),
+    ("drafter-confirms-without-four-eyes", "not_required", DID_AW_A, "confirmable"),
+]
+
+
+def _confirmer_outcome(distinct_approver: str, confirmer: str) -> str:
+    change = next(c for n, c in POSITIVE if n == "member-relaxes-four-eyes")
+    try:
+        check_confirmer(change, distinct_approver=distinct_approver, confirmer=confirmer)
+    except ChangeRefused as refused:
+        return refused.code
+    return "confirmable"
+
+
+confirmers = []
+for name, setting, confirmer, expected in CONFIRMER_CASES:
+    assert _confirmer_outcome(setting, confirmer) == expected, name
+    confirmers.append(
+        {
+            "name": name,
+            "of": "member-relaxes-four-eyes",
+            "distinct_approver": setting,
+            "confirmer": confirmer,
+            "expected": expected,
+        }
+    )
+
 confirmations = [
     {
         "name": name,
@@ -317,8 +386,10 @@ vector = {
         "the request. Positive cases carry those exact bytes and their SHA-256. Negative cases "
         "never reach them: refused encodings and shapes, or other bytes. Confirmation cases "
         "fix when a change set can be confirmed: for the current installation, generation and "
-        "team, at the revision it was drafted on, before it expires. A change set lives at most "
-        "seven days. Principals are exact did:aw or Ed25519 did:key strings. The after shapes of secret, destination, "
+        "team, at the revision it was drafted on, before it expires; confirmer cases fix who may "
+        "confirm under the installation's four-eyes setting in force at confirmation (decision 61). "
+        "A change set relaxes four eyes but never requires it, which is applied directly. "
+        "A change set lives at most seven days. Principals are exact did:aw or Ed25519 did:key strings. The after shapes of secret, destination, "
         "operation, grant and policy are added by their owning task (S8), and those of job and "
         "runner by S15; until then those kinds are refused. Identifiers are fixtures; DIDs are "
         "derived from fixed seeds."
@@ -328,11 +399,7 @@ vector = {
     "kinds": {kind: sorted(ops) for kind, ops in KINDS.items()},
     "reenable_targets": sorted(REENABLE_TARGETS),
     "after_shapes": {
-        "secret_value/1": ["v", "secret_ref", "version"],
-        "approver/1": ["v", "approver_ref", "contact", "covers", "principal"],
-        "approver_contact/1": ["v", "approver_ref", "contact"],
-        "role/1": ["v", "role", "principal"],
-        "reenable/1": ["v", "target_kind", "target_ref"],
+        f"{kind}/{v}": list(shape.fields) for (kind, v), shape in AFTER_SHAPES.items()
     },
     "fields": {
         "request": [
@@ -357,6 +424,7 @@ vector = {
     "positive_cases": positives,
     "negative_cases": negatives,
     "confirmation_cases": confirmations,
+    "confirmer_cases": confirmers,
 }
 # Sanity: B2's own canonical form of the reference reproduces its bytes.
 assert canonical_request({"policy": POLICY, "request": reference}) == covered_ref
