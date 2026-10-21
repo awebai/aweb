@@ -507,3 +507,21 @@ Errors carry no record values, no other link's existence and no secret.
 
 `aweb_naapp.runtime.link_requests` computes verifiers and builds and verifies
 link requests, and runs `link-request-v1.json`.
+
+### Current collection metadata for checked link adapters
+
+`LinkAuthority.readable(tx, *, creator, page_id, collection, link_mode,
+record_ids)` receives the checked link mode and selection. The host passes them
+as `collection_access_on(..., link_mode=link_mode, record_ids=record_ids)`;
+the store's returned `mode` describes an owned/synced collection, not the link.
+`Readable.records=None` explicitly means dynamic rows and is valid only for a
+live read-only wildcard. The outer `Readable | None` result still uses `None`
+for an unavailable collection or no visible fields. A live wildcard metadata
+check must not enumerate record IDs; `query_widget_on` applies current row
+permissions before filtering, counting and paging.
+
+Named selections, including `[]`, require a tuple of at most 200 current visible
+IDs. Pinned wildcard mint inspects at most 201 IDs and refuses above 200. An
+action-bearing wildcard mint requests this same bounded expansion with
+`link_mode="pinned"`, even when the content mode is live; its stored rows remain
+named. Dynamic results cannot satisfy named, pinned or action-bearing checks.

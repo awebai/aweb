@@ -165,3 +165,82 @@ async def test_pinned_wildcard_still_refuses_more_than_200_rows(db, authority):
                 now=T0,
                 snapshot_source=Source(),
             )
+
+
+@pytest.mark.parametrize("actions", [False, True])
+async def test_readable_selection_explicit_dynamic_or_bounded(db, authority, actions):
+    """Live metadata can avoid row enumeration; actions still request bounded IDs."""
+    from .test_lifecycle import holder
+
+    calls = []
+
+    async def readable(tx, *, creator, page_id, collection, link_mode, record_ids):
+        calls.append((link_mode, record_ids))
+        records = None if link_mode == "live" and record_ids == "*" else ("b-17", "b-18")
+        return Readable(records, frozenset({"arrival", "status"}))
+
+    authority.readable = readable
+    request = request_from(DEFAULT_LINK)
+    if not actions:
+        request.update(actions=[], intent_sponsor_did=None)
+    request["projection"]["collections"][0]["record_ids"] = "*"
+    caller = await holder(db, authority, request=request)
+    checked = await get_projection(db, authority, caller)
+    assert calls[0] == ("pinned" if actions else "live", "*")
+    if actions:
+        assert checked.projection["collections"][0]["record_ids"] == ["b-17", "b-18"]
+        assert all(isinstance(records, list) for _, records in calls[1:])
+    else:
+        assert checked.projection["collections"][0]["record_ids"] == "*"
+        assert calls[-1] == ("live", "*")
+        checked = await get_projection(
+            db, authority, caller, projection=selection("arrival", records=())
+        )
+        assert checked.projection["collections"][0]["record_ids"] == []
+        assert calls[-1] == ("live", [])
+
+
+@pytest.mark.parametrize("mode,records", [("live", ["b-17"]), ("pinned", "*")])
+async def test_dynamic_authority_cannot_satisfy_a_named_or_pinned_grant(
+    db, authority, mode, records
+):
+    async def readable(tx, **context):
+        return Readable(None, frozenset({"arrival", "status"}))
+
+    authority.readable = readable
+    request = request_from(DEFAULT_LINK)
+    request.update(
+        mode=mode, page_rev=12 if mode == "pinned" else None, actions=[], intent_sponsor_did=None
+    )
+    request["projection"]["collections"][0]["record_ids"] = records
+    with pytest.raises(LinkRefused, match="action_denied"):
+        async with db.transaction() as tx:
+            await mint(
+                tx,
+                authority,
+                scope=SCOPE,
+                creator=CREATOR,
+                creator_certificate_id="cert-test",
+                creator_team_did_key=TEAM_KEY,
+                request=request,
+                now=T0,
+                snapshot_source=Source(),
+            )
+
+
+@pytest.mark.parametrize("action", [False, True])
+async def test_named_use_refuses_unexpected_dynamic_authority(db, authority, action_app, action):
+    from .test_lifecycle import holder
+
+    caller = await holder(db, authority)
+
+    async def readable(tx, **context):
+        assert isinstance(context["record_ids"], list)
+        return Readable(None, frozenset({"arrival", "status"}))
+
+    authority.readable = readable
+    with pytest.raises(LinkRefused, match="action_denied"):
+        if action:
+            await submit(db, authority, action_app, caller)
+        else:
+            await get_projection(db, authority, caller)

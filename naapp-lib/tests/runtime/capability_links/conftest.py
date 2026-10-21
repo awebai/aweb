@@ -53,8 +53,17 @@ class GrantedAuthority:
         assert creator.scope == SCOPE
         assert creator.team_did_key == TEAM_KEY
 
-    async def readable(self, tx, *, creator: str, page_id: str, collection: str) -> Readable | None:
-        return self.reads.get(creator, {}).get(collection)
+    async def readable(
+        self, tx, *, creator: str, page_id: str, collection: str, link_mode, record_ids
+    ) -> Readable | None:
+        current = self.reads.get(creator, {}).get(collection)
+        if current is None:
+            return None
+        if link_mode == "live" and record_ids == "*":
+            return Readable(None, current.fields)
+        if record_ids == "*" or current.records is None:
+            return current
+        return Readable(tuple(r for r in current.records if r in record_ids), current.fields)
 
     async def can_read_asset(self, tx, *, creator: str, page_id: str, asset_id: str) -> bool:
         return asset_id in self.assets.get(creator, set())

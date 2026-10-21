@@ -136,9 +136,13 @@ class LinkCreator:
 
 @dataclass(frozen=True)
 class Readable:
-    """The records and fields of one collection a creator can read now."""
+    """Current fields and rows; ``records=None`` explicitly means live/dynamic.
 
-    records: tuple[str, ...]
+    Dynamic rows are valid only for live read-only wildcard selections. Named
+    selections (including empty) and pinned/action grants need bounded tuples.
+    """
+
+    records: tuple[str, ...] | None
     fields: frozenset[str]
 
 
@@ -157,8 +161,22 @@ class LinkAuthority(Protocol):
     ) -> None: ...
 
     async def readable(
-        self, tx: TransactionManager, *, creator: str, page_id: str, collection: str
-    ) -> Readable | None: ...
+        self,
+        tx: TransactionManager,
+        *,
+        creator: str,
+        page_id: str,
+        collection: str,
+        link_mode: str,
+        record_ids: str | list[str],
+    ) -> Readable | None:
+        """Check current access for this link mode and literal/dynamic selection.
+
+        The host passes these keywords to collection_access_on. Live read-only
+        '*' may return dynamic rows without enumerating IDs. Action wildcard
+        mint uses link_mode='pinned' to request bounded expansion instead.
+        """
+        ...
 
     async def can_read_asset(
         self, tx: TransactionManager, *, creator: str, page_id: str, asset_id: str
@@ -446,24 +464,30 @@ async def _freeze_projection(
     creator: str,
     page_id: str,
     projection: Mapping[str, Any],
+    link_mode: str,
     follow_rows: bool = False,
 ) -> dict[str, Any] | None:
     """Check mint authority; only live read-only queries retain the row marker."""
     frozen = []
     for entry in projection["collections"]:
+        records = entry["record_ids"]
         readable = await authority.readable(
-            tx, creator=creator, page_id=page_id, collection=entry["collection"]
+            tx,
+            creator=creator,
+            page_id=page_id,
+            collection=entry["collection"],
+            link_mode="pinned" if records == "*" and not follow_rows else link_mode,
+            record_ids=records,
         )
         if readable is None or not set(entry["fields"]) <= readable.fields:
             return None
-        records = entry["record_ids"]
-        if records == "*":
-            if not follow_rows:
+        if not (follow_rows and link_mode == "live" and records == "*"):
+            if readable.records is None or len(readable.records) > MAX_RECORDS:
+                return None
+            if records == "*":
                 records = sorted(readable.records)
-                if len(records) > MAX_RECORDS:
-                    return None
-        elif not set(records) <= set(readable.records):
-            return None
+            elif not set(records) <= set(readable.records):
+                return None
         frozen.append({**entry, "record_ids": "*" if records == "*" else list(records)})
     for asset_id in projection["assets"]:
         if not await authority.can_read_asset(
@@ -515,6 +539,7 @@ async def mint(
         creator=creator,
         page_id=scope.page_id,
         projection=checked["projection"],
+        link_mode=checked["mode"],
         follow_rows=checked["mode"] == "live" and not checked["actions"],
     )
     if projection is None:
@@ -695,6 +720,7 @@ async def _creator_still_reads(
         creator=creator,
         page_id=record["page_id"],
         projection={"collections": record["projection"]["collections"], "assets": []},
+        link_mode=record["mode"],
     )
     return frozen is not None
 
@@ -1008,7 +1034,13 @@ async def read(
     creator = created_by.principal_did
     if record["mode"] == "live" and not record["actions"]:
         selected = await _current_projection(
-            tx, authority, creator=creator, page_id=page_id, minted=selected, keep_empty=True
+            tx,
+            authority,
+            creator=creator,
+            page_id=page_id,
+            minted=selected,
+            link_mode=record["mode"],
+            keep_empty=True,
         )
     else:
         if (
@@ -1018,6 +1050,7 @@ async def read(
                 creator=creator,
                 page_id=page_id,
                 projection={"collections": selected["collections"], "assets": []},
+                link_mode=record["mode"],
             )
             is None
         ):
@@ -1103,21 +1136,30 @@ async def _current_projection(
     creator: str,
     page_id: str,
     minted: Mapping[str, Any],
+    link_mode: str,
     keep_empty: bool = False,
 ) -> dict[str, Any]:
     """Intersect the immutable row/field ceiling with current creator access."""
     collections = []
     for entry in minted["collections"]:
         current = await authority.readable(
-            tx, creator=creator, page_id=page_id, collection=entry["collection"]
+            tx,
+            creator=creator,
+            page_id=page_id,
+            collection=entry["collection"],
+            link_mode=link_mode,
+            record_ids=entry["record_ids"],
         )
         if current is None:
             continue
-        records = (
-            "*"
-            if entry["record_ids"] == "*"
-            else [r for r in entry["record_ids"] if r in current.records]
-        )
+        dynamic = keep_empty and link_mode == "live" and entry["record_ids"] == "*"
+        if not dynamic and (current.records is None or len(current.records) > MAX_RECORDS):
+            raise _denied()
+        if dynamic:
+            records: str | list[str] = "*"
+        else:
+            assert current.records is not None
+            records = [r for r in entry["record_ids"] if r in current.records]
         fields = [f for f in entry["fields"] if f in current.fields]
         if (records or keep_empty) and fields:
             collections.append(
@@ -1210,7 +1252,12 @@ async def admit(
         if not limit.allowed:
             raise _limited(limit)
         projection = await _current_projection(
-            tx, authority, creator=creator, page_id=page_id, minted=record["projection"]
+            tx,
+            authority,
+            creator=creator,
+            page_id=page_id,
+            minted=record["projection"],
+            link_mode=record["mode"],
         )
         receipt = await actions.apply(
             tx,
