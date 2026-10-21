@@ -122,6 +122,26 @@ commit together; rollback and a lost recording fence emit no child pair.
 K4 supplies the generic framing/key helper once; S13 consumes it. No live
 producer is enabled before kit, ingest, resolution and owner activation.
 
+### Passkey evidence convention (aweb-acgh.39)
+
+The public hook contract freezes one privacy projection and HMAC input for
+`approval_evidence_sha256` in governance and secret-use events. Its byte vector
+is `docs/vectors/passkey-evidence-v1.json`. Review is R+A. No actor field/mode
+or catalog wire shape is added. B3 supplies one shared canonical projection
+helper after this contract is ACKed, with the hook commitment/key helper
+reused for purpose-separated MAC/key loading rather than a producer-local
+codec. Assignment of that implementation follows the contract review.
+
+B3/S13/S14 implementation proofs must cover real restricted evidence lookup,
+session/candidate subject and purpose matching, authoritative scope and approval
+bindings, nullable-field omission, UTC microsecond preservation, exclusion of
+credential IDs/counters, each included field changing the MAC, separate keys,
+installation context, startup refusal and persist-once reuse across rotation.
+Any new stored association is an ordered migration. An unavailable audit target
+never blocks containment. Console governance uses the identity-free system
+actor; a different affected subject remains in payload subject_ref. The vector
+checks bytes and contract shape, not these runtime/lifecycle obligations.
+
 ### Decision 76: independent K4 helper (aweb-acgh.16.8.1)
 
 The generic helper is `aweb_naapp.hooks.commitment`, shared by K4 and S13.

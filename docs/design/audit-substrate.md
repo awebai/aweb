@@ -253,6 +253,29 @@ expectations change together; there is no parallel version. S13 builds on this
 shape after kit/ingest/resolution support and owner activation. B2's frozen
 approval bytes remain unchanged.
 
+**Passkey evidence and console actors (aweb-acgh.39).** Both hooks' historical
+`approval_evidence_sha256` means the independent-key HMAC-SHA-256 commitment
+specified in [the public hook contract](../hook-events.md#passkey-evidence-commitments-and-console-actors).
+It commits the restricted B3 verification record's purpose, authorizing subject
+and verification instant, optional approval bindings and authoritative
+installation/scope context. Credential IDs and sign counts are excluded;
+no raw WebAuthn proof is exposed by B3. The input, locator and scope stay
+restricted. A dedicated key and installation context prevent public dictionary
+testing and comparison across apps; reuse within one key epoch may link one
+authorization's effects. The original commitment is persisted before use,
+reused through retries and rotation, and the old key is destroyed.
+
+A console-only passkey governance effect uses the existing identity-free
+`system` actor and payload `authority: passkey_session`. This identifies a
+producer-verified app-local authorization, without inventing a team DID or a
+human/custody attestation. The authorizing subject stays in restricted evidence;
+payload `subject_ref` remains the affected subject. Approval evidence does not
+replace the requesting member actor in secret-use events. The commitment is
+not an independently verifiable WebAuthn proof. Narrowing acts remain ungated
+on audit target or delivery availability. Catalog v1's field sets and wire
+shapes stay unchanged; this defines their previously unspecified evidence
+encoding and updates both type labels together. No parallel codec is added.
+
 ### A3. Registration and owner activation
 
 **Manifest slot (C3), as D1 specifies it** (`agent-pages.md` §5 "Versioned

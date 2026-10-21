@@ -236,9 +236,122 @@ strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
 `authority` is how the act was authorized:
 
 - `owner_act` requires `owner_act_sha256`;
-- `passkey_session` requires `approval_evidence_sha256`;
+- `passkey_session` requires `approval_evidence_sha256`, the producer-private
+  passkey evidence commitment defined below;
 - `team_cert` is allowed only for a narrowing act, and never for
   `resource.replaced`.
+
+### Passkey evidence commitments and console actors
+
+`approval_evidence_sha256`, in both the governance and secret-use hooks, is
+an **HMAC-SHA-256** commitment encoded as 64 lowercase hexadecimal characters.
+Its historical name does not mean plain SHA-256. A passkey subject is an
+app-local principal, not a team member DID. Even restricted verification
+metadata can expose a guessable subject or correlate a login between apps;
+an unkeyed hash is therefore inappropriate under the digest rule in
+[audit substrate §A2](design/audit-substrate.md#a2-the-catalog-v1).
+
+The input is a projection of the authoritative B3 `PasskeyEvidence` record,
+looked up through its restricted `evidence_ref`, plus the authorization scope
+established by the verifier. It is not a serialization of the Python object,
+an HTTP request, a session cookie or a caller-supplied evidence object.
+
+**Projection `E`.** These fields are required, with their stored values:
+`evidence_ref`, `subject`, `purpose`, `verified_at`. The optional fields
+`approval_id`, `request_sha256`, `policy_ref`, `policy_version` and
+`task_answer_ref` are included exactly when the stored value is not null.
+A null optional value is omitted, never encoded as JSON null or an empty
+string. No other record fields enter `E`. In particular, `credential_id`
+(including any base64/hex spelling) and `sign_count` stay in the restricted
+store and are excluded from the commitment as well as the published payload.
+B3 exposes no raw client data, authenticator data, challenge or signature;
+none is invented, reconstructed or added to this projection. Contacts,
+session/CSRF tokens, IP addresses and device labels are also excluded.
+
+`purpose` is B3's verified purpose (`login`, `approve`, `reject`, `view` or
+`contact_change`). `verified_at` is the stored timezone-aware instant,
+converted to UTC and written `YYYY-MM-DDTHH:MM:SS.ffffffZ`, with exactly six
+fractional digits and no precision loss. A naive time is refused. The other
+included values retain their stored strings; `policy_version`, when present,
+is a positive safe-range JSON integer, never a boolean. Empty required
+identifiers and invalid UTF-8 strings are refused.
+
+**Context `C`.** Exactly `app_id`, `team_id`, `installation_id`, `generation`
+and `scope`. The first four are the authoritative production installation,
+not values read from a browser body. `scope` is the app's verified
+authorization scope: for a console login, the authenticated session's scope
+that B3 bound into its login challenge; for an approval, the scope bound by
+B2/B3 to that approval and candidate. It is not inferred from the affected
+payload's `subject_ref` or `role`. Before committing, the producer checks the
+record's subject against the authenticated session or approval candidate,
+its purpose against the operation, and every present approval binding against
+the authoritative approval. A login record has purpose `login` and all five
+optional approval fields absent. A missing or mismatched record cannot be
+replaced by an evidence ref alone, an empty object or another login's record.
+
+`C` and `E` use canonical UTF-8 JSON: keys sorted by Unicode code point,
+no insignificant whitespace, literal Unicode without normalization, and no
+floats or nulls. Quote and backslash are escaped; backspace, tab, LF, form
+feed and CR use `\b`, `\t`, `\n`, `\f`, `\r`; the remaining U+0000–U+001F
+characters use lowercase `\u00xx`. Slash is not escaped. The record projection
+is flat. This uses B2's integer-only
+canonical JSON value rules, rather than the envelope's ASCII-only string
+restriction; a non-ASCII scope or policy ref is preserved, not normalized or
+coerced. Context generation remains a positive safe-range integer.
+
+Let `frame(B) = u64be(len(B)) || B`, with byte lengths, and let `K_evidence`
+be an independent random 32-byte producer key used for no other purpose:
+
+```text
+approval_evidence_sha256 = lowerhex(HMAC-SHA-256(
+  K_evidence,
+  UTF8("aweb.passkey-evidence/1\n") || frame(canonical(C)) || frame(canonical(E))
+))
+```
+
+This key is separate from signing seeds, K4's manifest key, both secret-use
+request/params keys and response HMAC keys. It uses the shared single-purpose
+key-file loader; missing or malformed configuration prevents startup of a
+producer configured to emit passkey-authorized events. There is no plain-hash
+fallback. Compute and durably persist the commitment and context once when
+the evidence is first bound to that authorization, before it is used for a
+governance effect or approval decision. Console sessions and approval records
+retain that association. Later effects, asynchronous decisions and outbox
+retries reuse it without recomputing under a new key. Installation context
+must still match; a new installation/generation requires a new authorization.
+Destroy the old key on rotation; retained commitments and signed outbox bytes
+do not need it. A storage change for this association uses a new ordered
+migration, never an edit to B3's existing migration.
+
+Only the commitment is published from this evidence projection, not its
+locator, authorizing subject, scope or record. Existing event metadata can
+still identify the affected resource. Do not copy the raw B3 credential ID
+into the optional secret-use `approval_credential_id` field, or its subject
+into `approver_id` as a substitute for this convention. Equal commitments
+may link reuse of the same authorization within one installation and key
+epoch. They do not support comparison across producers or key rotations.
+The target verifies the producer signature and field shape; it cannot verify
+the MAC or independently re-verify a WebAuthn assertion from this restricted
+record. This records the producer's verified authorization fact, not a
+transferable WebAuthn proof or a claim about custody or a human identity.
+
+**Console actor.** For a governance act authorized solely by an app-local
+console passkey session, the envelope actor is exactly
+`{"authority_mode":"system","attestations":[]}`. The signed app producer
+identifies the app that effects the change; the payload's
+`authority: passkey_session` and evidence commitment identify the kind of
+authorization it verified. No team DID, alias, certificate, grant or fabricated
+principal attestation is added. `subject_ref` continues to name the affected
+subject, not the authorizing console subject; `role` describes the affected
+role, not a replacement for the verified scope. Their equality is never
+assumed. This convention adds no envelope actor mode or field.
+For a secret-use event, the envelope actor remains the requesting member;
+passkey approval evidence never replaces that actor with the approver.
+
+The convention changes neither the audit gate nor containment authorization.
+Narrowing acts continue without any audit target or delivery-availability
+check, and their required local recording uses the same evidence convention.
+The byte vector is [passkey evidence v1](vectors/passkey-evidence-v1.json).
 
 ### `post-manifest-command-hook`
 

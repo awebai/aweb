@@ -1,0 +1,198 @@
+{
+  "name": "passkey-evidence-v1",
+  "status": "proposed aweb-acgh.39; design byte vector, implementation/lifecycle proof separate",
+  "authority": "docs/hook-events.md#passkey-evidence-commitments-and-console-actors",
+  "domain": "aweb.passkey-evidence/1\n",
+  "algorithm": "HMAC-SHA-256, lowercase hex; independent random 32-byte key generated only in test memory",
+  "framing": "domain || u64be(byte_length(C)) || C || u64be(byte_length(E)) || E",
+  "excluded_record_fields": [
+    "credential_id",
+    "sign_count"
+  ],
+  "cases": [
+    {
+      "name": "console_login_nulls_omitted",
+      "context": {
+        "app_id": "fixture",
+        "team_id": "demo:example.com",
+        "installation_id": "install-1",
+        "generation": 3,
+        "scope": "operator"
+      },
+      "record": {
+        "evidence_ref": "evidence-1",
+        "subject": "app-subject-1",
+        "purpose": "login",
+        "verified_at": "2026-10-21T12:00:00.123456Z",
+        "approval_id": null,
+        "request_sha256": null,
+        "policy_ref": null,
+        "policy_version": null,
+        "task_answer_ref": null
+      },
+      "projection": {
+        "evidence_ref": "evidence-1",
+        "subject": "app-subject-1",
+        "purpose": "login",
+        "verified_at": "2026-10-21T12:00:00.123456Z"
+      },
+      "canonical_context_utf8": "{\"app_id\":\"fixture\",\"generation\":3,\"installation_id\":\"install-1\",\"scope\":\"operator\",\"team_id\":\"demo:example.com\"}",
+      "canonical_evidence_utf8": "{\"evidence_ref\":\"evidence-1\",\"purpose\":\"login\",\"subject\":\"app-subject-1\",\"verified_at\":\"2026-10-21T12:00:00.123456Z\"}",
+      "mac_input_hex": "617765622e706173736b65792d65766964656e63652f310a00000000000000717b226170705f6964223a2266697874757265222c2267656e65726174696f6e223a332c22696e7374616c6c6174696f6e5f6964223a22696e7374616c6c2d31222c2273636f7065223a226f70657261746f72222c227465616d5f6964223a2264656d6f3a6578616d706c652e636f6d227d00000000000000757b2265766964656e63655f726566223a2265766964656e63652d31222c22707572706f7365223a226c6f67696e222c227375626a656374223a226170702d7375626a6563742d31222c2276657269666965645f6174223a22323032362d31302d32315431323a30303a30302e3132333435365a227d"
+    },
+    {
+      "name": "login_offset_same_instant",
+      "context": {
+        "app_id": "fixture",
+        "team_id": "demo:example.com",
+        "installation_id": "install-1",
+        "generation": 3,
+        "scope": "operator"
+      },
+      "record": {
+        "evidence_ref": "evidence-1",
+        "subject": "app-subject-1",
+        "purpose": "login",
+        "verified_at": "2026-10-21T14:00:00.123456+02:00",
+        "approval_id": null,
+        "request_sha256": null,
+        "policy_ref": null,
+        "policy_version": null,
+        "task_answer_ref": null
+      },
+      "projection": {
+        "evidence_ref": "evidence-1",
+        "subject": "app-subject-1",
+        "purpose": "login",
+        "verified_at": "2026-10-21T12:00:00.123456Z"
+      },
+      "canonical_context_utf8": "{\"app_id\":\"fixture\",\"generation\":3,\"installation_id\":\"install-1\",\"scope\":\"operator\",\"team_id\":\"demo:example.com\"}",
+      "canonical_evidence_utf8": "{\"evidence_ref\":\"evidence-1\",\"purpose\":\"login\",\"subject\":\"app-subject-1\",\"verified_at\":\"2026-10-21T12:00:00.123456Z\"}",
+      "mac_input_hex": "617765622e706173736b65792d65766964656e63652f310a00000000000000717b226170705f6964223a2266697874757265222c2267656e65726174696f6e223a332c22696e7374616c6c6174696f6e5f6964223a22696e7374616c6c2d31222c2273636f7065223a226f70657261746f72222c227465616d5f6964223a2264656d6f3a6578616d706c652e636f6d227d00000000000000757b2265766964656e63655f726566223a2265766964656e63652d31222c22707572706f7365223a226c6f67696e222c227375626a656374223a226170702d7375626a6563742d31222c2276657269666965645f6174223a22323032362d31302d32315431323a30303a30302e3132333435365a227d"
+    },
+    {
+      "name": "login_zero_microseconds",
+      "context": {
+        "app_id": "fixture",
+        "team_id": "demo:example.com",
+        "installation_id": "install-1",
+        "generation": 3,
+        "scope": "operator"
+      },
+      "record": {
+        "evidence_ref": "evidence-1",
+        "subject": "app-subject-1",
+        "purpose": "login",
+        "verified_at": "2026-10-21T12:00:00Z",
+        "approval_id": null,
+        "request_sha256": null,
+        "policy_ref": null,
+        "policy_version": null,
+        "task_answer_ref": null
+      },
+      "projection": {
+        "evidence_ref": "evidence-1",
+        "subject": "app-subject-1",
+        "purpose": "login",
+        "verified_at": "2026-10-21T12:00:00.000000Z"
+      },
+      "canonical_context_utf8": "{\"app_id\":\"fixture\",\"generation\":3,\"installation_id\":\"install-1\",\"scope\":\"operator\",\"team_id\":\"demo:example.com\"}",
+      "canonical_evidence_utf8": "{\"evidence_ref\":\"evidence-1\",\"purpose\":\"login\",\"subject\":\"app-subject-1\",\"verified_at\":\"2026-10-21T12:00:00.000000Z\"}",
+      "mac_input_hex": "617765622e706173736b65792d65766964656e63652f310a00000000000000717b226170705f6964223a2266697874757265222c2267656e65726174696f6e223a332c22696e7374616c6c6174696f6e5f6964223a22696e7374616c6c2d31222c2273636f7065223a226f70657261746f72222c227465616d5f6964223a2264656d6f3a6578616d706c652e636f6d227d00000000000000757b2265766964656e63655f726566223a2265766964656e63652d31222c22707572706f7365223a226c6f67696e222c227375626a656374223a226170702d7375626a6563742d31222c2276657269666965645f6174223a22323032362d31302d32315431323a30303a30302e3030303030305a227d"
+    },
+    {
+      "name": "approval_all_bindings",
+      "context": {
+        "app_id": "fixture",
+        "team_id": "demo:example.com",
+        "installation_id": "install-1",
+        "generation": 3,
+        "scope": "operator"
+      },
+      "record": {
+        "evidence_ref": "evidence-1",
+        "subject": "app-subject-1",
+        "purpose": "approve",
+        "verified_at": "2026-10-21T12:00:00.123456Z",
+        "approval_id": "approval-1",
+        "request_sha256": "abababababababababababababababababababababababababababababababab",
+        "policy_ref": "policy-1",
+        "policy_version": 7,
+        "task_answer_ref": "answer-1"
+      },
+      "projection": {
+        "evidence_ref": "evidence-1",
+        "subject": "app-subject-1",
+        "purpose": "approve",
+        "verified_at": "2026-10-21T12:00:00.123456Z",
+        "approval_id": "approval-1",
+        "request_sha256": "abababababababababababababababababababababababababababababababab",
+        "policy_ref": "policy-1",
+        "policy_version": 7,
+        "task_answer_ref": "answer-1"
+      },
+      "canonical_context_utf8": "{\"app_id\":\"fixture\",\"generation\":3,\"installation_id\":\"install-1\",\"scope\":\"operator\",\"team_id\":\"demo:example.com\"}",
+      "canonical_evidence_utf8": "{\"approval_id\":\"approval-1\",\"evidence_ref\":\"evidence-1\",\"policy_ref\":\"policy-1\",\"policy_version\":7,\"purpose\":\"approve\",\"request_sha256\":\"abababababababababababababababababababababababababababababababab\",\"subject\":\"app-subject-1\",\"task_answer_ref\":\"answer-1\",\"verified_at\":\"2026-10-21T12:00:00.123456Z\"}",
+      "mac_input_hex": "617765622e706173736b65792d65766964656e63652f310a00000000000000717b226170705f6964223a2266697874757265222c2267656e65726174696f6e223a332c22696e7374616c6c6174696f6e5f6964223a22696e7374616c6c2d31222c2273636f7065223a226f70657261746f72222c227465616d5f6964223a2264656d6f3a6578616d706c652e636f6d227d000000000000012e7b22617070726f76616c5f6964223a22617070726f76616c2d31222c2265766964656e63655f726566223a2265766964656e63652d31222c22706f6c6963795f726566223a22706f6c6963792d31222c22706f6c6963795f76657273696f6e223a372c22707572706f7365223a22617070726f7665222c22726571756573745f736861323536223a2261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162222c227375626a656374223a226170702d7375626a6563742d31222c227461736b5f616e737765725f726566223a22616e737765722d31222c2276657269666965645f6174223a22323032362d31302d32315431323a30303a30302e3132333435365a227d"
+    },
+    {
+      "name": "unicode_scope_and_policy",
+      "context": {
+        "app_id": "fixture",
+        "team_id": "demo:example.com",
+        "installation_id": "install-1",
+        "generation": 3,
+        "scope": "opérator"
+      },
+      "record": {
+        "evidence_ref": "evidence-1",
+        "subject": "app-subject-1",
+        "purpose": "reject",
+        "verified_at": "2026-10-21T12:00:00.123456Z",
+        "approval_id": "approval-2",
+        "request_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "policy_ref": "politique-café",
+        "policy_version": 1,
+        "task_answer_ref": null
+      },
+      "projection": {
+        "evidence_ref": "evidence-1",
+        "subject": "app-subject-1",
+        "purpose": "reject",
+        "verified_at": "2026-10-21T12:00:00.123456Z",
+        "approval_id": "approval-2",
+        "request_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "policy_ref": "politique-café",
+        "policy_version": 1
+      },
+      "canonical_context_utf8": "{\"app_id\":\"fixture\",\"generation\":3,\"installation_id\":\"install-1\",\"scope\":\"opérator\",\"team_id\":\"demo:example.com\"}",
+      "canonical_evidence_utf8": "{\"approval_id\":\"approval-2\",\"evidence_ref\":\"evidence-1\",\"policy_ref\":\"politique-café\",\"policy_version\":1,\"purpose\":\"reject\",\"request_sha256\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"subject\":\"app-subject-1\",\"verified_at\":\"2026-10-21T12:00:00.123456Z\"}",
+      "mac_input_hex": "617765622e706173736b65792d65766964656e63652f310a00000000000000727b226170705f6964223a2266697874757265222c2267656e65726174696f6e223a332c22696e7374616c6c6174696f6e5f6964223a22696e7374616c6c2d31222c2273636f7065223a226f70c3a97261746f72222c227465616d5f6964223a2264656d6f3a6578616d706c652e636f6d227d00000000000001177b22617070726f76616c5f6964223a22617070726f76616c2d32222c2265766964656e63655f726566223a2265766964656e63652d31222c22706f6c6963795f726566223a22706f6c6974697175652d636166c3a9222c22706f6c6963795f76657273696f6e223a312c22707572706f7365223a2272656a656374222c22726571756573745f736861323536223a2263646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364222c227375626a656374223a226170702d7375626a6563742d31222c2276657269666965645f6174223a22323032362d31302d32315431323a30303a30302e3132333435365a227d"
+    }
+  ],
+  "console_governance": {
+    "actor": {
+      "authority_mode": "system",
+      "attestations": []
+    },
+    "payload": {
+      "act": "role.revoked",
+      "direction": "narrowing",
+      "authority": "passkey_session",
+      "role": "operator",
+      "subject_ref": "affected-subject-2"
+    },
+    "authorizing_subject": "app-subject-1",
+    "evidence_case": "console_login_nulls_omitted"
+  },
+  "producer_refusals": [
+    "missing_record",
+    "subject_mismatch",
+    "purpose_mismatch",
+    "scope_not_authoritative",
+    "approval_binding_mismatch",
+    "naive_verified_at",
+    "missing_commitment_key",
+    "installation_context_changed"
+  ]
+}

@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 42
+`docs/vectors/*.json` is the only public protocol-vector authority for the 43
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the two classified
 package copies below. An unclassified hand-maintained copy is forbidden even when
@@ -333,6 +333,20 @@ check: message bytes built with `canonical_payload` never equal activity bytes.
 Ingress separation is the required `type` at every route. Athena and the
 protocol reviewer ACKed these bytes at `4502edac0` before either side
 implemented them; changing them needs a new version.
+
+### `passkey-evidence-v1.json`
+
+The privacy projection, canonical UTF-8 JSON and length-framed HMAC input of
+[`hook-events.md`](../hook-events.md#passkey-evidence-commitments-and-console-actors).
+Login and approval cases pin optional-null omission, all approval bindings,
+UTC microseconds, equivalent timezone offsets and Unicode preservation.
+Credential IDs and counters never enter the projection. The console example
+uses the existing identity-free system actor, with different authorizing and
+affected subjects. Tests generate HMAC keys only in memory; the vector contains
+no key. The byte-vector consumer is
+`naapp-lib/tests/hooks/test_passkey_evidence_vector.py`. Real B3 evidence lookup,
+authority checks, producer MAC persistence and rotation remain implementation
+proofs, including the refusal cases listed by the vector.
 
 ### `hook-catalog-v1.json`
 

@@ -267,7 +267,7 @@
           "required": false
         },
         "approval_evidence_sha256": {
-          "type": "sha256_hex",
+          "type": "hmac_sha256_hex",
           "required": false
         },
         "approval_decision": {
@@ -626,7 +626,7 @@
           "required": false
         },
         "approval_evidence_sha256": {
-          "type": "sha256_hex",
+          "type": "hmac_sha256_hex",
           "required": false
         },
         "approval_id": {
