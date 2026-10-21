@@ -509,8 +509,6 @@ async def _write_team_registrations(
             emit_key.kid,
             emit_key.did_key,
         )
-
-
     for app_key in app_keys:
         conflicting = await tx.fetch_one(
             """
@@ -528,17 +526,11 @@ async def _write_team_registrations(
         # A team's revocation of a key outlives the digest it was made under:
         # new bytes listing the same key register it already revoked.
         await tx.execute(
-            """
-            INSERT INTO {{tables.team_app_keys}} (
+            f"""
+            INSERT INTO {{{{tables.team_app_keys}}}} (
                 team_id, app_id, origin, digest, key_id, did_key, purposes, revoked_at
             )
-            VALUES (
-                $1, $2, $3, $4, $5, $6, $7::TEXT[],
-                (
-                    SELECT MIN(revoked_at) FROM {{tables.team_app_keys}}
-                    WHERE team_id = $1 AND app_id = $2 AND key_id = $5 AND did_key = $6
-                )
-            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[], {_revocation_carried_across_digests("team_app_keys")})
             ON CONFLICT (team_id, app_id, origin, digest, key_id) DO NOTHING
             """,
             team_id,

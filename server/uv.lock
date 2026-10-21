@@ -87,7 +87,7 @@ name = "aweb"
 version = "1.27.31"
 source = { editable = "." }
 dependencies = [
-    { name = "aweb-naapp", extra = ["egress"] },
+    { name = "aweb-naapp", extra = ["egress", "hooks"] },
     { name = "awid-service" },
     { name = "base58" },
     { name = "cryptography" },
@@ -116,7 +116,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aweb-naapp", extras = ["egress"], editable = "../naapp-lib" },
+    { name = "aweb-naapp", extras = ["egress", "hooks"], editable = "../naapp-lib" },
     { name = "awid-service", editable = "../awid" },
     { name = "base58", specifier = ">=2.1.1" },
     { name = "cryptography", specifier = ">=45.0.6" },
@@ -145,7 +145,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "../naapp-lib" }
 
 [package.optional-dependencies]
@@ -216,7 +216,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp-testing"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "../naapp-lib/testing" }
 dependencies = [
     { name = "aweb-naapp", extra = ["hooks", "runtime"] },
