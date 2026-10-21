@@ -138,21 +138,32 @@ async def replace_value_consequences(
     installation_id: str,
     team_id: str,
     secret_id: str,
-    current_version: int,
+    current_version: int | None,
     revoked_by: str,
 ) -> tuple[str, ...]:
     """S10 calls before activation; returned IDs are evicted only after commit."""
     ids = await _lock_tree(tx, installation_id, team_id, secret_id)
-    await use_approvals.void_use_approvals(
-        tx,
-        approvals,
-        installation_id=installation_id,
-        team_id=team_id,
-        secret_id=secret_id,
-        current_version=current_version,
-        revoked_by=revoked_by,
-        descendant_secret_ids=ids[1:],
-    )
+    if current_version is None:
+        await use_approvals.revoke_use_approvals(
+            tx,
+            approvals,
+            installation_id=installation_id,
+            team_id=team_id,
+            secret_ids=ids,
+            revoked_by=revoked_by,
+            reason="secret_version_changed",
+        )
+    else:
+        await use_approvals.void_use_approvals(
+            tx,
+            approvals,
+            installation_id=installation_id,
+            team_id=team_id,
+            secret_id=secret_id,
+            current_version=current_version,
+            revoked_by=revoked_by,
+            descendant_secret_ids=ids[1:],
+        )
     await _disable(
         tx,
         custody,
@@ -505,6 +516,33 @@ class Containment:
             team_id=new.team_id,
             secret_id=new.secret_id,
             current_version=new.version,
+            revoked_by=revoked_by,
+        )
+
+    async def invalidate_value_consequences(
+        self,
+        tx: TransactionManager,
+        *,
+        installation_id: str,
+        team_id: str,
+        secret_id: str,
+        revoked_by: str,
+    ) -> tuple[str, ...]:
+        """Invalidate a prepared dependent root with no replacement version.
+
+        S10 prepares the complete forest and confirming approval before B2.
+        This hook revokes every root version and disables descendants only;
+        the caller clears the root's active version and destroys old material
+        in the same transaction. Its existing disabled state is preserved.
+        """
+        return await replace_value_consequences(
+            tx,
+            self.approvals,
+            self.custody,
+            installation_id=installation_id,
+            team_id=team_id,
+            secret_id=secret_id,
+            current_version=None,
             revoked_by=revoked_by,
         )
 
