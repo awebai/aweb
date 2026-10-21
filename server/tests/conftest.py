@@ -13,7 +13,7 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from awid.db_config import build_database_config
 
-pytest_plugins = ("pgdbm.fixtures.conftest",)
+pytest_plugins = ("pgdbm.fixtures.conftest", "tests.real_stack")
 
 os.environ.setdefault("APP_ENV", "testing")
 os.environ.setdefault("ENVIRONMENT", "testing")
