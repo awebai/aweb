@@ -978,18 +978,11 @@ async def read(
 
 
 def _action_request(body: bytes) -> dict[str, Any]:
+    """Parse only what is needed for receipt identity before admission checks."""
     request = _strict_object(body)
-    required = {"action_id", "input", "idempotency_key"}
     if (
         not isinstance(request, dict)
-        or not required <= set(request)
-        or set(request) - required - {"expected_page_rev", "expected_record_revs"}
-    ):
-        raise _schema("action request")
-    if (
-        not _identifier(request["action_id"])
-        or not isinstance(request["input"], dict)
-        or not isinstance(request["idempotency_key"], str)
+        or not isinstance(request.get("idempotency_key"), str)
         or re.fullmatch(r"[A-Za-z0-9._-]{1,128}", request["idempotency_key"]) is None
     ):
         raise _schema("action request")
@@ -998,6 +991,17 @@ def _action_request(body: bytes) -> dict[str, Any]:
     except (UnicodeEncodeError, ValueError, TypeError, RecursionError) as exc:
         raise _schema("action request") from exc
     return request
+
+
+def _check_action_request(request: Mapping[str, Any]) -> None:
+    required = {"action_id", "input", "idempotency_key"}
+    if (
+        not required <= set(request)
+        or set(request) - required - {"expected_page_rev", "expected_record_revs"}
+        or not _identifier(request["action_id"])
+        or not isinstance(request["input"], dict)
+    ):
+        raise _schema("action request")
 
 
 async def admit(
@@ -1036,6 +1040,7 @@ async def admit(
         if stored is not None:
             return stored
         _check_lifecycle(row, now)
+        _check_action_request(request)
         if record["page_id"] != page_id:
             raise _denied()
         allowed = next(

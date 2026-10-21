@@ -217,6 +217,23 @@ async def test_session_expiry_ends_both_read_and_receipt_replay(db, authority, a
         assert (refused.value.code, refused.value.status) == ("link_unavailable", 410)
 
 
+@pytest.mark.parametrize(
+    "changes", [{"input": "invalid"}, {"action_id": None}, {"task_authorization": {}}]
+)
+async def test_changed_bodies_conflict_before_new_action_schema_checks(
+    db, authority, action_app, changes
+):
+    caller = await holder(db, authority)
+    first = await submit(db, authority, action_app, caller)
+    with pytest.raises(LinkRefused) as conflict:
+        await submit(db, authority, action_app, caller, **changes)
+    assert (conflict.value.code, conflict.value.status) == ("idempotency_conflict", 409)
+    with pytest.raises(LinkRefused) as invalid:
+        await submit(db, authority, action_app, caller, key="new-key", **changes)
+    assert (invalid.value.code, invalid.value.status) == ("schema_invalid", 422)
+    assert await submit(db, authority, action_app, caller) == first
+
+
 async def test_expiry_boundary_from_the_contract(db, authority):
     request = request_from(CAPABILITY["delegation"][0]["link"])
     request["expires_at"] = CAPABILITY["expiry_sequence"][0]["expires_at"]
