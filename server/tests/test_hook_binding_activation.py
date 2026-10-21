@@ -135,6 +135,7 @@ async def env(aweb_cloud_db, shared_test_pool, monkeypatch):
                 yield type("Env", (), {
                     "db": db,
                     "registry_db": registry_db.get_manager(),
+                    "registry": registry,
                     "owner": Owner(team_key),
                     "verifier": core_owner_act_verifier(audience=AUDIENCE, registry_client=registry),
                 })
@@ -378,3 +379,33 @@ async def test_the_owner_revokes_an_active_or_pending_binding_and_records_the_ac
 
     with pytest.raises(ConflictError, match="already ended"):
         await _revoke(env, registration)
+
+
+@pytest.mark.asyncio
+async def test_work_in_the_activating_transaction_commits_or_rolls_back_with_it(env):
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    signing, signature = env.owner.sign("hook-binding.activate", registration)
+
+    async def fails(tx):
+        raise RuntimeError("the hook event could not be enqueued")
+
+    with pytest.raises(RuntimeError):
+        await activate_binding(
+            env.db, env.verifier, team_id=TEAM, binding_id=registration.binding_id,
+            signing=signing, signature=signature, in_transaction=fails,
+        )
+    assert (await list_app_bindings(env.db, team_id=TEAM, app_id="logs"))[0].state == "pending"
+
+    seen = []
+
+    async def records(tx):
+        seen.append(await tx.fetch_value(
+            "SELECT state FROM {{tables.app_hook_bindings}} WHERE binding_id = $1", registration.binding_id,
+        ))
+
+    active = await activate_binding(
+        env.db, env.verifier, team_id=TEAM, binding_id=registration.binding_id,
+        signing=signing, signature=signature, in_transaction=records,
+    )
+    assert active.state == "active" and seen == ["active"]
