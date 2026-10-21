@@ -29,9 +29,14 @@ from pgdbm.core import TransactionManager
 from aweb_secrets import records
 from aweb_secrets.approvers import approvers_for_secrets
 from aweb_secrets.owners import is_owner_scope
-from aweb_secrets.run_plan import FrozenRunSlot, PreparedRun, RunPlanRefused
+from aweb_secrets.run_plan import FrozenRunPlan, FrozenRunSlot, PreparedRun, RunPlanRefused
 from aweb_secrets.secret import SecretRecord
-from aweb_secrets.use_approval import RunJob, use_approval_request
+from aweb_secrets.use_approval import (
+    RunJob,
+    UseApprovalView,
+    use_approval_request,
+    use_approval_view,
+)
 from aweb_secrets.use_approvals import _b2_policy, _granted_policy, _refusal
 
 POLICY_PREFIX = "secrets.run"
@@ -169,6 +174,46 @@ async def _slots(tx, installation, team, run):
     )
 
 
+async def run_approval_view(
+    tx: TransactionManager, *, installation_id: str, team_id: str, approval_id: str
+) -> UseApprovalView | None:
+    """Enrich the signed v1 request from its immutable same-scope association.
+
+    The caller authorizes access through B2 before rendering. This read grants
+    no authority or coverage; the other slots are retained display context only.
+    No live job, source, issuer or template definition supplies displayed terms.
+    """
+    row = await tx.fetch_one(
+        "SELECT s.ordinal,s.request,p.canonical,p.plan_digest "
+        "FROM {{tables.run_slot_approvals}} s JOIN {{tables.run_approval_plans}} p "
+        "USING (installation_id,team_id,run_id) "
+        "WHERE s.installation_id=$1 AND s.team_id=$2 AND s.approval_id=$3",
+        installation_id,
+        team_id,
+        approval_id,
+    )
+    if row is None:
+        return None
+    plan = FrozenRunPlan.from_bytes(row["canonical"])
+    if plan.digest != row["plan_digest"]:
+        raise RunPlanRefused("run_plan_mismatch")
+    view = use_approval_view(json.loads(row["request"]))
+    assert view.job is not None
+    body = plan.body
+    mint = body["slots"][row["ordinal"]]["mint"]
+    return replace(
+        view,
+        job=replace(
+            view.job,
+            slot_ordinal=row["ordinal"],
+            plan_digest=plan.digest,
+            frozen_plan=body,
+            mint_params=None if mint is None else mint["params"],
+            child_grant_template=None if mint is None else mint["grant_template"],
+        ),
+    )
+
+
 async def _locked_plan(tx: TransactionManager, prepared: PreparedRun, *, create=False):
     body, scope = prepared.plan.body, prepared.installation
     args = (scope.installation_id, scope.team_id, body["run_id"])
@@ -264,7 +309,7 @@ def _request(
     expiry = expiry.replace(microsecond=0)
     if expiry <= now:
         raise RunPlanRefused("approval_expired")
-    request = use_approval_request(
+    return use_approval_request(
         installation_id=prepared.installation.installation_id,
         install_generation=prepared.installation.generation,
         team_id=prepared.installation.team_id,
@@ -285,10 +330,6 @@ def _request(
             frozen["delivery"],
         ),
     )
-    request["run_job"].update(
-        slot_ordinal=slot.ordinal, plan_digest=prepared.plan.digest, frozen_plan=body
-    )
-    return request
 
 
 async def request_run_approvals(

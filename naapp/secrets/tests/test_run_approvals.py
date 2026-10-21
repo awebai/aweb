@@ -284,14 +284,53 @@ async def test_frozen_view_shows_mapped_values_beside_complete_child_authority(u
     plan = await plan_for(uses)
     pending = await request(uses, plan)
     item = pending[0]
-    frozen = await uses.approvals._request(item.pending.approval)
-    view = use_approval_view(frozen)
+    async with uses.world.db.transaction() as tx:
+        view = await run_approvals.run_approval_view(
+            tx,
+            installation_id=uses.world.admitted.installation_id,
+            team_id=TEAM,
+            approval_id=item.approval_id,
+        )
     assert view.job.slot_ordinal == 0 and view.job.plan_digest == plan.digest
     assert view.job.mint_params == {"charge": "orders"}
     assert view.job.child_grant_template == plan.body["slots"][0]["mint"]["grant_template"]
     repeat = await request(uses, plan)
     assert [p.approval_id for p in repeat] == [p.approval_id for p in pending]
     assert all(p.pending is None for p in repeat)
+
+
+async def test_signed_run_request_keeps_v1_fields_and_view_is_scoped(uses):  # noqa: F811
+    plan = await plan_for(uses)
+    pending = await request(uses, plan)
+    for item in pending:
+        frozen = await uses.approvals._request(item.pending.approval)
+        assert frozen["v"] == 1
+        assert set(frozen["run_job"]) == {
+            "runner_id",
+            "job_id",
+            "job_digest",
+            "params",
+            "credential_delivery",
+        }
+        assert use_approval_view(frozen).job.frozen_plan is None
+        async with uses.world.db.transaction() as tx:
+            args = dict(
+                installation_id=uses.world.admitted.installation_id,
+                team_id=TEAM,
+                approval_id=item.approval_id,
+            )
+            view = await run_approvals.run_approval_view(tx, **args)
+            assert view.job.frozen_plan == plan.body
+            assert view.job.slot_ordinal == item.ordinal
+            assert view.job.plan_digest == plan.digest
+            view.job.frozen_plan["slots"].clear()
+            assert (await run_approvals.run_approval_view(tx, **args)).job.frozen_plan == plan.body
+            for wrong in (
+                {"installation_id": "other-installation"},
+                {"team_id": "other-team"},
+                {"approval_id": "unknown-approval"},
+            ):
+                assert await run_approvals.run_approval_view(tx, **{**args, **wrong}) is None
 
 
 async def test_withdrawn_coverage_voids_all_unsent_slots(uses):  # noqa: F811
@@ -708,8 +747,13 @@ async def test_a_durable_child_uses_its_own_source_version_and_parent_run_policy
     pending = await request(uses, plan)
     assert len(pending) == 2
     for item in pending:
-        frozen = await uses.approvals._request(item.pending.approval)
-        view = use_approval_view(frozen)
+        async with uses.world.db.transaction() as tx:
+            view = await run_approvals.run_approval_view(
+                tx,
+                installation_id=uses.world.admitted.installation_id,
+                team_id=TEAM,
+                approval_id=item.approval_id,
+            )
         slot = plan.slots[item.ordinal]
         assert view.secret_ref == slot.body["source"]["ref"]
         assert view.secret_version == slot.source_version

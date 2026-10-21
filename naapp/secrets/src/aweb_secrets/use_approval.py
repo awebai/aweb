@@ -263,20 +263,12 @@ def use_approval_view(request: Mapping[str, Any]) -> UseApprovalView:
     operation = open_request = job = None
     if request["action"] == "run_job":
         frozen = request["run_job"]
-        plan = frozen.get("frozen_plan")
-        ordinal = frozen.get("slot_ordinal")
-        mint = None if plan is None else plan["slots"][ordinal]["mint"]
         job = JobShown(
             runner_id=frozen["runner_id"],
             job_id=frozen["job_id"],
             job_digest=frozen["job_digest"],
             params=frozen["params"],
             credential_delivery=frozen["credential_delivery"],
-            slot_ordinal=ordinal,
-            plan_digest=frozen.get("plan_digest"),
-            frozen_plan=plan,
-            mint_params=None if mint is None else mint["params"],
-            child_grant_template=None if mint is None else mint["grant_template"],
         )
     elif "operation_id" in request["broker"]:
         frozen = request["broker"]

@@ -130,9 +130,13 @@ reason=...)` accepts only the internal planner's `PreparedRun`. The planner
 already holds installation, requester roles, full ancestry/grant unions and
 CURRENT runner/job/operation/template locks. S12 locks one sorted covering-record
 union for the run, intersects parent/template policy scopes per slot, and mints
-one approval for each required slot. Its frozen `run_job` view includes the
-complete plan, original ordinal, actual mapped issuer values and complete child
-grant authority. Only new results have `pending`; deliver those after commit.
+one approval for each required slot. The signed use-approval/1 `run_job` keeps
+exactly its existing five fields. After authorizing the B2 ceremony, the console
+calls `run_approval_view(tx, installation_id=..., team_id=..., approval_id=...)`
+to read the complete plan, original ordinal, actual mapped issuer values and
+complete child grant authority from that approval's immutable same-scope
+plan/slot association. No live definition or caller-supplied plan enriches the
+view. Only new results have `pending`; deliver those after commit.
 A repeated request returns the same B2 refs with `pending=None`.
 
 `admit_run_approvals(tx, approvals, prepared=...)` consumes every required B2
