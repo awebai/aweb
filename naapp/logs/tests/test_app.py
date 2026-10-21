@@ -31,14 +31,25 @@ def _chain_kid() -> str:
     return kid
 
 
-def _deployment(tmp_path: Path, database_url: str) -> tuple[LogsSettings, Path]:
+def _deployment(
+    tmp_path: Path, database_url: str, *, db_schema: str = "public"
+) -> tuple[LogsSettings, Path]:
     key_files = write_key_files(tmp_path)
     manifest_path = tmp_path / "aweb-app.json"
     manifest_path.write_bytes(filled_manifest(key_files))
     settings = LogsSettings(
-        _env_file=None, database_url=database_url, public_origin=ORIGIN, app_key_files=key_files
+        _env_file=None,
+        database_url=database_url,
+        db_schema=db_schema,
+        public_origin=ORIGIN,
+        app_key_files=key_files,
     )
     return settings, manifest_path
+
+
+def _deployment_on(tmp_path: Path, database: AsyncDatabaseManager) -> tuple[LogsSettings, Path]:
+    """A deployment on the test database, in the schema the test database gives."""
+    return _deployment(tmp_path, database.config.get_dsn(), db_schema=database.schema or "public")
 
 
 @pytest.fixture
@@ -54,7 +65,7 @@ async def running(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
 
 
 async def test_the_catalog_lists_the_served_manifest(tmp_path: Path, database) -> None:
-    settings, manifest_path = _deployment(tmp_path, database.config.get_dsn())
+    settings, manifest_path = _deployment_on(tmp_path, database)
     async with running(create_app(settings, manifest_path=manifest_path)) as client:
         catalog = (await client.get("/.well-known/aweb-app-versions.json")).json()
         (variant,) = catalog["variants"]
@@ -70,19 +81,20 @@ async def test_the_catalog_lists_the_served_manifest(tmp_path: Path, database) -
 
 
 async def test_logs_serves_no_docs_surface(tmp_path: Path, database) -> None:
-    settings, manifest_path = _deployment(tmp_path, database.config.get_dsn())
+    settings, manifest_path = _deployment_on(tmp_path, database)
     async with running(create_app(settings, manifest_path=manifest_path)) as client:
         for path in ("/docs", "/redoc", "/openapi.json", "/"):
             assert (await client.get(path)).status_code == 404, path
 
 
 async def test_logs_is_ready_with_its_chain_tables(tmp_path: Path, database) -> None:
-    settings, manifest_path = _deployment(tmp_path, database.config.get_dsn())
+    settings, manifest_path = _deployment_on(tmp_path, database)
     async with running(create_app(settings, manifest_path=manifest_path)) as client:
         ready = await client.get("/ready")
         assert ready.status_code == 200, ready.text
         tables = await database.fetch_all(
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = $1",
+            settings.db_schema,
         )
         assert {"chain_epochs", "chain_heads", "chain_events", "chain_checkpoints"} <= {
             row["table_name"] for row in tables
