@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -24,6 +25,7 @@ from aweb_naapp.runtime.approvals import (
     Approver,
     Assurance,
     AuthenticationFailed,
+    Candidate,
     Decision,
     DeliveryStatus,
     Evidence,
@@ -36,8 +38,20 @@ from aweb_naapp.runtime.approvals import (
 from aweb_naapp.runtime.audit import AuditEvent
 
 SCOPE = "installation-1"
-APPROVER = Approver(subject="human-1", subject_type="app_local", contact="owner@example.com")
-SUCCESSOR = Approver(subject="human-2", subject_type="app_local", contact="new@example.com")
+APPROVER = Approver(
+    scope=SCOPE,
+    subject="human-1",
+    subject_type="app_local",
+    contact="owner@example.com",
+    principal_did="did:aw:human-1",
+)
+SUCCESSOR = Approver(
+    scope=SCOPE,
+    subject="human-2",
+    subject_type="app_local",
+    contact="new@example.com",
+    principal_did="did:aw:human-2",
+)
 
 
 def policy(**changes) -> ActionPolicy:
@@ -46,7 +60,7 @@ def policy(**changes) -> ActionPolicy:
         version=1,
         min_assurance=Assurance.PASSKEY,
         ttl=timedelta(minutes=10),
-        approver_scope=SCOPE,
+        approver_scopes=(SCOPE,),
     )
     values.update(changes)
     return ActionPolicy(**values)
@@ -64,15 +78,36 @@ class Policies:
 
 
 class Directory:
+    """The app's designations: at most one approver per scope."""
+
     def __init__(self, approver: Approver | None) -> None:
+        self.by_scope: dict[str, Approver] = {}
         self.approver = approver
 
-    async def designated_approver(self, policy: ActionPolicy) -> Approver | None:
-        return self.approver if policy.approver_scope == SCOPE else None
+    @property
+    def approver(self) -> Approver | None:
+        """The approver designated in `SCOPE`."""
+        return self.by_scope.get(SCOPE)
 
-    async def is_current(self, approver_subject: str, policy: ActionPolicy) -> bool:
-        current = await self.designated_approver(policy)
-        return current is not None and current.subject == approver_subject
+    @approver.setter
+    def approver(self, approver: Approver | None) -> None:
+        self.by_scope.pop(SCOPE, None)
+        if approver is not None:
+            self.designate(approver)
+
+    def designate(self, approver: Approver) -> None:
+        self.by_scope[approver.scope] = approver
+
+    def undesignate(self, approver: Approver) -> None:
+        if self.by_scope.get(approver.scope) == approver:
+            del self.by_scope[approver.scope]
+
+    async def candidates(self, policy: ActionPolicy, request) -> list[Approver]:
+        return [self.by_scope[s] for s in policy.approver_scopes if s in self.by_scope]
+
+    async def is_current(self, scope: str, subject: str) -> bool:
+        current = self.by_scope.get(scope)
+        return current is not None and current.subject == subject
 
 
 @dataclass
@@ -81,6 +116,7 @@ class Mailbox:
 
     sent: list[tuple[Approver, str]] = field(default_factory=list)
     by_approval: dict[str, str] = field(default_factory=dict)
+    links: dict[tuple[str, str], str] = field(default_factory=dict)
     status: DeliveryStatus = DeliveryStatus.DELIVERED
 
     async def deliver_approval_link(
@@ -88,6 +124,7 @@ class Mailbox:
     ) -> DeliveryStatus:
         self.sent.append((approver, link_token))
         self.by_approval[approval.approval_id] = link_token
+        self.links[(approval.approval_id, approver.subject)] = link_token
         return self.status
 
     def last_token(self) -> str:
@@ -137,12 +174,17 @@ class Clock:
 
 class KeyAuthenticator:
     """Verifies an Ed25519 signature by a registered human over a challenge the
-    adapter issued for exactly this approval, purpose and task answer."""
+    adapter issued for exactly this approval, candidate, purpose and task
+    answer. The evidence names whoever signed, so a signature by someone other
+    than the candidate is the primitive's to refuse."""
 
     def __init__(self, assurance: Assurance) -> None:
         self.assurance = assurance
         self.keys: dict[str, VerifyKey] = {}
-        self.issued: dict[bytes, tuple[str, Purpose, str | None, bytes]] = {}
+        self.issued: dict[bytes, tuple[str, str, Purpose, str | None, bytes]] = {}
+        # Runs once a proof has verified, before the primitive records anything:
+        # a test makes something else commit at exactly that point.
+        self.after_verify: Callable[[], Awaitable[None]] | None = None
 
     def register(self, subject: str) -> SigningKey:
         key = SigningKey.generate()
@@ -150,28 +192,44 @@ class KeyAuthenticator:
         return key
 
     async def challenge(
-        self, approval: Approval, purpose: Purpose, task_answer_ref: str | None
+        self,
+        approval: Approval,
+        candidate: Candidate,
+        purpose: Purpose,
+        task_answer_ref: str | None,
     ) -> dict:
         nonce = uuid.uuid4().bytes
-        binding = challenge_binding(approval, purpose, nonce, task_answer_ref)
-        self.issued[binding] = (approval.approval_id, purpose, task_answer_ref, nonce)
+        binding = challenge_binding(approval, candidate, purpose, nonce, task_answer_ref)
+        self.issued[binding] = (
+            approval.approval_id,
+            candidate.subject,
+            purpose,
+            task_answer_ref,
+            nonce,
+        )
         return {"challenge": binding.hex()}
 
     async def verify(
-        self, approval: Approval, purpose: Purpose, proof, task_answer_ref: str | None
+        self,
+        approval: Approval,
+        candidate: Candidate,
+        purpose: Purpose,
+        proof,
+        task_answer_ref: str | None,
     ) -> Evidence:
         binding = bytes.fromhex(proof["challenge"])
         issued = self.issued.pop(binding, None)
         if issued is None:
             raise AuthenticationFailed("unknown challenge")
-        approval_id, issued_purpose, issued_answer, nonce = issued
-        if (approval_id, issued_purpose, issued_answer) != (
+        approval_id, issued_subject, issued_purpose, issued_answer, nonce = issued
+        if (approval_id, issued_subject, issued_purpose, issued_answer) != (
             approval.approval_id,
+            candidate.subject,
             purpose,
             task_answer_ref,
         ):
             raise AuthenticationFailed("challenge issued for another purpose")
-        if challenge_binding(approval, purpose, nonce, task_answer_ref) != binding:
+        if challenge_binding(approval, candidate, purpose, nonce, task_answer_ref) != binding:
             raise AuthenticationFailed("approval changed since the challenge")
         key = self.keys.get(proof["subject"])
         if key is None:
@@ -180,6 +238,8 @@ class KeyAuthenticator:
             key.verify(binding, bytes.fromhex(proof["signature"]))
         except BadSignatureError as exc:
             raise AuthenticationFailed("bad signature") from exc
+        if self.after_verify is not None:
+            await self.after_verify()
         return Evidence(
             assurance=self.assurance,
             subject=proof["subject"],
@@ -195,12 +255,20 @@ class TaskAnswers:
     def __init__(self) -> None:
         self.verified: dict[str, TaskAnswerEvidence] = {}
 
-    def record(self, ref: str, approval: Approval, decision: Decision) -> None:
+    def record(
+        self,
+        ref: str,
+        approval: Approval,
+        decision: Decision,
+        answered_by: str | None = APPROVER.principal_did,
+    ) -> None:
+        assert answered_by is not None
         self.verified[ref] = TaskAnswerEvidence(
             task_answer_ref=ref,
             approval_id=approval.approval_id,
             decision=decision,
             request_sha256=approval.request_sha256,
+            answered_by=answered_by,
         )
 
     async def verify(

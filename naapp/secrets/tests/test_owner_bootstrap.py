@@ -151,13 +151,22 @@ async def _apply(
     return designation
 
 
-def _policy(scope: str) -> ActionPolicy:
+CHANGE_REQUEST = {"type": "aweb.secrets.change", "drafter": {"via": "console", "scope": "-"}}
+
+
+async def _approver(world: World, scope: str):
+    found = await world.directory.candidates(_policy(scope), CHANGE_REQUEST)
+    return found[0] if found else None
+
+
+def _policy(scope: str, *, allow_requester_approval: bool = True) -> ActionPolicy:
     return ActionPolicy(
         policy_ref="secrets.change",
         version=1,
         min_assurance=Assurance.PASSKEY,
         ttl=timedelta(minutes=15),
-        approver_scope=scope,
+        approver_scopes=(scope,),
+        allow_requester_approval=allow_requester_approval,
     )
 
 
@@ -174,7 +183,7 @@ async def test_the_team_owner_act_makes_the_first_owner(world: World) -> None:
     assert await has_role(world.db, ALICE, OWNER_ROLE)
     await _enrol(world, "alice@example.com")
     scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
-    approver = await world.directory.designated_approver(_policy(scope))
+    approver = await _approver(world, scope)
     assert approver is not None and approver.contact == "alice@example.com"
 
 
@@ -277,7 +286,7 @@ async def test_a_recovery_from_another_team_cannot_touch_an_owner(world: World) 
             world, "app-credential.recover", impostor, "attacker@example.com", signed=signed
         )
     scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
-    approver = await world.directory.designated_approver(_policy(scope))
+    approver = await _approver(world, scope)
     assert approver is not None and approver.contact == "alice@example.com"
     assert await world.passkeys.recovery_pending_until(scope) is None
     assert world.contacts.notices == {}
@@ -313,4 +322,4 @@ async def test_an_owner_is_designated_once_and_recovered_after_the_cooling_off(
     ]
     scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
     assert await world.passkeys.recovery_pending_until(scope) == designation.effective_at
-    assert await world.directory.designated_approver(_policy(scope)) is None
+    assert await _approver(world, scope) is None
