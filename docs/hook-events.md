@@ -184,10 +184,44 @@ request_sha256 = hex_lower(HMAC-SHA-256(K,
 
 `context` contains exactly `app_id`, `team_id`, `installation_id`, `generation`
 and `tool`, from the admitted installation and matched manifest tool, encoded
-with the envelope's canonical JSON rules. `canonical_request_bytes` are the
-canonical request bytes of that tool's manifest mapping, before credential
-injection. Only the commitment leaves the producer; parameter values and
-concrete paths or queries are never copied into event fields.
+with the envelope's canonical JSON rules.
+
+`canonical_request_bytes` is the following binary encoding of the request
+received by the producer, before any downstream credential injection:
+
+```text
+frame(method) || frame(raw_target) || u64be(content_type_count) ||
+    frame(content_type_1) || ... || frame(content_type_n) || frame(body)
+frame(bytes) = u64be(length_in_bytes(bytes)) || bytes
+```
+
+`u64be` is an unsigned 64-bit integer in big-endian byte order, with no textual
+separators. The fields are:
+
+- `method`: the uppercase ASCII HTTP method matched by tool admission.
+- `raw_target`: the ASCII external raw path plus raw query used by team-auth
+  verification, including any mount prefix. It uses the same request-target
+  reconstruction as admission; it is never percent-decoded, re-encoded or replaced
+  with the tool's path template. Query order and percent-encoding spelling
+  are preserved.
+- `content_type_1` through `content_type_n`: every received `Content-Type`
+  field value as bytes, in request header order, without parsing, case folding
+  or trimming by the producer. An absent header has count zero; one empty
+  value has count one and a zero-length frame. Header names match
+  case-insensitively. Normal manifest requests supply the mapping's explicit
+  content type (`application/json` or `body.content_type`).
+- `body`: the exact received pre-injection body bytes, including an empty
+  body. In JSON mode these are the bytes the manifest dispatcher serialized
+  and team-auth authenticated, without parsing and reserializing. In raw mode
+  they are the exact raw body, including binary bytes, without text decoding
+  or newline normalization.
+
+The framing binds field boundaries even when a value contains delimiters or
+binary bytes. K4 tests require identical inputs to yield the same MAC and
+independent changes to method, concrete path, raw query, content type or body
+to change it, with both JSON and raw-body cases. Only the commitment leaves
+the producer; parameter values and concrete paths or queries are never copied
+into event fields.
 
 `K` is an independent, randomly generated 32-byte producer-local secret,
 persisted in the producer's private configuration. It is never a signing seed,
