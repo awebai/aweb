@@ -92,6 +92,7 @@ async def revoke_grant_tree(
         installation_id=installation_id,
         team_id=team_id,
         secret_ids=ids,
+        source_grant_id=grant_id,
         revoked_by=revoked_by,
         reason="grant_revoked",
     )
