@@ -575,9 +575,14 @@ _candidate-artifact-naapp-package: check-naapp-lib-package
 	cd naapp-lib && uv build
 	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION).tar.gz
 	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION)-py3-none-any.whl
+	rm -rf naapp-lib/testing/dist
+	cd naapp-lib/testing && uv build
+	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION).tar.gz
+	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION)-py3-none-any.whl
 
-# aweb-naapp's release artifacts as a consumer sees them: the wheel ships its
-# package files, pins awid-service, and installs and imports in a fresh environment.
+# aweb-naapp's and aweb-naapp-testing's release artifacts as a consumer sees them:
+# each wheel ships its package files, pins its dependencies, and installs and
+# imports in a fresh environment.
 check-naapp-lib-package:
 	python3 scripts/check-naapp-lib-package.py
 

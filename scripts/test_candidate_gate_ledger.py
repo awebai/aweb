@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STAGES = "checks unit artifacts integration"
 # Unrelated product targets check the fixture's committed source; the four
 # stage assertions below use real tools/services, never a replacement runner.
-SOURCE_CHECKS = """_candidate-gate-docker-boundaries check-aw-commit-repo-stamp
+SOURCE_CHECKS = """_candidate-gate-docker-boundaries check-aw-commit-repo-stamp check-page-renderer-bundle
 check-cli-go-tidy check-cli-release-vcs-stamps test-python-locks
  test-sot-source-inventories test-vector-provenance test-federation-error-reference
  test-federation-authority-mutations test-federation-harness test-cli-reference

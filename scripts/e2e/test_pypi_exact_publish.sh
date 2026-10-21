@@ -352,4 +352,15 @@ grep -c "STAGED:" <<<"$out" | grep -qx 2 \
   || fail "real-builder aweb-naapp dist must stage exactly the pair: $out"
 ok "real aweb-naapp build plus workflow cleanup inspects clean"
 
+rm -rf "$tmp/real-naapp-testing-dist"; mkdir -p "$tmp/real-naapp-testing-dist"
+uv build --sdist --wheel --out-dir "$tmp/real-naapp-testing-dist" "$ROOT/naapp-lib/testing" >/dev/null 2>&1 \
+  || fail "real uv build of naapp-lib/testing failed"
+rm -f "$tmp/real-naapp-testing-dist/.gitignore"
+out="$(bash "$LANE" inspect-staged --dist "$tmp/real-naapp-testing-dist" \
+  --package aweb-naapp-testing --version "$naapp_version" 2>&1)" \
+  || fail "real-builder aweb-naapp-testing dist refused after workflow cleanup: $out"
+grep -c "STAGED:" <<<"$out" | grep -qx 2 \
+  || fail "real-builder aweb-naapp-testing dist must stage exactly the pair: $out"
+ok "real aweb-naapp-testing build plus workflow cleanup inspects clean"
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"
