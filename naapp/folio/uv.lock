@@ -196,12 +196,16 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aweb", marker = "extra == 'server'", editable = "../../server" },
     { name = "aweb-naapp", extras = ["hooks", "runtime"], editable = "../../naapp-lib" },
     { name = "awid-service", editable = "../../awid" },
     { name = "cbor2", specifier = ">=5.6.0" },
     { name = "cryptography", specifier = ">=46.0.0" },
     { name = "dnspython", specifier = ">=2.7.0" },
+    { name = "pytest-asyncio", marker = "extra == 'server'", specifier = ">=1.2.0" },
+    { name = "redis", marker = "extra == 'server'", specifier = ">=6.4.0" },
 ]
+provides-extras = ["server"]
 
 [[package]]
 name = "awid-service"
