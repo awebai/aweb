@@ -143,7 +143,7 @@ async def register_runner(
 ) -> RegisteredRunner:
     try:
         if not isinstance(signing_key, str) or not isinstance(encryption_key, str):
-            raise ValueError('public keys must be strings')
+            raise ValueError("public keys must be strings")
         public_key_from_did(signing_key)
         key = decode_base64url(encryption_key, "encryption key")
         # Parsing a 32-byte key alone admits low-order keys. A real exchange
@@ -151,8 +151,15 @@ async def register_runner(
         X25519PrivateKey.generate().exchange(X25519PublicKey.from_public_bytes(key))
     except (ValueError, TypeError, EncodingRefused):
         raise RunnerRefused("runner_keys_invalid") from None
-    if not isinstance(code, str) or not 1 <= len(code) <= 128:
-        raise RunnerRefused("registration_code_invalid")
+    try:
+        if (
+            not isinstance(code, str)
+            or len(code) != 43
+            or len(decode_base64url(code, "registration code")) != 32
+        ):
+            raise ValueError("registration code format")
+    except (ValueError, EncodingRefused):
+        raise RunnerRefused("registration_code_invalid") from None
     row = await tx.fetch_one(
         "SELECT * FROM {{tables.runners}} WHERE code_hash=$1 FOR UPDATE",
         hashlib.sha256(code.encode()).digest(),

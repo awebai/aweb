@@ -67,3 +67,44 @@ async def test_registration_returns_only_public_pins_and_never_replays_code(db):
         malformed = await client.post("/runner/v1/register", content=duplicate)
         assert malformed.status_code == 400
         assert code not in malformed.text
+
+
+async def test_malformed_code_is_constant_refusal_and_does_not_burn_valid_code(db):
+    key = SigningKey.generate()
+    app = FastAPI()
+    app.include_router(
+        runner_registration_router(db=lambda: db, origin="https://secrets.example", service_key=key)
+    )
+    record = RunnerRecord.from_after(
+        {"v": 1, "runner_id": mint_runner_id(), "label": "Runner", "allowed_jobs": []}
+    )
+    async with db.transaction() as tx:
+        code = await create_runner(
+            tx, "install-one", "team:acme.test", record, now=datetime.now(UTC)
+        )
+    body = {
+        "code": code,
+        "signing_key": did_from_public_key(bytes(SigningKey.generate().verify_key)),
+        "encryption_key": encode_base64url(
+            X25519PrivateKey.generate().public_key().public_bytes_raw()
+        ),
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://secrets.example"
+    ) as client:
+        for invalid in [
+            "\ud800",
+            "not-a-registration-code",
+            code + "=",
+            "",
+            encode_base64url(bytes(31)),
+        ]:
+            malformed = await client.post(
+                "/runner/v1/register", content=json.dumps({**body, "code": invalid})
+            )
+            assert malformed.status_code == 401
+            assert malformed.json() == {"detail": {"code": "registration_code_invalid"}}
+            assert malformed.headers["cache-control"] == "no-store"
+        accepted = await client.post("/runner/v1/register", json=body)
+        assert accepted.status_code == 200
+        assert code not in accepted.text
