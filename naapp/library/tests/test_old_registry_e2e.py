@@ -10,6 +10,7 @@ from test_e2e_smoke import (
     _assert_aw_status,
     _assert_aw_success,
     _aw_request,
+    _compose,
     _provision_team,
     _require_e2e_enabled,
     _running_library,
@@ -21,7 +22,10 @@ pytestmark = pytest.mark.e2e
 
 def test_private_certificate_refused_by_real_pre_status_registry(aw_workspace):
     _require_e2e_enabled()
-    old_registry = os.environ.get("LIBRARY_E2E_OLD_AWID_URL", "http://127.0.0.1:18011")
+    binding = _compose("port", "awid-pre-status", "8010").stdout.strip().splitlines()[0]
+    port = int(binding.rsplit(":", 1)[1])
+    host = os.environ.get("NAAPP_E2E_HOST", "127.0.0.1")
+    old_registry = f"http://{host}:{port}"
     _wait_http_ok(f"{old_registry}/health")
     team = _provision_team(aw_workspace)
     team_path = f"/v1/namespaces/{team.namespace}/teams/{team.team}"
