@@ -93,7 +93,7 @@ async def child(
             dispatch_started_at=now,
             upstream_expires_at=now + timedelta(hours=1),
             expires_at=now + timedelta(minutes=30),
-            now=now,
+            clock=context.clock,
         )
     return secret, grant
 

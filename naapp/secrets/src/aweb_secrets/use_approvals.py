@@ -237,7 +237,7 @@ async def _ancestry_refusal(
 ) -> str | None:
     try:
         await derived_lineage.check_ancestry(
-            tx, nodes, now=approvals.now(), max_ttl_s=max_ttl_s, candidate_grant_ids=[grant_id]
+            tx, nodes, clock=approvals.now, max_ttl_s=max_ttl_s, candidate_grant_ids=[grant_id]
         )
     except derived_lineage.LineageRefused as exc:
         return exc.code
