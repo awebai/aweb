@@ -1,20 +1,17 @@
 import secrets
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
+from aweb_naapp.runtime.app import NOINDEX_ROBOTS_HEADER, NaappRuntime, mount_naapp_routes
+from aweb_naapp.runtime.team_auth import Principal, record_observed_principal
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from pgdbm import AsyncDatabaseManager
 
-from folio.auth import AWIDTeamCache, Principal, authenticate_request
-from folio.aweb_manifest import read_manifest_bytes
+from folio.aweb_manifest import MANIFEST_PATH
 from folio.cloudflare_stream import stream_iframe_url
 from folio.config import Settings, get_settings
-from folio.db import FolioDatabase
-from folio.event_emit import emit_doc_changed
 from folio.models import (
     AppendTemplateVersionRequest,
     AssetMetadataResponse,
@@ -64,171 +61,57 @@ from folio.repository import (
     upsert_theme,
 )
 from folio.surfaces import (
-    USER_CONTENT_ROBOTS_HEADER,
-    aweb_css,
+    SKILLS,
     llms_txt,
-    read_skill,
     render_landing_page,
     render_reference_page,
-    robots_txt,
-    skills_index,
 )
 from folio.templates import render_declarative_template
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _OG_CARD_BYTES = (_PACKAGE_DIR / "assets" / "og-card.png").read_bytes()
 _FONTS_DIR = _PACKAGE_DIR / "fonts"
-_FONT_NAMES = frozenset(
-    {
-        "BerkeleyMono-Light.woff2",
-        "BerkeleyMono-Regular.woff2",
-        "BerkeleyMono-SemiBold.woff2",
-    }
-)
+_MIGRATIONS_DIR = _PACKAGE_DIR / "migrations"
+# Present links and asset URLs are user content: crawlers skip them and every
+# response under them carries a noindex header.
+_USER_CONTENT_PATHS = ("/present/", "/assets/")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or get_settings()
-    holder: dict[str, object] = {}
-
-    @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        database = FolioDatabase(resolved)
-        await database.connect()
-        holder["db"] = database
-        holder["team_cache"] = AWIDTeamCache(
-            registry_url=resolved.awid_registry_url,
-            ttl_seconds=resolved.auth_cache_ttl_seconds,
-            service_token=resolved.awid_service_token,
-        )
-        try:
-            yield
-        finally:
-            await database.disconnect()
-
-    app = FastAPI(title="folio", version="0.1.0", lifespan=lifespan)
-
-    @app.middleware("http")
-    async def user_content_noindex(request: Request, call_next):
-        response = await call_next(request)
-        if request.url.path.startswith(("/present/", "/assets/")):
-            response.headers["X-Robots-Tag"] = USER_CONTENT_ROBOTS_HEADER
-        return response
+    runtime = NaappRuntime(
+        resolved,
+        module_name="folio",
+        migrations_path=_MIGRATIONS_DIR,
+        manifest_path=MANIFEST_PATH,
+    )
+    app = FastAPI(title="folio", version="0.1.0", lifespan=runtime.lifespan)
 
     def db() -> AsyncDatabaseManager:
-        database = holder.get("db")
-        if not isinstance(database, FolioDatabase):
-            raise RuntimeError("folio database is not initialized")
-        return database.db
+        return runtime.db()
 
-    def team_cache() -> AWIDTeamCache:
-        cache = holder.get("team_cache")
-        if not isinstance(cache, AWIDTeamCache):
-            raise RuntimeError("folio auth cache is not initialized")
-        return cache
+    async def principal(request: Request) -> Principal:
+        # The team member who signed the request, recorded as observed. Every
+        # document, link, asset and theme is scoped to its certificate's team.
+        member = await runtime.principal(request)
+        await record_observed_principal(runtime.db(), member)
+        return member
 
-    async def principal(
-        request: Request,
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
-        cache: Annotated[AWIDTeamCache, Depends(team_cache)],
-    ) -> Principal:
-        return await authenticate_request(request, settings=resolved, team_cache=cache, db=database)
+    async def landing() -> str:
+        return render_landing_page(public_origin=resolved.public_origin)
 
-    @app.get("/", response_class=HTMLResponse)
-    async def landing_route() -> HTMLResponse:
-        return HTMLResponse(render_landing_page(public_origin=resolved.public_origin))
-
-    def _aweb_css_response(immutable: bool) -> Response:
-        # The fingerprinted URL is content-addressed, so it can be cached forever;
-        # the legacy /css/aweb.css keeps a short TTL.
-        cache = "public, max-age=31536000, immutable" if immutable else "public, max-age=3600"
-        return Response(
-            content=aweb_css(),
-            media_type="text/css",
-            headers={"X-Content-Type-Options": "nosniff", "Cache-Control": cache},
-        )
-
-    @app.get("/css/aweb.css")
-    async def aweb_css_route() -> Response:
-        return _aweb_css_response(immutable=False)
-
-    @app.get("/css/aweb.{fingerprint}.css")
-    async def aweb_css_fingerprinted_route(fingerprint: str) -> Response:
-        return _aweb_css_response(immutable=True)
-
-    @app.get("/fonts/{font_name}")
-    async def font_route(font_name: str) -> Response:
-        if font_name not in _FONT_NAMES:
-            raise HTTPException(status_code=404, detail="Font not found")
-        return Response(
-            content=(_FONTS_DIR / font_name).read_bytes(),
-            media_type="font/woff2",
-            headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=31536000, immutable"},
-        )
-
-    @app.get("/og-card.png")
-    async def og_card_route() -> Response:
-        return Response(
-            content=_OG_CARD_BYTES,
-            media_type="image/png",
-            headers={"Cache-Control": "public, max-age=86400"},
-        )
-
-    @app.get("/reference", response_class=HTMLResponse)
-    async def reference_route() -> HTMLResponse:
-        return HTMLResponse(render_reference_page(public_origin=resolved.public_origin))
-
-    @app.get("/llms.txt", response_class=PlainTextResponse)
-    async def llms_route() -> PlainTextResponse:
-        return PlainTextResponse(
-            llms_txt(public_origin=resolved.public_origin),
-            headers={"X-Content-Type-Options": "nosniff"},
-        )
-
-    @app.get("/robots.txt", response_class=PlainTextResponse)
-    async def robots_route() -> PlainTextResponse:
-        return PlainTextResponse(
-            robots_txt(),
-            headers={"X-Content-Type-Options": "nosniff"},
-        )
-
-    @app.get("/skills/", response_class=PlainTextResponse)
-    async def skills_index_route() -> PlainTextResponse:
-        return PlainTextResponse(
-            skills_index(),
-            headers={"X-Content-Type-Options": "nosniff"},
-        )
-
-    @app.get("/skills/{skill_name}/SKILL.md", response_class=PlainTextResponse)
-    async def skill_route(skill_name: str) -> PlainTextResponse:
-        skill = read_skill(skill_name)
-        if skill is None:
-            raise HTTPException(status_code=404, detail="Skill not found")
-        return PlainTextResponse(skill, headers={"X-Content-Type-Options": "nosniff"})
-
-    async def _manifest_response() -> Response:
-        return Response(
-            content=read_manifest_bytes(),
-            media_type="application/json",
-            headers={"X-Content-Type-Options": "nosniff"},
-        )
-
-    # Served at the RFC 8615 well-known path the dispatcher/gateway fetch, plus the
-    # bare path the docs surface links ("canonical manifest"). Both return the same
-    # raw committed bytes.
-    @app.get("/.well-known/aweb-app.json")
-    async def well_known_manifest_route() -> Response:
-        return await _manifest_response()
-
-    @app.get("/aweb-app.json")
-    async def aweb_app_manifest_route() -> Response:
-        return await _manifest_response()
-
-    @app.get("/health")
-    @app.get("/live")
-    @app.get("/ready")
-    async def health() -> dict[str, str]:
-        return {"status": "ok", "service": "folio"}
+    mount_naapp_routes(
+        app,
+        runtime=runtime,
+        skills=SKILLS,
+        landing=landing,
+        reference_html=render_reference_page(public_origin=resolved.public_origin),
+        llms_txt=llms_txt(public_origin=resolved.public_origin),
+        og_card_png=_OG_CARD_BYTES,
+        fonts_dir=_FONTS_DIR,
+        robots_disallow=_USER_CONTENT_PATHS,
+        noindex_paths=_USER_CONTENT_PATHS,
+    )
 
     @app.post("/v1/documents", response_model=DocumentResponse)
     async def create_document_route(
@@ -252,16 +135,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result = await create_document(
             database,
             principal=actor,
+            events=runtime.app_events,
             slug=payload.slug,
             title=payload.title,
             body=body,
-        )
-        await emit_doc_changed(
-            settings=resolved,
-            team_id=actor.team_id,
-            slug=payload.slug,
-            version=int(result["current_version"]),
-            source="api",
         )
         return result
 
@@ -291,14 +168,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             body = (await request.body()).decode("utf-8")
         except UnicodeDecodeError as exc:
             raise HTTPException(status_code=400, detail="Version body must be valid UTF-8") from exc
-        result = await append_version(database, principal=actor, slug=slug, body=body)
-        await emit_doc_changed(
-            settings=resolved,
-            team_id=actor.team_id,
-            slug=slug,
-            version=int(result["current_version"]),
-            source="api",
-        )
+        result = await append_version(database, principal=actor, events=runtime.app_events, slug=slug, body=body)
         return result
 
     @app.post("/v1/documents/{slug}/versions/template", response_model=DocumentResponse)
@@ -310,14 +180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         payload = AppendTemplateVersionRequest.model_validate(await request.json())
         body = render_declarative_template(payload.model_dump())
-        result = await append_version(database, principal=actor, slug=slug, body=body)
-        await emit_doc_changed(
-            settings=resolved,
-            team_id=actor.team_id,
-            slug=slug,
-            version=int(result["current_version"]),
-            source="api",
-        )
+        result = await append_version(database, principal=actor, events=runtime.app_events, slug=slug, body=body)
         return result
 
     @app.get("/v1/billing", response_model=BillingResponse)
@@ -457,7 +320,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             media_type=str(asset["content_type"]),
             headers={
                 "X-Content-Type-Options": "nosniff",
-                "X-Robots-Tag": USER_CONTENT_ROBOTS_HEADER,
+                "X-Robots-Tag": NOINDEX_ROBOTS_HEADER,
             },
         )
 
@@ -477,17 +340,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload = PresentationEditRequest.model_validate(await request.json())
         edited = await edit_presented_document(
             database,
+            events=runtime.app_events,
             token=token,
             body=payload.body,
             base_version=payload.base_version,
             editor_name=payload.editor_name,
-        )
-        await emit_doc_changed(
-            settings=resolved,
-            team_id=edited["team_id"],
-            slug=edited["slug"],
-            version=edited["version_number"],
-            source="present-link",
         )
         return {"version_number": edited["version_number"]}
 

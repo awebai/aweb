@@ -1,28 +1,21 @@
 from __future__ import annotations
 
-import os
-import re
 from html import escape
 from pathlib import Path
 
 import aweb_naapp as naapp
 from aweb_naapp import FooterColumn, NavLink, SiteConfig, aweb_css
+from aweb_naapp.skills import Skills
 
 from folio.aweb_manifest import MANIFEST
 
 __all__ = [
-    "USER_CONTENT_ROBOTS_HEADER",
+    "SKILLS",
     "aweb_css",
     "render_landing_page",
     "render_reference_page",
     "llms_txt",
-    "robots_txt",
-    "skills_index",
-    "read_skill",
-    "skill_names",
 ]
-
-USER_CONTENT_ROBOTS_HEADER = "noindex, nofollow, noarchive"
 
 # The getting-started renders as single-box numbered steps — the same pattern the
 # library landing uses — so the whole zero-to-a-present-link journey reads as one
@@ -42,9 +35,8 @@ _GS_STEP_STYLE = """    <style>
     </style>
 """
 
-_SKILL_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_SKILLS_DIR = _REPO_ROOT / "skills"
+SKILLS = Skills(app_name="folio", env_var="FOLIO_SKILLS_DIR", source_dir=_REPO_ROOT / "skills")
 
 # folio's identity in the shared naapp chrome. The aweb design system, the chrome,
 # the manifest-driven llms.txt blocks, and the /reference page come from aweb_naapp;
@@ -117,13 +109,6 @@ def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
         source_url="https://github.com/awebai/aweb/tree/main/naapp/folio",
         og_image="/og-card.png",
     )
-
-
-def _skills_dir() -> Path:
-    configured = os.environ.get("FOLIO_SKILLS_DIR")
-    if configured:
-        return Path(configured)
-    return _SKILLS_DIR
 
 
 # Hero model: a team of agents drafts a shared, versioned document; a minted link
@@ -544,69 +529,3 @@ storage; presentation falls back to the same themed Markdown renderer.
 - Team-supplied Markdown is sanitized. Raw iframes are stripped; Cloudflare Stream iframes are generated only by the server for ready video assets.
 - folio stores server-readable text and media metadata. Do not call it end-to-end encrypted.
 """
-
-
-def robots_txt() -> str:
-    return """User-agent: *
-Disallow: /present/
-Disallow: /assets/
-"""
-
-
-def _skill_path_if_safe(name: str) -> Path | None:
-    if _SKILL_NAME.fullmatch(name) is None:
-        return None
-    skills_dir = _skills_dir()
-    root = skills_dir.resolve()
-    candidate = skills_dir / name / "SKILL.md"
-    path = candidate.resolve()
-    if (
-        candidate.is_symlink()
-        or candidate.parent.is_symlink()
-        or path.is_symlink()
-        or not path.is_relative_to(root)
-        or not path.is_file()
-    ):
-        return None
-    return path
-
-
-def skill_names() -> list[str]:
-    root = _skills_dir().resolve()
-    if not root.is_dir():
-        return []
-    names = []
-    for entry in root.iterdir():
-        if entry.is_symlink() or not entry.is_dir() or _SKILL_NAME.fullmatch(entry.name) is None:
-            continue
-        if _skill_path_if_safe(entry.name) is not None:
-            names.append(entry.name)
-    return sorted(names)
-
-
-def skills_index() -> str:
-    lines = [
-        "# folio agent skills",
-        "",
-        "folio is a Native Agentic App (naapp) on the aweb.ai hub.",
-        "Agents should fetch the relevant skill before acting so requests match the folio API contract.",
-        "",
-        "- aweb.ai hub: https://aweb.ai",
-        "- AWID identity authority: https://awid.ai",
-        "",
-        "Available skills:",
-        "",
-    ]
-    for name in skill_names():
-        lines.append(f"- GET /skills/{name}/SKILL.md")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def read_skill(name: str) -> str | None:
-    if name not in skill_names():
-        return None
-    path = _skill_path_if_safe(name)
-    if path is None:
-        return None
-    return path.read_text(encoding="utf-8")
