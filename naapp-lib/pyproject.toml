@@ -18,6 +18,10 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+# Independent HPKE helper; never pulled in by hooks or runtime.
+crypto = ["cryptography>=50.0.0"]
+# Replay store usable without HTTP or identity dependencies.
+nonces = ["pgdbm>=0.5.0"]
 # Request-time runtime code under aweb_naapp.runtime. The docs
 # surface (`import aweb_naapp`) never imports these.
 runtime = [
