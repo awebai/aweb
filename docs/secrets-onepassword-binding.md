@@ -128,10 +128,13 @@ old reference contexts. Preparation discovers the affected reference roots
 without child locks and holds the common installation fence, roles, ancestry,
 grants and complete sorted B2 union, including the confirming approval, before
 any approval consumption or consequence callback. Record and custody writes
-follow that authority phase, parent before custody. Unlocked dependent discovery
-relies on every active-version writer claiming the installation configuration
-revision before it writes. The automatic reconciliation writer follows the same
-rule; it must not introduce an uncoordinated active-pointer update.
+follow that authority phase, parent before custody. Every path that will lock
+an existing secret parent prepares its forest before B2 and the revision:
+secret metadata updates, operation validation's SHARE lock, and destination/grant
+foreign-key checks as well as value/binding changes. A revision lock alone
+cannot serialize safely with an unprepared parent lock taken after it. All
+active-version writers then claim the configuration revision before writes,
+including automatic reconciliation, so pending projections become stale.
 
 The confirmed transaction invalidates old dependent contexts and use approvals,
 disables descendants, and deletes the old token ciphertext. References

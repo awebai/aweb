@@ -26,8 +26,9 @@ sealed values. Each staged value is bound at draft time to its native value, pri
 reference item, and checked again at confirmation. Private token replacement
 prepares all dependent roots before B2; only explicitly rebound references can
 activate under the new token. Unlocked token-dependent discovery relies on
-all active-version writers claiming the configuration revision before writes,
-including automatic backend reconciliation. Required proof-bound audit shares
+all parent-locking record paths preparing their forests before the revision,
+and all active-version writers claiming that revision before writes, including
+automatic backend reconciliation. Required proof-bound audit shares
 the transaction.
 A confirmed value replaces the secret's last one,
 destroying it in the same transaction. A kind whose apply does not exist yet
@@ -883,6 +884,24 @@ class ChangeSets:
             admitted.team_id,
         )
         roots = {record["secret_id"] for record in rows}
+        # Metadata-only edits lock the parent in _check_sealed_shape; operation
+        # creation reads it FOR SHARE, and destination/grant inserts acquire FK
+        # KEY SHARE. Prepare these existing parents before B2/revision too.
+        # First-create parents remain absent/inert until the record-write phase.
+        parent_ids = {
+            item["after"]["secret_id"]
+            for item in change["changes"]
+            if item["kind"] in {"secret", "destination", "operation", "grant"}
+        }
+        if parent_ids:
+            existing = await tx.fetch_all(
+                "SELECT secret_id FROM {{tables.secrets}}"
+                " WHERE installation_id=$1 AND team_id=$2 AND secret_id=ANY($3::text[])",
+                admitted.installation_id,
+                admitted.team_id,
+                sorted(parent_ids),
+            )
+            roots.update(record["secret_id"] for record in existing)
         token_version = self._backend_token_version(change)
         if token_version is not None:
             roots.update(

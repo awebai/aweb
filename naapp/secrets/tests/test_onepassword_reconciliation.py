@@ -341,3 +341,106 @@ async def test_invalid_observation_metadata_cannot_allocate_or_emit(world, broke
     assert await config_revision(w.db, INSTALLATION_ID) == revision
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == count
     assert (await active_binding(w.db, old.context)).version_ref == old.version_ref
+
+
+def parent_edit(record, kind):
+    from aweb_secrets.policy import Policy
+    from tests.test_change_set_records import DESTINATION, POLICY_BODY, grant_after
+    from tests.test_operation_record import REFUND
+
+    if kind == "secret":
+        after = {**record.after, "description": "Updated owner description"}
+        return [{"kind": "secret", "op": "update", "ref": record.ref, "after": after}]
+    if kind == "destination":
+        after = {**DESTINATION, "secret_id": record.secret_id}
+        return [{"kind": kind, "op": "create", "ref": after["destination_id"], "after": after}]
+    if kind == "operation":
+        after = {**REFUND, "secret_id": record.secret_id}
+        return [{"kind": kind, "op": "create", "ref": after["operation_id"], "after": after}]
+    policy = Policy.from_body(POLICY_BODY)
+    after = {**grant_after(), "secret_id": record.secret_id}
+    return [
+        {"kind": "policy", "op": "create", "ref": policy.digest, "after": {"v": 1, **POLICY_BODY}},
+        {"kind": "grant", "op": "create", "ref": after["grant_id"], "after": after},
+    ]
+
+
+@pytest.mark.parametrize("kind", ["secret", "operation", "destination", "grant"])
+async def test_unsealed_parent_record_confirmation_and_reconciliation_share_lock_order(world, kind):
+    from aweb_naapp.runtime.approvals import ApprovalState
+
+    w = world
+    scope, record, _, old, _, first, _ = await initial(w)
+    await apply(w, first)
+    change, approval_id = await pending(w, scope, parent_edit(record, kind), [])
+    assert (
+        await w.db.fetch_value(
+            "SELECT count(*) FROM {{tables.change_set_sealed}} WHERE change_id=$1",
+            change["change_id"],
+        )
+        == 0
+    )
+    observation = await observe(w, old.context)
+    revision = await config_revision(w.db, INSTALLATION_ID)
+    started = asyncio.get_running_loop().create_future()
+
+    async def confirm_edit():
+        async with w.db.transaction() as tx:
+            started.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
+            return await w.change_sets.confirm(
+                tx,
+                change["change_id"],
+                operation_id="parent-edit-" + change["change_id"],
+                fence=w.fence,
+                admitted=w.admitted,
+            )
+
+    confirming = rotating = None
+    try:
+        async with w.db.transaction() as gate:
+            gate_pid = await gate.fetch_value("SELECT pg_backend_pid()")
+            await gate.fetch_value(
+                "SELECT revision FROM {{tables.config_revisions}} WHERE installation_id=$1 FOR UPDATE",
+                INSTALLATION_ID,
+            )
+            confirming = asyncio.create_task(confirm_edit())
+            confirmer_pid = await asyncio.wait_for(started, 5)
+            async with asyncio.timeout(5):
+                while gate_pid not in await w.db.fetch_value(
+                    "SELECT pg_blocking_pids($1)", confirmer_pid
+                ):
+                    if confirming.done():
+                        await confirming
+                        pytest.fail("confirmation did not reach the revision gate")
+                    await asyncio.sleep(0.01)
+            rotating = asyncio.create_task(
+                reconciler(w).reconcile(observation, admitted=w.admitted)
+            )
+            async with asyncio.timeout(5):
+                # Old code lets reconciliation hold the parent while it waits
+                # behind confirmation for the revision. The real queued order
+                # then deadlocks when gate commits. Correct code holds the
+                # parent in confirmation before it can wait at that revision.
+                while not await w.db.fetch_value(
+                    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid<>$1"
+                    " AND ($1=ANY(pg_blocking_pids(pid)) OR $2=ANY(pg_blocking_pids(pid))))",
+                    confirmer_pid,
+                    gate_pid,
+                ):
+                    if rotating.done():
+                        await rotating
+                        pytest.fail("reconciliation did not contend with confirmation")
+                    await asyncio.sleep(0.01)
+        confirmed, reconciled = await asyncio.wait_for(asyncio.gather(confirming, rotating), 10)
+        assert confirmed.revision == revision + 1
+        assert reconciled.changed and reconciled.affected_secret_ids == (record.secret_id,)
+    finally:
+        tasks = [task for task in (confirming, rotating) if task is not None]
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    assert (await w.approvals.get(approval_id)).state is ApprovalState.CONSUMED
+    assert await config_revision(w.db, INSTALLATION_ID) == revision + 2
+    current = await active_binding(w.db, replace(old.context, version=old.context.version + 1))
+    assert current.item_version == observation.item_version
