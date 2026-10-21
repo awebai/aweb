@@ -3,8 +3,10 @@
 Configuration names key files by kid (``app_key_files``). Which purposes a kid
 may sign is the served manifest's declaration, so the key for a purpose is the
 configured kid the manifest declares for it, and the loaded key must be the
-public key declared there. A v1 manifest declares its app-event kids in
-``event_emitters``.
+public key declared there. The declaration is the manifest's resolved
+:meth:`~aweb_naapp.manifest.Manifest.app_keys_for`: a v2 manifest's
+``app_keys`` by purpose, or a v1 manifest's ``event_emitters`` as app-event
+keys.
 
 The app-event key may instead come from the released seed value
 (``app_emit_key_seed_hex``), named by ``app_emit_kid``; that value signs no
@@ -13,13 +15,12 @@ other purpose. Every key byte is read by :mod:`aweb_naapp.signing_key`.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
 
 from awid.did import did_from_public_key
 from nacl.signing import SigningKey
 
+from aweb_naapp.manifest import Manifest
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.signing_key import SigningKeyError, parse_signing_key_hex, read_signing_key_file
 
@@ -38,14 +39,7 @@ class AppKey:
     signing_key: SigningKey = field(repr=False)
 
 
-def _declared(manifest: Mapping[str, Any], purpose: str) -> dict[str, str]:
-    """The kids the manifest declares for ``purpose``, with their did:keys."""
-    if purpose == APP_EVENT:
-        return {entry["kid"]: entry["did_key"] for entry in manifest.get("event_emitters", ())}
-    return {}
-
-
-def load_app_key(settings: NaappSettings, manifest: Mapping[str, Any], purpose: str) -> AppKey:
+def load_app_key(settings: NaappSettings, manifest: Manifest, purpose: str) -> AppKey:
     """The app's key for ``purpose``, or :class:`AppKeyError`."""
     prefix = settings.model_config.get("env_prefix", "")
     files = settings.app_key_files
@@ -57,7 +51,7 @@ def load_app_key(settings: NaappSettings, manifest: Mapping[str, Any], purpose: 
         if emit_kid in files:
             raise AppKeyError(f"app key {emit_kid} is given both a key file and a seed value")
 
-    declared = _declared(manifest, purpose)
+    declared = manifest.app_keys_for(purpose)
     configured = set(files)
     if purpose == APP_EVENT and seed_value is not None and emit_kid is not None:
         configured.add(emit_kid)
