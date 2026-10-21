@@ -25,7 +25,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, overload
 
 from pgdbm.core import TransactionManager
 
@@ -50,6 +50,8 @@ from aweb_naapp.runtime.approvals.model import (
     DeliveryStatus,
     DispatchOutcome,
     LinkedApproval,
+    PendingApproval,
+    PendingDelivery,
     PolicySource,
     PresentationKind,
     Purpose,
@@ -158,7 +160,11 @@ class ApprovalRevocation:
     ) -> None:
         """The retired approver stops being a candidate of pending approvals and
         loses their links; approvals they decided and that are not yet
-        dispatched are revoked."""
+        dispatched are revoked.
+
+        It locks those approvals in `tx`. Call it after removing the authority
+        it follows from (the role or membership delete), never before: paths
+        that check authority take its lock before an approval's."""
         async with self._store.transaction(tx) as t:
             now = self._clock()
             revoked = await self._store.retire_candidate(approver_subject, now, t)
@@ -203,6 +209,30 @@ class Approvals:
 
     # Requesting
 
+    @overload
+    async def mint(
+        self,
+        *,
+        request: Mapping[str, Any],
+        policy_ref: str,
+        requested_by: str,
+        presentation: PresentationKind = ...,
+        presentation_ref: str | None = ...,
+        tx: None = ...,
+    ) -> RequesterView: ...
+
+    @overload
+    async def mint(
+        self,
+        *,
+        request: Mapping[str, Any],
+        policy_ref: str,
+        requested_by: str,
+        presentation: PresentationKind = ...,
+        presentation_ref: str | None = ...,
+        tx: TransactionManager,
+    ) -> PendingApproval: ...
+
     async def mint(
         self,
         *,
@@ -211,9 +241,19 @@ class Approvals:
         requested_by: str,
         presentation: PresentationKind = PresentationKind.LINK,
         presentation_ref: str | None = None,
-    ) -> RequesterView:
-        """Freeze the request and its eligible approvers, record a pending
-        approval, and, when presented by link, send each candidate their own."""
+        tx: TransactionManager | None = None,
+    ) -> RequesterView | PendingApproval:
+        """Freeze the request and its eligible approvers and record a pending
+        approval. When presented by link, each candidate gets their own.
+
+        Without `tx` the approval commits at once and its links are sent.
+        With `tx` it commits with the caller's transaction, and nothing is
+        sent: the caller passes the returned `PendingApproval` to `deliver`
+        after the commit, so no link points at an approval that rolled back.
+
+        The directory is read on its own connection, not in `tx`, so it does
+        not see designations or roles the caller wrote earlier in the same
+        transaction: designate and mint in separate transactions."""
         policy = await self._policies.current(policy_ref)
         if policy is None:
             raise ApprovalRefused(Refusal.POLICY_UNKNOWN)
@@ -278,20 +318,37 @@ class Approvals:
             response_status=None,
         )
         stored = StoredRequest(approval.request_ref, digest, canonical, now)
-        async with self._store.transaction(None) as tx:
-            await self._store.create(stored, approval, links, tx)
-            await self._emit(AuditKind.APPROVAL_REQUESTED, requested_by, approval, now, tx)
+        async with self._store.transaction(tx) as t:
+            await self._store.create(stored, approval, links, t)
+            await self._emit(AuditKind.APPROVAL_REQUESTED, requested_by, approval, now, t)
+        pending = PendingApproval(
+            view=self._view(approval, now),
+            approval=approval,
+            deliveries=tuple(PendingDelivery(a, token) for a, token in sending),
+        )
+        if tx is not None:
+            return pending
+        return await self.deliver(pending)
 
-        if sending:
-            statuses = [await self._deliver(a, token, approval) for a, token in sending]
-            status = (
-                DeliveryStatus.DELIVERED
-                if DeliveryStatus.DELIVERED in statuses
-                else DeliveryStatus.FAILED
-            )
-            await self._store.set_delivery_status(approval_id, status)
-            approval = replace(approval, delivery_status=status)
-        return self._view(approval, now)
+    async def deliver(self, pending: PendingApproval) -> RequesterView:
+        """Send each candidate their link, once the approval has committed, and
+        record how the delivery went: delivered if any candidate's link was.
+
+        It is not idempotent: a second call sends the same single-use links
+        again and records the delivery again."""
+        approval = pending.approval
+        if not pending.deliveries:
+            return pending.view
+        statuses = [
+            await self._deliver(d.approver, d.link_token, approval) for d in pending.deliveries
+        ]
+        status = (
+            DeliveryStatus.DELIVERED
+            if DeliveryStatus.DELIVERED in statuses
+            else DeliveryStatus.FAILED
+        )
+        await self._store.set_delivery_status(approval.approval_id, status)
+        return self._view(replace(approval, delivery_status=status), self._clock())
 
     async def _eligible(
         self,
@@ -301,8 +358,8 @@ class Approvals:
         presentation: PresentationKind,
     ) -> list[Approver]:
         """The directory's approvers in the policy's scopes, one per subject,
-        without the requester unless the policy allows it. A task presentation needs each candidate's
-        principal, to match the answer's."""
+        without the requester unless the policy allows it. A task presentation
+        needs each candidate's principal, to match the answer's."""
         eligible: dict[str, Approver] = {}
         for approver in await self._approvers.candidates(policy, request):
             if approver.scope not in policy.approver_scopes:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any, Protocol
@@ -242,6 +242,26 @@ class RequesterView:
     approval_state: ApprovalState
     delivery_status: DeliveryStatus
     dispatch_outcome: DispatchOutcome | None
+
+
+@dataclass(frozen=True)
+class PendingDelivery:
+    """One candidate's link, still to be sent once the minting transaction
+    has committed. The token never appears in a repr."""
+
+    approver: Approver
+    link_token: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class PendingApproval:
+    """An approval minted in the caller's transaction, and the links still to
+    send with `Approvals.deliver` after that transaction commits. Only the
+    app holds it; the requester gets `view`."""
+
+    view: RequesterView
+    approval: Approval
+    deliveries: tuple[PendingDelivery, ...]
 
 
 @dataclass(frozen=True)
