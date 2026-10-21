@@ -19,6 +19,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 from aweb_naapp.runtime.attestation import VerifiedAttestation
 from awid.signing import canonical_json_bytes
 
+from aweb_secrets.principal import is_principal
+
 DIGEST_PREFIX = b"aweb.secrets.policy/1\n"
 
 APPROVALS = ("none", "per_use")
@@ -53,6 +55,19 @@ _CLOCK = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")
 
 class PolicyInvalid(ValueError):
     """The policy body does not have the policy shape."""
+
+
+OWNER_PREFIX = "owner:"
+
+
+def is_approver(value: Any) -> bool:
+    """Whether ``value`` names an approver: a plain approver ref, or ``owner:`` and an
+    owner's principal. The kind is tagged, never inferred from the form."""
+    if not isinstance(value, str):
+        return False
+    if value.startswith(OWNER_PREFIX):
+        return is_principal(value[len(OWNER_PREFIX) :])
+    return IDENTIFIER.fullmatch(value) is not None
 
 
 def _require(condition: bool, message: str) -> None:
@@ -187,9 +202,9 @@ def _check(body: Any) -> None:
     approvers = body["approvers"]
     _require(
         isinstance(approvers, list)
-        and all(isinstance(a, str) and a for a in approvers)
+        and all(is_approver(a) for a in approvers)
         and len(set(approvers)) == len(approvers),
-        "approvers is a list of approver ids",
+        "approvers is a list of approver refs and owner:<principal> entries",
     )
     _require(body["approval"] == "none" or bool(approvers), "per_use approval needs an approver")
     ttl = body["approval_ttl_s"]

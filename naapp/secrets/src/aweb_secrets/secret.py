@@ -24,7 +24,7 @@ KINDS = (
     "aws-sigv4",
 )
 SENSITIVITIES = ("standard", "sensitive")
-BACKENDS = ("native", "1password")
+BACKENDS = ("native", "onepassword")
 CLIENT_AUTHS = ("client_secret_basic", "client_secret_post")
 FIELDS = frozenset(
     {
@@ -99,7 +99,9 @@ def _is_token_endpoint(value: Any) -> bool:
     return url.ip is None and str(url) == value
 
 
-def _check_kind_params(kind: str, params: Any) -> None:
+def validate_kind_params(kind: str, params: Any) -> None:
+    """Validate an auth scheme and its fixed, non-secret injection parameters."""
+    _require(kind in KINDS, "kind is one of the auth schemes")
     _require(isinstance(params, Mapping), "kind_params is an object")
     if kind in ("bearer", "basic"):
         _require(not params, f"{kind} takes no parameters")
@@ -146,15 +148,14 @@ def _check(after: Any) -> None:
         and _CONTROLS.search(description) is None,
         "the description is bounded text without control characters",
     )
-    _require(after["kind"] in KINDS, "kind is one of the auth schemes")
-    _check_kind_params(after["kind"], after["kind_params"])
+    validate_kind_params(after["kind"], after["kind_params"])
     _require(after["sensitivity"] in SENSITIVITIES, "sensitivity is standard or sensitive")
     _require(isinstance(after["approve_only"], bool), "approve_only is a boolean")
     _require(
         not after["approve_only"] or after["sensitivity"] == "sensitive",
         "approve_only implies sensitive",
     )
-    _require(after["backend"] in BACKENDS, "backend is native or 1password")
+    _require(after["backend"] in BACKENDS, "backend is native or onepassword")
 
 
 @dataclass(frozen=True)
@@ -187,3 +188,32 @@ class SecretRecord:
             "approve_only": self.approve_only,
             "backend": self.backend,
         }
+
+
+def widened_fields(current: SecretRecord, after: SecretRecord) -> frozenset[str]:
+    """The fields an update of ``current`` to ``after`` widens (§6.3): leaving
+    sensitive for standard, turning approve_only off, or adding OAuth scopes."""
+    widened = set()
+    if current.sensitivity == "sensitive" and after.sensitivity == "standard":
+        widened.add("sensitivity")
+    if current.approve_only and not after.approve_only:
+        widened.add("approve_only")
+    if after.kind == "oauth2-client-credentials" and (
+        set(after.kind_params["scope"].split()) - set(current.kind_params.get("scope", "").split())
+    ):
+        widened.add("kind_params.scope")
+    return frozenset(widened)
+
+
+def sealed_shape(record: SecretRecord) -> dict[str, Any]:
+    """The non-secret interpretation and placement fixed after the first seal."""
+    params = dict(record.kind_params)
+    if record.kind == "oauth2-client-credentials":
+        params.pop("scope")
+    return {"kind": record.kind, "backend": record.backend, "kind_params": params}
+
+
+def sealed_shape_changed(current: SecretRecord, after: SecretRecord) -> bool:
+    """Whether an update changes a sealed value's interpretation or destination
+    (decision 65). OAuth scope remains editable."""
+    return sealed_shape(current) != sealed_shape(after)

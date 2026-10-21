@@ -7,8 +7,14 @@ from datetime import UTC, datetime
 
 import pytest
 from aweb_naapp.runtime.attestation import VerifiedAttestation
+from awid.did import did_from_public_key, stable_id_from_public_key
+from nacl.signing import SigningKey
 
 from aweb_secrets.policy import Policy, PolicyInvalid
+
+_KEY = bytes(SigningKey(b"\x01" * 32).verify_key)
+OWNER_AW = "owner:" + stable_id_from_public_key(_KEY)
+OWNER_KEY = "owner:" + did_from_public_key(_KEY)
 
 OPERATION_DIGEST = "24252d809f32328585e0e05fa02bf474df2cab5ba52b840eba6941f80c1c7fe1"
 
@@ -117,6 +123,29 @@ def test_every_field_is_required(missing) -> None:
     del body[missing]
     with pytest.raises(PolicyInvalid):
         Policy.from_body(body)
+
+
+def test_an_approver_is_an_approver_ref_or_an_owner_principal() -> None:
+    policy = Policy.from_body(_body(approvers=["finance-approver", OWNER_AW, OWNER_KEY]))
+    assert policy.body["approvers"] == ["finance-approver", OWNER_AW, OWNER_KEY]
+
+
+@pytest.mark.parametrize(
+    "approver",
+    [
+        "Finance Approver",
+        "owner:",
+        "owner:alice",
+        "owner:did:aw:2rMeyRyvQbWUZYjT8Jx6Kq",
+        "did:aw:" + OWNER_AW.split("did:aw:")[1],
+        "approver:finance",
+        "x" * 65,
+        7,
+    ],
+)
+def test_an_approver_of_any_other_form_is_refused(approver) -> None:
+    with pytest.raises(PolicyInvalid):
+        Policy.from_body(_body(approvers=[approver]))
 
 
 def test_per_use_approval_needs_an_approver() -> None:

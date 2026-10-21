@@ -20,6 +20,11 @@ from typing import Any
 # Credential field names, compared lowercased with "_" and "-" removed.
 _CREDENTIAL_FIELDS = frozenset(
     {
+        "token",
+        "clienttoken",
+        "authtoken",
+        "bearertoken",
+        "secretkey",
         "accesstoken",
         "refreshtoken",
         "idtoken",
@@ -35,7 +40,7 @@ _CREDENTIAL_FIELDS = frozenset(
 _FIELD_NAME = r"[A-Za-z][A-Za-z0-9_-]{2,40}"
 _JSON_FIELD = re.compile(rf'"({_FIELD_NAME})"\s*:\s*"[^"]')
 _XML_FIELD = re.compile(rf"<({_FIELD_NAME})>\s*[^<\s]")
-_FORM_FIELD = re.compile(rf"(?:^|[&?\s])({_FIELD_NAME})=[^&\s]")
+_FORM_FIELD = re.compile(rf"(?:^|[&?#\s])({_FIELD_NAME})=[^&\s]")
 
 _TOKEN_PATTERNS = [
     re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"),
@@ -53,14 +58,25 @@ _AWS_KEY_ID = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
 _AWS_SECRET_KEY = re.compile(r"(?<![A-Za-z0-9/+=])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+=])")
 
 
-def _is_credential_field(name: str) -> bool:
+def is_credential_field(name: str) -> bool:
     return name.lower().replace("_", "").replace("-", "") in _CREDENTIAL_FIELDS
+
+
+def has_credential_value(value: Any) -> bool:
+    """A credential field contains a nonempty string, directly or nested."""
+    if isinstance(value, str):
+        return value != ""
+    if isinstance(value, dict):
+        return any(has_credential_value(item) for item in value.values())
+    if isinstance(value, list):
+        return any(has_credential_value(item) for item in value)
+    return False
 
 
 def _json_has_credential_field(value: Any) -> bool:
     if isinstance(value, dict):
         return any(
-            (_is_credential_field(key) and isinstance(item, str) and item != "")
+            (is_credential_field(key) and has_credential_value(item))
             or _json_has_credential_field(item)
             for key, item in value.items()
         )
@@ -89,6 +105,6 @@ def has_credential_shape(body: bytes) -> bool:
     except ValueError:
         pass
     for pattern in (_JSON_FIELD, _XML_FIELD, _FORM_FIELD):
-        if any(_is_credential_field(match.group(1)) for match in pattern.finditer(text)):
+        if any(is_credential_field(match.group(1)) for match in pattern.finditer(text)):
             return True
     return _has_token_pattern(text)
