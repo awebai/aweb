@@ -21,12 +21,13 @@ from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 
 
 @asynccontextmanager
-async def _registry_http(app):
+async def _registry_http(app, *, registry_app):
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
-    previous_origins = app.state.awid_public_origins
     origin = f"http://127.0.0.1:{sock.getsockname()[1]}"
-    app.state.awid_public_origins = (*previous_origins, origin)
+    if registry_app is not None:
+        previous_origins = registry_app.state.awid_public_origins
+        registry_app.state.awid_public_origins = (*previous_origins, origin)
     server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
     task = asyncio.create_task(server.serve(sockets=[sock]))
     try:
@@ -40,7 +41,8 @@ async def _registry_http(app):
         server.should_exit = True
         await asyncio.wait_for(task, 5)
         sock.close()
-        app.state.awid_public_origins = previous_origins
+        if registry_app is not None:
+            registry_app.state.awid_public_origins = previous_origins
 
 
 @pytest.mark.usefixtures("source_cli_binary")
@@ -153,7 +155,7 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
     child_env.update(AWEB_IDENTITY_HOME=str(identity_home), AWEB_URL=str(env.client.base_url),
                      HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"),
                      AWID_REGISTRY_URL=str(env.client.base_url))
-    async with _registry_http(env.registry_app) as (registry_url, registry_server):
+    async with _registry_http(env.registry_app, registry_app=env.registry_app) as (registry_url, registry_server):
         child_env["AWID_REGISTRY_URL"] = registry_url
         async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (command_dir, command_env):
             async def read_both(expected):

@@ -93,7 +93,7 @@ async def test_id_request_uses_fixed_target_bound_v2(privacy_app, tmp_path, fami
             captured.append(dict(scope['headers']))
         await env.app(scope, receive, send)
 
-    async with _registry_http(front) as (url, _):
+    async with _registry_http(front, registry_app=None) as (url, _):
         env.client.base_url = url
         async with _local_sender_mail(env, tmp_path, family == 'identity-global', False, False) as (
                 _, _, binary, cwd, command_env, _):

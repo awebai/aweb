@@ -159,7 +159,7 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
             return
         await env.registry_app(scope, receive, record)
 
-    async with _registry_http(recorded_registry) as (registry_url, _):
+    async with _registry_http(recorded_registry, registry_app=env.registry_app) as (registry_url, _):
         registry.url = registry_url
         child_env["AWID_REGISTRY_URL"] = registry_url
         async with _reply_context(binary, tmp_path, child_env, grant, agent["address"], ttl="never" if cross_team else "5m") as (command_dir, command_env):

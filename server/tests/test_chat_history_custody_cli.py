@@ -37,7 +37,7 @@ async def encrypted_history(env, root, count):
                 await asyncio.sleep(observed.history_delay)
         await env.app(scope, receive, send)
 
-    async with _registry_http(front) as (url, _):
+    async with _registry_http(front, registry_app=None) as (url, _):
         env.client.base_url = url
         async with _local_sender_mail(env, root, False, True, False) as (
                 _, _, binary, cwd, command_env, _):
