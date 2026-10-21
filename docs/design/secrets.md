@@ -1665,6 +1665,30 @@ the `secret_*`, `request_sha256`/`params_sha256`, `approval_*`, `dispatch_*` and
   `target_path_template`, plus `operation_id` and `operation_digest` for a named
   operation. Concrete paths and query values are never sent. A runner job sends
   `runner_id`, `job_id` and `job_digest` instead.
+- **Passkey proof (decision 84).** `approval_evidence_sha256` follows the
+  [shared proof contract](../hook-events.md#passkey-evidence-commitments-and-console-actors)
+  and `docs/vectors/passkey-evidence-v1.json`. It is the unkeyed SHA-256
+  commitment to the exact retained assertion and frozen verification context,
+  with that contract's domain and fixed length framing. It is never a hash of
+  an evidence locator or verification summary. B3 retains the raw signed bytes,
+  COSE public key, consumed challenge preimage and context atomically with its
+  counter CAS/evidence insertion. The exact B2 covered-request sidecar stays
+  restricted and is bound through its existing hash in the signed challenge;
+  raw covered-request bytes do not enter the outer public-hash input.
+  S13/S14 use B3's sole canonical helper after its implementation review, with
+  no local serializer, reconstructed proof or summary-HMAC fallback.
+  Persist the commitment and its immutable evidence/authorization association
+  once; retries and rotation reuse them. Only the commitment is published,
+  never raw proof, key, credential ID, authorizing subject, scope or locator.
+  Do not fill `approval_credential_id` with the retained credential ID or
+  `approver_id` with the B3 authorizing subject as a disclosure shortcut.
+  An authorized reviewer uses the independently trusted approver key and
+  expected app/RP context to verify the retained request/challenge/assertion
+  and recompute the commitment (§10.4). This works after rotation without a
+  live service or retired secret. App-lifecycle deletion ends proof retrieval;
+  the surviving commitment cannot reconstruct the proof. Service timestamps,
+  prior-counter history and authority/consumption state remain audit-state
+  claims rather than additional authenticator-signed facts.
 - **Child creation.** The issuance's `completed` event with disposition
   `stored_as_secret` is the signed creation receipt. `grant_id` remains the
   issuing grant; `derived_secret_id` names the new child and `derived_grant_id`
@@ -1719,6 +1743,18 @@ secrets fills `authority` with one of:
 - `owner_act`, with `owner_act_sha256`;
 - `passkey_session`, with `approval_evidence_sha256`;
 - `team_cert`, for narrowing acts through the agent API.
+
+For governance authorized solely by an app-local console passkey session, the
+envelope actor is exactly `{"authority_mode":"system","attestations":[]}`.
+The signed producer identifies the executor; `authority: passkey_session` and
+the proof commitment identify its verified authorization. The authorizing
+subject remains restricted, while `subject_ref` and `role` identify the affected
+subject and role, not the authorizing subject or scope. No team identity is
+inferred from an app-local passkey. A secret-use hook keeps the requesting
+member as its actor; the approver never replaces that actor. A login assertion
+proves authentication to its scope, not a fresh signature over every later
+console act. None of these evidence rules gates narrowing on audit target or
+delivery availability.
 
 **One effect, one hook.** A secrets tool call fires only its specific hook:
 `post-secret-use-hook` for a use, `post-governance-hook` for a governance act. It
@@ -2006,7 +2042,7 @@ rows.
 | --- | --- | --- |
 | Team-auth v2 verifier with scope enforcement and a resource/action policy hook | B1, aweb-acgh.3 | §4.1. secrets uses B1 as specified. It needs the certificate's `member_did_aw` field in the principal output, so that grants follow the stable identity. It does not need the did:aw current-key profile. |
 | Grant status, admission fence, hook-target resolution | aweb-acgh.7; D1 F5/F6 | §4.1 step 2; §11.5 "no registered target". |
-| Approval primitive and WebAuthn | B2+B3, aweb-acgh.4 | §10. Requirements (a) and (b) in §10.1, plus the owner-lockout protection in §10.2, proposed as generic B3 behaviour. |
+| Approval primitive and WebAuthn | B2+B3, aweb-acgh.4 | §10. Requirements (a) and (b) in §10.1, plus the owner-lockout protection in §10.2. Decision 84 adds restricted proof/context retention and B3's sole canonical commitment helper (§11.5), implemented/reviewed before S13/S14 use it. |
 | Team owner act `aweb.owner-act/1` and its verifier | hooks design (aweb-acgh.1); `aweb_naapp` | §10.2: bootstrap and re-designation. |
 | `post-governance-hook`; `post-secret-use-hook` schema, action enum and `refusal_code` enum | hooks design (aweb-acgh.1, §A2) | §11.5. secrets cites the schema. The hooks seat has taken secrets' additions; the `refusal_code` list in §11.5 goes into its catalog vector. |
 | Manifest v2 with `invocation_contexts`, the `hooks` slot (`productions`) and `app_keys` with purposes | D1 C3 (in D1 §5) | §13 and §11.5. Open requests already fit as typed body parameters. |
