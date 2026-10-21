@@ -382,6 +382,41 @@ POSITIVE.append(
 )
 
 
+POSITIVE.append(
+    (
+        "console-job-record",
+        envelope(
+            "chg_7a08",
+            ONEPASSWORD_CHANGE["drafter"],
+            [
+                {
+                    "kind": "job",
+                    "op": "create",
+                    "ref": "nightly-backup",
+                    "after": {
+                        "v": 1,
+                        "job_id": "nightly-backup",
+                        "runner_ids": ["rnr_aaaaaaaaaaaaaaaaaaaaaa"],
+                        "kind": "exec",
+                        "exec": {"path": "/usr/local/bin/check", "sha256": "c" * 64, "files": []},
+                        "oci": None,
+                        "argv": ["--check"],
+                        "env": {},
+                        "cwd": "/srv/check",
+                        "timeout_s": 30,
+                        "output": {"max_bytes": 4096, "projection": ["/exit_code"]},
+                        "params": {},
+                        "credentials": [],
+                        "allow_durable": False,
+                    },
+                }
+            ],
+            "Draft the owner-managed job shape without enabling execution",
+        ),
+    )
+)
+
+
 def b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -843,8 +878,8 @@ vector = {
         "strings. A secret, destination, operation, grant, grant template or policy after is that "
         'record v1, checked whole; a policy is referenced by the SHA-256 of "aweb.secrets.policy/1\\n" '
         "|| canonical_json(after without v), and an operation by operation_id and the SHA-256 of "
-        '"aweb.secrets.operation/1\\n" || canonical_json(after without v). The after shape of job '
-        "is added by S15; until then job is refused. Runner has its own registered shape. "
+        '"aweb.secrets.operation/1\\n" || canonical_json(after without v). Job and runner have '
+        "their own registered record shapes; shape acceptance does not enable job applicability. "
         "Backend credential and 1Password binding versions are console-only projections; "
         "syntax alone never activates either backend. Identifiers are "
         "fixtures; DIDs are "
