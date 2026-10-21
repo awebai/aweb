@@ -43,6 +43,7 @@ def _inputs():
             app_id="secrets", team_id=TEAM, installation_id=INSTALLATION, generation=GENERATION
         ),
         requester=ALICE,
+        requester_roles=(),
         runner_id=body["runner_ids"][0],
         job=job,
         params={"database": "orders"},
@@ -288,6 +289,7 @@ def test_invalid_mint_bindings_refuse_before_a_plan_is_frozen(mutation):
         template = GrantTemplate.from_after(body)
         mint = replace(mint, template=GrantSnapshot(canonical_json_bytes(template.after)))
         if mutation == "wrong_subject":
+            inputs["requester_roles"] = ("secrets.role.deployers",)
             operation = mint.operation
             record = {
                 **operation.after,
@@ -479,3 +481,104 @@ def test_frozen_views_show_strictest_locked_ancestor_flags_and_both_policy_scope
     assert slot.parent_policy.digest == POLICY.digest
     assert slot.template_policy is None
     assert plan.body["slots"][0]["ancestry"][0]["approve_only"]
+
+
+@pytest.mark.parametrize("held", [(), ("secrets.role.other",), ("secrets.role.deployers",)])
+@pytest.mark.parametrize("subject_kind", ["parent", "template"])
+def test_role_subjects_require_the_planners_locked_requester_role_context(held, subject_kind):
+    from awid.signing import canonical_json_bytes
+
+    from aweb_secrets.derived_grants import GrantSnapshot
+    from aweb_secrets.grant import GrantTemplate
+
+    inputs = _short_lived_inputs()
+    inputs["requester_roles"] = held
+    slot = inputs["slots"][0]
+    if subject_kind == "parent":
+        slot = replace(
+            slot,
+            parent_grant=replace(
+                slot.parent_grant, subject_principal=None, subject_role="secrets.role.deployers"
+            ),
+        )
+    else:
+        mint = slot.mint
+        template = GrantTemplate.from_after(
+            {**mint.template.template.after, "subject": {"role": "secrets.role.deployers"}}
+        )
+        mint = replace(mint, template=GrantSnapshot(canonical_json_bytes(template.after)))
+        slot, mint = _pin_mint(
+            inputs,
+            slot,
+            mint,
+            {
+                **mint.operation.after,
+                "store_as_secret": {
+                    **mint.operation.after["store_as_secret"],
+                    "grant_template_digest": template.digest,
+                },
+            },
+        )
+        slot = replace(slot, mint=mint)
+    inputs["slots"] = (slot,)
+    if "secrets.role.deployers" in held:
+        plan = FrozenRunPlan.freeze(**inputs)
+        assert plan.body["requester"]["roles"] == list(held)
+    else:
+        with pytest.raises(RunPlanRefused):
+            FrozenRunPlan.freeze(**inputs)
+
+
+@pytest.mark.parametrize("which", ["parent", "template"])
+@pytest.mark.parametrize("mutated", [False, True])
+def test_policy_bodies_must_hash_to_the_exact_parent_and_template_pins(which, mutated):
+    from awid.signing import canonical_json_bytes
+
+    from aweb_secrets.derived_grants import GrantSnapshot
+    from aweb_secrets.grant import GrantTemplate
+    from aweb_secrets.policy import Policy
+
+    inputs = _short_lived_inputs()
+    policy = Policy.from_body(
+        {**POLICY.body, "approval": "per_use", "approvers": ["finance-approver"]}
+    )
+    slot = inputs["slots"][0]
+    if which == "parent":
+        slot = replace(
+            slot,
+            parent_policy=policy,
+            parent_grant=replace(slot.parent_grant, policy_digest=policy.digest),
+        )
+    else:
+        mint = slot.mint
+        template = GrantTemplate.from_after(
+            {**mint.template.template.after, "policy_digest": policy.digest}
+        )
+        mint = replace(
+            mint,
+            template=GrantSnapshot(canonical_json_bytes(template.after)),
+            template_policy=policy,
+        )
+        slot, mint = _pin_mint(
+            inputs,
+            slot,
+            mint,
+            {
+                **mint.operation.after,
+                "store_as_secret": {
+                    **mint.operation.after["store_as_secret"],
+                    "grant_template_digest": template.digest,
+                },
+            },
+        )
+        slot = replace(slot, mint=mint)
+    inputs["slots"] = (slot,)
+    if mutated:
+        policy.body["approval"] = "none"
+        with pytest.raises(RunPlanRefused):
+            FrozenRunPlan.freeze(**inputs)
+    else:
+        plan = FrozenRunPlan.freeze(**inputs)
+        assert plan.slots[0].approval_required
+        saved = plan.slots[0].parent_policy if which == "parent" else plan.slots[0].template_policy
+        assert saved.digest == policy.digest

@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID
@@ -26,7 +26,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_secrets.derived_grants import GrantSnapshot
 from aweb_secrets.derived_lineage import LineageNode
-from aweb_secrets.grant import GrantRecord
+from aweb_secrets.grant import GrantRecord, is_secrets_role
 from aweb_secrets.jobs import JobDefinition, unique_durable_slot
 from aweb_secrets.operation import OperationTemplate, operation_digest
 from aweb_secrets.policy import Policy
@@ -84,6 +84,17 @@ class RunPlanRefused(Exception):
 def _require(condition: bool) -> None:
     if not condition:
         raise RunPlanRefused()
+
+
+def _detached_policy(policy: Policy) -> Policy:
+    # Policy retains a mutable Mapping. Freeze the exact body we hash, rather
+    # than trusting the digest cached when that model was first constructed.
+    try:
+        detached = Policy.from_body(json.loads(canonical(dict(policy.body))))
+    except (ValueError, TypeError, RecursionError):
+        raise RunPlanRefused() from None
+    _require(detached.digest == policy.digest)
+    return detached
 
 
 @dataclass(frozen=True, repr=False)
@@ -230,6 +241,7 @@ class FrozenRunPlan:
         dispatch_id: UUID,
         installation: AdmittedInstallation,
         requester: Principal,
+        requester_roles: Sequence[str],
         runner_id: str,
         job: JobDefinition,
         params: Mapping[str, Any],
@@ -237,11 +249,30 @@ class FrozenRunPlan:
     ) -> FrozenRunPlan:
         """Detach a resolved plan from all caller-owned mutable models.
 
-        These consistency checks complement, and never replace, CURRENT/source
+        requester_roles is the trusted planner's locked role context. These
+        consistency checks complement, and never replace, CURRENT/source
         resolution, ancestry liveness and the caller's authority fence. No
         eligible-approver list is frozen: S12 reads current coverage under locks.
         """
         _require(requester.team_id == installation.team_id)
+        # Supplied only by the trusted planner after its role holds, never by
+        # a run's HTTP body. The later fence rechecks the roles actually used.
+        _require(all(isinstance(role, str) and is_secrets_role(role) for role in requester_roles))
+        roles = frozenset(requester_roles)
+        _require(len(roles) == len(requester_roles))
+        slots = tuple(
+            replace(
+                slot,
+                parent_policy=_detached_policy(slot.parent_policy),
+                mint=None
+                if slot.mint is None
+                else replace(
+                    slot.mint,
+                    template_policy=_detached_policy(slot.mint.template_policy),
+                ),
+            )
+            for slot in slots
+        )
         _require(bool(run_id) and bool(intent_id) and job.params_valid(params))
         job_body = job.after
         _require(runner_id in job_body["runner_ids"])
@@ -270,7 +301,7 @@ class FrozenRunPlan:
             _require(
                 grant.policy_digest == policy.digest and (job.job_id, job.digest) in grant.jobs
             )
-            _require(grant.subject_principal is None or grant.subject_principal == principal)
+            _require(grant.subject_principal == principal or grant.subject_role in roles)
             # An ordinary derived durable substitution keeps the owner's label;
             # the authoritative planner must select exactly one matching slot.
             if slot.delivery == "durable" and len(slot.ancestry) > 1:
@@ -303,7 +334,8 @@ class FrozenRunPlan:
                 _require(template.grant_template_id == store["grant_template"])
                 _require(template.digest == store["grant_template_digest"])
                 _require(template.terms["policy_digest"] == mint.template_policy.digest)
-                _require(template.terms["subject"] == {"principal": principal})
+                subject = template.terms["subject"]
+                _require(subject.get("principal") == principal or subject.get("role") in roles)
         try:
             return cls.from_bytes(
                 canonical(
@@ -322,6 +354,7 @@ class FrozenRunPlan:
                             "principal_did": principal,
                             "member_did_key": requester.did_key,
                             "certificate_id": requester.certificate_id,
+                            "roles": sorted(requester_roles),
                         },
                         "runner_id": runner_id,
                         "job": {"job_id": job.job_id, "digest": job.digest, "record": job_body},
