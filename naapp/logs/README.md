@@ -12,6 +12,14 @@ The design is [the audit substrate](../../docs/design/audit-substrate.md),
 Part B. The artefacts logs signs, and the chain they commit to, are specified
 in [the logs chain](../../docs/logs-chain.md).
 
+## Configuration
+
+logs reads its settings from `LOGS_`-prefixed environment variables:
+`LOGS_DATABASE_URL`, `LOGS_PUBLIC_ORIGIN`, and `LOGS_APP_KEY_FILES`, a JSON
+object from each kid the manifest declares to the path of that kid's key file.
+The `logs-chain` key signs receipts and checkpoints; logs does not start
+without it, or with a key other than the one its served manifest declares.
+
 ## Development
 
 ```bash
