@@ -5,4 +5,4 @@ test:
 
 lint:
 	uv run ruff check .
-	uv run mypy src
+	uv run mypy src e2e

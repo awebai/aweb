@@ -16,8 +16,14 @@ verified type, `VerifiedOwnerAct`. It refuses an act prepared more than 60
 seconds earlier (`owner_required`). The key `prepare` used may itself come
 from the verifier's registry cache, at most 60 seconds old, so after a team
 key rotation an act signed with the old key can still be consumed for at most
-the cache lifetime plus 60 seconds, about two minutes, and never later. The design and its rationale are
-in [the audit substrate design](design/audit-substrate.md), §2 and §A3.
+the cache lifetime plus 60 seconds, about two minutes, and never later. A
+signer builds the bytes with `OwnerActSigningBytes` in Go or
+`aweb_naapp.hooks.owner_act.owner_act_signing_bytes` in Python. Both refuse an
+act whose fields, subject or lifetime a verifier would refuse, with the
+verifier's code. Python's `hook_binding_subject` builds a `hook-binding.*`
+subject with `scopes` and `reads` in the order this contract fixes. The design
+and its rationale are in [the audit substrate design](design/audit-substrate.md),
+§2 and §A3.
 
 This is an identity-path change. Juan approved `aweb.owner-act/1` explicitly,
 with the ruling below on who may sign one.
@@ -112,7 +118,11 @@ refused otherwise.
   - when `kind` is `registration`: the resolved `tool`, `method`, raw `path`
     and the app `scopes`;
   - when `kind` is `production`: `reads`, the tools whose reads fire
-    `post-manifest-command-hook`, possibly empty.
+    `post-manifest-command-hook`, possibly empty;
+  - `scopes` and `reads` are sorted ascending by code point and distinct.
+    Canonical JSON keeps array order, so this is what makes every signer of
+    one binding sign the same bytes. A list out of order or with a repeat is
+    refused as `invalid_value`, before the subject is compared.
 - **`app-role.designate` and `app-credential.recover`**: `app_id`,
   `installation_id`, `role` and `contact_sha256`. They name a role holder who
   does not exist yet, so they carry no `subject_ref`, and one is refused: the

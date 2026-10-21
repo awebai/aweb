@@ -27,8 +27,8 @@
     "price-proposal": {
       "page_format": "aweb.page/1",
       "page_id": "price-fixture",
-      "locale": "ca",
-      "title": "Proposta de preus — dades fictícies",
+      "locale": "en",
+      "title": "Price proposal — synthetic data",
       "rev": 1,
       "layout_version": 1,
       "owner": "agent-fixture",
@@ -38,7 +38,7 @@
           "id": "title",
           "type": "heading",
           "props": {
-            "text": "Revisió de preus",
+            "text": "Price review",
             "level": 1
           }
         },
@@ -64,17 +64,17 @@
             "columns": [
               {
                 "field": "start",
-                "label": "Des de",
+                "label": "From",
                 "format": "date"
               },
               {
                 "field": "end",
-                "label": "Fins a",
+                "label": "To",
                 "format": "date"
               },
               {
                 "field": "price_minor",
-                "label": "Preu per nit (EUR)",
+                "label": "Price per night (EUR)",
                 "format": "money_minor"
               }
             ]
@@ -96,11 +96,11 @@
             "options": [
               {
                 "value": "approve",
-                "label": "Aprovar"
+                "label": "Approve"
               },
               {
                 "value": "reject",
-                "label": "Rebutjar"
+                "label": "Reject"
               }
             ],
             "recommendation": "approve",
@@ -108,7 +108,7 @@
             "proposal_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             "operation": {
               "kind": "pms.price.set",
-              "destination": "PMS · tarifa canal Airbnb",
+              "destination": "PMS · Airbnb channel rate",
               "summary": "Synthetic: exact values shown in the bound record."
             },
             "source_version": "pms-v7",
@@ -179,7 +179,7 @@
                 "end": "2026-11-08",
                 "price_minor": 18500,
                 "currency": "EUR",
-                "reason": "Proposta de prova per a dates disponibles.",
+                "reason": "Test proposal for available dates.",
                 "channel": "pms-fixture",
                 "source_version": "pms-v7"
               }
@@ -192,7 +192,7 @@
         {
           "id": "answer-price",
           "kind": "answer",
-          "label": "Respondre a la proposta",
+          "label": "Answer the proposal",
           "input_schema": {
             "type": "object",
             "properties": {
@@ -229,8 +229,8 @@
     "guest-reply": {
       "page_format": "aweb.page/1",
       "page_id": "reply-fixture",
-      "locale": "ca",
-      "title": "Resposta a una consulta — dades fictícies",
+      "locale": "en",
+      "title": "Reply to an enquiry — synthetic data",
       "rev": 1,
       "layout_version": 1,
       "owner": "agent-fixture",
@@ -240,7 +240,7 @@
           "id": "title",
           "type": "heading",
           "props": {
-            "text": "Revisar resposta al client",
+            "text": "Review the guest reply",
             "level": 1
           }
         },
@@ -271,11 +271,11 @@
             "options": [
               {
                 "value": "approve",
-                "label": "Aprovar"
+                "label": "Approve"
               },
               {
                 "value": "reject",
-                "label": "Rebutjar"
+                "label": "Reject"
               }
             ],
             "recommendation": "approve",
@@ -283,7 +283,7 @@
             "proposal_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             "operation": {
               "kind": "pms.message.send",
-              "destination": "PMS · missatge al client per Booking.com",
+              "destination": "PMS · guest message via Booking.com",
               "summary": "Synthetic: exact values shown in the bound record."
             },
             "source_version": "enquiry-v3",
@@ -298,7 +298,7 @@
               {
                 "id": "message",
                 "kind": "text",
-                "label": "Text final",
+                "label": "Final text",
                 "required": true
               }
             ],
@@ -346,7 +346,7 @@
               "value": {
                 "recipient": "guest-fixture",
                 "channel": "pms-fixture",
-                "message": "Bon dia! Gràcies pel vostre interès. Confirmarem la disponibilitat després de la revisió.",
+                "message": "Good morning! Thank you for your interest. We will confirm availability after review.",
                 "source_version": "enquiry-v3"
               }
             }
@@ -358,7 +358,7 @@
         {
           "id": "answer-reply",
           "kind": "answer",
-          "label": "Aprovar resposta exacta",
+          "label": "Approve the exact reply",
           "input_schema": {
             "type": "object",
             "properties": {
@@ -393,7 +393,7 @@
         {
           "id": "revise-reply",
           "kind": "edit",
-          "label": "Desar nova proposta",
+          "label": "Save a new proposal",
           "input_schema": {
             "type": "object",
             "properties": {
@@ -415,8 +415,8 @@
     "bookings": {
       "page_format": "aweb.page/1",
       "page_id": "bookings-fixture",
-      "locale": "ca",
-      "title": "Reserves — dades fictícies",
+      "locale": "en",
+      "title": "Bookings — synthetic data",
       "rev": 1,
       "layout_version": 1,
       "owner": "agent-fixture",
@@ -426,7 +426,7 @@
           "id": "title",
           "type": "heading",
           "props": {
-            "text": "Reserves",
+            "text": "Bookings",
             "level": 1
           }
         },
@@ -437,17 +437,17 @@
             "columns": [
               {
                 "field": "arrival",
-                "label": "Entrada",
+                "label": "Arrival",
                 "format": "date"
               },
               {
                 "field": "departure",
-                "label": "Sortida",
+                "label": "Departure",
                 "format": "date"
               },
               {
                 "field": "status",
-                "label": "Estat",
+                "label": "Status",
                 "format": "status"
               }
             ],
@@ -475,7 +475,7 @@
               {
                 "id": "booking_id",
                 "kind": "select",
-                "label": "Reserva",
+                "label": "Booking",
                 "required": true,
                 "options": [
                   {
@@ -487,7 +487,7 @@
               {
                 "id": "note",
                 "kind": "text",
-                "label": "Nota interna",
+                "label": "Internal note",
                 "required": true
               }
             ],
@@ -592,7 +592,7 @@
               "rev": 1,
               "value": {
                 "booking_id": "booking-1",
-                "note": "Cal revisar la petició."
+                "note": "The request needs review."
               }
             }
           ]
@@ -603,7 +603,7 @@
         {
           "id": "propose-accept",
           "kind": "intent",
-          "label": "Demanar acceptació",
+          "label": "Request acceptance",
           "input_schema": {
             "type": "object",
             "properties": {
@@ -626,7 +626,7 @@
         {
           "id": "propose-decline",
           "kind": "intent",
-          "label": "Demanar rebuig",
+          "label": "Request decline",
           "input_schema": {
             "type": "object",
             "properties": {
@@ -649,7 +649,7 @@
         {
           "id": "edit-note",
           "kind": "edit",
-          "label": "Desar nota local",
+          "label": "Save local note",
           "input_schema": {
             "type": "object",
             "properties": {
@@ -806,8 +806,8 @@
     "link-out": {
       "page_format": "aweb.page/1",
       "page_id": "console-entry",
-      "locale": "ca",
-      "title": "Accés a la consola",
+      "locale": "en",
+      "title": "Console access",
       "rev": 1,
       "layout_version": 1,
       "owner": "agent-fixture",
@@ -817,7 +817,7 @@
           "id": "title",
           "type": "heading",
           "props": {
-            "text": "Consola",
+            "text": "Console",
             "level": 1
           }
         },
@@ -825,7 +825,7 @@
           "id": "console",
           "type": "link_out",
           "props": {
-            "label": "Obrir la consola",
+            "label": "Open the console",
             "path": "/console/approvals"
           }
         }
@@ -837,8 +837,8 @@
     "bundle": {
       "page_format": "aweb.page/1",
       "page_id": "daily-prices",
-      "locale": "ca",
-      "title": "Propostes del dia",
+      "locale": "en",
+      "title": "Today's proposals",
       "rev": 7,
       "layout_version": 1,
       "owner": "agent-fixture",
@@ -848,7 +848,7 @@
           "id": "title",
           "type": "heading",
           "props": {
-            "text": "Propostes del dia",
+            "text": "Today's proposals",
             "level": 1
           }
         },
@@ -859,17 +859,17 @@
             "columns": [
               {
                 "field": "week",
-                "label": "Setmana",
+                "label": "Week",
                 "format": "text"
               },
               {
                 "field": "current_price_minor",
-                "label": "Preu actual",
+                "label": "Current price",
                 "format": "money_minor"
               },
               {
                 "field": "proposed_price_minor",
-                "label": "Preu proposat",
+                "label": "Proposed price",
                 "format": "money_minor"
               }
             ]
@@ -893,11 +893,11 @@
             "options": [
               {
                 "value": "approve",
-                "label": "Aprovar el lot"
+                "label": "Approve the batch"
               },
               {
                 "value": "reject",
-                "label": "Rebutjar"
+                "label": "Reject"
               }
             ],
             "recommendation": "approve",
@@ -1459,7 +1459,7 @@
               "id": "s1",
               "type": "stat",
               "props": {
-                "label": "Ràtio",
+                "label": "Ratio",
                 "value": 0.1
               }
             }
@@ -1489,7 +1489,7 @@
               "id": "s1",
               "type": "stat",
               "props": {
-                "label": "Ràtio",
+                "label": "Ratio",
                 "value": "0.1"
               }
             }
@@ -2646,7 +2646,7 @@
                 "limit": 1
               },
               "props": {
-                "label": "Preu",
+                "label": "Price",
                 "field": "missing"
               }
             }
@@ -31128,7 +31128,7 @@
           {
             "op": "replace",
             "path": "/layout/0/props/text",
-            "value": "Preus \u202epdf.exe"
+            "value": "Prices \u202epdf.exe"
           }
         ]
       },
@@ -32380,7 +32380,7 @@
           {
             "op": "replace",
             "path": "/layout/0/props/text",
-            "value": "Revisi\u043e de preus"
+            "value": "Price revi\u0435w"
           }
         ]
       },
@@ -32412,12 +32412,12 @@
       "name": "one-item-non-ascii-id",
       "items": [
         {
-          "record_id": "setmana-àè",
+          "record_id": "week-é€",
           "record_rev": 0,
           "proposal_sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
         }
       ],
-      "sha256": "sha256:4af2aa76219aeb546bd5f00175fd8bb46cbf507d14756cb3ec9fe0d60b41525a"
+      "sha256": "sha256:ee1572b0fa99cddf0c13e6b503e2423906a3c47242be20ad8bba95da3764cb86"
     },
     {
       "name": "empty",

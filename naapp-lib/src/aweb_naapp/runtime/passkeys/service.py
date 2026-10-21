@@ -44,12 +44,7 @@ from typing import Any, Protocol
 from awid.signing import canonical_json_bytes
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
-from webauthn import (
-    generate_authentication_options,
-    generate_registration_options,
-    verify_authentication_response,
-    verify_registration_response,
-)
+from webauthn import generate_authentication_options, generate_registration_options
 from webauthn.helpers import (
     base64url_to_bytes,
     bytes_to_base64url,
@@ -82,6 +77,11 @@ from aweb_naapp.runtime.approvals import (
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind, AuditSink
 from aweb_naapp.runtime.links import LinkLifetime, link_verifier, new_link_token
 from aweb_naapp.runtime.passkeys.rp import RelyingParty
+from aweb_naapp.runtime.passkeys.webauthn import (
+    WebAuthnRefused,
+    verify_assertion,
+    verify_registration,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,11 +103,12 @@ class EnrolmentRefused(Exception):
 
 
 class DesignationRefused(Exception):
-    """The owner act does not authorise this designation."""
+    """The owner evidence does not authorise this designation or retirement."""
 
 
 DESIGNATE_ACT = "app-role.designate"
 RECOVER_ACT = "app-credential.recover"
+REVOKE_ACT = "app-role.revoke"
 
 
 @dataclass(frozen=True)
@@ -416,6 +417,67 @@ class Passkeys:
             effective_at=effective_at,
             notices=tuple((recorded, notice) for recorded in notified),
             link_token=token,
+        )
+
+    async def retire(
+        self, tx: TransactionManager, *, scope: str, evidence: VerifiedOwnerAct
+    ) -> None:
+        """End `scope`'s designation in the caller's transaction, on an
+        `app-role.revoke` act consumed in this transaction that names the
+        approver it revokes as its `subject_ref`.
+
+        The current approver, or a recovery's pending one, is superseded, its
+        passkeys and unused enrolment links revoked and its live approvals
+        voided. The scope then has no approver: its next designation is a first
+        one, and the retired passkeys stay dead. Each act takes effect once.
+        """
+        if not isinstance(evidence, VerifiedOwnerAct):
+            raise TypeError("retirement needs a verified owner act")
+        if evidence.act != REVOKE_ACT:
+            raise DesignationRefused(f"{evidence.act} retires nobody")
+        if evidence.subject.get("role") != scope:
+            raise DesignationRefused("owner act names another scope")
+        if evidence.transaction_id != await _transaction_id(tx):
+            raise DesignationRefused("the owner act was consumed in another transaction")
+        act_id = f"{evidence.team_id}:{evidence.nonce}"
+        actor = str(evidence.fields["team_key_did"])
+        if await tx.fetch_value(
+            "SELECT 1 FROM {{tables.passkey_owner_acts}} WHERE act_id = $1", act_id
+        ):
+            raise DesignationRefused("this evidence has already taken effect")
+        current = await tx.fetch_one(
+            "SELECT subject FROM {{tables.passkey_approvers}} "
+            "WHERE scope = $1 AND superseded_at IS NULL FOR UPDATE",
+            scope,
+        )
+        if current is None:
+            raise DesignationRefused("the scope has no approver to retire")
+        # The act names the holder it revokes; checked under the lock, so a
+        # recovery committed after the act was signed cannot redirect it.
+        if evidence.subject.get("subject_ref") != current["subject"]:
+            raise DesignationRefused("owner act names another approver")
+        now = self._clock()
+        await self._retire(tx, current["subject"], actor, now)
+        await tx.execute(
+            "INSERT INTO {{tables.passkey_owner_acts}} "
+            "(act_id, kind, signer, scope, subject, used_at) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
+            act_id,
+            REVOKE_ACT,
+            actor,
+            scope,
+            current["subject"],
+            now,
+        )
+        await self._audit.emit(
+            AuditEvent(
+                kind=AuditKind.APPROVER_RETIRED,
+                actor=actor,
+                subject=current["subject"],
+                occurred_at=now,
+                details={"scope": scope, "owner_act_id": act_id, "owner_act_kind": REVOKE_ACT},
+            ),
+            tx,
         )
 
     async def owner_approval(
@@ -737,14 +799,8 @@ class Passkeys:
         ):
             raise EnrolmentRefused("registration does not answer this enrolment")
         try:
-            verified = verify_registration_response(
-                credential=dict(credential),
-                expected_challenge=challenge,
-                expected_rp_id=self.rp.rp_id,
-                expected_origin=self.rp.origin,
-                require_user_verification=True,
-            )
-        except WebAuthnException as exc:
+            verified = verify_registration(credential, challenge=challenge, rp=self.rp)
+        except WebAuthnRefused as exc:
             raise EnrolmentRefused("registration did not verify") from exc
 
         now = self._clock()
@@ -765,7 +821,7 @@ class Passkeys:
                 "VALUES ($1, $2, $3, $4, $5)",
                 verified.credential_id,
                 enrolment["subject"],
-                verified.credential_public_key,
+                verified.public_key,
                 verified.sign_count,
                 now,
             )
@@ -838,16 +894,15 @@ class Passkeys:
         if credential is None:
             raise AuthenticationFailed("credential is not the approver's current passkey")
         try:
-            verified = verify_authentication_response(
-                credential=dict(proof),
-                expected_challenge=challenge,
-                expected_rp_id=self.rp.rp_id,
-                expected_origin=self.rp.origin,
-                credential_public_key=credential["public_key"],
-                credential_current_sign_count=credential["sign_count"],
-                require_user_verification=True,
+            verified = verify_assertion(
+                proof,
+                challenge=challenge,
+                rp=self.rp,
+                credential_id=credential_id,
+                public_key=credential["public_key"],
+                sign_count=credential["sign_count"],
             )
-        except WebAuthnException as exc:
+        except WebAuthnRefused as exc:
             raise AuthenticationFailed("assertion did not verify") from exc
 
         evidence_ref = str(uuid.uuid4())

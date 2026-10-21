@@ -22,6 +22,7 @@ from aweb_naapp.pages.errors import PAGE_LIMITS, PageError, pointer
 Path = tuple[str | int, ...]
 
 BUNDLE_PREFIX = b"aweb.page-bundle/1\n"
+PROPOSAL_PREFIX = b"aweb.page-proposal/1\n"
 BUNDLE_ITEM_KEYS = frozenset({"record_id", "record_rev", "proposal_sha256"})
 _IDENTIFIER = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -112,6 +113,34 @@ def _canonical(value: object) -> bytes:
 def bundle_sha256(items: Sequence[Mapping[str, Any]]) -> str:
     """The digest a bundle decision card binds: its ordered item list, canonically."""
     return "sha256:" + hashlib.sha256(BUNDLE_PREFIX + _canonical(list(items))).hexdigest()
+
+
+def _require_canonical(value: object, where: str) -> None:
+    if value is None or isinstance(value, (str, bool)):
+        return
+    if isinstance(value, int):
+        if abs(value) > _SAFE_INTEGER:
+            raise ValueError(f"{where}: integer outside the safe range")
+        return
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError(f"{where}: object keys must be strings")
+            _require_canonical(item, f"{where}.{key}")
+        return
+    if isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _require_canonical(item, f"{where}[{index}]")
+        return
+    raise ValueError(f"{where}: {type(value).__name__} has no canonical form")
+
+
+def proposal_sha256(collection: str, record_id: str, value: object) -> str:
+    """The digest a decision binds for one proposal record: its collection, its
+    id and its exact value. The record revision is bound next to it, not in it."""
+    _require_canonical(value, "value")
+    proposal = {"collection": collection, "record_id": record_id, "value": value}
+    return "sha256:" + hashlib.sha256(PROPOSAL_PREFIX + _canonical(proposal)).hexdigest()
 
 
 def _widgets(page: Mapping[str, Any]) -> Iterator[tuple[Mapping[str, Any], Path]]:

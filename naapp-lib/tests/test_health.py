@@ -169,12 +169,21 @@ def _check(ok: bool, **detail: object):
 
 def test_health_and_ready_report_each_check_and_ready_is_200_when_all_pass() -> None:
     client = _checked({"database": _check(True), "queue": _check(True, oldest_age_seconds=None)})
-    expected_checks = {"database": {"ok": True}, "queue": {"ok": True, "oldest_age_seconds": None}}
-    for path in ("/health", "/ready"):
-        response = client.get(path)
-        assert response.status_code == 200
-        assert response.json()["status"] == "ok"
-        assert response.json()["checks"] == expected_checks
+    health = client.get("/health")
+    ready = client.get("/ready")
+    assert (health.status_code, ready.status_code) == (200, 200)
+    assert health.json()["status"] == ready.json()["status"] == "ok"
+    assert health.json()["checks"] == {
+        "database": {"ok": True},
+        "queue": {"ok": True, "oldest_age_seconds": None},
+    }
+    assert ready.json()["checks"] == {"database": {"ok": True}, "queue": {"ok": True}}
+
+
+@pytest.mark.parametrize("value", ["provider error text", b"bytes", ["a"], {"k": 1}])
+def test_a_check_detail_cannot_carry_text(value) -> None:
+    with pytest.raises(TypeError):
+        CheckResult(ok=False, detail={"reason": value})
 
 
 def test_ready_is_503_and_health_reports_unavailable_when_a_check_fails() -> None:

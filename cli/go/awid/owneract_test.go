@@ -59,6 +59,12 @@ func registrationSubject() map[string]any {
 	}
 }
 
+func registrationWith(key string, value any) map[string]any {
+	subject := registrationSubject()
+	subject[key] = value
+	return subject
+}
+
 func productionSubject() map[string]any {
 	return map[string]any{
 		"binding_id": "0192f0c4-6f1e-7c3a-9a51-3d2b8e0f4c11", "installation_id": ownerInstall, "generation": int64(2),
@@ -116,6 +122,7 @@ func ownerPositives() []ownerPositive {
 		{"erase_range", "logs.erase", ownerLogsAud, logsVocabulary, app(map[string]any{"erase_scope": "range", "chain_epoch": int64(1), "team_seq_first": int64(10), "team_seq_last": int64(20), "reason_code": "owner_request"})},
 		{"legal_hold_set", "logs.legal-hold.set", ownerLogsAud, logsVocabulary, app(map[string]any{"hold_id": "hold_1", "hold_scope": "all", "reason_code": "litigation"})},
 		{"legal_hold_release", "logs.legal-hold.release", ownerLogsAud, logsVocabulary, app(map[string]any{"hold_id": "hold_1"})},
+		{"activate_registration_sorted_scopes", "hook-binding.activate", ownerCoreAud, CoreOwnerActs, registrationWith("scopes", []any{"logs:ingest", "logs:read"})},
 	}
 	var out []ownerPositive
 	for i, c := range cases {
@@ -239,6 +246,11 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 	designationWithRef := map[string]any{"app_id": "secrets", "installation_id": ownerInstall, "role": "secrets.owner", "contact_sha256": contactSHA256("owner@example.com"), "subject_ref": "member:c_41"}
 	production := productionSubject()
 	production["tool"] = "ingest"
+	productionWith := func(key string, value any) map[string]any {
+		subject := productionSubject()
+		subject[key] = value
+		return subject
+	}
 	negatives := []negative{
 		{name: "admin_signer", err: "owner_required", seed: ownerAdminSeed, act: adminAct},
 		{name: "rotated_out_team_key", err: "owner_required", seed: ownerOldTeamSeed, act: oldAct},
@@ -281,6 +293,10 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 		{name: "signature_nonzero_trailing_bits", err: "signature_encoding", seed: ownerTeamSeed, act: base, signature: trailingBitsRespelling},
 		{name: "non_canonical_bytes", err: "not_canonical", seed: ownerTeamSeed,
 			raw: append([]byte(OwnerActPrefix), bytes.Replace(mustOwnerCanonical(t, base), []byte(`{"act"`), []byte(`{ "act"`), 1)...)},
+		{name: "registration_scopes_out_of_order", err: "invalid_value", seed: ownerTeamSeed,
+			act: ownerSet(base, "subject", subjectWith("scopes", []any{"logs:read", "logs:ingest"}))},
+		{name: "production_reads_duplicate", err: "invalid_value", seed: ownerTeamSeed,
+			act: ownerSet(base, "subject", productionWith("reads", []any{"ingest", "ingest"}))},
 	}
 	var out []map[string]any
 	for _, n := range negatives {
@@ -495,5 +511,12 @@ func TestSignOwnerActRefusesAnImpossibleTime(t *testing.T) {
 	act := ownerSet(ownerAct("hook-binding.activate", ownerCoreAud, registrationSubject(), nonceFor(0)), "issued_at", "2026-99-99T99:99:99Z")
 	if _, _, err := SignOwnerAct(ownerKey(ownerTeamSeed), act); strictjson.Code(err) != "invalid_value" {
 		t.Fatalf("got %v, want invalid_value", err)
+	}
+}
+
+func TestSignOwnerActRefusesALifetimeOverTenMinutes(t *testing.T) {
+	act := ownerSet(ownerAct("hook-binding.activate", ownerCoreAud, registrationSubject(), nonceFor(0)), "expires_at", "2026-10-20T12:10:01Z")
+	if _, _, err := SignOwnerAct(ownerKey(ownerTeamSeed), act); strictjson.Code(err) != "lifetime_too_long" {
+		t.Fatalf("got %v, want lifetime_too_long", err)
 	}
 }

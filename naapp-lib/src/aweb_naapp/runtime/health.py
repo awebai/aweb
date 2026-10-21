@@ -29,11 +29,17 @@ _monotonic = time.monotonic
 
 @dataclass(frozen=True)
 class CheckResult:
-    """One dependency's state. ``detail`` is served as it is, so it carries
-    only public facts, never an error message or a credential."""
+    """One dependency's state. ``detail`` is served on ``/health``, so its
+    values are numbers, booleans or ``None``: never text, which could carry an
+    error message or a credential."""
 
     ok: bool
-    detail: Mapping[str, object] = field(default_factory=dict)
+    detail: Mapping[str, int | float | bool | None] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for name, value in self.detail.items():
+            if value is not None and not isinstance(value, int | float | bool):
+                raise TypeError(f"health check detail {name!r} must be a number, a boolean or None")
 
 
 HealthCheck = Callable[[], Awaitable[CheckResult]]
@@ -58,7 +64,8 @@ def mount_health(
     read from the app's own ``<env_prefix>GIT_SHA``.
 
     ``checks`` are the app's dependencies, reported by name on ``/health`` and
-    ``/ready``. They run at most once per ``HEALTH_CHECK_CACHE_SECONDS``:
+    ``/ready``: ``/ready`` serves only whether each passed, ``/health`` also
+    its detail. They run at most once per ``HEALTH_CHECK_CACHE_SECONDS``:
     concurrent requests wait for the one run in flight, and later ones get its
     result until it expires. ``/ready`` answers 503 when any of them fails;
     ``/health`` reports the same and always answers 200; ``/live`` runs none.
@@ -74,27 +81,28 @@ def mount_health(
         payload["deployment"] = deployment
     checks = dict(checks or {})
     lock = asyncio.Lock()
-    cached: list[tuple[float, tuple[bool, dict[str, object]]]] = []
+    cached: list[tuple[float, dict[str, CheckResult]]] = []
 
-    async def checked() -> tuple[bool, dict[str, object]]:
-        if not checks:
-            return True, payload
+    async def checked() -> dict[str, CheckResult]:
         async with lock:
             if cached and cached[0][0] > _monotonic():
                 return cached[0][1]
-            result = await run_checks()
-            cached[:] = [(_monotonic() + HEALTH_CHECK_CACHE_SECONDS, result)]
-            return result
+            outcomes = await asyncio.gather(*(_run(name, check) for name, check in checks.items()))
+            results = dict(zip(checks, outcomes, strict=True))
+            cached[:] = [(_monotonic() + HEALTH_CHECK_CACHE_SECONDS, results)]
+            return results
 
-    async def run_checks() -> tuple[bool, dict[str, object]]:
-        results = await asyncio.gather(*(_run(name, check) for name, check in checks.items()))
-        ready = all(result.ok for result in results)
+    async def report(*, with_detail: bool) -> tuple[bool, dict[str, object]]:
+        if not checks:
+            return True, payload
+        results = await checked()
+        ready = all(result.ok for result in results.values())
         return ready, {
             **payload,
             "status": "ok" if ready else "unavailable",
             "checks": {
-                name: {"ok": result.ok, **result.detail}
-                for name, result in zip(checks, results, strict=True)
+                name: {"ok": result.ok, **(result.detail if with_detail else {})}
+                for name, result in results.items()
             },
         }
 
@@ -104,9 +112,9 @@ def mount_health(
 
     @app.get("/health")
     async def health() -> dict[str, object]:
-        return (await checked())[1]
+        return (await report(with_detail=True))[1]
 
     @app.get("/ready")
     async def ready() -> JSONResponse:
-        is_ready, body = await checked()
+        is_ready, body = await report(with_detail=False)
         return JSONResponse(body, status_code=200 if is_ready else 503)

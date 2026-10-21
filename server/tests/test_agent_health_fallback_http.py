@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+import json
 
 import pytest
 
 import aweb.agent_health
+import aweb.routes.dashboard
 import aweb.routes.events
 from test_agent_health_http import _health
 from test_agent_status_host_http import _team_request
@@ -101,15 +103,30 @@ async def test_open_event_stream_shows_listening(privacy_app):
 @pytest.mark.asyncio
 async def test_listening_ends_when_the_stream_stops_refreshing(privacy_app, monkeypatch):
     env = privacy_app
-    monkeypatch.setattr(aweb.agent_health, "LISTENING_WINDOW_SECONDS", 1)
     await _open_stream(env, "alice")
-    started = (await _health(env, "alice"))["listening_since"]
+    record = json.loads(await env.redis.get(f"events-stream:{env.actors['alice'].id}"))
+    now = _when(record["last"])
 
-    await asyncio.sleep(2.1)
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz) if tz is not None else now.replace(tzinfo=None)
+
+    # Both real HTTP reads in _health see one instant, regardless of host load.
+    # Freeze only the health reader; the stream and authentication stay real.
+    monkeypatch.setattr(aweb.routes.dashboard, "datetime", FrozenDateTime)
+    initial = await _health(env, "alice")
+    assert initial["listening"] is True
+    assert initial["listening_since"] == record["since"]
+
+    now += timedelta(seconds=aweb.agent_health.LISTENING_WINDOW_SECONDS)
+    assert (await _health(env, "alice"))["listening"] is True
+
+    now += timedelta(microseconds=1)
     health = await _health(env, "alice")
 
     assert health["listening"] is False
-    assert _when(health["listening_since"]) >= _when(started)
+    assert health["listening_since"] == record["last"]
 
 
 @pytest.mark.asyncio

@@ -257,3 +257,32 @@ async def test_the_service_is_not_ready_without_kms(registry, database_url) -> N
         assert ready.status_code == 503
         assert ready.json()["checks"]["kms"] == {"ok": False}
         assert (await app.console.get("/ready")).status_code == 503
+
+
+async def test_a_failing_check_serves_no_error_detail(registry, database_url) -> None:
+    async def failing_kms() -> CheckResult:
+        raise RuntimeError("KMSInvalidStateException: arn:aws:kms:eu-west-1:000000000000:key/x")
+
+    settings = SecretsSettings(
+        _env_file=None,
+        database_url=database_url,
+        public_origin=API,
+        console_origin=CONSOLE,
+        awid_registry_url=REGISTRY_URL,
+    )
+    service = create_app(
+        settings,
+        grants=InstalledTeams({}),
+        policy=allow_all,
+        kms=failing_kms,
+        awid_transport=registry.transport,
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=API) as api:
+        # Outside the lifespan the database is down too.
+        for client_path in ("/ready", "/health"):
+            response = await api.get(client_path)
+            assert "KMSInvalidState" not in response.text
+            assert "arn:" not in response.text
+            assert response.json()["checks"]["kms"] == {"ok": False}
+            assert response.json()["checks"]["database"] == {"ok": False}
+        assert set((await api.get("/ready")).json()["checks"]) == {"database", "outbox", "kms"}

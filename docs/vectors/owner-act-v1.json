@@ -1193,6 +1193,76 @@
         "now": "2026-10-20T12:01:00Z",
         "team_id": "demo:example.com"
       }
+    },
+    {
+      "error": "invalid_value",
+      "name": "registration_scopes_out_of_order",
+      "signature_b64": "EsvkdM+/NYGcmdSK2MZ8EcmAs8jfYm6shralCWcItAdjJlYWFaMXsOOPa+iyQhVf4dizHsAfpEGUcjGREl/5Aw",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicmVnaXN0cmF0aW9uIiwibWV0aG9kIjoiUE9TVCIsIm9yaWdpbiI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsInBhdGgiOiIvaG9va3MvaW5nZXN0Iiwic2NvcGVzIjpbImxvZ3M6cmVhZCIsImxvZ3M6aW5nZXN0Il0sInRvb2wiOiJpbmdlc3QifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "invalid_value",
+      "name": "production_reads_duplicate",
+      "signature_b64": "5jAjKkvB3+E69qr28AVzLkTGYeUKJQV7XdQLhHGvchmHKOS1ZcOFq2cO2CZkRr1CnAVSgetdTAveUFXs7+t8Cw",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOSIsInN1YmplY3QiOnsiYXBwX2lkIjoic2VjcmV0cyIsImJpbmRpbmdfaWQiOiIwMTkyZjBjNC02ZjFlLTdjM2EtOWE1MS0zZDJiOGUwZjRjMTEiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicHJvZHVjdGlvbiIsIm9yaWdpbiI6Imh0dHBzOi8vc2VjcmV0cy5leGFtcGxlLmNvbSIsInJlYWRzIjpbImluZ2VzdCIsImluZ2VzdCJdfSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
     }
   ],
   "positive_cases": [
@@ -1771,6 +1841,71 @@
           "app_id": "logs",
           "hold_id": "hold_1",
           "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "act": {
+        "act": "hook-binding.activate",
+        "aud": "https://aweb.example.com",
+        "expires_at": "2026-10-20T12:05:00Z",
+        "issued_at": "2026-10-20T12:00:00Z",
+        "nonce": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+        "subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest",
+            "logs:read"
+          ],
+          "tool": "ingest"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "name": "activate_registration_sorted_scopes",
+      "signature_b64": "nm4Lmi3MTkAeLdd2cS8nVx7BqoltZo4qp6XdHKRNNlItePKj29LuQMC+/V1t1DFy6tVm/3tw1xp2aYOedaIjDQ",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIwZDBkMGQwZDBkMGQwZDBkMGQwZDBkMGQwZDBkMGQwZCIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicmVnaXN0cmF0aW9uIiwibWV0aG9kIjoiUE9TVCIsIm9yaWdpbiI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsInBhdGgiOiIvaG9va3MvaW5nZXN0Iiwic2NvcGVzIjpbImxvZ3M6aW5nZXN0IiwibG9nczpyZWFkIl0sInRvb2wiOiJpbmdlc3QifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest",
+            "logs:read"
+          ],
+          "tool": "ingest"
         },
         "nonce_used": false,
         "now": "2026-10-20T12:01:00Z",
