@@ -35,8 +35,9 @@ ACTIVATE = "hook-binding.activate"
 REVOKE = "hook-binding.revoke"
 # The owner-act nonce scope of the coordination server's verifier.
 OWNER_ACT_SCOPE = "aweb"
-# Purposes a production's registered key must declare for consumers to accept its events.
-HOOK_KEY_PURPOSES = ("hook-event", "hook-delivery")
+# The purpose a production's registered key must declare: consumers verify its
+# events' content signatures with a hook-event key.
+HOOK_EVENT_PURPOSE = "hook-event"
 
 
 @dataclass(frozen=True)
@@ -305,16 +306,18 @@ def core_owner_act_verifier(*, audience: str, registry_client: Any) -> OwnerActV
     return OwnerActVerifier(scope=OWNER_ACT_SCOPE, audience=audience, acts=CORE_ACTS, team_key_for=team_key_for)
 
 
+# Every refusal of the act itself is 403 with its code, except that a valid act
+# meeting a binding that has moved on, or one already used, is a conflict. A
+# verifier the server built wrongly is the server's fault.
 _CONFLICT_REFUSALS = frozenset({"subject_mismatch", "nonce_reused"})
-_MALFORMED_REFUSALS = frozenset({"invalid_value", "missing_field", "unknown_field", "wrong_prefix"})
 
 
 def _service_error(refused: Refused) -> ServiceError:
     detail = str(refused)
     if refused.code in _CONFLICT_REFUSALS:
         return ConflictError(detail)
-    if refused.code in _MALFORMED_REFUSALS:
-        return ValidationError(detail)
+    if refused.code == "verifier_misconfigured":
+        return ServiceError(detail)
     return ForbiddenError(detail)
 
 
@@ -385,16 +388,16 @@ async def _require_production_keys(tx, binding: HookBinding) -> None:
         """
         SELECT COUNT(*) FROM {{tables.team_app_keys}}
         WHERE team_id = $1 AND app_id = $2 AND origin = $3 AND digest = $4
-          AND revoked_at IS NULL AND purposes && $5::TEXT[]
+          AND revoked_at IS NULL AND $5 = ANY(purposes)
         """,
         binding.team_id,
         binding.app_id,
         binding.origin,
         binding.digest,
-        list(HOOK_KEY_PURPOSES),
+        HOOK_EVENT_PURPOSE,
     )
     if not keys:
-        raise ConflictError("a production activates only once the install registers hook keys from its pinned bytes")
+        raise ConflictError("a production activates only once the install registers hook keys (hook-event) from its pinned bytes")
 
 
 async def _apply_owner_act(

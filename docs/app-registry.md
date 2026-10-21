@@ -247,15 +247,21 @@ name, and the owner act is the authority for the change.
   a production's carries `reads`.
 - Activation needs a `pending` binding whose install carries its installation
   identity. A production activates only when its install registered, from its
-  pinned manifest bytes, a key declaring `hook-event` or `hook-delivery`.
+  pinned manifest bytes, a key declaring `hook-event`, the purpose consumers
+  verify its events with.
   Revocation takes a `pending` or `active` binding.
-- The answer is the changed binding. Refusals: `404` for a binding that is not
-  the caller's team's; `403` with the owner-act code (`owner_required`,
-  `bad_signature`, `audience_mismatch`, `expired`, `act_not_allowed`, ...) when
-  the act is not the team owner's for this change; `409` for `subject_mismatch`,
-  `nonce_reused`, or a binding that is superseded, ended, not pending, without
-  installation identity, or a production without hook keys; `422` for a
-  malformed body or act.
+- The answer is the changed binding. Refusals:
+  - `404`: the binding is not the caller's team's.
+  - `403`, with the owner-act refusal code (`docs/owner-act.md`): any refusal
+    of the act itself, from malformed or non-canonical bytes to `owner_required`,
+    `team_mismatch`, `audience_mismatch`, `expired` or `act_not_allowed`.
+  - `409`: `subject_mismatch` or `nonce_reused`, or a binding that is
+    superseded, ended, not pending, without installation identity, or a
+    production without a `hook-event` key.
+  - `422`: a malformed request body, including an `act` that is not standard
+    base64.
+  - `503`: AWID cannot be reached for the team's key. Nothing is changed, and
+    the same act can be retried.
 
 ## Operator reseed from manifest bytes
 

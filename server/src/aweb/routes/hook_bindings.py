@@ -10,11 +10,17 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from aweb.awid_error_handling import (
+    AWID_DEPENDENCY_ERRORS,
+    awid_dependency_http_exception,
+    awid_registry_not_configured_exception,
+)
 from aweb.db import DatabaseInfra, get_db_infra
 from aweb.hook_bindings import (
     HookBinding,
@@ -27,10 +33,12 @@ from aweb.routes.apps import _authorized_team_id
 from aweb.service_errors import ServiceError
 from aweb.team_auth_deps import get_team_identity
 
-# The owner act's own record is the binding row (the act's SHA-256) and the
-# hook_binding.activated / .revoked events core enqueues in the same
-# transaction (audit-substrate.md §A3); these are not operator-audit actions.
+# The owner act's record is the binding row, which keeps the act's SHA-256.
+# The hook_binding.activated / .revoked events of §A3 are enqueued through the
+# change's in_transaction callback by core's producer (aweb-acgh.16.11). These
+# are owner acts, not operator-audit actions.
 router = APIRouter(prefix="/v1/apps/hook-bindings", tags=["apps"])
+logger = logging.getLogger(__name__)
 
 # An owner act is a few hundred bytes of canonical JSON; this bounds the request.
 MAX_ACT_BASE64_CHARS = 16 << 10
@@ -132,16 +140,20 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
     signing = _signing(payload.act)
     try:
         identity = await get_team_identity(request, db_infra)
-        verifier = core_owner_act_verifier(
-            audience=request.app.state.public_origin,
-            registry_client=request.app.state.awid_registry_client,
-        )
+        registry_client = getattr(request.app.state, "awid_registry_client", None)
+        if registry_client is None:
+            raise awid_registry_not_configured_exception(operation="AWID owner-act team key")
+        verifier = core_owner_act_verifier(audience=request.app.state.public_origin, registry_client=registry_client)
         binding = await change(
             db_infra.get_manager("aweb"), verifier, team_id=identity.team_id, binding_id=binding_id,
             signing=signing, signature=payload.signature,
         )
     except ServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except AWID_DEPENDENCY_ERRORS as exc:
+        # The team key is read before any transaction, so nothing was written.
+        logger.warning("AWID registry dependency failed reading the owner-act team key", exc_info=True)
+        raise awid_dependency_http_exception(exc, operation="AWID owner-act team key") from exc
     return _as_response(binding)
 
 
