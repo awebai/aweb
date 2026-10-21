@@ -83,6 +83,13 @@ role's default search_path is. A new app should set its own schema: apps that
 share one database also share the runtime's own tables (the outbox, observed
 principals) unless their schemas differ.
 
+Each shared store, meaning every `aweb_naapp` module with its own migration
+module (the outbox, idempotency and rate limits among them), owns its tables in
+the app's schema, and its migrations apply before the app's own. An app's migrations
+never create or alter a store's table: `CREATE TABLE IF NOT EXISTS` under the
+same name collides silently, and which shape wins depends on which migration
+applied first.
+
 ### App keys
 
 An app names its signing keys by kid, as key files:
