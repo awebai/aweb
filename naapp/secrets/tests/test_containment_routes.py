@@ -15,9 +15,9 @@ from fastapi import FastAPI
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME, STORES
 from aweb_secrets.config import SecretsSettings
 from aweb_secrets.containment_routes import containment_api_router
-from aweb_secrets.manifest import MANIFEST_PATH
+from aweb_secrets.manifest import MANIFEST, MANIFEST_PATH
 from aweb_secrets.owners import OWNER_ROLE
-from tests.test_app import allow_all
+from tests.test_app import _key_files, allow_all
 from tests.test_change_sets import TEAM, Installations, world  # noqa: F401
 from tests.test_containment_service import service
 from tests.test_use_approval_lineage import seed
@@ -25,7 +25,7 @@ from tests.test_use_approvals import SECRET_ID
 from tests.test_use_approvals import uses as _uses
 
 uses = _uses
-API = "https://api.secrets.test"
+API = MANIFEST["app"]["origin"]
 CONSOLE = "https://console.secrets.test"
 PATH = "/v1/containment"
 
@@ -37,7 +37,7 @@ class AdminInstallations(Installations):
 
 
 @asynccontextmanager
-async def running(uses, registry):
+async def running(uses, registry, key_directory):
     svc = await service(uses)
     runtime = NaappRuntime(
         SecretsSettings(
@@ -47,6 +47,7 @@ async def running(uses, registry):
             public_origin=API,
             console_origin=CONSOLE,
             awid_registry_url=REGISTRY_URL,
+            app_key_files=_key_files(key_directory),
         ),
         module_name=MODULE_NAME,
         migrations_path=MIGRATIONS_PATH,
@@ -69,7 +70,9 @@ async def running(uses, registry):
             yield client
 
 
-async def test_signed_owner_can_contain_and_unsigned_cookie_or_console_cannot(uses, registry):
+async def test_signed_owner_can_contain_and_unsigned_cookie_or_console_cannot(
+    uses, registry, tmp_path
+):
     await seed(uses)
     member = Member(team_id=TEAM)
     await registry.add_team(TEAM, member.team_did_key)
@@ -79,7 +82,7 @@ async def test_signed_owner_can_contain_and_unsigned_cookie_or_console_cannot(us
     body = json.dumps(
         {"request_id": "api-disable", "action": "disable-secret", "target": SECRET_ID}
     ).encode()
-    async with running(uses, registry) as api:
+    async with running(uses, registry, tmp_path) as api:
         assert (
             await api.post(PATH, content=body, headers={"Cookie": "__Host-console=invalid"})
         ).status_code == 401
@@ -94,7 +97,7 @@ async def test_signed_owner_can_contain_and_unsigned_cookie_or_console_cannot(us
         assert "cookie" not in response.headers
 
 
-async def test_bad_body_and_reenable_never_echo_arbitrary_input(uses, registry):
+async def test_bad_body_and_reenable_never_echo_arbitrary_input(uses, registry, tmp_path):
     await seed(uses)
     member = Member(team_id=TEAM)
     await registry.add_team(TEAM, member.team_did_key)
@@ -102,7 +105,7 @@ async def test_bad_body_and_reenable_never_echo_arbitrary_input(uses, registry):
     async with uses.world.db.transaction() as tx:
         await assign(tx, PrincipalKey(team_id=TEAM, principal_did=member.did_key), OWNER_ROLE)
     canary = os.urandom(24).hex()
-    async with running(uses, registry) as api:
+    async with running(uses, registry, tmp_path) as api:
         for value in (
             {"request_id": "bad", "action": "disable-secret", "target": SECRET_ID, "value": canary},
             {"request_id": "enable", "action": "reenable", "target": SECRET_ID},
