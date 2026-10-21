@@ -119,7 +119,7 @@ wheels = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "../../naapp-lib" }
 
 [package.metadata]
