@@ -8,6 +8,7 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
   export TEST_EGRESS_RUNNER=
   run test-server
   run test-awid
+  run test-naapp
   run test-cli
   run test-cli-auth-v2
   run _candidate-unit-channel
@@ -27,6 +28,7 @@ checks() {
   run check-cli-go-tidy
   run check-cli-release-vcs-stamps
   run test-python-locks
+  run lint-naapp
   run test-sot-source-inventories
   run test-vector-provenance
   run test-federation-error-reference
@@ -46,6 +48,7 @@ artifacts() {
   run _candidate-artifact-server
   run _candidate-artifact-awid-package
   run _candidate-artifact-awid-image
+  run _candidate-artifact-naapp-package
   run _candidate-artifact-channel
   run _candidate-artifact-pi
   run _candidate-artifact-skills

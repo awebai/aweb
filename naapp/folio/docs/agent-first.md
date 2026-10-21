@@ -21,9 +21,8 @@ contract prose unless the code and SOT move first.
 3. **Team-as-customer.** The roster is teams, not app-local users. Membership
    and revocation belong to the customer's controller and AWID registry; folio
    checks them per request (`src/folio/auth.py:58-100`, `src/folio/auth.py:283-289`).
-   The human appears exactly once: to pay. In v1 that payment door is absent and
-   the structured 402 says subscriptions are not yet available
-   (`src/folio/repository.py:23-34`, `docs/sot.md:128-145`).
+   The human appears exactly once: to pay. In v1 that payment door is absent;
+   usage is measured per team and reported by `GET /v1/billing`, not capped.
 4. **Validation discipline.** Unit tests cover verifier reject paths and
    byte-for-byte interop (`tests/test_auth_v2_envelope.py:208-343`). E2E tests
    use local awid-service and real `aw id` certificates, not mocked crypto
@@ -31,7 +30,7 @@ contract prose unless the code and SOT move first.
    The front-door recipes were validated verbatim before publication.
 5. **Agent-first surface.** The FastAPI app serves the browser landing and the
    plain-text twin for agents from `src/folio/surfaces.py`, with terminal-first
-   recipes, structured 401/402 errors (`README.md:148-173`), and append-only
+   recipes, structured 401 errors (`README.md:148-173`), and append-only
    version attribution (`src/folio/repository.py:167-182`,
    `src/folio/repository.py:271-287`).
 
