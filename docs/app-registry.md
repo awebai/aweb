@@ -313,7 +313,7 @@ uninstall. S3 enforces the same two-phase order on `begin_dispatch` as on
 then `check` validates active state, ID/generation and freshness under those
 locks. Both phases perform SQL only. The shared fence lock lasts through the
 dispatch commit, serializing it with local authority observations. The global
-order is **fence, pair, intent**, enforced inside S3 rather than by a separate
+order is **fence, dispatch row, pair**, enforced inside S3 rather than by a separate
 call the app must remember. Each operation gets a new bound fence object.
 
 Without S3, `fence.admit(tx, grant)` and `fence.check(tx, admitted)` remain
@@ -328,9 +328,16 @@ does not renew it, and a process restart does not reset it. Admission samples
 the SQL clock after acquiring its lock, then the remaining monotonic lifetime;
 a pre-wait clock would wrongly subtract the lock wait twice. Across the remote
 team server and app the guarantee is **max_age plus one bounded refresh**, at
-most **60 + 5 seconds with the remote source's defaults**. A local lock is not
-a cross-server lease. Earlier committed work is reconciled, never reported as
-rolled back. Immediate app-local containment is a separate authority operation.
+most **60 + 5 seconds with the remote source's defaults**. The source's freshness
+window begins at the start of the shared refresh that fetched the answer;
+every single-flight waiter gets
+that same deadline. Receipt or a later waiter never renews it. The fence
+preserves the supplied deadline's remaining lifetime rather than starting a
+new window.
+
+A local lock is not a cross-server lease. Earlier committed work is reconciled,
+never reported as rolled back. Immediate app-local containment is a separate
+authority operation.
 Before an uninstall is observed, a stale higher generation can be honoured for
 at most one cache window (60 + 5 s) after the remote uninstall. Once a confirmed
 typed uninstall is recorded, no cached active grant can revive that ID.
