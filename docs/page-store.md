@@ -110,7 +110,8 @@ renderer before any actor or authority change.
 
 `read_projection_on(tx, scope, creator_id=..., projection=...,
 expected_page_rev=None, source_snapshot=None)` loads bounded collection data on
-the caller's content transaction. The app supplies the creator's verified ACL
+the caller's content transaction and requires a pgdbm `TransactionManager`
+before loading any data. The app supplies the creator's verified ACL
 identity from its checked link context; it never constructs a member principal
 for the anonymous holder. The app retains its link lock through loading the
 view. The store also holds a page `FOR SHARE` lock until the transaction ends,

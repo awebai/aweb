@@ -105,6 +105,16 @@ async def test_projection_reads_uncommitted_caller_writes_and_does_not_commit(st
     assert await store.db.fetch_value("SELECT count(*) FROM {{tables.page_audit}}") == 1
 
 
+@pytest.mark.parametrize("kind", ["database", "missing"])
+async def test_projection_requires_a_real_transaction_before_loading(store, kind):
+    await create(store)
+    wrong_tx = store.db if kind == "database" else None
+    with pytest.raises(TypeError, match="TransactionManager"):
+        await store.read_projection_on(
+            wrong_tx, SCOPE, creator_id=OWNER.did_key, projection=selection()
+        )
+
+
 async def test_projection_holds_page_revision_until_the_caller_transaction_ends(store):
     await create(store)
     async with store.db.transaction() as tx:

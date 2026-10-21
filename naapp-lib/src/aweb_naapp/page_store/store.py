@@ -45,6 +45,11 @@ AUTHORIZED_RECORDS = """WITH authorized AS MATERIALIZED (
 ) """
 
 
+def _require_transaction(tx) -> None:
+    if not isinstance(tx, TransactionManager):
+        raise TypeError("a caller-owned TransactionManager is required")
+
+
 async def apply_page_store_migrations(
     db: AsyncDatabaseManager, ledger: AsyncDatabaseManager
 ) -> None:
@@ -395,8 +400,7 @@ class PageStore(LifecycleMixin):
         transaction of its own. A savepoint rolls back all page effects on
         refusal even if the caller catches the error and records a failure.
         """
-        if not isinstance(tx, TransactionManager):
-            raise TypeError("mutate_on requires a TransactionManager")
+        _require_transaction(tx)
         async with tx.transaction() as mutation_tx:
             return await self._mutate_on(
                 mutation_tx,
@@ -903,6 +907,7 @@ class PageStore(LifecycleMixin):
         holder. The host binds scope and any immutable source to the checked
         link. Pinned hosts must require a stored source; None reads live data.
         """
+        _require_transaction(tx)
         entries = self._projection_entries(projection)
         if not isinstance(creator_id, str) or not creator_id:
             raise StoreError("schema_invalid")
