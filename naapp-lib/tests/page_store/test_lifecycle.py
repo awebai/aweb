@@ -255,12 +255,12 @@ async def content_dump(store, tmp_path):
         "PGPASSWORD": config.password,
         "PGDATABASE": database,
     }
+    # Inherit stderr so pytest shows tool failures (including version mismatches).
     await asyncio.to_thread(
         subprocess.run,
         ["pg_dump", "--format=custom", "--no-owner", "--no-acl", "--file", str(backup)],
         env=env,
         check=True,
-        capture_output=True,
     )
     return backup, env, database
 
@@ -281,7 +281,6 @@ async def restore_dump(store, backup, env, database):
         ],
         env=env,
         check=True,
-        capture_output=True,
     )
     await store.db.connect()
 

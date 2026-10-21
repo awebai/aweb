@@ -143,6 +143,20 @@ npm test
 node build.mjs --check
 ```
 
+The store/renderer preservation proof also uses disposable PostgreSQL databases
+and a loopback HTTP host. It loads the packaged renderer, types an unsaved form
+draft, commits an unrelated record through `PageStore.mutate`, and refreshes the
+validated snapshot and per-widget projections. It asserts that the new record is
+visible while the draft, focus, selection and scroll position survive. After
+installing the browser dependencies above, run from the repository root:
+
+```sh
+AWEB_PAGE_STORE_BROWSER=1 uv run --project naapp-lib --extra page-store pytest -q naapp-lib/tests/page_store/test_renderer_browser.py
+```
+
+This test is opt-in because its Node/Chromium dependencies are installed separately
+from the Python test dependencies. It starts its own server on a dynamic port.
+
 Markdown uses [markdown-it](https://github.com/markdown-it/markdown-it) with raw
 HTML disabled followed by a strict allowlist in
 [DOMPurify](https://github.com/cure53/DOMPurify). DOMPurify owns the sole allowed

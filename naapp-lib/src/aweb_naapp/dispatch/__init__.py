@@ -2,7 +2,7 @@
 
 A dispatch is one intent: it is received, may wait for an approval, is
 admitted, and is then dispatched. ``dispatching`` is committed before the
-first byte leaves, after a fence callback has re-read whatever may stop it
+first byte leaves, after a :class:`Fence` has re-read whatever may stop it
 under a lock on the dispatch row. The outcome is ``completed`` (a definite
 response), ``not_sent`` (nothing reached the upstream; it may be dispatched
 again under the same id), or ``outcome_unknown``, which the sweeper writes
@@ -24,6 +24,12 @@ the caller (secrets' S13 wiring) owns that cleanup.
 Every transition runs in the caller's transaction and calls ``on_transition``
 in that same transaction, so a failed enqueue rolls the transition back.
 
+Admitting and dispatching both take a fence, and the fence's locks always come
+before S3's: :meth:`Fence.prepare` runs before S3 locks the dispatch row or the
+pair, and :meth:`Fence.check` runs under those locks and may take none of its
+own. Every caller then acquires locks in one order, so admission and dispatch
+for one pair cannot deadlock.
+
 Imports only the standard library and pgdbm, so it needs no naapp runtime.
 """
 
@@ -36,7 +42,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
@@ -125,7 +131,30 @@ class Transition:
 
 
 OnTransition = Callable[[TransactionManager, Transition], Awaitable[None]]
-Fence = Callable[[TransactionManager, Dispatch], Awaitable[None]]
+
+
+class Fence(Protocol):
+    """Whatever may stop a dispatch, re-read inside the transaction that admits
+    or begins it.
+
+    ``prepare`` must take the transaction's first lock. A caller that also
+    holds other rows (roles, approvals) takes them only after S3 returns, or
+    calls ``prepare`` itself before taking them; S3 then calls it again, so it
+    must be safe to repeat in one transaction, as a repeated SELECT ... FOR
+    UPDATE is.
+    """
+
+    async def prepare(self, tx: TransactionManager) -> None:
+        """Runs before S3 takes any lock; takes every lock the fence needs,
+        held to the end of the transaction."""
+
+    async def check(self, tx: TransactionManager, dispatch: Dispatch) -> None:
+        """Runs under S3's row and pair locks; raises to refuse, and takes no
+        lock of its own."""
+
+
+class FenceTookLock(RuntimeError):
+    """A fence's check took a lock, which it must take in prepare instead."""
 
 
 async def apply_dispatch_migrations(db: AsyncDatabaseManager) -> None:
@@ -200,25 +229,29 @@ class Dispatches:
             raise ValueError(f"{state} does not close a dispatch")
         return await self._move(tx, dispatch_id, state)
 
-    async def admit(self, tx: TransactionManager, dispatch_id: UUID) -> Dispatch:
-        """Admit the intent, unless its subject and action await reconciliation."""
+    async def admit(self, tx: TransactionManager, dispatch_id: UUID, *, fence: Fence) -> Dispatch:
+        """Admit the intent, unless its subject and action await reconciliation
+        or ``fence`` refuses. A fence that raises leaves the dispatch where it was."""
+        await fence.prepare(tx)
         current = await self._lock(tx, dispatch_id)
         _check(current, State.ADMITTED)
         await self._check_pair(tx, current)
+        await _checked(fence, tx, current)
         return await self._write(tx, current, State.ADMITTED)
 
     async def begin_dispatch(
         self, tx: TransactionManager, dispatch_id: UUID, *, fence: Fence
     ) -> Dispatch:
-        """Run ``fence`` under the row lock, then write ``dispatching``.
+        """Prepare ``fence``, check it under the row lock, then write ``dispatching``.
 
         Commit before sending the first byte. A fence that raises leaves the
         dispatch where it was.
         """
+        await fence.prepare(tx)
         current = await self._lock(tx, dispatch_id)
         _check(current, State.DISPATCHING)
         await self._check_pair(tx, current)
-        await fence(tx, current)
+        await _checked(fence, tx, current)
         return await self._write(
             tx,
             current,
@@ -379,6 +412,31 @@ class Dispatches:
                 occurred_at=occurred_at,
             ),
         )
+
+
+async def _checked(fence: Fence, tx: TransactionManager, current: Dispatch) -> None:
+    """Run the fence's check, refusing it if it took a lock."""
+    before = await _held_locks(tx)
+    await fence.check(tx, current)
+    taken = await _held_locks(tx) - before
+    if taken:
+        raise FenceTookLock(f"a fence check took locks it must take in prepare: {sorted(taken)}")
+
+
+async def _held_locks(tx: TransactionManager) -> frozenset[tuple[str, str, str]]:
+    """The locks this transaction holds that can block another writer: table
+    and advisory locks, but not plain reads or its own transaction ids."""
+    rows = await tx.fetch_all(
+        """
+        SELECT locktype, mode,
+               concat_ws(':', relation::regclass::text, classid, objid, objsubid) AS target
+        FROM pg_locks
+        WHERE pid = pg_backend_pid() AND granted
+          AND locktype NOT IN ('virtualxid', 'transactionid')
+          AND mode <> 'AccessShareLock'
+        """
+    )
+    return frozenset((row["locktype"], row["mode"], row["target"]) for row in rows)
 
 
 def _check(current: Dispatch, state: State) -> None:
