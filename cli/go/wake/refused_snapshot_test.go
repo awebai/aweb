@@ -29,7 +29,8 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 		{refusal: "paused"}, {refusal: "shell"}, {refusal: "blocked"},
 		{refusal: "prelaunch-not-launched"}, {refusal: "prelaunch-stopped"},
 		// Registration age is not snapshot age: slow startup must not spend
-		// the delivery budget before the refusal backoff has elapsed.
+		// the delivery budget before the refusal backoff has elapsed. The final
+		// inspection also exceeds the idle handoff budget while still in flight.
 		{refusal: "prelaunch-not-launched-delayed", initialSnapshotDelay: 3 * time.Second, slowFinalInspect: true},
 		// A loaded host can make one refused-delivery cycle take longer than a
 		// fixed wall-clock bound while the broker behaves correctly. Every
@@ -178,7 +179,9 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				}
 				for _, stream := range broker.streams {
 					stream.mu.Lock()
-					armed := stream.snapshotTimer != nil && stream.snapshotBackoff == next
+					// Backoff records scheduling even after the timer fires. A
+					// loaded observer must not miss that transient armed window.
+					armed := stream.snapshotBackoff >= next
 					stream.mu.Unlock()
 					if !armed {
 						return false
@@ -189,35 +192,42 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 			// The cycle runs in the channel-core child: inbox fetches and
 			// terminal inspections whose duration depends on the host. Its
 			// progress is the fetch count and the child's delivery stage.
-			cycleProgress := func() string {
+			cycleProgress := func() (string, bool) {
 				progress := fmt.Sprintf("fetches=%d", fetches.Load())
+				exhausted := false
 				for _, inst := range broker.Status().Instances {
 					if inst.Home == home {
 						cc := inst.ChannelCore
 						progress += fmt.Sprintf(" stage=%s readiness=%s error=%q", cc.TraceStage, cc.ReadinessWaiting, cc.LastError)
+						exhausted = cc.TraceStage == "lane_job_failed"
 					}
 				}
-				return progress
+				return progress, exhausted
 			}
-			// Wait while the cycle makes progress. A cycle that stops moving
-			// without scheduling its snapshot, such as a lost request, fails.
-			waitForBackoff := func(next time.Duration) {
+			// Delivery includes real subprocess inspections with their own
+			// deadlines. A repeated stage name is not evidence that one is stuck.
+			// Keep the existing whole-cycle limit, then give the broker the
+			// existing five seconds to schedule after this cycle has exhausted.
+			waitForBackoff := func(next time.Duration, cycleFetches int32) {
 				t.Helper()
 				const stalled = 5 * time.Second
 				const limit = 2 * time.Minute
 				start := time.Now()
-				last, lastMoved := cycleProgress(), time.Now()
+				var exhaustedAt time.Time
+				var last string
 				for !scheduled(next) {
-					if now := cycleProgress(); now != last {
-						last, lastMoved = now, time.Now()
+					var exhausted bool
+					last, exhausted = cycleProgress()
+					if exhausted && fetches.Load() >= cycleFetches && exhaustedAt.IsZero() {
+						exhaustedAt = time.Now()
 					}
-					if time.Since(lastMoved) > stalled || time.Since(start) > limit {
+					if (!exhaustedAt.IsZero() && time.Since(exhaustedAt) > stalled) || time.Since(start) > limit {
 						t.Fatalf("timed out waiting for exhausted refusal scheduled its snapshot (last progress %s)", last)
 					}
 					time.Sleep(10 * time.Millisecond)
 				}
 			}
-			waitForBackoff(2 * snapshotBackoffMin)
+			waitForBackoff(2*snapshotBackoffMin, 4)
 			if tc.slowRefusalCycle {
 				if err := os.WriteFile(slowInspect, nil, 0600); err != nil {
 					t.Fatal(err)
@@ -238,7 +248,7 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				if gap < 5*time.Second {
 					t.Fatalf("persistent refusal reopened too fast: %s", gap)
 				}
-				waitForBackoff(4 * snapshotBackoffMin)
+				waitForBackoff(4*snapshotBackoffMin, 8)
 				if got := fetches.Load(); got != 8 {
 					t.Fatalf("fetches=%d, want two exhausted four-attempt cycles", got)
 				}
