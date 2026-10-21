@@ -208,8 +208,10 @@ Every agent-API request is verified in this order, and every step fails closed.
 2. **Installation status and scope.** B1's scope enforcement checks the tool's
    declared scope against the installed grant. Grant status comes from the
    generic app-to-team-server API (aweb-acgh.7) and D1's admission fence. The
-   admitted generation is recorded on the intent. B1's resource/action policy
-   hook is where secrets plugs in steps 3–5.
+   admitted generation is recorded on the intent. A request made under a grant
+   from an installation generation that a later one has superseded is refused
+   with `generation_superseded`, here and again at the fence (§11.3). B1's resource/action policy hook is where
+   secrets plugs in steps 3–5.
 3. **Principal.** The principal is keyed `(team_id, member_did_aw)` when the
    certificate carries `member_did_aw`, and never by `did:aw` alone across
    teams. Otherwise it is `(team_id, member_did_key)`, which covers local
@@ -361,10 +363,10 @@ CustodyBackend
   kind                                  "native-kms" | "1password"
   bind(secret_id, config)  -> backend_ref     # native: allocate; 1P: validate vault/item/field reference
   ingest(backend_ref, value) -> version_ref   # native only; console-only caller (§6)
-  open(version_ref, purpose) -> Plaintext     # one dispatch; purpose = {dispatch_id, secret_id, version}
+  open(version_ref) -> Plaintext              # one dispatch, under the version's bound context
   describe(backend_ref) -> {version_ref, updated_at, state}   # never the value
   disable(backend_ref)                        # refuse open() from now on
-  destroy(version_ref)                        # native: crypto-shred; 1P: forget reference only
+  destroy(version_ref)                        # native: delete from the live store; 1P: forget reference only
   health() -> ok | degraded(reason)
 ```
 
@@ -390,14 +392,17 @@ How a value is handled once opened:
   to another secret or version fails to decrypt.
 - **Decryption.** Every dispatch calls KMS `Decrypt` with that context. There is
   no long-lived cache of plaintext data keys. KMS's own audit trail is a second,
-  independent record of every unseal, correlated by `dispatch_id` in the
-  context.
+  independent record of every unseal. Decrypt needs exactly the context given
+  when the data key was generated, so the context cannot carry a per-dispatch
+  `dispatch_id`. A KMS record is correlated with a dispatch through the
+  dispatch's audit row instead: its timestamp and the secret version it names.
 - **Key policy.** Only the secrets service role can decrypt or generate keys. No
   human operator role has decrypt rights in production. Break-glass access is an
   explicit, audited KMS policy change outside the app.
-- **Destroy.** Deleting the wrapped data key and ciphertext row crypto-shreds the
-  version in the live database. Backups that still hold the old rows are covered
-  by §15, item 5.
+- **Destroy.** Destroying a version deletes its wrapped data key and
+  ciphertext from the live database. Copies in backups and the write-ahead log
+  stay decryptable until they expire or the key-encryption key is retired
+  (§15, item 5), so destroy is not an irreversible erasure.
 
 ### 5.3 1Password backend
 
@@ -1130,6 +1135,11 @@ same transaction:
 - runner registration;
 - whether the approval has been revoked.
 
+An installation generation that has changed since admission means the request
+was admitted under a superseded generation, so the fence refuses it with
+`generation_superseded`, as admission does (§4.1). `installation_disabled` is
+for an installation that is inactive or uninstalled.
+
 A revocation that commits before this point stops the dispatch (§12). After this
 point it cannot recall bytes already sent, and the record says so.
 
@@ -1146,6 +1156,12 @@ point it cannot recall bytes already sent, and the record says so.
   `reconciliation_pending`. The exception is operations declared
   `side_effect: none`. This is how "reconcile before retry" is enforced. secrets
   cannot tell a retry from a new request, so it blocks the pair.
+- **In flight.** While a principal has a dispatch of the same pair in
+  `dispatching`, a new request for that pair is refused at admission and at the
+  fence with `dispatch_in_flight`, under the same `side_effect: none`
+  exception. Unlike `reconciliation_pending`, it clears by itself when that
+  dispatch reaches `completed` or `not_sent`. If it becomes `outcome_unknown`
+  instead, the retry block above applies.
 - A new dispatch after reconciliation is a new intent. Under `approve_only` it
   needs a **fresh approval**, per the joint recommendation.
 
@@ -1293,7 +1309,7 @@ availability, only for a failed local commit (§11.5).
 | **Revoke an approver passkey or contact** | That approver's pending decisions are voided. If no approver can decide anymore, `approve_only` uses refuse. Through team-auth, revoking the last owner's passkey or contact is refused (`last_owner_protected`, §10.2). |
 
 Installation uninstall (D1 §5) fences all normal calls. Deletion of secrets data
-follows D1's lifecycle jobs, with every native version crypto-shredded.
+follows D1's lifecycle jobs, with every native version destroyed as §5.2 describes.
 
 ## 13. Manifest v2 tool surface
 

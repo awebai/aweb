@@ -11,14 +11,20 @@ from aweb_naapp.runtime.passkeys.service import (
     LockoutPolicy,
     Notice,
     NoticeKind,
-    OwnerActEvidence,
-    OwnerActKind,
+    OwnerApproval,
     PasskeyAuthenticator,
     PasskeyDelivery,
     PasskeyEvidence,
     PasskeyLogin,
     Passkeys,
     contact_sha256,
+)
+from aweb_naapp.runtime.passkeys.webauthn import (
+    RegisteredPasskey,
+    VerifiedAssertion,
+    WebAuthnRefused,
+    verify_assertion,
+    verify_registration,
 )
 
 __all__ = [
@@ -31,13 +37,17 @@ __all__ = [
     "LockoutPolicy",
     "Notice",
     "NoticeKind",
-    "OwnerActEvidence",
-    "OwnerActKind",
+    "OwnerApproval",
     "PasskeyAuthenticator",
     "PasskeyDelivery",
     "PasskeyEvidence",
     "PasskeyLogin",
     "Passkeys",
+    "RegisteredPasskey",
     "RelyingParty",
+    "VerifiedAssertion",
+    "WebAuthnRefused",
     "contact_sha256",
+    "verify_assertion",
+    "verify_registration",
 ]

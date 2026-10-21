@@ -16,10 +16,12 @@ TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 	cli-e2e _candidate-gate-docker-boundaries _candidate-channel-version _candidate-node-deps \
 	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
 	_candidate-artifact-server _candidate-artifact-awid-package _candidate-artifact-awid-image \
+	_candidate-artifact-naapp-package check-naapp-lib-package \
 	_candidate-artifact-channel _candidate-artifact-pi _candidate-artifact-skills _candidate-artifact-a2a-image
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
+NAAPP_LIB_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' naapp-lib/pyproject.toml 2>/dev/null | head -n 1)
 CHANNEL_VERSION := $(shell node -p "require('./channel/package.json').version" 2>/dev/null)
 CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plugin.json').version" 2>/dev/null)
 # aw CLI releases have independent semver. Derive the next patch from the
@@ -115,8 +117,9 @@ test-shipping:
 	python3 scripts/test_shipping.py
 	python3 scripts/test_candidate_cleanup.py
 
-# Editable AWID metadata is repeated in both committed Python locks. Check both
-# without repair, then prove a missing dependent-lock dependency is rejected.
+# AWID metadata is repeated in every committed Python lock that takes the in-repo
+# awid (awid, server, naapp-lib and naapp/folio). Check all four without repair,
+# then prove stale and missing dependent-lock entries are rejected.
 test-python-locks:
 	bash scripts/check-python-locks.sh
 	bash scripts/check-python-locks.sh --self-test
@@ -595,6 +598,17 @@ _candidate-artifact-awid-package:
 	test -f awid/dist/awid_service-$(AWID_VERSION).tar.gz
 	test -f awid/dist/awid_service-$(AWID_VERSION)-py3-none-any.whl
 
+_candidate-artifact-naapp-package: check-naapp-lib-package
+	rm -rf naapp-lib/dist
+	cd naapp-lib && uv build
+	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION).tar.gz
+	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION)-py3-none-any.whl
+
+# aweb-naapp's release artifacts as a consumer sees them: the wheel ships its
+# package files, pins awid-service, and installs and imports in a fresh environment.
+check-naapp-lib-package:
+	python3 scripts/check-naapp-lib-package.py
+
 _candidate-artifact-awid-image:
 	@mkdir -p /tmp/aweb-candidate-gate
 	docker buildx build --platform linux/amd64,linux/arm64 \
@@ -656,3 +670,9 @@ test-isolated:
 .PHONY: test-egress-controls
 test-egress-controls:
 	python3 -m unittest discover -s scripts/test-egress -p test_native.py -v
+
+# The shared page renderer is packaged in the Python wheel. Rebuild from its
+# exact npm lock and compare without rewriting committed bytes.
+.PHONY: check-page-renderer-bundle
+check-page-renderer-bundle:
+	cd naapp-lib/renderer && npm ci --ignore-scripts && node build.mjs --check
