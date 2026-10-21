@@ -280,7 +280,7 @@ audit event carries its digest. It holds the following fields:
 | Field | Meaning |
 | --- | --- |
 | `approval` | `none` or `per_use`. The secret's `approve_only` flag forces `per_use`, whatever the grant says. |
-| `approvers` | approver IDs or an approver group; quorum 1 at launch (§10). |
+| `approvers` | entries are a plain `approver_ref` (slug grammar) or the explicitly tagged `owner:<principal_did>`; validation refuses every other form. Quorum 1 at launch (§10). |
 | `approval_ttl_s` | the approval's `expires_at` in B2: the request must be decided and consumed before it. Recommended 900 s. |
 | `rate` | token buckets per (principal, secret) and per secret, e.g. 30/hour. Counters update atomically in the admission transaction. |
 | `windows` | allowed weekday and hour ranges in an owner-set IANA time zone. |
@@ -293,6 +293,12 @@ audit event carries its digest. It holds the following fields:
 Policy is evaluated at admission and again at the dispatch fence (§11.3). Rate
 and window denials are security outcomes. They are recorded and never metered as
 economic limits.
+
+Use-approval candidates are the intersection of approver records covering the
+secret and entries listed in `policy.approvers`. An owner is eligible only when
+explicitly listed; a listed owner covers every secret under that policy because
+owners have no `covers` field. An empty intersection refuses the request with
+`no_eligible_approver` before creating a pending approval (decision 63).
 
 ### 4.5 L2 exposure grants nothing
 
@@ -370,6 +376,9 @@ CustodyBackend
   health() -> ok | degraded(reason)
 ```
 
+The backend wire values are exactly `native` and `onepassword`, matching the
+frozen use-approval vectors.
+
 How a value is handled once opened:
 
 - **Lifetime.** A `Plaintext` value lives in process memory for one dispatch
@@ -430,7 +439,7 @@ How a value is handled once opened:
 | Backend | What secrets holds at rest | When plaintext exists in secrets | Who else can read |
 | --- | --- | --- | --- |
 | native | ciphertext and wrapped data key; metadata | during one `open()` for one dispatch: the brokered call, OAuth token exchange, SigV4 signing, or HPKE sealing to a runner | KMS custodian with decrypt rights; a production operator able to run code as the service (trust boundary T4) |
-| 1password | vault, item and field reference; the sealed service-account token | the same window, after an SDK read | the 1Password account's members and admins; the vault provider; holders of the service-account token |
+| onepassword | vault, item and field reference; the sealed service-account token | the same window, after an SDK read | the 1Password account's members and admins; the vault provider; holders of the service-account token |
 | derived (OAuth access token, STS session) | sealed in the native store with its TTL, or in memory until expiry | per dispatch | as native |
 
 ### 5.5 Delegated vault mediation (option)
@@ -913,13 +922,18 @@ secrets supplies these:
 | B2 record field | secrets' value |
 | --- | --- |
 | immutable request ref | the stored frozen `aweb.secrets.use-approval/1` bytes (§10.4), or `aweb.secrets.change/1` for a widening change (§6.3) |
-| `policy_ref`/version | the policy digest (§4.4) |
+| `policy_ref`/version | for a use, `secrets.use\|<installation_id>\|<team_id>\|<grant_id>\|<policy_digest>`, version 1 (§4.4; decision 63) |
 | `requested_by` | the verified principal (§4.1) |
 | `approver_subject`/type | the approver ID; the approver type is passkey, which every secrets action policy declares as its minimum assurance |
 | presentation kind/ref | the secrets console approval page; `task_answer_ref` is unused unless Q13 adds a task presentation |
 | `expires_at` | `approval_ttl_s` from the policy |
 | `consumed_operation_id` | the `dispatch_id` (§11) |
 | audit-event interface | the producer outbox (§11.5), so that every designation, enrolment, recovery and decision is a hook event |
+
+For a use approval, `PolicySource.current(ref)` returns the policy only while
+that grant is active and still references that digest. Otherwise it returns
+`None`, and B2 voids the approval. The dispatch fence still re-reads the grant
+and policy digest under a row lock (§11.3).
 
 The secrets SOT §13 described the approval link as the authority. Under §14 and
 the joint recommendation, **the link is only a locator**. The authority is a B3
@@ -1005,15 +1019,20 @@ sequenceDiagram
   C->>C: render frozen request from frozen bytes
   H->>C: approve: B3 passkey assertion bound to request_sha256
   C->>S: B3 verifies; B2 records the decision; outbox(approval.decided)
-  Ag->>S: status(approval_ref) or re-submit same request_id
+  Ag->>S: status(approval_ref)
+  S-->>Ag: {state: approved, next: re-submit request_id}
+  Ag->>S: re-submit same request_id
   S->>S: B2 admission CAS + intent row + outbox, in one transaction
   S->>U: dispatch (§11)
   S-->>Ag: result (§7.6)
 ```
 
-The agent finds out the decision by polling `secrets.status`, or by re-submitting
-the same `request_id`, which is idempotent. A consumed approval cannot be reused.
-A denial or expiry is final for that `request_id`.
+`secrets.status` only reports the decision; it never admits or dispatches. An
+approved status is `{state: "approved", next: "re-submit request_id"}`. Only
+re-submitting `secrets.request` or `secrets.run` with the same `request_id` can
+admit the frozen request and dispatch it. Re-submission is idempotent. A consumed
+approval cannot authorize another dispatch. A denial or expiry is final for that
+`request_id`.
 
 ### 10.4 The frozen canonical request
 
@@ -1058,7 +1077,9 @@ issued_at, expires_at
   - the requester's alias and DID;
   - the policy, and the times.
 - **The requester's reason.** It is shown in a box labelled as unverified text
-  from the requesting agent. It is escaped and cannot be styled.
+  from the requesting agent. It is escaped and cannot be styled. Its maximum
+  is 1024 Unicode code points; a longer reason is refused with `params_invalid`,
+  never truncated.
 - **Open requests.** They are approvable only when the body is UTF-8 JSON or text
   of 64 KiB or less, rendered in full. Anything else is refused with
   `approval_unrenderable`, because consent to unseen bytes is not informed.
@@ -1244,6 +1265,11 @@ the `secret_*`, `request_sha256`/`params_sha256`, `approval_*`, `dispatch_*` and
   the raw response fills `upstream_response_hmac`.
 - **`refusal_code`.** It takes values from the §A2 enum. secrets proposed every
   code there, and each one is a refusal this design defines.
+  `no_eligible_approver` means no covering, policy-listed approver exists at
+  request time (§4.4). `approval_consumed` means the approval was already
+  consumed under another dispatch; an idempotent replay of the same dispatch
+  returns its existing state. Both codes are in the v1 catalog and secrets
+  hook-actions table before any producer emits them.
 - **`disposition`.** It takes `returned`, `withheld` or `stored_as_secret`
   (§A2 at hooks head 31206a4d). There is no value for a returned credential,
   because `return` does not exist (Q8).
@@ -1325,7 +1351,7 @@ The manifest is v2 (D1 C3). Every tool is signed with team-auth. Nothing is
 | `secrets.describe` | agent, surface | `secrets:read` | as above | one ref's operations (with parameter schemas) and jobs available to the caller |
 | `secrets.request` | agent, surface | `secrets:use` | a grant | a brokered named operation or open request (§7). Returns the result, or `awaiting_approval` with an `approval_ref` |
 | `secrets.run` | agent, surface | `secrets:run` | a grant | a runner job (§9) |
-| `secrets.status` | agent, surface | `secrets:read` | the requester; owners | state of a `request_id`, `approval_ref` or `reconcile_ref`; never a link |
+| `secrets.status` | agent, surface | `secrets:read` | the requester; owners | state of a `request_id`, `approval_ref` or `reconcile_ref`; never a link, admission or dispatch. Approved: re-submit the same `request_id` (§10.3) |
 | `secrets.cancel` | agent, surface | `secrets:use` | the requester | cancel the caller's own request while it is still before `admitted` |
 | `secrets.contain` | agent, surface | `secrets:admin` | owner (approver for its own approvals) | revoke a grant, revoke approvals, disable a secret or the installation, deregister a runner (§12) |
 | `secrets.propose-change` | surface | `secrets:admin` | owner | draft a widening change: secret metadata, destination, operation, job, grant, role or approver. It is inert until passkey confirmation on the console (§6.3) |
@@ -1352,7 +1378,9 @@ Authority always comes from secrets' role, grant and passkey checks. That is why
   It also renders `aw secrets run deploy-staging --runner home-1 --param env=staging`,
   `aw secrets status <request_id>` and `aw secrets contain revoke-grant <grant_id>`.
   The CLI generates `request_id` once per invocation and reuses it on transport
-  retries. Exit codes distinguish `awaiting_approval`, `refused`,
+  retries. After polling approval status, it re-submits the original request
+  with that same `request_id` to dispatch. Exit codes distinguish
+  `awaiting_approval`, `refused`,
   `outcome_unknown` and `result_withheld`. `--param` binding follows the manifest
   `params` mapping. Open requests need no manifest change. `method` (a string
   enum), `url`, `headers` (an array) and `data` (a string or an object) are
@@ -1363,8 +1391,9 @@ Authority always comes from secrets' role, grant and passkey checks. That is why
 - **MCP users (L2).** The same tools appear as `secrets_list`,
   `secrets_request`, and so on, with the same parameter schemas. A pending
   approval returns `approval_ref` and a message that a designated human has been
-  notified. The model polls `secrets_status`. It cannot see or act on the
-  approval. Responses are already projected and redacted for the model
+  notified. The model polls `secrets_status`, then re-submits `secrets_request`
+  (or `secrets_run`) with the same `request_id` after approval. It cannot see or
+  act on the approval. Responses are already projected and redacted for the model
   provider's context.
 - **Dashboard surface.** This is an `aweb.page/1` surface with read-only views
   (`list`, `activity`), containment buttons, `propose-change` forms, and a
@@ -1536,7 +1565,7 @@ boundary):
 | Headers | `Accept` | agent `Authorization`, `Cookie`, `X-Amz-Security-Token`, a credential-shaped value |
 | Schemes | each of the six injects or signs correctly upstream | wrong host gets no injection; SigV4 with an agent-chosen region or service |
 | Results | projected body | credential-shaped body withheld; undeclared token issuance flagged; STS `store_as_secret` yields a derived ref and no value |
-| Approval | passkey approve, then one dispatch | requester sees no link; reuse after consume; changed parameters after approval; expired; revoked; `distinct_approver: required` with the same principal; native value replaced before consume; 1Password item changed between approval and dispatch (refused, approval voided) |
+| Approval | eligible listed approver, passkey approve, status reports approval, then re-submit for one dispatch | no covering listed approver refuses immediately with `no_eligible_approver`; status never dispatches; requester sees no link; reuse after consume; changed parameters after approval; expired; revoked; `distinct_approver: required` with the same principal; native value replaced before consume; 1Password item changed between approval and dispatch (refused, approval voided) |
 | State machine | `not_sent` retry under the same intent | crash after send leads to `outcome_unknown`, which blocks a retry of the same operation until reconciled; reconciled-then-new needs a fresh approval |
 | Idempotency | same `request_id`, same bytes returns the same receipt | same `request_id`, different bytes is `409`; a replayed envelope inside the skew window does not dispatch again |
 | Outbox | event enqueued with every transition | outbox insert failure refuses dispatch; no hook target refuses; a registration inside its `active_from` pad refuses; no current registration refuses, while a stalled secondary target alone does not; all deliveries cancelled is surfaced as a fault; a governance act that cannot enqueue does not commit |
