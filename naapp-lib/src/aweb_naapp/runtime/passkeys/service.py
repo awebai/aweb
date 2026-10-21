@@ -110,9 +110,9 @@ class DesignationRefused(Exception):
 
 
 class ContactChangeRefused(Exception):
-    """A contact change, or its cancellation, is not allowed now. `reason` is
-    `last_owner_protected`, `contact_change_pending` or
-    `no_pending_contact_change`."""
+    """A contact change, its cancellation or its proof is not allowed now.
+    `reason` is `last_owner_protected`, `contact_change_pending`,
+    `no_pending_contact_change` or `contact_proof_unavailable`."""
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
@@ -190,6 +190,11 @@ class PasskeyDelivery(Protocol):
 
     async def deliver_notice(self, contact: str, notice: Notice) -> DeliveryStatus: ...
 
+    async def deliver_contact_proof(self, contact: str, proof_token: str) -> DeliveryStatus:
+        """Send the single-use proof a new contact's holder uses to confirm it,
+        to that contact only."""
+        ...
+
 
 @dataclass(frozen=True)
 class Designation:
@@ -205,12 +210,15 @@ class Designation:
 
 @dataclass(frozen=True)
 class ContactChange:
-    """A scheduled contact change and the notices still to send: the caller
-    sends them with :meth:`Passkeys.send_notices` after the commit."""
+    """A scheduled contact change and what is still to send: the notices to
+    both contacts and the proof to the new one. The caller sends them with
+    :meth:`Passkeys.send_notices` after the commit."""
 
     scope: str
     effective_at: datetime
     notices: tuple[tuple[str, Notice], ...]
+    new_contact: str = ""
+    proof_token: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True)
@@ -282,9 +290,12 @@ def _contact_change_challenge(subject: str, new_contact_sha256: str, nonce: byte
 
 
 _CURRENT = "superseded_at IS NULL AND effective_at <= $2"
+# A pending contact takes effect once its delay has passed AND its holder has
+# proven it; an unproven one lapses and the contact stays. So an approver's
+# effective contact is always proven: by enrolment through it, or by a proof.
 _EFFECTIVE_CONTACT = (
     "CASE WHEN pending_contact_at IS NOT NULL AND pending_contact_at <= $2 "
-    "THEN pending_contact ELSE contact END"
+    "AND pending_contact_proven_at IS NOT NULL THEN pending_contact ELSE contact END"
 )
 
 
@@ -1201,7 +1212,8 @@ class Passkeys:
 
     async def _last_owner(self, tx: TransactionManager, scope: str) -> bool:
         """Whether `scope` holds the only owner with an approver in effect and
-        an enrolled passkey."""
+        an enrolled passkey. Such an owner's contact is proven: an effective
+        contact always is, by its enrolment or by its holder's proof."""
         rows = await tx.fetch_all(
             "SELECT DISTINCT a.scope FROM {{tables.passkey_approvers}} a "
             "WHERE a.scope <> $1 AND a.superseded_at IS NULL AND a.effective_at <= $2 "
@@ -1223,7 +1235,9 @@ class Passkeys:
         details: dict[str, str],
     ) -> ContactChange:
         """Record `scope`'s approver's pending contact, refusing while another
-        change is pending, and return the notices to both contacts."""
+        change is pending, and issue the single-use proof its holder must use
+        before it can take effect. Return the notices to both contacts and the
+        proof for the new one."""
         now = self._clock()
         row = await tx.fetch_one(
             f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact, pending_contact_at "
@@ -1238,10 +1252,24 @@ class Passkeys:
         effective_at = now + self._lockout.contact_change_delay
         await tx.execute(
             "UPDATE {{tables.passkey_approvers}} SET contact = $2, pending_contact = $3, "
-            "pending_contact_at = $4 WHERE subject = $1 AND superseded_at IS NULL",
+            "pending_contact_at = $4, pending_contact_proven_at = NULL "
+            "WHERE subject = $1 AND superseded_at IS NULL",
             row["subject"],
             row["contact"],
             new_contact,
+            effective_at,
+        )
+        await self._revoke_contact_proofs(tx, row["subject"], now)
+        proof_token, verifier = new_link_token()
+        await tx.execute(
+            "INSERT INTO {{tables.passkey_contact_proofs}} "
+            "(proof_id, subject, contact_sha256, verifier_sha256, created_at, expires_at) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
+            str(uuid.uuid4()),
+            row["subject"],
+            contact_sha256(new_contact),
+            verifier,
+            now,
             effective_at,
         )
         await self._audit.emit(
@@ -1259,12 +1287,76 @@ class Passkeys:
             scope=scope,
             effective_at=effective_at,
             notices=tuple((c, notice) for c in sorted({row["contact"], new_contact})),
+            new_contact=new_contact,
+            proof_token=proof_token,
         )
 
     async def send_notices(self, change: ContactChange) -> None:
-        """Send a committed contact change's notices to the old and new contact."""
+        """Send a committed contact change's notices to the old and new contact,
+        and its proof to the new contact only."""
         for contact, notice in change.notices:
             await self._send(self._delivery.deliver_notice(contact, notice))
+        if change.proof_token:
+            await self._send(
+                self._delivery.deliver_contact_proof(change.new_contact, change.proof_token)
+            )
+
+    async def _revoke_contact_proofs(
+        self, tx: TransactionManager, subject: str, now: datetime
+    ) -> None:
+        await tx.execute(
+            "UPDATE {{tables.passkey_contact_proofs}} SET revoked_at = $2 "
+            "WHERE subject = $1 AND revoked_at IS NULL AND used_at IS NULL",
+            subject,
+            now,
+        )
+
+    async def prove_contact(self, proof_token: str) -> datetime:
+        """The new contact's holder confirms it with the proof sent there. The
+        pending contact then takes effect at its time; unproven, it lapses.
+        Returns when it takes effect."""
+        now = self._clock()
+        async with self.db.transaction() as tx:
+            proof = await tx.fetch_one(
+                "SELECT p.proof_id, p.subject, p.contact_sha256, a.scope, a.pending_contact, "
+                "a.pending_contact_at FROM {{tables.passkey_contact_proofs}} p "
+                "JOIN {{tables.passkey_approvers}} a ON a.subject = p.subject "
+                "WHERE p.verifier_sha256 = $1 AND p.used_at IS NULL AND p.revoked_at IS NULL "
+                "AND p.expires_at > $2 AND a.superseded_at IS NULL "
+                "AND a.pending_contact_at > $2 FOR UPDATE OF p, a",
+                link_verifier(proof_token),
+                now,
+            )
+            if (
+                proof is None
+                or contact_sha256(proof["pending_contact"]) != (proof["contact_sha256"])
+            ):
+                raise ContactChangeRefused("contact_proof_unavailable")
+            await tx.execute(
+                "UPDATE {{tables.passkey_contact_proofs}} SET used_at = $2 WHERE proof_id = $1",
+                proof["proof_id"],
+                now,
+            )
+            await tx.execute(
+                "UPDATE {{tables.passkey_approvers}} SET pending_contact_proven_at = $2 "
+                "WHERE subject = $1 AND superseded_at IS NULL",
+                proof["subject"],
+                now,
+            )
+            await self._audit.emit(
+                AuditEvent(
+                    kind=AuditKind.APPROVER_CONTACT_PROVEN,
+                    actor=proof["subject"],
+                    subject=proof["subject"],
+                    occurred_at=now,
+                    details={
+                        "scope": proof["scope"],
+                        "effective_at": proof["pending_contact_at"].isoformat(),
+                    },
+                ),
+                tx,
+            )
+        return proof["pending_contact_at"]
 
     async def _pending_contact(self, scope: str) -> dict[str, Any]:
         now = self._clock()
@@ -1317,7 +1409,8 @@ class Passkeys:
         async with self.db.transaction() as tx:
             cancelled = await tx.fetch_value(
                 "UPDATE {{tables.passkey_approvers}} SET pending_contact = NULL, "
-                "pending_contact_at = NULL WHERE subject = $1 AND superseded_at IS NULL "
+                "pending_contact_at = NULL, pending_contact_proven_at = NULL "
+                "WHERE subject = $1 AND superseded_at IS NULL "
                 "AND pending_contact = $2 AND pending_contact_at > $3 RETURNING subject",
                 pending["subject"],
                 pending["pending_contact"],
@@ -1325,6 +1418,7 @@ class Passkeys:
             )
             if cancelled is None:
                 raise ContactChangeRefused("no_pending_contact_change")
+            await self._revoke_contact_proofs(tx, pending["subject"], now)
             await self._audit.emit(
                 AuditEvent(
                     kind=AuditKind.APPROVER_CONTACT_CHANGE_CANCELLED,
