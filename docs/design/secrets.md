@@ -1217,6 +1217,58 @@ required. A pre-existing job with no internal mint recipe can therefore be
 pinned by an ordinary issuer's template without a digest cycle. This path
 never accepts a run-bound child or borrows an ancestor grant.
 
+**Run request selector.** `POST /v1/jobs/{job}/runs` accepts one additional
+optional JSON body field, `secret`, naming the actual ordinary derived child's
+ref. The logical tool arguments are `job`, `runner`, `request_id`, and optional
+`params`, `reason`, `secret`; `job` remains a path parameter. `secret` is a
+string matching secret/1's ref grammar, `[a-z0-9][a-z0-9_-]{0,63}`. A null,
+empty, non-string or malformed selector refuses with `params_invalid`.
+
+- **Absent:** prepare every slot from its fixed job selector, including internal
+  short-lived mints. Do not discover or substitute a previously issued child.
+- **Present:** resolve only within the authenticated installation and team.
+  Require an ordinary derived child with recorded parent lineage and no run
+  binding, then apply the exactly-one `durable` slot rule above. An unknown or
+  foreign ref, a non-derived or run-bound secret, or zero/multiple matching
+  durable slots refuses with `job_not_allowed` before approval, mint or release.
+  A selector cannot target a `short_lived` mint slot; other slots remain fixed.
+- The selected child needs its own matching run grant for this requester and
+  exact CURRENT job digest. No grant refuses with `grant_missing`; revocation
+  refuses with `grant_revoked`; a grant that does not cover the job digest
+  refuses with `job_not_allowed`. Existing policy, expiry and containment
+  refusals still apply. An ancestor's grant cannot repair a missing child grant.
+- The caller supplies only the child ref. `slot`, `ordinal`, credential arrays
+  and per-slot overrides are not accepted request fields. The server alone
+  resolves and freezes the unique ordinal, child ID/version and child grant in
+  the authoritative run plan, then rechecks them at release. No job parameter
+  is interpreted as a secret selector.
+
+The original `secret` field, including whether it was absent, is part of the
+authenticated body and request-id comparison (§11.2). Changing or removing it
+under an existing `request_id` refuses with `idempotency_conflict`; replay never
+retargets a stored plan. For the substituted slot's §10.4 approval, the existing
+top-level `secret` object describes the **actual child**, and `grant_id` and
+`policy_digest` are that child's; `run_job.credential_delivery` is `durable`.
+The approved CURRENT job digest and frozen plan bind its unique ordinal. The
+approval view shows the fixed slot label, actual child ref and lineage. This
+adds no field to use-approval/1 or to the signed runner assignment.
+
+**Manifest and conformance update.** Before enabling this selector, add the
+optional `secret` body parameter and string schema to the run tool in
+`naapp/secrets/src/aweb_secrets/manifest.py`, and regenerate its committed
+`aweb-app.json`; required arguments remain `job`, `runner`, `request_id`.
+The manifest's canonical-file test and CLI/gateway rendering must cover both
+absence and `--secret <child-ref>`. Run-preparation cases cover the refusal
+matrix above, exact-child plus ancestor ambiguity, a unique ancestor match,
+fixed other slots, and changed/removed selectors on replay. Extend
+`naapp/secrets/vectors/use-approval-v1.json` through B2 with a durable ordinary
+child case and a changed-child binding failure, preserving existing cases and
+the field set; freeze its slot plan alongside the run-preparation cases.
+`docs/vectors/secrets-runner-protocol-v1.json` keeps its existing wire shape.
+These are implementation obligations for the shared run preparation and S15a
+path: ordinary-child substitution and job enablement stay guarded until this
+delta is accepted and those paths, manifest and cases are implemented/reviewed.
+
 `delivery: durable` sends the durable value. It needs a passkey-confirmed
 per-job flag, and the console and events label it as reduced protection.
 
@@ -1697,7 +1749,7 @@ The manifest is v2 (D1 C3). Every tool is signed with team-auth. Nothing is
 | `secrets.list` | agent, surface | `secrets:read` | any member with a grant; owners see all | refs, kinds, sensitivity, destination summary, approval requirement; **never values** |
 | `secrets.describe` | agent, surface | `secrets:read` | as above | one ref's operations (with parameter schemas) and jobs available to the caller |
 | `secrets.request` | agent, surface | `secrets:use` | a grant | a brokered named operation or open request (§7). Returns the result, or `awaiting_approval` with an `approval_ref` |
-| `secrets.run` | agent, surface | `secrets:run` | a grant | a runner job (§9) |
+| `secrets.run` | agent, surface | `secrets:run` | a grant | a runner job (§9); optional `secret` selects an ordinary child for the unique durable slot (§9.5) |
 | `secrets.status` | agent, surface | `secrets:read` | the requester; owners | state of a `request_id`, `approval_ref` or `reconcile_ref`; never a link, admission or dispatch. Approved: re-submit the same `request_id` (§10.3) |
 | `secrets.cancel` | agent, surface | `secrets:use` | the requester | cancel the caller's own request while it is still before `admitted` |
 | `secrets.contain` | agent, surface | `secrets:admin` | owner (approver for its own approvals) | revoke a grant, revoke approvals, disable a secret or the installation, deregister a runner (§12) |
