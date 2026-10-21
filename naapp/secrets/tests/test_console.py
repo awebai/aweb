@@ -3,6 +3,7 @@
 Authored during Juan's execution pause; run after explicit resume.
 """
 
+import asyncio
 import base64
 import hashlib
 import os
@@ -29,7 +30,12 @@ API = "https://api.secrets.example.com"
 
 
 @asynccontextmanager
-async def clients(world: World) -> AsyncIterator[tuple[httpx.AsyncClient, httpx.AsyncClient]]:
+async def clients(
+    world: World,
+    *,
+    lookup_ready: asyncio.Event | None = None,
+    continue_lookup: asyncio.Event | None = None,
+) -> AsyncIterator[tuple[httpx.AsyncClient, httpx.AsyncClient]]:
     await apply_console_migrations(world.db)
 
     async def installation(installation_id: str):
@@ -41,6 +47,12 @@ async def clients(world: World) -> AsyncIterator[tuple[httpx.AsyncClient, httpx.
         )
         if row is None:
             raise LookupError(installation_id)
+        async with world.db.transaction() as tx:
+            await world.fence.check(tx, world.admitted)
+        if lookup_ready is not None:
+            lookup_ready.set()
+            assert continue_lookup is not None
+            await continue_lookup.wait()
         return world.admitted
 
     services = OwnerConsole(
@@ -229,3 +241,99 @@ async def test_a_non_controller_signature_cannot_bootstrap_an_owner(world: World
         )
         assert response.status_code == 403
         assert not world.inbox.enrolments
+
+
+@pytest.mark.parametrize("kind", ["token", "credential"])
+async def test_custom_ceremony_errors_do_not_reflect_malformed_fields(world: World, kind: str):
+    canary = os.urandom(24).hex()
+    body = (
+        {"link_token": {"unexpected": canary}}
+        if kind == "token"
+        else {"link_token": canary, "credential": [canary]}
+    )
+    path = "/enrolment/options" if kind == "token" else "/enrolment"
+    async with clients(world) as (human, _):
+        response = await human.post(path, json=body)
+        assert response.status_code == 400
+        assert canary not in response.text
+
+
+@pytest.mark.parametrize(
+    ("failure", "status", "code"),
+    [
+        ("stale", 503, "authority_unavailable"),
+        ("superseded", 409, "generation_superseded"),
+    ],
+)
+@pytest.mark.parametrize("stage", ["lookup", "transaction"])
+async def test_owner_acts_preserve_typed_fence_refusals(world: World, failure, status, code, stage):
+    contact = "alice@acme.com"
+    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+    subject = {
+        "app_id": world.admitted.app_id,
+        "installation_id": INSTALLATION_ID,
+        "role": scope,
+        "contact_sha256": hashlib.sha256(contact.encode()).hexdigest(),
+    }
+    signing, signature = world.owner.sign("app-role.designate", subject)
+    body = {
+        "signing": base64.b64encode(signing).decode(),
+        "signature": signature,
+        "team_id": TEAM,
+        "principal": ALICE.principal_did,
+        "contact": contact,
+    }
+    path = f"/installations/{INSTALLATION_ID}/owner-acts"
+    lookup_ready = asyncio.Event()
+    continue_lookup = asyncio.Event()
+
+    async def invalidate():
+        if failure == "stale":
+            await world.db.execute(
+                "UPDATE {{tables.installation_fences}}"
+                " SET fresh_until = clock_timestamp() - interval '1 second'"
+                " WHERE installation_id = $1",
+                INSTALLATION_ID,
+            )
+        else:
+            await world.db.execute(
+                "UPDATE {{tables.installation_fences}}"
+                " SET generation = generation + 1 WHERE installation_id = $1",
+                INSTALLATION_ID,
+            )
+
+    gates = (
+        {"lookup_ready": lookup_ready, "continue_lookup": continue_lookup}
+        if stage == "transaction"
+        else {}
+    )
+    task = None
+    async with clients(world, **gates) as (human, _):
+        try:
+            if stage == "lookup":
+                await invalidate()
+                response = await human.post(path, json=body)
+            else:
+                task = asyncio.create_task(human.post(path, json=body))
+                await asyncio.wait_for(lookup_ready.wait(), 5)
+                await invalidate()
+                continue_lookup.set()
+                response = await asyncio.wait_for(task, 5)
+            assert response.status_code == status
+            assert response.json()["detail"] == code
+            for table in (
+                "role_assignments",
+                "owner_principals",
+                "passkey_approvers",
+                "owner_act_nonces",
+            ):
+                assert (
+                    await world.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}") == 0
+                )
+            assert not world.inbox.enrolments
+            assert not world.inbox.notices
+        finally:
+            continue_lookup.set()
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)

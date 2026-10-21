@@ -122,7 +122,9 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
             raise HTTPException(status_code=403, detail="owner_required")
         try:
             admitted = await services.installation(installation_id)
-        except (LookupError, InstallationRefused):
+        except InstallationRefused as refused:
+            raise HTTPException(status_code=refused.status, detail=refused.code) from None
+        except LookupError:
             raise HTTPException(status_code=403, detail="owner_required") from None
         if admitted.installation_id != installation_id or body["team_id"] != admitted.team_id:
             raise HTTPException(status_code=403, detail="owner_required")
@@ -161,7 +163,9 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
                         directory=services.directory,
                         excluding=principal,
                     )
-        except (ValueError, Refused, DesignationRefused, InstallationRefused, ChangeRefused):
+        except InstallationRefused as refused:
+            raise HTTPException(status_code=refused.status, detail=refused.code) from None
+        except (ValueError, Refused, DesignationRefused, ChangeRefused):
             raise HTTPException(status_code=403, detail="owner_required") from None
         await services.passkeys.deliver(designation)
         return {"scope": scope, "effective_at": designation.effective_at.isoformat()}
