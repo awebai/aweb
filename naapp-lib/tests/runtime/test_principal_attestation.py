@@ -13,6 +13,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from aweb_naapp_testing import REGISTRY_URL
 from awid.attestation_records import sign_record
 from awid.signing import canonical_json_bytes
 
@@ -23,7 +24,6 @@ from aweb_naapp.runtime.attestation import (
     read_member_person,
     verify_principal_attestation,
 )
-from tests.runtime.conftest import REGISTRY_URL
 
 VECTORS = json.loads(
     (Path(__file__).parents[3] / "docs" / "vectors" / "principal-attestation-v1.json").read_text()

@@ -1259,11 +1259,14 @@ func TestChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T) {
 				return
 			}
 			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
-				t.Fatal(err)
+				t.Error(err)
+				http.Error(w, "invalid chat request", http.StatusBadRequest)
+				return
 			}
 			_ = json.NewEncoder(w).Encode(ChatSendMessageResponse{MessageID: posted.MessageID, Delivered: true})
 		default:
-			t.Fatalf("unexpected path=%s", r.URL.Path)
+			t.Errorf("unexpected path=%s", r.URL.Path)
+			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(server.Close)

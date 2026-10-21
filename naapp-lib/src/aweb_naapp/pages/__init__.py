@@ -11,7 +11,13 @@ Requires the `pages` extra (jsonschema).
 
 from __future__ import annotations
 
-from aweb_naapp.pages.lint import bundle_sha256
+from aweb_naapp.pages.lint import (
+    bundle_sha256,
+    inline_schema_errors,
+    inline_value_valid,
+    proposal_sha256,
+)
+from aweb_naapp.pages.text import PageLint, lint_page
 from aweb_naapp.pages.validation import (
     PAGE_LIMITS,
     PAGE_SCHEMA,
@@ -25,8 +31,13 @@ __all__ = [
     "PAGE_LIMITS",
     "PAGE_SCHEMA",
     "PageError",
+    "PageLint",
+    "lint_page",
     "Validation",
     "bundle_sha256",
+    "inline_schema_errors",
+    "inline_value_valid",
+    "proposal_sha256",
     "validate_page",
     "validate_page_bytes",
 ]

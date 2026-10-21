@@ -252,7 +252,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result = await create_document(
             database,
             principal=actor,
-            settings=resolved,
             slug=payload.slug,
             title=payload.title,
             body=body,
@@ -292,7 +291,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             body = (await request.body()).decode("utf-8")
         except UnicodeDecodeError as exc:
             raise HTTPException(status_code=400, detail="Version body must be valid UTF-8") from exc
-        result = await append_version(database, principal=actor, settings=resolved, slug=slug, body=body)
+        result = await append_version(database, principal=actor, slug=slug, body=body)
         await emit_doc_changed(
             settings=resolved,
             team_id=actor.team_id,
@@ -311,7 +310,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         payload = AppendTemplateVersionRequest.model_validate(await request.json())
         body = render_declarative_template(payload.model_dump())
-        result = await append_version(database, principal=actor, settings=resolved, slug=slug, body=body)
+        result = await append_version(database, principal=actor, slug=slug, body=body)
         await emit_doc_changed(
             settings=resolved,
             team_id=actor.team_id,
@@ -326,7 +325,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        return await get_billing_status(database, principal=actor, settings=resolved)
+        return await get_billing_status(database, principal=actor)
 
     @app.get("/v1/documents/{slug}/versions", response_model=list[DocumentVersion])
     async def list_versions_route(
@@ -479,7 +478,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         edited = await edit_presented_document(
             database,
             token=token,
-            settings=resolved,
             body=payload.body,
             base_version=payload.base_version,
             editor_name=payload.editor_name,
