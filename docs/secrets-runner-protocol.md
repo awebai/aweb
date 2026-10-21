@@ -279,8 +279,15 @@ There is at most one unresolved released assignment per runner. While it is
 `dispatching`, another claim returns the stored assignment bytes; it never opens
 credentials again, reseals them, extends their expiry or creates an independent
 assignment. Concurrent claims serialize this selection. An `outcome_unknown`
-assignment blocks a new release to that runner until reconciled; a claim with
-no eligible assignment returns `204`. Before returning stored credential-bearing
+assignment blocks a new release to that runner until reconciled; its claims
+return `409 runner_reconciliation_required`, never the idle `204`. The runner
+surfaces this refusal to its operator, and the console activity view labels the
+original item "runner blocked until you reconcile". A still-`dispatching`
+assignment whose executable lifetime expired refuses its claim with
+`409 runner_dispatch_state_conflict` while awaiting result or the normal timeout;
+expiry alone must not sweep a job before its original execution deadline. Only
+a genuinely idle runner with no eligible assignment returns `204`. Before
+returning stored credential-bearing
 bytes, recheck current registration/key, installation generation and containment
 authority. If those
 checks fail, do not return or reseal the assignment. An expired assignment is
@@ -399,7 +406,7 @@ nonce insertion are atomic. A transaction failure rolls back both.
 | `400` | `runner_request_invalid` for invalid header/signature or claim/started body; `runner_request_binding_mismatch` for origin/method/path/body mismatch; `runner_result_invalid` for malformed result fields or decoded stream bound |
 | `401` | `runner_unknown` for an unknown/inactive runner or non-current signing key |
 | `404` | `runner_dispatch_unknown` for unknown, foreign or unassigned dispatch |
-| `409` | `runner_request_stale`, `runner_request_replayed`, `runner_dispatch_state_conflict`, or `runner_result_conflict` |
+| `409` | `runner_request_stale`, `runner_request_replayed`, `runner_dispatch_state_conflict`, `runner_result_conflict`, or `runner_reconciliation_required` (claim blocked until the original attempt is reconciled) |
 | `413` | `runner_request_too_large` for the bounded body frame (an oversized signed header remains `runner_request_invalid` under §1) |
 | `415` | `runner_request_invalid` for unsupported media type or content encoding |
 | `503` | `runner_unavailable` for a required authority/database/custody dependency failure; log the real failure without output or values |
@@ -416,7 +423,8 @@ containment/key changes before replay, identical/conflicting results, late
 reports after sweeping/reconciliation, atomic rollback, exact original-value
 redaction (including changed 1Password items and unavailable context), multipart
 env fields and NUL. The public HTTP vector fixes body bytes, bounds, field
-families and status expectations; it does not replace those runtime proofs.
+families and status expectations, including idle versus blocked claims; it does
+not replace those runtime proofs.
 Short-lived mint authority and the separately guarded derived paths are unchanged.
 
 ## Conformance

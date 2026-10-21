@@ -432,3 +432,18 @@ def test_http_report_status_vectors(case):
         status, code = 204, None
         effect = "completed" if case["state"] == "dispatching" else "late_evidence"
     assert (status, code, effect) == (case["expected_status"], case.get("code"), case["effect"])
+
+
+@pytest.mark.parametrize("case", HTTP_VECTOR["claim_statuses"], ids=lambda case: case["name"])
+def test_http_claim_status_vectors(case):
+    if case["state"] == "outcome_unknown":
+        actual = {"status": 409, "code": "runner_reconciliation_required"}
+    elif case["state"] == "dispatching":
+        actual = (
+            {"status": 409, "code": "runner_dispatch_state_conflict"}
+            if case["assignment_expired"]
+            else {"status": 200, "assignment": "stored_bytes"}
+        )
+    else:
+        actual = {"status": 204}
+    assert actual == case["expected"]
