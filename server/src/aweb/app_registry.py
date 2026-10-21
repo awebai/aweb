@@ -765,7 +765,7 @@ async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
             i.digest,
             i.granted_scopes
         FROM {{tables.team_app_installs}} AS i
-        WHERE i.team_id = $1
+        WHERE i.team_id = $1 AND i.state = 'active' AND i.origin_verified
         ORDER BY i.app_id ASC
         """,
         team_id,
@@ -805,7 +805,7 @@ async def get_installed_app_event_type(
          AND e.app_id = i.app_id
          AND e.origin = i.origin
          AND e.digest = i.digest
-        WHERE i.team_id = $1
+        WHERE i.team_id = $1 AND i.state = 'active' AND i.origin_verified
           AND i.app_id = $2
           AND e.event_type = $3
         """,
@@ -839,6 +839,7 @@ async def get_active_app_key(
          AND k.origin = i.origin
          AND k.digest = i.digest
         WHERE i.team_id = $1
+          AND ($5 = 'app-grant-read' OR (i.state = 'active' AND i.origin_verified))
           AND i.app_id = $2
           AND k.key_id = $3
           AND k.did_key = $4
@@ -874,7 +875,7 @@ async def get_active_app_emit_key(
          AND k.app_id = i.app_id
          AND k.origin = i.origin
          AND k.digest = i.digest
-        WHERE i.team_id = $1
+        WHERE i.team_id = $1 AND i.state = 'active' AND i.origin_verified
           AND i.app_id = $2
           AND k.key_id = $3
           AND k.did_key = $4
