@@ -3,7 +3,6 @@ package hookevent
 import (
 	"bytes"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"net/url"
@@ -285,11 +284,6 @@ func buildEnvelopeVector(t *testing.T) map[string]any {
 		negativeCases = append(negativeCases, c)
 	}
 
-	before := "POST /v1/charges HTTP/1.1\r\nHost: api.example.com\r\nContent-Type: application/json\r\n\r\n{\"amount\":100}"
-	injected := "Authorization: Bearer test-credential-not-a-secret"
-	after := strings.Replace(before, "\r\n\r\n", "\r\n"+injected+"\r\n\r\n", 1)
-	digest := func(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
-
 	return map[string]any{
 		"name":   "hook-event-envelope-v1",
 		"status": "proposed (aweb-acgh.16.2); frozen once reviewed",
@@ -307,14 +301,6 @@ func buildEnvelopeVector(t *testing.T) map[string]any {
 		},
 		"positive_cases": positiveCases,
 		"negative_cases": negativeCases,
-		"digest_construction": map[string]any{
-			"rule":                     "request_sha256 and params_sha256 cover the request before credential injection, never after",
-			"request_before_injection": before,
-			"injected_header":          injected,
-			"request_after_injection":  after,
-			"request_sha256":           digest(before),
-			"refused_request_sha256":   digest(after),
-		},
 	}
 }
 

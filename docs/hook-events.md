@@ -88,8 +88,10 @@ identifier such as `task:<uuid>`: at most 128 characters, with no spaces, `@`,
 `+` or `=`, so it cannot carry an email address or a padded base64 token.
 
 **Digest rule.** No payload digest is ever unsalted over bytes that contain, or
-may echo, a credential. For `post-secret-use-hook`, `request_sha256` and
-`params_sha256` cover the request **before** credential injection. For
+may echo, a credential. For `post-secret-use-hook`, the historical names
+`request_sha256` and `params_sha256` mean separate producer-keyed HMAC-SHA-256
+commitments to the initial inbound request and typed parameters, as specified
+below (decision 73). Pre-injection bytes may already contain a credential. For
 `post-manifest-command-hook`, the historical field name `request_sha256`
 means a producer-keyed HMAC-SHA-256, as specified below: even an uninjected
 generic tool request may contain a credential. Response bytes are committed
@@ -136,12 +138,85 @@ the external call is sent. `op_kind` is `broker` or `run_job`.
 - `completed` requires `disposition` (`returned`, `withheld` or
   `stored_as_secret`) and `undeclared_credential`. A returned result carries
   `returned_hmac`, a withheld one never does, and a stored one names
-  `derived_secret_id`. An undeclared credential in the response forces
+  `derived_secret_id` and `derived_grant_id` together. Both fields are forbidden
+  on every other disposition or action. `grant_id` remains the authorizing
+  source grant; `derived_grant_id` is the child's actual newly minted grant,
+  never a grant template. The pair is emitted only in the transaction that
+  commits the child, custody value, new grant, result and outbox. A rollback or
+  lost recording fence emits no creation pair; replay preserves the committed
+  pair. An undeclared credential in the response forces
   `withheld`.
 - `approval_decided` requires `approval_id` and `approval_decision`.
 
 A withheld value and an undeclared credential are properties of the `completed`
 event, not separate events.
+
+**Request and parameter commitments (decision 73).** These two optional
+fields retain their historical names and 64-character lowercase hexadecimal
+shape, and are never plain SHA-256 values. The producer computes:
+
+```text
+request_sha256 = hex_lower(HMAC-SHA-256(K_request,
+    "aweb.post-secret-use.request/1\n" || canonical(context) || "\n" ||
+    canonical_request_bytes))
+params_sha256 = hex_lower(HMAC-SHA-256(K_params,
+    "aweb.post-secret-use.params/1\n" || canonical(context) || "\n" ||
+    frame(canonical_params_bytes)))
+```
+
+`context`, `frame` and `canonical_request_bytes` use the exact definitions
+under [the manifest-command hook](#post-manifest-command-hook). The context
+comes from authoritative installation and matched tool data. The request is
+the **initial authenticated inbound tool HTTP request**, with its original
+external raw target, received content-type values and exact body bytes. It
+is captured before injection and before rendering any upstream request. An
+upstream request may depend on a dispatch ID and need not exist at refusal.
+
+`canonical_params_bytes` is the canonical UTF-8 JSON of the validated typed
+operation/job input, using B2's integer-only canonical-JSON value rules but
+without B2's domain prefix or policy/request wrapper. Values have already
+been coerced to the operation/job's declared types. Open requests have no
+typed parameter object and omit `params_sha256`; they do not invent `{}`.
+Malformed or unavailable typed parameters on a refusal also omit that MAC.
+An otherwise attributable refusal with no complete input omits the
+corresponding optional commitment, never substitutes a plain digest or partial
+bytes, and still records its required audit event.
+
+`K_request` and `K_params` are separate independent random 32-byte secrets.
+Each is single-purpose and separate from the manifest-command K, signing
+seeds, team keys and the response/returned-value HMAC keys. They use the
+manifest-command key-file format, startup refusal and destruction-on-rotation
+rules. New commitments after rotation use the new key. All replicas of a
+producer share each configured purpose's key. A target verifies the signed
+producer statement and field shape; it cannot recompute the commitments or
+compare them across producers or key rotations.
+
+The producer computes and persists each available MAC and its context once
+with the initial logical use, before asynchronous approval or dispatch.
+Approval transitions, same-request re-submission, status and outbox retries
+reuse those stored commitments; they never recompute from later headers or a
+rotated key. The S8 local equality hash (`UseRequest.request_sha256`) and B2's
+approval request hash remain distinct from these audit MACs. Neither local
+hash is copied into these hook fields, and an audit MAC is never used as the
+idempotency comparator or passkey approval hash.
+
+An `idempotency_conflict` refusal describes the **attempted** request: it uses
+that attempt's MACs when the complete inputs exist and otherwise omits them.
+It neither borrows nor replaces the accepted use's persisted commitments.
+Refusals can roll back the inner admission savepoint, leaving no intent or
+claimed request key. Their required event is enqueued in the outer transaction
+without requiring an intent row. Existing configuration refusals
+`installation_identity_required` and `authority_unavailable` retain their
+no-use-event treatment; their installation/tool authority is not proven.
+
+**In-place re-freeze.** Decision 73 records that no deployed producer or
+consumer uses `post-secret-use-hook`, and there are no deployed pending uses.
+The catalog stays at version 1: its public file, package copy, transition
+fixtures and consumer expectations change together in this stack. S13 builds
+directly on this re-frozen shape; there is no parallel catalog or cutover.
+Kit, ingest and resolution support and owner activation are still prerequisites
+to emitting real events. Once a consumer is deployed, the normal versioning
+rule applies to subsequent payload changes.
 
 ### `post-governance-hook`
 
