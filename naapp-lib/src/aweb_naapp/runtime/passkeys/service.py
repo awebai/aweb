@@ -44,12 +44,7 @@ from typing import Any, Protocol
 from awid.signing import canonical_json_bytes
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
-from webauthn import (
-    generate_authentication_options,
-    generate_registration_options,
-    verify_authentication_response,
-    verify_registration_response,
-)
+from webauthn import generate_authentication_options, generate_registration_options
 from webauthn.helpers import (
     base64url_to_bytes,
     bytes_to_base64url,
@@ -82,6 +77,11 @@ from aweb_naapp.runtime.approvals import (
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind, AuditSink
 from aweb_naapp.runtime.links import LinkLifetime, link_verifier, new_link_token
 from aweb_naapp.runtime.passkeys.rp import RelyingParty
+from aweb_naapp.runtime.passkeys.webauthn import (
+    WebAuthnRefused,
+    verify_assertion,
+    verify_registration,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -737,14 +737,8 @@ class Passkeys:
         ):
             raise EnrolmentRefused("registration does not answer this enrolment")
         try:
-            verified = verify_registration_response(
-                credential=dict(credential),
-                expected_challenge=challenge,
-                expected_rp_id=self.rp.rp_id,
-                expected_origin=self.rp.origin,
-                require_user_verification=True,
-            )
-        except WebAuthnException as exc:
+            verified = verify_registration(credential, challenge=challenge, rp=self.rp)
+        except WebAuthnRefused as exc:
             raise EnrolmentRefused("registration did not verify") from exc
 
         now = self._clock()
@@ -765,7 +759,7 @@ class Passkeys:
                 "VALUES ($1, $2, $3, $4, $5)",
                 verified.credential_id,
                 enrolment["subject"],
-                verified.credential_public_key,
+                verified.public_key,
                 verified.sign_count,
                 now,
             )
@@ -838,16 +832,15 @@ class Passkeys:
         if credential is None:
             raise AuthenticationFailed("credential is not the approver's current passkey")
         try:
-            verified = verify_authentication_response(
-                credential=dict(proof),
-                expected_challenge=challenge,
-                expected_rp_id=self.rp.rp_id,
-                expected_origin=self.rp.origin,
-                credential_public_key=credential["public_key"],
-                credential_current_sign_count=credential["sign_count"],
-                require_user_verification=True,
+            verified = verify_assertion(
+                proof,
+                challenge=challenge,
+                rp=self.rp,
+                credential_id=credential_id,
+                public_key=credential["public_key"],
+                sign_count=credential["sign_count"],
             )
-        except WebAuthnException as exc:
+        except WebAuthnRefused as exc:
             raise AuthenticationFailed("assertion did not verify") from exc
 
         evidence_ref = str(uuid.uuid4())
