@@ -14,7 +14,8 @@ from aweb_naapp.manifest import canonical_bytes
 from aweb_naapp.runtime.authorization import DeclaredTool, Grant
 from aweb_naapp.runtime.health import CheckResult, HealthCheck
 from aweb_naapp.runtime.team_auth import Principal
-from aweb_naapp_testing import REGISTRY_URL, Member
+from aweb_naapp_testing import Member
+from awid_service.testing import REGISTRY_URL
 from fastapi import Request
 
 from aweb_secrets.app import SecretsService, create_app

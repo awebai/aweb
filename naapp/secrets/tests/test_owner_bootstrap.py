@@ -24,7 +24,7 @@ from aweb_naapp.runtime.approvals import (
     PgApprovalStore,
 )
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty, contact_sha256
-from aweb_naapp_testing import awid_registry, did_key
+from aweb_naapp_testing import did_key
 from aweb_naapp_testing.owner_acts import (
     APP_ID,
     AUDIENCE,
@@ -33,6 +33,7 @@ from aweb_naapp_testing.owner_acts import (
     team_owner,
 )
 from aweb_naapp_testing.webauthn import SoftAuthenticator
+from awid_service.testing import running_registry
 from nacl.signing import SigningKey
 
 from aweb_secrets.owners import (
@@ -86,7 +87,7 @@ async def world(test_db_factory) -> AsyncIterator[World]:
     await apply_roles_migrations(db)
     await apply_owner_act_migrations(db)
     await apply_owner_migrations(db)
-    async with awid_registry(registry_db.config.get_dsn()) as registry:
+    async with running_registry(registry_db.config.get_dsn()) as registry:
         yield World(db, passkeys, await team_owner(registry), contacts, registry)
 
 

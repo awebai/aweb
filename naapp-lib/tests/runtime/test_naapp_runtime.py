@@ -12,8 +12,9 @@ from typing import Annotated
 
 import httpx
 import pytest
-from aweb_naapp_testing import REGISTRY_URL, Member, did_key
+from aweb_naapp_testing import Member, did_key
 from awid.did import stable_id_from_did_key
+from awid_service.testing import REGISTRY_URL
 from fastapi import Depends, FastAPI, Request
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager

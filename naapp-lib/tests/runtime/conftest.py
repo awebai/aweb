@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 import pytest_asyncio
-from aweb_naapp_testing import REGISTRY_URL, Registry, awid_registry
+from awid_service.testing import REGISTRY_URL, Registry, running_registry
 from fastapi import FastAPI, Request
 
 from aweb_naapp.runtime.team_auth import (
@@ -24,7 +24,7 @@ from aweb_naapp.runtime.team_auth import (
 @pytest_asyncio.fixture
 async def registry(test_db_factory) -> AsyncIterator[Registry]:
     registry_db = await test_db_factory.create_db(suffix="naapp_awid")
-    async with awid_registry(registry_db.config.get_dsn()) as running:
+    async with running_registry(registry_db.config.get_dsn()) as running:
         yield running
 
 

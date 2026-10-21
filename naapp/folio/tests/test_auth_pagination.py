@@ -13,10 +13,8 @@ import pytest
 import pytest_asyncio
 from awid.did import did_from_public_key
 from awid.pagination import decode_cursor, encode_cursor
-from awid.ratelimit import NoOpRateLimiter
 from awid.signing import canonical_json_bytes, sign_message
-from awid_service.db import AwidDatabaseInfra
-from awid_service.routes.teams import router
+from awid_service.testing import running_registry
 from fastapi import FastAPI, Request
 from nacl.signing import SigningKey
 from pgdbm import AsyncMigrationManager
@@ -56,114 +54,106 @@ def signed_headers():
 @pytest_asyncio.fixture
 async def real_registry(test_db_factory, monkeypatch, request):
     registry_db = await test_db_factory.create_db(suffix="pagination_registry")
-    infra = AwidDatabaseInfra(schema="awid")
-    monkeypatch.setenv("AWID_DATABASE_URL", registry_db.config.get_dsn())
-    await infra.initialize(run_migrations=True)
-    registry = FastAPI()
-    registry.state.db = infra
-    registry.state.rate_limiter = NoOpRateLimiter()
     token = "pagination-test-service-token-32-bytes"
-    registry.state.awid_service_token = token
-    registry.include_router(router)
-    db = infra.get_manager("aweb")
-    team_did, member_did, headers = signed_headers()
-    visibility = getattr(request, "param", "public")
-    team = await db.fetch_one(
-        "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) "
-        "VALUES ('example.com', 'backend', $1, $2) RETURNING team_uuid", team_did, visibility,
-    )
-    # 201 real rows: target is beyond both AWID's default 50 and the client's 200.
-    await db.execute(
-        "INSERT INTO {{tables.team_certificates}} "
-        "(team_uuid, certificate_id, member_did_key, alias, issued_at) "
-        "SELECT $1, 'filler-' || n, $2, 'filler-' || n, "
-        "'2026-01-01'::timestamptz + n * interval '1 second' "
-        "FROM generate_series(1, 200) AS n", team["team_uuid"], member_did,
-    )
-    await db.execute(
-        "INSERT INTO {{tables.team_certificates}} "
-        "(team_uuid, certificate_id, member_did_key, alias, issued_at) "
-        "VALUES ($1, 'target', $2, 'target', '2026-01-02')", team["team_uuid"], member_did,
-    )
-    app_db = await test_db_factory.create_db(suffix="pagination_app")
-    await AsyncMigrationManager(
-        app_db, migrations_path=str(Path(auth.__file__).parent / "migrations"),
-        module_name="folio",
-    ).apply_pending_migrations()
-    calls = []
-    faults = {}
-    client_type = httpx.AsyncClient
-
-    async def record(request):
-        calls.append(request)
-
-    async def inject_fault(response):
-        # Faults are injected AFTER real AWID has handled the HTTP request.
-        # Cache/authentication code, database queries and pagination stay real.
-        if not response.request.url.path.endswith("/certificates"):
-            return
-        await response.aread()
-        payload = response.json()
-        if not response.request.url.params.get("cursor"):
-            faults["first_cursor"] = payload.get("next_cursor")
-            return
-        fault = faults.get("kind")
-        if fault is None:
-            return
-        if fault == "transport":
-            raise httpx.ReadTimeout("injected later-page timeout", request=response.request)
-        if fault == "http":
-            response.status_code = 503
-            return
-        if fault == "json":
-            response._content = b"{"
-            return
-        if fault == "payload":
-            payload = []
-        elif fault == "missing_has_more":
-            payload.pop("has_more")
-        elif fault == "has_more":
-            payload["has_more"] = "false"
-        elif fault == "certificates":
-            payload["certificates"] = {}
-        elif fault == "row":
-            payload["certificates"] = [None]
-        elif fault == "missing_revoked_at":
-            payload["certificates"][0].pop("revoked_at")
-        elif fault == "missing_certificate_id":
-            payload["certificates"][0].pop("certificate_id")
-        elif fault in ("missing_cursor", "blank_cursor", "invalid_cursor", "repeated_cursor", "cycling_cursor"):
-            payload["has_more"] = True
-            if fault == "cycling_cursor" and response.request.url.params["cursor"] == faults["first_cursor"]:
-                prior = decode_cursor(faults["first_cursor"])
-                prior["issued_at"] = "2025-12-31T00:00:00+00:00"
-                payload["next_cursor"] = encode_cursor(prior)
-            else:
-                payload["next_cursor"] = {
-                    "missing_cursor": None, "blank_cursor": " ", "invalid_cursor": 1,
-                }.get(fault, faults["first_cursor"])
-        elif fault == "private":
-            response.status_code = 403
-            payload = {"detail": {"code": "team_private"}}
-        response._content = json.dumps(payload).encode()
-
-    # Only replace transport selection: every request reaches real AWID handlers.
-    monkeypatch.setattr(auth.httpx, "AsyncClient", lambda **kw: client_type(
-        transport=httpx.ASGITransport(app=registry), event_hooks={"request": [record], "response": [inject_fault]}, **kw,
-    ))
-    cache = auth.AWIDTeamCache(registry_url="https://registry.example", ttl_seconds=60, service_token=token)
-    app = FastAPI()
-
-    @app.get("/protected")
-    async def protected(request: Request):
-        principal = await auth.authenticate_request(
-            request, settings=Settings(public_origin=ORIGIN), team_cache=cache, db=app_db,
+    async with running_registry(registry_db.config.get_dsn(), service_token=token) as running:
+        registry, db = running.app, running.db
+        team_did, member_did, headers = signed_headers()
+        visibility = getattr(request, "param", "public")
+        team = await db.fetch_one(
+            "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) "
+            "VALUES ('example.com', 'backend', $1, $2) RETURNING team_uuid", team_did, visibility,
         )
-        return {"certificate_id": principal.certificate_id}
+        # 201 real rows: target is beyond both AWID's default 50 and the client's 200.
+        await db.execute(
+            "INSERT INTO {{tables.team_certificates}} "
+            "(team_uuid, certificate_id, member_did_key, alias, issued_at) "
+            "SELECT $1, 'filler-' || n, $2, 'filler-' || n, "
+            "'2026-01-01'::timestamptz + n * interval '1 second' "
+            "FROM generate_series(1, 200) AS n", team["team_uuid"], member_did,
+        )
+        await db.execute(
+            "INSERT INTO {{tables.team_certificates}} "
+            "(team_uuid, certificate_id, member_did_key, alias, issued_at) "
+            "VALUES ($1, 'target', $2, 'target', '2026-01-02')", team["team_uuid"], member_did,
+        )
+        app_db = await test_db_factory.create_db(suffix="pagination_app")
+        await AsyncMigrationManager(
+            app_db, migrations_path=str(Path(auth.__file__).parent / "migrations"),
+            module_name="folio",
+        ).apply_pending_migrations()
+        calls = []
+        faults = {}
+        client_type = httpx.AsyncClient
 
-    async with client_type(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as client:
-        yield client, headers, cache, db, calls, faults
-    await infra.close()
+        async def record(request):
+            calls.append(request)
+
+        async def inject_fault(response):
+            # Faults are injected AFTER real AWID has handled the HTTP request.
+            # Cache/authentication code, database queries and pagination stay real.
+            if not response.request.url.path.endswith("/certificates"):
+                return
+            await response.aread()
+            payload = response.json()
+            if not response.request.url.params.get("cursor"):
+                faults["first_cursor"] = payload.get("next_cursor")
+                return
+            fault = faults.get("kind")
+            if fault is None:
+                return
+            if fault == "transport":
+                raise httpx.ReadTimeout("injected later-page timeout", request=response.request)
+            if fault == "http":
+                response.status_code = 503
+                return
+            if fault == "json":
+                response._content = b"{"
+                return
+            if fault == "payload":
+                payload = []
+            elif fault == "missing_has_more":
+                payload.pop("has_more")
+            elif fault == "has_more":
+                payload["has_more"] = "false"
+            elif fault == "certificates":
+                payload["certificates"] = {}
+            elif fault == "row":
+                payload["certificates"] = [None]
+            elif fault == "missing_revoked_at":
+                payload["certificates"][0].pop("revoked_at")
+            elif fault == "missing_certificate_id":
+                payload["certificates"][0].pop("certificate_id")
+            elif fault in ("missing_cursor", "blank_cursor", "invalid_cursor", "repeated_cursor", "cycling_cursor"):
+                payload["has_more"] = True
+                if fault == "cycling_cursor" and response.request.url.params["cursor"] == faults["first_cursor"]:
+                    prior = decode_cursor(faults["first_cursor"])
+                    prior["issued_at"] = "2025-12-31T00:00:00+00:00"
+                    payload["next_cursor"] = encode_cursor(prior)
+                else:
+                    payload["next_cursor"] = {
+                        "missing_cursor": None, "blank_cursor": " ", "invalid_cursor": 1,
+                    }.get(fault, faults["first_cursor"])
+            elif fault == "private":
+                response.status_code = 403
+                payload = {"detail": {"code": "team_private"}}
+            response._content = json.dumps(payload).encode()
+
+        # Only replace transport selection: every request reaches real AWID handlers.
+        monkeypatch.setattr(auth.httpx, "AsyncClient", lambda **kw: client_type(
+            transport=httpx.ASGITransport(app=registry), event_hooks={"request": [record], "response": [inject_fault]}, **kw,
+        ))
+        cache = auth.AWIDTeamCache(registry_url="https://registry.example", ttl_seconds=60, service_token=token)
+        app = FastAPI()
+
+        @app.get("/protected")
+        async def protected(request: Request):
+            principal = await auth.authenticate_request(
+                request, settings=Settings(public_origin=ORIGIN), team_cache=cache, db=app_db,
+            )
+            return {"certificate_id": principal.certificate_id}
+
+        async with client_type(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as client:
+            yield client, headers, cache, db, calls, faults
 
 
 @pytest.mark.asyncio

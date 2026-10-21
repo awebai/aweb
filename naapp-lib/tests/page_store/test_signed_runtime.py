@@ -5,7 +5,8 @@ import time
 from typing import Annotated
 
 import httpx
-from aweb_naapp_testing import REGISTRY_URL, Member
+from aweb_naapp_testing import Member
+from awid_service.testing import REGISTRY_URL
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 

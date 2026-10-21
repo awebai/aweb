@@ -120,13 +120,6 @@ def create_app(
 
     app = FastAPI(title="awid.ai registry", version=service_version, lifespan=lifespan)
 
-    app.state.rotate_max_body_bytes = rotate_max_body_bytes_from_env()
-
-    # Covering controller signatures use configuration, never Host/forwarded headers.
-    app.state.awid_public_origins = tuple(
-        value.strip() for value in os.getenv("AWID_PUBLIC_ORIGINS", "").split(",") if value.strip()
-    )
-
     @app.get("/", tags=["ops"])
     async def root() -> dict:
         return {"service": "awid", "version": service_version, "status": "ok"}
@@ -163,13 +156,25 @@ def create_app(
     async def ops_health(request: Request) -> dict:
         return await _health_payload(request)
 
+    mount_registry(app)
+    return app
+
+
+def mount_registry(app: FastAPI) -> None:
+    """AWID's registry routes on ``app``, with the configuration they read."""
+    app.state.rotate_max_body_bytes = rotate_max_body_bytes_from_env()
+
+    # Covering controller signatures use configuration, never Host/forwarded headers.
+    app.state.awid_public_origins = tuple(
+        value.strip() for value in os.getenv("AWID_PUBLIC_ORIGINS", "").split(",") if value.strip()
+    )
+
     app.include_router(did_router)
     app.include_router(dns_namespaces_router)
     app.include_router(dns_addresses_router)
     app.include_router(a2a_publications_router)
     app.include_router(teams_router)
     app.include_router(attestation_records_router)
-    return app
 
 
 app = create_app()
