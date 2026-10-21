@@ -10,12 +10,64 @@ from .app_manifests import ManifestFetcher, fetch_app_manifest
 from .app_registry import reseed_app_registrations
 from .config import get_settings
 from .db import DatabaseInfra
+from .install_admins import (
+    grant_install_admin_on,
+    list_install_admins_on,
+    revoke_install_admin_on,
+)
 from .installation_requests import run_installation_verifications
 from .installations import verify_pending_installations
 from .service_errors import ServiceError
 from .workspace_config import get_workspace_id
 
 app = typer.Typer(help="aweb coordination core CLI")
+install_admin_cli = typer.Typer(help="Manage standalone installation authority locally as the server operator")
+app.add_typer(install_admin_cli, name="install-admin")
+
+
+def _install_admin_operation(action, *, team_id, principal_did=None, role="admin", force=False):
+    async def run():
+        infra = DatabaseInfra()
+        await infra.initialize(run_migrations=False)
+        try:
+            async with infra.get_manager().transaction() as tx:
+                if action == "grant":
+                    return await grant_install_admin_on(tx, team_id=team_id, principal_did=principal_did, role=role, force=force)
+                if action == "revoke":
+                    return {"revoked": await revoke_install_admin_on(tx, team_id=team_id, principal_did=principal_did, force=force)}
+                return await list_install_admins_on(tx, team_id=team_id)
+        finally:
+            await infra.close()
+    try:
+        result = asyncio.run(run())
+    except ServiceError as exc:
+        typer.echo(f"Error: {getattr(exc, 'code', 'admin_grant_failed')}: {exc}", err=True)
+        raise typer.Exit(1)
+    typer.echo(json.dumps(result, default=str, indent=2))
+
+
+@install_admin_cli.command("grant")
+def grant_install_admin_command(
+    team_id: str = typer.Option(..., "--team-id"),
+    principal_did: str = typer.Option(..., "--principal-did", help="Member's verified Ed25519 did:key"),
+    role: str = typer.Option("admin", "--role", help="owner or admin"),
+    force: bool = typer.Option(False, "--force", help="Allow demoting the last owner"),
+):
+    _install_admin_operation("grant", team_id=team_id, principal_did=principal_did, role=role, force=force)
+
+
+@install_admin_cli.command("revoke")
+def revoke_install_admin_command(
+    team_id: str = typer.Option(..., "--team-id"),
+    principal_did: str = typer.Option(..., "--principal-did"),
+    force: bool = typer.Option(False, "--force", help="Allow revoking the last owner"),
+):
+    _install_admin_operation("revoke", team_id=team_id, principal_did=principal_did, force=force)
+
+
+@install_admin_cli.command("list")
+def list_install_admin_command(team_id: str = typer.Option(..., "--team-id")):
+    _install_admin_operation("list", team_id=team_id)
 
 
 def _resolve_workspace_id(override: str | None) -> str:

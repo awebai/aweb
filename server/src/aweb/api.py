@@ -27,6 +27,7 @@ from .mutation_hooks import create_mutation_handler
 from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
+from .install_admins import install_admin_setup_message
 from .mcp.server import NormalizeMountedMCPPathMiddleware
 from .request_compression import RequestDecompressionFastAPI
 from .routes.agent_activity import router as agent_activity_router
@@ -252,6 +253,10 @@ def _make_standalone_lifespan():
             await default_db_infra.initialize()
             db_initialized = True
             logger.info("Database initialized")
+            if getattr(app.state, "install_admin_policy", None) is None:
+                setup_message = await install_admin_setup_message(default_db_infra.get_manager())
+                if setup_message:
+                    logger.info(setup_message)
 
             # Phase 2: Only assign to app.state after ALL initialization succeeds
             app.state.redis = redis

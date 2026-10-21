@@ -116,11 +116,23 @@ async def install_verified_manifest_on(
 async def _write_verified_registrations(tx, *, team_id, app_id, fetched, registration):
     # Pre-F6 rows may have declarations supplied independently of these bytes.
     # Keep key history/revocations, but never activate an undeclared key.
-    for table, keys in (("team_app_emit_keys", registration.emit_keys), ("team_app_keys", registration.app_keys)):
+    event_keys = {(key.kid, key.did_key) for key in registration.emit_keys}
+    event_keys.update((key.kid, key.did_key) for key in registration.app_keys if "app-event" in key.purposes)
+    app_purposes = {(key.kid, key.did_key): list(key.purposes) for key in registration.app_keys}
+    for identity in event_keys:
+        app_purposes.setdefault(identity, ["app-event"])
+    # Older v2 clients stored declared event keys in the v1 emitter table.
+    # Compare logical identities, so verification never invents a revocation
+    # merely because the bytes use the other physical representation.
+    for table, identities in (("team_app_emit_keys", event_keys), ("team_app_keys", app_purposes)):
+        identities = sorted(identities)
         await tx.execute(
-            "UPDATE {{tables." + table + "}} SET revoked_at=COALESCE(revoked_at,clock_timestamp()) "
-            "WHERE team_id=$1 AND app_id=$2 AND origin=$3 AND digest=$4 AND NOT (key_id=ANY($5::TEXT[]))",
-            team_id, app_id, fetched.origin, fetched.digest, [key.kid for key in keys],
+            "UPDATE {{tables." + table + "}} AS existing SET revoked_at=COALESCE(existing.revoked_at,clock_timestamp()) "
+            "WHERE team_id=$1 AND app_id=$2 AND origin=$3 AND digest=$4 AND NOT EXISTS ("
+            "SELECT 1 FROM unnest($5::TEXT[],$6::TEXT[]) AS declared(kid,did) "
+            "WHERE declared.kid=existing.key_id AND declared.did=existing.did_key)",
+            team_id, app_id, fetched.origin, fetched.digest,
+            [identity[0] for identity in identities], [identity[1] for identity in identities],
         )
     await tx.execute(
         "DELETE FROM {{tables.team_app_event_types}} WHERE team_id=$1 AND app_id=$2 AND origin=$3 AND digest=$4 AND NOT (event_type=ANY($5::TEXT[]))",
@@ -130,10 +142,10 @@ async def _write_verified_registrations(tx, *, team_id, app_id, fetched, registr
         tx, team_id=team_id, app_id=app_id, origin=fetched.origin, digest=fetched.digest,
         event_types=registration.event_types, emit_keys=registration.emit_keys, app_keys=registration.app_keys,
     )
-    for key in registration.app_keys:
+    for (kid, did), purposes in app_purposes.items():
         await tx.execute(
             "UPDATE {{tables.team_app_keys}} SET purposes=$7::TEXT[] WHERE team_id=$1 AND app_id=$2 AND origin=$3 AND digest=$4 AND key_id=$5 AND did_key=$6",
-            team_id, app_id, fetched.origin, fetched.digest, key.kid, key.did_key, list(key.purposes),
+            team_id, app_id, fetched.origin, fetched.digest, kid, did, purposes,
         )
 
 

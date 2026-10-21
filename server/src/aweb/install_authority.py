@@ -14,6 +14,7 @@ from fastapi import HTTPException, Request
 from pgdbm.core import TransactionManager
 
 from aweb.app_registry import validate_team_id
+from aweb.install_admins import standalone_install_admin_policy
 from aweb.internal_auth import parse_internal_auth_context
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 from aweb.team_auth_deps import TeamIdentity
@@ -78,8 +79,8 @@ async def require_install_admin(
 
     Certificate routes pass their already authenticated TeamIdentity. Internal
     callers are parsed and authenticated by the existing internal-auth verifier,
-    with explicit proxy trust and a matching HMAC. An embedding host must set
-    its policy on the serving app; no policy denies with ``admin_required``.
+    with explicit proxy trust and a matching HMAC. A configured host policy is
+    the only authority source; otherwise standalone operator grants apply.
     Exceptions and non-True policy results never authorize a mutation.
     """
     team_id = validate_team_id(team_id)
@@ -107,5 +108,7 @@ async def require_install_admin(
         raise HTTPException(status_code=401, detail="Authentication required")
 
     policy: InstallAdminPolicy | None = getattr(request.app.state, "install_admin_policy", None)
-    if policy is None or await policy(tx, subject, action=action, app_id=app_id) is not True:
+    if policy is None:
+        policy = standalone_install_admin_policy
+    if await policy(tx, subject, action=action, app_id=app_id) is not True:
         raise _admin_required()

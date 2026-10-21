@@ -9,11 +9,16 @@ computes the real digest of the constructed manifest, never a fabricated pin.
 import hashlib
 import json
 
-from aweb_naapp.manifest import load_manifest
-
 from aweb.app_manifests import FetchedManifest
-from aweb.app_registry import AppInstall, get_installation_on, reserved_app_ids
+from aweb.app_registry import (
+    AppInstall,
+    _write_team_registrations,
+    get_installation_on,
+    normalize_event_types,
+    reserved_app_ids,
+)
 from aweb.installations import install_verified_manifest_on
+from aweb_naapp.manifest import load_manifest
 
 
 async def install_fixture_app(
@@ -44,3 +49,34 @@ async def install_fixture_app(
             expected_generation=before["generation"] if before else None, installed_by_agent_id=installed_by_agent_id,
         )
     return AppInstall(**{key: value for key, value in row.items() if key != "team_id"})
+
+
+async def seed_pending_installation(
+    db, *, team_id, app_id, origin, app_version, manifest_version, digest,
+    granted_scopes, event_types=(), emit_keys=(),
+):
+    """Seed pre-F6 metadata for legacy repair and hook-storage tests.
+
+    This supplies no origin evidence and never grants active app authority.
+    It is fixture SQL, not a production installation ingress.
+    """
+    async with db.transaction() as tx:
+        await tx.execute(
+            "INSERT INTO {{tables.app_registry_apps}} (app_id,origin) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            app_id, origin,
+        )
+        await tx.execute(
+            "INSERT INTO {{tables.app_registry_entries}} (app_id,origin,digest,app_version,manifest_version) "
+            "VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING", app_id, origin, digest, app_version, manifest_version,
+        )
+        await tx.execute(
+            "INSERT INTO {{tables.team_app_installs}} (team_id,app_id,origin,digest,app_version,manifest_version,granted_scopes) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7::TEXT[]) ON CONFLICT (team_id,app_id) DO UPDATE SET "
+            "origin=EXCLUDED.origin,digest=EXCLUDED.digest,app_version=EXCLUDED.app_version,manifest_version=EXCLUDED.manifest_version,"
+            "granted_scopes=EXCLUDED.granted_scopes,state='pending_origin_verification',origin_verified=FALSE,manifest_bytes=NULL",
+            team_id, app_id, origin, digest, app_version, manifest_version, list(granted_scopes),
+        )
+        await _write_team_registrations(
+            tx, team_id=team_id, app_id=app_id, origin=origin, digest=digest,
+            event_types=normalize_event_types(list(event_types)), emit_keys=list(emit_keys), app_keys=[],
+        )

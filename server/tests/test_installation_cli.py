@@ -42,19 +42,22 @@ async def test_cli_member_request_admin_install_update_and_refused_update_preser
         ))
 
     env.app.state.install_admin_policy = policy
-    home = _team_home(env, tmp_path, "alice")
-    # Local certificates produced by Go omit these empty optional fields. Sign
-    # the same shape the CLI re-encodes, as the existing CLI fixtures do.
-    certificate = json.loads(base64.b64decode(env.actors["alice"].certificate))
-    for field in ("member_did_aw", "member_address", "signature"):
-        certificate.pop(field)
-    certificate["signature"] = sign_message(env.team_sk, canonical_json_bytes(certificate))
-    next((home / "team-certs").glob("*.pem")).write_text(json.dumps(certificate))
-    (home / "identity.yaml").write_text(json.dumps({
-        "schema_version": 2, "did": env.actors["alice"].did,
-        "custody": "self", "identity_scope": "local",
-    }))
-    (home / "identity.yaml").chmod(0o600)
+    def member_home(name, location):
+        member = env.actors[name]
+        home = _team_home(env, location, name)
+        # Go omits these empty optional fields when it encodes a certificate.
+        certificate = json.loads(base64.b64decode(member.certificate))
+        for field in ("member_did_aw", "member_address", "signature"):
+            certificate.pop(field)
+        certificate["signature"] = sign_message(env.team_sk, canonical_json_bytes(certificate))
+        next((home / "team-certs").glob("*.pem")).write_text(json.dumps(certificate))
+        (home / "identity.yaml").write_text(json.dumps({
+            "schema_version": 2, "did": member.did, "custody": "self", "identity_scope": "local",
+        }))
+        (home / "identity.yaml").chmod(0o600)
+        return home
+
+    home = member_home("alice", tmp_path)
     process_env = {**os.environ, "AW_HOME": str(tmp_path / "plugin-store"), "AW_NO_UPDATE_CHECK": "1",
                    "SSL_CERT_FILE": str(origin.tls.certificates.ca_file),
                    # On macOS, opt into the Go 1.27 SSL_CERT_FILE behavior even
@@ -63,9 +66,9 @@ async def test_cli_member_request_admin_install_update_and_refused_update_preser
     for name in ("AW_IDENTITY_HOME", "AW_TEAM", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
         process_env.pop(name, None)
 
-    async def cli(*args):
+    async def cli(*args, identity_home=home):
         process = await asyncio.create_subprocess_exec(
-            str(source_cli_binary), "--identity-home", str(home), "--json", "plugin", *args,
+            str(source_cli_binary), "--identity-home", str(identity_home), "--json", "plugin", *args,
             cwd=tmp_path, env=process_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await asyncio.wait_for(process.communicate(), 45)
@@ -89,6 +92,18 @@ async def test_cli_member_request_admin_install_update_and_refused_update_preser
     assert await env.db.fetch_value("SELECT granted_scopes FROM {{tables.team_app_installs}}") == ["fixture:read"]
     path = Path(installed["path"]) / "manifest.json"
     assert path.read_bytes() == origin.routes[manifest_fixture.VARIANT][1]
+
+    # A second resident/member can join the same active team installation.
+    # It must not need install-admin or mutate the team's narrowed grants.
+    bob_home = member_home("bob", tmp_path / "bob")
+    code, out, error = await cli("install", origin.url, identity_home=bob_home)
+    assert code == 0, out + error
+    assert json.loads(out)["provenance"]["registered_generation"] == 1
+    assert await env.db.fetch_value("SELECT granted_scopes FROM {{tables.team_app_installs}}") == ["fixture:read"]
+    code, out, error = await cli("install", origin.url)
+    assert code == 0, out + error
+    assert json.loads(out)["provenance"]["registered_generation"] == 1
+    assert await env.db.fetch_value("SELECT granted_scopes FROM {{tables.team_app_installs}}") == ["fixture:read"]
 
     origin.publish(origin.manifest(version="2.0.0"))
     code, out, error = await cli("update", "fixture")

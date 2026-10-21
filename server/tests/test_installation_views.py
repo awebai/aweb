@@ -1,12 +1,12 @@
 """Installation management comparisons use the shared manifest interpreter."""
 
+import hashlib
 import json
 
 import pytest
 import test_verified_installations as store_fixture
-from aweb_naapp.manifest import load_manifest
-
 from aweb.installation_views import installation_view_on, semantic_diff
+from aweb_naapp.manifest import load_manifest
 
 origin = store_fixture.origin
 db = store_fixture.db
@@ -64,3 +64,20 @@ async def test_every_update_returns_owner_activated_hooks_to_pending(db, origin)
         view = await installation_view_on(tx, team_id=store_fixture.TEAM, app_id="fixture")
     assert view["hook_bindings"]
     assert all(binding["state"] == "pending" and binding["generation"] == updated["generation"] for binding in view["hook_bindings"])
+
+
+async def test_stored_manifest_that_is_no_longer_interpretable_does_not_crash_management(db, origin):
+    evidence = await store_fixture.fetched(origin)
+    installed = await store_fixture.install(db, evidence)
+    data = b'{"manifest_version":999}'
+    digest = "sha256:" + hashlib.sha256(data).hexdigest()
+    await db.execute(
+        "INSERT INTO {{tables.app_registry_entries}} (app_id,origin,digest,app_version,manifest_version) VALUES ('fixture',$1,$2,'1.0.0',2)",
+        evidence.origin, digest,
+    )
+    await db.execute("UPDATE {{tables.team_app_installs}} SET digest=$1,manifest_bytes=$2", digest, data)
+    async with db.transaction() as tx:
+        view = await installation_view_on(tx, team_id=store_fixture.TEAM, app_id="fixture")
+    assert view["installation_id"] == installed["installation_id"]
+    assert view["manifest"] is None and view["resolved"] is None
+    assert view["lifecycle"]["report"] == {"available": False}

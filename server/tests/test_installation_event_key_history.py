@@ -110,3 +110,38 @@ async def test_version_switch_cannot_rebind_an_existing_event_kid(db, origin, ve
     assert await store_fixture.current(db) == first
     assert await db.fetch_value("SELECT last_generation FROM {{tables.team_app_install_counters}}") == first["generation"]
     assert (await emit_probe(db, original)).status_code == 200
+
+
+@pytest.mark.parametrize("revoked", [False, True])
+async def test_verification_preserves_a_declared_v2_key_stored_as_a_legacy_emitter(db, origin, revoked):
+    from aweb.app_registry import AppEmitKey
+    from aweb.installations import verify_pending_installations
+    from tests.installation_fixtures import seed_pending_installation
+
+    signing = SigningKey.generate()
+    did = did_from_public_key(bytes(signing.verify_key))
+    document = json.loads(origin.manifest(2))
+    document["app_keys"] = [{"kid": KID, "did_key": did, "purposes": [APP_EVENT]}]
+    origin.publish(json.dumps(document).encode())
+    evidence = await origin.fetcher.fetch(origin.url)
+    # Released pre-F6 v2 clients registered app-event keys as emitters under
+    # this same pin, without supplying manifest bytes. Migration keeps it pending.
+    await seed_pending_installation(
+        db, team_id=TEAM, app_id="fixture", origin=origin.url, app_version=document["app"]["version"],
+        manifest_version=2, digest=evidence.digest, granted_scopes=["fixture:read"],
+        emit_keys=[AppEmitKey(kid=KID, did_key=did)],
+    )
+    before = await store_fixture.current(db)
+    if revoked:
+        await revoke_old_representation(db, 1)
+    reports = await verify_pending_installations(db, fetcher=origin.fetcher)
+    assert reports[0]["outcome"] == "verified"
+    after = await store_fixture.current(db)
+    assert after["state"] == "active" and after["origin_verified"]
+    assert (after["installation_id"], after["generation"], after["digest"], after["granted_scopes"]) == (
+        before["installation_id"], before["generation"], before["digest"], before["granted_scopes"],
+    )
+    legacy_revoked = await db.fetch_value("SELECT revoked_at IS NOT NULL FROM {{tables.team_app_emit_keys}} WHERE key_id=$1", KID)
+    assert legacy_revoked is revoked  # Verification must not invent a revocation.
+    result = await emit_probe(db, signing)
+    assert result.status_code == (403 if revoked else 200), result.text

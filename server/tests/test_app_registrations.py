@@ -5,22 +5,21 @@ import json
 import shutil
 from pathlib import Path
 
-import pytest
-from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
-
 import aweb.app_registry as app_registry
+import pytest
 from aweb.app_registry import (
     AppEmitKey,
     AppEventType,
     get_active_app_emit_key,
     get_installation_on,
     get_installed_app_event_type,
-    install_app,
     list_installed_apps,
     manifest_registration,
     reseed_app_registrations,
 )
 from aweb.service_errors import ValidationError
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
+from tests.installation_fixtures import seed_pending_installation
 from tests.test_app_events_http import _make_app_keypair, _seed_team_and_agent
 
 ORIGIN = "https://notes.example"
@@ -50,7 +49,7 @@ def _digest(manifest: bytes) -> str:
 
 
 async def _install_without_registrations(db, *, team_id: str, digest: str) -> None:
-    await install_app(
+    await seed_pending_installation(
         db,
         team_id=team_id,
         app_id="notes",
@@ -135,7 +134,7 @@ async def test_reseed_replaces_declarations_and_projection_with_the_bytes(aweb_c
     _, did_key = _make_app_keypair()
     manifest = _manifest(did_key=did_key)
     await _seed_team_and_agent(db, team_id=TEAM_A)
-    await install_app(
+    await seed_pending_installation(
         db,
         team_id=TEAM_A,
         app_id="notes",
@@ -197,7 +196,7 @@ async def test_reseed_refuses_a_team_whose_key_id_holds_another_key(aweb_cloud_d
     manifest = _manifest(did_key=did_key)
     await _seed_team_and_agent(db, team_id=TEAM_A)
     await _seed_team_and_agent(db, team_id=TEAM_B)
-    await install_app(
+    await seed_pending_installation(
         db,
         team_id=TEAM_A,
         app_id="notes",

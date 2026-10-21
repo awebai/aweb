@@ -39,20 +39,18 @@ func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string
 		}
 		expected = &current.Generation
 	}
-	grantedScopes, err := installationScopes(resolved.InstallScopes, current.GrantedScopes, update, selectedScopes)
+	grantedScopes, err := installationScopes(resolved.InstallScopes, current.GrantedScopes, expected != nil, selectedScopes)
 	if err != nil {
 		return err
 	}
-	if update && previous != nil && current.State == "active" && current.OriginVerified && current.Digest == fetchedDigest && slices.Equal(current.GrantedScopes, grantedScopes) && previous.RegisteredTeam == selection.TeamID && previous.RegisteredServer == selection.BaseURL {
-		saveInstallationReceipt(next, current, fetchedDigest, selection.TeamID, selection.BaseURL)
-		return nil
-	}
-
-	events := installRegistrationEvents(manifest)
-	body := installRegistrationBody(resolved, fetchedDigest, expected, grantedScopes)
-	var installed appInstallationReceipt
-	if err := client.Post(ctx, "/v1/apps/install?team_id="+url.QueryEscape(selection.TeamID), body, &installed); err != nil {
-		return fmt.Errorf("register app installation (existing local installation retained; request approval with aw plugin request %s): %w", manifest.App.Origin, err)
+	reuse := current.State == "active" && current.OriginVerified && current.Digest == fetchedDigest &&
+		(selectedScopes == nil || (update && previous != nil && slices.Equal(current.GrantedScopes, grantedScopes) && previous.RegisteredTeam == selection.TeamID && previous.RegisteredServer == selection.BaseURL))
+	installed := current
+	if !reuse {
+		body := installRegistrationBody(resolved, fetchedDigest, expected, grantedScopes)
+		if err := client.Post(ctx, "/v1/apps/install?team_id="+url.QueryEscape(selection.TeamID), body, &installed); err != nil {
+			return fmt.Errorf("register app installation (existing local installation retained; request approval with aw plugin request %s): %w", manifest.App.Origin, err)
+		}
 	}
 	if installed.InstallationID == "" || installed.Generation <= 0 || installed.State != "active" || !installed.OriginVerified || installed.Digest != fetchedDigest {
 		return fmt.Errorf("installation_identity_required: the team server returned an invalid confirmation")
@@ -60,7 +58,7 @@ func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string
 	// Updates replace declarations and keys, but never reset the subscriber's
 	// chosen intent. Only an explicit install creates the default subscriptions.
 	if !update {
-		for _, event := range events {
+		for _, event := range installRegistrationEvents(manifest) {
 			if err := client.Post(ctx, "/v1/events/subscriptions", map[string]any{
 				"type":            manifest.App.ID + "/" + event.Type,
 				"delivery_intent": event.DefaultDeliveryIntent,
@@ -107,11 +105,11 @@ func installRegistrationBody(resolved *appmanifest.Resolved, fetchedDigest strin
 	}
 }
 
-func installationScopes(requested, current []string, update bool, selected []string) ([]string, error) {
+func installationScopes(requested, current []string, existing bool, selected []string) ([]string, error) {
 	chosen := selected
 	if chosen == nil {
 		chosen = requested
-		if update {
+		if existing {
 			chosen = nil
 			for _, scope := range current {
 				if slices.Contains(requested, scope) {

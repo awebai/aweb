@@ -69,7 +69,7 @@ installation ID. Reinstall after uninstall creates a new ID. Both allocate the
 next generation from the persistent per-team/app counter inside the registry
 transaction; failed transactions issue no generation.
 
-For the CLI, `aw plugin install <origin>` grants the requested install scopes
+For the CLI, a new `aw plugin install <origin>` grants the requested install scopes
 unless `--grant-scope` selects a smaller set. `aw plugin update <app>` preserves
 the team's existing selection by default, dropping scopes the new bytes no
 longer request. It never silently grants new scopes; an admin selects those
@@ -80,6 +80,14 @@ Every successful confirmation returns the installation record. It stores the
 fetched bytes and their digest, sets `state: "active"` and
 `origin_verified: true`, and derives registrations from those bytes. New hook
 registrations and productions remain pending their owner's separate activation.
+When the team already has an active, origin-verified installation on that same
+pin and no `--grant-scope` is supplied, `aw plugin install` joins it locally and
+saves the receipt without an install POST. An ordinary member can join the
+team's existing installation. An admin repeating install keeps narrowed scopes,
+the generation and owner-activated hooks. When confirming different bytes
+without an explicit scope selection, install preserves the existing grants
+that the new manifest still requests, just as update does.
+
 There is no legacy any-member or unverified-install path.
 
 ## Installation reads

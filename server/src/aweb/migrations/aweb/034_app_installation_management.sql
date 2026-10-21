@@ -39,3 +39,24 @@ CREATE UNIQUE INDEX ON {{tables.app_installation_verifications}} (team_id, app_i
 
 -- The public generation type is BIGINT; the pre-F6 hook table used INTEGER.
 ALTER TABLE {{tables.app_hook_bindings}} ALTER COLUMN generation TYPE BIGINT;
+
+-- Operator-managed standalone install authority, never member-writable labels.
+CREATE TABLE {{tables.team_app_install_admins}} (
+    team_id TEXT NOT NULL REFERENCES {{tables.teams}}(team_id) ON DELETE CASCADE,
+    principal_did TEXT NOT NULL CHECK (principal_did LIKE 'did:key:%'),
+    role TEXT NOT NULL CHECK (role IN ('owner','admin')),
+    granted_by TEXT NOT NULL,
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    revoked_at TIMESTAMPTZ,
+    PRIMARY KEY (team_id, principal_did)
+);
+CREATE TABLE {{tables.app_install_admin_audit}} (
+    event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_id TEXT NOT NULL,
+    principal_did TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('owner','admin')),
+    action TEXT NOT NULL CHECK (action IN ('grant','revoke')),
+    operator TEXT NOT NULL,
+    forced BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);

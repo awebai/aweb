@@ -2,7 +2,7 @@
 
 from dataclasses import asdict
 
-from aweb_naapp.manifest import Manifest, load_manifest
+from aweb_naapp.manifest import Manifest, ManifestError, load_manifest
 
 from aweb.app_registry import get_installation_on, reserved_app_ids
 from aweb.hook_bindings import list_app_bindings
@@ -54,7 +54,15 @@ async def pinned_manifest_on(tx, *, team_id, app_id):
     data = await tx.fetch_value(
         "SELECT manifest_bytes FROM {{tables.team_app_installs}} WHERE team_id=$1 AND app_id=$2", team_id, app_id,
     )
-    return load_manifest(bytes(data), reserved_names=reserved_app_ids()) if data is not None else None
+    if data is None:
+        return None
+    try:
+        return load_manifest(bytes(data), reserved_names=reserved_app_ids())
+    except ManifestError:
+        # Older stored pins may no longer be interpretable by this reader.
+        # Management and preview still report the installation and an
+        # unavailable old-manifest comparison, rather than failing with 500.
+        return None
 
 
 async def installation_view_on(tx, *, team_id, app_id):

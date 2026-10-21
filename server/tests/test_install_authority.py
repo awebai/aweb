@@ -8,8 +8,6 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI, HTTPException, Request
-
 from aweb.auth_context import GrantContext
 from aweb.install_authority import (
     CertificateInstallAdminSubject,
@@ -18,6 +16,7 @@ from aweb.install_authority import (
 )
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.team_auth_deps import TeamIdentity
+from fastapi import FastAPI, HTTPException, Request
 
 TEAM = "demo:example.com"
 ACTOR = str(uuid4())
@@ -66,6 +65,7 @@ class Policy:
 async def db(test_db_factory):
     db = await test_db_factory.create_db(suffix="install_authority")
     await db.execute("CREATE TABLE test_install_admins (team_id TEXT NOT NULL, subject_id TEXT NOT NULL)")
+    await db.execute("CREATE TABLE team_app_install_admins (team_id TEXT, principal_did TEXT, role TEXT, revoked_at TIMESTAMPTZ)")
     return db
 
 

@@ -149,8 +149,12 @@ The serving application's `app.state.install_admin_policy` implements
 `InstallAdminPolicy`: `async __call__(tx, subject, *, action, app_id) -> bool`.
 It reads current authority inside the passed mutation transaction. A standalone
 operator configures authority rooted in its team controller and explicit
-delegations; an embedding host supplies its authoritative policy. No policy,
-or a result other than `True`, produces `403` with code `admin_required`.
+delegations; an embedding host supplies its authoritative policy. A configured
+host policy is the only source: its denial never falls back to standalone grants.
+Without a host policy, the standalone policy reads an operator-managed grant
+for the verified member's `did:key` inside the mutation transaction, holding
+`FOR SHARE` until commit. No grant, or a result other than `True`, produces
+`403` with code `admin_required`.
 Membership, custody, audit attribution and role strings confer no installation
 administration authority. Identity session grants cannot acquire it through
 their coordination scopes.
@@ -170,6 +174,29 @@ check. Installation confirmation, request approval and queued re-verification
 use it on both certificate and internal ingress; uninstall uses it in the
 lifecycle service. Ordinary members can submit installation requests without
 granting authority. See [the installation API](app-installation-api.md).
+
+## Standalone installation administrators
+
+The server starts with no install-admin grants and prints bootstrap guidance;
+core mail and chat keep working. A server operator grants the first owner
+locally, using the normal server database configuration:
+
+```sh
+aweb install-admin grant --team-id TEAM --principal-did did:key:MEMBER --role owner
+aweb install-admin list --team-id TEAM
+aweb install-admin grant --team-id TEAM --principal-did did:key:ANOTHER --role admin
+aweb install-admin revoke --team-id TEAM --principal-did did:key:ANOTHER
+```
+
+These are local server commands, not `aw` member commands. There is no HTTP
+grant/revoke route. `team_app_install_admins` records team, principal DID,
+owner/admin role, database operator, grant time and revocation time. Changes
+and their content-free operator audit commit together. Revoking or demoting
+the last owner requires an explicit `--force`. A revoked grant stops authorizing
+new mutation transactions; an already-authorized transaction holds its grant
+until commit. Certificate membership and member-writable agent/workspace role
+labels or prompt-role bundles do not confer this authority. Internal-auth
+hosts must provide their own policy; no internal actor is guessed into a DID.
 
 ## Installation identity and transactional reader
 
