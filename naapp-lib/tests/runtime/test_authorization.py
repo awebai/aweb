@@ -15,6 +15,7 @@ import pytest
 from aweb_naapp_testing import REGISTRY_URL, Member
 from fastapi import FastAPI, HTTPException, Request
 
+from aweb_naapp.manifest import canonical_bytes, load_manifest
 from aweb_naapp.runtime.authorization import (
     DeclaredTools,
     Grant,
@@ -27,18 +28,33 @@ from tests.runtime.conftest import relying_app
 ORIGIN = "https://app.example.com"
 TEAM_ID = "backend:example.com"
 
+def in_path(name: str) -> dict:
+    """The params and input_schema a tool needs to take ``name`` from its path."""
+    return {
+        "params": [{"name": name, "in": "path"}],
+        "input_schema": {"type": "object", "properties": {name: {"type": "string"}}, "required": [name]},
+    }
+
+
 MANIFEST = {
     "app": {"id": "fixture", "origin": ORIGIN, "version": "1"},
     "manifest_version": 1,
     "tools": [
         {"name": "list", "method": "GET", "path": "/v1/items", "scopes": ["fixture:read"]},
-        {"name": "get", "method": "GET", "path": "/v1/items/{item_id}", "scopes": ["fixture:read"]},
+        {"name": "get", "method": "GET", "path": "/v1/items/{item_id}",
+         **in_path("item_id"), "scopes": ["fixture:read"]},
         {"name": "create", "method": "POST", "path": "/v1/items", "scopes": ["fixture:write"]},
         {"name": "archive", "method": "POST", "path": "/v1/items/{item_id}/archive",
-         "scopes": ["fixture:read", "fixture:write"]},
+         **in_path("item_id"), "scopes": ["fixture:read", "fixture:write"]},
         {"name": "catalog", "method": "GET", "path": "/v1/catalog", "auth": "none", "scopes": ["fixture:read"]},
     ],
 }
+
+
+def declared(*tools: dict, version: int = 1) -> DeclaredTools:
+    """The tools of an app manifest declaring ``tools``, read as the runtime reads it."""
+    manifest = {"manifest_version": version, "app": {"id": "fixture", "origin": ORIGIN}, "tools": list(tools)}
+    return DeclaredTools.from_manifest(load_manifest(canonical_bytes(manifest)))
 
 
 @dataclass
@@ -84,12 +100,12 @@ async def member(registry) -> Member:
     return member
 
 
-def serve(grants, policy, tools=None):
-    tools = tools or DeclaredTools.from_manifest(MANIFEST)
+def serve(grants, policy, tools=None, caller="agent"):
+    tools = tools or DeclaredTools.from_manifest(load_manifest(canonical_bytes(MANIFEST)))
 
     async def on_principal(request, principal):
         authorization = await authorize_request(
-            request, principal=principal, tools=tools, grants=grants, policy=policy,
+            request, principal=principal, caller=caller, tools=tools, grants=grants, policy=policy,
         )
         return {
             "tool": authorization.tool.name,
@@ -100,8 +116,9 @@ def serve(grants, policy, tools=None):
     return on_principal
 
 
-async def call(registry, member, grants, policy, method, path, *, tools=None):
-    async with relying_app(registry, public_origin=ORIGIN, on_principal=serve(grants, policy, tools)) as (client, _):
+async def call(registry, member, grants, policy, method, path, *, tools=None, caller="agent"):
+    on_principal = serve(grants, policy, tools, caller)
+    async with relying_app(registry, public_origin=ORIGIN, on_principal=on_principal) as (client, _):
         return await client.request(method, path, headers=member.headers(aud=ORIGIN, method=method, path=path))
 
 
@@ -228,14 +245,16 @@ async def asgi_get(app: FastAPI, raw_path: bytes, headers: dict[str, str]) -> tu
 @pytest.mark.parametrize("path", ["/v1/items/.", "/v1/items/..", "/v1/./items", "/v1/items/abc/../x"])
 async def test_raw_dot_segments_are_refused_before_matching(registry, member, path):
     grants = InstalledGrants({TEAM_ID: fresh("fixture:read", "fixture:write")})
-    tools = DeclaredTools.from_manifest(MANIFEST)
+    tools = DeclaredTools.from_manifest(load_manifest(canonical_bytes(MANIFEST)))
     cache = AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, transport=registry.transport)
     app = FastAPI()
 
     @app.get("/{route:path}")
     async def anything(route: str, request: Request):
         principal = await authenticate_request(request, public_origin=ORIGIN, team_cache=cache)
-        await authorize_request(request, principal=principal, tools=tools, grants=grants, policy=Policy())
+        await authorize_request(
+            request, principal=principal, caller="agent", tools=tools, grants=grants, policy=Policy()
+        )
         return {}
 
     status, body = await asgi_get(app, path.encode(), member.headers(aud=ORIGIN, method="GET", path=path))
@@ -253,10 +272,12 @@ async def test_ordinary_percent_encoding_in_a_segment_is_still_authorized(regist
 
 async def test_encoded_slash_cannot_reach_a_second_declared_route(registry, member):
     """Real per-route dispatch: the tool that is checked is the route that runs."""
-    tools = DeclaredTools.from_manifest({"tools": [
-        {"name": "get-thing", "method": "GET", "path": "/v1/things/{id}", "scopes": ["things:read"]},
-        {"name": "get-secret", "method": "GET", "path": "/v1/things/{id}/secret", "scopes": ["things:admin"]},
-    ]})
+    tools = declared(
+        {"name": "get-thing", "method": "GET", "path": "/v1/things/{id}", **in_path("id"),
+         "scopes": ["things:read"]},
+        {"name": "get-secret", "method": "GET", "path": "/v1/things/{id}/secret", **in_path("id"),
+         "scopes": ["things:admin"]},
+    )
     grants = InstalledGrants({TEAM_ID: fresh("things:read")})
     cache = AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, transport=registry.transport)
     app = FastAPI()
@@ -264,7 +285,8 @@ async def test_encoded_slash_cannot_reach_a_second_declared_route(registry, memb
 
     async def admit(request: Request) -> str:
         principal = await authenticate_request(request, public_origin=ORIGIN, team_cache=cache)
-        authorization = await authorize_request(request, principal=principal, tools=tools, grants=grants,
+        authorization = await authorize_request(request, principal=principal, caller="agent", tools=tools,
+                                                grants=grants,
                                                 policy=Policy())
         return authorization.tool.name
 
@@ -296,13 +318,13 @@ async def test_signed_request_to_a_public_tool_still_needs_the_grant(registry, m
     assert detail_code(response) == "scope_denied"
 
 
-@pytest.mark.parametrize("declared,matches", [("/mounted/v1/items", True), ("/v1/items", False)])
-async def test_mounted_app_matches_the_external_path_its_manifest_declares(registry, member, declared, matches):
+@pytest.mark.parametrize("declared_path,matches", [("/mounted/v1/items", True), ("/v1/items", False)])
+async def test_mounted_app_matches_the_external_path_its_manifest_declares(
+    registry, member, declared_path, matches
+):
     # A manifest path is relative to the app origin, so a mounted app declares its prefix.
     grants = InstalledGrants({TEAM_ID: fresh("fixture:read")})
-    tools = DeclaredTools.from_manifest(
-        {"tools": [{"name": "list", "method": "GET", "path": declared, "scopes": ["fixture:read"]}]}
-    )
+    tools = declared({"name": "list", "method": "GET", "path": declared_path, "scopes": ["fixture:read"]})
     async with relying_app(
         registry, public_origin=ORIGIN, root_path="/mounted", on_principal=serve(grants, Policy(), tools)
     ) as (client, _):
@@ -323,16 +345,16 @@ async def test_mounted_app_matches_the_external_path_its_manifest_declares(regis
     ([{"name": "a", "method": "GET", "path": "/v1/x?y=1", "scopes": ["s"]}], "query in path"),
     ([{"name": "a", "method": "FETCH", "path": "/v1/x", "scopes": ["s"]}], "unknown method"),
     ([{"name": "a", "method": "GET", "path": "/v1/{}", "scopes": ["s"]}], "empty placeholder"),
-    ([{"name": "a", "method": "GET", "path": "/v1/{x}", "scopes": ["s"]},
+    ([{"name": "a", "method": "GET", "path": "/v1/{x}", **in_path("x"), "scopes": ["s"]},
       {"name": "b", "method": "GET", "path": "/v1/fixed", "scopes": ["t"]}], "ambiguous routes"),
 ])
 def test_manifest_that_cannot_be_enforced_is_rejected(tools, reason):
     with pytest.raises(ValueError):
-        DeclaredTools.from_manifest({"tools": tools})
+        declared(*tools)
 
 
 def test_same_path_with_different_methods_is_not_ambiguous():
-    tools = DeclaredTools.from_manifest(MANIFEST)
+    tools = DeclaredTools.from_manifest(load_manifest(canonical_bytes(MANIFEST)))
     assert tools.match("GET", "/v1/items").name == "list"
     assert tools.match("POST", "/v1/items").name == "create"
     assert tools.match("get", "/v1/items") is None
@@ -350,3 +372,26 @@ async def test_policy_http_refusal_from_the_app_propagates(registry, member):
     grants = InstalledGrants({TEAM_ID: fresh("fixture:read")})
     response = await call(registry, member, grants, refuse, "GET", "/v1/items/abc")
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize("caller,contexts,admitted", [
+    ("agent", ["agent"], True),
+    ("agent", ["surface"], False),
+    ("agent", ["hook"], False),
+    ("surface", ["surface"], True),
+    ("surface", ["agent"], False),
+    ("surface", ["hook"], False),
+])
+async def test_a_tool_admits_only_the_caller_contexts_it_declares(registry, member, caller, contexts, admitted):
+    grants = InstalledGrants({TEAM_ID: fresh("fixture:read")})
+    tools = declared(
+        {"name": "list", "method": "GET", "path": "/v1/items", "scopes": ["fixture:read"],
+         "invocation_contexts": contexts},
+        version=2,
+    )
+    response = await call(registry, member, grants, Policy(), "GET", "/v1/items", tools=tools, caller=caller)
+    if admitted:
+        assert response.status_code == 200, response.text
+    else:
+        assert detail_code(response) == "tool_context_denied"
+        assert grants.asked == []

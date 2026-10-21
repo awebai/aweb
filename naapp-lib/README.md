@@ -88,12 +88,35 @@ principals) unless their schemas differ.
 An app names its signing keys by kid, as key files:
 `<PREFIX>APP_KEY_FILES='{"<kid>": "/run/secrets/<file>"}'`. A key file holds the
 32-byte Ed25519 seed as 64 hex characters, with one trailing newline allowed. It
-must be a regular file of at most 1 KiB, and must not be group- or world-writable. The manifest
-declares which kid signs which purpose, and the app does not start unless the
-configured key is the declared one. An app with `<PREFIX>APP_EVENTS_ORIGIN` set
-(https, or http on loopback) must hold its declared app-event key. That key may instead be given as
-`<PREFIX>APP_EMIT_KEY_SEED_HEX` with `<PREFIX>APP_EMIT_KID`, a form that signs
-app events only.
+must be a regular file of at most 1 KiB, and must not be group- or world-writable. The
+app-event key may instead be given as `<PREFIX>APP_EMIT_KEY_SEED_HEX` with
+`<PREFIX>APP_EMIT_KID`, a form that signs app events only. An app with
+`<PREFIX>APP_EVENTS_ORIGIN` set (https, or http on loopback) must hold its app-event key.
+
+### The served manifest
+
+The committed `aweb-app.json` is a template. It declares the app's kids and the
+purposes each signs (a version 2 manifest in `app_keys`, a version 1 manifest's
+`event_emitters` as app-event keys), its local event types, and the hosted
+`app.id` default, and it commits no `did_key`. At startup the runtime fills in
+the deployment's own `<PREFIX>APP_ID`, its public origin, and each declared kid's
+did:key derived from that kid's configured key, then serves the canonical bytes
+(`aweb_naapp.manifest.fill_manifest`). The app does not start if a declared kid
+has no configured key, if a key is configured for a kid the template does not
+declare, if the template commits a did:key or names an event type with an app
+prefix, if the filled manifest is invalid,
+or if it would serve the hosted app id at an origin others can reach (anything
+but the hosted origin or a loopback origin, private-network addresses included).
+
+Operator rules:
+- **The app id is permanent.** Keep `<PREFIX>APP_ID` stable for the deployment's
+  lifetime: installations are bound to it, so changing it orphans them.
+- **Rotating a key is a new kid.** Add the new kid beside the old one in the
+  template, configure its key, and deploy. The served bytes change, so every team
+  re-pins the new digest; a kid keeps the did:key it was first published with.
+- The same configuration always serves byte-identical manifest and catalog
+  bytes, on every replica and restart, so their digests can be recorded at
+  deploy.
 
 ### Health
 

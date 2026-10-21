@@ -1,4 +1,4 @@
-# App manifest v1
+# App manifest
 
 Status: **current experimental public contract**. Owner: the aweb OSS CLI
 extension surface. The shipped interpreter and validator live in
@@ -46,7 +46,9 @@ AWID publication are governed by [`a2a.md`](a2a.md) and
 **Compatibility.** `manifest_version` is the **contract version the consumer
 interprets** (distinct from `app.version`, the app's own release). A consumer
 MUST reject a manifest whose `manifest_version` it does not support rather than
-best-effort parse it. v1 consumers support `manifest_version: 1`.
+best-effort parse it. v1 consumers support `manifest_version: 1`. The aw CLI
+and `aweb_naapp.manifest` support versions 1 and 2; see
+[Manifest version 2](#manifest-version-2).
 
 The v1 manifest also accepts optional `events` declaration metadata. When
 present it must be an array of at most 64 objects. Each object accepts only
@@ -75,6 +77,11 @@ and missing count limit are recorded as known divergences, not valid v1
 exceptions. Gateway tightening is a separate change.
 
 ## Manifest discovery
+
+A consumer that supports more than one manifest version discovers the
+variant to use from the app's catalog first; see
+[Variant discovery](#variant-discovery). Consumers that support only v1, and
+apps that publish no catalog, use the legacy path below.
 
 An app serves its manifest at a **well-known path on its origin**:
 `<app.origin>/.well-known/aweb-app.json` (RFC 8615; parallels A2A's
@@ -184,6 +191,12 @@ Given `(tool, args)`:
    `in:path` params, each **percent-encoded** (RFC 3986). **Reject** any
    `tool.path` that is not relative — absolute URL, leading `//host`, a scheme,
    or path-traversal (`..`) → validation error.
+   **Reject** a path param value that is blank, is `.` or `..` after trimming
+   whitespace, or contains `/`, `\`, `%`, `?`, `#`, `;` or an ASCII control
+   character: each value fills exactly one segment, even where an
+   intermediary decodes the path before routing. App authors must not design
+   path params that carry any of these; such values go in the query or the
+   body.
 2. **Query** = `in:query` params, **canonically encoded — this lands in the
    SIGNED path.** `aw id request` signs `path` *including* the raw query
    (`cli/go/cmd/aw/id_request.go`), so every consumer MUST encode identically
@@ -352,11 +365,234 @@ Deferred consistently; capture so they aren't lost. None block v1.
 
 ## Compatibility and change control
 
-`manifest_version: 1` is frozen for the fields and mapping rules above. Additive
+`manifest_version: 1` is frozen for the fields and mapping rules above.
+Version 2 is defined by its section above and its vectors. Additive
 application releases use `app.version`; a breaking interpretation change needs
 a new `manifest_version` and new conformance fixtures. Streaming responses,
 multipart bodies, float canonicalization, and output selectors remain outside
 v1 until source, vectors, and this contract change together.
+
+## Manifest version 2
+
+Status: **interpreter, vectors and CLI discovery shipped; no app publishes v2
+until a catalog-aware CLI is released.** Design: D1 §5
+(`docs/design/agent-pages.md`). Authority: the shared vectors
+`test-vectors/app-manifests/app-manifest-v2-v1.json`, which both the Go
+interpreter (`cli/go/internal/appmanifest`) and the Python reader
+(`aweb_naapp.manifest.load_manifest`) pass. Consumers compare error **codes**
+from those vectors, never wording.
+
+Version 2 keeps every v1 tool field and the whole verb → HTTP mapping
+unchanged, removes `event_emitters`, and adds:
+
+| Field | Meaning |
+|---|---|
+| `tools[].invocation_contexts` | Nonempty, unique subset of `agent`, `surface`, `hook`. Absent means `agent` and `surface`; `hook` is never implied. |
+| `app_keys` | Purpose-split app keys: `[{kid, did_key, purposes}]`, at most 16 keys and 8 purposes each. |
+| `surfaces` | Member page bindings (at most 16): `id`, `label`, `format`, `list_tool`, `read_tool`, optional `invoke_tool` and `answer_tool`, `inputs: {resource, invocation}` and event bindings. |
+| `usage` | `{format, snapshot_tool}`. |
+| `lifecycle` | `{export_tool, delete_tool, status_tool}`, at least one. |
+| `hooks` | The versioned hooks slot: `registration_version: 1`, `registrations` and `productions` (at most 64 each). |
+| `roles` | The roles a team admin may designate: `[{name, label, description?}]`, 1 to 64 entries. Absent declares none. |
+
+A v2 manifest declares at most 256 tools, and a v2 tool path has at most 32
+segments and no percent-encoding. Any manifest or catalog nested deeper than
+512 levels is refused, in both versions; these bounds keep every check
+linear. A v2 member is never `null`, and unknown fields are refused at every
+level.
+Keys match exactly: `Surfaces` is not `surfaces`. v2 tool names are unique,
+so every lookup by name finds the same tool. v1 decoding is unchanged, and a
+v2 field in a v1 manifest is refused.
+
+### Designatable roles
+
+`roles` declares the roles a team admin may designate for this app. Absent
+declares none; an empty array is refused, so "none" has one spelling.
+
+- `name` is the designatable role grammar of `aweb_naapp.roles`:
+  dot-separated lowercase segments, at least two (`[a-z0-9][a-z0-9_-]*` each),
+  no `:`, at most 128 bytes, unique within the array and compared exactly,
+  never trimmed. A name is not tied to `app.id`: a role is scoped by the
+  installation that declares it. So every surface that shows a role (the
+  install diff, the designation UI, audit records and member views) shows
+  it as the pair of app and name, never the bare name; otherwise an app
+  declaring `secrets.owner` could pass for another app's owner role.
+- `label` is 1 to 128 characters (runes), and the optional `description` is
+  1 to 512. The host shows both in its own chrome, in the install diff and
+  the designation UI, so neither may carry a C0 or C1 control character or a
+  bidi control (U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069).
+
+Every fault in `roles` is `role_invalid`, except `roles: null`, which is
+`manifest_invalid` like any null v2 member. The manifest only declares the
+roles; where the host reads them and what designating one allows are the
+host's contract.
+
+### Tool invocation contexts
+
+The context a tool may be called from is part of its declaration:
+
+- **agent** — CLI verbs, hosted MCP tools and grant snapshots. The aw CLI is
+  an agent caller: `aw <app> --help` lists only agent tools, and calling a
+  surface-only or hook-only verb fails with `tool_context_denied` before
+  anything is signed or sent. Grant snapshots hold only agent tools, and
+  custody refuses a snapshot tool outside the agent context.
+- **surface** — tools a member page host calls. Every surface reference must
+  name a `surface` tool.
+- **hook** — hook targets. A registration's `tool` must declare exactly
+  `["hook"]`.
+
+At call time, a request's caller context comes from its verified
+`aweb.principal-attestation/1` `channel` claim: `dashboard` is `surface`;
+`mcp_l2` and `api` are `agent`; no attestation is `agent`. Any other channel
+fails closed (`channel_invalid`). A present attestation that did not verify
+is `attestation_invalid`, never treated as absent. The check only refuses:
+passing it grants nothing, and the call still faces the app's grants, roles
+and policy. A naapp enforces it once that attestation ships. Until then, the
+CLI, grant snapshots and custody refuse, and a naapp cannot tell a page
+host's member-signed call from an agent's. Today only the hosted custodial
+path produces the attestation.
+
+### Surfaces and answers
+
+`format` names the page format, e.g. `aweb.page/1`. A host that does not know
+a format shows the surface as unavailable. List and read tools are
+member-authenticated, non-mutating GETs; invoke and answer tools are
+member-authenticated mutations. `inputs.resource` names a parameter of the
+read, invoke and answer tools. `inputs.invocation` names the invoke and answer
+tools' JSON object body parameter. A surface event binds a declared manifest
+event, as `<app.id>/<type>` or the local type, with fixed top-level field
+names, never a path expression.
+
+Answers reach an app only through a surface's `answer_tool`, which must
+declare `invocation_contexts` exactly `["surface"]`. A manifest whose answer
+path is agent-visible is refused at install:
+
+- the answer tool itself declares other contexts
+  (`answer_tool_contexts_invalid`);
+- another tool whose contexts include `agent` can reach the answer tool's
+  route as a server routes it, on the decoded path
+  (`answer_route_agent_visible`). The check is deliberately conservative: it
+  uses the same method, ignores trailing and repeated slashes, and lets a
+  caller segment holding a placeholder cover one or more segments. v2 tool
+  paths carry no percent-encoding, so literal segments compare as the server
+  sees them. Path parameter values are never blank, `.` or `..`, and never
+  contain `/`, `\`, `%`, `?`, `#`, `;` or an ASCII control character, so a
+  value is always one segment, even after an intermediary decodes it. This is
+  defence in depth; the guarantee is below;
+- another tool, the `invoke_tool` included, declares an `answer` input,
+  top-level or inside an object body parameter (`answer_input_forbidden`).
+
+**The guarantee is the action's kind, not a member name.** An answer is an
+action whose page definition has `kind: "answer"` (D1 §4, C1). The naapp's
+own invoke handler refuses any request whose action, resolved from the
+page's action definitions, is `answer`-kind, whatever manifest validation
+and host filtering did. Only the naapp can resolve that; a manifest cannot
+express it. The shared naapp runtime (`aweb_naapp`) enforces it in
+`authorize_request`, through the app's `action_kind`, which resolves the
+kind of the page action a request performs. An `answer`-kind action is
+refused on every tool except the surface's `answer_tool`
+(`answer_action_refused`). On the `invoke_tool`, an action whose kind does
+not resolve is refused (`action_unresolved`). An app that guards its
+`invoke_tool` route without an `action_kind` does not start.
+
+As an additional cheap guard, a request body for any v2 tool except a
+surface `answer_tool` that carries a member named `answer`, top-level or in
+a top-level object member, is refused (`answer_payload_refused`). This guard
+does not recognise an answer-kind action, so it is not the guarantee. The
+naapp runtime applies it to JSON bodies; a `raw` body is opaque bytes.
+
+The naapp runtime also enforces invocation contexts at call time: a request
+calls as an agent unless its principal attestation verifies and names the
+dashboard channel, which makes it a surface caller. A tool outside the
+caller's context is refused (`tool_context_denied`). No team-auth request
+calls in the `hook` context.
+
+### Hooks slot
+
+`registrations` declare where the app receives a hook:
+`{catalog: {id, version}, hook, tool, scopes}`. `productions` declare which
+hooks it may fire: `{catalog, hook, reads}`. `reads` lists local
+non-mutating tools whose reads fire the hook, where the hook's catalog
+says reads fire at all. The slot's structure is strict. The hook catalog,
+its names and its firing and delivery semantics are not part of this
+contract.
+
+Every registration and production is **pending** when installed. Only the
+team owner activates one, bound to the installation's generation and
+manifest digest. A new generation returns them to pending, and uninstall
+revokes them. An ordinary install grants the scopes of the agent and surface
+tools it activates (`install_scopes` in the resolved view). A hook-only
+tool's scopes are granted only at owner activation.
+
+### App keys
+
+A verifier accepts a key only for a purpose the key declares and the
+verifier implements. D1 uses `app-event`, `app-request` and `app-usage`, and
+the hooks lane defines its own. An unrecognized purpose is shown to the
+admin and grants nothing. A v1 `event_emitters` entry reads as an
+`app-event` key only.
+
+## Variant discovery
+
+Authority: `test-vectors/app-manifests/app-manifest-discovery-v1.json`.
+
+An app that publishes more than one manifest version serves a catalog at
+`<origin>/.well-known/aweb-app-versions.json`:
+
+```json
+{
+  "catalog_version": 1,
+  "app_id": "fixture",
+  "variants": [
+    {"manifest_version": 1, "url": "/manifests/v1.json", "digest": "sha256:<exact bytes>"},
+    {"manifest_version": 2, "url": "/manifests/v2.json", "digest": "sha256:<exact bytes>"}
+  ]
+}
+```
+
+A consumer GETs the catalog and selects the highest `manifest_version` it
+supports. A variant `url` is an absolute path, with no percent-encoding,
+resolved against the install base, path prefix included: an app installed from
+`https://apps.example/notes` serves its catalog at
+`https://apps.example/notes/.well-known/aweb-app-versions.json` and a variant
+`/manifests/v2.json` at `https://apps.example/notes/manifests/v2.json`. A
+path that could escape the base is refused: dot segments, and any
+percent-encoding. The consumer GETs that variant and checks
+three things: the bytes hash to the catalog digest, they declare that version, and
+they name the catalog's app id. Each variant is immutable: new bytes mean a
+new digest. Only a missing catalog (404) permits the legacy
+`/.well-known/aweb-app.json`. Any other catalog failure, and any failure of
+the selected variant, fails discovery; nothing falls back to another variant
+or to the legacy path. Catalog and variant fetches follow no redirects.
+
+`aw plugin install` and `aw plugin update` discover this way. A failed
+update keeps the installed manifest. An app that publishes v2 may also
+serve a v1 variant's exact bytes at the legacy path, for released v1-only
+clients. That v1 variant must be an agent-safe subset of v2. Its app and
+events must equal v2's. Every v1 tool must be a v2 agent tool with an
+identical mapping, since a v1 tool has no contexts and is always
+agent-visible. Every v1 event emitter must be a v2 `app-event` key.
+Publishers check this with `aweb_naapp.manifest.check_v1_variant`
+(`v1_variant_incompatible`).
+
+The shared naapp runtime (`aweb_naapp`) serves a v1 manifest at the legacy
+path and publishes no catalog for it. For a v2 manifest it serves the
+catalog, listing the exact bytes it serves at `/manifests/v2.json`, and no
+v1 variant, so the legacy path is not found. It computes both once at
+startup.
+
+The manifest a deployment serves is its own. The committed manifest is a
+template: it declares the kids and the purposes each signs, local event types
+and the hosted `app.id` default, and commits no `did_key`. The runtime fills in
+the deployment's `app.id`, its origin and each declared kid's `did_key`, derived
+from the deployment's configured key, and serves the canonical bytes
+(`aweb_naapp.manifest.fill_manifest`). One configuration therefore serves
+byte-identical bytes on every replica. Event types, and the surface event
+bindings that reference them, are named locally in the template, without an
+`app.id/` prefix, because they resolve against the deployment's `app.id`; a
+prefixed one stops every deployment from starting. A deployment must keep its `app.id` for
+its lifetime, and rotates a key by adding a kid, which changes the digest every
+team pins.
 
 ## CLI resident and grant access
 
