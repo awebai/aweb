@@ -5,7 +5,8 @@ aweb OSS hooks lane (aweb-acgh.16.21). This document is the source of truth for
 the bytes logs commits to and signs. Its vector is
 `docs/vectors/logs-chain-v1.json`. The Python implementation in
 `naapp/logs/src/aweb_logs/chain.py` and `verify.py` regenerates it byte for
-byte. The design and its rationale are in
+byte. The Go verifier in `cli/go/logschain`, on which `aw logs verify` is to be
+built, passes it. The design and its rationale are in
 [the audit substrate design](design/audit-substrate.md), §B3 and §B6.
 
 ## What the chain proves, and what it does not

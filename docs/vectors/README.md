@@ -395,7 +395,8 @@ cases puts two adjacent faults on one event (a duplicate of another team, an
 event of another team with a broken link, a wrong event hash with its content
 gone, a wrong event hash with its content altered, wrong key evidence with a
 changed skeleton) and expects the earlier. The
-Python implementation in `naapp/logs` regenerates it byte for byte.
+Python implementation in `naapp/logs` regenerates it byte for byte, and the Go
+verifier in `cli/go/logschain` passes it.
 
 ### `owner-act-v1.json`
 

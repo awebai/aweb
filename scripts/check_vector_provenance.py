@@ -254,6 +254,10 @@ ROOT_CONSUMERS = {
         "hook-delivery-credential-v1.json",
         '(AWEB_ROOT / "docs" / "vectors" / "hook-delivery-credential-v1.json")',
     ),
+    PurePosixPath("cli/go/logschain/vectors_test.go"): _consumer(
+        "logs-chain-v1.json",
+        '"../../../docs/vectors/logs-chain-v1.json"',
+    ),
     PurePosixPath("naapp/logs/tests/chain_vector.py"): _consumer(
         "logs-chain-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "logs-chain-v1.json"',
