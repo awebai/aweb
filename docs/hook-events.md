@@ -224,14 +224,27 @@ the producer; parameter values and concrete paths or queries are never copied
 into event fields.
 
 `K` is an independent, randomly generated 32-byte producer-local secret,
-persisted in the producer's private configuration. It is never a signing seed,
+persisted in the producer's private configuration. K is used for no other
+purpose, including `returned_hmac` or `upstream_response_hmac`. It is never a signing seed,
 a public key, a team key or a manifest field, and is never sent to a target.
 The runtime loads it through the shared key-file reader as 64 hexadecimal
 characters, with one trailing newline allowed. A runtime configured to produce
 this hook fails startup if the key is absent or malformed. All
 replicas of that producer use the same key. Rotation changes subsequent
-commitments; retries deliver the already-signed outbox bytes without
-recomputing them. Cross-key comparisons have no meaning.
+commitments and destroys the old K; retries deliver the already-signed outbox
+bytes without recomputing them. Cross-key comparisons have no meaning.
+
+**Attributable refusals require a complete body.** The producer must have
+received the entire body within its configured request-size bound, verified
+the request's authentication, matched a declared tool and resolved its
+installation before a refusal can fire this hook. An oversized, interrupted
+or otherwise early refusal made before the body is fully read is not
+attributable for this hook and emits no manifest-command event. Its ordinary
+refusal status is preserved. The producer never drains an unbounded body to
+make a refusal attributable, and never substitutes a partial body, an empty
+body or a caller-supplied body digest for the complete bytes. K4 tests cover
+both an authenticated refusal with its complete body and an early refusal
+without one.
 
 The target verifies the event's signature and the commitment's shape. It
 cannot recompute this HMAC and does not obtain proof of the request's contents;
