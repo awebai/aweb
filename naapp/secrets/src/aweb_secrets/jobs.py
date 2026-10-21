@@ -265,6 +265,10 @@ def _check(after: dict[str, Any]) -> None:
     _require(len(refs) == len(set(refs)), "distinct credential references")
     argv = after["argv"]
     _require(isinstance(argv, list), "argv array")
+    if after["kind"] == "oci":
+        _require(
+            bool(argv) and _absolute(argv[0]), "OCI argv starts with a fixed absolute executable"
+        )
     used_credentials: dict[str, set[str]] = {}
     for i, arg in enumerate(argv):
         if isinstance(arg, str):

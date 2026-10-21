@@ -153,7 +153,7 @@ def test_durable_flag_and_all_template_references_are_checked():
         JobDefinition.from_after(body)
 
 
-def test_oci_requires_a_digest_and_only_declared_readonly_paths():
+def oci_after():
     body = after()
     body.update(
         kind="oci",
@@ -163,10 +163,69 @@ def test_oci_requires_a_digest_and_only_declared_readonly_paths():
             "read_only_paths": ["/srv/config"],
         },
     )
+    body["argv"].insert(0, "/usr/bin/backup")
+    return body
+
+
+def test_oci_requires_a_digest_and_only_declared_readonly_paths():
+    body = oci_after()
     JobDefinition.from_after(body)
     body["oci"]["image"] = "registry.example/backup:latest"
     with pytest.raises(JobInvalid):
         JobDefinition.from_after(body)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        [],
+        ["backup"],
+        [""],
+        ["--"],
+        ["/usr/../bin/backup"],
+        [{"$param": "database", "slot": "positional"}],
+    ],
+)
+def test_oci_argv_requires_its_own_fixed_absolute_executable(argv):
+    body = oci_after()
+    body["argv"] = argv
+    # Keep the declared parameter used independently of argv, so an absent
+    # executable cannot be refused merely as an unused-parameter side effect.
+    body["env"]["DATABASE"] = {"$param": "database"}
+    with pytest.raises(JobInvalid):
+        JobDefinition.from_after(body)
+
+
+def test_oci_command_is_pinned_without_rewriting_exec_argument_semantics():
+    body = oci_after()
+    first = JobDefinition.from_after(body)
+    assert first.after["argv"] == body["argv"]
+    assert first.params_valid({"database": "orders"})
+    body["argv"][0] = "/opt/backup"
+    edited = JobDefinition.from_after(body)
+    assert edited.digest != first.digest
+    assert first.after["argv"][0] == "/usr/bin/backup"
+    # Exec argv remains arguments only: exec.path supplies its executable.
+    ordinary = after()
+    assert JobDefinition.from_after(ordinary).after["argv"][0] == "--"
+    ordinary["argv"] = []
+    ordinary["params"] = {}
+    assert JobDefinition.from_after(ordinary).after["argv"] == []
+
+
+def test_oci_change_draft_never_inherits_an_image_executable():
+    from aweb_secrets.change import ChangeRefused, validate_change
+    from tests.test_change_records import _change
+
+    body = oci_after()
+    validate_change(_change({"kind": "job", "op": "create", "ref": body["job_id"], "after": body}))
+    body["argv"] = []
+    body["params"] = {}
+    with pytest.raises(ChangeRefused):
+        validate_change(
+            _change({"kind": "job", "op": "create", "ref": body["job_id"], "after": body})
+        )
+    assert body["argv"] == []
 
 
 @pytest.fixture
@@ -422,12 +481,8 @@ def test_option_with_attached_value_cannot_take_a_parameter_as_another_argument(
     "path", ["/", "//etc", "/etc/", "/etc//config", "/etc/./config", "/etc/../config"]
 )
 def test_oci_mount_paths_are_normalized_nonroot_paths(path):
-    body = after()
-    body.update(
-        kind="oci",
-        exec=None,
-        oci={"image": "registry.example/backup@sha256:" + "b" * 64, "read_only_paths": [path]},
-    )
+    body = oci_after()
+    body["oci"]["read_only_paths"] = [path]
     with pytest.raises(JobInvalid):
         JobDefinition.from_after(body)
     body["oci"]["read_only_paths"] = ["/etc/config"]

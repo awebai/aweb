@@ -74,6 +74,18 @@ The digest is SHA-256 of `aweb.secrets.job/1\n` followed by canonical JSON of
 A returned `after` is a fresh mapping; mutating it cannot change the stored snapshot
 or its digest. PostgreSQL refuses updates to immutable definition rows.
 
+For OCI, `argv` is the complete process argument vector: it is nonempty and
+starts with a fixed absolute executable inside the pinned image. For exec,
+`argv` remains arguments only and the runner prepends the pinned `exec.path`.
+Neither form supplies an executable override from a parameter. Confirmation must
+show the kind-specific effective command, pinned `cwd`, declared environment
+names and credential-field bindings. OCI uses exactly that command, environment
+and working directory, ignoring image/runtime defaults. Existing records and
+pins are not rewritten to inherit a default executable; a corrected definition
+requires normal owner confirmation and new digest/grant/local pins. Runtime
+state and cleanup follow [secrets §9.4](design/secrets.md#94-job-definitions);
+the definition check alone does not enable OCI execution.
+
 Server-managed run-bound child metadata and the paired child/grant receipt stay
 outside job/1. The stable slot label maps by signed array ordinal to the actual
 delivered ref, under §9.5. The runner independently checks its local job pin.
