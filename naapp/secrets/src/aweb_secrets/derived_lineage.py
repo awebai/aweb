@@ -1,7 +1,10 @@
 """Server-managed ancestry, expiry fences and nearest-current operation lookup.
 
-Callers hold the installation fence before these functions. Secret locks are
-root to leaf, followed by all source and candidate grants in grant-ID order.
+Decision 78 extends decision 59's common lock order: installation fence, role
+hold, secret ancestry root to leaf, all source and candidate grants in ascending
+grant-ID order, covering approver rows FOR SHARE in deterministic order, B2
+approval locks, then writes. Callers hold the fence and any role hold first;
+lock_ancestry and check_ancestry take only their respective ancestry/grant locks.
 The guard stays closed until admission, capture and containment all use this
 order and issuance can commit its mandatory audit event.
 """
