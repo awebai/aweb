@@ -157,7 +157,7 @@ MANIFEST: dict[str, Any] = {
             "scopes": ["secrets:admin"],
             "mutation": True,
             "body": {"mode": "json"},
-            "params": _params("request_id", "action", "target"),
+            "params": _params("request_id", "action", "target", "credential_id"),
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -174,6 +174,7 @@ MANIFEST: dict[str, Any] = {
                         ],
                     },
                     "target": {"type": "string", "description": "The grant, approval, secret, runner or approver id."},
+                    "credential_id": {"type": "string", "description": "For revoke-approver, the lost passkey credential ID as unpadded base64url. Omit to revoke the contact and full designation."},
                 },
                 "required": ["request_id", "action"],
             },

@@ -1,4 +1,4 @@
-"""Owner-only HTTP ceremonies on the console origin, using S4 sessions and B3.
+"""Human console ceremonies and scoped owner/approver sessions, using S4 and B3.
 
 The app composes one OwnerConsole with the same database, passkeys and fence
 used by its broker. Its installation lookup reads authoritative F6 records;
@@ -106,7 +106,17 @@ class OwnerConsole:
     async def admits_scope(self, scope: str) -> bool:
         # B3's login alone does not check application roles. The same predicate
         # is used by login AND by every subsequent S4 session request.
-        return await self.directory.owner_of(self.db, scope) is not None
+        if await self.directory.owner_of(self.db, scope) is not None:
+            return True
+        # S4 separately verifies B3's current holder and login credential.
+        # A scope grants no installation-wide action authority: S14 rechecks
+        # the record's live coverage under the action's installation fence.
+        return bool(
+            await self.db.fetch_value(
+                "SELECT EXISTS(SELECT 1 FROM {{tables.approvers}} WHERE scope=$1)",
+                scope,
+            )
+        )
 
     async def apply_owner_act(
         self,

@@ -205,3 +205,189 @@ async def test_confirmed_reenable_restores_only_named_root(uses):  # noqa: F811
         )
         == "disabled"
     )
+
+
+@pytest.mark.parametrize("passkey", [False, True])
+async def test_team_auth_refuses_last_enrolled_owner_contact_or_key(uses, passkey):  # noqa: F811
+    from aweb_secrets.owners import owner_scope
+    from tests.test_change_sets import ALICE
+
+    await seed(uses)
+    svc = await service(uses)
+    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+    credential_id = (
+        next(iter(uses.world.devices["alice@acme.com"].credentials)) if passkey else None
+    )
+    with pytest.raises(ContainmentRefused) as refused:
+        await svc.by_member(
+            grant=uses.grant,
+            principal=REQUESTER,
+            request_id="last-owner",
+            action="revoke-approver",
+            target=scope,
+            credential_id=credential_id,
+        )
+    assert refused.value.code == "last_owner_protected"
+    assert await uses.world.passkeys.designated_approver(scope) is not None
+    assert await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
+
+
+@pytest.mark.parametrize("passkey", [False, True])
+async def test_another_enrolled_owner_allows_team_auth_credential_containment(uses, passkey):  # noqa: F811
+    from aweb_secrets.owners import owner_scope
+    from tests.test_change_sets import ALICE, BOB, enrol_owner
+
+    await seed(uses)
+    await enrol_owner(uses.world, BOB, "bob@acme.com")
+    svc = await service(uses)
+    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+    credential_id = (
+        next(iter(uses.world.devices["alice@acme.com"].credentials)) if passkey else None
+    )
+    await svc.by_member(
+        grant=uses.grant,
+        principal=REQUESTER,
+        request_id="contain-owner",
+        action="revoke-approver",
+        target=scope,
+        credential_id=credential_id,
+    )
+    assert await uses.world.passkeys.designated_approver(scope) is None
+    assert (
+        await uses.world.passkeys.designated_approver(
+            owner_scope(INSTALLATION_ID, TEAM, BOB.principal_did)
+        )
+        is not None
+    )
+
+
+async def test_approver_retirement_voids_their_decisions_in_same_transaction(uses):  # noqa: F811
+    from aweb_naapp.runtime.approvals import ApprovalState
+
+    from tests.test_use_approval_lineage import request_child
+    from tests.test_use_approvals import approve
+
+    await seed(uses)
+    first, _ = await child(uses)
+    _, _, pending = await request_child(uses, first)
+    await approve(uses, pending, "finance@acme.com")
+    svc = await service(uses)
+    await act(svc, uses, "revoke-approver", "finance")
+    assert (
+        await uses.approvals.get(pending.pending.approval.approval_id)
+    ).state == ApprovalState.REVOKED
+    assert not await uses.world.db.fetch_value(
+        "SELECT EXISTS(SELECT 1 FROM {{tables.approvers}} WHERE approver_ref='finance')"
+    )
+
+
+async def test_failed_local_outbox_write_rolls_back_containment_and_keeps_cache(uses):  # noqa: F811
+    import asyncpg
+
+    await seed(uses)
+    svc = await service(uses)
+    key = TokenKey(INSTALLATION_ID, TEAM, SECRET_ID, 4, "https://api.example.com/token", "")
+    await svc.tokens.put(key, os.urandom(24).hex(), datetime.now(UTC) + timedelta(hours=1))
+    await uses.world.db.execute(
+        "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT refuse_local_commit CHECK (kind <> 'post-governance-hook')"
+    )
+    with pytest.raises(asyncpg.CheckViolationError):
+        await act(svc, uses)
+    assert await svc.tokens.get(key) is not None
+    assert (
+        await uses.world.db.fetch_value(
+            "SELECT state FROM {{tables.secrets}} WHERE secret_id=$1", SECRET_ID
+        )
+        == "active"
+    )
+    assert (
+        await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.containment_receipts}}") == 0
+    )
+
+
+async def test_last_owner_can_revoke_one_key_when_another_survives(uses):  # noqa: F811
+    from aweb_naapp.runtime.passkeys import verify_registration
+    from aweb_naapp_testing.webauthn import SoftAuthenticator, b64url
+
+    from aweb_secrets.owners import owner_scope
+    from tests.test_change_sets import ALICE, ORIGIN
+
+    await seed(uses)
+    svc = await service(uses)
+    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+    holder = await uses.world.passkeys.designated_approver(scope)
+    kept = SoftAuthenticator(ORIGIN)
+    challenge = os.urandom(32)
+    registration = verify_registration(
+        kept.create(
+            {
+                "rp": {"id": uses.world.passkeys.rp.rp_id},
+                "user": {"id": b64url(holder.subject.encode())},
+                "challenge": b64url(challenge),
+            }
+        ),
+        challenge=challenge,
+        rp=uses.world.passkeys.rp,
+    )
+    await uses.world.db.execute(
+        "INSERT INTO {{tables.passkey_credentials}}"
+        " (credential_id,subject,public_key,sign_count,created_at) VALUES ($1,$2,$3,$4,$5)",
+        registration.credential_id,
+        holder.subject,
+        registration.public_key,
+        registration.sign_count,
+        datetime.now(UTC),
+    )
+    lost = next(iter(uses.world.devices["alice@acme.com"].credentials))
+    await svc.by_member(
+        grant=uses.grant,
+        principal=REQUESTER,
+        request_id="lost-device",
+        action="revoke-approver",
+        target=scope,
+        credential_id=lost,
+    )
+    assert await uses.world.passkeys.designated_approver(scope) is not None
+    options = await uses.world.passkeys.login_options(scope)
+    assert (
+        await uses.world.passkeys.verify_login(scope, kept.get(options))
+    ).subject == holder.subject
+
+
+async def test_runner_deregistration_invalidates_registered_key_and_unused_code(uses):  # noqa: F811
+    from aweb_secrets import runners
+    from aweb_secrets.runner_protocol import RunnerRefused
+    from tests.test_runners import keys
+
+    await seed(uses)
+    svc = await service(uses)
+    await runners.apply_runner_migrations(uses.world.db)
+    svc.deregister_runner = runners.deregister_runner
+    record = runners.RunnerRecord.from_after(
+        {
+            "v": 1,
+            "runner_id": runners.mint_runner_id(),
+            "label": "Build runner",
+            "allowed_jobs": ["build"],
+        }
+    )
+    now = datetime.now(UTC)
+    async with uses.world.db.transaction() as tx:
+        code = await runners.create_runner(tx, INSTALLATION_ID, TEAM, record, now=now)
+        signing, encryption = keys()
+        await runners.register_runner(
+            tx,
+            code=code,
+            signing_key=signing,
+            encryption_key=encryption,
+        )
+    await act(svc, uses, "deregister-runner", record.runner_id)
+    async with uses.world.db.transaction() as tx:
+        assert await runners.active_runner(tx, record.runner_id) is None
+        with pytest.raises(RunnerRefused):
+            await runners.register_runner(
+                tx,
+                code=code,
+                signing_key=signing,
+                encryption_key=encryption,
+            )

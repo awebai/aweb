@@ -14,12 +14,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from aweb_naapp.console import ConsoleSession
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired, claim
 from aweb_naapp.roles import hold_role, principal_key
 from aweb_naapp.runtime.approvals import Approvals
 from aweb_naapp.runtime.authorization import Grant
-from aweb_naapp.runtime.installation import InstallationFence
-from aweb_naapp.runtime.passkeys import Passkeys
+from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationFence
+from aweb_naapp.runtime.passkeys import Passkeys, RetirementRefused
 from aweb_naapp.runtime.team_auth import Principal
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
@@ -28,7 +29,7 @@ from aweb_secrets import derived_lineage, use_approvals
 from aweb_secrets.containment_state import ContainmentRefused
 from aweb_secrets.containment_state import require_enabled as require_enabled
 from aweb_secrets.custody import Custody, SealContext
-from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory
+from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, owner_scope
 from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.tokens import TokenCache
 
@@ -427,7 +428,16 @@ class Containment:
             )
             ids = ()
         else:
-            raise ContainmentRefused("approver_unavailable", 503)
+            assert target is not None
+            await self._revoke_approver(
+                tx,
+                installation_id=installation_id,
+                team_id=team_id,
+                target=target,
+                credential_id=credential_id,
+                authorized_by=authorized_by,
+            )
+            ids = ()
         payload = {
             "act": ACTIONS[action],
             "direction": "narrowing",
@@ -596,3 +606,173 @@ class Containment:
                 )
         except derived_lineage.LineageRefused as refused:
             raise ContainmentRefused(refused.code) from None
+
+    async def _revoke_approver(
+        self,
+        tx: TransactionManager,
+        *,
+        installation_id: str,
+        team_id: str,
+        target: str,
+        credential_id: bytes | None,
+        authorized_by: str,
+    ) -> None:
+        owner = await tx.fetch_one(
+            "SELECT scope, principal_did FROM {{tables.owner_principals}}"
+            " WHERE installation_id=$1 AND team_id=$2 AND scope=$3",
+            installation_id,
+            team_id,
+            target,
+        )
+        approver = await tx.fetch_one(
+            "SELECT scope FROM {{tables.approvers}}"
+            " WHERE installation_id=$1 AND team_id=$2 AND (approver_ref=$3 OR scope=$3)"
+            " FOR UPDATE",
+            installation_id,
+            team_id,
+            target,
+        )
+        scope = owner["scope"] if owner is not None else approver["scope"] if approver else None
+        if scope is None:
+            raise ContainmentRefused("approver_unknown", 404)
+        subject = await tx.fetch_value(
+            "SELECT subject FROM {{tables.passkey_approvers}}"
+            " WHERE scope=$1 AND superseded_at IS NULL",
+            scope,
+        )
+        if subject is None:
+            raise ContainmentRefused("approver_unknown", 404)
+
+        async def protect(guard_tx: TransactionManager, guarded_scope: str, holder: str) -> None:
+            if owner is None:
+                return
+            # Losing one of multiple keys does not lock the owner out.
+            if credential_id is not None and await guard_tx.fetch_value(
+                "SELECT EXISTS(SELECT 1 FROM {{tables.passkey_credentials}}"
+                " WHERE subject=$1 AND credential_id<>$2 AND revoked_at IS NULL)",
+                holder,
+                credential_id,
+            ):
+                return
+            owners = await self.directory.enrolled_owners(
+                guard_tx,
+                installation_id=installation_id,
+                team_id=team_id,
+            )
+            if not any(p.principal_did != owner["principal_did"] for p in owners):
+                raise RetirementRefused("last_owner_protected")
+
+        # Removing a designation's covering record precedes B3/B2 retirement.
+        # A partial key revocation preserves its record and remaining key.
+        if approver is not None:
+            if credential_id is None:
+                remove = True
+            else:
+                remove = not await tx.fetch_value(
+                    "SELECT EXISTS(SELECT 1 FROM {{tables.passkey_credentials}}"
+                    " WHERE subject=$1 AND credential_id<>$2 AND revoked_at IS NULL)",
+                    subject,
+                    credential_id,
+                )
+            if remove:
+                await tx.execute(
+                    "DELETE FROM {{tables.approvers}}"
+                    " WHERE installation_id=$1 AND team_id=$2 AND scope=$3",
+                    installation_id,
+                    team_id,
+                    scope,
+                )
+        kwargs = dict(scope=scope, subject=subject, authorized_by=authorized_by, protect=protect)
+        try:
+            if credential_id is None:
+                await self.passkeys.retire_in(tx, **kwargs)
+            else:
+                await self.passkeys.revoke_passkey_in(tx, credential_id=credential_id, **kwargs)
+        except RetirementRefused as refused:
+            raise ContainmentRefused(refused.reason) from None
+        await bump_config_revision(tx, installation_id)
+
+    async def authorize_console(
+        self,
+        tx: TransactionManager,
+        *,
+        admitted: AdmittedInstallation,
+        session: ConsoleSession,
+        action: str,
+        target: str | None,
+    ) -> bool:
+        """Authorize under the caller's installation fence; return owner status.
+
+        The action must recheck exact login-evidence liveness through B3 after
+        these application locks and retain all locks through commit.
+        """
+        owner = await self.directory.owner_of(tx, session.scope)
+        if (
+            owner is not None
+            and owner.team_id == admitted.team_id
+            and session.scope
+            == owner_scope(admitted.installation_id, owner.team_id, owner.principal_did)
+            and await hold_role(tx, owner, OWNER_ROLE)
+        ):
+            # Pre-acquire normal resource authority before B3 login evidence.
+            await self._prepare_action(tx, admitted, action, target)
+            return True
+        if action in {"disable-installation", "deregister-runner"}:
+            raise ContainmentRefused("owner_required")
+        secret_id = await self._prepare_action(tx, admitted, action, target)
+        row = await tx.fetch_one(
+            "SELECT approver_ref, covers FROM {{tables.approvers}}"
+            " WHERE installation_id=$1 AND team_id=$2 AND scope=$3 FOR SHARE",
+            admitted.installation_id,
+            admitted.team_id,
+            session.scope,
+        )
+        if row is None:
+            raise ContainmentRefused("approver_required")
+        if action == "revoke-approver":
+            if target not in {session.scope, row["approver_ref"]}:
+                raise ContainmentRefused("coverage_denied")
+            return False
+        if secret_id is None:
+            raise ContainmentRefused("coverage_denied")
+        ancestry = await derived_lineage.ancestry_ids(
+            tx,
+            admitted.installation_id,
+            admitted.team_id,
+            secret_id,
+        )
+        if not set(ancestry).intersection(json.loads(row["covers"])):
+            raise ContainmentRefused("coverage_denied")
+        return False
+
+    async def _prepare_action(
+        self,
+        tx: TransactionManager,
+        admitted: AdmittedInstallation,
+        action: str,
+        target: str | None,
+    ) -> str | None:
+        if action == "disable-secret":
+            secret_id = target
+        elif action == "revoke-grant":
+            secret_id = await tx.fetch_value(
+                "SELECT secret_id FROM {{tables.grants}}"
+                " WHERE installation_id=$1 AND team_id=$2 AND grant_id=$3",
+                admitted.installation_id,
+                admitted.team_id,
+                target,
+            )
+        elif action == "revoke-approvals":
+            secret_id = await tx.fetch_value(
+                "SELECT secret_id FROM {{tables.use_approvals}}"
+                " WHERE installation_id=$1 AND team_id=$2 AND approval_id=$3",
+                admitted.installation_id,
+                admitted.team_id,
+                target,
+            )
+        else:
+            return None
+        if secret_id is None:
+            raise ContainmentRefused("resource_unknown", 404)
+        await _lock_tree(tx, admitted.installation_id, admitted.team_id, secret_id)
+        return secret_id
