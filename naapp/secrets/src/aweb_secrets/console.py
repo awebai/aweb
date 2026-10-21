@@ -3,7 +3,9 @@
 The app composes one OwnerConsole with the same database, passkeys and fence
 used by its broker. Its installation lookup reads authoritative F6 records;
 request team fields never establish the installation's team. Routes belong only
-on split_origins' human app. S4 rechecks the owner role on every session request.
+on split_origins' human app. S4 rechecks the current owner role or approver
+record on every session request; owner-only actions separately require the
+owner role.
 
 No request body is echoed in validation errors. Bootstrap consumes a K2 act in
 the fenced transaction; registration and login use B3's distinct ceremonies.

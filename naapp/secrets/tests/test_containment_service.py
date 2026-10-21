@@ -391,3 +391,202 @@ async def test_runner_deregistration_invalidates_registered_key_and_unused_code(
                 signing_key=signing,
                 encryption_key=encryption,
             )
+
+
+@pytest.mark.parametrize("decided", [False, True])
+async def test_assigned_member_approver_can_revoke_own_approval_only(uses, decided):  # noqa: F811
+    from tests.test_use_approvals import _member, approve, designate, install, request
+
+    approver = _member(8)
+    await designate(
+        uses, "finance", "finance@acme.com", principal=principal_key(approver).principal_did
+    )
+    await install(uses)
+    _, _, pending = await request(uses)
+    if decided:
+        await approve(uses, pending, "finance@acme.com")
+    svc = await service(uses)
+    approval_id = pending.pending.approval.approval_id
+    await svc.by_member(
+        grant=uses.grant,
+        principal=approver,
+        request_id="own-approval",
+        action="revoke-approvals",
+        target=approval_id,
+    )
+    assert (await uses.approvals.get(approval_id)).state.value == "revoked"
+    with pytest.raises(ContainmentRefused):
+        await svc.by_member(
+            grant=uses.grant,
+            principal=approver,
+            request_id="broader",
+            action="disable-secret",
+            target=SECRET_ID,
+        )
+
+
+@pytest.mark.parametrize("withdrawal", ["coverage", "principal"])
+async def test_member_approver_needs_current_and_frozen_assignment(uses, withdrawal):  # noqa: F811
+    from tests.test_use_approvals import _member, designate, install, request
+
+    approver = _member(8)
+    await designate(
+        uses, "finance", "finance@acme.com", principal=principal_key(approver).principal_did
+    )
+    await install(uses)
+    _, _, pending = await request(uses)
+    svc = await service(uses)
+    async with uses.world.db.transaction() as tx:
+        if withdrawal == "coverage":
+            await tx.execute(
+                "UPDATE {{tables.approvers}} SET covers='[]' WHERE approver_ref='finance'"
+            )
+        else:
+            approver = _member(9)
+            await tx.execute(
+                "UPDATE {{tables.approvers}} SET principal_did=$1 WHERE approver_ref='finance'",
+                principal_key(approver).principal_did,
+            )
+    with pytest.raises(ContainmentRefused):
+        await svc.by_member(
+            grant=uses.grant,
+            principal=approver,
+            request_id="withdrawn",
+            action="revoke-approvals",
+            target=pending.pending.approval.approval_id,
+        )
+    assert (await uses.approvals.get(pending.pending.approval.approval_id)).state.value == "pending"
+
+
+async def test_by_member_grant_revoke_contains_exact_subtree_and_source_approvals(uses):  # noqa: F811
+    import asyncpg
+
+    from aweb_secrets import records
+    from aweb_secrets.admission import AdmissionRefused
+    from aweb_secrets.secret import SecretRecord
+    from tests.test_use_approval_lineage import grant_record, request_child
+    from tests.test_use_approvals import SECRET, approve
+
+    source = await seed(uses)
+    svc = await service(uses)
+    root = SecretRecord.from_after(SECRET)
+    direct = await request_child(uses, root)
+    first, _ = await child(uses, source_grant=source)
+    pending = await request_child(uses, first)
+    await approve(uses, pending[2], "finance@acme.com")
+    async with uses.world.db.transaction() as tx:
+        digest = await tx.fetch_value(
+            "SELECT policy_digest FROM {{tables.grants}} WHERE grant_id=$1", source
+        )
+        other = grant_record("grt_----control", SECRET_ID, digest)
+        await records.create_grant(tx, INSTALLATION_ID, TEAM, other)
+    sibling, _ = await child(uses, secret_id="sec_sibling01", source_grant=other.grant_id)
+    untouched = await request_child(uses, sibling)
+    keys = [
+        TokenKey(INSTALLATION_ID, TEAM, sid, 1, "https://api.example.com/token", "")
+        for sid in (first.secret_id, sibling.secret_id)
+    ]
+    for key in keys:
+        await svc.tokens.put(key, os.urandom(24).hex(), datetime.now(UTC) + timedelta(hours=1))
+    await uses.world.db.execute(
+        "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT reject_grant_event CHECK (kind <> 'post-governance-hook')"
+    )
+    with pytest.raises(asyncpg.CheckViolationError):
+        await act(svc, uses, "revoke-grant", source)
+    assert await svc.tokens.get(keys[0]) is not None
+    assert (await uses.approvals.get(direct[2].pending.approval.approval_id)).revoked_at is None
+    await uses.world.db.execute(
+        "ALTER TABLE {{tables.outbox_events}} DROP CONSTRAINT reject_grant_event"
+    )
+    result = await act(svc, uses, "revoke-grant", source)
+    assert result.affected_secret_ids == (first.secret_id,)
+    assert await svc.tokens.get(keys[0]) is None
+    assert await svc.tokens.get(keys[1]) is not None
+    for item in (direct, pending):
+        assert (
+            await uses.approvals.get(item[2].pending.approval.approval_id)
+        ).state.value == "revoked"
+    assert (
+        await uses.approvals.get(untouched[2].pending.approval.approval_id)
+    ).state.value == "pending"
+    with pytest.raises(AdmissionRefused) as refused:
+        await request_child(uses, first)
+    assert refused.value.code == "grant_revoked"
+    assert await uses.world.db.fetch_value(
+        "SELECT revoked_at IS NOT NULL FROM {{tables.grants}} WHERE grant_id=$1",
+        source,
+    )
+    await request_child(uses, sibling)
+
+
+async def test_unknown_grant_is_refused_at_service_boundary(uses):  # noqa: F811
+    await seed(uses)
+    svc = await service(uses)
+    with pytest.raises(ContainmentRefused) as refused:
+        await act(svc, uses, "revoke-grant", "grt_missing01")
+    assert (refused.value.code, refused.value.status) == ("grant_unknown", 404)
+
+
+async def test_uninstall_then_reinstall_does_not_restore_former_owner_role(uses):  # noqa: F811
+    import time
+    from types import SimpleNamespace
+
+    from aweb_naapp.roles import has_role
+    from aweb_naapp.runtime.authorization import Grant
+
+    from aweb_secrets.app import installation_fence
+    from aweb_secrets.owners import owner_scope
+    from tests.test_change_sets import ALICE
+
+    class InstallationAuthority:
+        """The remote installation authority, not an application store."""
+
+        state = "active"
+        installation_id = INSTALLATION_ID
+        generation = 1
+
+        async def grant_for(self, team_id):
+            if team_id != TEAM or self.state != "active":
+                return None
+            return Grant(
+                team_id=TEAM,
+                scopes=frozenset({"secrets:admin"}),
+                fresh_until=time.monotonic() + 55,
+                installation_id=self.installation_id,
+                generation=self.generation,
+            )
+
+        async def status_for(self, team_id):
+            if team_id != TEAM:
+                return None
+            return SimpleNamespace(
+                team_id=TEAM,
+                app_id="secrets",
+                state=self.state,
+                installation_id=self.installation_id,
+                generation=self.generation,
+                fresh_until=time.monotonic() + 55,
+                granted_scopes=frozenset({"secrets:admin"}),
+            )
+
+    authority = InstallationAuthority()
+    fence = installation_fence(uses.world.db, app_id="secrets", grants=authority)
+    assert await has_role(uses.world.db, ALICE, OWNER_ROLE)
+    authority.state = "uninstalled"
+    await fence.refresh(TEAM)
+    authority.state = "active"
+    authority.installation_id = "reinstalled-generation-two"
+    authority.generation = 2
+    await fence.refresh(TEAM)
+    assert not await has_role(uses.world.db, ALICE, OWNER_ROLE)
+    async with uses.world.db.transaction() as tx:
+        grant = await authority.grant_for(TEAM)
+        admitted = await fence.admit(tx, grant)
+        assert admitted.installation_id == authority.installation_id
+        assert (
+            await uses.world.directory.owner_of(
+                tx,
+                owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did),
+            )
+            is None
+        )

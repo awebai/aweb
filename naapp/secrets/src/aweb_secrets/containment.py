@@ -151,15 +151,7 @@ async def replace_value_consequences(
         secret_id=secret_id,
         current_version=current_version,
         revoked_by=revoked_by,
-    )
-    await use_approvals.revoke_use_approvals(
-        tx,
-        approvals,
-        installation_id=installation_id,
-        team_id=team_id,
-        secret_ids=ids[1:],
-        revoked_by=revoked_by,
-        reason="secret_version_changed",
+        descendant_secret_ids=ids[1:],
     )
     await _disable(
         tx,
@@ -289,7 +281,14 @@ class Containment:
         async with self.db.transaction() as tx:
             installed = await self.fence.admit(tx, grant)
             if not await hold_role(tx, key, OWNER_ROLE):
-                raise ContainmentRefused("owner_required")
+                if action != "revoke-approvals" or target is None:
+                    raise ContainmentRefused("owner_required")
+                await self._authorize_member_approver(
+                    tx,
+                    installed,
+                    key.principal_did,
+                    target,
+                )
             result = await self._act(
                 tx,
                 installation_id=installed.installation_id,
@@ -392,6 +391,16 @@ class Containment:
         elif action == "revoke-grant":
             from aweb_secrets.derived_containment import revoke_grant_tree
 
+            assert target is not None
+
+            if not await tx.fetch_value(
+                "SELECT EXISTS(SELECT 1 FROM {{tables.grants}}"
+                " WHERE installation_id=$1 AND team_id=$2 AND grant_id=$3)",
+                installation_id,
+                team_id,
+                target,
+            ):
+                raise ContainmentRefused("grant_unknown", 404)
             ids = await revoke_grant_tree(
                 tx,
                 self.approvals,
@@ -506,7 +515,13 @@ class Containment:
         installation_id: str,
         team_id: str,
         secret_ids: tuple[str, ...],
+        approval_ids: tuple[str, ...] = (),
     ) -> None:
+        """Lock the complete replacement/reenable forest before B2 consumption.
+
+        S10 includes its confirming approval in approval_ids. This conservative
+        all-version union is held through every later per-root callback.
+        """
         paths = {
             secret_id: await derived_lineage.ancestry_ids(
                 tx,
@@ -526,16 +541,17 @@ class Containment:
             if not any(ancestor in paths for ancestor in path[:-1])
         ]
         locked: set[str] = set()
+        affected: set[str] = set()
         for secret_id in sorted(minimal, key=lambda root: paths[root]):
-            locked.update(
-                await _lock_tree(
-                    tx,
-                    installation_id,
-                    team_id,
-                    secret_id,
-                    lock_grants=False,
-                )
+            tree = await _lock_tree(
+                tx,
+                installation_id,
+                team_id,
+                secret_id,
+                lock_grants=False,
             )
+            affected.update(tree)
+            locked.update(tree)
             locked.update(
                 await derived_lineage.ancestry_ids(
                     tx,
@@ -551,6 +567,20 @@ class Containment:
             installation_id,
             team_id,
             list(locked),
+        )
+        # Prelock a conservative superset across the FULL forest before S10
+        # consumes its own confirmation or invokes any per-root callback.
+        # Revocation later retains the root's version filter.
+        rows = await tx.fetch_all(
+            "SELECT approval_id FROM {{tables.use_approvals}}"
+            " WHERE installation_id=$1 AND team_id=$2 AND secret_id=ANY($3::text[])",
+            installation_id,
+            team_id,
+            list(affected),
+        )
+        await self.approvals.lock_many(
+            tx,
+            [*approval_ids, *(row["approval_id"] for row in rows)],
         )
 
     async def reenable(
@@ -579,14 +609,26 @@ class Containment:
             return
         if target_kind != "secret":
             raise ContainmentRefused("reenable_target_unsupported", 400)
-        from aweb_secrets import records
-
-        stored = await records.secret_by_ref(tx, installation_id, team_id, target_ref)
-        if stored is None:
+        # Resolve the mutable ref without locking the child before its parent.
+        secret_id = await tx.fetch_value(
+            "SELECT secret_id FROM {{tables.secrets}}"
+            " WHERE installation_id=$1 AND team_id=$2 AND ref=$3",
+            installation_id,
+            team_id,
+            target_ref,
+        )
+        if secret_id is None:
             raise ContainmentRefused("secret_unknown", 404)
-        secret_id = stored.record.secret_id
         try:
             async with tx.transaction() as attempt:
+                nodes = await derived_lineage.lock_ancestry(
+                    attempt,
+                    installation_id,
+                    team_id,
+                    secret_id,
+                )
+                if not nodes or nodes[-1].secret.record.ref != target_ref:
+                    raise ContainmentRefused("secret_unknown", 404)
                 await attempt.execute(
                     "UPDATE {{tables.secrets}} SET state='active', updated_at=NOW()"
                     " WHERE installation_id=$1 AND team_id=$2 AND secret_id=$3",
@@ -722,7 +764,8 @@ class Containment:
         secret_id = await self._prepare_action(tx, admitted, action, target)
         row = await tx.fetch_one(
             "SELECT approver_ref, covers FROM {{tables.approvers}}"
-            " WHERE installation_id=$1 AND team_id=$2 AND scope=$3 FOR SHARE",
+            " WHERE installation_id=$1 AND team_id=$2 AND scope=$3"
+            + (" FOR UPDATE" if action == "revoke-approver" else " FOR SHARE"),
             admitted.installation_id,
             admitted.team_id,
             session.scope,
@@ -776,3 +819,45 @@ class Containment:
             raise ContainmentRefused("resource_unknown", 404)
         await _lock_tree(tx, admitted.installation_id, admitted.team_id, secret_id)
         return secret_id
+
+    async def _authorize_member_approver(
+        self,
+        tx: TransactionManager,
+        admitted: AdmittedInstallation,
+        principal_did: str,
+        approval_id: str,
+    ) -> None:
+        from aweb_secrets.approvers import approvers_for_secrets
+
+        secret_id = await self._prepare_action(tx, admitted, "revoke-approvals", approval_id)
+        assert secret_id is not None
+        ids = await derived_lineage.ancestry_ids(
+            tx,
+            admitted.installation_id,
+            admitted.team_id,
+            secret_id,
+        )
+        covering = await approvers_for_secrets(
+            tx,
+            installation_id=admitted.installation_id,
+            team_id=admitted.team_id,
+            secret_ids=ids,
+        )
+        scopes = {record.scope for record in covering if record.principal_did == principal_did}
+        if not scopes:
+            raise ContainmentRefused("approver_required")
+        # Retirement serializes on this B2 row. Read the committed candidate
+        # and holder AFTER acquiring it, so a completed retirement is seen and
+        # a concurrent retirement commits after this narrowing action.
+        await self.approvals.lock_many(tx, [approval_id])
+        approval = await self.approvals.get(approval_id)
+        if approval is not None:
+            for candidate in approval.candidates:
+                if (
+                    candidate.scope in scopes
+                    and candidate.principal_did == principal_did
+                    and candidate.retired_at is None
+                    and await self.passkeys.is_current(candidate.scope, candidate.subject)
+                ):
+                    return
+        raise ContainmentRefused("approver_required")
