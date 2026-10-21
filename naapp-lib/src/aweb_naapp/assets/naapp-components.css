@@ -22,6 +22,9 @@
 .footer-oss a { color: var(--accent); text-decoration: none; }
 .footer-oss a:hover { text-decoration: underline; }
 
+/* Public cards follow the shared sans heading voice; monospace is for identifiers. */
+.card h3 { font-family: var(--font-sans); }
+
 /* Numbered instructions: one sequence with optional copyable commands. */
 .gs-steps { list-style: none; margin: var(--s5) 0 0; padding: 0; display: grid; gap: var(--s5); }
 .gs-step { display: grid; grid-template-columns: auto 1fr; gap: var(--s3); align-items: start; }
