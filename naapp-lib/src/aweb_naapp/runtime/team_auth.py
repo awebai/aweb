@@ -607,6 +607,24 @@ def _verify_certificate_signature(cert: dict[str, Any], team_did_key: str) -> No
         raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
+async def require_active_certificate(
+    team_cache: AWIDTeamCache, *, team_id: str, certificate_id: str,
+) -> CachedTeamFacts:
+    """Require controller-published, unrevoked membership through the shared cache.
+
+    This checks current publication, not the certificate signature or the
+    caller's request signature. Consumers (including event ingestion) must
+    verify those signed artifacts as well. Unknown/revoked membership is 401;
+    unavailable authority retains the cache's 503 failure.
+    """
+    try:
+        facts = await team_cache.get(team_id, certificate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid AWID team id") from exc
+    _require_active_certificate(facts, certificate_id)
+    return facts
+
+
 async def authenticate_request(
     request: Request,
     *,
@@ -654,11 +672,9 @@ async def authenticate_request(
         body=body,
     )
 
-    try:
-        facts = await team_cache.get(team_id, certificate_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Invalid AWID team id") from exc
-    _require_active_certificate(facts, certificate_id)
+    facts = await require_active_certificate(
+        team_cache, team_id=team_id, certificate_id=certificate_id,
+    )
     _verify_certificate_signature(cert, facts.team_did_key)
 
     did_aw = str(cert.get("member_did_aw") or "").strip() or None

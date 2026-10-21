@@ -204,6 +204,48 @@ digest=...)` for the exact manifest bytes the app serves, an
 `TeamServerDirectory` as `discovery`. It reads only the team's controller-signed
 server URL; it creates no directory or resolver of its own.
 
+`runtime.team_cache()` and `runtime.team_server_directory()` return the same
+configuration-only objects before, during and after the lifespan; constructing
+them makes no network requests. This permits wiring the grant source and
+registering `runtime.authorized(grants=source, policy=...)` before startup's
+route validation. The database remains available only inside the lifespan.
+For example, before mounting the guarded routes:
+
+```python
+import hashlib
+
+from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, AppCredentialSigner
+from aweb_naapp.runtime.app_keys import load_app_key
+from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
+
+key = load_app_key(settings, runtime.manifest, APP_GRANT_READ)
+source = TeamGrantSource(
+    identity=AppIdentity(
+        app_id=runtime.manifest.app_id,
+        origin=runtime.manifest.document["app"]["origin"],
+        digest="sha256:" + hashlib.sha256(runtime.manifest_bytes).hexdigest(),
+    ),
+    signer=AppCredentialSigner(app_id=runtime.manifest.app_id, key=key, purpose=APP_GRANT_READ),
+    discovery=runtime.team_server_directory(),
+)
+guard = runtime.authorized(grants=source, policy=policy)
+```
+
+The runtime's cached `runtime.hook_resolver()` uses that same directory and the
+served app identity. If the manifest declares `hook-resolve`, its key is loaded
+at construction: missing or ambiguous configuration refuses startup. An app
+without that purpose can start but cannot obtain a resolver using another
+purpose's key. The keyword-only `team_server_transport` constructor seam is
+for requests to the coordination server; `awid_transport` remains the AWID
+registry seam. Both default to normal production networking.
+
+For event ingestion, use the same publication check as request authentication:
+`await team_auth.require_active_certificate(runtime.team_cache(), team_id=...,
+certificate_id=...)`. It returns current AWID facts only for a published,
+unrevoked certificate, preserving 401 for unknown/revoked membership and 503
+for unavailable authority. This helper does not verify a certificate or event
+signature; consumers still verify their signed artifacts.
+
 `grant_for(team_id)` returns an active `Grant` or `None` when no key is
 registered or the installation is not active. `status_for(team_id)` shares
 the same cache and returns a `GrantStatus` with the installation's state,
