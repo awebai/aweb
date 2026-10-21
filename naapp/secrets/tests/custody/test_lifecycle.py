@@ -220,3 +220,64 @@ async def test_no_path_leaks_the_value_into_logs_output_or_errors(
     captured = capfd.readouterr()
     everything = "\n".join([caplog.text, captured.out, captured.err, *errors])
     assert canary.decode() not in everything
+
+
+async def test_reenabling_restores_custody_only_when_its_transaction_commits(
+    custody: Custody, db: AsyncDatabaseManager, canary: bytes
+) -> None:
+    version = await _ingest(custody, db, "sec_secret1", canary)
+    async with db.transaction() as tx:
+        await custody.disable(tx, **_secret("sec_secret1"))
+    async with db.transaction() as tx:
+        await custody.enable(tx, **_secret("sec_secret1"))
+        with pytest.raises(CustodyUnavailable):
+            await custody.opener.open(_context("sec_secret1", version))
+    assert (await custody.opener.open(_context("sec_secret1", version))).reveal() == value_bytes(
+        canary
+    )
+    assert await _ingest(custody, db, "sec_secret1", b"new") == version + 1
+
+
+async def test_reenabling_rolls_back_with_its_caller(
+    custody: Custody, db: AsyncDatabaseManager, canary: bytes
+) -> None:
+    version = await _ingest(custody, db, "sec_secret1", canary)
+    async with db.transaction() as tx:
+        await custody.disable(tx, **_secret("sec_secret1"))
+
+    class Abandoned(Exception):
+        pass
+
+    with pytest.raises(Abandoned):
+        async with db.transaction() as tx:
+            await custody.enable(tx, **_secret("sec_secret1"))
+            raise Abandoned
+    with pytest.raises(CustodyUnavailable):
+        await custody.opener.open(_context("sec_secret1", version))
+
+
+@pytest.mark.parametrize("field", ["installation_id", "team_id", "secret_id"])
+async def test_reenabling_cannot_cross_its_scope(
+    custody: Custody, db: AsyncDatabaseManager, canary: bytes, field: str
+) -> None:
+    version = await _ingest(custody, db, "sec_secret1", canary)
+    async with db.transaction() as tx:
+        await custody.disable(tx, **_secret("sec_secret1"))
+    async with db.transaction() as tx:
+        await custody.enable(tx, **{**_secret("sec_secret1"), field: "elsewhere"})
+    with pytest.raises(CustodyUnavailable):
+        await custody.opener.open(_context("sec_secret1", version))
+
+
+async def test_reenabling_does_not_restore_a_destroyed_version(
+    custody: Custody, db: AsyncDatabaseManager, canary: bytes
+) -> None:
+    version = await _ingest(custody, db, "sec_secret1", canary)
+    async with db.transaction() as tx:
+        await custody.disable(tx, **_secret("sec_secret1"))
+        await custody.destroy(tx, _context("sec_secret1", version))
+    async with db.transaction() as tx:
+        await custody.enable(tx, **_secret("sec_secret1"))
+    with pytest.raises(CustodyUnavailable):
+        await custody.opener.open(_context("sec_secret1", version))
+    assert await _ingest(custody, db, "sec_secret1", b"new") == version + 1

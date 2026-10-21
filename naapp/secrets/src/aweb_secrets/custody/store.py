@@ -5,8 +5,9 @@ broker holds a :class:`SecretOpener`, which is the only way a stored value is
 unsealed. The app's composition hands each its own; :class:`Custody` holds
 both, with the operations that never reveal a value.
 
-Lock order (decisions 43, 59, 65c): installation fence, role hold, approval
-and candidates, four-eyes setting, revision, then record writes. Within record
+Lock order (decisions 43, 59, 65c, 78): installation fence, role hold,
+replacement/reenable ancestry and grants where applicable, the complete approval
+union and candidates, four-eyes setting, revision, then record writes. Within record
 writes, lock the parent secrets row before custody rows: KEY SHARE for ingest,
 UPDATE for reshaping. Existing ingest validates against the record re-read under
 that lock; only initial-create drafts may have no parent yet. All callers run
@@ -311,6 +312,24 @@ class Custody:
             "UPDATE {{tables.custody_secrets}} SET disabled_at = NOW()"
             " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3"
             " AND disabled_at IS NULL",
+            installation_id,
+            team_id,
+            secret_id,
+        )
+
+    async def enable(
+        self, tx: TransactionManager, *, installation_id: str, team_id: str, secret_id: str
+    ) -> None:
+        """Restore custody access as part of the caller's confirmed reenable.
+
+        This only clears the disabled marker. Destroyed versions stay destroyed,
+        and retained version/shape history stays intact. The caller authorizes
+        the widening act and updates the secret's record in this transaction.
+        """
+        await tx.execute(
+            "UPDATE {{tables.custody_secrets}} SET disabled_at = NULL"
+            " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3"
+            " AND disabled_at IS NOT NULL",
             installation_id,
             team_id,
             secret_id,
