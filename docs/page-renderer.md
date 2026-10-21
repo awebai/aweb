@@ -204,6 +204,15 @@ currency, and `decision-options`, `decision-missing-field` and
 and decision persistence are tested by their owners through the real Folio
 stack, rather than simulated by this gallery.
 
+`?case=table-urls` shows table `url` columns with a normalized HTTPS host,
+long accepted and refused URLs, and the ordinary host-owned confirmation.
+`?case=table-urls&paged=1` exercises independent projection paging; `Alt+u`
+refreshes the page revision. A URL cell uses the same `safeLink` and private
+`pageLink` handler as Markdown and `link_out`: its full destination is accessible
+text, with no native navigation attribute under the page. Refused strings remain
+inert original text. Producers must upgrade both validator and renderer before
+emitting the additive `url` format; use `text` for older consumers.
+
 `?case=authored-language` is a synthetic Catalan authored-content fixture:
 the page title, paragraph and long form label/description use the page language,
 while generated controls and English date/number formatting carry `lang="en"`.

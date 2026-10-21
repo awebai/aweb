@@ -1,4 +1,5 @@
 import { element, chrome, formattedValue, valueText } from "./dom.mjs";
+import { safeLink } from "./sanitize.mjs";
 
 export function selectRecords(records, bind) {
   const compare = (a, b) =>
@@ -28,7 +29,7 @@ export function selectRecords(records, bind) {
     });
 }
 
-function dataTable(records, columns, label, locale, timeZone) {
+function dataTable(records, columns, label, locale, timeZone, pageLink) {
   const table = element("table");
   table.append(element("caption", label, "sr-only"));
   const head = element("thead");
@@ -52,15 +53,30 @@ function dataTable(records, columns, label, locale, timeZone) {
           ? "cell-compact"
           : "cell-text",
       );
-      cell.append(
-        formattedValue(
-          record.value[column.field],
-          column.format,
-          locale,
-          timeZone,
-          record.value.currency,
-        ),
-      );
+      const value = record.value[column.field];
+      const url =
+        column.format === "url" && typeof value === "string"
+          ? safeLink(value)
+          : null;
+      if (url && pageLink) {
+        const link = element("a");
+        const domain = element("bdi", url.host);
+        domain.setAttribute("aria-hidden", "true");
+        // Keep the full destination accessible without a URL attribute.
+        link.append(domain, element("span", url.href, "sr-only"));
+        pageLink(link, url);
+        cell.append(link);
+      } else {
+        cell.append(
+          formattedValue(
+            value,
+            column.format,
+            locale,
+            timeZone,
+            record.value.currency,
+          ),
+        );
+      }
       row.append(cell);
     }
     body.append(row);
@@ -174,6 +190,7 @@ export function renderCollection({
   query,
   onRead,
   actionButton,
+  pageLink,
   announce,
 }) {
   const p = w.props;
@@ -235,7 +252,14 @@ export function renderCollection({
     if (!visible.length)
       region.append(chrome("p", "Nothing here yet.", "field-description"));
     else if (w.type === "table") {
-      const table = dataTable(visible, p.columns, t.records, locale, timeZone);
+      const table = dataTable(
+        visible,
+        p.columns,
+        t.records,
+        locale,
+        timeZone,
+        pageLink,
+      );
       table.caption.lang = "en";
       table.caption.id = `records-${w.id}`;
       [...table.tHead.rows[0].cells].forEach((th, i) => {
