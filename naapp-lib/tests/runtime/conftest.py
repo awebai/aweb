@@ -9,8 +9,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-import pytest_asyncio
-from awid_service.testing import REGISTRY_URL, Registry, running_registry
+from awid_service.testing import REGISTRY_URL, Registry
 from fastapi import FastAPI, Request
 
 from aweb_naapp.runtime.team_auth import (
@@ -19,13 +18,6 @@ from aweb_naapp.runtime.team_auth import (
     Principal,
     authenticate_request,
 )
-
-
-@pytest_asyncio.fixture
-async def registry(test_db_factory) -> AsyncIterator[Registry]:
-    registry_db = await test_db_factory.create_db(suffix="naapp_awid")
-    async with running_registry(registry_db.config.get_dsn()) as running:
-        yield running
 
 
 @asynccontextmanager
