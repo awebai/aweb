@@ -201,10 +201,6 @@ ROOT_CONSUMERS = {
         "team-auth-envelope-v2.json",
         'root / "docs" / "vectors" / "team-auth-envelope-v2.json"',
     ),
-    PurePosixPath("naapp/folio/tests/test_auth_v2_envelope.py"): _consumer(
-        "team-auth-envelope-v2.json",
-        'aweb_path("docs", "vectors", "team-auth-envelope-v2.json")',
-    ),
     PurePosixPath("naapp-lib/tests/runtime/test_principal_attestation.py"): _consumer(
         "principal-attestation-v1.json",
         '(Path(__file__).parents[3] / "docs" / "vectors" / "principal-attestation-v1.json")',
