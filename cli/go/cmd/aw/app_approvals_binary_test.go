@@ -31,7 +31,13 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	t.Setenv("AW_HOME", filepath.Join(root, "host"))
 	var body atomic.Value
 	var gets atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gets.Add(1); w.Write(body.Load().([]byte)) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gets.Add(1)
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
+		w.Write(body.Load().([]byte))
+	}))
 	defer server.Close()
 	body.Store([]byte(appTestManifest(server.URL, "/v1/things/{thing_id}")))
 	writeResident := func(parent, scope string) string {
@@ -118,6 +124,17 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	}
 	invoke(empty, homes[0], "app_origin_mismatch", "plugin", "update", "testapp")
 	invoke(empty, homes[0], "", "plugin", "install", server.URL) // explicit reinstall reapproves
+	// A reinstall at another origin that fails to register leaves the
+	// approved origin as it was, so later updates still work.
+	withEvents := strings.TrimSuffix(appTestManifest(server.URL, "/v1/things/{thing_id}"), "}") +
+		`,"events":[{"type":"thing.changed","default_delivery_intent":"wake"}]}`
+	body.Store([]byte(withEvents))
+	invoke(empty, homes[0], "app events require a resident connected to a team", "plugin", "install", server.URL, "--dev-origin", "http://127.0.0.1:1")
+	if cat, err := loadAppApprovals(homes[0]); err != nil || cat.Apps["testapp"] != server.URL {
+		t.Fatalf("refused install changed the approved origin: %v %v", cat.Apps, err)
+	}
+	body.Store([]byte(appTestManifest(server.URL, "/v1/things/{thing_id}")))
+	invoke(empty, homes[0], "", "plugin", "update", "testapp")
 	// Executable collisions are refused without invoking or overwriting anything.
 	executable := filepath.Join(dir, pluginExecutableName("testapp"))
 	marker := filepath.Join(root, "executed")

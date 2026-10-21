@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -138,7 +139,9 @@ def config(tmp_path: Path) -> render_ops.ProductionConfig:
                 "service_name": "library",
                 "region": "virginia",
                 "repo": "https://github.com/awebai/aweb",
-                "root_dir": "naapp/library",
+                "root_dir": "",
+                "dockerfile_path": "./naapp/library/Dockerfile",
+                "docker_context": ".",
                 "branch": "main",
                 "origin_url": "https://library-origin.example",
                 "public_url": "https://library.example",
@@ -217,6 +220,8 @@ def write_config(path: Path, config: render_ops.ProductionConfig) -> None:
                     "region",
                     "repo",
                     "root_dir",
+                    "dockerfile_path",
+                    "docker_context",
                     "branch",
                     "origin_url",
                     "public_url",
@@ -288,7 +293,14 @@ def service(config: render_ops.ProductionConfig) -> dict:
         "branch": config.branch,
         "autoDeploy": "no",
         "suspended": "not_suspended",
-        "serviceDetails": {"region": config.region, "url": config.origin_url},
+        "serviceDetails": {
+            "region": config.region,
+            "url": config.origin_url,
+            "envSpecificDetails": {
+                "dockerfilePath": config.dockerfile_path,
+                "dockerContext": config.docker_context,
+            },
+        },
     }
 
 
@@ -1635,17 +1647,60 @@ def test_validate_service_fails_on_topology_drift(config: render_ops.ProductionC
         render_ops.validate_service(observed, config)
 
 
-def test_validate_service_fails_on_root_dir_drift(config: render_ops.ProductionConfig) -> None:
+@pytest.mark.parametrize(
+    ("path", "value", "named"),
+    [
+        (("rootDir",), "naapp/library", "rootDir"),
+        (("rootDir",), None, "rootDir"),
+        (("serviceDetails", "envSpecificDetails", "dockerfilePath"), "./Dockerfile", "dockerfilePath"),
+        (("serviceDetails", "envSpecificDetails", "dockerContext"), "./naapp/library", "dockerContext"),
+    ],
+)
+def test_validate_service_fails_on_build_drift(
+    config: render_ops.ProductionConfig, path: tuple[str, ...], value: object, named: str
+) -> None:
     observed = service(config)
-    observed["rootDir"] = ""
-    with pytest.raises(render_ops.OpsError, match="rootDir"):
+    target = observed
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    with pytest.raises(render_ops.OpsError, match=named):
         render_ops.validate_service(observed, config)
 
 
-def test_production_config_names_library_inside_the_aweb_repository() -> None:
+def test_validate_service_treats_an_absent_root_dir_as_the_repository_root(
+    config: render_ops.ProductionConfig,
+) -> None:
+    observed = service(config)
+    del observed["rootDir"]
+    render_ops.validate_service(observed, config)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("root_dir", "/naapp/library"),
+        ("root_dir", "../library"),
+        ("dockerfile_path", ""),
+        ("dockerfile_path", "../Dockerfile"),
+        ("docker_context", "/"),
+    ],
+)
+def test_production_config_rejects_build_paths_outside_the_repository(
+    tmp_path: Path, config: render_ops.ProductionConfig, field: str, value: str
+) -> None:
+    path = tmp_path / "production.json"
+    write_config(path, dataclasses.replace(config, **{field: value}))
+    with pytest.raises(render_ops.OpsError, match=field):
+        render_ops.ProductionConfig.load(path)
+
+
+def test_production_config_builds_library_from_the_aweb_repository_root() -> None:
     config = render_ops.ProductionConfig.load(render_ops.APP_ROOT / "ops" / "render-production.json")
     assert render_ops.canonical_git_repo(config.repo) == "github.com/awebai/aweb"
-    assert render_ops.REPOSITORY_ROOT / config.root_dir == render_ops.APP_ROOT
+    assert config.root_dir == ""
+    assert config.docker_context == "."
+    assert (render_ops.REPOSITORY_ROOT / config.dockerfile_path).resolve() == render_ops.APP_ROOT / "Dockerfile"
 
 
 def test_repository_root_is_the_git_top_level() -> None:

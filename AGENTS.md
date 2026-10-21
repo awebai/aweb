@@ -2,14 +2,10 @@ We use main as the sync branch.
 
 Work is done in worktrees.
 
-Ordinary single-repo work: merge it yourself. After your reviewer ACKs,
-always merge `origin/main` into your branch before handing off, then merge your
-branch to main and merge main back into your branch, from your own worktree. Do
-not wait for anyone. Many agents cannot stay coordinated if integration queues
-behind one of them; never merge work your reviewer has not ACKed.
-
-Ask the coordinator to integrate when the change spans repositories, cuts a
-release tag, or touches production tooling.
+Every landing goes through the coordinator's per-repository train. Get an
+independent review ACK, push your branch, and send a landing request with the
+exact head SHA, non-merge commit count and ACK message IDs. The review and
+handoff requirements are detailed below; active team instructions govern.
 
 Do not copy teammate names, presence timestamps, or current availability into
 repository or profile instructions. Resolve current responsibility and
@@ -40,33 +36,36 @@ rather than choosing silently.
 Never make work-in-progress or temporary branches. Stay on the worktree and
 branch assigned to you.
 
-When you finish a task, stand back and review the code, get an independent
-review, and then keep main in sync. Main is the shared branch and divergence is
-the thing to avoid.
+When you finish a task, review your change and get one independent review ACK
+on the exact head SHA, with the number of non-merge commits read. Add Athena
+when the change touches security, auth, identity or data, and UX when
+user-visible screens or words change. Test-only, config-only and tooling
+changes need one reviewer.
 
-**Ordinary single-repo work: merge it yourself.** After your reviewer ACKs,
-merge your branch to main and merge main back into your branch, from your own
-worktree. Do not wait for anyone. Many agents cannot stay coordinated if
-integration queues behind one of them.
+**Every landing goes through the coordinator's per-repository train.** Authors
+push their reviewed branch and send the coordinator a landing request with:
 
-**Ask the coordinator to integrate when the change spans repositories, cuts a
-release tag, or touches production tooling.** There the risk is not your diff
-but the combination: two branches can each pass alone and fail together, and a
-tag must point at one reviewed commit. The coordinator merges those from a
-detached worktree based on `origin/main`, so no working tree is touched and the
-combination is built and tested before it lands.
+- Repository and branch.
+- Exact head SHA and number of non-merge commits over `origin/main`.
+- Review ACK message IDs.
+- Any required landing order or dependencies.
 
-Either way: never merge work your reviewer has not ACKed, and always merge
-`origin/main` into your branch before handing off, so your reviewer reads it
-against current main rather than against a base that has moved.
+Resolve the coordinator from active team instructions and `aw workspace status`.
+Authors do not merge to main or queue individual whole-suite runs. Focused tests
+remain the author's responsibility; whole suites run only in trains under the
+shared suite lock. Never hand off unreviewed work.
 
-That merge does **not** by itself make what was reviewed what lands - it is the
-step that makes a SHA-identity check insufficient, because the branch keeps its
-ACKed tip while its contents change underneath. Before you push, follow "Before
-you push to main" in the active team instructions.
+Merge `origin/main` into your branch before handing off. If the reviewed files
+are unchanged, no new ACK is needed; otherwise the same reviewer reads the
+delta. The coordinator merges ACKed heads onto current `origin/main` in a
+separate integration worktree, checks the three-dot diff matches the reviewed
+change and that no main commits are lost, and runs one covering gate for the
+repository. A green train lands the heads and reports each landed SHA; a
+failing head returns to its author for a fix.
 
-A team without a coordinator self-merges everything; follow your team's active
-instructions rather than assuming this split is universal.
+The exact SHA alone does not establish what lands after main moves. Follow
+"Before you push to main" in the active team instructions for the coordinator's
+integration checks.
 
 ## Start Here
 

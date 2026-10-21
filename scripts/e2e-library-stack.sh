@@ -16,9 +16,10 @@
 #     down            tear the stack down and remove all state (-v)
 #
 # Committed local inputs (see docs/e2e-library-stack.md):
-#   naapp/library                                  Library service source
+#   naapp/library                                  Library service source, built
+#                                                  from this checkout's root
 #   naapp/library/test-vectors/blueprints/team     seeded aweb.team blueprint
-# Override either with LIBRARY_E2E_LIBRARY_CONTEXT / LIBRARY_E2E_BLUEPRINT_SRC.
+# Override the blueprint with LIBRARY_E2E_BLUEPRINT_SRC.
 #
 # Environment overrides:
 #   LIBRARY_E2E_AWID_PORT      awid host port      (default: 18010)
@@ -64,8 +65,7 @@ AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
 LIBRARY_URL="http://$DOCKER_PUBLISHED_HOST:$LIBRARY_PORT"
 
 # Both inputs are versioned under this checkout, so release evidence and normal
-# e2e runs consume the same exact source. Explicit overrides remain supported.
-export LIBRARY_E2E_LIBRARY_CONTEXT="${LIBRARY_E2E_LIBRARY_CONTEXT:-$REPO_ROOT/naapp/library}"
+# e2e runs consume the same exact source. The blueprint override remains supported.
 export LIBRARY_E2E_BLUEPRINT_SRC="${LIBRARY_E2E_BLUEPRINT_SRC:-$REPO_ROOT/naapp/library/test-vectors/blueprints/team}"
 # Keep every advertised public endpoint in lockstep with the published-host probes.
 export LIBRARY_E2E_AWEB_PUBLIC_ORIGIN="${LIBRARY_E2E_AWEB_PUBLIC_ORIGIN:-$AWEB_URL}"
@@ -112,13 +112,12 @@ remove_stack() {
 }
 
 stack_up() {
-  if [[ ! -d "$LIBRARY_E2E_LIBRARY_CONTEXT" ]]; then
-    echo "FATAL: library source not found at $LIBRARY_E2E_LIBRARY_CONTEXT" >&2
-    echo "Set LIBRARY_E2E_LIBRARY_CONTEXT to the ../library checkout." >&2
+  if [[ ! -f "$REPO_ROOT/naapp/library/Dockerfile" ]]; then
+    echo "FATAL: library source not found at $REPO_ROOT/naapp/library" >&2
     exit 1
   fi
   echo "=== Building and starting the stack ==="
-  echo "  library context: $LIBRARY_E2E_LIBRARY_CONTEXT"
+  echo "  library source:  $REPO_ROOT/naapp/library"
   echo "  blueprint src:   $LIBRARY_E2E_BLUEPRINT_SRC"
   # Reset this exact project first and prove it has no residue. A failed reset
   # must not silently reuse state or redirect cleanup to another invocation.

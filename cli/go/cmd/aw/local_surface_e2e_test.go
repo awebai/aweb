@@ -179,7 +179,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveUnadvertisedHealth(w, r) {
+		if serveUnadvertisedHealth(w, r) || serveNoManifestCatalog(w, r) {
 			return
 		}
 		switch {

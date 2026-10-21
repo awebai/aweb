@@ -741,6 +741,8 @@ class ProductionConfig:
     region: str
     repo: str
     root_dir: str
+    dockerfile_path: str
+    docker_context: str
     branch: str
     origin_url: str
     public_url: str
@@ -765,10 +767,21 @@ class ProductionConfig:
             raise OpsError("production URLs must use https")
         if not config.health_path.startswith("/"):
             raise OpsError("health_path must be absolute")
-        root_dir = Path(config.root_dir)
-        if not config.root_dir or root_dir.is_absolute() or ".." in root_dir.parts:
-            raise OpsError("root_dir must be a relative path inside the repository")
+        for name, allow_root in (
+            ("root_dir", True),
+            ("dockerfile_path", False),
+            ("docker_context", True),
+        ):
+            if not _relative_inside_repository(getattr(config, name), allow_root=allow_root):
+                raise OpsError(f"{name} must be a relative path inside the repository")
         return config
+
+
+def _relative_inside_repository(value: str, *, allow_root: bool) -> bool:
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts:
+        return False
+    return allow_root or bool(path.parts)
 
 
 def _validated_public_deployment_identity(
@@ -938,12 +951,16 @@ def safe_deploy(deploy: dict[str, Any]) -> dict[str, Any]:
 
 def validate_service(service: dict[str, Any], config: ProductionConfig) -> None:
     details = service.get("serviceDetails") or {}
+    docker = details.get("envSpecificDetails") or {}
     observed = {
         "id": service.get("id"),
         "name": service.get("name"),
         "region": details.get("region"),
         "repo": service.get("repo"),
-        "rootDir": service.get("rootDir"),
+        # An absent rootDir and an empty one both mean the repository root; null does not.
+        "rootDir": service.get("rootDir", ""),
+        "dockerfilePath": docker.get("dockerfilePath"),
+        "dockerContext": docker.get("dockerContext"),
         "branch": service.get("branch"),
         "url": details.get("url"),
         "suspended": service.get("suspended"),
@@ -955,6 +972,8 @@ def validate_service(service: dict[str, Any], config: ProductionConfig) -> None:
         "region": config.region,
         "repo": config.repo,
         "rootDir": config.root_dir,
+        "dockerfilePath": config.dockerfile_path,
+        "dockerContext": config.docker_context,
         "branch": config.branch,
         "url": config.origin_url,
         "suspended": "not_suspended",
