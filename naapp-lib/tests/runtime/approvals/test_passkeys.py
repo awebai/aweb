@@ -13,6 +13,14 @@ from datetime import timedelta
 
 import pytest
 import pytest_asyncio
+from aweb_naapp_testing import did_key
+from aweb_naapp_testing.owner_acts import (
+    TeamOwner,
+    designation_subject,
+    revocation_subject,
+    team_owner,
+)
+from aweb_naapp_testing.webauthn import SoftAuthenticator, b64url
 
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from aweb_naapp.runtime.approvals import (
@@ -44,15 +52,7 @@ from aweb_naapp.runtime.passkeys import (
     Passkeys,
     RelyingParty,
 )
-from tests.runtime.approvals.owner_acts import (
-    TeamOwner,
-    designation_subject,
-    revocation_subject,
-    team_owner,
-)
-from tests.runtime.approvals.soft_authenticator import SoftAuthenticator, b64url
 from tests.runtime.approvals.support import SCOPE, AuditOutbox, Clock, Policies, TaskAnswers, policy
-from tests.runtime.conftest import did_key
 
 ORIGIN = "https://app.example.com"
 

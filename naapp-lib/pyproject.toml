@@ -21,7 +21,8 @@ dependencies = []
 # Request-time runtime code under aweb_naapp.runtime. The docs
 # surface (`import aweb_naapp`) never imports these.
 runtime = [
-  "awid-service",
+  # The first awid release with the principal-attestation records the runtime reads.
+  "awid-service>=0.5.30",
   "fastapi>=0.116.1",
   "httpx>=0.28.1",
   "pgdbm>=0.5.0",
@@ -34,13 +35,37 @@ runtime = [
 outbox = [
   "pgdbm>=0.5.0",
 ]
+# The signing-key reader, aweb_naapp.signing_key: pynacl only, so the core
+# server can read its keys the same way without the naapp runtime.
+signing-key = [
+  "pynacl>=1.6.2",
+]
+# The shared dispatch state machine, aweb_naapp.dispatch: pgdbm only.
+dispatch = [
+  "pgdbm>=0.5.0",
+]
 # The shared idempotency store, aweb_naapp.idempotency: pgdbm only.
 idempotency = [
+  "pgdbm>=0.5.0",
+]
+# Shared role assignments, aweb_naapp.roles: pgdbm only.
+roles = [
   "pgdbm>=0.5.0",
 ]
 # The shared page-format validator, aweb_naapp.pages: JSON Schema only, no I/O.
 pages = [
   "jsonschema>=4.23",
+]
+# The shared egress guard, aweb_naapp.egress: URL canonicalization, its own
+# resolver and a pinned verified connection, without the naapp runtime.
+# publicsuffixlist is pinned exactly on purpose: the list decides which
+# wildcard destinations are refused, so it changes only by a reviewed bump of
+# this pin together with docs/vectors/egress-url-v2.json. Do not loosen it.
+egress = [
+  "dnspython>=2.7.0",
+  "httpcore[asyncio]>=1.0.9",
+  "idna>=3.10",
+  "publicsuffixlist==1.1.0.20261018",
 ]
 # aw-hooks, aweb_naapp.hooks: the catalog reader (stdlib), the event envelope,
 # the delivery credential and the owner-act verifier with its nonce table.
@@ -49,9 +74,15 @@ pages = [
 # (a subprocess test pins that). Installing awid-service brings that package's
 # own dependencies, which the core server and every naapp already carry.
 hooks = [
-  "awid-service",
+  "awid-service>=0.5.30",
   "pgdbm>=0.5.0",
   "pynacl>=1.6.2",
+]
+
+# Persistent pages need PostgreSQL and the frozen validator, not HTTP/auth deps.
+page-store = [
+  "pgdbm>=0.5.0",
+  "jsonschema>=4.23",
 ]
 
 [project.urls]
@@ -67,11 +98,15 @@ build-backend = "hatchling.build"
 packages = ["src/aweb_naapp"]
 
 [tool.uv.sources]
-awid-service = { path = "../awid" }
+awid-service = { path = "../awid", editable = true }
+aweb-naapp-testing = { path = "testing", editable = true }
 
 [dependency-groups]
 dev = [
   "aweb-naapp[runtime,pages]",
+  "aweb-naapp[egress]",
+  "cryptography>=44.0.0",
+  "aweb-naapp-testing",
   "pytest>=9.0.0",
   "pytest-asyncio>=1.2.0",
   "httpx2>=2.9.1",

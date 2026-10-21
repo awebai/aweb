@@ -11,11 +11,12 @@ from __future__ import annotations
 import ipaddress
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 from awid.did import public_key_from_did
 from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_with_public_key
+from awid.utc_timestamps import parse_utc_seconds
 
 SIGNING_PREFIX = b"aweb.team-server/1\n"
 RECORD_TYPE = "aweb.team-server"
@@ -23,7 +24,6 @@ RECORD_VERSION = 1
 RECORD_FIELDS = frozenset({"v", "type", "team_id", "team_did_key", "server_url", "issued_at"})
 MAX_FUTURE_SECONDS = 300
 MAX_SERVER_URL_BYTES = 2048
-_ISSUED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 # An Ed25519 signature in unpadded standard base64: 64 bytes, 86 characters.
 # The last character carries four spare bits, which must be zero (A, Q, g or w),
 # so every signature has exactly one accepted encoding.
@@ -111,9 +111,12 @@ def canonical_team_server_url(value: str) -> tuple[str, str]:
 
 
 def _parse_issued_at(value: object) -> datetime:
-    if not isinstance(value, str) or not _ISSUED_AT_RE.fullmatch(value):
-        raise TeamServerRecordError("record_invalid", "issued_at must be RFC 3339 UTC seconds (YYYY-MM-DDTHH:MM:SSZ)")
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    try:
+        return parse_utc_seconds(value)
+    except ValueError as exc:
+        raise TeamServerRecordError(
+            "record_invalid", "issued_at must be RFC 3339 UTC seconds (YYYY-MM-DDTHH:MM:SSZ)"
+        ) from exc
 
 
 def verify_team_server_record(
