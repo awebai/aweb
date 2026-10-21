@@ -5,7 +5,11 @@ purpose. The team's server is always the one its ``aweb.team-server/1``
 record names, found through :class:`TeamServerDirectory`, never an origin an
 event or a request names; when that record changes, the next resolution
 follows it. Answers are reused through :class:`FreshnessCache` for at most
-``min(max_age_seconds, 60)`` seconds and an expired one is never served.
+``min(max_age_seconds, 60)`` seconds and an expired one is never served. Each
+:class:`Resolution` says how old its data may be: ``as_of`` is the wall-clock
+time its request was sent, which the server read after, and ``max_age_seconds``
+the window it was reused for, so a caller bounding the data's age measures the
+data, not the time it asked.
 
 A binding is listed while its state is active, including before its
 ``active_from``. The caller compares ``active_from`` with an event's
@@ -41,6 +45,7 @@ import httpx
 from aweb_naapp.runtime.app_credentials import HOOK_RESOLVE, AppCredentialSigner
 from aweb_naapp.runtime.freshness import (
     DEFAULT_REFRESH_TIMEOUT_SECONDS,
+    FRESHNESS_CEILING_SECONDS,
     FreshnessCache,
     RefreshTimedOut,
 )
@@ -160,6 +165,9 @@ class Resolution[T]:
     items: tuple[T, ...]
     # The time.monotonic() deadline after which this answer must not be used.
     fresh_until: float
+    # The wall-clock time the data is no older than, and the window it is reused for.
+    as_of: datetime
+    max_age_seconds: int
 
 
 class HookResolver:
@@ -176,6 +184,7 @@ class HookResolver:
         transport: httpx.AsyncBaseTransport | None = None,
         refresh_timeout: float = DEFAULT_REFRESH_TIMEOUT_SECONDS,
         monotonic: Callable[[], float] = time.monotonic,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if signer.purpose != HOOK_RESOLVE:
             raise ValueError(
@@ -185,6 +194,7 @@ class HookResolver:
         self._signer = signer
         self._app_origin = app_origin
         self._transport = transport
+        self._clock = clock
         self._cache: FreshnessCache[tuple[Any, ...], tuple[Any, ...]] = FreshnessCache(
             refresh_timeout=refresh_timeout, monotonic=monotonic
         )
@@ -285,9 +295,12 @@ class HookResolver:
         key = (team_id, server.server_url, server.audience, server.team_did_key, *selection)
 
         async def fetch() -> tuple[tuple[Any, ...], int]:
+            requested_at = self._clock()
             body = await self._get(server, team_id, path, signed=signed)
             try:
-                return parse(body), _max_age(body)
+                max_age = _max_age(body)
+                window = min(max_age, FRESHNESS_CEILING_SECONDS)
+                return (parse(body), requested_at, window), max_age
             except (_Malformed, KeyError, TypeError, ValueError) as exc:
                 raise HookResolutionUnavailable("answer_malformed") from exc
 
@@ -299,11 +312,14 @@ class HookResolver:
             raise HookResolutionUnavailable("timeout") from exc
         except ValueError as exc:
             raise HookResolutionUnavailable("answer_malformed") from exc
+        items, as_of, window = fresh.value
         return Resolution(
             team_id=team_id,
             server_url=server.server_url,
-            items=fresh.value,
+            items=items,
             fresh_until=fresh.fresh_until,
+            as_of=as_of,
+            max_age_seconds=window,
         )
 
     async def _get(
