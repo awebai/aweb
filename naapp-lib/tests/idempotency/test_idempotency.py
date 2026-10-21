@@ -16,6 +16,7 @@ from aweb_naapp.idempotency import (
     apply_idempotency_migrations,
     claim,
     expire_keys,
+    lookup,
 )
 
 KEY = ("installation-1", "did:aw:member", "request-1")
@@ -181,3 +182,66 @@ async def test_expiring_keys_leaves_content_free_tombstones(db: AsyncDatabaseMan
 async def test_malformed_claims_are_refused(db: AsyncDatabaseManager, changes: dict) -> None:
     with pytest.raises(ValueError):
         await _claim(db, "dispatch-1", **changes)
+
+
+# Looking a key up without claiming it
+
+
+async def test_looking_up_an_unknown_key_finds_nothing_and_claims_nothing(
+    db: AsyncDatabaseManager,
+) -> None:
+    assert await lookup(db, key=KEY, request_hash=_hash(b"a")) is None
+    assert await _rows(db) == 0
+    receipt = await _claim(db, "dispatch-1")
+    assert receipt.created is True
+
+
+async def test_looking_up_a_claimed_key_returns_its_receipt(db: AsyncDatabaseManager) -> None:
+    await _claim(db, "dispatch-1")
+    found = await lookup(db, key=KEY, request_hash=_hash(b"a"))
+    assert found is not None
+    assert (found.receipt_ref, found.created) == ("dispatch-1", False)
+    assert await _rows(db) == 1
+
+
+async def test_a_lookup_runs_in_the_callers_transaction(db: AsyncDatabaseManager) -> None:
+    async with db.transaction() as tx:
+        await claim(
+            tx, key=KEY, request_hash=_hash(b"a"), receipt_ref="dispatch-1", retention=RETENTION
+        )
+        found = await lookup(tx, key=KEY, request_hash=_hash(b"a"))
+        assert found is not None and found.receipt_ref == "dispatch-1"
+
+
+async def test_looking_up_with_different_bytes_conflicts_as_a_claim_does(
+    db: AsyncDatabaseManager,
+) -> None:
+    await _claim(db, "dispatch-1", body=b"a")
+    with pytest.raises(IdempotencyConflict) as looked:
+        await lookup(db, key=KEY, request_hash=_hash(b"b"))
+    with pytest.raises(IdempotencyConflict) as claimed:
+        await _claim(db, "dispatch-2", body=b"b")
+    assert (looked.value.code, looked.value.status) == (claimed.value.code, claimed.value.status)
+
+
+async def test_looking_up_an_expired_key_is_refused_as_a_claim_is(
+    db: AsyncDatabaseManager,
+) -> None:
+    await _claim(db, "dispatch-1", retention=SHORT)
+    await asyncio.sleep(0.2)
+    with pytest.raises(IdempotencyExpired) as looked:
+        await lookup(db, key=KEY, request_hash=_hash(b"a"))
+    await expire_keys(db)
+    with pytest.raises(IdempotencyExpired):
+        await lookup(db, key=KEY, request_hash=_hash(b"a"))
+    with pytest.raises(IdempotencyExpired) as claimed:
+        await _claim(db, "dispatch-2")
+    assert (looked.value.code, looked.value.status) == (claimed.value.code, claimed.value.status)
+
+
+async def test_a_lookup_needs_a_key_and_a_request_hash(db: AsyncDatabaseManager) -> None:
+    for changes in ({"key": ()}, {"request_hash": b""}):
+        arguments = dict(key=KEY, request_hash=_hash(b"a"))
+        arguments.update(changes)
+        with pytest.raises(ValueError):
+            await lookup(db, **arguments)
