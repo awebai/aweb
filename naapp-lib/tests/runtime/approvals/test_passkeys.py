@@ -1584,3 +1584,31 @@ async def test_the_owner_count_counts_only_proven_contacts(pw):
     )
     change, _ = await owner_changes_contact(pw, SCOPE, "pick@example.com", attempt=3)
     assert change.scope == SCOPE
+
+
+async def test_recovery_notices_go_only_to_proven_contacts(pw):
+    _, device = await enrol(pw, "human@example.com")
+    await change_contact(pw, device, "unproven@example.com")
+    designation = await designate(pw, "new-phone@example.com")
+    notice = Notice(NoticeKind.RECOVERY_STARTED, SCOPE, designation.effective_at)
+    assert notice in pw.contacts.notices["human@example.com"]
+    assert notice not in pw.contacts.notices.get("unproven@example.com", [])
+
+
+async def test_recovery_notices_reach_a_proven_pending_contact(pw):
+    _, device = await enrol(pw, "human@example.com")
+    await change_contact(pw, device, "proven@example.com")
+    await prove(pw, "proven@example.com")
+    designation = await designate(pw, "new-phone@example.com")
+    notice = Notice(NoticeKind.RECOVERY_STARTED, SCOPE, designation.effective_at)
+    assert notice in pw.contacts.notices["proven@example.com"]
+
+
+async def test_an_approver_who_never_enrolled_gets_no_security_notice(pw):
+    await designate(pw, "never-enrolled@example.com")
+    designation = await designate(pw, "new-phone@example.com")
+    notice = Notice(NoticeKind.RECOVERY_STARTED, SCOPE, designation.effective_at)
+    assert notice not in pw.contacts.notices.get("never-enrolled@example.com", [])
+    async with pw.passkeys.db.transaction() as tx:
+        reissued = await pw.passkeys.reissue_enrolment(tx, scope=SCOPE)
+    assert "never-enrolled@example.com" not in {contact for contact, _ in reissued.notices}

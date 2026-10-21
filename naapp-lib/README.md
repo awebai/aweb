@@ -262,7 +262,9 @@ the approval, decision, policy and the app's own origin.
   change still unproven by then lapses, and the old contact stays. A contact
   given at designation is proven by the enrolment completed through it. So an
   approver's effective contact is always a proven one, which is what the owner
-  count behind `last_owner_protected` relies on.
+  count behind `last_owner_protected` relies on. Security notices, such as recovery
+  notices, go only to proven contacts; the one message an unproven pending
+  contact receives is its own proof.
 - These durations are floors. App or owner policy may lengthen them, and
   deploy configuration may raise the floor itself (`lockout_floor`); nothing
   can go below 72 h and 24 h.

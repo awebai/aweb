@@ -217,8 +217,8 @@ class ContactChange:
     scope: str
     effective_at: datetime
     notices: tuple[tuple[str, Notice], ...]
-    new_contact: str = ""
-    proof_token: str = field(default="", repr=False)
+    new_contact: str
+    proof_token: str = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -602,16 +602,9 @@ class Passkeys:
         )
         notices: tuple[tuple[str, Notice], ...] = ()
         if current["effective_at"] > now:
-            rows = await tx.fetch_all(
-                "SELECT contact FROM {{tables.passkey_approvers}} "
-                "WHERE scope = $1 AND subject <> $2 "
-                "UNION SELECT pending_contact FROM {{tables.passkey_approvers}} "
-                "WHERE scope = $1 AND subject <> $2 AND pending_contact IS NOT NULL",
-                scope,
-                current["subject"],
-            )
+            recorded = await self._recorded_contacts(tx, scope, excluding=current["subject"])
             notice = Notice(NoticeKind.RECOVERY_STARTED, scope, current["effective_at"])
-            notices = tuple((contact, notice) for contact in sorted({r["contact"] for r in rows}))
+            notices = tuple((contact, notice) for contact in recorded)
         approver = Approver(
             scope=scope,
             subject=current["subject"],
@@ -656,12 +649,22 @@ class Passkeys:
             logger.exception("passkey delivery failed")
             return DeliveryStatus.FAILED
 
-    async def _recorded_contacts(self, tx: TransactionManager, scope: str) -> list[str]:
+    async def _recorded_contacts(
+        self, tx: TransactionManager, scope: str, *, excluding: str | None = None
+    ) -> list[str]:
+        """The proven contacts ever recorded for `scope`'s approvers, for
+        security notices: a registered contact once an enrolment completed
+        through it, a pending one once its holder proved it. An unproven
+        address gets nothing but its own proof."""
         rows = await tx.fetch_all(
-            "SELECT contact FROM {{tables.passkey_approvers}} WHERE scope = $1 "
+            "SELECT a.contact FROM {{tables.passkey_approvers}} a "
+            "WHERE a.scope = $1 AND a.subject IS DISTINCT FROM $2 AND EXISTS ("
+            "SELECT 1 FROM {{tables.passkey_credentials}} c WHERE c.subject = a.subject) "
             "UNION SELECT pending_contact FROM {{tables.passkey_approvers}} "
-            "WHERE scope = $1 AND pending_contact IS NOT NULL",
+            "WHERE scope = $1 AND subject IS DISTINCT FROM $2 "
+            "AND pending_contact_proven_at IS NOT NULL",
             scope,
+            excluding,
         )
         return sorted({row["contact"] for row in rows})
 
@@ -1296,10 +1299,9 @@ class Passkeys:
         and its proof to the new contact only."""
         for contact, notice in change.notices:
             await self._send(self._delivery.deliver_notice(contact, notice))
-        if change.proof_token:
-            await self._send(
-                self._delivery.deliver_contact_proof(change.new_contact, change.proof_token)
-            )
+        await self._send(
+            self._delivery.deliver_contact_proof(change.new_contact, change.proof_token)
+        )
 
     async def _revoke_contact_proofs(
         self, tx: TransactionManager, subject: str, now: datetime
@@ -1316,20 +1318,33 @@ class Passkeys:
         pending contact then takes effect at its time; unproven, it lapses.
         Returns when it takes effect."""
         now = self._clock()
+        verifier = link_verifier(proof_token)
         async with self.db.transaction() as tx:
+            # The approver row first, then the proof: the order every contact
+            # change and cancel takes, so they serialise instead of deadlocking.
+            subject = await tx.fetch_value(
+                "SELECT subject FROM {{tables.passkey_contact_proofs}} WHERE verifier_sha256 = $1",
+                verifier,
+            )
+            approver = await tx.fetch_one(
+                "SELECT subject, scope, pending_contact, pending_contact_at "
+                "FROM {{tables.passkey_approvers}} "
+                "WHERE subject = $1 AND superseded_at IS NULL FOR UPDATE",
+                subject,
+            )
             proof = await tx.fetch_one(
-                "SELECT p.proof_id, p.subject, p.contact_sha256, a.scope, a.pending_contact, "
-                "a.pending_contact_at FROM {{tables.passkey_contact_proofs}} p "
-                "JOIN {{tables.passkey_approvers}} a ON a.subject = p.subject "
-                "WHERE p.verifier_sha256 = $1 AND p.used_at IS NULL AND p.revoked_at IS NULL "
-                "AND p.expires_at > $2 AND a.superseded_at IS NULL "
-                "AND a.pending_contact_at > $2 FOR UPDATE OF p, a",
-                link_verifier(proof_token),
+                "SELECT proof_id, contact_sha256 FROM {{tables.passkey_contact_proofs}} "
+                "WHERE verifier_sha256 = $1 AND used_at IS NULL AND revoked_at IS NULL "
+                "AND expires_at > $2 FOR UPDATE",
+                verifier,
                 now,
             )
             if (
-                proof is None
-                or contact_sha256(proof["pending_contact"]) != (proof["contact_sha256"])
+                approver is None
+                or proof is None
+                or approver["pending_contact_at"] is None
+                or approver["pending_contact_at"] <= now
+                or contact_sha256(approver["pending_contact"]) != proof["contact_sha256"]
             ):
                 raise ContactChangeRefused("contact_proof_unavailable")
             await tx.execute(
@@ -1340,23 +1355,23 @@ class Passkeys:
             await tx.execute(
                 "UPDATE {{tables.passkey_approvers}} SET pending_contact_proven_at = $2 "
                 "WHERE subject = $1 AND superseded_at IS NULL",
-                proof["subject"],
+                approver["subject"],
                 now,
             )
             await self._audit.emit(
                 AuditEvent(
                     kind=AuditKind.APPROVER_CONTACT_PROVEN,
-                    actor=proof["subject"],
-                    subject=proof["subject"],
+                    actor=approver["subject"],
+                    subject=approver["subject"],
                     occurred_at=now,
                     details={
-                        "scope": proof["scope"],
-                        "effective_at": proof["pending_contact_at"].isoformat(),
+                        "scope": approver["scope"],
+                        "effective_at": approver["pending_contact_at"].isoformat(),
                     },
                 ),
                 tx,
             )
-        return proof["pending_contact_at"]
+        return approver["pending_contact_at"]
 
     async def _pending_contact(self, scope: str) -> dict[str, Any]:
         now = self._clock()
