@@ -76,7 +76,12 @@ run-binding check: the shared admission/release path still checks them all.
 
 Jobs remain excluded from `ChangeSets.APPLICABLE_KINDS` until the confirming
 source/issuer validation and trusted dispatch integration are implemented and
-reviewed. Both durable and short-lived drafts refuse `change_kind_not_applicable`
+reviewed. `validate_mint_mapping(slot, issuer)` supplies the record's pure
+exact-parameter coverage, literal-schema/charset, reference-type and operation
+pin comparisons against a resolved `OperationTemplate`. It proves no CURRENT
+lookup or source authority: the common confirming/planning path must resolve
+that issuer under its own locks and require token-issuing `store_as_secret`,
+then validate expanded actual values at admission. Both durable and short-lived drafts refuse `change_kind_not_applicable`
 at this stage. Adding the kind requires definition-time exact issuer parameter
 coverage, typed literals, same-type parameter references, CURRENT issuer digest
 and token-issuing `store_as_secret` checks; admission additionally validates the

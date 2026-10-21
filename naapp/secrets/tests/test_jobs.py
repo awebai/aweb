@@ -11,6 +11,7 @@ from pgdbm import AsyncDatabaseManager
 from aweb_secrets.jobs import (
     JobDefinition,
     JobInvalid,
+    JobRefused,
     apply_job_migrations,
     create_job,
     current_job,
@@ -392,3 +393,60 @@ def test_nul_is_refused_in_all_record_strings_before_jsonb(field):
         )
     with pytest.raises(JobInvalid):
         JobDefinition.from_after(body)
+
+
+def _mapping_job_and_parameter_source(mapping):
+    from aweb_secrets.operation import OperationTemplate
+    from tests.test_change_records import OPERATION
+
+    source = OperationTemplate.from_after(copy.deepcopy(OPERATION))
+    body = after()
+    body["credentials"][0].update(
+        delivery="short_lived",
+        mint={
+            "operation_id": source.operation_id,
+            "digest": source.digest,
+            "params": {"charge": mapping},
+        },
+    )
+    return JobDefinition.from_after(body), source
+
+
+def test_mint_mapping_checks_literal_constraints_and_matching_reference_types():
+    job, source = _mapping_job_and_parameter_source({"value": "orders"})
+    job.validate_mint_mapping(0, source)
+    for literal in ["x", "+invalid", 600, False]:
+        job, source = _mapping_job_and_parameter_source({"value": literal})
+        with pytest.raises(JobRefused) as refused:
+            job.validate_mint_mapping(0, source)
+        assert refused.value.code == "params_invalid"
+    job, source = _mapping_job_and_parameter_source({"$param": "database"})
+    job.validate_mint_mapping(0, source)
+    body = job.after
+    body["params"]["database"]["schema"] = {"type": "integer", "minimum": 1, "maximum": 10}
+    with pytest.raises(JobRefused) as refused:
+        JobDefinition.from_after(body).validate_mint_mapping(0, source)
+    assert refused.value.code == "params_invalid"
+
+
+def test_mint_mapping_has_exact_issuer_parameter_coverage_and_pin():
+    job, source = _mapping_job_and_parameter_source({"$param": "database"})
+    for params in [{}, {"charge": {"value": "orders"}, "unknown": {"value": "orders"}}]:
+        body = job.after
+        body["credentials"][0]["mint"]["params"] = params
+        with pytest.raises(JobRefused) as refused:
+            JobDefinition.from_after(body).validate_mint_mapping(0, source)
+        assert refused.value.code == "params_invalid"
+    body = job.after
+    body["credentials"][0]["mint"]["digest"] = "d" * 64
+    with pytest.raises(JobRefused) as refused:
+        JobDefinition.from_after(body).validate_mint_mapping(0, source)
+    assert refused.value.code == "operation_not_allowed"
+
+
+def test_matching_mint_parameter_types_still_require_actual_issuer_validation():
+    job, source = _mapping_job_and_parameter_source({"$param": "database"})
+    job.validate_mint_mapping(0, source)
+    expanded = job.expand_mint_params(0, {"database": "+invalid"})
+    assert not source.params_valid(expanded)
+    assert source.params_valid(job.expand_mint_params(0, {"database": "orders"}))
