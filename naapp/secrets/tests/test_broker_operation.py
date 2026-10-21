@@ -22,7 +22,11 @@ from .test_operation_record import REFUND
 
 def _template(upstream: Upstream, **changes) -> OperationTemplate:
     after = copy.deepcopy(REFUND)
-    after["url"] = {"host": NAME, "port": upstream.port, "path": "/bearer/echo/charges/{charge}/refunds"}
+    after["url"] = {
+        "host": NAME,
+        "port": upstream.port,
+        "path": "/bearer/echo/charges/{charge}/refunds",
+    }
     after["response"] = {
         "projection": ["/scheme", "/path", "/body_sha256", "/idempotency_key"],
         "max_bytes": 4096,
@@ -67,6 +71,9 @@ async def test_a_named_operation_verifies_and_returns_its_projection(upstream: U
         {"charge": "ch_3Pq9", "amount_minor_units": 500, "currency": "EUR"},
         headers=[],
         idempotency_key="secrets-d1",
+    )
+    assert request.destination.header_allow == frozenset(
+        {"stripe-version", "x-request-id", "idempotency-key"}
     )
     call = await _send(upstream, request)
     assert call.result.disposition == "returned", call.result
@@ -123,7 +130,9 @@ def _issuing(upstream: Upstream, *, handling: str = "withhold", projection=None)
 
 
 @pytest.mark.parametrize("handling", ["deny", "store_as_secret"])
-async def test_unsupported_token_issuance_never_reaches_the_upstream(upstream: Upstream, handling: str) -> None:
+async def test_unsupported_token_issuance_never_reaches_the_upstream(
+    upstream: Upstream, handling: str
+) -> None:
     # The derived-secret mode is refused at validation today. Its dispatch
     # seam must stay closed too until custody is wired, even for an old row.
     request = dataclasses.replace(_issuing(upstream, handling="deny"), result_handling=handling)
@@ -133,14 +142,19 @@ async def test_unsupported_token_issuance_never_reaches_the_upstream(upstream: U
     assert upstream.paths == []
 
 
-async def test_denied_issuance_is_refused_before_even_exchanging_oauth_credentials(upstream: Upstream) -> None:
+async def test_denied_issuance_is_refused_before_even_exchanging_oauth_credentials(
+    upstream: Upstream,
+) -> None:
     request = _issuing(upstream, handling="deny")
     with pytest.raises(EgressRefused) as refused:
         await broker_operation(
             upstream.egress,
             _internal(upstream, request),
             kind="oauth2-client-credentials",
-            value={"client_id": upstream.creds.oauth_client_id, "client_secret": upstream.creds.oauth_client_secret},
+            value={
+                "client_id": upstream.creds.oauth_client_id,
+                "client_secret": upstream.creds.oauth_client_secret,
+            },
             kind_params={
                 "token_endpoint": upstream.url("/oauth2/token"),
                 "client_auth": "client_secret_basic",
@@ -156,7 +170,9 @@ async def test_denied_issuance_is_refused_before_even_exchanging_oauth_credentia
     assert upstream.issued() == 0
 
 
-async def test_an_issuing_operation_returns_only_its_noncredential_projection(upstream: Upstream) -> None:
+async def test_an_issuing_operation_returns_only_its_noncredential_projection(
+    upstream: Upstream,
+) -> None:
     request = _issuing(upstream, projection=["/AssumedRoleUser/Arn", "/Credentials/Expiration"])
     assert request.result_handling == "withhold"
     call = await _send(upstream, request)
@@ -169,7 +185,9 @@ async def test_an_issuing_operation_returns_only_its_noncredential_projection(up
     assert projected["/AssumedRoleUser/Arn"] == "arn:aws:sts::123456789012:assumed-role/e2e/test"
 
 
-async def test_an_issuing_operation_that_projects_a_credential_is_withheld(upstream: Upstream) -> None:
+async def test_an_issuing_operation_that_projects_a_credential_is_withheld(
+    upstream: Upstream,
+) -> None:
     request = _issuing(upstream, projection=["/Credentials/SessionToken"])
     call = await _send(upstream, request)
     assert upstream.paths == ["/bearer/issue"]
@@ -180,7 +198,9 @@ async def test_an_issuing_operation_that_projects_a_credential_is_withheld(upstr
     assert call.result.undeclared_credential is False
 
 
-async def test_an_undeclared_credential_issuance_is_withheld_and_flagged(upstream: Upstream) -> None:
+async def test_an_undeclared_credential_issuance_is_withheld_and_flagged(
+    upstream: Upstream,
+) -> None:
     request = _issuing(upstream, handling="undeclared")
     call = await _send(upstream, request)
     assert upstream.paths == ["/bearer/issue"]

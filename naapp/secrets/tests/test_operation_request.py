@@ -25,9 +25,13 @@ PARAMS = {"charge": "ch_3Pq9", "amount_minor_units": 500, "currency": "EUR"}
 KEY = "secrets-d1"
 
 
-def _render(template: OperationTemplate, params: Any, *, headers=(), idempotency_key: str | None = KEY):
+def _render(
+    template: OperationTemplate, params: Any, *, headers=(), idempotency_key: str | None = KEY
+):
     """Render as the dispatcher does, with its upstream idempotency key."""
-    return render_operation(template, params, headers=list(headers), idempotency_key=idempotency_key)
+    return render_operation(
+        template, params, headers=list(headers), idempotency_key=idempotency_key
+    )
 
 
 def _template(**changes: Any) -> OperationTemplate:
@@ -55,20 +59,29 @@ def test_the_operation_renders_its_one_request() -> None:
     assert request.bounds.max_response_bytes == 65536
 
 
-def test_the_request_matches_the_destination_it_carries() -> None:
-    request = _render(_template(), PARAMS, headers=[])
+@pytest.mark.parametrize("header", ["Idempotency-Key", "X-Broker-Request", None])
+def test_the_request_matches_the_destination_it_carries(header: str | None) -> None:
+    template = _template(idempotency={"header": header} if header else None)
+    request = _render(template, PARAMS, headers=[])
     match_destination(
         request.destination,
         request.method,
         canonical_url(request.url),
         internal_destinations=InternalDestinations.DISABLED,
     )
-    assert request.destination.header_allow == frozenset({"stripe-version", "idempotency-key"})
+    expected = {"stripe-version", "x-request-id"}
+    if header:
+        expected.add(header.lower())
+    assert request.destination.header_allow == frozenset(expected)
 
 
 def test_the_template_response_bound_applies_above_the_egress_default() -> None:
     template = _template(
-        response={"projection": None, "max_bytes": 16 * 1024 * 1024, "content_types": ["application/json"]}
+        response={
+            "projection": None,
+            "max_bytes": 16 * 1024 * 1024,
+            "content_types": ["application/json"],
+        }
     )
     request = _render(template, PARAMS, headers=[])
     assert request.bounds.max_response_bytes == MAX_RESPONSE_BYTES == 16 * 1024 * 1024
@@ -121,7 +134,11 @@ def test_a_query_parameter_is_one_encoded_value() -> None:
 
 def test_a_query_value_cannot_add_a_parameter() -> None:
     after = copy.deepcopy(REFUND)
-    after["params"]["note"] = {"schema": {"type": "string", "maxLength": 32}, "charset": None, "placement": "query"}
+    after["params"]["note"] = {
+        "schema": {"type": "string", "maxLength": 32},
+        "charset": None,
+        "placement": "query",
+    }
     template = OperationTemplate.from_after(after)
     request = _render(template, {**PARAMS, "note": "x&admin=1"}, headers=[])
     query = canonical_url(request.url).query
@@ -135,20 +152,24 @@ def _allowing(*names: str) -> OperationTemplate:
 
 
 def test_an_allowed_agent_header_passes_and_others_are_refused() -> None:
-    template = _allowing("idempotency-key", "x-request-id")
+    template = _allowing("x-request-id")
     request = _render(template, PARAMS, headers=[("X-Request-Id", "agent-1")])
     assert ("X-Request-Id", "agent-1") in request.headers
-    for header in (("X-Other", "v"), ("Stripe-Version", "2099-01-01"), ("Content-Type", "text/plain")):
+    for header in (
+        ("X-Other", "v"),
+        ("Stripe-Version", "2099-01-01"),
+        ("Content-Type", "text/plain"),
+    ):
         with pytest.raises(EgressRefused) as refused:
             _render(template, PARAMS, headers=[header])
         assert refused.value.code == "header_not_allowed"
 
 
-def test_the_declared_idempotency_header_is_never_the_agents() -> None:
-    # The template lists it as allowed too; it is still the broker's.
-    template = _allowing("idempotency-key", "x-request-id")
+@pytest.mark.parametrize("header", ["Idempotency-Key", "idempotency-key", "IDEMPOTENCY-KEY"])
+def test_the_declared_idempotency_header_is_never_the_agents(header: str) -> None:
+    template = _allowing("x-request-id")
     with pytest.raises(EgressRefused) as refused:
-        _render(template, PARAMS, headers=[("Idempotency-Key", "agent-chosen")])
+        _render(template, PARAMS, headers=[(header, "agent-chosen")])
     assert refused.value.code == "header_not_allowed"
 
 
@@ -161,8 +182,8 @@ def test_an_operation_without_idempotency_lets_an_allowed_agent_header_through()
     after = copy.deepcopy(REFUND)
     after["idempotency"] = None
     template = OperationTemplate.from_after(after)
-    request = render_operation(template, PARAMS, headers=[("Idempotency-Key", "agent-1")])
-    assert ("Idempotency-Key", "agent-1") in request.headers
+    request = render_operation(template, PARAMS, headers=[("X-Request-Id", "agent-1")])
+    assert ("X-Request-Id", "agent-1") in request.headers
 
 
 def test_the_broker_idempotency_key_takes_the_declared_header() -> None:
@@ -170,7 +191,10 @@ def test_the_broker_idempotency_key_takes_the_declared_header() -> None:
     assert ("Idempotency-Key", "secrets-d1") in request.headers
     with pytest.raises(EgressRefused):
         render_operation(
-            _template(), PARAMS, headers=[("Idempotency-Key", "agent-1")], idempotency_key="secrets-d1"
+            _template(),
+            PARAMS,
+            headers=[("Idempotency-Key", "agent-1")],
+            idempotency_key="secrets-d1",
         )
 
 
