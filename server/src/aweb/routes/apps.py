@@ -267,7 +267,11 @@ async def list_installation_requests_route(request: Request, mine: bool = Query(
                    AND (NOT $2 OR requested_by=$3::JSONB) ORDER BY created_at DESC""",
                 authorized, mine, json.dumps(asdict(request.state.operator_audit_actor)),
             )
-        return {"team_id": authorized, "requests": [dict(row) for row in rows]}
+        records = [dict(row) for row in rows]
+        for record in records:
+            if isinstance(record["requested_by"], str):
+                record["requested_by"] = json.loads(record["requested_by"])
+        return {"team_id": authorized, "requests": records}
     except ServiceError as exc:
         raise _failure(exc) from exc
 
@@ -280,8 +284,10 @@ async def approve_installation_request_route(request_id: UUID, request: Request,
         db = db_infra.get_manager("aweb")
         async with db.transaction() as tx:
             pending = await get_installation_request_on(tx, team_id=authorized, request_id=request_id)
+            request.state.operator_audit_target = "app:" + pending["app_id"]
             await require_install_admin(tx, request, identity, authorized, action="apps.requests.approve", app_id=pending["app_id"])
-        request.state.operator_audit_target = "app:" + pending["app_id"]
+            if pending["state"] != "pending":
+                raise HTTPException(409, detail={"code": "installation_request_resolved"})
         fetched = await _fetcher(request).fetch(pending["origin"], expected_digest=pending["digest"])
         async with db.transaction() as tx:
             await require_install_admin(tx, request, identity, authorized, action="apps.requests.approve", app_id=pending["app_id"])

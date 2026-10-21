@@ -171,6 +171,13 @@ async def test_member_request_has_a_separate_current_admin_approval_path(client,
     assert mine.status_code == 200, mine.text
     assert mine.json()["requests"][0]["state"] == "approved"
     assert mine.json()["requests"][0]["installation_id"] == approved.json()["installation_id"]
+    assert mine.json()["requests"][0]["requested_by"]["user_id"] == PRINCIPAL
+    origin.tls.seen.clear()
+    origin.publish(origin.manifest(version="2.0.0"))
+    again = await post(client, body, f"requests/{request_id}/approve")
+    assert again.status_code == 409
+    assert again.json()["detail"]["code"] == "installation_request_resolved"
+    assert not origin.tls.seen
 
 
 async def test_admin_reverify_only_queues_and_management_exposes_pending_reason(client, db, origin):
