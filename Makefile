@@ -260,7 +260,7 @@ test-server:
 # their suites against its Postgres. A package joins by being added here.
 # UV_FROZEN keeps the gate on each committed lock, a lock the run changed fails
 # it, and the suites run offline.
-NAAPP_PACKAGES := naapp-lib naapp/folio naapp/library
+NAAPP_PACKAGES := naapp-lib naapp/folio naapp/library naapp/secrets naapp/logs
 
 # Installs each package's locked dependencies, for a runner that then goes offline.
 naapp-sync:
