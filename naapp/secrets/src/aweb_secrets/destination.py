@@ -60,7 +60,11 @@ def _require(condition: bool, message: str) -> None:
 
 
 def _sorted_distinct(values: Any) -> bool:
-    return isinstance(values, list) and values == sorted(set(values))
+    return (
+        isinstance(values, list)
+        and all(isinstance(value, str) for value in values)
+        and values == sorted(set(values))
+    )
 
 
 def _check(after: Any) -> None:

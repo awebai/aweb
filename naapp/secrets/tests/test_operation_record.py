@@ -258,12 +258,21 @@ def test_well_formed_store_as_secret_stays_unavailable_until_derived_paths_exist
         {**OAUTH_TOKEN_STORE, "expires_in": "expires_in"},
         _store_with(["kind_params"], {"region": "US-EAST-1", "service": "s3"}),
         _store_with(["kind_params", "service"], {"$param": "service"}),
-        _store_with(["capture"], {"access_key_id": "/id", "secret_access_key": "/key"}),
+        pytest.param(
+            _store_with(["capture"], {"access_key_id": "/id", "secret_access_key": "/key"}),
+            id="derived-aws-without-session-token",
+        ),
         _store_with(["destinations"], []),
         _store_with(["destinations"], {}),
         _store_with(["destinations", 0, "host"], "ASSETS.s3.example.com"),
         _store_with(["destinations", 0, "host"], {"$param": "host"}),
         _store_with(["destinations", 0, "methods"], ["CONNECT"]),
+        pytest.param(_store_with(["destinations", 0, "methods"], [{}]), id="methods-object"),
+        pytest.param(_store_with(["destinations", 0, "header_allow"], [{}]), id="headers-object"),
+        pytest.param(_store_with(["destinations", 0, "methods"], ["GET", 1]), id="methods-mixed"),
+        pytest.param(
+            _store_with(["destinations", 0, "header_allow"], ["accept", 1]), id="headers-mixed"
+        ),
         _store_with(["destinations", 0, "path"], "/reports/../admin"),
         _store_with(["destinations", 0, "scheme"], "http"),
         _store_with(["destinations", 0, "v"], 2),

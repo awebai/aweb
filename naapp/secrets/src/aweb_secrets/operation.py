@@ -77,7 +77,7 @@ CAPTURE_FIELDS: Mapping[str, tuple[frozenset[str], frozenset[str]]] = {
     "query": (frozenset({"value"}), frozenset()),
     "basic": (frozenset({"username", "password"}), frozenset()),
     "oauth2-client-credentials": (frozenset({"client_id", "client_secret"}), frozenset()),
-    "aws-sigv4": (frozenset({"access_key_id", "secret_access_key", "session_token"}), frozenset()),
+    "aws-sigv4": (frozenset({"access_key_id", "secret_access_key"}), frozenset({"session_token"})),
 }
 
 _PARAM_NAME = re.compile(r"[a-z_][a-z0-9_]{0,63}")
@@ -280,6 +280,10 @@ def _check_store_as_secret(store: Any) -> None:
     except (SecretInvalid, DestinationInvalid) as refused:
         raise OperationInvalid(str(refused)) from None
     required, optional = CAPTURE_FIELDS[store["derived_kind"]]
+    # Native AWS values may be static key pairs. Every derived AWS credential
+    # is temporary, so only the derived capture requires a session token.
+    if store["derived_kind"] == "aws-sigv4":
+        required = required | {"session_token"}
     capture = store["capture"]
     _require(
         isinstance(capture, Mapping) and required <= set(capture) <= required | optional,

@@ -551,6 +551,22 @@ derived_stores = [
     ),
     ("derived-no-destinations", {**store_as_secret, "destinations": []}, "operation_invalid"),
     (
+        "derived-destination-method-not-string",
+        {
+            **store_as_secret,
+            "destinations": [{**store_as_secret["destinations"][0], "methods": [{}]}],
+        },
+        "operation_invalid",
+    ),
+    (
+        "derived-destination-header-not-string",
+        {
+            **store_as_secret,
+            "destinations": [{**store_as_secret["destinations"][0], "header_allow": [{}]}],
+        },
+        "operation_invalid",
+    ),
+    (
         "derived-destination-from-response",
         {
             **store_as_secret,
