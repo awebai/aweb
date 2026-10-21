@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -132,6 +132,80 @@ async def lock_ancestry(
     if nodes and nodes[0].parent_secret_id is not None:
         raise LineageRefused("secret_disabled")
     return tuple(nodes)
+
+
+async def lock_forest(
+    tx: TransactionManager,
+    installation_id: str,
+    team_id: str,
+    secret_ids: Sequence[str],
+) -> tuple[tuple[LineageNode, ...], ...]:
+    """Lock the complete union of requested paths in canonical path order.
+
+    Returns paths in the requested slot order, without granting liveness.
+    The caller holds the installation fence and role holds first.
+    """
+    discovered = {}
+    for secret_id in set(secret_ids):
+        path = await ancestry_ids(tx, installation_id, team_id, secret_id)
+        if not path:
+            raise LineageRefused("secret_disabled")
+        discovered[secret_id] = path
+    locked = {}
+    for path in sorted(set(discovered.values())):
+        nodes = await lock_ancestry(tx, installation_id, team_id, path[-1])
+        if tuple(node.secret.record.secret_id for node in nodes) != path:
+            raise LineageRefused("secret_disabled")
+        locked[path] = nodes
+    return tuple(locked[discovered[secret_id]] for secret_id in secret_ids)
+
+
+@dataclass(frozen=True, repr=False)
+class LockedForest:
+    """Locked metadata, checked purely after the caller's final awaited read.
+
+    This is valid only while the caller retains its installation/role/path/grant
+    locks. It is not a send capability. Re-read it for every fresh transaction.
+    """
+
+    paths: tuple[tuple[LineageNode, ...], ...]
+    _grants: Mapping[str, Any] = field(repr=False)
+
+    def check(
+        self,
+        *,
+        clock: Callable[[], datetime],
+        max_ttl_s: int,
+    ) -> frozenset[str]:
+        now = clock()
+        for nodes in self.paths:
+            _check_locked_ancestry(nodes, self._grants, now=now, max_ttl_s=max_ttl_s)
+        return frozenset(
+            grant_id
+            for grant_id, row in self._grants.items()
+            if row is not None and row["revoked_at"] is None
+        )
+
+
+async def lock_forest_grants(
+    tx: TransactionManager,
+    paths: Sequence[Sequence[LineageNode]],
+    *,
+    candidate_grant_ids: Sequence[str],
+) -> LockedForest:
+    """Take the entire source/candidate grant union once, globally ascending.
+
+    Authority can be checked after later CURRENT/coverage/B2 reads by calling
+    the returned forest.check with a live clock; that check takes no new lock.
+    """
+    fixed = tuple(tuple(path) for path in paths)
+    nodes = tuple(node for path in fixed for node in path)
+    if not fixed or any(not path for path in fixed):
+        raise LineageRefused("secret_disabled")
+    scope = (nodes[0].installation_id, nodes[0].team_id)
+    if any((node.installation_id, node.team_id) != scope for node in nodes):
+        raise LineageRefused("secret_disabled")
+    return LockedForest(fixed, await _lock_grants(tx, nodes, candidate_grant_ids))
 
 
 async def check_ancestry(

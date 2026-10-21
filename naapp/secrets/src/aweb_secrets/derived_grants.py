@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from awid.signing import canonical_json_bytes
 from pgdbm.core import TransactionManager
 
-from aweb_secrets import derived_lineage, records
+from aweb_secrets import derived_lineage, jobs, records
 from aweb_secrets.grant import GrantTemplate
 
 
@@ -41,13 +41,23 @@ async def _compatible(
     if not nodes:
         raise DerivedGrantRefused()
     parent = nodes[-1].secret.record
-    # Decision 80: S15a owns the sole job registry and its resolver. Its absence
-    # is an explicit typed refusal, never a guessed job/operation conversion.
-    if template.terms["capability"] == "run":
-        raise DerivedGrantRefused("job_unavailable")
     policy = await records.policy(tx, nodes[-1].installation_id, template.terms["policy_digest"])
     if policy is None:
         raise DerivedGrantRefused()
+    if template.terms["capability"] == "run":
+        # Decision 80: one installation CURRENT registry. A copied child run
+        # grant can cover an existing durable slot selected by actual lineage;
+        # it never borrows an ancestor grant or authorizes an internal mint.
+        refs = [node.secret.record.ref for node in nodes]
+        for pin in template.terms["jobs"]:
+            try:
+                job = await jobs.resolve_job_pin(
+                    tx, nodes[-1].installation_id, pin["job_id"], pin["digest"]
+                )
+                jobs.unique_durable_slot(job, lineage_refs=refs)
+            except jobs.JobRefused as refused:
+                raise DerivedGrantRefused(refused.code) from None
+        return
     if template.terms["open_request"] and (
         parent.sensitivity == "sensitive" or not policy.body["open_request"]
     ):
