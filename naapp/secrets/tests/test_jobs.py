@@ -246,3 +246,59 @@ def test_job_after_shape_binds_ref_and_expands_mint_without_coercion():
     draft["changes"][0]["ref"] = "other-job"
     with pytest.raises(ChangeRefused):
         validate_change(draft)
+
+
+@pytest.mark.parametrize("refs", [["db-admin"], ["root-admin"], ["fresh-child"]])
+def test_durable_descendant_substitution_returns_the_unique_slot(refs):
+    from aweb_secrets.jobs import unique_durable_slot
+
+    body = after()
+    body["credentials"][0]["secret_ref"] = refs[0]
+    body["env"] = {"DB_ADMIN": {"$credential": refs[0]}}
+    job = JobDefinition.from_after(body)
+    assert unique_durable_slot(job, lineage_refs=["root-admin", "db-admin", "fresh-child"]) == 0
+
+
+def test_two_matching_ancestors_and_exact_child_plus_ancestor_are_ambiguous():
+    from aweb_secrets.jobs import JobRefused, unique_durable_slot
+
+    for selectors in [["root-admin", "db-admin"], ["root-admin", "fresh-child"]]:
+        body = after()
+        body["credentials"] = [
+            {"secret_ref": ref, "delivery": "durable", "mint": None} for ref in selectors
+        ]
+        body["env"] = {"CRED_" + str(i): {"$credential": ref} for i, ref in enumerate(selectors)}
+        job = JobDefinition.from_after(body)
+        with pytest.raises(JobRefused) as refused:
+            unique_durable_slot(job, lineage_refs=["root-admin", "db-admin", "fresh-child"])
+        assert refused.value.code == "job_not_allowed"
+
+
+def test_unmatched_or_short_lived_slots_never_authorize_durable_substitution():
+    from aweb_secrets.jobs import JobRefused, unique_durable_slot
+
+    body = after()
+    body["credentials"][0].update(
+        delivery="short_lived",
+        mint={"operation_id": "mint-session", "digest": "c" * 64, "params": {}},
+    )
+    job = JobDefinition.from_after(body)
+    with pytest.raises(JobRefused) as refused:
+        unique_durable_slot(job, lineage_refs=["db-admin", "fresh-child"])
+    assert refused.value.code == "job_not_allowed"
+    with pytest.raises(JobRefused) as refused:
+        unique_durable_slot(
+            JobDefinition.from_after(after()), lineage_refs=["unrelated", "fresh-child"]
+        )
+    assert refused.value.code == "job_not_allowed"
+
+
+def test_unique_slot_keeps_other_slots_fixed_and_preserves_the_ordinal():
+    from aweb_secrets.jobs import unique_durable_slot
+
+    body = after()
+    body["credentials"].insert(0, {"secret_ref": "unrelated", "delivery": "durable", "mint": None})
+    body["env"]["OTHER_ADMIN"] = {"$credential": "unrelated"}
+    job = JobDefinition.from_after(body)
+    assert unique_durable_slot(job, lineage_refs=["db-admin", "fresh-child"]) == 1
+    assert job.after == body

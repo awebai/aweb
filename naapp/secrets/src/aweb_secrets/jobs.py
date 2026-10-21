@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -417,3 +417,23 @@ async def resolve_job_pin(
     if job is None or job.digest != approved_digest:
         raise JobRefused("job_not_allowed")
     return job
+
+
+def unique_durable_slot(job: JobDefinition, *, lineage_refs: Sequence[str]) -> int:
+    """Return the one durable selector matching a child or any of its ancestors.
+
+    The caller obtains these refs from the shared, same-installation/team
+    lineage check and freezes the resulting ordinal with the actual child ID.
+    This pure selector supplies no grant or mint authority and does not check
+    run binding. The release fence rechecks those boundaries and the lineage.
+    Exact child matches have no priority over ancestors; ambiguity refuses.
+    """
+    refs = set(lineage_refs)
+    matches = [
+        ordinal
+        for ordinal, slot in enumerate(job.after["credentials"])
+        if slot["delivery"] == "durable" and slot["secret_ref"] in refs
+    ]
+    if len(matches) != 1:
+        raise JobRefused("job_not_allowed")
+    return matches[0]

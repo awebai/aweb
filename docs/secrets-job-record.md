@@ -52,3 +52,12 @@ or its digest. PostgreSQL refuses updates to immutable definition rows.
 Server-managed run-bound child metadata and the paired child/grant receipt stay
 outside job/1. The stable slot label maps by signed array ordinal to the actual
 delivered ref, under §9.5. The runner independently checks its local job pin.
+
+For an ordinary derived child used outside its issuing run, the shared lineage
+check supplies the selected child's and all ancestors' refs within the same
+installation and team. `unique_durable_slot` collects every durable slot matching
+any of those refs and requires exactly one; zero or multiple matches refuse with
+`job_not_allowed`. Exact-child selectors have no priority over ancestor selectors.
+The frozen run plan stores that unique ordinal and actual child ID; other slots
+keep their fixed selectors. This pure selection helper is not a grant, lineage or
+run-binding check: the shared admission/release path still checks them all.
