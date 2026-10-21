@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1
+# Build context: the aweb repository root, because library depends on the in-repo
+# awid and naapp-lib:  docker build -f naapp/library/Dockerfile .
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -10,22 +12,31 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_HTTP_TIMEOUT=300 \
     UV_CONCURRENT_DOWNLOADS=4
 
-# git is required because awid-service is installed from the aweb repository's
-# awid subdirectory (pinned by commit in uv.lock); pgdbm resolves from PyPI.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates git \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # uv binary from the official image — no pip anywhere in the build.
 COPY --from=ghcr.io/astral-sh/uv:0.11.21 /uv /uvx /bin/
 
-WORKDIR /app
+# /app mirrors the repository layout, so library's path sources ../../awid and
+# ../../naapp-lib resolve in the image as they do in a checkout. Only the paths the
+# service needs are copied; Dockerfile.dockerignore keeps a checkout's local files
+# out of them.
+COPY awid/pyproject.toml awid/README.md /app/awid/
+COPY awid/src /app/awid/src
+COPY naapp-lib/pyproject.toml naapp-lib/README.md /app/naapp-lib/
+COPY naapp-lib/src /app/naapp-lib/src
+
+WORKDIR /app/naapp/library
 
 # Resolve dependencies from the committed lock first (cached layer), then the
 # project, with `uv sync --frozen` so the build is reproducible and never re-resolves.
-COPY pyproject.toml uv.lock README.md ./
+COPY naapp/library/pyproject.toml naapp/library/uv.lock naapp/library/README.md ./
 RUN uv sync --frozen --no-install-project --no-dev
-COPY . /app/
+COPY naapp/library/src ./src
+COPY naapp/library/skills ./skills
+COPY naapp/library/site/static ./site/static
 RUN uv sync --frozen --no-dev
 
 RUN useradd --create-home --shell /usr/sbin/nologin library

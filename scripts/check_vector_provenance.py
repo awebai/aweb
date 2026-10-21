@@ -60,6 +60,11 @@ ROOT_CONSUMERS = {
         '"../../../docs/vectors/human-channels-v1.json"',
         '"../../../docs/vectors/human-channels-profile-v1.json"',
     ),
+    PurePosixPath("cli/go/awid/app_task_authorization_test.go"): _consumer(
+        "app-task-authorization-v1.json",
+        '"../../../docs/vectors/app-task-authorization-v1.json"',
+
+    ),
     PurePosixPath("cli/go/awid/page_proposal_test.go"): _consumer(
         "page-proposal-v1.json",
         '"../../../docs/vectors/page-proposal-v1.json"',
@@ -252,6 +257,16 @@ ROOT_CONSUMERS = {
     PurePosixPath("naapp-lib/tests/pages/test_page_proposal_vectors.py"): _consumer(
         "page-proposal-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "page-proposal-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/runtime/test_task_request_vectors.py"): _consumer(
+        ("app-task-authorization-v1.json", "app-request-credential-v1.json", "task-answer-v1.json"),
+        'AWEB_ROOT / "docs" / "vectors" / "app-task-authorization-v1.json"',
+        'AWEB_ROOT / "docs" / "vectors" / "app-request-credential-v1.json"',
+        'AWEB_ROOT / "docs" / "vectors" / "task-answer-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/runtime/test_prepare_vectors.py"): _consumer(
+        "page-action-prepare-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "page-action-prepare-v1.json"',
     ),
     PurePosixPath("naapp-lib/tests/runtime/test_team_auth_vectors.py"): _consumer(
         "team-auth-envelope-v2.json",
