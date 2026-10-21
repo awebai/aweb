@@ -551,19 +551,18 @@ def test_no_envelope_fails_closed(folio_origin: str) -> None:
 
 
 def test_well_known_manifest_is_public_and_byte_stable(folio: RunningFolio) -> None:
-    from aweb_naapp.manifest import read_manifest_bytes
-
-    from folio.aweb_manifest import MANIFEST_PATH
+    from aweb_naapp.manifest import canonical_bytes
+    from manifest_config import served_manifest
 
     # Public discovery doc: no team-auth envelope, still 200.
     response = httpx.get(f"{folio.origin}/.well-known/aweb-app.json", timeout=10.0)
 
     assert response.status_code == 200, response.text
     assert response.headers["content-type"].startswith("application/json")
-    # The running app serves the committed manifest for its configured public
-    # origin, fixed at startup and identical on every fetch. With the committed
-    # origin (production) those are the committed bytes; test_surfaces pins that.
-    assert response.content == read_manifest_bytes(MANIFEST_PATH, folio.origin)
+    # The real server fills the declared kid from its configured key once at
+    # startup, and both discovery paths serve those exact deployment bytes.
+    assert response.content == canonical_bytes(served_manifest(folio.origin))
+    assert httpx.get(f"{folio.origin}/aweb-app.json", timeout=10.0).content == response.content
     again = httpx.get(f"{folio.origin}/.well-known/aweb-app.json", timeout=10.0)
     assert again.content == response.content
 
