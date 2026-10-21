@@ -25,6 +25,9 @@ class NaappSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str
+    # The schema the app's tables live in, pinned on every connection so the
+    # app never depends on its database role's default search_path.
+    db_schema: str = Field(default="public", pattern=r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$")
     public_origin: str
     app_id: str
     awid_registry_url: str = Field(default="https://api.awid.ai")
