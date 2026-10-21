@@ -84,6 +84,7 @@ from aweb_naapp.runtime.hook_resolver import HookResolver
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
     AWIDTeamCache,
+    MembershipProof,
     Principal,
     authenticate_request,
     record_observed_principal,
@@ -305,6 +306,30 @@ class NaappRuntime:
         if self._hook_resolver is None:
             raise AppKeyError("manifest declares no hook-resolve key")
         return self._hook_resolver
+
+    async def require_current_member(
+        self, team_id: str, *, certificate_id: str, team_did_key: str
+    ) -> None:
+        """Check membership before a transaction without retaining a proof.
+
+        May perform network I/O. For creator-scoped link access, retain the
+        result of :meth:`check_current_member` for local checking under the lock.
+        """
+        await self.check_current_member(
+            team_id, certificate_id=certificate_id, team_did_key=team_did_key
+        )
+
+    async def check_current_member(
+        self, team_id: str, *, certificate_id: str, team_did_key: str
+    ) -> MembershipProof:
+        """Fetch/check mint evidence before opening any transaction or lock.
+
+        Retain the in-process proof for a local evidence/expiry check after the
+        link lock is acquired. Its deadline is the original AWID facts' expiry.
+        """
+        return await self.team_cache().check_current_member(
+            team_id, certificate_id=certificate_id, team_did_key=team_did_key
+        )
 
     async def principal(self, request: Request) -> Principal:
         """FastAPI dependency: the team member who signed this request.
