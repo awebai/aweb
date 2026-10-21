@@ -193,7 +193,7 @@ async def test_clients_refuse_tampering_then_apply_original_once(network_registr
         return json.loads(stdout)['status']
     async def snapshot():
         result = []
-        for table in ('dns_namespaces', 'teams', 'team_certificates', 'dns_addresses', 'team_custodians', 'member_custody', 'member_person'):
+        for table in ('dns_namespaces', 'teams', 'team_certificates', 'public_addresses', 'team_custodians', 'member_custody', 'member_person'):
             rows = await env.db.fetch_all('SELECT row_to_json(t)::text AS row FROM {{tables.' + table + '}} t ORDER BY row_to_json(t)::text')
             result.append([row['row'] for row in rows])
         return result

@@ -28,6 +28,20 @@ from awid.registry import (
 async def _unused_domain_registry_resolver(domain: str) -> str:
     raise AssertionError("field-forwarding fixtures are never called")
 
+
+@pytest.mark.asyncio
+async def test_registry_client_identifies_its_installed_sdk_version():
+    from importlib.metadata import version
+
+    registry = RegistryClient(registry_url="https://registry.example")
+    try:
+        token = f"aweb-python/{version('awid-service')}"
+        assert registry._http_client.headers["User-Agent"] == token
+        assert registry._http_client.headers["X-AWEB-Client-Version"] == token
+    finally:
+        await registry.aclose()
+
+
 def test_registry_http_bound_values_are_pinned():
     assert MAX_REGISTRY_RESPONSE_BYTES == 10 * 1024 * 1024
     assert MAX_REGISTRY_ERROR_BYTES == 64 * 1024

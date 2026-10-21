@@ -25,11 +25,17 @@
 #   AWID_E2E_PORT    awid port  (default: 8110)
 #   AWEB_E2E_REDIS   redis port (default: 6399)
 #   AWEB_E2E_PG      postgres port (default: 5452)
+#   AWEB_E2E_PHASE   all (default), or 22 for the local quickstart phase only
 #   AWEB_E2E_SEED_ERIN_CONTROLLER_KEY_LEAK
 #                      test-only mutation: seed the production-resolved Erin
 #                      controller-key path immediately before its real assertion
 
 set -euo pipefail
+
+case "${AWEB_E2E_PHASE:-all}" in
+  all|22) ;;
+  *) echo "unsupported AWEB_E2E_PHASE: $AWEB_E2E_PHASE" >&2; exit 2 ;;
+esac
 
 canonicalize_dir() {
   local dir="$1"
@@ -680,6 +686,7 @@ echo ""
 # ---------------------------------------------------------------------------
 # Phase 1b: Retired aw agents bootstrap family stays absent
 # ---------------------------------------------------------------------------
+if [[ "${AWEB_E2E_PHASE:-all}" == all ]]; then
 echo "=== Phase 1b: Retired aw agents command family ==="
 
 retired_agents_help="$(run_aw --help 2>&1)"
@@ -2702,6 +2709,8 @@ else
 fi
 echo ""
 
+fi
+
 phase_aw_init_reconnect() {
   echo "=== Phase 21: aw init reconnect (Case A) ==="
 
@@ -2757,6 +2766,23 @@ phase_aw_init_local_quickstart() {
   local local_team="default:local"
   local local_awid_url="http://127.0.0.1:$AWID_PORT"
   local local_aweb_url="http://127.0.0.1:$AWEB_PORT"
+  local configured_origin
+  configured_origin="$(cd "$SERVER_DIR" && compose exec -T aweb printenv AWEB_PUBLIC_ORIGIN)"
+  assert_eq "initial server audience matches published origin" "$AWEB_URL" "$configured_origin"
+
+  recreate_quickstart_aweb() {
+    (
+      cd "$SERVER_DIR"
+      AWID_SERVICE_TOKEN="$1" AWEB_PUBLIC_ORIGIN="$2" \
+        compose up -d --force-recreate --no-deps aweb
+    )
+    for _ in $(seq 1 60); do
+      curl -fsS "$local_aweb_url/health" >/dev/null 2>&1 && break
+      sleep 1
+    done
+    configured_origin="$(cd "$SERVER_DIR" && compose exec -T aweb printenv AWEB_PUBLIC_ORIGIN)"
+    assert_eq "recreated server audience matches requested origin" "$2" "$configured_origin"
+  }
   local quickstart_bridge_required=0
   if [[ "$DOCKER_PUBLISHED_HOST" != "127.0.0.1" ]]; then
     quickstart_bridge_required=1
@@ -2814,17 +2840,11 @@ phase_aw_init_local_quickstart() {
 
   # A wrong but nonempty credential is the only way to get past startup and
   # reproduce the old half-initialized state. AWID keeps the generated token;
-  # only aweb is restarted with a different value.
+  # only aweb is restarted with a different value. This phase reaches Docker
+  # through temporary loopback bridges, so request-bound signatures need that
+  # loopback origin configured for the phase, rather than the runner's hostname.
   local wrong_service_token="wrong-awid-service-token-generated-for-e2e-only"
-  (
-    cd "$SERVER_DIR"
-    export AWID_SERVICE_TOKEN="$wrong_service_token"
-    compose up -d --force-recreate --no-deps aweb
-  )
-  for _ in $(seq 1 60); do
-    curl -fsS "$local_aweb_url/health" >/dev/null 2>&1 && break
-    sleep 1
-  done
+  recreate_quickstart_aweb "$wrong_service_token" "$local_aweb_url"
 
   if wizard_failed_out="$(run_aw_in "$WIZARD_BYOD_DIR" init \
     --new-team \
@@ -2859,15 +2879,7 @@ phase_aw_init_local_quickstart() {
 
   # Repair only configuration, then retry the exact same user command in the
   # exact same directory. No .aw cleanup and no database mutation is allowed.
-  (
-    cd "$SERVER_DIR"
-    export AWID_SERVICE_TOKEN="$AWID_E2E_SERVICE_TOKEN"
-    compose up -d --force-recreate --no-deps aweb
-  )
-  for _ in $(seq 1 60); do
-    curl -fsS "$local_aweb_url/health" >/dev/null 2>&1 && break
-    sleep 1
-  done
+  recreate_quickstart_aweb "$AWID_E2E_SERVICE_TOKEN" "$local_aweb_url"
 
   if wizard_out="$(run_aw_in "$WIZARD_BYOD_DIR" init \
     --new-team \
@@ -2935,6 +2947,7 @@ phase_aw_init_local_quickstart() {
     echo "  wizard mail output: ${wizard_mail_out:0:480}"
   fi
   assert_contains "wizard output shows local team" "$wizard_out" "default:local"
+  recreate_quickstart_aweb "$AWID_E2E_SERVICE_TOKEN" "$AWEB_URL"
   stop_quickstart_bridges
   if [[ "$quickstart_bridge_required" == "1" ]]; then
     if curl -fsS --connect-timeout 1 "$local_awid_url/health" >/dev/null 2>&1; then
@@ -2955,8 +2968,13 @@ phase_aw_init_local_quickstart() {
   echo ""
 }
 
-phase_aw_init_reconnect
+if [[ "${AWEB_E2E_PHASE:-all}" == all ]]; then
+  phase_aw_init_reconnect
+fi
 phase_aw_init_local_quickstart
+if [[ "${AWEB_E2E_PHASE:-all}" == 22 ]]; then
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # Phase 23: Amy-symptom reproducer (aweb-aalj)
