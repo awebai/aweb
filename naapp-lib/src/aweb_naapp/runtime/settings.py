@@ -7,11 +7,13 @@ defaults; everything else here is common to every naapp.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from aweb_naapp.outbox import MAX_CALL_TIMEOUT_SECONDS
 from aweb_naapp.runtime.team_auth import (
     MAX_TEAM_FACTS_TTL_SECONDS,
     MAX_TIMESTAMP_SKEW_SECONDS,
@@ -39,10 +41,23 @@ class NaappSettings(BaseSettings):
     db_pool_min_connections: int = Field(default=1, ge=1)
     db_pool_max_connections: int = Field(default=5, ge=1)
     db_statement_cache_size: int = Field(default=0, ge=0)
+    # Shared page lifecycle policy is deliberately absent until the operator
+    # publishes one. The fixed alias is stable across app-specific env prefixes.
+    page_retention_policy: dict | None = Field(
+        default=None, validation_alias="AWEB_PAGE_RETENTION_POLICY"
+    )
+    page_deletion_database_url: str | None = Field(
+        default=None, repr=False, validation_alias="AWEB_PAGE_DELETION_DATABASE_URL"
+    )
     app_events_origin: str | None = None
+    # Key files by kid; which purposes a kid signs is the manifest's to declare.
+    app_key_files: dict[str, Path] = Field(default_factory=dict)
     app_emit_kid: str | None = None
-    app_emit_key_seed_hex: str | None = Field(default=None, repr=False)
-    app_emit_timeout_seconds: float = Field(default=3.0, gt=0)
+    # The released form of the app-event key: its seed as a value, for that key only.
+    app_emit_key_seed_hex: SecretStr | None = None
+    # Bounded by the outbox drain's own limit on one delivery.
+    app_emit_timeout_seconds: float = Field(default=3.0, gt=0, le=MAX_CALL_TIMEOUT_SECONDS)
+    app_events_stalled_after_seconds: int = Field(default=3600, ge=1)
 
     @field_validator("awid_service_token")
     @classmethod

@@ -3,15 +3,23 @@
 Status: **specified experimental public contract, not yet shipped**. Owner: the
 aweb OSS hooks lane (aweb-acgh.16). This document is the source of truth for the
 `aweb.hooks` catalog, version 1, for owner-activated hook bindings, and for how
-a producer delivers hook events. Its machine-readable authority is two vectors:
+a producer signs and delivers hook events. Its machine-readable authority is
+four vectors:
 
 - `docs/vectors/hook-catalog-v1.json`: the hooks, their payload allowlists and
   rules, with positive and negative cases;
 - `docs/vectors/hook-binding-cases-v1.json`: binding states, activation, the
-  `active_from` pad and revocation, as replayable cases.
+  `active_from` pad and revocation, as replayable cases;
+- `docs/vectors/hook-event-envelope-v1.json`: the signed event envelope;
+- `docs/vectors/hook-delivery-credential-v1.json`: the request credential that
+  carries an event to a target.
 
-The strict reader is `aweb_naapp.hooks.catalog`
-(`naapp-lib/src/aweb_naapp/hooks/catalog.py`). The design and its rationale are
+The strict catalog reader is `aweb_naapp.hooks.catalog`
+(`naapp-lib/src/aweb_naapp/hooks/catalog.py`). The envelope and credential
+authority is the Go package `cli/go/hookevent`, which regenerates both of
+their vectors byte for byte. The Python reading is `aweb_naapp.hooks.envelope`
+and `aweb_naapp.hooks.delivery`, behind the dependency-light `hooks` extra, and
+passes the same vectors with the same refusal codes. The design and its rationale are
 in [the audit substrate design](design/audit-substrate.md).
 
 This contract adds named, owner-activated extension points beside the
@@ -118,7 +126,7 @@ the external call is sent. `op_kind` is `broker` or `run_job`.
   test that a request whose concrete path holds a credential-shaped segment
   emits only its configured template. A runner job names `runner_id`, `job_id` and
   `job_digest` instead, and the two sets exclude each other.
-- `refused` requires `refusal_code`, from the catalog's 28 codes; no other
+- `refused` requires `refusal_code`, from the catalog's 30 codes; no other
   action carries one.
 - `completed` requires `disposition` (`returned`, `withheld` or
   `stored_as_secret`) and `undeclared_credential`. A returned result carries
@@ -233,8 +241,11 @@ installation and its generation.
 - **Install never activates.** An install or update by an admin creates its
   bindings as `pending`.
 - **Only the team owner activates or revokes**, with an `aweb.owner-act/1`
-  signed by the team's controller authority. The owner-act contract is
-  aweb-acgh.16.3. Any other signer is refused with `owner_required`. Activation
+  signed by the team's current controller key ([owner act](owner-act.md)). An
+  act signed by any other key, an admin's or a rotated-out team key, is refused
+  with `owner_required`. The verifier proves the key, not the person holding
+  it; signing only for the organization owner after a fresh step-up is the
+  signing deployment's obligation. Activation
   compares the act's subject, including the manifest digest the owner's client
   fetched, with the stored pending row.
 - **A new generation supersedes.** Every binding of the old generation becomes
@@ -280,9 +291,8 @@ bytes.
 
 **Transport.** Each delivery is an HTTPS `POST` to the binding's origin and
 path, authenticated by the `hook-delivery` credential, which binds the request
-to that binding and event. The envelope's signing bytes and the credential's
-fields are fixed by docs/vectors/hook-event-envelope-v1.json and
-docs/vectors/hook-delivery-credential-v1.json (aweb-acgh.16.2). Egress takes
+to that binding and event (see [The delivery credential](#the-delivery-credential)).
+Egress takes
 the destination only from the activated binding. It uses HTTPS only and follows
 no redirects. Private and internal destinations are refused unless a
 self-hosted operator allows them; a hosted deployment always refuses them.
@@ -322,17 +332,196 @@ refuses a mutation for want of one.
 
 ## Event envelope
 
-Every event is one signed envelope, `aweb.hook-event/1`, carrying:
+Every event is one envelope, signed by its producer:
 
-- the catalog id and version, and the hook;
-- `event_id`;
-- a `trace` with a W3C trace id and its origin;
-- `team_id`;
-- the `producer`: its kind, origin or member identity, key and `seq`;
-- the `actor`, with its authority mode and any verified attestations;
-- `occurred_at` and `fired_at`;
-- `result_status`;
-- the payload above.
+```json
+{
+  "v": 1,
+  "type": "aweb.hook-event",
+  "catalog": {"id": "aweb.hooks", "version": 1},
+  "hook": "post-mutation-hook",
+  "event_id": "0192f0c4-6f1e-7c3a-9a51-3d2b8e0f4c11",
+  "trace": {"id": "4bf92f3577b34da6a3ce929d0e0e4736", "origin": "signed_request"},
+  "team_id": "demo:example.com",
+  "producer": {"kind": "core", "origin": "https://aweb.example.com", "kid": "hook-2026-10", "did_key": "did:key:z6Mk...", "seq": 812},
+  "actor": {"did_key": "did:key:z6Mk...", "certificate_id": "c_41", "alias": "bond", "authority_mode": "team_cert", "attestations": []},
+  "occurred_at": "2026-10-20T12:00:00.412Z",
+  "fired_at": "2026-10-20T12:00:00.415Z",
+  "result_status": "success",
+  "payload": {"mutation_type": "task.updated", "target_ref": "task:...", "task_ref": "demo-aa1", "changes": ["status"], "old_status": "open", "new_status": "in_progress"}
+}
+```
 
-For a client event, the actor is the member who signed it. aweb-acgh.16.2 pins
-the canonical bytes, the signature and their vectors.
+**Signing bytes** are the ASCII prefix `aweb.hook-event/1` and a newline,
+followed by the envelope's canonical JSON. Canonical JSON here means:
+
+- object keys sorted, with no insignificant whitespace;
+- every string is printable ASCII (0x20 to 0x7E), and only `"` and `\` are
+  escaped;
+- integers lie within plus or minus 2^53 - 1;
+- there are no floats and no `null`: an absent value is an absent field;
+- objects and arrays nest at most eight deep. The bytes are parsed before any
+  signature is checked, so deeper input is refused before it is read.
+
+A verifier re-encodes what it parsed and requires identical bytes, so every
+language produces and accepts the same bytes. The signature is a detached
+Ed25519 signature by the producer's `did:key`, written exactly one way: 86
+characters of the standard base64 alphabet, with no padding and zero trailing
+bits. Every other spelling of the same bytes is refused (`signature_encoding`).
+
+**ASCII by construction.** Every catalog payload type is an identifier, an
+enum, a digest, a bounded integer or a pattern-bounded ASCII string, and every
+envelope field is an identifier or a timestamp. A producer fills payloads from
+its own identifiers and never from user text, so an ASCII-only envelope never
+makes an effect unsignable. On `post-command-hook`, `command` is the command's
+path in `aw`'s own command tree and `flags` are the parser's declared flag
+names; argument values never enter the event. If `aw` cannot express an event
+in these types, it records nothing for that command, and the command itself
+still runs: client events are cooperative and never block the command they
+describe.
+
+**Fields:**
+
+- `event_id` is minted once, in the effecting transaction (see
+  [Delivery](#delivery)).
+- `trace.id` is a W3C trace id (32 lowercase hex characters, not all zero), and
+  `trace.origin` is `signed_request` when the producer took it from a signed
+  request, or `producer` when the producer minted it. A trace correlates; it is
+  never authority and never a deduplication key.
+- `producer` depends on its kind:
+  - `core`: `origin`, `kid`, `did_key`, `seq`;
+  - `app`: `origin`, `app_id`, `installation_id`, `generation`, `kid`,
+    `did_key`, `seq`;
+  - `client`: `did_key` and `certificate_id`, with no `seq`, because a client's
+    events are bypassable and their gaps prove nothing.
+
+  `seq` counts the producer's events per team and hook, without gaps, from 1.
+- `actor` always carries `authority_mode` (`team_cert`, `identity_grant`,
+  `app_key`, `link_capability`, `owner_act` or `system`) and `attestations`.
+  - Every authority but `system` names the actor's `did_key`, and may add
+    `did_aw`, `certificate_id` and `alias`. A `system` actor carries no
+    identity.
+  - `grant_id` is present exactly when the authority is `identity_grant`.
+  - `attestations` holds at most four strict unpadded base64url strings. Each
+    is the signed bytes of an attestation. They are untyped at this layer: a
+    consumer verifies each one under its own contract before it relies on it,
+    and custody and principal facts appear only there.
+- Every `did_key` is an Ed25519 `did:key`.
+- `occurred_at` is when the effect happened and `fired_at` when the event was
+  built: UTC with exactly three fractional digits, in their one canonical
+  spelling, with `fired_at` never earlier.
+- `result_status` is `success`, `denied`, `failed` or `outcome_unknown`.
+- `payload` is the catalog payload for the hook.
+
+**Verification** requires the team the verifier expects; without one it
+refuses (`verifier_misconfigured`). It then checks, in this order, and reports
+the first fault:
+
+1. the prefix (`wrong_prefix`);
+2. a strict parse (`duplicate_key`, `float_value`, `null_value`,
+   `string_not_ascii`, `too_deep`, `invalid_json`);
+3. canonical bytes (`not_canonical`);
+4. the envelope's fields, top down (`unknown_field`, `missing_field`,
+   `invalid_value`), with the catalog (`unknown_catalog`) and the hook
+   (`unknown_hook`);
+5. a flat payload of strings, integers, booleans and lists of strings
+   (`invalid_value`);
+6. a producer kind the hook allows (`producer_not_allowed`), so a member can
+   never sign a server hook;
+7. for a client event, an actor equal to its signer (`actor_not_signer`), so
+   one member cannot file events as another;
+8. the team the verifier expects (`team_mismatch`);
+9. the signature's spelling (`signature_encoding`), then the signature
+   (`bad_signature`).
+
+The catalog reader then checks the payload against its hook's allowlist (see
+[Payloads](#payloads)).
+
+**What verification proves.** A verified envelope is well formed, belongs to
+the expected team, and was signed by the key it names as its producer. That is
+self-consistency, not authority. Authority comes from elsewhere:
+
+- A server producer signs with a key whose declared purposes include
+  `hook-event`: an app's v2 `app_keys` entry, or the core server's hook key. A
+  consumer resolves both through the team's server (aweb-acgh.7), requires an
+  active production for the hook, and records the key it verified against at
+  ingest.
+- A client signs with its member key, and its delivery carries the member's
+  team certificate (see below), signed by the team's current key and naming
+  that key and certificate id. The target checks the certificate's revocation
+  status with the shared team-auth verifier.
+
+## The delivery credential
+
+A delivery is an HTTPS `POST` of the canonical JSON body
+`{"hook_event": <strict unpadded base64url signing bytes>, "signature": <envelope signature>}`
+with these headers:
+
+- `Authorization: AWEB-Hook DIDKey <did:key> <signature>`, the signature over
+  the signed payload, spelled as event signatures are (86 standard base64
+  characters, no padding, zero trailing bits);
+- `X-AWEB-Signed-Payload`, the canonical signed payload, in strict unpadded
+  base64url;
+- for a client producer only, `X-AWID-Team-Certificate`, the member's team
+  certificate, encoded as team-auth encodes it. A server producer sends none.
+
+The signed payload is:
+
+```json
+{
+  "v": 1,
+  "auth": "hook-delivery",
+  "aud": "https://logs.example.com",
+  "method": "POST",
+  "path": "/hooks/ingest",
+  "body_sha256": "<hex SHA-256 of the body>",
+  "team_id": "demo:example.com",
+  "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+  "event_id": "0192f0c4-6f1e-7c3a-9a51-3d2b8e0f4c11",
+  "producer": "core",
+  "kid": "hook-2026-10",
+  "did_key": "did:key:z6Mk...",
+  "timestamp": "2026-10-20T12:00:01Z"
+}
+```
+
+- `aud` is the target's origin and `path` its raw path and query.
+- `team_id` is a non-empty team id, and `timestamp` is UTC to the second in its
+  one canonical spelling.
+- `producer` is `core`, `app:<app_id>` or `client:<certificate_id>`.
+- `kid` is the server producer's key id, or `member` for a client.
+- The credential's purpose, `hook-delivery`, is separate from the event's
+  content signature, from `app-event` and from `hook-resolve`, so none of them
+  can be replayed as another.
+
+The target holds facts of its own: its public origin, the binding the delivery
+must name, the team's current controller key (read fresh from the team's
+registry, for a client's certificate) and its clock. Without an origin or a
+binding it refuses (`verifier_misconfigured`), as it does for a client delivery
+without the team key. It checks, in this order:
+
+1. the `AWEB-Hook DIDKey` scheme (`wrong_scheme`), so an app-event or
+   `hook-resolve` credential is refused at a hook target;
+2. the signed payload is strict base64url and strict canonical JSON, and its
+   signature is spelled exactly (`signature_encoding`) and verifies under the
+   header's `did:key` (`bad_signature`);
+3. `auth` is `hook-delivery` (`wrong_auth`);
+4. the payload's fields, its `did_key` is the header's (`signer_mismatch`), and
+   its `team_id` is well formed (`invalid_value`);
+5. `aud` is the target's own origin (`audience_mismatch`);
+6. method and path are the request's (`request_mismatch`);
+7. `body_sha256` matches the body (`body_mismatch`);
+8. the timestamp is within 300 seconds of the target's clock
+   (`timestamp_outside_window`);
+9. `binding_id` is the target's own binding (`binding_mismatch`);
+10. the body carries a valid envelope of the credential's team, through the
+    envelope checks above;
+11. the envelope's `event_id` (`event_mismatch`), and its producer, `kid` and
+    `did_key`, are the credential's (`producer_mismatch`);
+12. for a client producer, the team certificate is present
+    (`certificate_missing`), names the event's team, producer key and
+    certificate id (`certificate_mismatch`), and is signed by the team's current
+    key (`certificate_invalid`).
+
+The target then checks that the binding is its own active registration, and
+that the producer holds an active production for the hook (aweb-acgh.7).

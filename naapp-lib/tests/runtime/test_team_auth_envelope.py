@@ -10,10 +10,11 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from aweb_naapp_testing import Member, did_key, envelope_headers, utc_timestamp
 from awid.signing import canonical_json_bytes, sign_message
 from nacl.signing import SigningKey
 
-from tests.runtime.conftest import Member, did_key, envelope_headers, relying_app, utc_timestamp
+from tests.runtime.conftest import relying_app
 
 ORIGIN = "https://app.example.com"
 TEAM_ID = "backend:example.com"
@@ -238,11 +239,11 @@ async def test_raw_percent_encoding_is_what_is_signed(registry, member):
     ("/v1/caf\u00e9".encode(), b""), (b"/v1/items", "q=caf\u00e9".encode()),
 ])
 async def test_non_ascii_request_target_is_a_client_error(registry, member, raw_path, query_string):
+    from aweb_naapp_testing import REGISTRY_URL
     from fastapi import HTTPException
     from starlette.requests import Request
 
     from aweb_naapp.runtime.team_auth import AWIDTeamCache, authenticate_request
-    from tests.runtime.conftest import REGISTRY_URL
 
     headers = member.headers(aud=ORIGIN, method="GET", path="/v1/items")
     scope = {"type": "http", "method": "GET", "path": raw_path.decode(), "raw_path": raw_path,
