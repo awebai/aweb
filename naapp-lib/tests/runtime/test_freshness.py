@@ -74,7 +74,7 @@ async def test_the_window_is_the_answers_max_age_capped_at_sixty_seconds(max_age
     assert FRESHNESS_CEILING_SECONDS == 60
 
 
-async def test_the_window_counts_from_receipt_not_from_the_request():
+async def test_the_window_counts_from_the_request_not_from_receipt():
     clock = Clock()
     cache = _cache(clock)
 
@@ -84,7 +84,28 @@ async def test_the_window_counts_from_receipt_not_from_the_request():
 
     fresh = await cache.get("team-a", Authority(slow_answer))
 
-    assert fresh.fresh_until == 1004.0 + 60
+    assert fresh.fresh_until == 1000.0 + 60
+
+
+async def test_a_late_joiner_gets_the_deadline_of_the_refresh_it_joined():
+    clock = Clock()
+    cache = _cache(clock)
+    answered = asyncio.Event()
+
+    async def held_answer():
+        await answered.wait()
+        return ("granted", 60)
+
+    authority = Authority(held_answer)
+    first = asyncio.create_task(cache.get("team-a", authority))
+    await asyncio.sleep(0)
+    clock.now += 3
+    late = asyncio.create_task(cache.get("team-a", authority))
+    await asyncio.sleep(0)
+    answered.set()
+
+    assert {(await first).fresh_until, (await late).fresh_until} == {1000.0 + 60}
+    assert authority.calls == 1
 
 
 async def test_an_expired_entry_is_never_served_when_the_refresh_fails():
@@ -281,3 +302,4 @@ async def test_an_answer_without_a_positive_whole_max_age_is_refused_and_not_cac
 def test_the_refresh_timeout_must_be_a_positive_finite_number(refresh_timeout):
     with pytest.raises(ValueError):
         FreshnessCache(refresh_timeout=refresh_timeout)
+

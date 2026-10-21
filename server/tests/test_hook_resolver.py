@@ -210,6 +210,28 @@ async def test_an_answer_carries_the_time_its_data_is_no_older_than(team):
 
 
 @pytest.mark.asyncio
+async def test_a_slow_answer_expires_when_its_data_does(team):
+    resolver = await team["resolver_for"](SECRETS)
+
+    def slow(request, response):
+        team["clock"].advance(3)
+
+    team["stack"].aweb.fault = slow
+    answer = await resolver.registrations(TEAM, *HOOK)
+    team["stack"].aweb.fault = None
+    data_expiry = answer.as_of + timedelta(seconds=answer.max_age_seconds)
+    team["clock"].advance(answer.max_age_seconds - 3 - 0.5)
+    assert team["clock"].wall < data_expiry
+    calls = _aweb_calls(team)
+    await resolver.registrations(TEAM, *HOOK)
+    assert _aweb_calls(team) == calls
+    team["clock"].advance(1)
+    assert team["clock"].wall > data_expiry
+    await resolver.registrations(TEAM, *HOOK)
+    assert _aweb_calls(team) == calls + 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("offered", "used"), [(10, 10), (120, 60)])
 async def test_an_answer_carries_the_window_it_is_reused_for(team, offered, used):
     resolver = await team["resolver_for"](SECRETS)
