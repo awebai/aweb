@@ -1,0 +1,70 @@
+name: logs CI
+
+# logs' equivalent of secrets-ci.yml: lint and type-check, then the unit and
+# contract tests, which regenerate and read the logs-chain vector against
+# naapp-lib's hook kit. Tests fail on any warning (pyproject filterwarnings =
+# ["error"]), so a passing run is a clean run.
+#
+# Advisory, like folio-ci.yml: aweb main is not protected, so this check
+# reports but cannot block a merge.
+#
+# No path filter, for the reason library-ci.yml gives: a path-filtered gate is
+# how naapp coverage went missing before.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: logs-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: logs lint and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout aweb
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: naapp/logs/uv.lock
+
+      - name: Install locked logs dependencies
+        working-directory: naapp/logs
+        run: uv sync --locked
+
+      - name: Lint and type-check
+        working-directory: naapp/logs
+        run: make lint
+
+      - name: Run unit and contract tests
+        working-directory: naapp/logs
+        run: make test

@@ -12,6 +12,7 @@ from typing import Annotated
 
 import httpx
 import pytest
+from aweb_naapp_testing import REGISTRY_URL, Member, attested, did_key
 from awid.attestation_records import ATTESTATION_HEADER
 from awid.did import stable_id_from_did_key
 from fastapi import Depends, FastAPI, Request
@@ -24,8 +25,6 @@ from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import Authorization, DeclaredTool, Grant
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import Principal
-
-from .conftest import REGISTRY_URL, Member, attested, did_key
 
 ORIGIN = "https://app.example"
 

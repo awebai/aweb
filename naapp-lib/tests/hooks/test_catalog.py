@@ -82,9 +82,14 @@ def test_secret_use_dispositions_and_refusal_codes() -> None:
     fields = CATALOG.hooks["post-secret-use-hook"].fields
     assert fields["disposition"].enum == ("returned", "withheld", "stored_as_secret")
     refusal_codes = fields["refusal_code"].enum
-    assert len(refusal_codes) == 28
-    assert len(set(refusal_codes)) == 28
-    assert {"audit_target_unavailable", "audit_delivery_stalled"} <= set(refusal_codes)
+    assert len(refusal_codes) == 30
+    assert len(set(refusal_codes)) == 30
+    assert {
+        "audit_target_unavailable",
+        "audit_delivery_stalled",
+        "dispatch_in_flight",
+        "generation_superseded",
+    } <= set(refusal_codes)
 
 
 def test_every_governance_act_has_one_direction() -> None:

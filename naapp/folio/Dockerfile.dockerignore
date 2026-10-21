@@ -11,3 +11,5 @@
 **/.ruff_cache
 **/.DS_Store
 **/*.pem
+**/*.key
+**/.aw

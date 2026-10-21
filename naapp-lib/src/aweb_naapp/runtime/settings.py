@@ -41,6 +41,14 @@ class NaappSettings(BaseSettings):
     db_pool_min_connections: int = Field(default=1, ge=1)
     db_pool_max_connections: int = Field(default=5, ge=1)
     db_statement_cache_size: int = Field(default=0, ge=0)
+    # Shared page lifecycle policy is deliberately absent until the operator
+    # publishes one. The fixed alias is stable across app-specific env prefixes.
+    page_retention_policy: dict | None = Field(
+        default=None, validation_alias="AWEB_PAGE_RETENTION_POLICY"
+    )
+    page_deletion_database_url: str | None = Field(
+        default=None, repr=False, validation_alias="AWEB_PAGE_DELETION_DATABASE_URL"
+    )
     app_events_origin: str | None = None
     # Key files by kid; which purposes a kid signs is the manifest's to declare.
     app_key_files: dict[str, Path] = Field(default_factory=dict)

@@ -16,6 +16,7 @@ from typing import Annotated, Any
 
 import httpx
 import pytest
+from aweb_naapp_testing import REGISTRY_URL, Member, attested
 from fastapi import Depends, FastAPI, Request
 from nacl.signing import SigningKey
 from pydantic_settings import SettingsConfigDict
@@ -27,7 +28,6 @@ from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import Principal
 
 from ..test_manifest_v2_vectors import V2
-from .conftest import REGISTRY_URL, Member, attested
 
 MANIFEST = V2["base_manifests"]["v2"]
 ORIGIN = MANIFEST["app"]["origin"]

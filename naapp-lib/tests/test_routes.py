@@ -19,7 +19,8 @@ from aweb_naapp.manifest import (
     select_variant,
     write_manifest_file,
 )
-from aweb_naapp.runtime.app import NaappRuntime, mount_naapp_routes
+from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes, mount_naapp_routes
+from aweb_naapp.runtime.health import CheckResult
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.skills import Skills
 
@@ -239,9 +240,65 @@ def test_without_noindex_paths_nothing_is_tagged(tmp_path: Path) -> None:
     assert "x-robots-tag" not in _client(tmp_path).get("/present/abc").headers
 
 
-def test_health_is_mounted(tmp_path: Path) -> None:
+def test_health_is_mounted_with_the_runtime_checks(tmp_path: Path) -> None:
     response = _client(tmp_path).get("/health")
-    assert response.json() == {"status": "ok", "service": "example", "build": {"git_sha": None}}
+    assert response.json() == {
+        "status": "unavailable",
+        "service": "example",
+        "build": {"git_sha": None},
+        "checks": {"database": {"ok": False}, "outbox": {"ok": False}},
+    }
+
+
+def test_health_checks_the_apps_own_dependencies(tmp_path: Path) -> None:
+    async def kms() -> CheckResult:
+        return CheckResult(ok=True, detail={"canary_age_seconds": 4})
+
+    response = _client(tmp_path, health_checks={"kms": kms}).get("/health")
+    assert response.json()["checks"]["kms"] == {"ok": True, "canary_age_seconds": 4}
+
+
+def test_an_app_without_the_docs_surface_serves_its_manifest_alone(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "aweb-app.json"
+    write_manifest_file(manifest_path, _MANIFEST)
+    runtime = NaappRuntime(
+        ExampleSettings(_env_file=None),
+        module_name="example",
+        migrations_path=tmp_path,
+        manifest_path=manifest_path,
+    )
+    app = FastAPI()
+    mount_manifest_routes(app, runtime=runtime)
+    client = TestClient(app)
+    for path in ("/.well-known/aweb-app.json", "/aweb-app.json"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/json"
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.content == manifest_path.read_bytes()
+    for path in ("/", "/llms.txt", "/health"):
+        assert client.get(path).status_code == 404
+
+
+def test_an_app_without_the_docs_surface_serves_its_v2_manifest_through_its_catalog(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "aweb-app.json"
+    write_manifest_file(manifest_path, _MANIFEST_V2)
+    runtime = NaappRuntime(
+        ExampleSettings(_env_file=None),
+        module_name="example",
+        migrations_path=tmp_path,
+        manifest_path=manifest_path,
+    )
+    app = FastAPI()
+    mount_manifest_routes(app, runtime=runtime)
+    client = TestClient(app)
+    variant = select_variant(_HOSTED, (1, 2), _fetch(client))
+    assert (variant.source, variant.manifest_version) == ("catalog", 2)
+    assert variant.data == manifest_path.read_bytes()
+    assert client.get("/aweb-app.json").content == variant.data
+    assert client.get("/.well-known/aweb-app.json").status_code == 404
+    for path in ("/", "/llms.txt", "/health"):
+        assert client.get(path).status_code == 404
 
 
 # --- Manifest discovery --------------------------------------------------------

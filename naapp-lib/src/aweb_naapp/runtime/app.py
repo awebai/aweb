@@ -2,7 +2,8 @@
 
 An app creates a :class:`NaappRuntime`, builds its FastAPI app with the
 runtime's lifespan, and calls :func:`mount_naapp_routes` for the standard public
-surface.
+surface. An app without the docs surface calls :func:`mount_manifest_routes`
+and :func:`aweb_naapp.runtime.health.mount_health` instead.
 
 The runtime reads the app's manifest once, at construction, for its configured
 public origin: :attr:`NaappRuntime.manifest_bytes` are the bytes served at the
@@ -29,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -52,7 +53,7 @@ from aweb_naapp.manifest import (
     load_manifest,
     read_manifest_bytes,
 )
-from aweb_naapp.outbox import run_drain
+from aweb_naapp.outbox import outbox_status, run_drain
 from aweb_naapp.robots import robots_txt
 from aweb_naapp.runtime.attestation import (
     AttestationRefused,
@@ -72,7 +73,7 @@ from aweb_naapp.runtime.authorization import (
 )
 from aweb_naapp.runtime.db import NaappDatabase
 from aweb_naapp.runtime.event_emit import AppEvents
-from aweb_naapp.runtime.health import mount_health
+from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
     AWIDTeamCache,
@@ -212,6 +213,34 @@ class NaappRuntime:
         if self._database is None:
             raise RuntimeError("naapp database is not initialized")
         return self._database.db
+
+    def health_checks(self) -> dict[str, HealthCheck]:
+        """The runtime's dependencies for the health routes: the database, and
+        the age of the oldest outbox event not yet delivered (``None`` when
+        every event is delivered). Neither is healthy outside the lifespan."""
+
+        async def database() -> CheckResult:
+            db = self.connected_db()
+            if db is None:
+                return CheckResult(ok=False)
+            await db.fetch_value("SELECT 1")
+            return CheckResult(ok=True)
+
+        async def outbox() -> CheckResult:
+            db = self.connected_db()
+            if db is None:
+                return CheckResult(ok=False)
+            status = await outbox_status(db)
+            ages = [
+                target.oldest_undelivered_age_seconds
+                for target in status.targets.values()
+                if target.oldest_undelivered_age_seconds is not None
+            ] + [team.oldest_age_seconds for team in status.unmaterialized.values()]
+            return CheckResult(
+                ok=True, detail={"oldest_undelivered_age_seconds": max(ages, default=None)}
+            )
+
+        return {"database": database, "outbox": outbox}
 
     def team_cache(self) -> AWIDTeamCache:
         if self._team_cache is None:
@@ -378,6 +407,45 @@ def _template(segments: Sequence[str]) -> tuple[str, ...]:
     return tuple("{}" if is_placeholder(segment) else segment for segment in segments)
 
 
+def mount_manifest_routes(app: FastAPI, *, runtime: NaappRuntime) -> None:
+    """Serve the runtime's ``manifest_bytes`` verbatim, for an app with or
+    without the docs surface.
+
+    A version 1 manifest is served at the RFC 8615 well-known path the
+    dispatcher and gateway fetch. A version 2 manifest is discovered through
+    its catalog (``catalog_bytes``), which lists the bytes served at the
+    variant path; no version 1 copy is served, so the legacy well-known path
+    is not found. Either way the bare path the docs surface links serves the
+    manifest itself.
+    """
+    manifest_bytes = runtime.manifest_bytes
+    catalog_bytes = runtime.catalog_bytes
+
+    async def _manifest_response() -> Response:
+        return Response(
+            content=manifest_bytes,
+            media_type="application/json",
+            headers=_NOSNIFF,
+        )
+
+    if catalog_bytes is None:
+        @app.get(LEGACY_MANIFEST_PATH)
+        async def well_known_manifest_route() -> Response:
+            return await _manifest_response()
+    else:
+        @app.get(CATALOG_PATH)
+        async def manifest_catalog_route() -> Response:
+            return Response(content=catalog_bytes, media_type="application/json", headers=_NOSNIFF)
+
+        @app.get(MANIFEST_V2_PATH)
+        async def manifest_v2_route() -> Response:
+            return await _manifest_response()
+
+    @app.get("/aweb-app.json")
+    async def aweb_app_manifest_route() -> Response:
+        return await _manifest_response()
+
+
 def mount_naapp_routes(
     app: FastAPI,
     *,
@@ -390,6 +458,7 @@ def mount_naapp_routes(
     fonts_dir: Path,
     robots_disallow: Sequence[str] = (),
     noindex_paths: Sequence[str] = (),
+    health_checks: Mapping[str, HealthCheck] | None = None,
 ) -> None:
     """Serve the standard naapp public surface.
 
@@ -401,9 +470,9 @@ def mount_naapp_routes(
     renders the front door on each request, ``robots_disallow`` lists the paths
     crawlers must skip, and every response under ``noindex_paths`` (found or
     not) carries ``X-Robots-Tag``. The manifest routes serve the runtime's
-    ``manifest_bytes`` verbatim: at the legacy well-known path for a version 1
-    manifest, or, for version 2, at the variant path its catalog
-    (``catalog_bytes``) lists, with no version 1 copy.
+    ``manifest_bytes`` verbatim, as :func:`mount_manifest_routes` does. The
+    health routes check the runtime's dependencies plus the app's own
+    ``health_checks``.
     """
     settings = runtime.settings
     noindex_prefixes = tuple(noindex_paths)
@@ -485,35 +554,5 @@ def mount_naapp_routes(
             raise HTTPException(status_code=404, detail="Skill not found")
         return PlainTextResponse(skill, headers=_NOSNIFF)
 
-    manifest_bytes = runtime.manifest_bytes
-    catalog_bytes = runtime.catalog_bytes
-
-    async def _manifest_response() -> Response:
-        return Response(
-            content=manifest_bytes,
-            media_type="application/json",
-            headers=_NOSNIFF,
-        )
-
-    if catalog_bytes is None:
-        # A version 1 manifest is discovered at the RFC 8615 well-known path.
-        @app.get(LEGACY_MANIFEST_PATH)
-        async def well_known_manifest_route() -> Response:
-            return await _manifest_response()
-    else:
-        # A version 2 manifest is discovered through its catalog. No version 1
-        # copy is served, so the legacy well-known path is not found.
-        @app.get(CATALOG_PATH)
-        async def manifest_catalog_route() -> Response:
-            return Response(content=catalog_bytes, media_type="application/json", headers=_NOSNIFF)
-
-        @app.get(MANIFEST_V2_PATH)
-        async def manifest_v2_route() -> Response:
-            return await _manifest_response()
-
-    # The bare path the docs surface links serves the app's manifest itself.
-    @app.get("/aweb-app.json")
-    async def aweb_app_manifest_route() -> Response:
-        return await _manifest_response()
-
-    mount_health(app, settings)
+    mount_manifest_routes(app, runtime=runtime)
+    mount_health(app, settings, checks={**runtime.health_checks(), **(health_checks or {})})

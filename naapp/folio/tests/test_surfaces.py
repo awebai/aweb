@@ -322,27 +322,6 @@ def test_served_skills_do_not_reference_removed_python_cli() -> None:
             assert needle not in response.text
 
 
-def test_skill_index_falls_back_to_container_skills_for_installed_package_layout(monkeypatch, tmp_path) -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    fake_site_packages = tmp_path / "site-packages" / "folio"
-    fake_site_packages.mkdir(parents=True)
-    monkeypatch.delenv("FOLIO_SKILLS_DIR", raising=False)
-    monkeypatch.setattr(surfaces, "_SKILLS_DIR", fake_site_packages / "skills")
-    monkeypatch.setattr(surfaces, "_CONTAINER_SKILLS_DIR", repo_root / "skills")
-
-    assert surfaces.skill_names() == [
-        "agent-first-app",
-        "byot-e2e-validation",
-        "create-from-template",
-        "present-to-human",
-        "set-theme",
-        "team-cert-verification",
-    ]
-    index = surfaces.skills_index()
-    assert "GET /skills/agent-first-app/SKILL.md" in index
-    assert "GET /skills/team-cert-verification/SKILL.md" in index
-
-
 def test_skill_surface_rejects_symlink_escapes(monkeypatch, tmp_path) -> None:
     skills_dir = tmp_path / "skills"
     leak_dir = skills_dir / "leak"

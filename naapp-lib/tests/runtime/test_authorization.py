@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 import httpx
 import pytest
+from aweb_naapp_testing import REGISTRY_URL, Member
 from fastapi import FastAPI, HTTPException, Request
 
 from aweb_naapp.manifest import canonical_bytes, load_manifest
@@ -22,7 +23,7 @@ from aweb_naapp.runtime.authorization import (
     authorize_request,
 )
 from aweb_naapp.runtime.team_auth import AWIDTeamCache, authenticate_request
-from tests.runtime.conftest import REGISTRY_URL, Member, relying_app
+from tests.runtime.conftest import relying_app
 
 ORIGIN = "https://app.example.com"
 TEAM_ID = "backend:example.com"
