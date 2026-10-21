@@ -135,8 +135,8 @@ async def team(aweb_cloud_db):
     }
 
 
-async def _get(team: dict, caller: dict, key_name: str, path: str, **header_options):
-    headers = _headers(caller, team[key_name], "resolve-1", path, **header_options)
+async def _get(team: dict, caller: dict, key_name: str, path: str, *, kid: str = "resolve-1", **header_options):
+    headers = _headers(caller, team[key_name], kid, path, **header_options)
     async with AsyncClient(transport=ASGITransport(app=team["app"]), base_url="http://test") as client:
         return await client.get(path, headers=headers)
 
@@ -419,9 +419,10 @@ async def test_own_bindings_never_show_an_earlier_origins_history(team):
         )
     moved = {"app_id": "logs", "origin": "https://logs.other.example", "digest": "sha256:" + "5" * 64}
     current = await _install(db, moved, installation_id="inst-logs-moved", declarations=[INGEST])
-    moved_key = await _register_key(db, moved, kid="resolve-1", purposes=[HOOK_RESOLVE])
+    # Key identity survives an origin move: a fresh keypair needs a fresh kid.
+    moved_key = await _register_key(db, moved, kid="resolve-moved", purposes=[HOOK_RESOLVE])
     team["moved_key"] = moved_key
-    response = await _get(team, moved, "moved_key", f"/v1/apps/self/hooks/bindings?hook={HOOK_PATH}")
+    response = await _get(team, moved, "moved_key", f"/v1/apps/self/hooks/bindings?hook={HOOK_PATH}", kid="resolve-moved")
     assert response.status_code == 200, response.text
     assert [b["binding_id"] for b in response.json()["bindings"]] == [str(current[REGISTRATION].binding_id)]
     assert {b["origin"] for b in response.json()["bindings"]} == {moved["origin"]}
