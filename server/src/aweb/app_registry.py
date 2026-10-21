@@ -37,6 +37,11 @@ class AppInstall:
     manifest_version: int
     digest: str
     granted_scopes: list[str]
+    installation_id: str | None = None
+    generation: int | None = None
+    state: str = "pending_origin_verification"
+    origin_verified: bool = False
+    origin_verification_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -763,7 +768,8 @@ async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
             i.app_version,
             i.manifest_version,
             i.digest,
-            i.granted_scopes
+            i.granted_scopes, i.installation_id, i.generation, i.state,
+            i.origin_verified, i.origin_verification_error
         FROM {{tables.team_app_installs}} AS i
         WHERE i.team_id = $1 AND i.state = 'active' AND i.origin_verified
         ORDER BY i.app_id ASC
@@ -778,6 +784,9 @@ async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
             manifest_version=row["manifest_version"],
             digest=row["digest"],
             granted_scopes=list(row["granted_scopes"] or []),
+            installation_id=row["installation_id"], generation=row["generation"],
+            state=row["state"], origin_verified=row["origin_verified"],
+            origin_verification_error=row["origin_verification_error"],
         )
         for row in rows
     ]

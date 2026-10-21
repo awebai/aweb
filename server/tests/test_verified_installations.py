@@ -10,8 +10,9 @@ import pytest_asyncio
 
 from aweb.app_registry import get_active_app_key, get_installation_on, get_installed_app_event_type, list_installed_apps
 from aweb.installations import InstallationError, install_verified_manifest_on
-from test_app_manifest_fetch import origin  # noqa: F401 - shared real TLS fixture
+import test_app_manifest_fetch as manifest_fixture
 
+origin = manifest_fixture.origin
 pytestmark = pytest.mark.asyncio
 TEAM = "demo:example.com"
 
