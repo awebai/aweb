@@ -30,8 +30,8 @@ def semantic_diff(before: Manifest | None, after: Manifest) -> dict:
     """Compare identifiers and interpreted authority, rather than array order."""
     old = before.view() if before else {}
     new = after.view()
-    old_tools = {tool["name"]: _semantic(tool) for tool in before.document["tools"]} if before else {}
-    new_tools = {tool["name"]: _semantic(tool) for tool in after.document["tools"]}
+    old_tools = {name: _semantic(tool) for name, tool in before.tools_by_name().items()} if before else {}
+    new_tools = {name: _semantic(tool) for name, tool in after.tools_by_name().items()}
     def endpoints(tools):
         return {name: {key: tool.get(key) for key in ("method", "path")} for name, tool in tools.items()}
     old_scopes, new_scopes = set(old.get("install_scopes", [])), set(new["install_scopes"])

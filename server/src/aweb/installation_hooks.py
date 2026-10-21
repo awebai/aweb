@@ -5,7 +5,7 @@ from aweb.hook_bindings import HookBindingDeclaration, write_pending_bindings
 
 async def write_manifest_bindings_on(tx, *, team_id, fetched, installation_id, generation):
     hooks = fetched.manifest.hooks or {}
-    tools = {tool["name"].strip(): tool for tool in fetched.manifest.document["tools"]}
+    tools = fetched.manifest.tools_by_name()
     declarations = []
     for registration in hooks.get("registrations", []):
         tool = tools[registration["tool"]]
