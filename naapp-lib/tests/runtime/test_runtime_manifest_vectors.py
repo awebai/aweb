@@ -36,6 +36,7 @@ def _as_template(data: bytes, keys: Path) -> tuple[dict[str, Any], dict[str, Pat
     """The vector manifest as a deployment's template: its did:keys removed, and a
     key file per declared kid, whose did:keys the runtime fills back in."""
     document = json.loads(data)
+    _localize_event_types(document)
     files: dict[str, Path] = {}
     did_keys: dict[str, str] = {}
     for entry in template_key_entries(document):
@@ -48,6 +49,28 @@ def _as_template(data: bytes, keys: Path) -> tuple[dict[str, Any], dict[str, Pat
         files[entry["kid"]] = path
         did_keys[entry["kid"]] = did_from_public_key(bytes(SigningKey(bytes.fromhex(seed)).verify_key))
     return document, files, did_keys
+
+
+def _event_bindings(document: dict[str, Any]) -> list[dict[str, Any]]:
+    bindings = [event for event in document.get("events") or () if isinstance(event, dict)]
+    for surface in document.get("surfaces") or ():
+        if isinstance(surface, dict):
+            bindings += [event for event in surface.get("events") or () if isinstance(event, dict)]
+    return bindings
+
+
+def _localize_event_types(document: dict[str, Any]) -> None:
+    """Name event types as a template does: without the app's own prefix."""
+    prefix = f"{document['app']['id']}/"
+    for event in _event_bindings(document):
+        if isinstance(event.get("type"), str):
+            event["type"] = event["type"].removeprefix(prefix)
+
+
+def _names_a_foreign_event_type(data: bytes) -> bool:
+    document = json.loads(data)
+    _localize_event_types(document)
+    return any(isinstance(event.get("type"), str) and "/" in event["type"] for event in _event_bindings(document))
 
 
 def _runtime(tmp_path: Path, document: dict[str, Any], files: dict[str, Path]) -> NaappRuntime:
@@ -84,6 +107,8 @@ def test_the_runtime_serves_each_vector_template_as_the_shared_reader_resolves_i
         pytest.skip("a deployment configures a string app id and origin")
     if any("did_key" in mutation["path"] for mutation in case.get("mutations", [])):
         pytest.skip("did:keys come from the deployment's configured keys, not the template")
+    if _names_a_foreign_event_type(data):
+        pytest.skip("a template names its event types locally; another app's prefix cannot be written in one")
     document, files, did_keys = _as_template(data, tmp_path / "keys")
     if not expected["accepted"]:
         with pytest.raises(ManifestError) as refused:

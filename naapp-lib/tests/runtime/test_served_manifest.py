@@ -121,10 +121,16 @@ def test_a_v1_event_emitter_is_filled_from_the_released_seed(tmp_path: Path) -> 
     ]
 
 
-def test_the_released_seed_fills_only_a_kid_declared_for_app_events(tmp_path: Path) -> None:
-    template = _v2_template(("example:requests", ["app-request"]))
+@pytest.mark.parametrize("purposes", [["app-request"], ["app-event", "app-request"]])
+def test_the_released_seed_fills_only_a_kid_declared_for_app_events_alone(
+    tmp_path: Path, purposes: list[str]
+) -> None:
+    template = _v2_template(("example:emit-1", purposes))
     with pytest.raises(AppKeyError, match="app-event"):
-        _runtime(tmp_path, template, app_emit_kid="example:requests", app_emit_key_seed_hex=secrets.token_hex(32))
+        _runtime(
+            tmp_path, template, app_emit_kid="example:emit-1", app_emit_key_seed_hex=secrets.token_hex(32),
+            app_events_origin="https://core.example.test",
+        )
 
 
 def test_a_template_that_commits_a_did_key_does_not_start(tmp_path: Path) -> None:
@@ -167,10 +173,11 @@ def test_the_hosted_app_id_is_served_only_at_the_hosted_origin_or_loopback(tmp_p
     assert own.manifest.app_id == "self-example"
 
 
-def test_a_committed_event_type_must_be_local(tmp_path: Path) -> None:
+def test_a_committed_event_type_must_be_local_at_every_deployment(tmp_path: Path) -> None:
     template = _v2_template(events=[{"type": "example/thing.changed", "default_delivery_intent": "ambient"}])
-    with pytest.raises(ManifestError):
-        _runtime(tmp_path, template, app_id="acme-example", public_origin="https://example.acme.test")
+    for name, settings in (("hosted", {}), ("own", {"app_id": "acme-example", "public_origin": "https://example.acme.test"})):
+        with pytest.raises(ManifestError, match="locally"):
+            _runtime(tmp_path / name, template, **settings)
 
 
 def test_the_filler_is_the_canonical_form_consumers_compare() -> None:

@@ -587,8 +587,10 @@ and the hosted `app.id` default, and commits no `did_key`. The runtime fills in
 the deployment's `app.id`, its origin and each declared kid's `did_key`, derived
 from the deployment's configured key, and serves the canonical bytes
 (`aweb_naapp.manifest.fill_manifest`). One configuration therefore serves
-byte-identical bytes on every replica. Event types stay local in the template
-because they resolve against `app.id`. A deployment must keep its `app.id` for
+byte-identical bytes on every replica. Event types, and the surface event
+bindings that reference them, are named locally in the template, without an
+`app.id/` prefix, because they resolve against the deployment's `app.id`; a
+prefixed one stops every deployment from starting. A deployment must keep its `app.id` for
 its lifetime, and rotates a key by adding a kid, which changes the digest every
 team pins.
 

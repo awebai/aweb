@@ -104,7 +104,7 @@ def declared_did_keys(settings: NaappSettings, template: Mapping[str, Any]) -> d
 
     Configuration supplies keys only for declared kids: a key file for any other
     kid is refused, and the released seed value serves only a kid declared for
-    app-event.
+    app-event alone.
     """
     prefix = settings.model_config.get("env_prefix", "")
     kids = template_kids(template)
@@ -121,6 +121,9 @@ def declared_did_keys(settings: NaappSettings, template: Mapping[str, Any]) -> d
         for entry in template_key_entries(template):
             declared = entry.get("purposes") if "purposes" in entry else [APP_EVENT]
             purposes[entry["kid"]] = tuple(declared) if isinstance(declared, list) else ()
-        if APP_EVENT not in purposes.get(emit_kid, ()):
-            raise AppKeyError(f"{prefix}APP_EMIT_KID {emit_kid} is not declared by the manifest for {APP_EVENT}")
+        if purposes.get(emit_kid) != (APP_EVENT,):
+            raise AppKeyError(
+                f"{prefix}APP_EMIT_KID {emit_kid} must be declared by the manifest for {APP_EVENT} only; "
+                "the released seed value signs app events alone"
+            )
     return {kid: did_from_public_key(bytes(_configured_key(settings, kid).verify_key)) for kid in kids}

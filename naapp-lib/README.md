@@ -72,7 +72,8 @@ the deployment's own `<PREFIX>APP_ID`, its public origin, and each declared kid'
 did:key derived from that kid's configured key, then serves the canonical bytes
 (`aweb_naapp.manifest.fill_manifest`). The app does not start if a declared kid
 has no configured key, if a key is configured for a kid the template does not
-declare, if the template commits a did:key, if the filled manifest is invalid,
+declare, if the template commits a did:key or names an event type with an app
+prefix, if the filled manifest is invalid,
 or if it would serve the hosted app id at an origin others can reach (anything
 but the hosted origin or a loopback origin, private-network addresses included).
 
