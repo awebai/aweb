@@ -18,7 +18,7 @@ import json
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -213,7 +213,6 @@ async def request_use_approval(
     principal: Principal,
     action: BrokerOperation | BrokerOpen | RunJob,
     reason: str,
-    now: datetime | None = None,
 ) -> PendingUseApproval:
     """Put an admitted use to its approvers, in the caller's transaction.
 
@@ -274,7 +273,7 @@ async def request_use_approval(
         grant_id=intent["grant_id"],
         request_id=intent["request_id"],
         reason=reason,
-        issued_at=now or datetime.now(UTC),
+        issued_at=approvals.now(),
         ttl=policy.ttl,
         action=action,
     )
@@ -283,6 +282,7 @@ async def request_use_approval(
             request=request,
             policy_ref=policy_ref,
             requested_by=principal_key(principal).principal_did,
+            expires_at=datetime.fromisoformat(request["expires_at"]),
             tx=tx,
         )
     except ApprovalRefused as exc:
@@ -330,9 +330,10 @@ async def admit_approved_use(
     """Admit the approved use's one dispatch, in the caller's transaction.
 
     The same dispatch asked again retrieves its admission; any other dispatch
-    is refused as `approval_consumed`. A use whose secret version moved, whose
-    grant or policy changed, or whose approver no longer stands, is voided and
-    refused."""
+    is refused as `approval_consumed`. A moved secret version refuses new
+    admissions and not_sent transport retries, while preserving retrieval of
+    an already admitted dispatch. A changed grant, policy or approver voids
+    any approval that has not yet been dispatched."""
     link = await tx.fetch_one(
         "SELECT * FROM {{tables.use_approvals}} WHERE intent_id = $1 FOR UPDATE", intent_id
     )
@@ -344,6 +345,11 @@ async def admit_approved_use(
         link["secret_id"],
     )
     if active != link["secret_version"]:
+        retrieved = await approvals.retrieve(
+            approval_id, json.loads(link["request"]), str(dispatch_id), tx=tx
+        )
+        if retrieved is not None:
+            return UseAdmission(admission=retrieved, refusal=None)
         await _void(tx, approvals, approval_id, "secret_version_changed")
         return UseAdmission(admission=None, refusal="secret_version_changed")
     try:

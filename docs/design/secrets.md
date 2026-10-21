@@ -360,7 +360,7 @@ it is honestly inert. The artifact is a launch requirement (Q5, decided).
 
 ```text
 CustodyBackend
-  kind                                  "native-kms" | "1password"
+  kind                                  "native" | "onepassword"
   bind(secret_id, config)  -> backend_ref     # native: allocate; 1P: validate vault/item/field reference
   ingest(backend_ref, value) -> version_ref   # native only; console-only caller (§6)
   open(version_ref) -> Plaintext              # one dispatch, under the version's bound context

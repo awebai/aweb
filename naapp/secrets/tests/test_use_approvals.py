@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -23,6 +24,7 @@ from aweb_naapp.runtime.approvals import (
     ApprovalState,
     Assurance,
     Decision,
+    DispatchOutcome,
     PgApprovalStore,
 )
 from aweb_naapp.runtime.team_auth import Principal
@@ -388,6 +390,48 @@ async def test_a_replaced_value_before_consume_voids_the_approval(uses):
     assert approval.state_at(uses.clock()) is ApprovalState.REVOKED
 
 
+@pytest.mark.parametrize(
+    "outcome",
+    [DispatchOutcome.DISPATCHING, DispatchOutcome.COMPLETED, DispatchOutcome.OUTCOME_UNKNOWN],
+)
+async def test_a_replaced_value_preserves_retrieval_of_an_admitted_dispatch(uses, outcome):
+    await designate(uses, "finance", "finance@acme.com")
+    await install(uses)
+    admission, dispatch_id, pending = await request(uses)
+    await approve(uses, pending, "finance@acme.com")
+    assert (await admit(uses, admission, dispatch_id)).admission.first
+    if outcome is not DispatchOutcome.DISPATCHING:
+        await uses.approvals.record_outcome(
+            pending.pending.approval.approval_id,
+            str(dispatch_id),
+            outcome,
+            response_status="200" if outcome is DispatchOutcome.COMPLETED else None,
+        )
+    async with uses.world.db.transaction() as tx:
+        await records.set_active_version(tx, INSTALLATION_ID, TEAM, SECRET_ID, 5)
+    retrieved = await admit(uses, admission, dispatch_id)
+    assert retrieved.refusal is None
+    assert not retrieved.admission.first and not retrieved.admission.may_send
+    assert retrieved.admission.dispatch_outcome is outcome
+    assert (await admit(uses, admission, uuid.uuid4())).refusal == "secret_version_changed"
+
+
+async def test_a_replaced_value_refuses_an_unsent_transport_retry(uses):
+    await designate(uses, "finance", "finance@acme.com")
+    await install(uses)
+    admission, dispatch_id, pending = await request(uses)
+    await approve(uses, pending, "finance@acme.com")
+    assert (await admit(uses, admission, dispatch_id)).admission.first
+    await uses.approvals.record_outcome(
+        pending.pending.approval.approval_id, str(dispatch_id), DispatchOutcome.NOT_SENT
+    )
+    async with uses.world.db.transaction() as tx:
+        await records.set_active_version(tx, INSTALLATION_ID, TEAM, SECRET_ID, 5)
+    assert (await admit(uses, admission, dispatch_id)).refusal == "secret_version_changed"
+    approval = await uses.approvals.get(pending.pending.approval.approval_id)
+    assert approval.dispatch_outcome is DispatchOutcome.NOT_SENT
+
+
 async def test_a_changed_external_item_voids_the_pending_and_approved_approvals(uses):
     await designate(uses, "finance", "finance@acme.com")
     await install(uses)
@@ -494,6 +538,24 @@ async def test_the_approval_lives_as_long_as_the_policy_says(uses):
     _, _, pending = await request(uses)
     approval = pending.pending.approval
     assert approval.expires_at - approval.created_at == timedelta(seconds=600)
+
+
+async def test_frozen_and_enforced_expiry_agree_away_from_wall_time(uses):
+    await designate(uses, "finance", "finance@acme.com")
+    await install(uses, approval_ttl_s=600)
+    uses.clock.now += timedelta(days=3, microseconds=750000)
+    _, _, pending = await request(uses)
+    approval = pending.pending.approval
+    frozen = json.loads(
+        await uses.world.db.fetch_value(
+            "SELECT request FROM {{tables.use_approvals}} WHERE approval_id = $1",
+            approval.approval_id,
+        )
+    )
+    expires = datetime.fromisoformat(frozen["expires_at"])
+    assert expires == approval.expires_at
+    assert datetime.fromisoformat(frozen["issued_at"]) == uses.clock().replace(microsecond=0)
+    assert expires - datetime.fromisoformat(frozen["issued_at"]) == timedelta(seconds=600)
 
 
 async def test_a_grant_revoked_before_the_approval_is_requested_is_refused_as_revoked(uses):
