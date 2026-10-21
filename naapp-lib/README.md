@@ -52,6 +52,16 @@ denied address, and sends a request only to the destination it matches,
 through one pinned, verified connection. Redirects come back as responses, no proxy is read from
 the environment, and a failure is classed as not sent or of unknown outcome.
 
+The email sender, `aweb_naapp.email`, sends a naapp's links and notices, one
+recipient per message, over SMTP with TLS required and the certificate
+verified. It is pure standard library and needs no extra.
+`EmailSettings.from_env(prefix)` reads `<PREFIX>EMAIL_SMTP_HOST`, `_SMTP_PORT`,
+`_TLS` (`starttls` or `implicit`), `_USERNAME`, `_FROM`, an optional
+`_CA_FILE`, and the password from the key file named by `_PASSWORD_FILE`
+(`aweb_naapp.key_file`), never from the environment; anything missing or
+malformed fails at startup. A failed send raises `EmailNotSent` with a code, and
+neither errors nor logs carry the body or the full recipient.
+
 A server that produces hook events (`docs/hook-events.md`) uses
 `aweb_naapp.hooks.producer` and `aweb_naapp.hooks.transport`, with the `hooks`,
 `outbox` and `egress` extras. `HookProducer.enqueue(tx, ...)` signs an event and
