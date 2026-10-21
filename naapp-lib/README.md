@@ -100,6 +100,22 @@ never create or alter a store's table: `CREATE TABLE IF NOT EXISTS` under the
 same name collides silently, and which shape wins depends on which migration
 applied first.
 
+### Current link-creator membership
+
+Before every creator-scoped link use, call
+`await runtime.require_current_member(team_id, certificate_id=..., team_did_key=...)`.
+The team scope must be verified, and the certificate id and team key must come
+from the authenticated mint-time `Principal`, retained as immutable link metadata.
+An observed-principal row or a bare creator DID is not membership evidence.
+
+This uses the request verifier's AWID cache, with the same maximum 60-second
+revocation window. Success returns `None`; incomplete evidence, an unknown or
+revoked certificate, or a changed team key raises `HTTPException` with status
+403 and `detail.code=current_member_required`. Unavailable or unreadable AWID
+facts raise 503 with `detail.code=current_membership_unavailable`; propagate
+that retryable failure rather than treating it as revoked authority. The host
+still checks the creator's page/installation permissions separately.
+
 ### App keys
 
 An app names its signing keys by kid, as key files:

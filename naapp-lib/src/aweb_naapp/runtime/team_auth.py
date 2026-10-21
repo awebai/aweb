@@ -105,6 +105,18 @@ class CachedDidKey:
     expires_at: float
 
 
+def _require_active_certificate(facts: CachedTeamFacts, certificate_id: str) -> None:
+    if certificate_id not in facts.published_certificate_ids:
+        raise HTTPException(status_code=401, detail="Unknown AWID certificate")
+    if certificate_id in facts.revoked_certificate_ids:
+        raise HTTPException(status_code=401, detail="Team certificate has been revoked")
+
+
+def _current_member_refusal(status_code: int) -> HTTPException:
+    code = "current_member_required" if status_code == 403 else "current_membership_unavailable"
+    return HTTPException(status_code=status_code, detail={"code": code})
+
+
 def _raise_if_private_team_unreadable(response: httpx.Response) -> None:
     if response.status_code != 403:
         return
@@ -151,6 +163,43 @@ class AWIDTeamCache:
         if self._transport is None:
             return httpx.AsyncClient(timeout=10.0)
         return httpx.AsyncClient(timeout=10.0, transport=self._transport)
+
+    async def require_current_member(
+        self, team_id: str, *, certificate_id: str, team_did_key: str
+    ) -> None:
+        """Recheck immutable evidence from a previously verified mint-time Principal.
+
+        The caller supplies its verified team scope and the recorded certificate
+        id and signing team key, never an observed-principal row. AWID must still
+        publish that certificate as active under the same current team key.
+        Facts share request authentication's cache, bounded to 60 seconds.
+
+        Incomplete evidence or authority loss raises 403/current_member_required;
+        unreadable or unavailable registry facts raise 503/current_membership_unavailable.
+        This checks membership only, not the creator's page or installation ACLs.
+        """
+        if (
+            not isinstance(certificate_id, str) or not certificate_id.strip()
+            or not isinstance(team_did_key, str) or not team_did_key.strip()
+        ):
+            raise _current_member_refusal(403)
+        try:
+            parse_team_id(team_id)
+            public_key_from_did(team_did_key)
+        except ValueError as exc:
+            raise _current_member_refusal(403) from exc
+        try:
+            facts = await self.get(team_id, certificate_id)
+            public_key_from_did(facts.team_did_key)
+            _require_active_certificate(facts, certificate_id)
+        except HTTPException as exc:
+            # A private registry that we cannot read is unavailable evidence,
+            # not proof that the recorded member lost their authority.
+            raise _current_member_refusal(403 if exc.status_code == 401 else 503) from exc
+        except ValueError as exc:
+            raise _current_member_refusal(503) from exc
+        if team_did_key != facts.team_did_key:
+            raise _current_member_refusal(403)
 
     async def get(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
         if not self._headers:
@@ -567,10 +616,7 @@ async def authenticate_request(
         facts = await team_cache.get(team_id, certificate_id)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid AWID team id") from exc
-    if certificate_id not in facts.published_certificate_ids:
-        raise HTTPException(status_code=401, detail="Unknown AWID certificate")
-    if certificate_id in facts.revoked_certificate_ids:
-        raise HTTPException(status_code=401, detail="Team certificate has been revoked")
+    _require_active_certificate(facts, certificate_id)
     _verify_certificate_signature(cert, facts.team_did_key)
 
     did_aw = str(cert.get("member_did_aw") or "").strip() or None

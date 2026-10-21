@@ -264,6 +264,18 @@ class NaappRuntime:
             raise RuntimeError("naapp auth cache is not initialized")
         return self._team_cache
 
+    async def require_current_member(
+        self, team_id: str, *, certificate_id: str, team_did_key: str
+    ) -> None:
+        """Recheck a link creator's verified mint-time certificate evidence.
+
+        Call before creator-scoped access on every link use. See
+        :meth:`AWIDTeamCache.require_current_member` for the cache and refusals.
+        """
+        await self.team_cache().require_current_member(
+            team_id, certificate_id=certificate_id, team_did_key=team_did_key
+        )
+
     async def principal(self, request: Request) -> Principal:
         """FastAPI dependency: the team member who signed this request.
 
