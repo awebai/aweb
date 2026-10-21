@@ -22,7 +22,8 @@ from aweb_secrets.change import (
     covered_bytes,
     validate_change,
 )
-from aweb_secrets.operation import OperationTemplate
+from aweb_secrets.grant import GrantTemplate
+from aweb_secrets.operation import OperationInvalid, OperationTemplate, operation_digest
 from aweb_secrets.policy import Policy
 
 # Fixture identities, derived from fixed seeds the way AWID derives them.
@@ -505,6 +506,139 @@ refused_records = [
         mutated_records(setitem(["changes", 3, "after", "subject"], {"role": "logs.reader"})),
     ),
 ]
+
+# Derived operation/1 schemas and pins are frozen before the broker's derived
+# paths are enabled. A well-formed issuer remains explicitly unavailable.
+grant_template = records["changes"][3]["after"]
+store_as_secret = {
+    "derived_kind": "aws-sigv4",
+    "kind_params": {"region": "us-east-1", "service": "s3"},
+    "capture": {
+        "access_key_id": "/Credentials/AccessKeyId",
+        "secret_access_key": "/Credentials/SecretAccessKey",
+        "session_token": "/Credentials/SessionToken",
+    },
+    "destinations": [
+        {
+            "v": 1,
+            "scheme": "https",
+            "host": "assets.s3.example.com",
+            "port": 443,
+            "path": "/reports/**",
+            "methods": ["GET"],
+            "query_rules": {},
+            "header_allow": [],
+            "network": "public",
+            "cidr": None,
+        }
+    ],
+    "expires_at": "/Credentials/Expiration",
+    "grant_template": grant_template["grant_template_id"],
+    "grant_template_digest": GrantTemplate.from_after(grant_template).digest,
+}
+relative_store = {
+    **{key: value for key, value in store_as_secret.items() if key != "expires_at"},
+    "derived_kind": "bearer",
+    "kind_params": {},
+    "capture": {"value": "/access_token"},
+    "expires_in": "/expires_in",
+}
+derived_stores = [
+    ("derived-absolute-unavailable", store_as_secret, "store_as_secret_unavailable"),
+    ("derived-relative-unavailable", relative_store, "store_as_secret_unavailable"),
+    (
+        "derived-expiry-ambiguous",
+        {**store_as_secret, "expires_in": "/expires_in"},
+        "operation_invalid",
+    ),
+    (
+        "derived-kind-params-not-fixed",
+        {
+            **store_as_secret,
+            "kind_params": {"region": "us-east-1", "service": {"$param": "service"}},
+        },
+        "operation_invalid",
+    ),
+    ("derived-no-destinations", {**store_as_secret, "destinations": []}, "operation_invalid"),
+    (
+        "derived-destination-method-not-string",
+        {
+            **store_as_secret,
+            "destinations": [{**store_as_secret["destinations"][0], "methods": [{}]}],
+        },
+        "operation_invalid",
+    ),
+    (
+        "derived-destination-header-not-string",
+        {
+            **store_as_secret,
+            "destinations": [{**store_as_secret["destinations"][0], "header_allow": [{}]}],
+        },
+        "operation_invalid",
+    ),
+    (
+        "derived-destination-from-response",
+        {
+            **store_as_secret,
+            "destinations": [{**store_as_secret["destinations"][0], "host": {"$capture": "/host"}}],
+        },
+        "operation_invalid",
+    ),
+    (
+        "derived-sts-without-session-token",
+        {
+            **store_as_secret,
+            "capture": {
+                "access_key_id": "/Credentials/AccessKeyId",
+                "secret_access_key": "/Credentials/SecretAccessKey",
+            },
+        },
+        "operation_invalid",
+    ),
+    (
+        "derived-grant-template-pin-malformed",
+        {**store_as_secret, "grant_template_digest": "A" * 64},
+        "operation_invalid",
+    ),
+]
+derived_operations = []
+for name, store, expected in derived_stores:
+    after = {
+        **copy.deepcopy(REFUND_OPERATION),
+        "token_issuing": True,
+        "result_handling": "store_as_secret",
+        "store_as_secret": store,
+    }
+    try:
+        OperationTemplate.from_after(after)
+    except OperationInvalid as refused_operation:
+        assert refused_operation.code == expected, name
+    else:
+        raise AssertionError(f"{name} must remain refused")
+    derived_operations.append(
+        {
+            "name": name,
+            "after": after,
+            "operation_digest": operation_digest(after),
+            "expected_code": expected,
+        }
+    )
+    refused_records.append((name, mutated_records(setitem(["changes", 5, "after"], after))))
+
+grant_template_cases = [
+    {
+        "name": "complete-grant-template-pin",
+        "after": grant_template,
+        "digest": GrantTemplate.from_after(grant_template).digest,
+    },
+    {
+        "name": "different-template-id-different-pin",
+        "after": {**grant_template, "grant_template_id": "gtp_other01"},
+        "digest": GrantTemplate.from_after(
+            {**grant_template, "grant_template_id": "gtp_other01"}
+        ).digest,
+    },
+]
 covered_ref = base64.urlsafe_b64decode(positives[0]["covered_bytes_b64url"] + "==")
 body = covered_ref[len(b"aweb.approval-request/1\n") :]
 negatives = (
@@ -656,6 +790,8 @@ vector = {
     "negative_cases": negatives,
     "confirmation_cases": confirmations,
     "confirmer_cases": confirmers,
+    "derived_operation_cases": derived_operations,
+    "grant_template_cases": grant_template_cases,
 }
 # Sanity: B2's own canonical form of the reference reproduces its bytes.
 assert canonical_request({"policy": POLICY, "request": reference}) == covered_ref
