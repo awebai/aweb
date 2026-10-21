@@ -280,7 +280,7 @@ audit event carries its digest. It holds the following fields:
 | Field | Meaning |
 | --- | --- |
 | `approval` | `none` or `per_use`. The secret's `approve_only` flag forces `per_use`, whatever the grant says. |
-| `approvers` | approver IDs or an approver group; quorum 1 at launch (§10). |
+| `approvers` | entries are a plain `approver_ref` (slug grammar) or the explicitly tagged `owner:<principal_did>`; validation refuses every other form. Quorum 1 at launch (§10). |
 | `approval_ttl_s` | the approval's `expires_at` in B2: the request must be decided and consumed before it. Recommended 900 s. |
 | `rate` | token buckets per (principal, secret) and per secret, e.g. 30/hour. Counters update atomically in the admission transaction. |
 | `windows` | allowed weekday and hour ranges in an owner-set IANA time zone. |
@@ -293,6 +293,14 @@ audit event carries its digest. It holds the following fields:
 Policy is evaluated at admission and again at the dispatch fence (§11.3). Rate
 and window denials are security outcomes. They are recorded and never metered as
 economic limits.
+
+Use-approval candidates are the intersection of approver records covering the
+secret and entries listed in `policy.approvers`. An owner is eligible only when
+explicitly listed; a listed owner covers every secret under that policy because
+owners have no `covers` field. For a derived secret, an approver covering an
+ancestor also covers its descendants (§8.4); the child policy must still list
+that approver. An empty intersection refuses the request with
+`no_eligible_approver` before creating a pending approval (decision 63).
 
 ### 4.5 L2 exposure grants nothing
 
@@ -360,7 +368,7 @@ it is honestly inert. The artifact is a launch requirement (Q5, decided).
 
 ```text
 CustodyBackend
-  kind                                  "native-kms" | "1password"
+  kind                                  "native" | "onepassword"
   bind(secret_id, config)  -> backend_ref     # native: allocate; 1P: validate vault/item/field reference
   ingest(backend_ref, value) -> version_ref   # native only; console-only caller (§6)
   open(version_ref) -> Plaintext              # one dispatch, under the version's bound context
@@ -369,6 +377,9 @@ CustodyBackend
   destroy(version_ref)                        # native: delete from the live store; 1P: forget reference only
   health() -> ok | degraded(reason)
 ```
+
+The backend wire values are exactly `native` and `onepassword`, matching the
+frozen use-approval vectors.
 
 How a value is handled once opened:
 
@@ -430,7 +441,7 @@ How a value is handled once opened:
 | Backend | What secrets holds at rest | When plaintext exists in secrets | Who else can read |
 | --- | --- | --- | --- |
 | native | ciphertext and wrapped data key; metadata | during one `open()` for one dispatch: the brokered call, OAuth token exchange, SigV4 signing, or HPKE sealing to a runner | KMS custodian with decrypt rights; a production operator able to run code as the service (trust boundary T4) |
-| 1password | vault, item and field reference; the sealed service-account token | the same window, after an SDK read | the 1Password account's members and admins; the vault provider; holders of the service-account token |
+| onepassword | vault, item and field reference; the sealed service-account token | the same window, after an SDK read | the 1Password account's members and admins; the vault provider; holders of the service-account token |
 | derived (OAuth access token, STS session) | sealed in the native store with its TTL, or in memory until expiry | per dispatch | as native |
 
 ### 5.5 Delegated vault mediation (option)
@@ -752,8 +763,8 @@ declare `token_issuing: true` and one `result_handling`:
 | Handling | Behavior |
 | --- | --- |
 | `deny` (default) | The operation is refused before dispatch. |
-| `withhold` | secrets dispatches, records, and returns a projection that excludes the credential fields. |
-| `store_as_secret` | secrets captures the issued credential into custody as a **derived secret**. It is child-linked to the parent, given a TTL from the response expiry, and given a kind (for STS, `aws-sigv4` with a session token). Its grants are copied from a named grant template. The agent receives the derived ref, never the value. |
+| `withhold` | The operation must declare a nonempty response projection; validation refuses its absence (`operation_invalid`, decision 64). secrets dispatches, then applies projection, redaction and credential-shape checks (§7.6). |
+| `store_as_secret` | One issuance creates one native-custody child secret, with fixed child destinations, kind parameters, a grant from pinned template terms and a bounded expiry (§8.4). The agent receives `{derived_ref, expires_at}`, never the value. |
 | `return` | **Does not exist (Q8, decided).** Returning the credential is a value release, like `--unsafe-inject`, and `store_as_secret` plus runner `short_lived` delivery covers the use cases. |
 
 When detection (§7.6) finds credential-shaped content in an operation that did not
@@ -761,6 +772,183 @@ declare `token_issuing`, the result is withheld. The `completed` event then
 carries `undeclared_credential: true` with disposition `withheld`, and no
 separate event is raised (one effect, one event, §11.5). The console reads that
 flag to tell the owner to fix the template.
+
+### 8.4 Derived-secret creation and use
+
+This is the `store_as_secret` contract (decision 71), implementing the controlled
+result handling required by secrets SOT §14. It adds no value-ingress tool.
+
+**Issuer definition.** `operation/1.store_as_secret` has exactly
+`derived_kind`, `kind_params`, `capture`, `destinations`, `grant_template`,
+`grant_template_digest`, and exactly one of `expires_at` or `expires_in`.
+The issuer operation's digest covers every field. Its owner passkey confirmation
+shows the child authority as well as the issuance request. The existing
+`store_as_secret_unavailable` guard is lifted only when the record, resolver and
+expiry paths implement this contract; other operation/1 forms keep their
+existing shape. The operation/1 and change/1 vectors are regenerated together
+under deliberate review, not hand-merged.
+
+- `derived_kind` and `kind_params` follow secret/1's auth-scheme validation.
+  OAuth access tokens become `bearer` children; they do not become OAuth client
+  secrets. STS children use `aws-sigv4` with explicitly fixed region and service
+  and must capture the session token as well as the access-key pair.
+- `capture` maps the selected kind's value fields to response JSON pointers.
+  These pointers extract credential material only into custody, before response
+  projection. Values use the same custody-owned structured-value codec as the
+  broker's opener; there is no second encoding or opaque string conversion.
+- `destinations` is a nonempty list of destination/1 bodies without
+  `destination_id` or `secret_id`; each retains its `v` and all canonical egress
+  constraints (§7.2–§7.3). Child destinations are **not** a union with the
+  parent's destinations. They are an explicit, owner-confirmed issuance scope,
+  and the child's usable scope is at most that list, further narrowed by its
+  grant, policy, selected operation and current deployment network policy.
+  An STS-only parent may therefore issue an S3-only child without ever allowing
+  the parent credential to be sent to S3. Request parameters and upstream
+  responses cannot supply child hosts, paths, methods or kind parameters.
+- `grant_template` is an existing template ID in the same installation.
+  `grant_template_digest` is the lowercase SHA-256 of
+  `"aweb.secrets.grant-template/1\n" || canonical_json(template.after)`, including
+  all fields, `v` and the template ID. At issuance admission, secrets snapshots
+  the complete terms and verifies that hash against the issuer operation's pin.
+  The approval thus covers the terms through `operation_digest` (§10.4), without
+  changing use-approval/1's field set. The dispatch fence re-reads and locks the
+  template, rejects a mismatch (`operation_not_allowed`), and uses only the
+  persisted snapshot to construct the child grant. Editing template terms
+  requires a newly confirmed issuer-operation digest before issuance can resume.
+
+There is no implicit child permission. A child inherits the parent's
+`sensitivity` and `approve_only` flags, but **no ancestor grant or policy grants
+permission** to the child. The ancestor rate constraints below are additional
+limits. Its new grant copies the one named template's subject, capability,
+policy digest, pinned operations/jobs and open-request setting; only its grant
+ID and secret ID are minted. Definition and issuance refuse an incompatible
+combination, such as an open-request grant on a sensitive child or missing
+policy/operation pins. The template's policy must permit the intended child
+uses. Child operation lookup follows the explicit rule below.
+
+**One atomic child per issuance.** Add an ordered migration for server-managed
+lineage and expiry metadata: parent secret ID and parent value version, source
+issuance dispatch ID and issuing grant ID, issuing principal and policy digest,
+upstream expiry and effective expiry, with a same-team, same-installation
+parent reference and a uniqueness constraint on the source
+dispatch. These are not agent-editable secret/1 fields. A successful capture
+creates the child metadata, a new secret ref, sealed native version 1,
+child-bound destination rows, its fresh grant, the dispatch result and the
+operational/hook outbox record in **one transaction**. Parent version, state,
+ancestor expiry and issuing-grant liveness are rechecked under the recording
+fence; if containment won the race, no usable child is committed. The minted ref obeys secret/1's existing
+slug grammar and length, with a collision-checked random suffix; no upstream
+field chooses it. The source dispatch's uniqueness makes replay return the
+same child, without minting another or calling the issuer again.
+
+**The issuing grant remains a containment boundary.** Revoking a grant disables
+all child secrets whose issuing dispatch used that exact grant, and all of those
+children's descendants, in the **same transaction** as the revocation. Their
+pending and approved-but-unconsumed approvals are voided in that transaction.
+This does not disable the parent or siblings issued under other grants. The
+lineage's issuing grant ID makes this precise even when a template designates a
+different principal. Admission, dispatch, capture and runner release recheck all
+issuing-grant links in the ancestry; a revoked link refuses with `grant_revoked`.
+Regranting or re-enabling a parent never resurrects disabled descendants. The
+local cascade does not claim to revoke a credential already held upstream or on
+a runner; §12's remote-containment limits still apply.
+
+**Approver coverage follows the lineage.** An active approver record covering a
+secret ID also covers every descendant of that secret in the same installation
+and team, including descendants minted later. The designation surface and the
+issuer-operation confirmation disclose that meaning. For a child request,
+coverage is a match on the child **or any recorded ancestor**, intersected with
+that child's `policy.approvers`. An unlisted ancestor approver gains nothing;
+owner eligibility, passkey assurance and `distinct_approver` remain unchanged.
+No approver record is copied or minted at issuance. Coverage and policy listing
+are rechecked at approval admission as well as request time; withdrawing
+coverage or revoking the approver voids affected unconsumed child approvals.
+An empty eligible set still refuses immediately with `no_eligible_approver`.
+
+**One lock order for capture and containment.** After the existing installation
+fence, creation, use and every cascade lock the stored secret ancestry from root
+to leaf; multiple sibling paths use ascending `secret_id`. They then lock the
+relevant grants in ascending `grant_id`, including the issuing grant. Re-read
+liveness, parent version and expiry only after those locks. Insertion takes the
+same locks on the prospective parent's complete ancestry before creating its
+child. A cascade therefore cannot miss an insertion: either capture commits
+first and the cascade disables it, or capture sees the revoked/disabled ancestor
+and commits no usable child. Re-enable cannot undo the descendant's own disabled
+state. Existing configuration-revision and approval locks keep their relative
+order; S11 and S8 use this same lineage order at both recording and revocation.
+
+**Rate limits do not reset at derivation.** Child admission charges its own
+policy's buckets **and** the rate buckets pinned by every ancestor issuance's
+recorded policy digest. An inherited secret-wide bucket remains keyed to the
+ancestor secret; an inherited principal/secret bucket remains keyed to that
+secret and its recorded issuing principal. Thus fan-out into many child IDs or
+template subjects does not multiply an issuer's budget. This inherits limits,
+not authorization. Deduplicate identical bucket keys, lock all applicable keys
+in one deterministic order, and charge them atomically only for an admitted
+request. Refusal charges none, and an idempotent replay never charges twice.
+Missing ancestor rate policy refuses; a new child never starts fresh copies of
+those buckets. The child policy may impose additional, tighter limits.
+
+**Expiry.** `expires_at` and `expires_in` are mutually exclusive JSON pointers,
+not expiry values supplied by the requester:
+
+- `expires_at` points to an absolute RFC3339 timestamp with a timezone; normalize
+  it to UTC. A missing timezone or invalid timestamp is refused.
+- `expires_in` points to an integer number of seconds from 1 through
+  `2**53 - 1`, never a boolean, string or float. Compute upstream expiry from the issuance dispatch's
+  **persisted start time**, not response receipt, replay or reconciliation time.
+  Neither a retry nor a status request restarts the lifetime.
+- The deployment's `derived_secret_max_ttl_s` is a positive finite integer,
+  **3600 s by default** (decision 71). Effective expiry is the earliest of
+  upstream expiry, persisted dispatch start plus this cap, and every ancestor's
+  expiry. Store that deadline once; later cap increases cannot extend it. Any
+  tighter current cap or ancestor deadline still applies at use. Missing,
+  malformed, overflowing or already-past expiry refuses child creation; so does
+  an effective deadline that is no longer in the future when recording commits.
+
+The one-hour default matches [STS AssumeRole's default session duration and its
+role-chaining bound](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html).
+It is a local use limit, not a claim that all STS sessions last one hour. For
+OAuth, [RFC 6749 §5.1](https://www.rfc-editor.org/rfc/rfc6749.html#section-5.1)
+defines `expires_in` in seconds without a universal lifetime; a shorter upstream
+lifetime always wins, and an omitted lifetime has no guessed default here.
+A deployment can support longer intended sessions by raising its cap; the
+upstream and ancestor deadlines still win. Local expiry does not revoke a
+credential already accepted by an upstream or delivered to a runner.
+
+**Child operation resolution.** For a child use, resolve `operation_id` only
+within its stored ancestry, in this fixed order: the child first, then its
+immediate parent, then each ancestor toward the root. Choose the **first current
+definition** with that ID, even if a more distant definition would match a pin.
+Its original source `secret_id` remains part of its original digest. Require
+that current digest to match both the child's grant and policy pins. On a
+mismatch refuse `operation_not_allowed`; never fall back to a historical digest
+or a farther ancestor. The child's approved use names the exact selected
+operation digest. Editing a source operation therefore invalidates an old child
+grant until regrant, and a nearer definition cannot silently replace it. No
+installation-wide or cross-team search is allowed. The effective credential,
+grant, policy, destination checks, approvals and dispatch fence always belong to
+the **child**, with its recorded ancestor liveness/version checks in addition.
+
+**Failure, containment and cleanup.** After a definite upstream response, invalid
+capture or expiry, a stale template snapshot or lost parent authority yields a
+`completed` event with disposition `withheld` and `undeclared_credential: false`;
+no child or value is returned. The owner's operational record has the distinct
+capture/expiry/authority failure reason. This is a known issuance outcome with a
+withheld result, not permission to retry issuance. A recording transaction that
+cannot enqueue rolls back; the dispatch remains for reconciliation (§11.4).
+Reconciliation reuses the same dispatch and recorded start time; if it cannot
+recover the issued credential safely, it withholds rather than dispatching again.
+
+Admission, the dispatch fence, `SecretOpener` and runner credential release all
+refuse an expired child or an inactive/replaced ancestor. Disable or value
+replacement on any ancestor disables every descendant and voids its pending
+approvals; re-enabling the parent does not resurrect descendants. Expired use is
+`secret_disabled` with the distinct message that the derived secret expired.
+The sweeper destroys expired sealed live values and cached copies; the expiry
+checks apply even if that sweep is delayed. Metadata and signed receipts remain
+under their retention policy. Upstream revocation is attempted where supported,
+without treating local disable as proof of remote revocation (§12).
 
 ## 9. The runner
 
@@ -913,13 +1101,18 @@ secrets supplies these:
 | B2 record field | secrets' value |
 | --- | --- |
 | immutable request ref | the stored frozen `aweb.secrets.use-approval/1` bytes (§10.4), or `aweb.secrets.change/1` for a widening change (§6.3) |
-| `policy_ref`/version | the policy digest (§4.4) |
+| `policy_ref`/version | for a use, `secrets.use\|<installation_id>\|<team_id>\|<grant_id>\|<policy_digest>`, version 1 (§4.4; decision 63) |
 | `requested_by` | the verified principal (§4.1) |
 | `approver_subject`/type | the approver ID; the approver type is passkey, which every secrets action policy declares as its minimum assurance |
 | presentation kind/ref | the secrets console approval page; `task_answer_ref` is unused unless Q13 adds a task presentation |
 | `expires_at` | `approval_ttl_s` from the policy |
 | `consumed_operation_id` | the `dispatch_id` (§11) |
 | audit-event interface | the producer outbox (§11.5), so that every designation, enrolment, recovery and decision is a hook event |
+
+For a use approval, `PolicySource.current(ref)` returns the policy only while
+that grant is active and still references that digest. Otherwise it returns
+`None`, and B2 voids the approval. The dispatch fence still re-reads the grant
+and policy digest under a row lock (§11.3).
 
 The secrets SOT §13 described the approval link as the authority. Under §14 and
 the joint recommendation, **the link is only a locator**. The authority is a B3
@@ -1005,15 +1198,20 @@ sequenceDiagram
   C->>C: render frozen request from frozen bytes
   H->>C: approve: B3 passkey assertion bound to request_sha256
   C->>S: B3 verifies; B2 records the decision; outbox(approval.decided)
-  Ag->>S: status(approval_ref) or re-submit same request_id
+  Ag->>S: status(approval_ref)
+  S-->>Ag: {state: approved, next: re-submit request_id}
+  Ag->>S: re-submit same request_id
   S->>S: B2 admission CAS + intent row + outbox, in one transaction
   S->>U: dispatch (§11)
   S-->>Ag: result (§7.6)
 ```
 
-The agent finds out the decision by polling `secrets.status`, or by re-submitting
-the same `request_id`, which is idempotent. A consumed approval cannot be reused.
-A denial or expiry is final for that `request_id`.
+`secrets.status` only reports the decision; it never admits or dispatches. An
+approved status is `{state: "approved", next: "re-submit request_id"}`. Only
+re-submitting `secrets.request` or `secrets.run` with the same `request_id` can
+admit the frozen request and dispatch it. Re-submission is idempotent. A consumed
+approval cannot authorize another dispatch. A denial or expiry is final for that
+`request_id`.
 
 ### 10.4 The frozen canonical request
 
@@ -1058,7 +1256,9 @@ issued_at, expires_at
   - the requester's alias and DID;
   - the policy, and the times.
 - **The requester's reason.** It is shown in a box labelled as unverified text
-  from the requesting agent. It is escaped and cannot be styled.
+  from the requesting agent. It is escaped and cannot be styled. Its maximum
+  is 1024 Unicode code points; a longer reason is refused with `params_invalid`,
+  never truncated.
 - **Open requests.** They are approvable only when the body is UTF-8 JSON or text
   of 64 KiB or less, rendered in full. Anything else is refused with
   `approval_unrenderable`, because consent to unseen bytes is not informed.
@@ -1239,11 +1439,29 @@ the `secret_*`, `request_sha256`/`params_sha256`, `approval_*`, `dispatch_*` and
   `target_path_template`, plus `operation_id` and `operation_digest` for a named
   operation. Concrete paths and query values are never sent. A runner job sends
   `runner_id`, `job_id` and `job_digest` instead.
+- **Child creation.** The issuance's `completed` event with disposition
+  `stored_as_secret` is the signed creation receipt. `grant_id` remains the
+  issuing grant; `derived_secret_id` names the new child and `derived_grant_id`
+  names its fresh grant. It shares the recording transaction with those rows
+  (§8.4), so no child is exposed without its enqueued creation receipt. The
+  hook-contract owner puts `derived_grant_id` in the re-frozen post-secret-use
+  shape (decision 73 delta): both derived refs are required together for this
+  disposition and forbidden elsewhere. This is an in-place schema/vector
+  re-freeze: no deployed producer or consumer uses this hook, so there is no
+  parallel catalog version. Until that shape is accepted, the kit, ingest and
+  resolution support it, and an owner activates the production,
+  `store_as_secret` cannot emit or activate; secrets does not add private fields
+  to an existing envelope.
 - **`returned_hmac`.** This is an HMAC, keyed by secrets, over the bytes returned
   to the agent. It is absent when the result is withheld. secrets' keyed HMAC of
   the raw response fills `upstream_response_hmac`.
 - **`refusal_code`.** It takes values from the §A2 enum. secrets proposed every
   code there, and each one is a refusal this design defines.
+  `no_eligible_approver` means no covering, policy-listed approver exists at
+  request time (§4.4). `approval_consumed` means the approval was already
+  consumed under another dispatch; an idempotent replay of the same dispatch
+  returns its existing state. Both codes are in the v1 catalog and secrets
+  hook-actions table before any producer emits them.
 - **`disposition`.** It takes `returned`, `withheld` or `stored_as_secret`
   (§A2 at hooks head 31206a4d). There is no value for a returned credential,
   because `return` does not exist (Q8).
@@ -1300,11 +1518,11 @@ availability, only for a failed local commit (§11.5).
 
 | Action | Effect |
 | --- | --- |
-| **Revoke a grant** | Admission refuses at once. The dispatch fence (§11.3) stops admitted, not-yet-sent intents (`refused: grant_revoked`). Pending approvals under that grant are voided. |
+| **Revoke a grant** | Admission refuses at once. The dispatch fence (§11.3) stops admitted, not-yet-sent intents (`refused: grant_revoked`). The same transaction disables children issued under that grant and their descendants, and voids affected unconsumed approvals (§8.4); the parent and children issued under other grants stay usable. |
 | **Revoke approvals** | A pending or approved-but-unconsumed approval moves to `revoked`. The consume CAS fails. There is no bearer token to chase, because the link was never authority. |
 | **Disable a secret** | New admissions, the fence and runner credential release all refuse. Pending approvals are voided, and the cached OAuth tokens and derived secrets are disabled. For 1Password, the console also links to revoking the service account. Re-enabling is widening, so it needs a passkey. |
 | **Disable the installation** (kill switch) | Every secret is disabled at once, through one flag checked at admission and at the fence. |
-| **Replace a value** (§6.2) | The new version activates. The old version is destroyed in the live database in the same transaction (backups per §15, item 5). Version-bound approvals are voided. Derived and cached credentials are revoked where the upstream allows it. STS sessions cannot be revoked one by one, so the console guides the owner to the IAM "revoke older sessions" action. Upstream rotation remains the owner's act. |
+| **Replace a value** (§6.2) | The new version activates. The old version is destroyed in the live database in the same transaction (backups per §15, item 5). Version-bound approvals are voided. All descendants are disabled locally and their pending approvals voided (§8.4); derived and cached credentials are also revoked where the upstream allows it. STS sessions cannot be revoked one by one, so the console guides the owner to the IAM "revoke older sessions" action. Upstream rotation remains the owner's act. |
 | **Deregister a runner** | The key is invalidated, unclaimed assignments are cancelled, and claimed ones go to `outcome_unknown`. |
 | **Revoke an approver passkey or contact** | That approver's pending decisions are voided. If no approver can decide anymore, `approve_only` uses refuse. Through team-auth, revoking the last owner's passkey or contact is refused (`last_owner_protected`, §10.2). |
 
@@ -1325,7 +1543,7 @@ The manifest is v2 (D1 C3). Every tool is signed with team-auth. Nothing is
 | `secrets.describe` | agent, surface | `secrets:read` | as above | one ref's operations (with parameter schemas) and jobs available to the caller |
 | `secrets.request` | agent, surface | `secrets:use` | a grant | a brokered named operation or open request (§7). Returns the result, or `awaiting_approval` with an `approval_ref` |
 | `secrets.run` | agent, surface | `secrets:run` | a grant | a runner job (§9) |
-| `secrets.status` | agent, surface | `secrets:read` | the requester; owners | state of a `request_id`, `approval_ref` or `reconcile_ref`; never a link |
+| `secrets.status` | agent, surface | `secrets:read` | the requester; owners | state of a `request_id`, `approval_ref` or `reconcile_ref`; never a link, admission or dispatch. Approved: re-submit the same `request_id` (§10.3) |
 | `secrets.cancel` | agent, surface | `secrets:use` | the requester | cancel the caller's own request while it is still before `admitted` |
 | `secrets.contain` | agent, surface | `secrets:admin` | owner (approver for its own approvals) | revoke a grant, revoke approvals, disable a secret or the installation, deregister a runner (§12) |
 | `secrets.propose-change` | surface | `secrets:admin` | owner | draft a widening change: secret metadata, destination, operation, job, grant, role or approver. It is inert until passkey confirmation on the console (§6.3) |
@@ -1352,7 +1570,9 @@ Authority always comes from secrets' role, grant and passkey checks. That is why
   It also renders `aw secrets run deploy-staging --runner home-1 --param env=staging`,
   `aw secrets status <request_id>` and `aw secrets contain revoke-grant <grant_id>`.
   The CLI generates `request_id` once per invocation and reuses it on transport
-  retries. Exit codes distinguish `awaiting_approval`, `refused`,
+  retries. After polling approval status, it re-submits the original request
+  with that same `request_id` to dispatch. Exit codes distinguish
+  `awaiting_approval`, `refused`,
   `outcome_unknown` and `result_withheld`. `--param` binding follows the manifest
   `params` mapping. Open requests need no manifest change. `method` (a string
   enum), `url`, `headers` (an array) and `data` (a string or an object) are
@@ -1363,8 +1583,9 @@ Authority always comes from secrets' role, grant and passkey checks. That is why
 - **MCP users (L2).** The same tools appear as `secrets_list`,
   `secrets_request`, and so on, with the same parameter schemas. A pending
   approval returns `approval_ref` and a message that a designated human has been
-  notified. The model polls `secrets_status`. It cannot see or act on the
-  approval. Responses are already projected and redacted for the model
+  notified. The model polls `secrets_status`, then re-submits `secrets_request`
+  (or `secrets_run`) with the same `request_id` after approval. It cannot see or
+  act on the approval. Responses are already projected and redacted for the model
   provider's context.
 - **Dashboard surface.** This is an `aweb.page/1` surface with read-only views
   (`list`, `activity`), containment buttons, `propose-change` forms, and a
@@ -1536,7 +1757,8 @@ boundary):
 | Headers | `Accept` | agent `Authorization`, `Cookie`, `X-Amz-Security-Token`, a credential-shaped value |
 | Schemes | each of the six injects or signs correctly upstream | wrong host gets no injection; SigV4 with an agent-chosen region or service |
 | Results | projected body | credential-shaped body withheld; undeclared token issuance flagged; STS `store_as_secret` yields a derived ref and no value |
-| Approval | passkey approve, then one dispatch | requester sees no link; reuse after consume; changed parameters after approval; expired; revoked; `distinct_approver: required` with the same principal; native value replaced before consume; 1Password item changed between approval and dispatch (refused, approval voided) |
+| Approval | eligible listed approver, passkey approve, status reports approval, then re-submit for one dispatch | no covering listed approver refuses immediately with `no_eligible_approver`; status never dispatches; requester sees no link; reuse after consume; changed parameters after approval; expired; revoked; `distinct_approver: required` with the same principal; native value replaced before consume; 1Password item changed between approval and dispatch (refused, approval voided) |
+| Derived secrets | STS-to-S3 child with fixed destinations; absolute STS expiry or OAuth `expires_in`; child grant with a matching current lineage operation | response-selected destination/kind parameters; inherited ancestor grant; missing, malformed or past expiry; a non-integer relative lifetime; replay extending expiry; a source operation edited after granting; a nearer definition with a different pin; parent disable/replace or issuing-grant revocation racing capture; grant revocation leaving one of its descendants usable; listed ancestor approver withdrawn before admission; unlisted ancestor approver accepted; child fan-out resetting ancestor rate budgets; duplicate child for one dispatch; missing signed child/grant linkage; a delayed sweep allowing expired use |
 | State machine | `not_sent` retry under the same intent | crash after send leads to `outcome_unknown`, which blocks a retry of the same operation until reconciled; reconciled-then-new needs a fresh approval |
 | Idempotency | same `request_id`, same bytes returns the same receipt | same `request_id`, different bytes is `409`; a replayed envelope inside the skew window does not dispatch again |
 | Outbox | event enqueued with every transition | outbox insert failure refuses dispatch; no hook target refuses; a registration inside its `active_from` pad refuses; no current registration refuses, while a stalled secondary target alone does not; all deliveries cancelled is surfaced as a fault; a governance act that cannot enqueue does not commit |
