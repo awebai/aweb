@@ -1092,6 +1092,57 @@ defined and checked again by the runner before each run.
   environment plus the declared names. It does not inherit the runner's own
   environment.
 
+**OCI process composition.** For `kind: oci`, the expanded `job.argv` is
+exactly the process argument vector, including its executable at index zero.
+The array is nonempty; its first element is a fixed, nonempty absolute path
+inside the pinned image, never a parameter. Remaining elements follow the
+argument rules above. The runner neither prepends nor appends image
+`Entrypoint` or `Cmd`, and supplies no implicit shell. For `kind: exec`, the
+existing convention remains: prepend the pinned `exec.path` to the expanded
+argument template. Owner confirmation and the runner-local pin show this
+kind-dependent interpretation; neither form accepts an executable override.
+
+For OCI, `process.cwd` is the job's pinned `cwd`, and `process.env` contains
+exactly the declared job environment after validated expansion and explicit
+credential-field selection. Ignore image `Env` and `WorkingDir` defaults and
+runtime-added environment defaults, including `PATH` and `HOSTNAME`; these names
+are not implicitly added. Existing environment-name refusals still apply.
+A runtime that cannot enforce this exact process configuration refuses before
+credential opening. The pinned image remains the filesystem authority; this
+rule does not change the declared read-only mount boundary.
+
+**OCI credential lifetime.** Runtime configuration containing expanded
+credentials belongs to this one run's transient trusted runner context. It may
+be passed privately in memory or held in a private memory-backed runtime bundle
+(directory accessible only to the runner user, credential-bearing files mode
+0600). It must not enter persistent container/daemon metadata, an image layer,
+a durable bundle, command-line arguments, diagnostics or the runner journal.
+A standard daemon environment option is not sufficient if it retains values in
+persistent inspectable metadata; removing the container afterward does not
+make that earlier persistence conformant. The choice of runtime is local, not
+a new job or protocol field.
+
+The runner bounds this context by the original job deadline and disposes of it
+when the process tree terminates, on preparation/start failure, timeout or
+containment. It stops/reaps the process tree before removing its runtime state;
+on restart it cleans stale private runtime state before accepting new work,
+without executing an uncertain assignment again. No runtime-state bundle is
+mounted into the job for credential transport. Credential values may remain in
+the job process's own memory/environment while it runs; runner-host operators
+remain trusted under T8, and no secure-memory-erasure guarantee is added.
+
+These rules select explicit OCI runtime `process.args`, `process.env` and
+`process.cwd` rather than composing image defaults. The upstream
+[OCI runtime process contract](https://github.com/opencontainers/runtime-spec/blob/main/config.md#process)
+and [OCI image defaults](https://github.com/opencontainers/image-spec/blob/main/config.md#properties)
+are distinct. This clarification adds no job/1 or runner-wire field. S15a/M7
+must enforce the OCI executable invariant at definition and local preparation,
+show the effective command/environment names at confirmation, and prove with a
+real runtime that conflicting image defaults do not run or appear, undeclared
+environment names are absent, declared values reach only their intended process,
+and success/failure/timeout cleanup leaves no credential-bearing persistent
+runtime state. Existing signed assignment, redaction and no-rerun rules apply.
+
 **Two-key pinning.** secrets checks the parameters and the digest. The runner's
 own local config independently lists the job digests it will execute. A job runs
 only if both agree.
