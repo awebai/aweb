@@ -19,6 +19,9 @@ CATALOG_BYTES = (AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json").read_b
 CATALOG_DOCUMENT = json.loads(CATALOG_BYTES)
 CATALOG = load_catalog(CATALOG_BYTES)
 TABLE = json.loads((Path(__file__).parents[1] / "vectors" / "hook-actions-v1.json").read_text())
+USE_APPROVAL = json.loads(
+    (Path(__file__).parents[1] / "vectors" / "use-approval-v1.json").read_text()
+)
 
 USE = "post-secret-use-hook"
 GOVERNANCE = "post-governance-hook"
@@ -84,3 +87,13 @@ def test_each_governance_act_exists_with_the_catalog_direction(row):
 
 def test_authorities_equal_the_catalog_enum():
     assert set(TABLE["authorities"]) == set(GOVERNANCE_HOOK["fields"]["authority"]["enum"])
+
+
+def test_example_secret_kinds_are_use_approval_kinds():
+    kinds = {
+        example["secret_kind"]
+        for row in TABLE["use_transitions"]
+        for example in row["examples"]
+        if "secret_kind" in example
+    }
+    assert kinds and kinds <= set(USE_APPROVAL["secret_kinds"])

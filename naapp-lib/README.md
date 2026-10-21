@@ -36,11 +36,21 @@ css_bytes = naapp.aweb_css()
 ```
 
 The docs surface is pure standard library. Request-time runtime code (the
-team-auth verifier, approvals, passkeys) lives under `aweb_naapp.runtime` and
+team-auth verifier, approvals, passkeys, and team-server discovery from the
+team's AWID `aweb.team-server/1` record) lives under `aweb_naapp.runtime` and
 needs the `runtime` extra: `aweb-naapp[runtime]`. Two parts the core server
 shares import without it: the durable outbox, `aweb_naapp.outbox`
 (`aweb-naapp[outbox]`), and the signing-key reader, `aweb_naapp.signing_key`
 (`aweb-naapp[signing-key]`).
+
+The egress guard, `aweb_naapp.egress`, is for naapps that call an external
+service with their own credential. It needs only the `egress` extra,
+`aweb-naapp[egress]`, and none of the runtime. It canonicalizes and matches
+outbound URLs under the contracts in `docs/vectors/egress-url-v2.json` and
+`docs/vectors/egress-address-v1.json`, resolves names itself and refuses any
+denied address, and sends a request only to the destination it matches,
+through one pinned, verified connection. Redirects come back as responses, no proxy is read from
+the environment, and a failure is classed as not sent or of unknown outcome.
 
 ### App keys
 
@@ -54,6 +64,15 @@ configured key is the declared one. An app with `<PREFIX>APP_EVENTS_ORIGIN` set
 `<PREFIX>APP_EMIT_KEY_SEED_HEX` with `<PREFIX>APP_EMIT_KID`, a form that signs
 app events only.
 
+The egress guard, `aweb_naapp.egress`, is for naapps that call an external
+service with their own credential. It needs only the `egress` extra,
+`aweb-naapp[egress]`, and none of the runtime. It canonicalizes and matches
+outbound URLs under the contracts in `docs/vectors/egress-url-v2.json` and
+`docs/vectors/egress-address-v1.json`, resolves names itself and refuses any
+denied address, and sends a request only to the destination it matches,
+through one pinned, verified connection. Redirects come back as responses, no proxy is read from
+the environment, and a failure is classed as not sent or of unknown outcome.
+
 ### Health
 
 `/live` reports the app's id and build commit. `/health` and `/ready` also run
@@ -62,7 +81,11 @@ check fails, and `health` always answers 200. The runtime checks its database
 and reports the age of its oldest undelivered outbox event
 (`NaappRuntime.health_checks()`). An app adds its own as async callables that
 return a `CheckResult`. A check that raises, or does not answer within 5 s,
-fails, and its error is logged, never served.
+fails, and its error is logged, never served. `/ready` serves only whether each
+check passed; `/health` adds each check's detail, whose values are numbers,
+booleans or null, never text. The routes are unauthenticated,
+so the checks run at most once every 10 s: concurrent requests share the run in
+flight, and later ones get its result until it expires.
 
 ### Agent and human origins
 
@@ -139,10 +162,31 @@ user-verification requirement as explicit arguments, which this module binds to
 the approval, decision, policy and the app's own origin.
 
 - The relying party is the app's own origin (`RelyingParty`).
-- Only a verified team owner act designates (`designate(owner_act=...)`):
-  `app-role.designate` for a scope's first approver, `app-credential.recover`
-  to replace one. The act names the scope, commits to the contact by hash and
-  is used once. `OwnerActEvidence` is the seam the owner-act verifier fills.
+- `verify_registration(credential, challenge=..., rp=...)` and
+  `verify_assertion(proof, challenge=..., rp=..., credential_id=...,
+  public_key=..., sign_count=...)` are the stateless ceremony checks `Passkeys`
+  uses, for any caller with its own challenges and credentials. They always
+  require user verification and raise `WebAuthnRefused` on any failure.
+  `verify_assertion` takes the stored credential the caller chose for the
+  expected subject and refuses a proof naming any other credential, since the
+  proof's credential ID is not signed. The caller makes each challenge
+  single-use, stores the credential and advances its counter with a
+  compare-and-set on `new_sign_count`.
+- `designate(tx, scope=..., contact=..., evidence=...)` runs in the caller's
+  transaction. The evidence is a `VerifiedOwnerAct`, which the owner-act
+  verifier (`aweb_naapp.hooks.owner_act_nonces`) consumed in that same
+  transaction: `app-role.designate` for a scope's first approver,
+  `app-credential.recover` to replace one. The act names the scope, commits to
+  the contact by hash and takes effect once. For a scope the app does not count
+  as an owner scope (`Passkeys(owner_scopes=...)`, every scope by default), the
+  evidence may instead be an `OwnerApproval` from `owner_approval()`: an owner's
+  decided approval, admitted and completed through B2 in the same transaction.
+  It designates only a scope's first approver. Whether the approved request asks
+  for that designation is the app's check.
+- Nothing is sent inside the transaction. After the commit the caller sends the
+  enrolment link and any recovery notices with `deliver(designation)`. If that
+  never happens, `reissue_enrolment(tx, scope=...)` revokes the unused link and
+  issues a new one to the same contact, while the approver has not enrolled.
 - The enrolment link goes only to the designated contact. Whoever first
   completes enrolment through the link registers the passkey: this is **trust
   on first use**, and the audit event records it as such. The link is as strong
@@ -154,6 +198,14 @@ the approval, decision, policy and the app's own origin.
   the scope has no approver, and every contact previously recorded for the
   scope is notified. `recovery_pending_until` tells the app to freeze its own
   widening changes meanwhile.
+- `retire(tx, scope=..., evidence=...)` ends a scope's designation on an
+  `app-role.revoke` act consumed in the same transaction, for instance when the
+  owner role behind the scope is revoked. The act's `subject_ref` must name the
+  approver retire finds current, so a recovery committed after the act was
+  signed is never retired by it. The current approver, or a recovery's
+  pending one, is retired with its passkeys, unused enrolment links and live
+  approvals. The scope then has no approver: its next designation is a first
+  one and enrols a new passkey, and the retired passkeys stay dead.
 - A contact change needs the approver's own passkey, takes effect after a delay
   (at least 24 h) and is notified to the old and the new contact.
 - These durations are floors. App or owner policy may lengthen them, and
@@ -171,6 +223,6 @@ the approval, decision, policy and the app's own origin.
   in-effect approver under the same rules, returning `PasskeyLogin(subject,
   contact, evidence_ref)`. What a login opens (a console or reader session) is
   the caller's. Roles are named scopes, such as `secrets.owner`, each designated
-  through the same owner act.
+  through a team owner act.
 - A passkey proves that an app-local human holds the enrolled authenticator. It
   is not AWID membership, team identity or key custody.

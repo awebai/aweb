@@ -83,6 +83,10 @@ self_test() (
     mkdir -p "$tmp/$lock"
     cp "$ROOT/$lock/pyproject.toml" "$ROOT/$lock/uv.lock" "$ROOT/$lock/README.md" "$tmp/$lock/"
   done
+  # naapp-lib's dev-only test-support distribution, which the dependents' dev groups lock too.
+  mkdir -p "$tmp/naapp-lib/testing"
+  cp "$ROOT/naapp-lib/testing/pyproject.toml" "$tmp/naapp-lib/testing/"
+  cp -R "$ROOT/naapp-lib/testing/src" "$tmp/naapp-lib/testing/"
 
   if ! check_locks "$tmp" >/dev/null; then
     echo "SELF-TEST FAIL: clean copied locks were rejected" >&2
