@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The shared app credential signer supports `app-request`, signing the required
+  installation id and positive generation. Its bytes match the C2 transport
+  vector; existing app-event, grant-read and hook-resolve credentials are unchanged.
+
 - `aweb_naapp.runtime.team_grants.TeamGrantSource` reads an app's own grant
   through the shared AWID-backed team-server directory and an `app-grant-read`
   signer. Grant and installation-status reads share one bounded cache, verify

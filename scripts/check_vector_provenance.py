@@ -50,6 +50,10 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("naapp-lib/tests/runtime/test_app_credential_signer.py"): _consumer(
+        "app-request-credential-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "app-request-credential-v1.json"',
+    ),
     PurePosixPath("cli/go/awid/page_proposal_test.go"): _consumer(
         "page-proposal-v1.json",
         '"../../../docs/vectors/page-proposal-v1.json"',
