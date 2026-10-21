@@ -2,7 +2,7 @@
 # the proxy; the hard runner instead preserves DNS/connection error semantics.
 TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 
-.PHONY: help clean test test-shipping test-server test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-shipping test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -254,6 +254,35 @@ test-server:
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
 		UV_CACHE_DIR=/tmp/uv-cache uv build --out-dir "$$build_dir"
 	cd server && UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+
+# The naapp packages the candidate gate covers. Each provides `make lint` and
+# `make test`: the checks stage lints them, and the isolated unit stage runs
+# their suites against its Postgres. A package joins by being added here.
+# UV_FROZEN keeps the gate on each committed lock, a lock the run changed fails
+# it, and the suites run offline.
+NAAPP_PACKAGES := naapp-lib naapp/folio naapp/library naapp/secrets naapp/logs
+
+# Installs each package's locked dependencies, for a runner that then goes offline.
+naapp-sync:
+	set -e; for package in $(NAAPP_PACKAGES); do \
+		UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --project $$package; \
+	done
+
+lint-naapp:
+	set -e; for package in $(NAAPP_PACKAGES); do \
+		echo "=== lint $$package ==="; \
+		UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 $(MAKE) -C $$package lint; \
+		git diff --exit-code -- $$package/uv.lock; \
+	done
+
+test-naapp:
+	set -e; for package in $(NAAPP_PACKAGES); do \
+		echo "=== test $$package ==="; \
+		UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --project $$package; \
+		UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache \
+			NAAPP_REQUIRE_TEST_DATABASE=1 LIBRARY_REQUIRE_TEST_DATABASE=1 $(TEST_EGRESS_RUNNER) $(MAKE) -C $$package test; \
+		git diff --exit-code -- $$package/uv.lock; \
+	done
 
 test-awid:
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen

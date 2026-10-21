@@ -52,6 +52,29 @@ denied address, and sends a request only to the destination it matches,
 through one pinned, verified connection. Redirects come back as responses, no proxy is read from
 the environment, and a failure is classed as not sent or of unknown outcome.
 
+A server that produces hook events (`docs/hook-events.md`) uses
+`aweb_naapp.hooks.producer` and `aweb_naapp.hooks.transport`, with the `hooks`,
+`outbox` and `egress` extras. `HookProducer.enqueue(tx, ...)` signs an event and
+stores it on the outbox's `hooks` channel in the effect's own transaction. An
+audit-critical event is refused with `audit_target_unavailable` unless the
+registration view the caller read beforehand is fresh and holds a registration
+owed it. The drain resolves deliveries with `hook_targets(registrations)`, and
+`HookTransport` re-checks each binding, signs a `hook-delivery` request and sends
+it through the egress guard to the binding's endpoint only.
+
+Operators: a hook target is sent to as a public destination. A self-hosted
+operator who also wants hooks to reach targets inside its own network allows
+internal destinations on the egress and passes that network as
+`HookTransport(internal_cidr=...)`; a target the guard refuses as a private
+address is then tried once more inside that network, and only there. This is
+an opt-in to server-side requests into your network: any activated binding
+whose origin resolves inside `internal_cidr` becomes reachable, and a
+third-party app's owner controls its own DNS, so keep `internal_cidr` as
+narrow as the hosts of your own apps. A hosted deployment allows neither, so
+private addresses are never reached. Before rotating the producer's hook key,
+drain the `hooks` channel: undelivered events carry the old key's signature,
+and their deliveries would end rejected.
+
 ### Database schema
 
 An app's tables live in `<PREFIX>DB_SCHEMA` (default `public`). The runtime pins
@@ -72,15 +95,6 @@ configured key is the declared one. An app with `<PREFIX>APP_EVENTS_ORIGIN` set
 (https, or http on loopback) must hold its declared app-event key. That key may instead be given as
 `<PREFIX>APP_EMIT_KEY_SEED_HEX` with `<PREFIX>APP_EMIT_KID`, a form that signs
 app events only.
-
-The egress guard, `aweb_naapp.egress`, is for naapps that call an external
-service with their own credential. It needs only the `egress` extra,
-`aweb-naapp[egress]`, and none of the runtime. It canonicalizes and matches
-outbound URLs under the contracts in `docs/vectors/egress-url-v2.json` and
-`docs/vectors/egress-address-v1.json`, resolves names itself and refuses any
-denied address, and sends a request only to the destination it matches,
-through one pinned, verified connection. Redirects come back as responses, no proxy is read from
-the environment, and a failure is classed as not sent or of unknown outcome.
 
 ### Health
 
@@ -246,7 +260,26 @@ the approval, decision, policy and the app's own origin.
   approval. Retiring approvals before removing the authority inverts that
   order and can deadlock with such a path.
 - A contact change needs the approver's own passkey, takes effect after a delay
-  (at least 24 h) and is notified to the old and the new contact.
+  (at least 24 h) and is notified to the old and the new contact. An owner can
+  also schedule one through an owner-confirmed change, with
+  `change_contact_by_owner(tx, scope=..., new_contact=..., evidence=...)` on an
+  `OwnerApproval` admitted in that transaction. The delay and notices are the
+  same, and the notices go out with `send_notices` after the commit. It
+  changes the contact only: no passkey is enrolled at the new contact without
+  a recovery. The last owner's own contact is refused (`last_owner_protected`).
+  Only one change may be pending at a time (`contact_change_pending`). The
+  approver cancels a pending change from either path with their own passkey
+  (`contact_cancel_options`, `cancel_pending_contact`), and the cancel wins.
+- A new contact counts only once its holder proves it. Every contact change,
+  from either path, sends a single-use proof to the new contact alone, through
+  `PasskeyDelivery.deliver_contact_proof`, bound to that contact's digest. The
+  holder confirms it with `prove_contact(token)` before the change's time; a
+  change still unproven by then lapses, and the old contact stays. A contact
+  given at designation is proven by the enrolment completed through it. So an
+  approver's effective contact is always a proven one, which is what the owner
+  count behind `last_owner_protected` relies on. Security notices, such as recovery
+  notices, go only to proven contacts; the one message an unproven pending
+  contact receives is its own proof.
 - These durations are floors. App or owner policy may lengthen them, and
   deploy configuration may raise the floor itself (`lockout_floor`); nothing
   can go below 72 h and 24 h.
