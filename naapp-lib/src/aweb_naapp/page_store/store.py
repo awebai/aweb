@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import secrets
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -12,6 +13,7 @@ from uuid import UUID, uuid4
 
 from jsonschema import Draft202012Validator
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
+from pgdbm.core import TransactionManager
 
 from aweb_naapp.idempotency import (
     IdempotencyConflict,
@@ -23,12 +25,29 @@ from aweb_naapp.outbox import OutboxEvent, apply_outbox_migrations, enqueue
 from aweb_naapp.page_store.lifecycle import LifecycleMixin
 from aweb_naapp.page_store.models import Access, RetentionPolicy, Scope, StoreError
 from aweb_naapp.page_store.support import canonical, decoded, identity, validated, widgets
+from aweb_naapp.pages import inline_schema_errors, inline_value_valid
 
 if TYPE_CHECKING:
     from aweb_naapp.runtime.team_auth import Principal
 
 ROOT = Path(__file__).parent
 MAX_REV = 2**53 - 1
+
+# Shared by widget queries and bounded live/snapshot-creation projections.
+AUTHORIZED_RECORDS = """WITH authorized AS MATERIALIZED (
+    SELECT (record-'value') || jsonb_build_object('value', COALESCE(
+        (SELECT jsonb_object_agg(key,value) FROM jsonb_each(record->'value')
+         WHERE $5::boolean OR key=ANY($4::text[])), '{}'::jsonb)) AS record
+    FROM {{tables.page_records}}
+    WHERE scope=$1 AND collection=$2 AND record IS NOT NULL
+      AND NOT(record_id=ANY($3::text[]))
+      AND ($6::text[] IS NULL OR record_id=ANY($6::text[]))
+) """
+
+
+def _require_transaction(tx) -> None:
+    if not isinstance(tx, TransactionManager):
+        raise TypeError("a caller-owned TransactionManager is required")
 
 
 async def apply_page_store_migrations(
@@ -96,9 +115,13 @@ class PageStore(LifecycleMixin):
 
     async def _load(self, tx, scope: Scope, principal: Principal, operation="read"):
         actor = identity(principal, scope)
+        return await self._load_actor(tx, scope, actor, operation)
+
+    async def _load_actor(self, tx, scope, actor, operation="read", *, shared=False):
         await self._fence(scope)
         row = await tx.fetch_one(
-            "SELECT document, access, deleted FROM {{tables.pages}} WHERE scope=$1 FOR UPDATE",
+            "SELECT document, access, deleted FROM {{tables.pages}} WHERE scope=$1 FOR "
+            + ("SHARE" if shared else "UPDATE"),
             scope.key,
         )
         if row is None or row["deleted"]:
@@ -367,113 +390,149 @@ class PageStore(LifecycleMixin):
         if type(expected_rev) is not int or expected_rev != document["rev"]:
             raise StoreError("revision_conflict", 409, details={"page_rev": document["rev"]})
 
+    async def mutate_on(self, tx, scope, principal, *, expected_rev, key, records=(), state=None):
+        """Apply an owned mutation on the caller's content-database transaction.
+
+        The caller owns commit/rollback and can atomically join action state or
+        task-mirror outbox writes. All ordinary page/record/field guards and the
+        independent restore-safe request claim apply. Use a transaction from
+        this store's database; this method never opens or commits a content
+        transaction of its own. A savepoint rolls back all page effects on
+        refusal even if the caller catches the error and records a failure.
+        """
+        _require_transaction(tx)
+        async with tx.transaction() as mutation_tx:
+            return await self._mutate_on(
+                mutation_tx,
+                scope,
+                principal,
+                expected_rev=expected_rev,
+                key=key,
+                records=records,
+                state=state,
+                sync=False,
+            )
+
     async def _mutate(self, scope, principal, *, expected_rev, key, records, state, sync):
         self._policy()
         async with self.db.transaction() as tx:
-            document, access, actor = await self._load(
-                tx, scope, principal, "owner" if sync else "write"
-            )
-            transaction, replay = await self._claim(
+            return await self._mutate_on(
                 tx,
                 scope,
                 principal,
-                key,
-                {
-                    "op": "sync" if sync else "mutate",
-                    "expected_rev": expected_rev,
-                    "records": records,
-                    "state": state,
-                },
+                expected_rev=expected_rev,
+                key=key,
+                records=records,
+                state=state,
+                sync=sync,
             )
-            if replay:
-                return replay
-            self._precondition(document, expected_rev)
-            revisions, changed, seen = {}, [], set()
-            collections = {c["id"]: c for c in document["collections"]}
-            for change in records:
-                if not isinstance(change, dict) or set(change) - {
-                    "op",
-                    "collection",
-                    "id",
-                    "expected_rev",
-                    "value",
-                    "source",
-                }:
-                    raise StoreError("schema_invalid")
-                cid, rid = change.get("collection"), change.get("id")
-                if (cid, rid) in seen:
-                    raise StoreError("schema_invalid")
-                seen.add((cid, rid))
-                collection = collections.get(cid)
-                if collection is None or not access.visible_row(actor, cid, rid):
-                    raise StoreError("action_denied", 403)
-                if (collection["mode"] == "synced") != sync:
-                    raise StoreError("synced_write_denied", 403)
-                row = await tx.fetch_one(
-                    "SELECT rev,record FROM {{tables.page_records}} WHERE scope=$1 AND collection=$2 AND record_id=$3",
+
+    async def _mutate_on(self, tx, scope, principal, *, expected_rev, key, records, state, sync):
+        self._policy()
+        document, access, actor = await self._load(
+            tx, scope, principal, "owner" if sync else "write"
+        )
+        transaction, replay = await self._claim(
+            tx,
+            scope,
+            principal,
+            key,
+            {
+                "op": "sync" if sync else "mutate",
+                "expected_rev": expected_rev,
+                "records": records,
+                "state": state,
+            },
+        )
+        if replay:
+            return replay
+        self._precondition(document, expected_rev)
+        revisions, changed, seen = {}, [], set()
+        collections = {c["id"]: c for c in document["collections"]}
+        for change in records:
+            if not isinstance(change, dict) or set(change) - {
+                "op",
+                "collection",
+                "id",
+                "expected_rev",
+                "value",
+                "source",
+            }:
+                raise StoreError("schema_invalid")
+            cid, rid = change.get("collection"), change.get("id")
+            if (cid, rid) in seen:
+                raise StoreError("schema_invalid")
+            seen.add((cid, rid))
+            collection = collections.get(cid)
+            if collection is None or not access.visible_row(actor, cid, rid):
+                raise StoreError("action_denied", 403)
+            if (collection["mode"] == "synced") != sync:
+                raise StoreError("synced_write_denied", 403)
+            row = await tx.fetch_one(
+                "SELECT rev,record FROM {{tables.page_records}} WHERE scope=$1 AND collection=$2 AND record_id=$3",
+                scope.key,
+                cid,
+                rid,
+            )
+            operation = change.get("op")
+            expected = change.get("expected_rev")
+            if expected is None:
+                raise StoreError("precondition_required", 428)
+            if operation not in {"create", "update", "delete"}:
+                raise StoreError("schema_invalid")
+            if type(expected) is not int or (
+                (operation == "create" and (row is not None or expected != 0))
+                or (
+                    operation != "create"
+                    and (row is None or row["record"] is None or row["rev"] != expected)
+                )
+            ):
+                raise StoreError("revision_conflict", 409)
+            rev = 1 if row is None else row["rev"] + 1
+            if rev > MAX_REV:
+                raise StoreError("revision_exhausted", 409)
+            previous = decoded(row["record"])["value"] if row and row["record"] else {}
+            proposed = change.get("value") if isinstance(change.get("value"), dict) else {}
+            allowed = access.value_fields(actor, collection, set(previous) | set(proposed))
+            if row and set(previous) - allowed:
+                raise StoreError("action_denied", 403)
+            if operation == "delete":
+                await tx.execute(
+                    "UPDATE {{tables.page_records}} SET rev=$4,record=NULL WHERE scope=$1 AND collection=$2 AND record_id=$3",
                     scope.key,
                     cid,
                     rid,
+                    rev,
                 )
-                operation = change.get("op")
-                expected = change.get("expected_rev")
-                if expected is None:
-                    raise StoreError("precondition_required", 428)
-                if operation not in {"create", "update", "delete"}:
-                    raise StoreError("schema_invalid")
-                if type(expected) is not int or (
-                    (operation == "create" and (row is not None or expected != 0))
-                    or (
-                        operation != "create"
-                        and (row is None or row["record"] is None or row["rev"] != expected)
-                    )
-                ):
-                    raise StoreError("revision_conflict", 409)
-                rev = 1 if row is None else row["rev"] + 1
-                if rev > MAX_REV:
-                    raise StoreError("revision_exhausted", 409)
-                previous = decoded(row["record"])["value"] if row and row["record"] else {}
-                proposed = change.get("value") if isinstance(change.get("value"), dict) else {}
-                allowed = access.value_fields(actor, collection, set(previous) | set(proposed))
-                if row and set(previous) - allowed:
+            else:
+                value = change.get("value")
+                if not isinstance(value, dict) or set(value) - allowed:
                     raise StoreError("action_denied", 403)
-                if operation == "delete":
-                    await tx.execute(
-                        "UPDATE {{tables.page_records}} SET rev=$4,record=NULL WHERE scope=$1 AND collection=$2 AND record_id=$3",
-                        scope.key,
-                        cid,
-                        rid,
-                        rev,
-                    )
-                else:
-                    value = change.get("value")
-                    if not isinstance(value, dict) or set(value) - allowed:
-                        raise StoreError("action_denied", 403)
-                    record = {"id": rid, "rev": rev, "value": value}
-                    if sync:
-                        record["source"] = change.get("source")
-                    elif "source" in change:
-                        raise StoreError("schema_invalid")
-                    self._validate_record(document, collection, record)
-                    await self._put_record(tx, scope, cid, record)
-                revisions[f"{cid}/{rid}"] = rev
-                changed.append(
-                    {
-                        "collection": cid,
-                        "record_id": rid,
-                        "fields": sorted(change.get("value") or {}),
-                        "operation": operation,
-                    }
-                )
-            if state is not None:
-                if not isinstance(state, dict):
-                    raise StoreError("schema_invalid", details=[{"pointer": "/widget_state"}])
-                document["widget_state"].update(copy.deepcopy(state))
-                changed.append({"widget_state": sorted(state)})
-            await self._project(tx, scope, copy.deepcopy(document), access, access.owner)
-            return await self._commit(
-                tx, scope, principal, transaction, document, expected_rev, changed, revisions
+                record = {"id": rid, "rev": rev, "value": value}
+                if sync:
+                    record["source"] = change.get("source")
+                elif "source" in change:
+                    raise StoreError("schema_invalid")
+                self._validate_record(document, collection, record)
+                await self._put_record(tx, scope, cid, record)
+            revisions[f"{cid}/{rid}"] = rev
+            changed.append(
+                {
+                    "collection": cid,
+                    "record_id": rid,
+                    "fields": sorted(change.get("value") or {}),
+                    "operation": operation,
+                }
             )
+        if state is not None:
+            if not isinstance(state, dict):
+                raise StoreError("schema_invalid", details=[{"pointer": "/widget_state"}])
+            document["widget_state"].update(copy.deepcopy(state))
+            changed.append({"widget_state": sorted(state)})
+        await self._project(tx, scope, copy.deepcopy(document), access, access.owner)
+        return await self._commit(
+            tx, scope, principal, transaction, document, expected_rev, changed, revisions
+        )
 
     @staticmethod
     def _validate_record(document, collection, record):
@@ -746,6 +805,164 @@ class PageStore(LifecycleMixin):
             await self._fence(scope)
             return result
 
+    @staticmethod
+    def _record_access_args(scope, definition, access, actor, *, fields=None, record_ids=None):
+        allowed = (
+            access.visible_fields(actor, definition)
+            if fields is None
+            else access.value_fields(actor, definition, fields) & fields
+        )
+        return [
+            scope.key,
+            definition["id"],
+            sorted(access.hidden_rows.get(actor, {}).get(definition["id"], set()))
+            if actor != access.owner
+            else [],
+            sorted(allowed),
+            fields is None and access.all_value_fields(actor, definition),
+            record_ids,
+        ]
+
+    @staticmethod
+    def _projection_entries(projection):
+        if not isinstance(projection, Mapping) or set(projection) - {"collections", "assets"}:
+            raise StoreError("schema_invalid")
+        entries = projection.get("collections")
+        if not isinstance(entries, (list, tuple)) or len(entries) > 16:
+            raise StoreError("schema_invalid")
+        seen = set()
+        for entry in entries:
+            if not isinstance(entry, Mapping) or set(entry) != {
+                "collection",
+                "record_ids",
+                "fields",
+            }:
+                raise StoreError("schema_invalid")
+            cid = entry["collection"]
+            if not isinstance(cid, str) or not cid or cid in seen:
+                raise StoreError("schema_invalid")
+            seen.add(cid)
+            for name, maximum in (("record_ids", 200), ("fields", 64)):
+                values = entry[name]
+                if (
+                    not isinstance(values, (list, tuple))
+                    or not 1 <= len(values) <= maximum
+                    or any(not isinstance(v, str) or not v or v == "*" for v in values)
+                    or len(set(values)) != len(values)
+                ):
+                    raise StoreError("schema_invalid")
+        return entries
+
+    @staticmethod
+    def _snapshot_collections(source):
+        if (
+            not isinstance(source, Mapping)
+            or set(source) != {"page_rev", "collections"}
+            or type(source["page_rev"]) is not int
+            or not 1 <= source["page_rev"] <= MAX_REV
+            or not isinstance(source["collections"], (list, tuple))
+            or len(source["collections"]) > 16
+        ):
+            raise StoreError("schema_invalid")
+        result = {}
+        for collection in source["collections"]:
+            if (
+                not isinstance(collection, Mapping)
+                or set(collection) != {"id", "schema_version", "schema", "records"}
+                or not isinstance(collection["id"], str)
+                or not collection["id"]
+                or collection["id"] in result
+                or type(collection["schema_version"]) is not int
+                or collection["schema_version"] < 1
+                or not isinstance(collection["schema"], dict)
+                or inline_schema_errors(collection["schema"])
+                or not isinstance(collection["records"], (list, tuple))
+                or len(collection["records"]) > 200
+            ):
+                raise StoreError("schema_invalid")
+            seen = set()
+            for record in collection["records"]:
+                if (
+                    not isinstance(record, Mapping)
+                    or set(record) != {"id", "rev", "value"}
+                    or not isinstance(record["id"], str)
+                    or not record["id"]
+                    or record["id"] in seen
+                    or type(record["rev"]) is not int
+                    or not 1 <= record["rev"] <= MAX_REV
+                    or not isinstance(record["value"], dict)
+                    or not inline_value_valid(collection["schema"], record["value"])
+                ):
+                    raise StoreError("schema_invalid")
+                seen.add(record["id"])
+            result[collection["id"]] = collection
+        return result
+
+    async def read_projection_on(
+        self, tx, scope, *, creator_id, projection, expected_page_rev=None, source_snapshot=None
+    ):
+        """Project checked link data under the caller's transaction/link lock.
+
+        creator_id is the verified creator's ACL identity, never the anonymous
+        holder. The host binds scope and any immutable source to the checked
+        link. Pinned hosts must require a stored source; None reads live data.
+        """
+        _require_transaction(tx)
+        entries = self._projection_entries(projection)
+        if not isinstance(creator_id, str) or not creator_id:
+            raise StoreError("schema_invalid")
+        document, access, actor = await self._load_actor(tx, scope, creator_id, shared=True)
+        current = {c["id"]: c for c in document["collections"]}
+        source = None if source_snapshot is None else self._snapshot_collections(source_snapshot)
+        revision = document["rev"] if source is None else source_snapshot["page_rev"]
+        if expected_page_rev is not None:
+            self._precondition({"rev": revision}, expected_page_rev)
+        selected = []
+        for entry in entries:
+            cid = entry["collection"]
+            if cid not in current or (source is not None and cid not in source):
+                raise StoreError("action_denied", 403)
+            definition = current[cid] if source is None else source[cid]
+            args = self._record_access_args(
+                scope,
+                current[cid],
+                access,
+                actor,
+                fields=set(entry["fields"]),
+                record_ids=list(entry["record_ids"]),
+            )
+            if source is None:
+                records = [
+                    decoded(row["record"])
+                    for row in await tx.fetch_all(
+                        AUTHORIZED_RECORDS + "SELECT record FROM authorized ORDER BY record->>'id'",
+                        *args,
+                    )
+                ]
+            else:
+                records = definition["records"]
+            fields, hidden, ids = set(args[3]), set(args[2]), set(args[5])
+            selected.append(
+                {
+                    "id": cid,
+                    "schema_version": definition["schema_version"],
+                    "schema": access.redact_schema(actor, definition, fields=fields),
+                    "records": [
+                        {
+                            "id": r["id"],
+                            "rev": r["rev"],
+                            "value": {
+                                k: copy.deepcopy(v) for k, v in r["value"].items() if k in fields
+                            },
+                        }
+                        for r in sorted(records, key=lambda r: r["id"])
+                        if r["id"] in ids and r["id"] not in hidden
+                    ],
+                }
+            )
+        await self._fence(scope)
+        return {"page_rev": revision, "collections": selected}
+
     async def read_widget(self, scope, principal, *, widget_id, expected_page_rev, bind):
         if not isinstance(bind, dict):
             raise StoreError("schema_invalid", details=[{"pointer": "/bind"}])
@@ -807,15 +1024,7 @@ class PageStore(LifecycleMixin):
                 if cursor is None:
                     raise StoreError("cursor_invalid", 409)
                 offset = cursor["row_offset"]
-            args = [
-                scope.key,
-                definition["id"],
-                sorted(access.hidden_rows.get(actor, {}).get(definition["id"], set()))
-                if actor != access.owner
-                else [],
-                sorted(fields),
-                access.all_value_fields(actor, definition),
-            ]
+            args = self._record_access_args(scope, definition, access, actor)
 
             def parameter(value):
                 args.append(value)
@@ -846,14 +1055,7 @@ class PageStore(LifecycleMixin):
                 orders.append(f"record->'value'->{field}::text {direction} NULLS FIRST")
             orders.append("record->>'id' ASC")
             where = " AND ".join(clauses) or "TRUE"
-            authorized = """WITH authorized AS MATERIALIZED (
-                SELECT (record-'value') || jsonb_build_object('value', COALESCE(
-                    (SELECT jsonb_object_agg(key,value) FROM jsonb_each(record->'value')
-                     WHERE $5::boolean OR key=ANY($4::text[])), '{}'::jsonb)) AS record
-                FROM {{tables.page_records}}
-                WHERE scope=$1 AND collection=$2 AND record IS NOT NULL
-                  AND NOT(record_id=ANY($3::text[]))
-            ) """
+            authorized = AUTHORIZED_RECORDS
             count = await tx.fetch_value(
                 authorized + "SELECT count(*) FROM authorized WHERE " + where, *filter_args
             )
