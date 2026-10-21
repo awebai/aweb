@@ -825,6 +825,8 @@ ID and secret ID are minted. Definition and issuance refuse an incompatible
 combination, such as an open-request grant on a sensitive child or missing
 policy/operation pins. The template's policy must permit the intended child
 uses. Child operation lookup follows the explicit rule below.
+For an internal runner mint, §9.5 adds an immutable run binding that further
+restricts this copied grant; it does not change the grant record's shape.
 
 **One atomic child per issuance.** Add an ordered migration for server-managed
 lineage and expiry metadata: parent secret ID and parent value version, source
@@ -1012,8 +1014,50 @@ argv template: array; params substitute only as whole elements, never through a 
 env template: names that receive credential material or params, never a code-loading name,
 cwd, timeout, max output bytes, output projection,
 params: typed schema as in §8.1,
-credentials: [{secret_ref, delivery: short_lived | durable}]
+credentials: [{secret_ref, delivery: short_lived | durable, mint}]
 ```
+
+**Credential slots and mint recipes.** Each `secret_ref` is unique in the job's
+ordered credential list and names a fixed secret in the same installation and
+team. It is also the stable slot label used by `env` entries of the form
+`{"$credential": "<secret_ref>"}`. An environment reference must name a declared
+slot. It never names a future random child ref.
+
+- For `short_lived`, `secret_ref` names the **parent** and `mint` is exactly
+  `{operation_id, digest, params}`. The operation must resolve for that parent
+  under §8.4's CURRENT operation rule and be token-issuing with
+  `result_handling: store_as_secret`; `digest` is its exact approved operation/1
+  digest. Each `params` entry is exactly one of
+  `{"value": <typed literal>}` or `{"$param": "<job parameter name>"}`.
+- For `durable`, `mint` is `null`; there is no implicit mint operation. The job
+  also needs its explicit passkey-confirmed `allow_durable: true` flag (§9.5).
+- The recipe supplies every declared issuer parameter exactly once, with no
+  unknown names. A literal must satisfy that parameter's type and bounds at job
+  definition. A job-parameter reference must name a declared job parameter of
+  the same type. At admission, validate the job parameters, expand the recipe
+  without coercion, then validate every resulting value against the issuer's
+  constraints. Invalid mappings refuse with `params_invalid`; a schema match
+  never dispenses with validating the actual value.
+- Mappings fill only the issuer's declared parameter slots (§8.1). They cannot
+  replace fixed request fields, fixed role/session-policy terms, destinations,
+  kind parameters, capture/expiry pointers or the grant-template pin. Neither
+  the agent's run request nor an upstream response supplies a recipe or an
+  override. The owner confirmation shows each literal and each job-to-issuer
+  mapping, together with the resulting child authority.
+
+The job/1 digest is SHA-256 of
+`"aweb.secrets.job/1\n" || canonical_json(after without v)`, using the shared
+integer-only canonical JSON rules. It covers the ordered slots, complete mint
+recipes, parameter schemas, delivery modes and `allow_durable`, as well as the
+executable and other job fields. Changes require a new owner confirmation, job
+digest, run grant and runner-local pin. Jobs resolve through the installation's
+single CURRENT `job_id` definition, then compare its digest with the approved
+pin; mismatch refuses with `job_not_allowed`. There is no secret-scoped or
+ancestor job namespace and no fallback to a historical job definition. Each
+mint operation likewise resolves the parent's CURRENT operation under §8.4 and
+requires the recipe's exact digest at admission and the dispatch/release fences; an
+edit refuses with `operation_not_allowed`, without substituting another mint
+operation or a newer digest.
 
 **Argument and environment safety.** These rules are checked when a job is
 defined and checked again by the runner before each run.
@@ -1058,9 +1102,111 @@ honestly rather than detected.
   duration of 15 minutes or less. The runner receives a session triple.
 - **OAuth2 client credentials.** The runner receives an access token.
 
-secrets mints the credential through the broker, under the parent secret's
-token-issuing operation with `store_as_secret` handling. It seals the result to
-the runner and records both events.
+**One authorized run, with internal mints.** A `short_lived` slot is authorized
+by the parent's `run` grant for this exact installation CURRENT `job_id@digest`,
+not by a child grant that must itself pin the invoking job. The owner-confirmed
+job's recipe authorizes the named mint as an internal step of that run; it
+does not grant the caller independent broker access to the parent operation.
+Every credential slot needs its own matching authorization for the same verified
+requester, job, runner and frozen parameters. A grant for one parent grants
+nothing for another slot. Resolve and freeze the complete slot plan before
+approval or minting: source secret/version, authorizing grant/policy, recipe
+operation/digest and expanded parameters, and the complete pinned template
+snapshot. Approval rendering shows the job and its credential/mint plan. Every
+required parent approval binds the same job digest and job parameters through
+§10.4; all must be admitted for this one run. There is no second agent-visible
+request in which the caller chooses the mint's parameters.
+
+For each slot requiring approval, use §10.4's existing `run_job` request with
+that slot's source secret/version, parent run grant/policy and delivery mode;
+the shared job digest and typed job parameters bind its complete recipe.
+Persist its association with this run and slot. Admit all required approvals
+atomically with the run intent; internal mints reference that admission rather
+than consuming an approval again under a different dispatch ID. The plan and
+template snapshots are retained with the frozen request for rendering; neither
+a live job edit nor a live template lookup can change what the approver sees.
+
+secrets dispatches each mint through the broker's existing admission, network,
+custody and recording path, applying the selected operation and §8.4's template
+snapshot/hash, recording fence, expiry, lineage, containment, approver coverage
+and inherited rate limits. Internal mint authority is the recorded parent run
+grant. The template must match the same requester, and its policy is an
+additional restriction, including its time/rate constraints and listed
+approvers. If the parent secret or either policy requires approval, this slot
+requires approval before minting. Choose an approver eligible under both
+the parent's run policy and that template policy before minting; an empty
+intersection refuses with `no_eligible_approver`. A template never supplies a
+different principal's authority to release this run's credential.
+
+**Run-bound children.** The ordinary atomic capture still creates the child,
+sealed value, copied template grant, result and paired child/grant receipt
+(§8.4, §11.5). In that same transaction, add an immutable server-managed binding
+to the run dispatch ID, credential-slot ordinal, mint dispatch ID and issuing
+parent run grant ID. These fields are not job/1, secret/1 or agent inputs.
+The copied grant and its template pin remain intact; the binding restricts
+their use further. In particular:
+
+- The child can be released only to the originally selected runner through
+  that original run's parent-grant fence. It cannot be independently admitted
+  for a broker request or another run, regranted, or used as an issuer for
+  another derivation. Broker/derivation attempts refuse with
+  `operation_not_allowed`, independent runs with `job_not_allowed`, and regrant
+  changes with `change_kind_not_applicable`, even if a copied template allowance
+  would otherwise match. No new grant shape is added.
+- The template need not pin the invoking job: its copied allowances confer no
+  independent use of this run-bound child. The parent run grant supplies the
+  exact job pin, and the job supplies the mint operation pin, so these digest
+  dependencies have no cycle.
+- The run binding survives containment and re-enable, and cannot be cleared or
+  retargeted. Re-enabling never makes a run-bound child independently usable.
+  Revoking the recorded issuing run grant disables its children in the same
+  transaction, exactly as §8.4 requires.
+- Persist a unique mapping from `(run dispatch, slot ordinal)` to its mint
+  dispatch and resulting child/grant. Replay returns that same child. An
+  outcome-unknown mint goes through reconciliation before any new mint; a
+  later claim, retry or expired child does not silently mint a replacement.
+  A new run needs new admission and any required approvals.
+
+Missing, invalid or past upstream expiry refuses child creation. The child's
+deadline is recorded once using §8.4's immutable dispatch-start anchor, default
+3600-second deployment cap, upstream expiry and every ancestor expiry. The job
+cannot extend it. Recheck the full lineage, all issuing grants, parent versions,
+policies, approvals and CURRENT operation/job pins before releasing any slot,
+using §8.4's lock order. An expired or contained child prevents release; there
+is no fallback to a durable value. Assignment expiry is no later than any
+delivered child's effective expiry and the runner protocol's existing bound.
+If another slot fails after a mint, the already-created child stays run-bound
+and expires normally; it grants no partial runner release.
+
+**Slot substitution on the wire.** The signed assignment's `credentials` array
+has exactly the job's slot count and order. At index `i`, `secret_ref` is the
+actual delivered ref: the recorded run-bound child for a `short_lived` slot,
+or the selected secret for a `durable` slot. The runner maps this element to
+`job.credentials[i].secret_ref`, the stable environment label. It must not
+compare a fresh child ref for equality with the parent's label, search by an
+untrusted ref, or accept missing/extra slots. The existing assignment
+signature binds `job_digest`, `dispatch_id` and the hash of the complete
+ordered sealed-credential array; its per-item `{secret_ref, sealed}` shape is
+unchanged; reordering without a new signature fails that commitment. secrets
+validates the recorded substitution and lineage before signing; the runner
+trusts that signed assignment for the substitution, while
+independently enforcing its local job pin. Values are HPKE-sealed only to the
+selected runner. Both the internal mint and the run have their own operational
+and hook records; the mint's receipt retains the real `derived_grant_id`.
+
+**Ordinary derived children outside a run.** These remain supported (decision
+80): a child issued through an ordinary broker request has no run binding and
+needs its **own** explicit `run` grant/template pin for any job. Such a grant
+does not inherit the parent's permission. A durable-delivery job slot may name
+that child directly, or its fixed ancestor when the requested child's recorded
+lineage proves the relationship. Only the slot matching the run request's
+selected secret accepts this descendant substitution; other slots retain their
+fixed selectors. The same actual-ref/ordinal assignment rule applies. The job
+is still the installation CURRENT definition, its digest must match the child's
+grant and the runner's local pin, and its durable-delivery confirmation is
+required. A pre-existing job with no internal mint recipe can therefore be
+pinned by an ordinary issuer's template without a digest cycle. This path
+never accepts a run-bound child or borrows an ancestor grant.
 
 `delivery: durable` sends the durable value. It needs a passkey-confirmed
 per-job flag, and the console and events label it as reduced protection.
