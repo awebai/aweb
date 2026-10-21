@@ -163,3 +163,25 @@ byte-identical 49-test envelope file side by side through the train window.
 Main has no acic.4 lifetime test file, so that file is excluded from all three
 sides of this comparison. Source-path receipts bind each import to its expected
 export or worktree. Results are pending; the landing hold remains.
+
+## Shared checker and hosted-runner proof
+
+Compose stacks bind-mount scripts/test-postgres-storage.sh read-only; their
+health checks execute that file. The gate copies it to its existing shared
+bind directory and overrides the child mount to that host-visible path. Its
+generic Compose wrapper preserves each PostgreSQL memory budget and matches
+its swap limit, rather than replacing it with the generic sibling limit.
+The checker waits for TCP readiness so the initdb-only socket server cannot
+make a stack healthy early. Retained inspect output redacts POSTGRES_PASSWORD
+and PGPASSWORD; the generated password file is removed at exit.
+
+Real controls verify the gate wrapper keeps 2 GiB memory/swap and mounts the
+shared checker read-only; a deliberately wrong checker refuses health before
+the correct one succeeds. The normal PG16 Compose stack is also healthy.
+
+The GitHub-hosted test.yml dispatch at 4895ea1a completed Initialize containers
+successfully at 2026-10-21T04:29:27Z, then checkout/setup. All six workflows use
+identical PostgreSQL options. Run 39544262826/job 119038756394 was cancelled
+after this requested service proof; it is not a whole-suite green gate. The
+reviewer independently verified the successful service step. Its condition
+on hosted quoting/swap accounting is met.

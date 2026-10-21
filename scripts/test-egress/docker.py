@@ -5,6 +5,7 @@ Image preparation can download dependencies; the test runner has no external rou
 Evidence survives cleanup. No host credentials or identity directories are mounted.
 """
 import argparse
+import sys
 import json
 import hashlib
 from pathlib import Path
@@ -133,8 +134,9 @@ def main():
                                     'cat /sys/fs/cgroup/memory.peak; cat /sys/fs/cgroup/memory.events; du -sk /var/lib/postgresql/data'],
                                    capture_output=True, text=True)
             (evidence / 'postgres-usage.txt').write_text(usage.stdout + usage.stderr)
-            for suffix, command in [('log', ['logs', postgres]), ('inspect.json', ['inspect', postgres])]:
-                captured = subprocess.run(['docker', *command], capture_output=True, text=True)
+            for suffix, command in [('log', ['docker', 'logs', postgres]),
+                                    ('inspect.json', [sys.executable, str(ROOT / 'scripts/test-postgres-inspect.py'), postgres])]:
+                captured = subprocess.run(command, capture_output=True, text=True)
                 (evidence / ('postgres.' + suffix)).write_text(captured.stdout + captured.stderr)
         for container in reversed(containers):
             subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=subprocess.DEVNULL, check=True)

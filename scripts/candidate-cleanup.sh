@@ -10,7 +10,7 @@ cleanup() {
   # Preserve the run-owned PostgreSQL evidence before its tmpfs disappears.
   if [[ -n "${pg_id:-}" ]] && docker container inspect "$pg_id" >/dev/null 2>&1; then
     docker logs "$pg_id" > "$LOG_DIR/postgres.log" 2>&1 || cleanup_status=1
-    docker inspect "$pg_id" > "$LOG_DIR/postgres-inspect.json" || cleanup_status=1
+    python3 "$ROOT/scripts/test-postgres-inspect.py" "$pg_id" > "$LOG_DIR/postgres-inspect.json" || cleanup_status=1
     docker exec "$pg_id" sh -c 'cat /sys/fs/cgroup/memory.peak; cat /sys/fs/cgroup/memory.events; du -sk /var/lib/postgresql/data' > "$LOG_DIR/postgres-usage.txt" 2>&1 || true
   fi
   # Stop the runner before removing anything it could recreate.

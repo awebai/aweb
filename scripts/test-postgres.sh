@@ -11,7 +11,7 @@ cleanup() {
   trap - EXIT INT TERM
   if [ -n "$test_container" ]; then
     docker logs "$test_container" > "$test_evidence/postgres.log" 2>&1 || true
-    docker inspect "$test_container" > "$test_evidence/postgres-inspect.json" || true
+    python3 "$test_root/scripts/test-postgres-inspect.py" "$test_container" > "$test_evidence/postgres-inspect.json" || true
     docker exec "$test_container" sh -c 'cat /sys/fs/cgroup/memory.peak; cat /sys/fs/cgroup/memory.events; du -sk /var/lib/postgresql/data' > "$test_evidence/usage.txt" || true
     docker rm -f -v "$test_container" >/dev/null || test_status=1
   fi

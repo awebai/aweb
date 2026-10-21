@@ -568,6 +568,8 @@ services:
   postgres-awid:
     image: postgres:16-alpine
     tmpfs: ["/var/lib/postgresql/data:rw,nosuid,nodev,size=1g"]
+    volumes:
+      - "$REPO_ROOT/scripts/test-postgres-storage.sh:/test-postgres-storage.sh:ro"
     mem_limit: 2g
     memswap_limit: 2g
     environment:
@@ -575,7 +577,7 @@ services:
       POSTGRES_PASSWORD: awid-fed-e2e
       POSTGRES_DB: awid
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U awid -d awid && test \"\$\$(psql -U \"\$\${POSTGRES_USER:-postgres}\" -d \"\$\${POSTGRES_DB:-postgres}\" -Atqc 'show data_directory')\" = /var/lib/postgresql/data && test \"\$\$(readlink -f /var/lib/postgresql/data)\" = /var/lib/postgresql/data && test \"\$\$(stat -f -c %T /var/lib/postgresql/data)\" = tmpfs && test \"\$\$(readlink -f /var/lib/postgresql/data/pg_wal)\" = /var/lib/postgresql/data/pg_wal && test \"\$\$(cat /sys/fs/cgroup/memory.swap.max)\" = 0"]
+      test: ["CMD-SHELL", "sh /test-postgres-storage.sh"]
       interval: 2s
       timeout: 2s
       retries: 30
@@ -612,6 +614,8 @@ services:
   postgres-alpha:
     image: postgres:16-alpine
     tmpfs: ["/var/lib/postgresql/data:rw,nosuid,nodev,size=1g"]
+    volumes:
+      - "$REPO_ROOT/scripts/test-postgres-storage.sh:/test-postgres-storage.sh:ro"
     mem_limit: 2g
     memswap_limit: 2g
     environment:
@@ -619,7 +623,7 @@ services:
       POSTGRES_PASSWORD: aweb-fed-e2e
       POSTGRES_DB: aweb
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aweb -d aweb && test \"\$\$(psql -U \"\$\${POSTGRES_USER:-postgres}\" -d \"\$\${POSTGRES_DB:-postgres}\" -Atqc 'show data_directory')\" = /var/lib/postgresql/data && test \"\$\$(readlink -f /var/lib/postgresql/data)\" = /var/lib/postgresql/data && test \"\$\$(stat -f -c %T /var/lib/postgresql/data)\" = tmpfs && test \"\$\$(readlink -f /var/lib/postgresql/data/pg_wal)\" = /var/lib/postgresql/data/pg_wal && test \"\$\$(cat /sys/fs/cgroup/memory.swap.max)\" = 0"]
+      test: ["CMD-SHELL", "sh /test-postgres-storage.sh"]
       interval: 2s
       timeout: 2s
       retries: 30
@@ -658,6 +662,8 @@ $ALPHA_SERVER_BUILD
   postgres-beta:
     image: postgres:16-alpine
     tmpfs: ["/var/lib/postgresql/data:rw,nosuid,nodev,size=1g"]
+    volumes:
+      - "$REPO_ROOT/scripts/test-postgres-storage.sh:/test-postgres-storage.sh:ro"
     mem_limit: 2g
     memswap_limit: 2g
     environment:
@@ -665,7 +671,7 @@ $ALPHA_SERVER_BUILD
       POSTGRES_PASSWORD: aweb-fed-e2e
       POSTGRES_DB: aweb
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aweb -d aweb && test \"\$\$(psql -U \"\$\${POSTGRES_USER:-postgres}\" -d \"\$\${POSTGRES_DB:-postgres}\" -Atqc 'show data_directory')\" = /var/lib/postgresql/data && test \"\$\$(readlink -f /var/lib/postgresql/data)\" = /var/lib/postgresql/data && test \"\$\$(stat -f -c %T /var/lib/postgresql/data)\" = tmpfs && test \"\$\$(readlink -f /var/lib/postgresql/data/pg_wal)\" = /var/lib/postgresql/data/pg_wal && test \"\$\$(cat /sys/fs/cgroup/memory.swap.max)\" = 0"]
+      test: ["CMD-SHELL", "sh /test-postgres-storage.sh"]
       interval: 2s
       timeout: 2s
       retries: 30

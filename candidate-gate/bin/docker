@@ -18,7 +18,7 @@ sibling_memory="${AWEB_CANDIDATE_SIBLING_MEMORY:-4g}"
 sibling_pids="${AWEB_CANDIDATE_SIBLING_PIDS:-1024}"
 
 compose_with_limits() {
-  local -a prefix rest services compose_prefix build_services
+  local -a prefix rest services compose_prefix build_services postgres_services
   build_services=()
   local has_file=0 project_directory="${PWD}"
   while [[ "$#" -gt 0 ]]; do
@@ -113,9 +113,11 @@ compose_with_limits() {
     fi
   fi
 
+  local config_json
+  config_json="$("$real" compose "${compose_prefix[@]}" config --format json)"
+  mapfile -t postgres_services < <(printf '%s' "$config_json" | python3 -c 'import json,sys; print("\n".join(k for k,v in json.load(sys.stdin).get("services", {}).items() if v.get("image", "").startswith("postgres:")))')
   if [[ -n "${CANDIDATE_RESOURCE_MANIFEST:-}" ]]; then
-    local project config_json
-    config_json="$("$real" compose "${compose_prefix[@]}" config --format json)"
+    local project
     project="$(printf '%s' "$config_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')"
     mapfile -t build_services < <(printf '%s' "$config_json" | python3 -c 'import json,sys; print("\n".join(k for k,v in json.load(sys.stdin).get("services", {}).items() if "build" in v))')
     [[ -n "$project" ]] || { printf 'candidate compose project is unknown\n' >&2; exit 2; }
@@ -129,7 +131,7 @@ compose_with_limits() {
   override="$(mktemp "${TMPDIR:-/tmp}/aweb-candidate-compose-limits.XXXXXX")"
   {
     printf 'services:\n'
-    local service
+    local service pg_memory
     for service in "${services[@]}"; do
       printf '  %s:\n' "$service"
       printf '    labels:\n'
@@ -138,7 +140,18 @@ compose_with_limits() {
         printf '    build:\n      labels:\n        aweb.candidate-gate: %s\n' "$label"
       fi
       printf '    cpus: "%s"\n' "$sibling_cpus"
-      printf '    mem_limit: "%s"\n' "$sibling_memory"
+      if [[ " ${postgres_services[*]} " == *" $service "* ]]; then
+        # Keep the test PG budget; a generic 4g override conflicts with 2g swap.
+        pg_memory="$(printf '%s' "$config_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"][sys.argv[1]].get("mem_limit") or 2147483648)' "$service")"
+        printf '    mem_limit: "%s"\n    memswap_limit: "%s"\n' "$pg_memory" "$pg_memory"
+        if [[ -n "${AWEB_TEST_POSTGRES_CHECKER:-}" ]]; then
+          # The daemon sees this shared path, not the runner's source volume.
+          [[ -f "$AWEB_TEST_POSTGRES_CHECKER" ]] || { echo 'missing shared PostgreSQL checker' >&2; exit 2; }
+          printf '    volumes:\n      - type: bind\n        source: %s\n        target: /test-postgres-storage.sh\n        read_only: true\n' "$AWEB_TEST_POSTGRES_CHECKER"
+        fi
+      else
+        printf '    mem_limit: "%s"\n' "$sibling_memory"
+      fi
       printf '    pids_limit: %s\n' "$sibling_pids"
     done
   } > "$override"

@@ -25,9 +25,10 @@ services:
     # Create the separate `library` database alongside `aweb` on first init.
     # With tmpfs every `up` is a fresh init, so this always runs.
     volumes:
+      - "./scripts/test-postgres-storage.sh:/test-postgres-storage.sh:ro"
       - ./scripts/e2e/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aweb -d aweb && test \"$$(psql -U \"$${POSTGRES_USER:-postgres}\" -d \"$${POSTGRES_DB:-postgres}\" -Atqc 'show data_directory')\" = /var/lib/postgresql/data && test \"$$(readlink -f /var/lib/postgresql/data)\" = /var/lib/postgresql/data && test \"$$(stat -f -c %T /var/lib/postgresql/data)\" = tmpfs && test \"$$(readlink -f /var/lib/postgresql/data/pg_wal)\" = /var/lib/postgresql/data/pg_wal && test \"$$(cat /sys/fs/cgroup/memory.swap.max)\" = 0"]
+      test: ["CMD-SHELL", "sh /test-postgres-storage.sh"]
       interval: 2s
       timeout: 5s
       retries: 30

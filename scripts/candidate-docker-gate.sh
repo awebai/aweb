@@ -295,6 +295,7 @@ for db in postgres template1; do
     || refuse "pgcrypto pre-provision did not land in public for $db: '$ext_schema'"
 done
 mkdir -p "$docker_bind_root" "$checkout/.candidate-home"
+cp "$checkout/scripts/test-postgres-storage.sh" "$docker_bind_root/test-postgres-storage.sh"
 socket_gid="$(docker run --rm \
   --label "aweb.candidate-gate=$resource_label" \
   --cpus "$redis_cpus" --memory "$redis_memory" --pids-limit "$redis_pids" \
@@ -370,6 +371,7 @@ docker run --rm --init \
   -e GOFLAGS=-modcacherw \
   -e NPM_CONFIG_CACHE=/tmp/npm-cache \
   -e AWEB_DOCKER_BIND_ROOT="$docker_bind_root" \
+  -e AWEB_TEST_POSTGRES_CHECKER="$docker_bind_root/test-postgres-storage.sh" \
   -e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test \
   -e AWEB_A2A_E2E_PORT="$a2a_aweb_port" \
   -e AWID_A2A_E2E_PORT="$a2a_awid_port" \
