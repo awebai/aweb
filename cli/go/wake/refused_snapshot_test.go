@@ -24,12 +24,13 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 		refusal              string
 		initialSnapshotDelay time.Duration
 		slowRefusalCycle     bool
+		slowFinalInspect     bool
 	}{
 		{refusal: "paused"}, {refusal: "shell"}, {refusal: "blocked"},
 		{refusal: "prelaunch-not-launched"}, {refusal: "prelaunch-stopped"},
 		// Registration age is not snapshot age: slow startup must not spend
 		// the delivery budget before the refusal backoff has elapsed.
-		{refusal: "prelaunch-not-launched-delayed", initialSnapshotDelay: 3 * time.Second},
+		{refusal: "prelaunch-not-launched-delayed", initialSnapshotDelay: 3 * time.Second, slowFinalInspect: true},
 		// A loaded host can make one refused-delivery cycle take longer than a
 		// fixed wall-clock bound while the broker behaves correctly. Every
 		// terminal inspection of the second cycle is slow.
@@ -60,7 +61,8 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 			}
 			oats := filepath.Join(root, "oats")
 			slowInspect := filepath.Join(root, "slow-inspect")
-			script := "#!/bin/sh\nif [ \"$1 $2\" = \"session inspect\" ]; then if [ -f " + shellQuoteForTest(slowInspect) + " ]; then sleep 1.5; fi; cat " + shellQuoteForTest(statePath) + "; else cat >> " + shellQuoteForTest(inputPath) + "; printf '{\"ok\":true,\"result\":{\"submitted\":true}}'; fi\n"
+			oneSlowInspect := filepath.Join(root, "one-slow-inspect")
+			script := "#!/bin/sh\nif [ \"$1 $2\" = \"session inspect\" ]; then if [ -f " + shellQuoteForTest(slowInspect) + " ]; then sleep 1.5; fi; if [ -f " + shellQuoteForTest(oneSlowInspect) + " ]; then rm " + shellQuoteForTest(oneSlowInspect) + "; sleep 6; fi; cat " + shellQuoteForTest(statePath) + "; else cat >> " + shellQuoteForTest(inputPath) + "; printf '{\"ok\":true,\"result\":{\"submitted\":true}}'; fi\n"
 			if err := os.WriteFile(oats, []byte(script), 0755); err != nil {
 				t.Fatal(err)
 			}
@@ -68,7 +70,12 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 			var acks atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				if req.Method == http.MethodGet {
-					fetches.Add(1)
+					n := fetches.Add(1)
+					if tc.slowFinalInspect && n == 4 {
+						if err := os.WriteFile(oneSlowInspect, nil, 0600); err != nil {
+							t.Error(err)
+						}
+					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{{"message_id": "mail-1", "from_alias": "bob", "body": "snapshot recovery mail", "created_at": "2026-01-01T00:00:00Z"}}})
 				} else {
 					acks.Add(1)
