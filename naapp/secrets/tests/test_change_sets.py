@@ -96,10 +96,14 @@ class Installations:
     """The installation's grant, as the app-to-team-server source reports it:
     fresh for 55 seconds from each observation, inside the fence's 60."""
 
+    def __init__(self, *, team_id: str = TEAM, app_id: str = APP_ID) -> None:
+        self.team_id = team_id
+        self.app_id = app_id
+
     @property
     def grant(self) -> Grant:
         return Grant(
-            team_id=TEAM,
+            team_id=self.team_id,
             installation_id=INSTALLATION_ID,
             generation=1,
             scopes=frozenset({"secrets:use"}),
@@ -107,15 +111,15 @@ class Installations:
         )
 
     async def grant_for(self, team_id: str) -> Grant | None:
-        return self.grant if team_id == TEAM else None
+        return self.grant if team_id == self.team_id else None
 
     async def status_for(self, team_id: str) -> SimpleNamespace | None:
-        if team_id != TEAM:
+        if team_id != self.team_id:
             return None
         grant = self.grant
         return SimpleNamespace(
-            team_id=TEAM,
-            app_id=APP_ID,
+            team_id=self.team_id,
+            app_id=self.app_id,
             state="active",
             installation_id=INSTALLATION_ID,
             generation=1,

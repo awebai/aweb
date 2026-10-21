@@ -32,6 +32,7 @@ from aweb_naapp.runtime.installation import (
 )
 from aweb_naapp.runtime.passkeys import (
     ContactChangeRefused,
+    Designation,
     DesignationRefused,
     EnrolmentRefused,
     Passkeys,
@@ -42,7 +43,7 @@ from pgdbm import AsyncDatabaseManager
 
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_policy import keep_four_eyes_owners
-from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, owner_scope, record_owner
+from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, OwnerRequired, owner_scope, record_owner
 from aweb_secrets.principal import is_principal
 
 InstallationLookup = Callable[[str], Awaitable[AdmittedInstallation]]
@@ -100,6 +101,56 @@ class OwnerConsole:
         # is used by login AND by every subsequent S4 session request.
         return await self.directory.owner_of(self.db, scope) is not None
 
+    async def apply_owner_act(
+        self,
+        *,
+        admitted: AdmittedInstallation,
+        signing: bytes,
+        signature: str,
+        principal: PrincipalKey,
+        contact: str,
+    ) -> Designation:
+        """Apply bootstrap/recovery through the console's single guarded path.
+
+        The caller obtains admitted from authoritative installation lookup.
+        Order: installation fence, role hold, B3 candidate, four-eyes setting.
+        Deliver the returned designation only after this transaction commits.
+        """
+        if principal.team_id != admitted.team_id:
+            raise OwnerRequired("owner_required")
+        scope = owner_scope(admitted.installation_id, admitted.team_id, principal.principal_did)
+        expected = {
+            "app_id": admitted.app_id,
+            "installation_id": admitted.installation_id,
+            "role": scope,
+            "contact_sha256": contact_sha256(contact),
+        }
+        try:
+            prepared = await self.verifier.prepare(signing, signature, team_id=admitted.team_id)
+            async with self.db.transaction() as tx:
+                await self.fence.check(tx, admitted)
+                act = await self.verifier.consume_in(tx, prepared, expected_subject=expected)
+                await assign(tx, principal, OWNER_ROLE)
+                if not await hold_role(tx, principal, OWNER_ROLE):
+                    raise OwnerRequired("owner_required")
+                await record_owner(
+                    tx, installation_id=admitted.installation_id, principal=principal
+                )
+                designation = await self.passkeys.designate(
+                    tx, scope=scope, contact=contact, evidence=act
+                )
+                if prepared.act_name == "app-credential.recover":
+                    await keep_four_eyes_owners(
+                        tx,
+                        installation_id=admitted.installation_id,
+                        team_id=admitted.team_id,
+                        directory=self.directory,
+                        excluding=principal,
+                    )
+                return designation
+        except (Refused, DesignationRefused):
+            raise OwnerRequired("owner_required") from None
+
 
 def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRouter:
     """Mount only on the human-origin application. Never mount on the agent API."""
@@ -131,43 +182,19 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
         principal = PrincipalKey(team_id=admitted.team_id, principal_did=principal_did)
         contact = _text(body, "contact")
         scope = owner_scope(installation_id, admitted.team_id, principal_did)
-        expected = {
-            "app_id": admitted.app_id,
-            "installation_id": installation_id,
-            "role": scope,
-            "contact_sha256": contact_sha256(contact),
-        }
         try:
-            signing = base64.b64decode(_text(body, "signing"), validate=True)
-            prepared = await services.verifier.prepare(
-                signing, _text(body, "signature"), team_id=admitted.team_id
+            designation = await services.apply_owner_act(
+                admitted=admitted,
+                signing=base64.b64decode(_text(body, "signing"), validate=True),
+                signature=_text(body, "signature"),
+                principal=principal,
+                contact=contact,
             )
-            async with services.db.transaction() as tx:
-                await services.fence.check(tx, admitted)
-                act = await services.verifier.consume_in(tx, prepared, expected_subject=expected)
-                recovering = prepared.act_name == "app-credential.recover"
-                # The root act can grant this role; hold it before B3 locks
-                # approval candidates, so withdrawal serializes with bootstrap.
-                await assign(tx, principal, OWNER_ROLE)
-                if not await hold_role(tx, principal, OWNER_ROLE):
-                    raise HTTPException(status_code=403, detail="owner_required")
-                await record_owner(tx, installation_id=installation_id, principal=principal)
-                designation = await services.passkeys.designate(
-                    tx, scope=scope, contact=contact, evidence=act
-                )
-                if recovering:
-                    await keep_four_eyes_owners(
-                        tx,
-                        installation_id=installation_id,
-                        team_id=admitted.team_id,
-                        directory=services.directory,
-                        excluding=principal,
-                    )
         except InstallationRefused as refused:
             raise HTTPException(status_code=refused.status, detail=refused.code) from None
         except ChangeRefused as refused:
             raise HTTPException(status_code=403, detail=refused.code) from None
-        except (ValueError, Refused, DesignationRefused):
+        except (ValueError, OwnerRequired):
             raise HTTPException(status_code=403, detail="owner_required") from None
         await services.passkeys.deliver(designation)
         return {"scope": scope, "effective_at": designation.effective_at.isoformat()}
