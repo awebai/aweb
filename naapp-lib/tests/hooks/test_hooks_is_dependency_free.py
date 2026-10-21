@@ -56,3 +56,16 @@ def test_owner_act_nonces_load_only_pgdbm_beyond_the_verifier() -> None:
         _loaded("aweb_naapp.hooks.owner_act_nonces", tuple(m for m in RUNTIME if m not in allowed))
         == ""
     )
+
+
+def test_the_producer_loads_only_the_outbox_beyond_the_envelope() -> None:
+    # The outbox's pgdbm brings pydantic with it; nothing else may load.
+    allowed = ("pgdbm", "pydantic")
+    assert _loaded("aweb_naapp.hooks.producer", tuple(m for m in RUNTIME if m not in allowed)) == ""
+
+
+def test_the_transport_loads_the_egress_guard_and_no_runtime() -> None:
+    allowed = ("pgdbm", "pydantic")
+    assert (
+        _loaded("aweb_naapp.hooks.transport", tuple(m for m in RUNTIME if m not in allowed)) == ""
+    )

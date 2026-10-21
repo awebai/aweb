@@ -76,7 +76,7 @@ from aweb_naapp.runtime.authorization import (
     authorize_request,
     is_placeholder,
 )
-from aweb_naapp.runtime.db import NaappDatabase
+from aweb_naapp.runtime.db import NaappDatabase, Store
 from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.settings import NaappSettings
@@ -121,12 +121,14 @@ class NaappRuntime:
         manifest_path: Path,
         root_path: str = "",
         awid_transport: httpx.AsyncBaseTransport | None = None,
+        stores: Sequence[Store] = (),
     ) -> None:
         self.settings = settings
         # The external prefix the server serves the app under (its ASGI root path).
         self.root_path = root_path.rstrip("/")
         self.module_name = module_name
         self.migrations_path = migrations_path
+        self.stores = tuple(stores)
         self._awid_transport = awid_transport
         self._database: NaappDatabase | None = None
         self._team_cache: AWIDTeamCache | None = None
@@ -181,7 +183,10 @@ class NaappRuntime:
     async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:
         self.check_authorized_routes(app)
         database = NaappDatabase(
-            self.settings, module_name=self.module_name, migrations_path=self.migrations_path
+            self.settings,
+            module_name=self.module_name,
+            migrations_path=self.migrations_path,
+            stores=self.stores,
         )
         await database.connect()
         self._database = database

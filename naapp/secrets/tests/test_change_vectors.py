@@ -33,6 +33,7 @@ from aweb_secrets.change import (
     REENABLE_TARGETS,
     ChangeRefused,
     check_confirmable,
+    check_confirmer,
     covered_bytes,
     parse_change,
     validate_change,
@@ -42,6 +43,7 @@ VECTOR = json.loads((Path(__file__).parents[1] / "vectors" / "change-v1.json").r
 POSITIVE = VECTOR["positive_cases"]
 NEGATIVE = VECTOR["negative_cases"]
 CONFIRMATIONS = VECTOR["confirmation_cases"]
+CONFIRMERS = VECTOR["confirmer_cases"]
 
 
 def _bytes(value: str) -> bytes:
@@ -129,6 +131,18 @@ def test_confirmation_cases(case: dict) -> None:
     assert refused.value.code == case["expected"]
 
 
+@pytest.mark.parametrize("case", CONFIRMERS, ids=lambda case: case["name"])
+def test_confirmer_cases(case: dict) -> None:
+    change = _case(case["of"])["request"]
+    check = {"distinct_approver": case["distinct_approver"], "confirmer": case["confirmer"]}
+    if case["expected"] == "confirmable":
+        check_confirmer(change, **check)
+        return
+    with pytest.raises(ChangeRefused) as refused:
+        check_confirmer(change, **check)
+    assert refused.value.code == case["expected"]
+
+
 class _Policies:
     def __init__(self, policy: ActionPolicy) -> None:
         self._policy = policy
@@ -138,13 +152,18 @@ class _Policies:
 
 
 class _Directory:
-    approver = Approver(subject="owner-1", subject_type="app_local", contact="owner@example.com")
+    approver = Approver(
+        scope="secrets.owner.fixture",
+        subject="owner-1",
+        subject_type="app_local",
+        contact="owner@example.com",
+    )
 
-    async def designated_approver(self, policy: ActionPolicy) -> Approver | None:
-        return self.approver
+    async def candidates(self, policy: ActionPolicy, request) -> list[Approver]:
+        return [self.approver]
 
-    async def is_current(self, approver_subject: str, policy: ActionPolicy) -> bool:
-        return approver_subject == self.approver.subject
+    async def is_current(self, scope: str, subject: str) -> bool:
+        return (scope, subject) == (self.approver.scope, self.approver.subject)
 
 
 class _Mailbox:
@@ -178,7 +197,7 @@ async def test_b2_mint_records_the_vector_digest(test_db_factory) -> None:
                 version=policy["version"],
                 min_assurance=Assurance.PASSKEY,
                 ttl=timedelta(minutes=15),
-                approver_scope="secrets.owner.fixture",
+                approver_scopes=("secrets.owner.fixture",),
             )
         ),
         approvers=_Directory(),

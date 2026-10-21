@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 from uuid import UUID
 
@@ -17,6 +17,7 @@ from aweb_naapp.dispatch import (
     Dispatch,
     Dispatches,
     DispatchInFlight,
+    FenceTookLock,
     InvalidTransition,
     ReconciliationPending,
     State,
@@ -76,8 +77,28 @@ def machine(recorder: Recorder) -> Dispatches:
     )
 
 
-async def no_fence(tx: TransactionManager, dispatch: Dispatch) -> None:
-    return None
+class CallFence:
+    """A fence whose phases are the given coroutines; with neither, it locks
+    and checks nothing."""
+
+    def __init__(
+        self,
+        check: Callable[[TransactionManager, Dispatch], Awaitable[None]] | None = None,
+        prepare: Callable[[TransactionManager], Awaitable[None]] | None = None,
+    ) -> None:
+        self._check = check
+        self._prepare = prepare
+
+    async def prepare(self, tx: TransactionManager) -> None:
+        if self._prepare is not None:
+            await self._prepare(tx)
+
+    async def check(self, tx: TransactionManager, dispatch: Dispatch) -> None:
+        if self._check is not None:
+            await self._check(tx, dispatch)
+
+
+NO_FENCE = CallFence()
 
 
 async def _admitted(
@@ -93,14 +114,14 @@ async def _admitted(
         await machine.create(
             tx, dispatch_id=dispatch_id, subject=subject, action=action, retry_exempt=retry_exempt
         )
-        await machine.admit(tx, dispatch_id)
+        await machine.admit(tx, dispatch_id, fence=NO_FENCE)
     return dispatch_id
 
 
 async def _dispatching(db: AsyncDatabaseManager, machine: Dispatches, **kwargs) -> UUID:
     dispatch_id = await _admitted(db, machine, **kwargs)
     async with db.transaction() as tx:
-        await machine.begin_dispatch(tx, dispatch_id, fence=no_fence)
+        await machine.begin_dispatch(tx, dispatch_id, fence=NO_FENCE)
     return dispatch_id
 
 
@@ -143,7 +164,7 @@ async def test_approval_states(db: AsyncDatabaseManager, machine: Dispatches) ->
     async with db.transaction() as tx:
         await machine.create(tx, dispatch_id=approved, subject=SUBJECT, action=ACTION)
         await machine.await_approval(tx, approved)
-        await machine.admit(tx, approved)
+        await machine.admit(tx, approved, fence=NO_FENCE)
     assert (await _state(db, machine, approved)).state is State.ADMITTED
 
 
@@ -213,7 +234,7 @@ async def test_a_not_sent_retry_keeps_the_dispatch_id(
     async with db.transaction() as tx:
         assert await machine.not_sent(tx, dispatch_id, {"error": "connect"}) is True
     async with db.transaction() as tx:
-        await machine.begin_dispatch(tx, dispatch_id, fence=no_fence)
+        await machine.begin_dispatch(tx, dispatch_id, fence=NO_FENCE)
         await machine.complete(tx, dispatch_id, {"status": 200})
     dispatch = await _state(db, machine, dispatch_id)
     assert (dispatch.state, dispatch.attempts) == (State.COMPLETED, 2)
@@ -234,8 +255,8 @@ async def test_a_failing_enqueue_leaves_the_previous_state(
     dispatch_id = uuid.uuid4()
     steps = [
         lambda tx: machine.create(tx, dispatch_id=dispatch_id, subject=SUBJECT, action=ACTION),
-        lambda tx: machine.admit(tx, dispatch_id),
-        lambda tx: machine.begin_dispatch(tx, dispatch_id, fence=no_fence),
+        lambda tx: machine.admit(tx, dispatch_id, fence=NO_FENCE),
+        lambda tx: machine.begin_dispatch(tx, dispatch_id, fence=NO_FENCE),
         lambda tx: machine.complete(tx, dispatch_id, {"status": 200}),
     ]
     order = [State.RECEIVED, State.ADMITTED, State.DISPATCHING, State.COMPLETED]
@@ -267,7 +288,7 @@ async def test_a_failing_fence_refuses_before_dispatching(
 
     with pytest.raises(FenceRefused):
         async with db.transaction() as tx:
-            await machine.begin_dispatch(tx, dispatch_id, fence=fence)
+            await machine.begin_dispatch(tx, dispatch_id, fence=CallFence(check=fence))
     assert (await _state(db, machine, dispatch_id)).state is State.ADMITTED
     assert State.DISPATCHING not in recorder.states(dispatch_id)
     async with db.transaction() as tx:
@@ -287,7 +308,7 @@ async def test_the_fence_holds_the_row_lock_until_dispatching_commits(
 
     async def dispatcher() -> None:
         async with db.transaction() as tx:
-            await machine.begin_dispatch(tx, dispatch_id, fence=slow_fence)
+            await machine.begin_dispatch(tx, dispatch_id, fence=CallFence(check=slow_fence))
 
     async def canceller() -> None:
         await fence_entered.wait()
@@ -308,7 +329,7 @@ async def test_a_cancel_committed_before_the_fence_stops_the_dispatch(
         await machine.close(tx, dispatch_id, State.CANCELLED)
     with pytest.raises(InvalidTransition):
         async with db.transaction() as tx:
-            await machine.begin_dispatch(tx, dispatch_id, fence=no_fence)
+            await machine.begin_dispatch(tx, dispatch_id, fence=NO_FENCE)
     assert (await _state(db, machine, dispatch_id)).state is State.CANCELLED
 
 
@@ -333,14 +354,14 @@ async def test_an_unreconciled_outcome_blocks_the_same_subject_and_action(
         await machine.create(tx, dispatch_id=blocked, subject=SUBJECT, action=ACTION)
     with pytest.raises(ReconciliationPending) as pending:
         async with db.transaction() as tx:
-            await machine.admit(tx, blocked)
+            await machine.admit(tx, blocked, fence=NO_FENCE)
     assert pending.value.code == "reconciliation_pending"
     await _admitted(db, machine, subject="did:aw:other")
     await _admitted(db, machine, action="credential-1:list-charges")
 
     async with db.transaction() as tx:
         await machine.reconcile(tx, unknown, State.RECONCILED_FAILED, {"by": "owner"})
-        await machine.admit(tx, blocked)
+        await machine.admit(tx, blocked, fence=NO_FENCE)
     assert (await _state(db, machine, blocked)).state is State.ADMITTED
     assert (await _state(db, machine, unknown)).result == {"by": "owner"}
 
@@ -381,10 +402,10 @@ async def test_a_not_sent_retry_is_blocked_by_an_unknown_outcome_of_its_pair(
     await quick.sweep(db)
     with pytest.raises(ReconciliationPending):
         async with db.transaction() as tx:
-            await machine.begin_dispatch(tx, retrying, fence=no_fence)
+            await machine.begin_dispatch(tx, retrying, fence=NO_FENCE)
     async with db.transaction() as tx:
         await machine.reconcile(tx, unknown, State.RECONCILED_FAILED, {})
-        await machine.begin_dispatch(tx, retrying, fence=no_fence)
+        await machine.begin_dispatch(tx, retrying, fence=NO_FENCE)
 
 
 async def test_a_dispatch_admitted_before_the_sweep_is_blocked_at_dispatch(
@@ -396,15 +417,15 @@ async def test_a_dispatch_admitted_before_the_sweep_is_blocked_at_dispatch(
     running = uuid.uuid4()
     async with db.transaction() as tx:
         await quick.create(tx, dispatch_id=running, subject=SUBJECT, action=ACTION)
-        await quick.admit(tx, running)
-        await quick.begin_dispatch(tx, running, fence=no_fence)
+        await quick.admit(tx, running, fence=NO_FENCE)
+        await quick.begin_dispatch(tx, running, fence=NO_FENCE)
     await asyncio.sleep(0.2)
     await quick.sweep(db)
     with pytest.raises(ReconciliationPending):
         async with db.transaction() as tx:
-            await quick.begin_dispatch(tx, admitted, fence=no_fence)
+            await quick.begin_dispatch(tx, admitted, fence=NO_FENCE)
     async with db.transaction() as tx:
-        await quick.begin_dispatch(tx, exempt, fence=no_fence)
+        await quick.begin_dispatch(tx, exempt, fence=NO_FENCE)
 
 
 async def test_a_pair_has_at_most_one_dispatch_in_flight(
@@ -413,17 +434,17 @@ async def test_a_pair_has_at_most_one_dispatch_in_flight(
     first = await _admitted(db, machine)
     second = await _admitted(db, machine)
     async with db.transaction() as tx:
-        await machine.begin_dispatch(tx, first, fence=no_fence)
+        await machine.begin_dispatch(tx, first, fence=NO_FENCE)
     with pytest.raises(DispatchInFlight) as in_flight:
         async with db.transaction() as tx:
-            await machine.begin_dispatch(tx, second, fence=no_fence)
+            await machine.begin_dispatch(tx, second, fence=NO_FENCE)
     assert in_flight.value.code == "dispatch_in_flight"
     with pytest.raises(DispatchInFlight):
         await _admitted(db, machine)
     await _admitted(db, machine, subject="did:aw:other")
     async with db.transaction() as tx:
         await machine.complete(tx, first, {"status": 200})
-        await machine.begin_dispatch(tx, second, fence=no_fence)
+        await machine.begin_dispatch(tx, second, fence=NO_FENCE)
 
 
 async def test_concurrent_dispatches_of_one_pair_yield_one(
@@ -437,7 +458,7 @@ async def test_concurrent_dispatches_of_one_pair_yield_one(
 
     async def begin(dispatch_id: UUID) -> None:
         async with db.transaction() as tx:
-            await machine.begin_dispatch(tx, dispatch_id, fence=slow_fence)
+            await machine.begin_dispatch(tx, dispatch_id, fence=CallFence(check=slow_fence))
 
     results = await asyncio.gather(begin(first), begin(second), return_exceptions=True)
     assert sorted(type(r).__name__ for r in results) == ["DispatchInFlight", "NoneType"]
@@ -457,7 +478,7 @@ async def test_admission_racing_the_sweep_is_refused(
 
     async def admit() -> None:
         async with db.transaction() as tx:
-            await quick.admit(tx, newcomer)
+            await quick.admit(tx, newcomer, fence=NO_FENCE)
 
     results = await asyncio.gather(quick.sweep(db), admit(), return_exceptions=True)
     assert results[0] == 1
@@ -479,7 +500,7 @@ async def test_a_slow_fence_does_not_eat_the_sweep_margin(
         await asyncio.sleep(0.7)
 
     async with db.transaction() as tx:
-        await machine.begin_dispatch(tx, dispatch_id, fence=slow_fence)
+        await machine.begin_dispatch(tx, dispatch_id, fence=CallFence(check=slow_fence))
     assert await machine.sweep(db) == 0
     assert (await _state(db, machine, dispatch_id)).state is State.DISPATCHING
 
@@ -604,3 +625,184 @@ def test_the_sweep_threshold_must_be_positive(recorder: Recorder) -> None:
     for max_dispatch, margin in ((timedelta(0), timedelta(1)), (timedelta(1), timedelta(0))):
         with pytest.raises(ValueError):
             Dispatches(on_transition=recorder, max_dispatch=max_dispatch, sweep_margin=margin)
+
+
+# The fence comes first: its prepare runs before S3 takes any lock, and its
+# check runs under S3's locks without taking any of its own.
+
+
+async def _held(tx: TransactionManager) -> dict[str, int]:
+    """The locks this transaction holds that S3 takes: its row lock on
+    dispatches and the pair's advisory lock."""
+    row = await tx.fetch_one(
+        """
+        SELECT count(*) FILTER (WHERE locktype = 'advisory') AS advisory,
+               count(*) FILTER (WHERE locktype = 'relation' AND mode = 'RowShareLock'
+                                AND relation = '{{tables.dispatches}}'::regclass) AS dispatch_rows
+        FROM pg_locks WHERE pid = pg_backend_pid() AND granted
+        """
+    )
+    assert row is not None
+    return {"advisory": row["advisory"], "dispatch_rows": row["dispatch_rows"]}
+
+
+@pytest.mark.parametrize("step", ["admit", "begin_dispatch"])
+async def test_the_fence_prepares_before_s3_locks_and_checks_under_them(
+    db: AsyncDatabaseManager, machine: Dispatches, step: str
+) -> None:
+    seen: dict[str, dict[str, int]] = {}
+
+    async def prepare(tx: TransactionManager) -> None:
+        seen["prepare"] = await _held(tx)
+
+    async def check(tx: TransactionManager, dispatch: Dispatch) -> None:
+        seen["check"] = await _held(tx)
+
+    fence = CallFence(check=check, prepare=prepare)
+    dispatch_id = uuid.uuid4()
+    async with db.transaction() as tx:
+        await machine.create(tx, dispatch_id=dispatch_id, subject=SUBJECT, action=ACTION)
+    async with db.transaction() as tx:
+        await machine.admit(tx, dispatch_id, fence=fence if step == "admit" else NO_FENCE)
+    if step == "begin_dispatch":
+        async with db.transaction() as tx:
+            await machine.begin_dispatch(tx, dispatch_id, fence=fence)
+    assert seen["prepare"] == {"advisory": 0, "dispatch_rows": 0}
+    assert seen["check"] == {"advisory": 1, "dispatch_rows": 1}
+
+
+@pytest.mark.parametrize("step", ["admit", "begin_dispatch"])
+async def test_a_fence_refusing_in_prepare_leaves_no_s3_lock_and_the_dispatch_as_it_was(
+    db: AsyncDatabaseManager, machine: Dispatches, step: str
+) -> None:
+    async def refuse(tx: TransactionManager) -> None:
+        raise FenceRefused
+
+    dispatch_id = uuid.uuid4()
+    async with db.transaction() as tx:
+        await machine.create(tx, dispatch_id=dispatch_id, subject=SUBJECT, action=ACTION)
+    if step == "begin_dispatch":
+        async with db.transaction() as tx:
+            await machine.admit(tx, dispatch_id, fence=NO_FENCE)
+    before = (await _state(db, machine, dispatch_id)).state
+    async with db.transaction() as tx:
+        with pytest.raises(FenceRefused):
+            await getattr(machine, step)(tx, dispatch_id, fence=CallFence(prepare=refuse))
+        assert await _held(tx) == {"advisory": 0, "dispatch_rows": 0}
+    assert (await _state(db, machine, dispatch_id)).state is before
+
+
+async def test_a_fence_refusing_admission_leaves_the_dispatch_received(
+    db: AsyncDatabaseManager, machine: Dispatches
+) -> None:
+    async def refuse(tx: TransactionManager, dispatch: Dispatch) -> None:
+        raise FenceRefused
+
+    dispatch_id = uuid.uuid4()
+    async with db.transaction() as tx:
+        await machine.create(tx, dispatch_id=dispatch_id, subject=SUBJECT, action=ACTION)
+    with pytest.raises(FenceRefused):
+        async with db.transaction() as tx:
+            await machine.admit(tx, dispatch_id, fence=CallFence(check=refuse))
+    assert (await _state(db, machine, dispatch_id)).state is State.RECEIVED
+
+
+@pytest.fixture
+async def installations(db: AsyncDatabaseManager) -> AsyncDatabaseManager:
+    """An app's installation rows, which its fences lock."""
+    await db.execute(
+        "CREATE TABLE {{tables.installations}} (team_id TEXT PRIMARY KEY, generation INT NOT NULL)"
+    )
+    await db.execute("INSERT INTO {{tables.installations}} VALUES ('team-1', 1)")
+    return db
+
+
+@pytest.mark.parametrize(
+    "late_lock",
+    [
+        "SELECT generation FROM {{tables.installations}} WHERE team_id = 'team-1' FOR SHARE",
+        "UPDATE {{tables.installations}} SET generation = generation WHERE team_id = 'team-1'",
+        "SELECT pg_advisory_xact_lock(42)",
+    ],
+)
+async def test_a_check_that_takes_a_lock_is_refused(
+    installations: AsyncDatabaseManager, machine: Dispatches, late_lock: str
+) -> None:
+    async def check(tx: TransactionManager, dispatch: Dispatch) -> None:
+        await tx.execute(late_lock)
+
+    dispatch_id = await _admitted(installations, machine)
+    with pytest.raises(FenceTookLock):
+        async with installations.transaction() as tx:
+            await machine.begin_dispatch(tx, dispatch_id, fence=CallFence(check=check))
+    assert (await _state(installations, machine, dispatch_id)).state is State.ADMITTED
+
+
+async def test_a_check_that_only_reads_what_prepare_locked_is_accepted(
+    installations: AsyncDatabaseManager, machine: Dispatches
+) -> None:
+    async def prepare(tx: TransactionManager) -> None:
+        await tx.execute(
+            "SELECT 1 FROM {{tables.installations}} WHERE team_id = 'team-1' FOR SHARE"
+        )
+
+    async def check(tx: TransactionManager, dispatch: Dispatch) -> None:
+        await tx.fetch_value(
+            "SELECT generation FROM {{tables.installations}} WHERE team_id = 'team-1'"
+        )
+
+    dispatch_id = await _admitted(installations, machine)
+    async with installations.transaction() as tx:
+        await machine.begin_dispatch(tx, dispatch_id, fence=CallFence(check=check, prepare=prepare))
+    assert (await _state(installations, machine, dispatch_id)).state is State.DISPATCHING
+
+
+def _installation_fence(*, mode: str, hold: float = 0.0) -> CallFence:
+    """An installation fence: prepare locks the team's row (FOR UPDATE when
+    admitting, FOR SHARE when dispatching), check reads it under S3's locks."""
+
+    async def prepare(tx: TransactionManager) -> None:
+        await tx.execute(
+            f"SELECT 1 FROM {{{{tables.installations}}}} WHERE team_id = 'team-1' FOR {mode}"
+        )
+        await asyncio.sleep(hold)
+
+    async def check(tx: TransactionManager, dispatch: Dispatch) -> None:
+        await tx.fetch_value(
+            "SELECT generation FROM {{tables.installations}} WHERE team_id = 'team-1'"
+        )
+
+    return CallFence(check=check, prepare=prepare)
+
+
+async def test_admission_and_dispatch_of_one_pair_never_deadlock(
+    installations: AsyncDatabaseManager, machine: Dispatches
+) -> None:
+    db = installations
+    for round_number in range(10):
+        action = f"{ACTION}:{round_number}"
+        dispatching = await _admitted(db, machine, action=action)
+        newcomer = uuid.uuid4()
+        async with db.transaction() as tx:
+            await machine.create(tx, dispatch_id=newcomer, subject=SUBJECT, action=action)
+
+        async def admit(dispatch_id: UUID) -> None:
+            async with db.transaction() as tx:
+                await machine.admit(
+                    tx, dispatch_id, fence=_installation_fence(mode="UPDATE", hold=0.1)
+                )
+
+        async def dispatch(dispatch_id: UUID) -> None:
+            await asyncio.sleep(0.02)
+            async with db.transaction() as tx:
+                await machine.begin_dispatch(
+                    tx, dispatch_id, fence=_installation_fence(mode="SHARE")
+                )
+
+        # Whichever commits first decides whether the other is refused as in
+        # flight; neither may fail any other way.
+        results = await asyncio.gather(
+            admit(newcomer), dispatch(dispatching), return_exceptions=True
+        )
+        for result in results:
+            assert result is None or isinstance(result, DispatchInFlight), results

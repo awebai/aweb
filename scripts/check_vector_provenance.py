@@ -29,6 +29,9 @@ MANAGED_PUBLIC_COPIES = {
     PurePosixPath("cli/go/internal/conformance/vectors/team-auth-envelope-v2.json"): (
         PUBLIC_ROOT / "team-auth-envelope-v2.json"
     ),
+    PurePosixPath("naapp-lib/src/aweb_naapp/hooks/catalog-v1.json"): (
+        PUBLIC_ROOT / "hook-catalog-v1.json"
+    ),
 }
 
 
@@ -285,6 +288,14 @@ ROOT_CONSUMERS = {
     PurePosixPath("naapp-lib/tests/hooks/test_owner_act_vector.py"): _consumer(
         "owner-act-v1.json",
         '(AWEB_ROOT / "docs" / "vectors" / "owner-act-v1.json")',
+    ),
+    PurePosixPath("naapp-lib/tests/hooks/test_producer.py"): _consumer(
+        "hook-catalog-v1.json",
+        '(AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json")',
+    ),
+    PurePosixPath("naapp-lib/tests/hooks/test_packaged_catalog.py"): _consumer(
+        "hook-catalog-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',
     ),
     PurePosixPath("naapp-lib/tests/hooks/test_owner_act_signing.py"): _consumer(
         "owner-act-v1.json",
@@ -786,14 +797,14 @@ def self_test(root: Path) -> None:
         add=(PurePosixPath("cli/go/internal/conformance/vectors/stable-id-v1.json"),),
         expected="public vector mirror is forbidden",
     )
-    managed_copy = next(iter(MANAGED_PUBLIC_COPIES))
-    _expect_mutation(
-        "divergent managed package copy",
-        root,
-        tracked,
-        overrides={managed_copy: read_bytes(root, managed_copy) + b"\n"},
-        expected="managed public-vector package copy differs",
-    )
+    for managed_copy in MANAGED_PUBLIC_COPIES:
+        _expect_mutation(
+            f"divergent managed package copy {managed_copy}",
+            root,
+            tracked,
+            overrides={managed_copy: read_bytes(root, managed_copy) + b"\n"},
+            expected="managed public-vector package copy differs",
+        )
     snapshot = APP_EMIT_COPIES[1]
     _expect_mutation(
         "divergent classified snapshot",

@@ -68,6 +68,7 @@ from aweb_naapp.runtime.approvals import (
     ApproverRetirement,
     Assurance,
     AuthenticationFailed,
+    Candidate,
     DeliveryStatus,
     DispatchOutcome,
     Evidence,
@@ -90,6 +91,8 @@ MIGRATION_MODULE = "aweb_naapp_passkeys"
 SUBJECT_TYPE = "app_local"
 ENROLMENT_PREFIX = b"aweb.passkey-enrolment/1\n"
 CONTACT_CHANGE_PREFIX = b"aweb.passkey-contact-change/1\n"
+CONTACT_CANCEL_PREFIX = b"aweb.passkey-contact-cancel/1\n"
+CONTACT_CHANGE_ACT = "approver-contact.change"
 LOGIN_PREFIX = b"aweb.passkey-login/1\n"
 TRUST_ON_FIRST_USE = "trust_on_first_use"
 # Outstanding unused challenges kept per subject and purpose; issuing another
@@ -104,6 +107,16 @@ class EnrolmentRefused(Exception):
 
 class DesignationRefused(Exception):
     """The owner evidence does not authorise this designation or retirement."""
+
+
+class ContactChangeRefused(Exception):
+    """A contact change, its cancellation or its proof is not allowed now.
+    `reason` is `last_owner_protected`, `contact_change_pending`,
+    `no_pending_contact_change` or `contact_proof_unavailable`."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 DESIGNATE_ACT = "app-role.designate"
@@ -158,6 +171,7 @@ class LockoutPolicy:
 class NoticeKind(StrEnum):
     RECOVERY_STARTED = "recovery_started"
     CONTACT_CHANGE_SCHEDULED = "contact_change_scheduled"
+    CONTACT_CHANGE_CANCELLED = "contact_change_cancelled"
 
 
 @dataclass(frozen=True)
@@ -176,6 +190,11 @@ class PasskeyDelivery(Protocol):
 
     async def deliver_notice(self, contact: str, notice: Notice) -> DeliveryStatus: ...
 
+    async def deliver_contact_proof(self, contact: str, proof_token: str) -> DeliveryStatus:
+        """Send the single-use proof a new contact's holder uses to confirm it,
+        to that contact only."""
+        ...
+
 
 @dataclass(frozen=True)
 class Designation:
@@ -190,6 +209,19 @@ class Designation:
 
 
 @dataclass(frozen=True)
+class ContactChange:
+    """A scheduled contact change and what is still to send: the notices to
+    both contacts and the proof to the new one. The caller sends them with
+    :meth:`Passkeys.send_notices` after the commit."""
+
+    scope: str
+    effective_at: datetime
+    notices: tuple[tuple[str, Notice], ...]
+    new_contact: str
+    proof_token: str = field(repr=False)
+
+
+@dataclass(frozen=True)
 class PasskeyLogin:
     """A verified login by a scope's in-effect approver. What the login opens,
     a session or anything else, is the caller's."""
@@ -201,7 +233,7 @@ class PasskeyLogin:
 
 @dataclass(frozen=True)
 class PasskeyEvidence:
-    """The restricted record behind an `auth_evidence_ref`."""
+    """The restricted record behind a decision's `decided_by.evidence_ref`."""
 
     evidence_ref: str
     subject: str
@@ -243,15 +275,27 @@ def _login_challenge(scope: str, subject: str, nonce: bytes) -> bytes:
     return hashlib.sha256(LOGIN_PREFIX + canonical_json_bytes(fields)).digest()
 
 
+def _contact_cancel_challenge(subject: str, pending_contact_sha256: str, nonce: bytes) -> bytes:
+    fields = {
+        "subject": subject,
+        "pending_contact_sha256": pending_contact_sha256,
+        "nonce": nonce.hex(),
+    }
+    return hashlib.sha256(CONTACT_CANCEL_PREFIX + canonical_json_bytes(fields)).digest()
+
+
 def _contact_change_challenge(subject: str, new_contact_sha256: str, nonce: bytes) -> bytes:
     fields = {"contact_sha256": new_contact_sha256, "nonce": nonce.hex(), "subject": subject}
     return hashlib.sha256(CONTACT_CHANGE_PREFIX + canonical_json_bytes(fields)).digest()
 
 
 _CURRENT = "superseded_at IS NULL AND effective_at <= $2"
+# A pending contact takes effect once its delay has passed AND its holder has
+# proven it; an unproven one lapses and the contact stays. So an approver's
+# effective contact is always proven: by enrolment through it, or by a proof.
 _EFFECTIVE_CONTACT = (
     "CASE WHEN pending_contact_at IS NOT NULL AND pending_contact_at <= $2 "
-    "THEN pending_contact ELSE contact END"
+    "AND pending_contact_proven_at IS NOT NULL THEN pending_contact ELSE contact END"
 )
 
 
@@ -362,7 +406,9 @@ class Passkeys:
             raise DesignationRefused("the first approver needs app-role.designate")
         if previous is not None and kind != RECOVER_ACT:
             raise DesignationRefused("replacing an approver needs app-credential.recover")
-        approver = Approver(subject=str(uuid.uuid4()), subject_type=SUBJECT_TYPE, contact=contact)
+        approver = Approver(
+            scope=scope, subject=str(uuid.uuid4()), subject_type=SUBJECT_TYPE, contact=contact
+        )
         effective_at = now
         notified: list[str] = []
         if previous is not None:
@@ -500,12 +546,9 @@ class Passkeys:
         if not admission.first:
             raise DesignationRefused("the owner approval has already been used")
         approval = await approvals.get(approval_id)
-        assert approval is not None
-        scope = await tx.fetch_value(
-            "SELECT scope FROM {{tables.passkey_approvers}} WHERE subject = $1",
-            approval.approver_subject,
-        )
-        if scope is None or not self._owner_scopes(scope):
+        assert approval is not None and approval.decided_by is not None
+        decider = approval.decided_by
+        if not self._owner_scopes(decider.scope):
             raise DesignationRefused("the approval was not decided by an owner")
         await approvals.record_outcome(
             approval_id,
@@ -516,8 +559,8 @@ class Passkeys:
         )
         return OwnerApproval(
             approval_id=approval_id,
-            approver_subject=approval.approver_subject,
-            approver_scope=scope,
+            approver_subject=decider.subject,
+            approver_scope=decider.scope,
             transaction_id=await _transaction_id(tx),
         )
 
@@ -559,18 +602,14 @@ class Passkeys:
         )
         notices: tuple[tuple[str, Notice], ...] = ()
         if current["effective_at"] > now:
-            rows = await tx.fetch_all(
-                "SELECT contact FROM {{tables.passkey_approvers}} "
-                "WHERE scope = $1 AND subject <> $2 "
-                "UNION SELECT pending_contact FROM {{tables.passkey_approvers}} "
-                "WHERE scope = $1 AND subject <> $2 AND pending_contact IS NOT NULL",
-                scope,
-                current["subject"],
-            )
+            recorded = await self._recorded_contacts(tx, scope, excluding=current["subject"])
             notice = Notice(NoticeKind.RECOVERY_STARTED, scope, current["effective_at"])
-            notices = tuple((contact, notice) for contact in sorted({r["contact"] for r in rows}))
+            notices = tuple((contact, notice) for contact in recorded)
         approver = Approver(
-            subject=current["subject"], subject_type=SUBJECT_TYPE, contact=current["contact"]
+            scope=scope,
+            subject=current["subject"],
+            subject_type=SUBJECT_TYPE,
+            contact=current["contact"],
         )
         return Designation(
             approver=approver,
@@ -610,12 +649,22 @@ class Passkeys:
             logger.exception("passkey delivery failed")
             return DeliveryStatus.FAILED
 
-    async def _recorded_contacts(self, tx: TransactionManager, scope: str) -> list[str]:
+    async def _recorded_contacts(
+        self, tx: TransactionManager, scope: str, *, excluding: str | None = None
+    ) -> list[str]:
+        """The proven contacts ever recorded for `scope`'s approvers, for
+        security notices: a registered contact once an enrolment completed
+        through it, a pending one once its holder proved it. An unproven
+        address gets nothing but its own proof."""
         rows = await tx.fetch_all(
-            "SELECT contact FROM {{tables.passkey_approvers}} WHERE scope = $1 "
+            "SELECT a.contact FROM {{tables.passkey_approvers}} a "
+            "WHERE a.scope = $1 AND a.subject IS DISTINCT FROM $2 AND EXISTS ("
+            "SELECT 1 FROM {{tables.passkey_credentials}} c WHERE c.subject = a.subject) "
             "UNION SELECT pending_contact FROM {{tables.passkey_approvers}} "
-            "WHERE scope = $1 AND pending_contact IS NOT NULL",
+            "WHERE scope = $1 AND subject IS DISTINCT FROM $2 "
+            "AND pending_contact_proven_at IS NOT NULL",
             scope,
+            excluding,
         )
         return sorted({row["contact"] for row in rows})
 
@@ -653,29 +702,52 @@ class Passkeys:
 
     # The directory
 
-    async def designated_approver(self, policy: ActionPolicy) -> Approver | None:
-        """The current approver for the policy's scope, once in effect and enrolled."""
+    async def designated_approver(self, scope: str) -> Approver | None:
+        """The scope's current approver, once in effect and enrolled."""
         row = await self.db.fetch_one(
             f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact "
             "FROM {{tables.passkey_approvers}} a "
             f"WHERE scope = $1 AND {_CURRENT} AND EXISTS ("
             "SELECT 1 FROM {{tables.passkey_credentials}} c "
             "WHERE c.subject = a.subject AND c.revoked_at IS NULL)",
-            policy.approver_scope,
+            scope,
             self._clock(),
         )
         if row is None:
             return None
-        return Approver(subject=row["subject"], subject_type=SUBJECT_TYPE, contact=row["contact"])
+        return Approver(
+            scope=scope, subject=row["subject"], subject_type=SUBJECT_TYPE, contact=row["contact"]
+        )
 
-    async def is_current(self, approver_subject: str, policy: ActionPolicy) -> bool:
+    async def candidates(self, policy: ActionPolicy, request: Mapping[str, Any]) -> list[Approver]:
+        """The current approver of each of the policy's scopes that has one."""
+        found = [await self.designated_approver(scope) for scope in policy.approver_scopes]
+        return [approver for approver in found if approver is not None]
+
+    async def is_current(self, scope: str, subject: str) -> bool:
         return bool(
             await self.db.fetch_value(
                 "SELECT EXISTS (SELECT 1 FROM {{tables.passkey_approvers}} "
                 f"WHERE subject = $1 AND {_CURRENT} AND scope = $3)",
-                approver_subject,
+                subject,
                 self._clock(),
-                policy.approver_scope,
+                scope,
+            )
+        )
+
+    async def can_log_in(self, scope: str, subject: str) -> bool:
+        """Whether `subject` is `scope`'s in-effect approver and still holds an
+        unrevoked passkey: what a login needs, and what a session it opened
+        keeps needing for as long as it lasts."""
+        return bool(
+            await self.db.fetch_value(
+                "SELECT EXISTS (SELECT 1 FROM {{tables.passkey_approvers}} "
+                f"WHERE subject = $1 AND {_CURRENT} AND scope = $3 AND EXISTS ("
+                "SELECT 1 FROM {{tables.passkey_credentials}} c "
+                "WHERE c.subject = $1 AND c.revoked_at IS NULL))",
+                subject,
+                self._clock(),
+                scope,
             )
         )
 
@@ -683,7 +755,8 @@ class Passkeys:
 
     async def _usable_enrolment(self, link_token: str) -> dict[str, Any]:
         row = await self.db.fetch_one(
-            "SELECT e.enrolment_id, e.subject, e.expires_at, e.revoked_at, e.used_at, a.contact "
+            "SELECT e.enrolment_id, e.subject, e.expires_at, e.revoked_at, e.used_at, "
+            "a.contact, a.scope "
             "FROM {{tables.passkey_enrolments}} e JOIN {{tables.passkey_approvers}} a "
             "ON a.subject = e.subject "
             "WHERE e.verifier_sha256 = $1 AND a.superseded_at IS NULL",
@@ -839,7 +912,10 @@ class Passkeys:
                 tx,
             )
         return Approver(
-            subject=enrolment["subject"], subject_type=SUBJECT_TYPE, contact=enrolment["contact"]
+            scope=enrolment["scope"],
+            subject=enrolment["subject"],
+            subject_type=SUBJECT_TYPE,
+            contact=enrolment["contact"],
         )
 
     # Assertions
@@ -948,27 +1024,33 @@ class Passkeys:
         return evidence_ref
 
     async def approval_options(
-        self, approval: Approval, purpose: Purpose, task_answer_ref: str | None
+        self,
+        approval: Approval,
+        candidate: Candidate,
+        purpose: Purpose,
+        task_answer_ref: str | None,
     ) -> Mapping[str, Any]:
-        if approval.approver_subject_type != SUBJECT_TYPE:
-            raise AuthenticationFailed("approver is not an app-local passkey holder")
-        if not await self._active_credentials(approval.approver_subject):
-            raise AuthenticationFailed("approver has no current passkey")
+        """Assertion options for one candidate, listing only their passkeys."""
+        if candidate.subject_type != SUBJECT_TYPE:
+            raise AuthenticationFailed("candidate is not an app-local passkey holder")
+        if not await self._active_credentials(candidate.subject):
+            raise AuthenticationFailed("candidate has no current passkey")
         nonce = secrets.token_bytes(32)
-        challenge = challenge_binding(approval, purpose, nonce, task_answer_ref)
+        challenge = challenge_binding(approval, candidate, purpose, nonce, task_answer_ref)
         await self._issue_challenge(
             challenge,
             purpose.value,
-            approval.approver_subject,
+            candidate.subject,
             nonce,
             approval_id=approval.approval_id,
             task_answer_ref=task_answer_ref,
         )
-        return await self._assertion_options(approval.approver_subject, challenge)
+        return await self._assertion_options(candidate.subject, challenge)
 
     async def verify_approval_assertion(
         self,
         approval: Approval,
+        candidate: Candidate,
         purpose: Purpose,
         proof: Mapping[str, Any],
         task_answer_ref: str | None,
@@ -981,17 +1063,18 @@ class Passkeys:
         if (
             issued is None
             or issued["approval_id"] != approval.approval_id
-            or issued["subject"] != approval.approver_subject
+            or issued["subject"] != candidate.subject
             or issued["task_answer_ref"] != task_answer_ref
-            or challenge_binding(approval, purpose, issued["nonce"], task_answer_ref) != challenge
+            or challenge_binding(approval, candidate, purpose, issued["nonce"], task_answer_ref)
+            != challenge
         ):
             raise AuthenticationFailed("assertion does not answer this challenge")
         evidence_ref = await self._verify_assertion(
-            approval.approver_subject, challenge, proof, purpose, approval, task_answer_ref
+            candidate.subject, challenge, proof, purpose, approval, task_answer_ref
         )
         return Evidence(
             assurance=Assurance.PASSKEY,
-            subject=approval.approver_subject,
+            subject=candidate.subject,
             subject_type=SUBJECT_TYPE,
             evidence_ref=evidence_ref,
         )
@@ -1089,35 +1172,297 @@ class Passkeys:
         evidence_ref = await self._verify_assertion(
             approver["subject"], challenge, proof, "contact_change"
         )
-        now = self._clock()
-        effective_at = now + self._lockout.contact_change_delay
         async with self.db.transaction() as tx:
-            await tx.execute(
-                "UPDATE {{tables.passkey_approvers}} SET contact = $2, pending_contact = $3, "
-                "pending_contact_at = $4 WHERE subject = $1 AND superseded_at IS NULL",
-                approver["subject"],
-                approver["contact"],
+            change = await self._schedule_contact(
+                tx,
+                scope,
                 new_contact,
-                effective_at,
+                kind=AuditKind.APPROVER_CONTACT_CHANGE_SCHEDULED,
+                actor=approver["subject"],
+                details={"evidence_ref": evidence_ref},
+            )
+        await self.send_notices(change)
+        return change.effective_at
+
+    async def change_contact_by_owner(
+        self,
+        tx: TransactionManager,
+        *,
+        scope: str,
+        new_contact: str,
+        evidence: OwnerApproval,
+    ) -> ContactChange:
+        """Schedule a new contact for `scope`'s approver on an owner's approval
+        admitted in this transaction, as an owner-confirmed change set does.
+
+        It changes the contact only: no authenticator is enrolled, re-enrolled
+        or revoked, and nothing is sent to the new contact but the notice. It
+        takes effect after the contact-change delay, and the approver can
+        cancel it with their own passkey. The last owner's own contact changes
+        only through that owner's passkey or a recovery. Send the returned
+        notices after the commit."""
+        if not isinstance(evidence, OwnerApproval):
+            raise TypeError("an owner contact change needs an owner approval")
+        if evidence.transaction_id != await _transaction_id(tx):
+            raise DesignationRefused("the owner approval was admitted in another transaction")
+        act_id = f"approval:{evidence.approval_id}:contact:{scope}"
+        if self._owner_scopes(scope) and await self._last_owner(tx, scope):
+            raise ContactChangeRefused("last_owner_protected")
+        change = await self._schedule_contact(
+            tx,
+            scope,
+            new_contact,
+            kind=AuditKind.APPROVER_CONTACT_CHANGE_BY_OWNER_SCHEDULED,
+            actor=evidence.approver_subject,
+            details={"owner_approval_id": evidence.approval_id},
+        )
+        await tx.execute(
+            "INSERT INTO {{tables.passkey_owner_acts}} "
+            "(act_id, kind, signer, scope, subject, used_at) "
+            "SELECT $1, $2, $3, $4, subject, $5 FROM {{tables.passkey_approvers}} "
+            "WHERE scope = $4 AND superseded_at IS NULL",
+            act_id,
+            CONTACT_CHANGE_ACT,
+            evidence.approver_subject,
+            scope,
+            self._clock(),
+        )
+        return change
+
+    async def _last_owner(self, tx: TransactionManager, scope: str) -> bool:
+        """Whether `scope` holds the only owner with an approver in effect and
+        an enrolled passkey. Such an owner's contact is proven: an effective
+        contact always is, by its enrolment or by its holder's proof."""
+        rows = await tx.fetch_all(
+            "SELECT DISTINCT a.scope FROM {{tables.passkey_approvers}} a "
+            "WHERE a.scope <> $1 AND a.superseded_at IS NULL AND a.effective_at <= $2 "
+            "AND EXISTS (SELECT 1 FROM {{tables.passkey_credentials}} c "
+            "WHERE c.subject = a.subject AND c.revoked_at IS NULL)",
+            scope,
+            self._clock(),
+        )
+        return not any(self._owner_scopes(row["scope"]) for row in rows)
+
+    async def _schedule_contact(
+        self,
+        tx: TransactionManager,
+        scope: str,
+        new_contact: str,
+        *,
+        kind: AuditKind,
+        actor: str,
+        details: dict[str, str],
+    ) -> ContactChange:
+        """Record `scope`'s approver's pending contact, refusing while another
+        change is pending, and issue the single-use proof its holder must use
+        before it can take effect. Return the notices to both contacts and the
+        proof for the new one."""
+        now = self._clock()
+        row = await tx.fetch_one(
+            f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact, pending_contact_at "
+            f"FROM {{{{tables.passkey_approvers}}}} WHERE scope = $1 AND {_CURRENT} FOR UPDATE",
+            scope,
+            now,
+        )
+        if row is None:
+            raise AuthenticationFailed("no approver in effect for this scope")
+        if row["pending_contact_at"] is not None and row["pending_contact_at"] > now:
+            raise ContactChangeRefused("contact_change_pending")
+        effective_at = now + self._lockout.contact_change_delay
+        await tx.execute(
+            "UPDATE {{tables.passkey_approvers}} SET contact = $2, pending_contact = $3, "
+            "pending_contact_at = $4, pending_contact_proven_at = NULL "
+            "WHERE subject = $1 AND superseded_at IS NULL",
+            row["subject"],
+            row["contact"],
+            new_contact,
+            effective_at,
+        )
+        await self._revoke_contact_proofs(tx, row["subject"], now)
+        proof_token, verifier = new_link_token()
+        await tx.execute(
+            "INSERT INTO {{tables.passkey_contact_proofs}} "
+            "(proof_id, subject, contact_sha256, verifier_sha256, created_at, expires_at) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
+            str(uuid.uuid4()),
+            row["subject"],
+            contact_sha256(new_contact),
+            verifier,
+            now,
+            effective_at,
+        )
+        await self._audit.emit(
+            AuditEvent(
+                kind=kind,
+                actor=actor,
+                subject=row["subject"],
+                occurred_at=now,
+                details={"scope": scope, "effective_at": effective_at.isoformat(), **details},
+            ),
+            tx,
+        )
+        notice = Notice(NoticeKind.CONTACT_CHANGE_SCHEDULED, scope, effective_at)
+        return ContactChange(
+            scope=scope,
+            effective_at=effective_at,
+            notices=tuple((c, notice) for c in sorted({row["contact"], new_contact})),
+            new_contact=new_contact,
+            proof_token=proof_token,
+        )
+
+    async def send_notices(self, change: ContactChange) -> None:
+        """Send a committed contact change's notices to the old and new contact,
+        and its proof to the new contact only."""
+        for contact, notice in change.notices:
+            await self._send(self._delivery.deliver_notice(contact, notice))
+        await self._send(
+            self._delivery.deliver_contact_proof(change.new_contact, change.proof_token)
+        )
+
+    async def _revoke_contact_proofs(
+        self, tx: TransactionManager, subject: str, now: datetime
+    ) -> None:
+        await tx.execute(
+            "UPDATE {{tables.passkey_contact_proofs}} SET revoked_at = $2 "
+            "WHERE subject = $1 AND revoked_at IS NULL AND used_at IS NULL",
+            subject,
+            now,
+        )
+
+    async def prove_contact(self, proof_token: str) -> datetime:
+        """The new contact's holder confirms it with the proof sent there. The
+        pending contact then takes effect at its time; unproven, it lapses.
+        Returns when it takes effect."""
+        now = self._clock()
+        verifier = link_verifier(proof_token)
+        async with self.db.transaction() as tx:
+            # The approver row first, then the proof: the order every contact
+            # change and cancel takes, so they serialise instead of deadlocking.
+            subject = await tx.fetch_value(
+                "SELECT subject FROM {{tables.passkey_contact_proofs}} WHERE verifier_sha256 = $1",
+                verifier,
+            )
+            approver = await tx.fetch_one(
+                "SELECT subject, scope, pending_contact, pending_contact_at "
+                "FROM {{tables.passkey_approvers}} "
+                "WHERE subject = $1 AND superseded_at IS NULL FOR UPDATE",
+                subject,
+            )
+            proof = await tx.fetch_one(
+                "SELECT proof_id, contact_sha256 FROM {{tables.passkey_contact_proofs}} "
+                "WHERE verifier_sha256 = $1 AND used_at IS NULL AND revoked_at IS NULL "
+                "AND expires_at > $2 FOR UPDATE",
+                verifier,
+                now,
+            )
+            if (
+                approver is None
+                or proof is None
+                or approver["pending_contact_at"] is None
+                or approver["pending_contact_at"] <= now
+                or contact_sha256(approver["pending_contact"]) != proof["contact_sha256"]
+            ):
+                raise ContactChangeRefused("contact_proof_unavailable")
+            await tx.execute(
+                "UPDATE {{tables.passkey_contact_proofs}} SET used_at = $2 WHERE proof_id = $1",
+                proof["proof_id"],
+                now,
+            )
+            await tx.execute(
+                "UPDATE {{tables.passkey_approvers}} SET pending_contact_proven_at = $2 "
+                "WHERE subject = $1 AND superseded_at IS NULL",
+                approver["subject"],
+                now,
             )
             await self._audit.emit(
                 AuditEvent(
-                    kind=AuditKind.APPROVER_CONTACT_CHANGE_SCHEDULED,
+                    kind=AuditKind.APPROVER_CONTACT_PROVEN,
                     actor=approver["subject"],
                     subject=approver["subject"],
                     occurred_at=now,
                     details={
-                        "scope": scope,
-                        "evidence_ref": evidence_ref,
-                        "effective_at": effective_at.isoformat(),
+                        "scope": approver["scope"],
+                        "effective_at": approver["pending_contact_at"].isoformat(),
                     },
                 ),
                 tx,
             )
-        notice = Notice(NoticeKind.CONTACT_CHANGE_SCHEDULED, scope, effective_at)
-        for contact in sorted({approver["contact"], new_contact}):
+        return approver["pending_contact_at"]
+
+    async def _pending_contact(self, scope: str) -> dict[str, Any]:
+        now = self._clock()
+        row = await self.db.fetch_one(
+            f"SELECT subject, contact, pending_contact, pending_contact_at "
+            f"FROM {{{{tables.passkey_approvers}}}} WHERE scope = $1 AND {_CURRENT}",
+            scope,
+            now,
+        )
+        if row is None:
+            raise AuthenticationFailed("no approver in effect for this scope")
+        if row["pending_contact_at"] is None or row["pending_contact_at"] <= now:
+            raise ContactChangeRefused("no_pending_contact_change")
+        return row
+
+    async def contact_cancel_options(self, scope: str) -> Mapping[str, Any]:
+        """Assertion options for the approver to cancel its pending contact
+        change, whoever scheduled it."""
+        pending = await self._pending_contact(scope)
+        nonce = secrets.token_bytes(32)
+        digest = contact_sha256(pending["pending_contact"])
+        challenge = _contact_cancel_challenge(pending["subject"], digest, nonce)
+        await self._issue_challenge(
+            challenge, "contact_change", pending["subject"], nonce, new_contact_sha256=digest
+        )
+        return await self._assertion_options(pending["subject"], challenge)
+
+    async def cancel_pending_contact(self, scope: str, proof: Mapping[str, Any]) -> None:
+        """Cancel the approver's pending contact change with its own passkey,
+        whether the approver or an owner scheduled it. The approver's cancel
+        wins; both contacts are told."""
+        pending = await self._pending_contact(scope)
+        digest = contact_sha256(pending["pending_contact"])
+        try:
+            challenge = _client_challenge(proof)
+        except (KeyError, TypeError, ValueError, WebAuthnException) as exc:
+            raise AuthenticationFailed("malformed assertion") from exc
+        issued = await self._take_challenge(challenge, "contact_change")
+        if (
+            issued is None
+            or issued["subject"] != pending["subject"]
+            or issued["contact_sha256"] != digest
+            or _contact_cancel_challenge(pending["subject"], digest, issued["nonce"]) != challenge
+        ):
+            raise AuthenticationFailed("assertion does not answer this cancellation")
+        evidence_ref = await self._verify_assertion(
+            pending["subject"], challenge, proof, "contact_change"
+        )
+        now = self._clock()
+        async with self.db.transaction() as tx:
+            cancelled = await tx.fetch_value(
+                "UPDATE {{tables.passkey_approvers}} SET pending_contact = NULL, "
+                "pending_contact_at = NULL, pending_contact_proven_at = NULL "
+                "WHERE subject = $1 AND superseded_at IS NULL "
+                "AND pending_contact = $2 AND pending_contact_at > $3 RETURNING subject",
+                pending["subject"],
+                pending["pending_contact"],
+                now,
+            )
+            if cancelled is None:
+                raise ContactChangeRefused("no_pending_contact_change")
+            await self._revoke_contact_proofs(tx, pending["subject"], now)
+            await self._audit.emit(
+                AuditEvent(
+                    kind=AuditKind.APPROVER_CONTACT_CHANGE_CANCELLED,
+                    actor=pending["subject"],
+                    subject=pending["subject"],
+                    occurred_at=now,
+                    details={"scope": scope, "evidence_ref": evidence_ref},
+                ),
+                tx,
+            )
+        notice = Notice(NoticeKind.CONTACT_CHANGE_CANCELLED, scope, pending["pending_contact_at"])
+        for contact in sorted({pending["contact"], pending["pending_contact"]}):
             await self._send(self._delivery.deliver_notice(contact, notice))
-        return effective_at
 
     async def evidence(self, evidence_ref: str) -> PasskeyEvidence | None:
         row = await self.db.fetch_one(
@@ -1135,17 +1480,22 @@ class PasskeyAuthenticator:
         self._passkeys = passkeys
 
     async def challenge(
-        self, approval: Approval, purpose: Purpose, task_answer_ref: str | None
+        self,
+        approval: Approval,
+        candidate: Candidate,
+        purpose: Purpose,
+        task_answer_ref: str | None,
     ) -> Mapping[str, Any]:
-        return await self._passkeys.approval_options(approval, purpose, task_answer_ref)
+        return await self._passkeys.approval_options(approval, candidate, purpose, task_answer_ref)
 
     async def verify(
         self,
         approval: Approval,
+        candidate: Candidate,
         purpose: Purpose,
         proof: Mapping[str, Any],
         task_answer_ref: str | None,
     ) -> Evidence:
         return await self._passkeys.verify_approval_assertion(
-            approval, purpose, proof, task_answer_ref
+            approval, candidate, purpose, proof, task_answer_ref
         )
