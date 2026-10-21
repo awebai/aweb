@@ -163,8 +163,56 @@ async def test_browser_login_and_bodiless_csrf_logout(
             assert parse_qs(urlsplit(href).query) == {"scope": [scope]}
             await other.screenshot(path=tmp_path / "console-fresh-tab.png")
         await page.screenshot(path=tmp_path / "console-home.png")
+
+        # Two tabs in one BrowserContext share cookies, but not sessionStorage.
+        # Re-authenticate in B with the same real software passkey, then act in
+        # A with its now-stale CSRF token. No HTTP responses are mocked.
+        second = await context.new_page()
+        second_cdp = await context.new_cdp_session(second)
+        await second_cdp.send("WebAuthn.enable")
+        second_auth = await second_cdp.send(
+            "WebAuthn.addVirtualAuthenticator",
+            {
+                "options": {
+                    "protocol": "ctap2",
+                    "transport": "internal",
+                    "hasResidentKey": True,
+                    "hasUserVerification": True,
+                    "isUserVerified": True,
+                    "automaticPresenceSimulation": True,
+                }
+            },
+        )
+        credentials = await cdp.send(
+            "WebAuthn.getCredentials", {"authenticatorId": result["authenticatorId"]}
+        )
+        for credential in credentials["credentials"]:
+            await second_cdp.send(
+                "WebAuthn.addCredential",
+                {"authenticatorId": second_auth["authenticatorId"], "credential": credential},
+            )
+        await second.goto(service + "/login?" + urlencode({"scope": scope}))
+        await second.get_by_role("button", name="Sign in with a passkey").click()
+        await second.wait_for_url(service + "/")
         await page.get_by_role("button", name="Sign out").click()
-        await page.wait_for_url(service + "/login")
-        assert (await context.request.get(service + "/session")).status == 401
+        await expect(page.locator("#console-reauth")).to_be_visible(timeout=2000)
+        await expect(page.locator("[data-console-scope]")).to_be_hidden()
         assert await page.evaluate("key => sessionStorage.getItem(key)", CSRF_KEY) is None
+        assert await second.evaluate("key => !!sessionStorage.getItem(key)", CSRF_KEY)
+        assert (await context.request.get(service + "/session")).status == 200
+        await page.screenshot(path=tmp_path / "console-stale-tab.png")
+        await second.get_by_role("button", name="Sign out").click()
+        await second.wait_for_url(service + "/login")
+        assert (await context.request.get(service + "/session")).status == 401
+        assert await second.evaluate("key => sessionStorage.getItem(key)", CSRF_KEY) is None
         assert await context.cookies() == []
+        async with page.expect_response(service + "/logout") as refused:
+            rejected = await page.evaluate(
+                """async () => {
+                  try { await window.awebSecretsConsole.post('/logout'); return false; }
+                  catch { return true; }
+                }"""
+            )
+        assert (await refused.value).status == 401
+        assert rejected
+        await expect(page.locator("#console-reauth")).to_be_visible()

@@ -28,7 +28,17 @@
       .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   }
 
-  async function post(path, body, csrf) {
+  class SessionRequired extends Error {}
+
+  function requireSignIn() {
+    try { sessionStorage.removeItem(csrfKey); } catch {}
+    if (actions) actions.hidden = true;
+    const prompt = document.querySelector("#console-reauth-notice");
+    if (prompt) prompt.hidden = false;
+  }
+
+  async function post(path, body) {
+    const csrf = sessionStorage.getItem(csrfKey);
     const headers = {};
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (csrf) headers["X-CSRF-Token"] = csrf;
@@ -36,9 +46,23 @@
       method: "POST", credentials: "same-origin", cache: "no-store", headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (!response.ok) throw new Error("Request refused");
+    if (!response.ok) {
+      let detail;
+      if (response.status === 403) {
+        try { detail = (await response.json()).detail; } catch {}
+      }
+      if (response.status === 401 || (response.status === 403 && detail === "csrf_token_required")) {
+        requireSignIn();
+        throw new SessionRequired("Sign in again");
+      }
+      throw new Error("Request refused");
+    }
     return response.json();
   }
+
+  // Custody forms use this same helper so stale cookies/tokens recover in
+  // exactly the same way as the shell's logout, without duplicated fetch code.
+  window.awebSecretsConsole = Object.freeze({post});
 
   const login = document.querySelector("#login");
   if (login) login.addEventListener("submit", async event => {
@@ -82,11 +106,13 @@
     button.disabled = true;
     try {
       // The existing S4 logout is deliberately bodiless and requires CSRF.
-      await post("/logout", undefined, sessionStorage.getItem(csrfKey));
+      await post("/logout");
       sessionStorage.removeItem(csrfKey);
       window.location.replace("/login");
-    } catch {
-      notice.textContent = "Sign-out could not be completed. Try again.";
+    } catch (error) {
+      if (!(error instanceof SessionRequired)) {
+        notice.textContent = "Sign-out could not be completed. Try again.";
+      }
       button.disabled = false;
     }
   });
