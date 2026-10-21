@@ -87,6 +87,7 @@ name = "aweb"
 version = "1.27.31"
 source = { editable = "." }
 dependencies = [
+    { name = "aweb-naapp", extra = ["hooks"] },
     { name = "awid-service" },
     { name = "base58" },
     { name = "cryptography" },
@@ -108,12 +109,14 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "aweb-naapp" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "aweb-naapp", extras = ["hooks"], editable = "../naapp-lib" },
     { name = "awid-service", editable = "../awid" },
     { name = "base58", specifier = ">=2.1.1" },
     { name = "cryptography", specifier = ">=45.0.6" },
@@ -135,8 +138,65 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aweb-naapp", editable = "../naapp-lib" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
+]
+
+[[package]]
+name = "aweb-naapp"
+version = "0.2.0"
+source = { editable = "../naapp-lib" }
+
+[package.optional-dependencies]
+hooks = [
+    { name = "awid-service" },
+    { name = "pgdbm" },
+    { name = "pynacl" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "awid-service", marker = "extra == 'hooks'", editable = "../awid" },
+    { name = "awid-service", marker = "extra == 'runtime'", editable = "../awid" },
+    { name = "dnspython", marker = "extra == 'egress'", specifier = ">=2.7.0" },
+    { name = "fastapi", marker = "extra == 'runtime'", specifier = ">=0.116.1" },
+    { name = "httpcore", extras = ["asyncio"], marker = "extra == 'egress'", specifier = ">=1.0.9" },
+    { name = "httpx", marker = "extra == 'runtime'", specifier = ">=0.28.1" },
+    { name = "idna", marker = "extra == 'egress'", specifier = ">=3.10" },
+    { name = "jsonschema", marker = "extra == 'page-store'", specifier = ">=4.23" },
+    { name = "jsonschema", marker = "extra == 'pages'", specifier = ">=4.23" },
+    { name = "pgdbm", marker = "extra == 'dispatch'", specifier = ">=0.5.0" },
+    { name = "pgdbm", marker = "extra == 'hooks'", specifier = ">=0.5.0" },
+    { name = "pgdbm", marker = "extra == 'idempotency'", specifier = ">=0.5.0" },
+    { name = "pgdbm", marker = "extra == 'outbox'", specifier = ">=0.5.0" },
+    { name = "pgdbm", marker = "extra == 'page-store'", specifier = ">=0.5.0" },
+    { name = "pgdbm", marker = "extra == 'ratelimit'", specifier = ">=0.5.0" },
+    { name = "pgdbm", marker = "extra == 'roles'", specifier = ">=0.5.0" },
+    { name = "pgdbm", marker = "extra == 'runtime'", specifier = ">=0.5.0" },
+    { name = "publicsuffixlist", marker = "extra == 'egress'", specifier = "==1.1.0.20261018" },
+    { name = "pydantic-settings", marker = "extra == 'runtime'", specifier = ">=2.10.1" },
+    { name = "pynacl", marker = "extra == 'hooks'", specifier = ">=1.6.2" },
+    { name = "pynacl", marker = "extra == 'runtime'", specifier = ">=1.6.2" },
+    { name = "pynacl", marker = "extra == 'signing-key'", specifier = ">=1.6.2" },
+    { name = "webauthn", marker = "extra == 'runtime'", specifier = ">=3.0.1" },
+]
+provides-extras = ["runtime", "outbox", "signing-key", "dispatch", "idempotency", "roles", "ratelimit", "pages", "egress", "hooks", "page-store"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "aweb-naapp", extras = ["egress"] },
+    { name = "aweb-naapp", extras = ["runtime", "pages"] },
+    { name = "aweb-naapp-testing", editable = "../naapp-lib/testing" },
+    { name = "cryptography", specifier = ">=44.0.0" },
+    { name = "hatchling", specifier = ">=1.32.4" },
+    { name = "httpx2", specifier = ">=2.9.1" },
+    { name = "mypy", specifier = ">=1.18.0" },
+    { name = "playwright", specifier = "==1.63.0" },
+    { name = "pytest", specifier = ">=9.0.0" },
+    { name = "pytest-asyncio", specifier = ">=1.2.0" },
+    { name = "ruff", specifier = ">=0.14.0" },
+    { name = "uvicorn", specifier = ">=0.35.0" },
 ]
 
 [[package]]

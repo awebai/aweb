@@ -1,11 +1,17 @@
-import { element } from "./dom.mjs";
+import { element, chrome } from "./dom.mjs";
 
 export function renderMedia(box, w, host) {
   const p = w.props,
     figure = element("figure");
   box.append(figure);
-  const message = element("p", "Loading media…", "field-description");
+  const message = chrome("p", "Loading media…", "field-description");
   figure.append(message);
+  const unavailable = () => {
+    const alt = element("span", p.alt);
+    alt.lang = box.closest("[lang]")?.lang || "en";
+    message.replaceChildren("Media unavailable. ", alt);
+    message.hidden = false;
+  };
   let disposed = false;
   Promise.resolve()
     .then(() => host.asset?.(p.asset_id))
@@ -42,8 +48,7 @@ export function renderMedia(box, w, host) {
         media.append(element("p", p.alt));
       }
       media.onerror = () => {
-        message.textContent = `Media unavailable. ${p.alt}`;
-        message.hidden = false;
+        unavailable();
       };
       media.onload = () => {
         message.hidden = true;
@@ -56,7 +61,7 @@ export function renderMedia(box, w, host) {
       if (p.caption) figure.append(element("figcaption", p.caption));
     })
     .catch(() => {
-      if (!disposed) message.textContent = `Media unavailable. ${p.alt}`;
+      if (!disposed) unavailable();
     });
   return () => {
     disposed = true;
@@ -70,8 +75,8 @@ export function renderMedia(box, w, host) {
 
 export function renderPresence(box, w, host) {
   const subject = element("p", w.props.subject, "widget-label"),
-    status = element("p", "Unknown"),
-    age = element("p", null, "field-description");
+    status = chrome("p", "Unknown"),
+    age = chrome("p", null, "field-description");
   box.append(subject, status, age);
   let disposed = false,
     timer;
@@ -105,10 +110,15 @@ export function renderPresence(box, w, host) {
           unknown: "Unknown",
         };
         status.textContent = states[evidence.reachable] || states.unknown;
-        if (evidence.reason?.text)
-          status.append(element("span", ` · ${evidence.reason.text}`));
-        if (evidence.fixing?.text)
-          status.append(element("span", ` ${evidence.fixing.text}`));
+        for (const text of [
+          evidence.reason?.text && ` · ${evidence.reason.text}`,
+          evidence.fixing?.text && ` ${evidence.fixing.text}`,
+        ]) {
+          if (!text) continue;
+          const report = element("span", text);
+          report.lang = box.closest("[lang]")?.lang || "en";
+          status.append(report);
+        }
         const seconds = Math.max(0, Math.floor((now - observed) / 1000));
         age.textContent = `Reported ${seconds < 60 ? "less than a minute ago" : `${Math.floor(seconds / 60)} minutes ago`}`;
       }
