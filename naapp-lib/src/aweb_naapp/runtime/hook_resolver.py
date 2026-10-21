@@ -7,8 +7,8 @@ event or a request names; when that record changes, the next resolution
 follows it. Answers are reused through :class:`FreshnessCache` for at most
 ``min(max_age_seconds, 60)`` seconds and an expired one is never served. Each
 :class:`Resolution` says how old its data may be: ``as_of`` is the wall-clock
-time its request was sent, which the server read after, and ``max_age_seconds``
-the window it was reused for, so a caller bounding the data's age measures the
+time its refresh started, which the server read after and from which the cache
+counts its window, and ``max_age_seconds`` that window, so a caller bounding the data's age measures the
 data, not the time it asked. That bound holds because the server's resolution
 endpoints read their bindings from its database per request, after the request
 arrives; if they ever answer from a server-side cache, ``as_of`` must come from
@@ -297,13 +297,16 @@ class HookResolver:
         # reuses an answer from the server it replaced.
         key = (team_id, server.server_url, server.audience, server.team_did_key, *selection)
 
+        # Read with no await before the cache starts its refresh, so a refresh
+        # this call starts begins at this instant on both clocks.
+        asked_at = self._clock()
+
         async def fetch() -> tuple[tuple[Any, ...], int]:
-            requested_at = self._clock()
             body = await self._get(server, team_id, path, signed=signed)
             try:
                 max_age = _max_age(body)
                 window = min(max_age, FRESHNESS_CEILING_SECONDS)
-                return (parse(body), requested_at, window), max_age
+                return (parse(body), asked_at, window), max_age
             except (_Malformed, KeyError, TypeError, ValueError) as exc:
                 raise HookResolutionUnavailable("answer_malformed") from exc
 
