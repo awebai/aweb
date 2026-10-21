@@ -2,7 +2,7 @@
 # the proxy; the hard runner instead preserves DNS/connection error semantics.
 TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 
-.PHONY: help clean test test-shipping test-server test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-shipping test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -16,10 +16,12 @@ TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 	cli-e2e _candidate-gate-docker-boundaries _candidate-channel-version _candidate-node-deps \
 	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
 	_candidate-artifact-server _candidate-artifact-awid-package _candidate-artifact-awid-image \
+	_candidate-artifact-naapp-package check-naapp-lib-package \
 	_candidate-artifact-channel _candidate-artifact-pi _candidate-artifact-skills _candidate-artifact-a2a-image
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
+NAAPP_LIB_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' naapp-lib/pyproject.toml 2>/dev/null | head -n 1)
 CHANNEL_VERSION := $(shell node -p "require('./channel/package.json').version" 2>/dev/null)
 CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plugin.json').version" 2>/dev/null)
 # aw CLI releases have independent semver. Derive the next patch from the
@@ -115,8 +117,9 @@ test-shipping:
 	python3 scripts/test_shipping.py
 	python3 scripts/test_candidate_cleanup.py
 
-# Editable AWID metadata is repeated in both committed Python locks. Check both
-# without repair, then prove a missing dependent-lock dependency is rejected.
+# AWID metadata is repeated in every committed Python lock that takes the in-repo
+# awid (awid, server, naapp-lib and each naapp). Check them all without repair,
+# then prove stale and missing dependent-lock entries are rejected.
 test-python-locks:
 	bash scripts/check-python-locks.sh
 	bash scripts/check-python-locks.sh --self-test
@@ -251,6 +254,35 @@ test-server:
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
 		UV_CACHE_DIR=/tmp/uv-cache uv build --out-dir "$$build_dir"
 	cd server && UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+
+# The naapp packages the candidate gate covers. Each provides `make lint` and
+# `make test`: the checks stage lints them, and the isolated unit stage runs
+# their suites against its Postgres. A package joins by being added here.
+# UV_FROZEN keeps the gate on each committed lock, a lock the run changed fails
+# it, and the suites run offline.
+NAAPP_PACKAGES := naapp-lib naapp/folio naapp/library naapp/secrets naapp/logs
+
+# Installs each package's locked dependencies, for a runner that then goes offline.
+naapp-sync:
+	set -e; for package in $(NAAPP_PACKAGES); do \
+		UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --project $$package; \
+	done
+
+lint-naapp:
+	set -e; for package in $(NAAPP_PACKAGES); do \
+		echo "=== lint $$package ==="; \
+		UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 $(MAKE) -C $$package lint; \
+		git diff --exit-code -- $$package/uv.lock; \
+	done
+
+test-naapp:
+	set -e; for package in $(NAAPP_PACKAGES); do \
+		echo "=== test $$package ==="; \
+		UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --project $$package; \
+		UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache \
+			NAAPP_REQUIRE_TEST_DATABASE=1 LIBRARY_REQUIRE_TEST_DATABASE=1 $(TEST_EGRESS_RUNNER) $(MAKE) -C $$package test; \
+		git diff --exit-code -- $$package/uv.lock; \
+	done
 
 test-awid:
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
@@ -486,10 +518,12 @@ test-candidate-ledger:
 _candidate-unit-suites:
 	python3 scripts/test-egress/docker.py --evidence "$$CANDIDATE_LOG_DIR/test-egress" --command bash scripts/candidate-suite.sh --isolated-suites
 
-candidate-gate:
+# The gate's own ledger test runs first, on the host, so a gate change that
+# breaks it stops every train and release candidate before any stage runs.
+candidate-gate: test-candidate-ledger
 	bash scripts/candidate-docker-gate.sh
 
-release-candidate:
+release-candidate: test-candidate-ledger
 	@test -n "$(TAGS)" || (echo "TAGS='server-vX.Y.Z ...' is required" >&2; exit 2)
 	python3 scripts/release_candidate.py $(TAGS)
 
@@ -567,6 +601,22 @@ _candidate-artifact-awid-package:
 	test -f awid/dist/awid_service-$(AWID_VERSION).tar.gz
 	test -f awid/dist/awid_service-$(AWID_VERSION)-py3-none-any.whl
 
+_candidate-artifact-naapp-package: check-naapp-lib-package
+	rm -rf naapp-lib/dist
+	cd naapp-lib && uv build
+	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION).tar.gz
+	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION)-py3-none-any.whl
+	rm -rf naapp-lib/testing/dist
+	cd naapp-lib/testing && uv build
+	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION).tar.gz
+	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION)-py3-none-any.whl
+
+# aweb-naapp's and aweb-naapp-testing's release artifacts as a consumer sees them:
+# each wheel ships its package files, pins its dependencies, and installs and
+# imports in a fresh environment.
+check-naapp-lib-package:
+	python3 scripts/check-naapp-lib-package.py
+
 _candidate-artifact-awid-image:
 	@mkdir -p /tmp/aweb-candidate-gate
 	docker buildx build --platform linux/amd64,linux/arm64 \
@@ -628,3 +678,9 @@ test-isolated:
 .PHONY: test-egress-controls
 test-egress-controls:
 	python3 -m unittest discover -s scripts/test-egress -p test_native.py -v
+
+# The shared page renderer is packaged in the Python wheel. Rebuild from its
+# exact npm lock and compare without rewriting committed bytes.
+.PHONY: check-page-renderer-bundle
+check-page-renderer-bundle:
+	cd naapp-lib/renderer && npm ci --ignore-scripts && node build.mjs --check

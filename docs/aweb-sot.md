@@ -611,6 +611,7 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `team_app_emit_keys`
 - `team_app_event_types`
 - `team_app_keys`
+- `app_hook_bindings`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 ---
@@ -1763,6 +1764,9 @@ AWEB_REDIS_URL=redis://localhost:6379/0
 AWEB_PRESENCE_TTL_SECONDS=1800
 AWEB_DATABASE_USES_TRANSACTION_POOLER=false
 AWEB_DATABASE_STATEMENT_CACHE_SIZE=
+
+# How long an app may reuse its grant answer (1-60 seconds)
+AWEB_APP_GRANT_MAX_AGE_SECONDS=60
 ```
 
 `AWEB_REDIS_URL` falls back to `REDIS_URL`, `AWEB_DATABASE_USES_TRANSACTION_POOLER`

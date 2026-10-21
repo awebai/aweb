@@ -39,6 +39,7 @@ OUTCOMES = {
     "evidence_limit",
     "delivered",
     "resource_not_found",
+    "action_denied",
 }
 
 

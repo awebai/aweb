@@ -42,8 +42,6 @@ All runtime env vars use the `FOLIO_` prefix:
 - `FOLIO_TIMESTAMP_SKEW_SECONDS` — signed request skew window, default `300`.
 - `FOLIO_DEFAULT_PRESENT_TTL_SECONDS` — default present-link TTL, default `86400`.
 - `FOLIO_MAX_PRESENT_TTL_SECONDS` — max present-link TTL, default `604800`.
-- `FOLIO_FREE_MAX_DOCUMENTS` — inherited free-tier cap, default `3`.
-- `FOLIO_FREE_MAX_VERSIONS_PER_DOC` — inherited version cap, default `50`.
 - `FOLIO_CLOUDFLARE_ACCOUNT_ID` — Cloudflare account id for Stream.
 - `FOLIO_CLOUDFLARE_STREAM_API_TOKEN` — Stream API token for direct uploads/status.
 - `FOLIO_CLOUDFLARE_STREAM_PLAYBACK_HOST` — signed playback host, for example `customer-<code>.cloudflarestream.com`.
@@ -161,7 +159,7 @@ The container runs:
 uvicorn folio.api:app --host 0.0.0.0 --port ${PORT:-8765}
 ```
 
-`render.yaml` declares the Docker web service and the `FOLIO_` env names for a fresh Neon-backed deployment.
+`render.yaml` is a template declaring the Docker web service and the `FOLIO_` env names for a fresh Neon-backed deployment. Folio's own production service is pinned in `ops/render-production.json` and operated through `make prod-*`; see [docs/production-operations.md](docs/production-operations.md).
 
 ## License
 

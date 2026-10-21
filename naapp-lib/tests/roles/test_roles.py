@@ -15,9 +15,11 @@ from aweb_naapp.roles import (
     apply_roles_migrations,
     assign,
     has_role,
+    hold_role,
     is_role_name,
     members_of,
     principal_key,
+    purge_team,
     resolve_one,
     roles_of,
     unassign,
@@ -178,6 +180,113 @@ async def test_a_did_key_assignment_does_not_follow_the_member_once_it_carries_a
     await _assign(db, LOCAL, OWNER)
     with_did_aw = replace(LOCAL, did_aw=DID_AW, certificate_id="cert-local-2")
     assert not await has_role(db, principal_key(with_did_aw), OWNER)
+
+
+async def test_purging_a_team_removes_every_assignment_of_that_team_only(
+    db: AsyncDatabaseManager,
+) -> None:
+    elsewhere = replace(MEMBER, team_id=OTHER_TEAM, certificate_id="cert-other")
+    await _assign(db, MEMBER, OWNER)
+    await _assign(db, LOCAL, "logs.reader")
+    await _assign(db, elsewhere, OWNER)
+    async with db.transaction() as tx:
+        await purge_team(tx, TEAM)
+    assert await roles_of(db, principal_key(MEMBER)) == []
+    assert await roles_of(db, principal_key(LOCAL)) == []
+    assert await members_of(db, TEAM, OWNER) == []
+    assert await roles_of(db, principal_key(elsewhere)) == [OWNER]
+
+
+async def test_a_purged_role_no_longer_resolves(db: AsyncDatabaseManager) -> None:
+    await _assign(db, MEMBER, OWNER)
+    async with db.transaction() as tx:
+        await purge_team(tx, TEAM)
+    with pytest.raises(TargetUnresolved):
+        await _resolve(db, TEAM, OWNER)
+
+
+async def test_a_purge_rolls_back_with_the_callers_transaction(db: AsyncDatabaseManager) -> None:
+    await _assign(db, MEMBER, OWNER)
+    with pytest.raises(RuntimeError):
+        async with db.transaction() as tx:
+            await purge_team(tx, TEAM)
+            raise RuntimeError("the retirement was not recorded")
+    assert await has_role(db, principal_key(MEMBER), OWNER)
+
+
+async def test_purging_a_team_without_assignments_changes_nothing(
+    db: AsyncDatabaseManager,
+) -> None:
+    await _assign(db, MEMBER, OWNER)
+    async with db.transaction() as tx:
+        await purge_team(tx, OTHER_TEAM)
+    assert await has_role(db, principal_key(MEMBER), OWNER)
+
+
+async def test_a_purge_cannot_take_a_role_resolved_in_an_open_transaction(
+    db: AsyncDatabaseManager,
+) -> None:
+    await _assign(db, MEMBER, OWNER)
+    async with db.transaction() as resolving:
+        await resolve_one(resolving, TEAM, OWNER)
+        with pytest.raises(asyncpg.LockNotAvailableError):
+            async with db.transaction() as purging:
+                await purging.execute("SET LOCAL lock_timeout = '100ms'")
+                await purge_team(purging, TEAM)
+
+
+async def _blocked(db: AsyncDatabaseManager, change) -> None:
+    with pytest.raises(asyncpg.LockNotAvailableError):
+        async with db.transaction() as changing:
+            await changing.execute("SET LOCAL lock_timeout = '100ms'")
+            await change(changing)
+
+
+async def test_a_held_role_cannot_be_unassigned_until_the_holder_commits(
+    db: AsyncDatabaseManager,
+) -> None:
+    await _assign(db, MEMBER, OWNER)
+    async with db.transaction() as holding:
+        assert await hold_role(holding, principal_key(MEMBER), OWNER)
+        await _blocked(db, lambda tx: unassign(tx, principal_key(MEMBER), OWNER))
+    async with db.transaction() as tx:
+        await unassign(tx, principal_key(MEMBER), OWNER)
+    assert not await has_role(db, principal_key(MEMBER), OWNER)
+
+
+async def test_a_held_role_cannot_be_purged_until_the_holder_commits(
+    db: AsyncDatabaseManager,
+) -> None:
+    await _assign(db, MEMBER, OWNER)
+    async with db.transaction() as holding:
+        assert await hold_role(holding, principal_key(MEMBER), OWNER)
+        await _blocked(db, lambda tx: purge_team(tx, TEAM))
+
+
+async def test_a_role_unassigned_before_the_hold_is_not_held(db: AsyncDatabaseManager) -> None:
+    await _assign(db, MEMBER, OWNER)
+    async with db.transaction() as tx:
+        await unassign(tx, principal_key(MEMBER), OWNER)
+    async with db.transaction() as holding:
+        assert not await hold_role(holding, principal_key(MEMBER), OWNER)
+
+
+async def test_a_rolled_back_hold_releases_the_role(db: AsyncDatabaseManager) -> None:
+    await _assign(db, MEMBER, OWNER)
+    with pytest.raises(RuntimeError):
+        async with db.transaction() as holding:
+            assert await hold_role(holding, principal_key(MEMBER), OWNER)
+            raise RuntimeError("the stage failed")
+    async with db.transaction() as tx:
+        await tx.execute("SET LOCAL lock_timeout = '100ms'")
+        await unassign(tx, principal_key(MEMBER), OWNER)
+    assert not await has_role(db, principal_key(MEMBER), OWNER)
+
+
+async def test_a_hold_checks_the_role_name(db: AsyncDatabaseManager) -> None:
+    async with db.transaction() as holding:
+        with pytest.raises(ValueError):
+            await hold_role(holding, principal_key(MEMBER), "owner")
 
 
 async def test_unassign_removes_only_that_role(db: AsyncDatabaseManager) -> None:

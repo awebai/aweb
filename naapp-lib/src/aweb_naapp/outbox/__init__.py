@@ -41,10 +41,15 @@ class OutboxConflict(Exception):
     """An event id was enqueued again with different contents."""
 
 
+class TargetChannelConflict(Exception):
+    """A target id is already used by another channel."""
+
+
 @dataclass(frozen=True)
 class OutboxEvent:
     """One event to deliver. ``payload`` is delivered byte for byte; ``producer``
-    holds the producer's own columns, which the outbox stores but never reads."""
+    holds the producer's own columns, which the outbox stores but never reads.
+    ``channel`` names the kind of delivery: each channel drains on its own."""
 
     event_id: UUID
     team_id: str
@@ -54,6 +59,7 @@ class OutboxEvent:
     signature: str | None = None
     critical: bool = False
     producer: Mapping[str, Any] = field(default_factory=dict)
+    channel: str = "default"
 
 
 @dataclass(frozen=True)
@@ -68,6 +74,7 @@ class StoredEvent:
     signature: str | None
     critical: bool
     producer: Mapping[str, Any]
+    channel: str
 
 
 @dataclass(frozen=True)
@@ -198,8 +205,9 @@ async def enqueue(tx: TransactionManager, event: OutboxEvent) -> None:
     inserted = await tx.fetch_value(
         """
         INSERT INTO {{tables.outbox_events}}
-          (event_id, team_id, kind, occurred_at, payload, payload_sha256, signature, critical, producer)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+          (event_id, team_id, kind, occurred_at, payload, payload_sha256, signature, critical,
+           producer, channel)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
         ON CONFLICT (event_id) DO NOTHING
         RETURNING event_id
         """,
@@ -212,12 +220,13 @@ async def enqueue(tx: TransactionManager, event: OutboxEvent) -> None:
         event.signature,
         event.critical,
         json.dumps(dict(event.producer), sort_keys=True),
+        event.channel,
     )
     if inserted is not None:
         return
     stored = await tx.fetch_one(
         """
-        SELECT team_id, kind, payload_sha256, signature, critical
+        SELECT team_id, kind, payload_sha256, signature, critical, channel
         FROM {{tables.outbox_events}} WHERE event_id = $1
         """,
         event.event_id,
@@ -228,7 +237,15 @@ async def enqueue(tx: TransactionManager, event: OutboxEvent) -> None:
         stored["payload_sha256"],
         stored["signature"],
         stored["critical"],
-    ) != (event.team_id, event.kind, payload_sha256, event.signature, event.critical):
+        stored["channel"],
+    ) != (
+        event.team_id,
+        event.kind,
+        payload_sha256,
+        event.signature,
+        event.critical,
+        event.channel,
+    ):
         raise OutboxConflict(f"event {event.event_id} was already enqueued with other contents")
 
 
@@ -259,6 +276,7 @@ def _stored(row: Mapping[str, Any]) -> StoredEvent:
         signature=row["signature"],
         critical=row["critical"],
         producer=json.loads(producer) if isinstance(producer, str) else producer,
+        channel=row["channel"],
     )
 
 
@@ -266,21 +284,39 @@ def _meta(value: Any) -> Mapping[str, Any]:
     return json.loads(value) if isinstance(value, str) else value
 
 
+async def _claim_target(tx: TransactionManager, target_id: str, channel: str) -> None:
+    await tx.execute(
+        """
+        INSERT INTO {{tables.outbox_targets}} (target_id, channel) VALUES ($1, $2)
+        ON CONFLICT (target_id) DO NOTHING
+        """,
+        target_id,
+        channel,
+    )
+    owner = await tx.fetch_value(
+        "SELECT channel FROM {{tables.outbox_targets}} WHERE target_id = $1", target_id
+    )
+    if owner != channel:
+        raise TargetChannelConflict(f"target {target_id} belongs to channel {owner}")
+
+
 async def _materialize(
-    db: AsyncDatabaseManager, resolver: Resolver, policy: RetryPolicy, limit: int
+    db: AsyncDatabaseManager, channel: str, resolver: Resolver, policy: RetryPolicy, limit: int
 ) -> int:
     materialized = 0
     async with db.transaction() as tx:
         rows = await tx.fetch_all(
             """
-            SELECT event_id, team_id, kind, occurred_at, payload, signature, critical, producer
+            SELECT event_id, team_id, kind, occurred_at, payload, signature, critical, producer,
+                   channel
             FROM {{tables.outbox_events}}
-            WHERE materialized_at IS NULL
+            WHERE materialized_at IS NULL AND channel = $2
             ORDER BY position
             LIMIT $1
             FOR UPDATE SKIP LOCKED
             """,
             limit,
+            channel,
         )
         for row in rows:
             event = _stored(row)
@@ -291,42 +327,52 @@ async def _materialize(
                 continue
             if targets is None:
                 continue
-            for target in targets:
-                await tx.execute(
-                    """
-                    INSERT INTO {{tables.outbox_deliveries}} (event_id, target_id, target_meta)
-                    VALUES ($1, $2, $3::jsonb)
-                    ON CONFLICT (event_id, target_id) DO NOTHING
-                    """,
-                    event.event_id,
-                    target.id,
-                    json.dumps(dict(target.meta), sort_keys=True),
-                )
-            await tx.execute(
-                "UPDATE {{tables.outbox_events}} SET materialized_at = NOW() WHERE event_id = $1",
-                event.event_id,
-            )
+            try:
+                async with tx.transaction() as event_tx:
+                    for target in targets:
+                        await _claim_target(event_tx, target.id, channel)
+                        await event_tx.execute(
+                            """
+                            INSERT INTO {{tables.outbox_deliveries}}
+                              (event_id, target_id, target_meta)
+                            VALUES ($1, $2, $3::jsonb)
+                            ON CONFLICT (event_id, target_id) DO NOTHING
+                            """,
+                            event.event_id,
+                            target.id,
+                            json.dumps(dict(target.meta), sort_keys=True),
+                        )
+                    await event_tx.execute(
+                        "UPDATE {{tables.outbox_events}} SET materialized_at = NOW()"
+                        " WHERE event_id = $1",
+                        event.event_id,
+                    )
+            except TargetChannelConflict:
+                logger.exception("Outbox event %s names another channel's target", event.event_id)
+                continue
             materialized += 1
     return materialized
 
 
 async def _deliver_one(
-    db: AsyncDatabaseManager, transport: Transport, policy: RetryPolicy
+    db: AsyncDatabaseManager, channel: str, transport: Transport, policy: RetryPolicy
 ) -> Outcome | None:
     async with db.transaction() as tx:
         row = await tx.fetch_one(
             """
             SELECT d.event_id, d.target_id, d.target_meta, d.attempts,
                    e.team_id, e.kind, e.occurred_at, e.payload, e.signature, e.critical, e.producer,
-                   (NOW() - e.created_at) >= $1 AS past_horizon
+                   e.channel, (NOW() - e.created_at) >= $1 AS past_horizon
             FROM {{tables.outbox_deliveries}} d
             JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id
             WHERE d.state IN ('pending', 'stalled') AND d.next_attempt_at <= NOW()
+              AND e.channel = $2
             ORDER BY e.position, d.target_id
             LIMIT 1
             FOR UPDATE OF d SKIP LOCKED
             """,
             policy.stalled_after,
+            channel,
         )
         if row is None:
             return None
@@ -435,21 +481,23 @@ async def _finish_drained(db: AsyncDatabaseManager) -> int:
 async def drain(
     db: AsyncDatabaseManager,
     *,
+    channel: str,
     resolver: Resolver,
     transport: Transport,
     policy: RetryPolicy,
     limit: int = 100,
 ) -> DrainResult:
-    """Materialize pending events, then deliver every due delivery once.
+    """Materialize the channel's pending events, then deliver each of its due
+    deliveries once. Other channels' events are left to their own drains.
 
     Materialization commits before any send, so a crash never re-resolves an
     event. Each delivery is sent and recorded in its own transaction, holding
     its row lock, so a crash mid-send leaves it pending for the next drain.
     """
-    materialized = await _materialize(db, resolver, policy, limit)
+    materialized = await _materialize(db, channel, resolver, policy, limit)
     delivered = failed = 0
     for _ in range(limit):
-        outcome = await _deliver_one(db, transport, policy)
+        outcome = await _deliver_one(db, channel, transport, policy)
         if outcome is None:
             break
         if isinstance(outcome, Acked):
@@ -465,6 +513,7 @@ async def drain(
 async def run_drain(
     db: AsyncDatabaseManager,
     *,
+    channel: str,
     resolver: Resolver,
     transport: Transport,
     policy: RetryPolicy,
@@ -475,7 +524,9 @@ async def run_drain(
     found nothing to do. A failing pass is logged and retried."""
     while not stop.is_set():
         try:
-            result = await drain(db, resolver=resolver, transport=transport, policy=policy)
+            result = await drain(
+                db, channel=channel, resolver=resolver, transport=transport, policy=policy
+            )
             busy = result.materialized or result.delivered or result.failed
         except Exception:
             logger.exception("Outbox drain pass failed")
@@ -579,11 +630,13 @@ async def latest_receipt(db: AsyncDatabaseManager, target_id: str) -> bytes | No
     return bytes(value) if value is not None else None
 
 
-async def outbox_status(db: AsyncDatabaseManager) -> OutboxStatus:
+async def outbox_status(db: AsyncDatabaseManager, channel: str | None = None) -> OutboxStatus:
     """Per target: undelivered, stalled, dead-letter (conflict or rejected, not
-    yet acknowledged) and cancelled counts, and the age of the oldest undelivered event. Per team: the
+    yet acknowledged) and cancelled counts, and the age of the oldest
+    undelivered event. Per team: the
     events not yet materialized, and the oldest one's age. Faults: critical
-    events left with no delivery pending or acknowledged."""
+    events left with no delivery pending or acknowledged. ``channel`` limits
+    every figure to that channel's events; None covers all channels."""
     target_rows = await db.fetch_all(
         """
         SELECT d.target_id,
@@ -597,28 +650,33 @@ async def outbox_status(db: AsyncDatabaseManager) -> OutboxStatus:
                        FILTER (WHERE d.state IN ('pending', 'stalled'))) AS oldest
         FROM {{tables.outbox_deliveries}} d
         JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id
+        WHERE $1::text IS NULL OR e.channel = $1
         GROUP BY d.target_id
-        """
+        """,
+        channel,
     )
     unmaterialized_rows = await db.fetch_all(
         """
         SELECT team_id, count(*) AS count, EXTRACT(EPOCH FROM NOW() - min(created_at)) AS oldest
         FROM {{tables.outbox_events}}
-        WHERE materialized_at IS NULL
+        WHERE materialized_at IS NULL AND ($1::text IS NULL OR channel = $1)
         GROUP BY team_id
-        """
+        """,
+        channel,
     )
     fault_rows = await db.fetch_all(
         """
         SELECT e.event_id FROM {{tables.outbox_events}} e
         WHERE e.critical AND e.materialized_at IS NOT NULL
+          AND ($1::text IS NULL OR e.channel = $1)
           AND NOT EXISTS (
             SELECT 1 FROM {{tables.outbox_deliveries}} d
             WHERE d.event_id = e.event_id
               AND d.state IN ('pending', 'stalled', 'delivered', 'duplicate')
           )
         ORDER BY e.position
-        """
+        """,
+        channel,
     )
     return OutboxStatus(
         targets={

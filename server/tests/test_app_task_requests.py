@@ -85,7 +85,7 @@ async def app_request_context(privacy_app):
     installation = await _verified_install(env.db, team_id=TEAM, app_id="fixture", did_key=app_did,
         event_did=did_from_public_key(bytes(env.event_signing_key.verify_key)))
     credential = AppCredential(purpose=APP_REQUEST, team_id=TEAM, app_id="fixture", kid="requests-1",
-                               did_key=app_did, installation_id="install-fixture", installation_generation=1)
+                               did_key=app_did, digest=installation["digest"], installation_id="install-fixture", installation_generation=1)
     request = Request({"type": "http", "method": "POST", "path": "/v1/tasks/app-requests",
                        "headers": [(b"x-aweb-team-id", TEAM.encode()), (b"x-aweb-app-id", b"fixture")], "app": env.app})
     return env, request, credential, installation

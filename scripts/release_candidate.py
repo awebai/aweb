@@ -15,16 +15,19 @@ from pathlib import Path
 
 SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
 TAG_PATTERN = re.compile(
-    rf"^(server-v|awid-service-v|awid-v|aw-v|channel-v|pi-v|skills-v|a2a-gw-v)({SEMVER})$"
+    rf"^(server-v|awid-service-v|aweb-naapp-v|awid-v|aw-v|channel-v|pi-v|skills-v|a2a-gw-v)({SEMVER})$"
 )
 MANIFESTS = {
     "server-v": "server/pyproject.toml",
     "awid-service-v": "awid/pyproject.toml",
+    "aweb-naapp-v": "naapp-lib/pyproject.toml",
     "awid-v": "awid/pyproject.toml",
     "channel-v": "channel/package.json",
     "pi-v": "pi-extension/package.json",
     "skills-v": "packages/claude-skills/package.json",
 }
+# Packages a tag lane publishes together with its manifest's, at the same version.
+LOCKSTEP = {"aweb-naapp-v": ["naapp-lib/testing/pyproject.toml"]}
 
 
 class CandidateRefusal(RuntimeError):
@@ -83,11 +86,11 @@ def validate_tags(root: Path, tags: list[str]) -> tuple[str, dict[str, str]]:
         if prefix in versions:
             raise CandidateRefusal(f"more than one {prefix} tag was requested")
         versions[prefix] = version
-        manifest = MANIFESTS.get(prefix)
-        if manifest and manifest_version(root, manifest) != version:
-            raise CandidateRefusal(
-                f"{tag} does not match {manifest} version {manifest_version(root, manifest)}"
-            )
+        for manifest in ([MANIFESTS[prefix]] if prefix in MANIFESTS else []) + LOCKSTEP.get(prefix, []):
+            if manifest_version(root, manifest) != version:
+                raise CandidateRefusal(
+                    f"{tag} does not match {manifest} version {manifest_version(root, manifest)}"
+                )
         if run(root, "git", "tag", "--list", tag):
             raise CandidateRefusal(f"local tag {tag} already exists; tags are never moved")
     return source_sha, versions

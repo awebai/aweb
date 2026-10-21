@@ -1,6 +1,6 @@
 [project]
 name = "aweb"
-version = "1.27.29"
+version = "1.27.31"
 description = "Agent Web: self-hostable coordination server for AI agents (identity, presence, mail, chat, tasks, locks)"
 readme = "README.md"
 license = "MIT"
@@ -20,7 +20,7 @@ classifiers = [
 ]
 dependencies = [
     "aweb-naapp>=0.1.0",
-    "awid-service>=0.5.19",
+    "awid-service>=0.5.30",
     "base58>=2.1.1",
     "cryptography>=45.0.6",
     "dnspython>=2.8.0",

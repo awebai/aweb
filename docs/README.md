@@ -88,6 +88,8 @@ authority.
   statement of custody and channel for a team-auth request (proposal).
 - [Member person declaration](member-person.md) — team controller's statement
   that a certificate's member is one natural person (proposal).
+- [secrets runner protocol](secrets-runner-protocol.md) — signed runner requests
+  and assignments, and HPKE credential sealing, between secrets and its runners.
 - [AWID A2A publication contract](a2a-awid-publication-contract.md) — publication
   and bridge-delegation assertions.
 - [Agent health](agent-health.md) — status-host designation and the signed
@@ -179,8 +181,10 @@ presented as shipped.
   `app.state.on_mutation` callback and exact current route call sites.
 - [aw-hooks: catalog, bindings and delivery](hook-events.md) — specified
   experimental contract for owner-activated named hooks, not yet shipped.
-- [App manifest v1](app-manifest.md) — current experimental manifest and
-  byte-identical CLI interpretation contract.
+- [Owner act](owner-act.md) — specified experimental controller-signed artifact
+  for owner-only governance acts, not yet shipped.
+- [App manifest](app-manifest.md) — current experimental manifest versions 1
+  and 2, variant discovery, and the byte-identical CLI interpretation contract.
 - [App registry and team grants](app-registry.md) — current experimental install,
   digest-pin, and grants read surface.
 - [Page format](page-format.md) — the frozen `aweb.page/1` page snapshot
