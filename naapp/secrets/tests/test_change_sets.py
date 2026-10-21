@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from aweb_naapp.roles import PrincipalKey, apply_roles_migrations, assign, has_role, unassign
 from aweb_naapp.runtime.approvals import (
@@ -48,8 +49,9 @@ from aweb_naapp_testing.owner_acts import (
     team_owner,
 )
 from aweb_naapp_testing.webauthn import SoftAuthenticator
-from pgdbm import AsyncDatabaseManager
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
+from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME
 from aweb_secrets.approvers import approvers_for_secret
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_policy import apply_change_policy_migrations, four_eyes, require_four_eyes
@@ -194,6 +196,9 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
         apply_installation_migrations,
     ):
         await migrate(db)
+    await AsyncMigrationManager(
+        db, migrations_path=str(MIGRATIONS_PATH), module_name=MODULE_NAME
+    ).apply_pending_migrations()
     installations = Installations()
     fence = InstallationFence(db, app_id=APP_ID, grants=installations)
     await fence.refresh(TEAM)
@@ -219,6 +224,7 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
         directory=directory,
         custody=custody,
         draft_limit=DraftLimit(count=2, window=timedelta(hours=1)),
+        internal_destinations=InternalDestinations.DISABLED,
     )
     async with awid_registry(registry_db.config.get_dsn()) as registry:
         yield World(
@@ -450,14 +456,14 @@ async def test_the_draft_limit_is_per_member(world: World) -> None:
 
 async def test_a_kind_without_an_apply_yet_is_refused_at_draft(world: World) -> None:
     await enrol_owner(world, ALICE, "alice@acme.com")
-    value = {
-        "kind": "secret_value",
-        "op": "create",
+    reenable = {
+        "kind": "reenable",
+        "op": "enable",
         "ref": "payments-live",
-        "after": {"v": 1, "secret_ref": "payments-live", "version": 1},
+        "after": {"v": 1, "target_kind": "secret", "target_ref": "payments-live"},
     }
     with pytest.raises(ChangeRefused) as refused:
-        await draft(world, change_set(drafter=by_member(CAROL), changes=[value]))
+        await draft(world, change_set(drafter=by_member(CAROL), changes=[reenable]))
     assert refused.value.code == "change_kind_not_applicable"
 
 
@@ -479,20 +485,49 @@ async def test_under_four_eyes_another_owner_confirms_relaxing_it(world: World) 
     assert await four_eyes(world.db, INSTALLATION_ID) == "not_required"
 
 
-async def _sealed(world: World, secret_id: str) -> SealContext:
+SECRET_ID = "sec_19ab42"
+SECRET = {
+    "v": 1,
+    "secret_id": SECRET_ID,
+    "ref": "payments-live",
+    "description": "Live payments API key",
+    "kind": "bearer",
+    "kind_params": {},
+    "sensitivity": "standard",
+    "approve_only": False,
+    "backend": "native",
+}
+
+
+async def sealed_value(world: World, contents: bytes = b"v") -> SealContext:
     async with world.db.transaction() as tx:
         version = await world.custody.sealer.ingest(
-            tx, installation_id=INSTALLATION_ID, team_id=TEAM, secret_id=secret_id, value=b"v"
+            tx, installation_id=INSTALLATION_ID, team_id=TEAM, secret_id=SECRET_ID, value=contents
         )
     return SealContext(
-        installation_id=INSTALLATION_ID, team_id=TEAM, secret_id=secret_id, version=version
+        installation_id=INSTALLATION_ID, team_id=TEAM, secret_id=SECRET_ID, version=version
     )
+
+
+def secret_value(version: int) -> dict[str, Any]:
+    return {
+        "kind": "secret_value",
+        "op": "create",
+        "ref": "payments-live",
+        "after": {"v": 1, "secret_ref": "payments-live", "version": version},
+    }
+
+
+def new_secret(sealed: SealContext) -> list[dict[str, Any]]:
+    """The items creating ``SECRET`` with ``sealed`` as its first value."""
+    secret = {"kind": "secret", "op": "create", "ref": "payments-live", "after": SECRET}
+    return [secret, secret_value(sealed.version)]
 
 
 async def test_an_expired_draft_destroys_its_sealed_versions_and_its_approval(world: World) -> None:
     await enrol_owner(world, ALICE, "alice@acme.com")
-    sealed = await _sealed(world, "sec_1")
-    change = change_set(drafter=by_member(CAROL), changes=[grant_role(CAROL)])
+    sealed = await sealed_value(world)
+    change = change_set(drafter=by_member(CAROL), changes=new_secret(sealed))
     approval_id = await draft(world, change, sealed=[sealed])
     expired = await world.change_sets.expire(now=datetime.now(UTC) + timedelta(hours=2))
     assert expired == 1
@@ -507,8 +542,8 @@ async def test_a_cancelled_draft_destroys_its_sealed_versions_and_its_approval(
     world: World,
 ) -> None:
     await enrol_owner(world, ALICE, "alice@acme.com")
-    sealed = await _sealed(world, "sec_1")
-    change = change_set(drafter=by_member(CAROL), changes=[grant_role(CAROL)])
+    sealed = await sealed_value(world)
+    change = change_set(drafter=by_member(CAROL), changes=new_secret(sealed))
     approval_id = await draft(world, change, sealed=[sealed])
     async with world.db.transaction() as tx:
         await world.change_sets.cancel(tx, change["change_id"], cancelled_by=CAROL.principal_did)
@@ -519,8 +554,8 @@ async def test_a_cancelled_draft_destroys_its_sealed_versions_and_its_approval(
 
 async def test_a_live_draft_keeps_its_sealed_versions(world: World) -> None:
     await enrol_owner(world, ALICE, "alice@acme.com")
-    sealed = await _sealed(world, "sec_1")
-    await draft(world, change_set(drafter=by_member(CAROL), changes=[grant_role(CAROL)]), [sealed])
+    sealed = await sealed_value(world)
+    await draft(world, change_set(drafter=by_member(CAROL), changes=new_secret(sealed)), [sealed])
     assert await world.change_sets.expire(now=datetime.now(UTC)) == 0
     assert (await world.custody.opener.open(sealed)).reveal() == b"v"
 
@@ -601,11 +636,11 @@ async def test_a_draft_takes_only_its_own_installations_sealed_values(
     world: World, other: dict[str, str]
 ) -> None:
     await enrol_owner(world, ALICE, "alice@acme.com")
-    sealed = await _sealed(world, "sec_1")
+    sealed = await sealed_value(world)
     foreign = SealContext(**{**sealed.__dict__, **other})
     with pytest.raises(ChangeRefused) as refused:
         await draft(
-            world, change_set(drafter=by_member(CAROL), changes=[grant_role(CAROL)]), [foreign]
+            world, change_set(drafter=by_member(CAROL), changes=new_secret(sealed)), [foreign]
         )
     assert refused.value.code == "sealed_value_foreign"
     assert (await world.custody.opener.open(sealed)).reveal() == b"v"
@@ -613,10 +648,10 @@ async def test_a_draft_takes_only_its_own_installations_sealed_values(
 
 async def test_a_sealed_value_belongs_to_one_draft(world: World) -> None:
     await enrol_owner(world, ALICE, "alice@acme.com")
-    sealed = await _sealed(world, "sec_1")
-    await draft(world, change_set(drafter=by_member(CAROL), changes=[grant_role(CAROL)]), [sealed])
+    sealed = await sealed_value(world)
+    await draft(world, change_set(drafter=by_member(CAROL), changes=new_secret(sealed)), [sealed])
     with pytest.raises(ChangeRefused) as refused:
-        await draft(world, change_set(drafter=by_member(BOB), changes=[grant_role(BOB)]), [sealed])
+        await draft(world, change_set(drafter=by_member(BOB), changes=new_secret(sealed)), [sealed])
     assert refused.value.code == "sealed_value_taken"
 
 
