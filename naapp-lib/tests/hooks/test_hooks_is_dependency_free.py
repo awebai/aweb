@@ -42,7 +42,7 @@ def test_hook_catalog_loads_the_standard_library_alone() -> None:
 
 
 def test_commitment_helper_loads_no_runtime_or_awid() -> None:
-    assert _loaded("aweb_naapp.hooks.commitment", RUNTIME + ("awid",)) == ""
+    assert _loaded("aweb_naapp.hooks.commitment", RUNTIME + ("awid", "nacl")) == ""
 
 
 def test_envelope_and_delivery_load_no_runtime_dependency() -> None:

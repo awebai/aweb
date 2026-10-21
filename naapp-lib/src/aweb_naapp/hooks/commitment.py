@@ -24,7 +24,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from aweb_naapp.hooks.strictjson import MAX_SAFE_INTEGER, Refused, canonical
-from aweb_naapp.signing_key import KeyFileError, read_key_file
+from aweb_naapp.key_file import KeyFileError, read_key_file
 
 
 class CommitmentError(ValueError):
