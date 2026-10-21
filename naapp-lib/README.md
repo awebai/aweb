@@ -124,6 +124,26 @@ human_origin=...)` is one ASGI app that dispatches on `Host`:
 A route exists on one origin because it is declared in one of the two apps. The
 lifespan is the agent app's.
 
+### Team grants
+
+`aweb_naapp.runtime.team_grants.TeamGrantSource` implements the runtime's
+`GrantSource`. Construct it with `AppIdentity(app_id=..., origin=...,
+digest=...)` for the exact manifest bytes the app serves, an
+`AppCredentialSigner` for `app-grant-read`, and the runtime's shared
+`TeamServerDirectory` as `discovery`. It reads only the team's controller-signed
+server URL; it creates no directory or resolver of its own.
+
+`grant_for(team_id)` returns an active `Grant` or `None` when no key is
+registered or the installation is not active. `status_for(team_id)` shares
+the same cache and returns a `GrantStatus` with the installation's state,
+identity, generation, scopes and origin provenance. Unknown states grant no
+use; `None` is never evidence of uninstall. Discovery failures, malformed or
+mismatched answers, and failed refreshes raise `GrantUnavailable`.
+
+Answers expire at most 60 seconds after the shared read starts; the server
+may specify less. Expired answers are never served. The default total timeout
+is 5 seconds, including discovery, and concurrent grant reads share a refresh.
+
 ### Hook resolution
 
 `aweb_naapp.runtime.hook_resolver.HookResolver` asks a team's coordination

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `aweb_naapp.runtime.team_grants.TeamGrantSource` reads an app's own grant
+  through the shared AWID-backed team-server directory and an `app-grant-read`
+  signer. Grant and installation-status reads share one bounded cache, verify
+  the team and served-manifest identity, and fail closed on expired or
+  unavailable authority. `status_for` preserves installation state and
+  nullable id, generation and origin provenance for the installation fence.
+
 ## Release preparations
 
 ### Release preparation: server 1.27.31

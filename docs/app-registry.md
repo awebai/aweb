@@ -230,6 +230,32 @@ Response:
 
 Conformance: `test-vectors/app-read-credential-v1.json`.
 
+### App-side grant source
+
+`aweb_naapp.runtime.team_grants.TeamGrantSource` consumes the runtime's shared
+`TeamServerDirectory`, an `app-grant-read` signer, and the app's own
+`AppIdentity` (app id, public origin and served-manifest digest). Every answer
+must name that exact identity and the requested team. A changed server record
+selects a separate cache entry, so an old server's answer cannot follow a move.
+The app signs the full external request path, including any server mount prefix,
+and follows no redirects.
+
+`grant_for(team_id)` returns B1's active `Grant` or `None` for a non-active
+installation or `403 app_key_not_registered`. `status_for(team_id)` uses the
+same read and cache to return `GrantStatus`, preserving non-active and unknown
+states and nullable installation identity, generation and origin provenance.
+`None` means the calling key has no grant; it does not prove an uninstall.
+Only a typed `uninstalled` status confirms that state to the installation fence.
+
+The freshness deadline uses the client's monotonic clock, counting from the
+start of the shared read, with a ceiling of 60 seconds. A slow answer earns no
+extra time, and an answer already expired when received is unavailable.
+Concurrent misses share one refresh; a cancelled waiter does not cancel that
+refresh for other callers. The default total caller timeout is 5 seconds,
+including discovery. Discovery failures, refused credentials other than the
+explicit missing-key result, failed reads and malformed or mismatched answers
+raise `GrantUnavailable`. Expired positive answers never survive a failed refresh.
+
 ## An app resolves its hooks
 
 ```http
