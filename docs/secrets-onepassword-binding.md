@@ -5,10 +5,12 @@ stores an immutable reference and a natively sealed service-account token,
 never a copy of the referenced item value. This extends [the custody design](design/secrets.md#53-1password-backend)
 without changing `secret/1`, `SealContext` or the use-approval version format.
 
-This schema slice adds the two `change/1` projections below. Both remain outside
-`ChangeSets.APPLICABLE_KINDS` until scoped persistence, staged-row checks and
-atomic confirmation are implemented. Parsing or hashing a projection supplies
-no backend authority.
+The two `change/1` projections below apply only through the existing
+passkey-confirmed `ChangeSets.confirm` path. Draft and confirmation compare the
+full scoped server-staged candidates and credential epoch. Parsing or hashing
+a projection supplies no backend authority. Console routes, automatic remote
+version reconciliation and successful external-vault proof remain separate
+release integration work.
 
 ## Console-only change projections
 
@@ -136,6 +138,34 @@ atomically; the others have no usable active version until an owner confirms a
 new binding. A stale pending draft naming the former credential refuses.
 Existing disabled flags stay disabled, including descendants. The console
 preview discloses affected references and registration/use consequences.
+
+Confirmation rechecks every brought candidate before changing active pointers.
+A proposed token activates before any reference items, independent of their
+presentation order. The complete pre-B2 preparation includes every existing
+active reference pinned to another token, including disabled roots, and the
+confirming approval. Invalidation uses the shared S14 all-version consequence
+hook; it never invents a replacement version for a reference left unbound.
+The root's disabled state/custody marker is preserved, its active pointer is
+cleared, and its old reference is destroyed while retaining the opaque handle
+and monotonic history. Explicit new reference items then activate only under
+the new active token. A cancelled/expired draft destroys only its brought inert
+candidates. A stale draft cannot restore a replaced credential or reference.
+
+The caller resolves a trusted `post-governance-hook` registration view before
+entering the confirmation transaction and supplies it as `governance_view`.
+Explicit credential/reference versions use the existing widening
+`resource.version_added` act with `authority: passkey_session` and the
+identity-free system actor. The commitment is obtained solely from
+`Passkeys.evidence_commitment(..., purpose="approve", tx=tx)` over the retained
+APPROVE proof. Its B2 approval ID, deciding scope and subject must match the
+transaction's `OwnerApproval`, and its original proof context must match the
+admitted app/team/installation/generation. Login evidence, legacy summaries
+and hashes of evidence locators are not substitutes. Missing proof refuses.
+Reference events name only the local secret ID and opaque `sv_` handle; the
+private token uses its reserved local resource ID. No provider selectors,
+item versions, value bytes, fingerprints or authorizing identity are emitted.
+Missing/stale audit targets or failed required outbox storage roll back the
+revision, activation, destruction, consequences and approval consumption.
 
 All activation, invalidation, ciphertext destruction, required audit enqueue
 and revision changes commit together or roll back together. A returned sorted,
