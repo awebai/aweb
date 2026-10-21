@@ -214,12 +214,140 @@ class HookProducer:
         ``signed_trace_id`` is a trace id the request carried under its
         signature; an absent or malformed one is replaced by a minted one.
         """
+        return await self._enqueue(
+            tx,
+            hook=hook,
+            team_id=team_id,
+            payload=payload,
+            actor=actor,
+            occurred_at=occurred_at,
+            result_status=result_status,
+            signed_trace_id=signed_trace_id,
+            view=view,
+            gate=True,
+        )
+
+    async def enqueue_refusal(
+        self,
+        tx: TransactionManager,
+        *,
+        team_id: str,
+        payload: Mapping[str, Any],
+        actor: Mapping[str, Any],
+        occurred_at: datetime,
+        signed_trace_id: str | None = None,
+    ) -> UUID:
+        """Record a secret-use refusal, including a failure of the audit gate.
+
+        Only ``action=refused`` is accepted. Target availability and backlog
+        cannot block this record; catalog/envelope/key checks and atomic
+        outbox storage still apply. This method authorizes no external effect.
+        The caller keeps its operational/console refusal record in the same
+        transaction. Delivery eligibility is unchanged: a target activated
+        after ``occurred_at`` is never owed this event (decision 94).
+        """
+        if payload.get("action") != "refused":
+            raise Refused("rule_violation", "refusal recording requires action=refused")
+        return await self._enqueue(
+            tx,
+            hook="post-secret-use-hook",
+            team_id=team_id,
+            payload=payload,
+            actor=actor,
+            occurred_at=occurred_at,
+            result_status="denied",
+            signed_trace_id=signed_trace_id,
+            view=None,
+            gate=False,
+        )
+
+    async def require_admission(
+        self,
+        tx: TransactionManager,
+        *,
+        team_id: str,
+        hook: str,
+        occurred_at: datetime,
+        view: RegistrationView | None,
+        max_backlog_age: timedelta,
+    ) -> None:
+        """Require at least one eligible target whose backlog is current.
+
+        Fetch ``view`` outside authority locks; this check performs DB reads
+        only in the caller's admission transaction. It neither grants authority
+        nor replaces the dispatch fence or enqueue's validation/freshness
+        checks. The deployment supplies the positive backlog-age bound.
+
+        Every owed event on this team's hook channel counts until this target
+        has acknowledged it, including unmaterialized events and terminal
+        failures. A stalled secondary does not block a current primary.
+        Age starts at the local outbox's ``created_at``; target eligibility
+        starts at the event's ``occurred_at``. No producer-local tracker is
+        needed. A refusal is recorded separately with ``enqueue_refusal``.
+        """
+        if max_backlog_age <= timedelta(0):
+            raise ValueError("max_backlog_age must be positive")
+        if hook not in self._catalog.hooks:
+            raise Refused("unknown_hook", "unknown admission hook")
+        now = self._clock()
+        _event_time(occurred_at)
+        _event_time(now)
+        if occurred_at > now + OCCURRED_AT_SKEW:
+            raise Refused("invalid_value", "occurred_at is in the future")
+        eligible = self._gate(hook, team_id, occurred_at, now, view)
+        rows = await tx.fetch_all(
+            """
+            WITH eligible AS (
+                SELECT * FROM unnest($1::text[], $2::timestamptz[])
+                    AS r(binding_id, active_from)
+            )
+            SELECT r.binding_id, (
+                EXISTS (
+                    SELECT 1 FROM {{tables.outbox_deliveries}} d
+                    JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id
+                    WHERE d.target_id = r.binding_id
+                      AND d.state NOT IN ('delivered', 'duplicate')
+                      AND e.channel = $3 AND e.team_id = $4 AND e.kind = $5
+                      AND r.active_from <= e.occurred_at AND e.created_at < $6
+                ) OR EXISTS (
+                    SELECT 1 FROM {{tables.outbox_events}} e
+                    WHERE e.materialized_at IS NULL
+                      AND e.channel = $3 AND e.team_id = $4 AND e.kind = $5
+                      AND r.active_from <= e.occurred_at AND e.created_at < $6
+                )
+            ) AS stalled
+            FROM eligible r
+            """,
+            [r.binding_id for r in eligible],
+            [r.active_from for r in eligible],
+            HOOKS_CHANNEL,
+            team_id,
+            hook,
+            now - max_backlog_age,
+        )
+        if not any(not row["stalled"] for row in rows):
+            raise Refused("audit_delivery_stalled", "no eligible audit target is current")
+
+    async def _enqueue(
+        self,
+        tx: TransactionManager,
+        *,
+        hook: str,
+        team_id: str,
+        payload: Mapping[str, Any],
+        actor: Mapping[str, Any],
+        occurred_at: datetime,
+        result_status: str,
+        signed_trace_id: str | None,
+        view: RegistrationView | None,
+        gate: bool,
+    ) -> UUID:
         self._catalog.validate(hook, payload)
         critical = self._catalog.is_audit_critical(hook, payload)
         now = self._clock()
         if occurred_at > now + OCCURRED_AT_SKEW:
             raise Refused("invalid_value", "occurred_at is in the future")
-        if critical:
+        if critical and gate:
             self._gate(hook, team_id, occurred_at, now, view)
         event_id = mint_event_id()
         occurred = _event_time(occurred_at)
@@ -268,15 +396,17 @@ class HookProducer:
         occurred_at: datetime,
         now: datetime,
         view: RegistrationView | None,
-    ) -> None:
+    ) -> tuple[Registration, ...]:
         if view is None:
             raise Refused("audit_target_unavailable", f"no registration view for {hook}")
         if view.team_id != team_id or view.hook != hook:
             raise Refused("audit_target_unavailable", f"the view is not {team_id}'s {hook}")
         if not view.is_fresh(now):
             raise Refused("audit_target_unavailable", f"the {hook} view is stale")
-        if not view.owed(occurred_at):
+        owed = view.owed(occurred_at)
+        if not owed:
             raise Refused("audit_target_unavailable", f"no registration is owed this {hook} event")
+        return owed
 
 
 def hook_targets(

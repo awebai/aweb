@@ -221,6 +221,23 @@ item, that task is cited. X4 and X5 are operations tasks.
 | X5 | Core hook producer key configuration and rotation, with retired keys kept listed. Also the same-operator AWID read credential for the M3 observer, the drain worker in the deployed server, and the operator-disclosed delivery horizon. | aweb-acgh.13 | S2, S4, P1 |
 | X6 | Publish and backfill `aweb.team-server/1` records for every team whose controller key the deployment holds, before any naapp depends on discovery (decision 3). | D1 L6, aweb-acgg.31 | acgh.7 G1-a |
 
+## Decision 94: refusal recording and shared admission backlog
+
+K4 owns `HookProducer.enqueue_refusal` and `require_admission`, which S13 reuses.
+The refusal path preserves validation, signing, transaction and delivery
+eligibility, exempting only target/backlog gating and permitting no external
+effect. No-target refusals have zero owed deliveries, with no retroactive
+delivery to a later target. S13 retains its operational/console record.
+The local admission check requires a fresh matching view and at least one
+current eligible target, counting unmaterialized backlog; it maintains no
+parallel tracker. The outbox adds an ordered migration for its admission-read
+indexes. Runtime attachment remains on the one decision-69 resolver.
+
+Focused proofs cover no target, one healthy target, a stalled primary, a
+stalled secondary next to a healthy primary, unmaterialized age, scope/pad/
+freshness, boundary equality, refusal-only validation/key checks, atomic rollback,
+recovery with stable bytes and zero retroactive delivery. Review is R+A.
+
 ## Decision 92: observed backend versions
 
 The shared catalog maps a successful validated backend observation to

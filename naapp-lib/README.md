@@ -72,6 +72,24 @@ owed it. The drain resolves deliveries with `hook_targets(registrations)`, and
 `HookTransport` re-checks each binding, signs a `hook-delivery` request and sends
 it through the egress guard to the binding's endpoint only.
 
+For admission, call `HookProducer.require_admission(tx, *, team_id, hook,
+occurred_at, view, max_backlog_age)` with a fresh view obtained outside
+authority locks. It reads that team's/hook's eligible target backlog directly
+from the shared outbox, including unmaterialized events. No target refuses
+with `audit_target_unavailable`; all eligible targets beyond the age bound
+refuse with `audit_delivery_stalled`. A healthy target next to a stalled
+secondary admits. Apply the outbox's new ordered admission-index migration.
+The helper grants no use authority and replaces no dispatch fence.
+
+`HookProducer.enqueue_refusal(tx, *, team_id, payload, actor, occurred_at,
+signed_trace_id=None)` accepts only secret-use `action=refused` and fixes
+`result_status=denied`. Target availability/backlog cannot block the refusal's
+local record; validation, signing and transactional storage still apply.
+Record the operational/console refusal in that same transaction. With no target
+owed at the event time, zero deliveries are owed: a future target is never sent
+old refusals retroactively. Existing targets receive their backlog after
+recovery. Neither method authorizes an external effect (decision 94).
+
 Operators: a hook target is sent to as a public destination. A self-hosted
 operator who also wants hooks to reach targets inside its own network allows
 internal destinations on the egress and passes that network as
