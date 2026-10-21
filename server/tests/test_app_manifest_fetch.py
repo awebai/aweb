@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from aweb.app_manifests import ManifestFetcher, ManifestFetchError
 from aweb_naapp.egress import (
     AddressPolicy,
     DnsResolver,
@@ -22,8 +23,6 @@ from aweb_naapp_testing.network import (
     local_address,
     make_certificates,
 )
-
-from aweb.app_manifests import ManifestFetcher, ManifestFetchError
 
 pytestmark = pytest.mark.asyncio
 NAME = "manifest.fetch.test"
