@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STAGES = "checks unit artifacts integration"
 # Unrelated product targets check the fixture's committed source; the four
 # stage assertions below use real tools/services, never a replacement runner.
-SOURCE_CHECKS = """_candidate-gate-docker-boundaries check-aw-commit-repo-stamp
+SOURCE_CHECKS = """_candidate-gate-docker-boundaries check-page-renderer-bundle check-aw-commit-repo-stamp
 check-cli-go-tidy check-cli-release-vcs-stamps test-python-locks lint-naapp
  test-sot-source-inventories test-vector-provenance test-federation-error-reference
  test-federation-authority-mutations test-federation-harness test-cli-reference
@@ -76,6 +76,10 @@ _candidate-artifact-server:
 \t@test "$$(wc -l < "$$CANDIDATE_LOG_DIR/setup.log")" = 2
 freshness:
 \t@test "$$(redis-cli -u "$$REDIS_URL" PING)" = PONG
+naapp-e2e-packages:
+\t@printf '%s\\n' proof/first proof/second
+e2e-naapp:
+\t@python3 -c 'import os; rows=[row.split() for row in os.environ["NAAPP_E2E_ALLOCATIONS"].splitlines()]; assert [row[0] for row in rows] == ["proof/first", "proof/second"]; assert len({port for row in rows for port in row[2:]}) == 4; assert all(row[1].startswith("aweb-candidate-") and "-naapp-" in row[1] for row in rows); assert os.environ["AWEB_DOCKER_PUBLISHED_HOST"] == "aweb-docker.test"'
 candidate-gate:
 \tbash scripts/candidate-docker-gate.sh
 '''
