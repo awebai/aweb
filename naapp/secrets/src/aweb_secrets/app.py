@@ -12,6 +12,7 @@ accepts team-auth. It serves no tool.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
 import httpx
@@ -19,7 +20,7 @@ from aweb_naapp.idempotency import apply_idempotency_migrations
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.roles import apply_roles_migrations, purge_team
 from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes
-from aweb_naapp.runtime.authorization import ActionPolicy, GrantSource
+from aweb_naapp.runtime.authorization import ActionPolicy, Authorization, GrantSource
 from aweb_naapp.runtime.health import HealthCheck, mount_health
 from aweb_naapp.runtime.installation import (
     InstallationFence,
@@ -27,7 +28,8 @@ from aweb_naapp.runtime.installation import (
     apply_installation_migrations,
 )
 from aweb_naapp.runtime.origins import split_origins
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager
 from starlette.types import Receive, Scope, Send
 
@@ -37,6 +39,9 @@ from aweb_secrets.revisions import apply_revision_migrations
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MODULE_NAME = "aweb_secrets"
+
+Authorized = Callable[..., Awaitable[Authorization]]
+ToolRouter = Callable[[NaappRuntime, Authorized], APIRouter]
 
 
 class SecretsService:
@@ -96,9 +101,15 @@ def create_app(
     policy: ActionPolicy,
     kms: HealthCheck,
     awid_transport: httpx.AsyncBaseTransport | None = None,
+    tool_routers: Sequence[ToolRouter] = (),
 ) -> SecretsService:
     """The secrets service. ``grants`` is the team-server grant authority,
-    ``policy`` secrets' admission policy and ``kms`` its KMS canary."""
+    ``policy`` secrets' admission policy and ``kms`` its KMS canary.
+
+    Tool router factories receive the runtime and its exact B1 dependency.
+    Use a getter for runtime.db, which is available after startup. Composition
+    guards every included route; unavailable declared tools retain 501.
+    """
     runtime = NaappRuntime(
         settings,
         module_name=MODULE_NAME,
@@ -113,7 +124,21 @@ def create_app(
     mount_manifest_routes(api, runtime=runtime)
     mount_health(api, settings, checks=checks)
     authorized = runtime.authorized(grants=grants, policy=policy)
+    implemented = set()
+    for factory in tool_routers:
+        router = factory(runtime, authorized)
+        for route in router.routes:
+            if not isinstance(route, APIRoute) or not route.methods:
+                raise ValueError("tool routers contain only HTTP tool routes")
+            for method in route.methods:
+                key = (method, route.path)
+                if key in implemented:
+                    raise ValueError("a tool route is composed more than once")
+                implemented.add(key)
+        api.include_router(router, dependencies=[Depends(authorized)])
     for tool in runtime.declared_tools:
+        if (tool.method, tool.path) in implemented:
+            continue
         api.add_api_route(
             tool.path,
             not_implemented,

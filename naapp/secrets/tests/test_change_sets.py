@@ -83,6 +83,7 @@ from aweb_secrets.owners import (
     owner_scope,
     record_owner,
 )
+from aweb_secrets.passkey_context import PasskeyContexts
 from aweb_secrets.revisions import apply_revision_migrations, bump_config_revision, config_revision
 from aweb_secrets.tokens import ProcessTokenCache
 from aweb_secrets.use_approvals import apply_use_approval_migrations
@@ -196,6 +197,7 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
         owner_scopes=is_owner_scope,
+        proof_context=PasskeyContexts(app_id=APP_ID),
     )
     await passkeys.migrate()
     await AsyncMigrationManager(
