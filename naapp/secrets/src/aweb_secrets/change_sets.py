@@ -100,7 +100,7 @@ class Confirmation:
 
     revision: int
     designations: tuple[Designation, ...]
-    contact_changes: tuple[ContactChange, ...] = ()
+    contact_changes: tuple[ContactChange, ...]
 
 
 def change_policy_ref(installation_id: str, team_id: str, scope: str | None = None) -> str:
