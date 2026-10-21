@@ -162,7 +162,7 @@ writer: disk-backed acic.4, tmpfs acic.4 and disk-backed main run the same
 byte-identical 49-test envelope file side by side through the train window.
 Main has no acic.4 lifetime test file, so that file is excluded from all three
 sides of this comparison. Source-path receipts bind each import to its expected
-export or worktree. Results are pending; the landing hold remains.
+export or worktree. The completed results follow below; landing still requires the coordinator's disposition and covering train.
 
 ## Shared checker and hosted-runner proof
 
@@ -185,3 +185,53 @@ identical PostgreSQL options. Run 39544262826/job 119038756394 was cancelled
 after this requested service proof; it is not a whole-suite green gate. The
 reviewer independently verified the successful service step. Its condition
 on hosted quoting/swap accounting is met.
+
+## Completed real-train comparison
+
+All three probes ran the same 49-test file with PostgreSQL 17, one CPU and
+4 GiB memory with no swap. Only storage and the explicitly pinned main versus
+acic.4 source differed. No synthetic writer ran. Source bindings were verified.
+The shared observation interval was 2026-10-21T04:18:29.194786Z through
+05:18:27Z (3597.805 seconds), excluding final-batch and trace-flush tails.
+
+| Case | Completed tests | DataFileExtend samples on statements older than 1 s | Observed consecutive DataFileExtend spans over 1 s | Other I/O and checkpoint spans over 1 s |
+| --- | ---: | ---: | ---: | ---: |
+| acic.4, disk | 8,673 | 96 | 1 (2.996 s) | 95 |
+| acic.4, tmpfs | 19,012 | 0 | 0 | 0 |
+| main f064438b, disk | 9,604 | 0 | 0 | 99 |
+
+Every batch passed all 49 tests, with no skips, retries or changed deadlines.
+A span means consecutive observations of the same query and wait; a sampling
+gap of 100 ms or more breaks a span. Samples are observations, not distinct
+file-extension operations.
+
+The literal DataFileExtend trigger repeated only on acic.4. That single episode
+was CREATE TABLE team_custodians in 009_principal_attestation_records.sql,
+whose bytes are unchanged from main. It was not the modified certificate table.
+There were no lock blockers. The maximum statement age at DataFileExtend was
+3.004569 s on acic.4 disk, 0.371325 s on main disk and 0.011181 s on tmpfs.
+
+Both disk-backed cases had many other long waits: acic.4 reached 5.926 s in
+WalSync and 6.663 s in CheckpointDone; main reached 5.973 s and 7.557 s.
+Including the one DataFileExtend span, disk I/O/checkpoint counts were 96 and
+99 (54.2 and 50.5 per 100 completed batches). Main additionally had two
+long WALWrite lock spans, excluded from that comparison. Tmpfs had no observed
+wait span over one second, despite completing more batches.
+
+These results reproduce disk-dependent stalls on main as well as acic.4 and
+show that tmpfs avoids those stalls under the concurrent train. They do not
+reproduce the exact DataFileExtend trigger on main, identify the host storage
+component, or establish the cause of the unsampled 02:53 cancellation. The
+coordinator must assess that distinction before landing; the covering train
+is still required.
+
+There were 506,507 observations and zero observer errors. Maximum sampling
+gaps were 124.1 ms (acic.4 disk), 126.4 ms (tmpfs), and 113.8 ms (main disk).
+Observed host-minus-PostgreSQL timestamp offsets were positive and at most
+97.4 ms; this applies to this experiment, not the historical 03:39 evidence.
+The analyzer detects the retained native positive control: 224 over-limit
+observations and a 5.950 s DataFileExtend span.
+
+Retained summaries: tmp/aciq-real-comparison-summary.jsonl and the three
+aciq-real-* directories in the instance home. All six owned PG/Redis services
+were removed, inspect passwords redacted, and the main export deleted.
