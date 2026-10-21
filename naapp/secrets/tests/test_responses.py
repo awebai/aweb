@@ -151,6 +151,28 @@ def test_a_projection_that_drops_the_credential_fields_is_returned() -> None:
     assert json.loads(result.body) == {"/expires_in": 3600}
 
 
+@pytest.mark.parametrize(
+    "pointer", ["/access_token", "/Credentials/SessionToken", "/Credentials/secret-access-key"]
+)
+@pytest.mark.parametrize("token_issuing", [True, False])
+def test_a_projection_that_names_a_credential_field_is_withheld(pointer: str, token_issuing: bool) -> None:
+    document = {
+        "access_token": "issued",
+        "Credentials": {"SessionToken": "issued", "secret-access-key": "issued"},
+    }
+    result = _handle(json.dumps(document).encode(), projection=[pointer], token_issuing=token_issuing)
+    assert result.disposition == "withheld"
+    assert result.withheld_reason == "credential_shaped"
+    assert result.body is None
+    assert result.undeclared_credential is not token_issuing
+
+
+def test_a_projection_naming_an_empty_credential_field_is_returned() -> None:
+    body = json.dumps({"Credentials": {"SessionToken": ""}, "id": "x"}).encode()
+    result = _handle(body, projection=["/Credentials/SessionToken", "/id"], token_issuing=True)
+    assert result.disposition == "returned"
+
+
 @pytest.mark.parametrize("pointer", ["id", "/a/~2", "/a/~"])
 def test_a_malformed_pointer_is_refused(pointer: str) -> None:
     with pytest.raises(ValueError):

@@ -22,7 +22,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from aweb_secrets.credential_shapes import has_credential_shape
+from aweb_secrets.credential_shapes import has_credential_shape, is_credential_field
 from aweb_secrets.redaction import KnownValues
 
 _PASSED_HEADERS = frozenset(
@@ -93,11 +93,13 @@ def _resolve(document: Any, tokens: Sequence[str]) -> Any:
     return current
 
 
-def _project(body: bytes, projection: Sequence[str], *, complete: bool) -> bytes:
-    """The values the pointers name, keyed by pointer. A body that is cut or is
-    not JSON yields none."""
+def _project(body: bytes, projection: Sequence[str], *, complete: bool) -> tuple[bytes, bool]:
+    """The values the pointers name, keyed by pointer, and whether one of them
+    is a non-empty string in a credential-named field. A body that is cut or
+    is not JSON yields none."""
     parsed = [(pointer, _pointer_tokens(pointer)) for pointer in projection]
     projected: dict[str, Any] = {}
+    names_credential = False
     if complete:
         try:
             document = json.loads(body)
@@ -108,7 +110,11 @@ def _project(body: bytes, projection: Sequence[str], *, complete: bool) -> bytes
                 value = _resolve(document, tokens)
                 if value is not _MISSING:
                     projected[pointer] = value
-    return json.dumps(projected, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+                    names_credential |= (
+                        is_credential_field(tokens[-1]) and isinstance(value, str) and value != ""
+                    )
+    encoded = json.dumps(projected, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return encoded, names_credential
 
 
 def handle_response(
@@ -174,13 +180,16 @@ def handle_response(
         body, count = known.redact_tail(body)
         redaction_count += count
 
+    # Projected values are keyed by pointer, so a credential field they name is
+    # found by its pointer, not by the detector's field-name rule.
+    names_credential = False
     if projection is not None:
-        body = _project(body, projection, complete=not truncated)
+        body, names_credential = _project(body, projection, complete=not truncated)
         for redact in (known.redact, known.redact_json):
             body, count = redact(body)
             redaction_count += count
 
-    if has_credential_shape(body):
+    if names_credential or has_credential_shape(body):
         return withheld("credential_shaped", not token_issuing)
     return BrokeredResult(
         status=status,

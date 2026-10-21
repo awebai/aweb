@@ -53,14 +53,14 @@ _AWS_KEY_ID = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
 _AWS_SECRET_KEY = re.compile(r"(?<![A-Za-z0-9/+=])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+=])")
 
 
-def _is_credential_field(name: str) -> bool:
+def is_credential_field(name: str) -> bool:
     return name.lower().replace("_", "").replace("-", "") in _CREDENTIAL_FIELDS
 
 
 def _json_has_credential_field(value: Any) -> bool:
     if isinstance(value, dict):
         return any(
-            (_is_credential_field(key) and isinstance(item, str) and item != "")
+            (is_credential_field(key) and isinstance(item, str) and item != "")
             or _json_has_credential_field(item)
             for key, item in value.items()
         )
@@ -89,6 +89,6 @@ def has_credential_shape(body: bytes) -> bool:
     except ValueError:
         pass
     for pattern in (_JSON_FIELD, _XML_FIELD, _FORM_FIELD):
-        if any(_is_credential_field(match.group(1)) for match in pattern.finditer(text)):
+        if any(is_credential_field(match.group(1)) for match in pattern.finditer(text)):
             return True
     return _has_token_pattern(text)
