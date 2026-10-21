@@ -22,6 +22,7 @@ from aweb.installations import (
 )
 
 origin = manifest_fixture.origin
+other_origin = manifest_fixture.origin
 pytestmark = pytest.mark.asyncio
 TEAM = "demo:example.com"
 
@@ -76,6 +77,29 @@ async def test_update_keeps_id_and_allocates_a_higher_generation(db, origin):
     assert updated["generation"] == first["generation"] + 1
     assert updated["app_version"] == "2.0.0"
     assert updated["digest"] != first["digest"]
+
+
+async def test_a_different_origin_cannot_replace_an_active_installation(db, origin, other_origin):
+    before = await install(db, await fetched(origin))
+    replacement = await fetched(other_origin)
+    with pytest.raises(InstallationError) as refusal:
+        await install(db, replacement, before["generation"])
+    assert refusal.value.code == "app_origin_conflict"
+    assert await current(db) == before
+
+
+async def test_another_teams_origin_does_not_bind_this_teams_installation(db, origin, other_origin):
+    before = await install(db, await fetched(origin))
+    team = "other:example.com"
+    await db.execute("INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,'example.com','other','did:key:other')", team)
+    async with db.transaction() as tx:
+        another = await install_verified_manifest_on(
+            tx, team_id=team, fetched=await fetched(other_origin), granted_scopes=[],
+        )
+    assert another["origin"] != before["origin"]
+    assert another["installation_id"] != before["installation_id"]
+    assert another["generation"] == before["generation"] == 1
+    assert await current(db) == before
 
 
 @pytest.mark.parametrize("expected", [None, 999])

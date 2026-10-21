@@ -18,24 +18,30 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
+import test_app_manifest_fetch as manifest_fixture
+from aweb_naapp.manifest import ManifestError, load_manifest, read_manifest_bytes
+from awid.signing import canonical_json_bytes, sign_message
 
 import aweb.routes.apps as apps_routes
-from awid.signing import canonical_json_bytes, sign_message
-from aweb_naapp.manifest import ManifestError, load_manifest, read_manifest_bytes
-
 from aweb.app_credentials import APP_EVENT, APP_GRANT_READ, HOOK_RESOLVE, PURPOSES
 from aweb.app_registry import (
     get_active_app_emit_key,
     get_active_app_key,
-    install_app,
     manifest_registration,
     reseed_app_registrations,
     reserved_app_ids,
 )
 from aweb.service_errors import ConflictError, ValidationError
+from tests.installation_fixtures import install_fixture_app as install_app
 from tests.test_app_credentials import _app as _probe_app
 from tests.test_app_credentials import _post
-from tests.test_app_events_http import AGENT_ID, OTHER_TEAM_ID, TEAM_ID, _make_app_keypair, _seed_team_and_agent
+from tests.test_app_events_http import (
+    AGENT_ID,
+    OTHER_TEAM_ID,
+    TEAM_ID,
+    _make_app_keypair,
+    _seed_team_and_agent,
+)
 from tests.test_app_install_bytes import _install as _install_over_http
 from tests.test_app_registry_http import _build_apps_app, _fake_team_identity
 
@@ -44,6 +50,7 @@ VECTOR = json.loads((ROOT / "test-vectors" / "app-manifests" / "app-manifest-v2-
 V2_BASE = VECTOR["base_manifests"]["v2"]
 APP_ID = V2_BASE["app"]["id"]
 ORIGIN = V2_BASE["app"]["origin"]
+origin = manifest_fixture.origin
 EMIT_BODY = b'{"type":"fixture/workspace.changed","resource_ref":"w1","payload":{}}'
 
 
@@ -347,18 +354,23 @@ VECTOR_INPUTS = [(case["name"], _case_bytes(case), case["expected"]) for case in
 
 
 @pytest.mark.asyncio
-async def test_a_refused_manifest_is_a_422_whose_detail_carries_the_readers_code(db, monkeypatch):
+async def test_a_refused_manifest_is_a_422_whose_detail_carries_the_readers_code(db, monkeypatch, origin):
     monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
     _, entry = _key("bad", [APP_GRANT_READ])
     entry["did_key"] = "did:key:zNotAKey"
     manifest = _v2_manifest([entry])
-    body = {
-        "app_id": APP_ID, "origin": ORIGIN, "app_version": "0.0.0", "manifest_version": 2,
-        "digest": _digest(manifest), "granted_scopes": [], "events": [], "event_emitters": [],
-        "manifest": base64.b64encode(manifest).decode(),
-    }
-
-    response = await _install_over_http(_build_apps_app(db), body)
+    document = json.loads(manifest)
+    document["app"]["origin"] = origin.url
+    manifest = _canonical(document)
+    origin.publish(manifest)
+    app = _build_apps_app(db)
+    app.state.manifest_fetcher = origin.fetcher
+    async def policy(tx, subject, *, action, app_id):
+        return True
+    app.state.install_admin_policy = policy
+    response = await _install_over_http(app, {
+        "app_id": APP_ID, "origin": origin.url, "digest": _digest(manifest), "granted_scopes": [],
+    })
 
     assert response.status_code == 422, response.text
     assert response.json()["detail"]["code"] == "app_keys_invalid"

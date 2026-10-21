@@ -9,11 +9,11 @@ import pytest
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 import aweb.app_registry as app_registry
-
 from aweb.app_registry import (
     AppEmitKey,
     AppEventType,
     get_active_app_emit_key,
+    get_installation_on,
     get_installed_app_event_type,
     install_app,
     list_installed_apps,
@@ -121,8 +121,10 @@ async def test_reseed_registers_keys_and_declarations_for_every_team_at_the_dige
     for team_id in (TEAM_A, TEAM_B):
         key = await get_active_app_emit_key(db, team_id=team_id, app_id="notes", kid="notes:emit-1", did_key=did_key)
         declared = await get_installed_app_event_type(db, team_id=team_id, app_id="notes", local_event_type="note.saved")
-        assert key is not None
-        assert declared["default_delivery_intent"] == "wake"
+        assert key is None and declared is None
+        stored = await db.fetch_one("SELECT default_delivery_intent FROM {{tables.team_app_event_types}} WHERE team_id=$1 AND event_type='note.saved'", team_id)
+        assert stored["default_delivery_intent"] == "wake"
+        assert (await get_installation_on(db, team_id=team_id, app_id="notes"))["state"] == "pending_origin_verification"
     assert await get_active_app_emit_key(db, team_id=TEAM_C, app_id="notes", kid="notes:emit-1", did_key=did_key) is None
     assert await get_installed_app_event_type(db, team_id=TEAM_C, app_id="notes", local_event_type="note.saved") is None
 
@@ -149,8 +151,12 @@ async def test_reseed_replaces_declarations_and_projection_with_the_bytes(aweb_c
 
     declared = await get_installed_app_event_type(db, team_id=TEAM_A, app_id="notes", local_event_type="note.saved")
     apps = await list_installed_apps(db, team_id=TEAM_A)
-    assert declared["default_delivery_intent"] == "wake"
-    assert apps[0].app_version == "1.2.0"
+    assert declared is None and apps == []
+    stored = await db.fetch_one("SELECT default_delivery_intent FROM {{tables.team_app_event_types}} WHERE team_id=$1 AND event_type='note.saved'", TEAM_A)
+    assert stored["default_delivery_intent"] == "wake"
+    row = await get_installation_on(db, team_id=TEAM_A, app_id="notes")
+    assert row["app_version"] == "1.2.0"
+    assert row["state"] == "pending_origin_verification" and not row["origin_verified"]
 
 
 @pytest.mark.asyncio
@@ -180,7 +186,7 @@ async def test_reseed_leaves_subscriptions_unchanged_and_is_idempotent(aweb_clou
     assert again.reseeded == [TEAM_A]
     assert [dict(row) for row in subscriptions] == [{"event_type": "notes/note.saved", "delivery_intent": "steer"}]
     key = await get_active_app_emit_key(db, team_id=TEAM_A, app_id="notes", kid="notes:emit-1", did_key=did_key)
-    assert key is not None
+    assert key is None  # Repairing declarations is not origin verification.
 
 
 @pytest.mark.asyncio
@@ -213,7 +219,7 @@ async def test_reseed_refuses_a_team_whose_key_id_holds_another_key(aweb_cloud_d
 
 
 @pytest.mark.asyncio
-async def test_upgrade_from_registry_entry_rows_fails_closed_until_reseed(shared_test_pool, tmp_path):
+async def test_legacy_registration_repair_keeps_authority_pending_for_origin_verification(shared_test_pool, tmp_path):
     schema_manager = AsyncDatabaseManager(pool=shared_test_pool, schema=None)
     await schema_manager.execute("CREATE SCHEMA aweb")
     upgrade_db = AsyncDatabaseManager(pool=shared_test_pool, schema="aweb")
@@ -285,13 +291,17 @@ async def test_upgrade_from_registry_entry_rows_fails_closed_until_reseed(shared
     await manager.apply_pending_migrations()
 
     apps = await list_installed_apps(upgrade_db, team_id=TEAM_A)
-    assert [(app.app_version, app.manifest_version) for app in apps] == [("1.2.0", 1)]
+    assert apps == []
+    pending = await get_installation_on(upgrade_db, team_id=TEAM_A, app_id="notes")
+    assert (pending["app_version"], pending["manifest_version"]) == ("1.2.0", 1)
+    assert pending["state"] == "pending_origin_verification"
     assert await get_active_app_emit_key(upgrade_db, team_id=TEAM_A, app_id="notes", kid="notes:emit-1", did_key=did_key) is None
     assert await get_installed_app_event_type(upgrade_db, team_id=TEAM_A, app_id="notes", local_event_type="note.saved") is None
 
     report = await reseed_app_registrations(upgrade_db, origin=ORIGIN, manifest=manifest)
 
     assert report.reseeded == [TEAM_A]
-    assert await get_active_app_emit_key(upgrade_db, team_id=TEAM_A, app_id="notes", kid="notes:emit-1", did_key=did_key) is not None
-    declared = await get_installed_app_event_type(upgrade_db, team_id=TEAM_A, app_id="notes", local_event_type="note.saved")
+    assert await get_active_app_emit_key(upgrade_db, team_id=TEAM_A, app_id="notes", kid="notes:emit-1", did_key=did_key) is None
+    assert await get_installed_app_event_type(upgrade_db, team_id=TEAM_A, app_id="notes", local_event_type="note.saved") is None
+    declared = await upgrade_db.fetch_one("SELECT default_delivery_intent FROM {{tables.team_app_event_types}} WHERE team_id=$1 AND event_type='note.saved'", TEAM_A)
     assert declared["default_delivery_intent"] == "wake"
