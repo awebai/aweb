@@ -161,9 +161,7 @@ class OwnerConsole:
 
 def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRouter:
     """Mount only on the human-origin application. Never mount on the agent API."""
-    router = APIRouter(
-        prefix=prefix, route_class=ConsoleRoute, dependencies=[Depends(_require_json)]
-    )
+    router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
     router.include_router(
         console_login_router(sessions=services.sessions, limiter=services.limiter)
     )
@@ -174,7 +172,9 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
     ) -> dict[str, Any]:
         return {"scope": current.scope, "expires_at": current.expires_at.isoformat()}
 
-    @router.post("/installations/{installation_id}/owner-acts")
+    @router.post(
+        "/installations/{installation_id}/owner-acts", dependencies=[Depends(_require_json)]
+    )
     async def owner_act(installation_id: str, request: Request) -> dict[str, str]:
         body = await _body(request, {"signing", "signature", "team_id", "principal", "contact"})
         principal_did = _text(body, "principal")
@@ -208,7 +208,7 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
         await services.passkeys.deliver(designation)
         return {"scope": scope, "effective_at": designation.effective_at.isoformat()}
 
-    @router.post("/enrolment/options")
+    @router.post("/enrolment/options", dependencies=[Depends(_require_json)])
     async def enrolment_options(request: Request) -> dict[str, Any]:
         body = await _body(request, {"link_token"})
         try:
@@ -216,7 +216,7 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
         except EnrolmentRefused:
             raise HTTPException(status_code=403, detail="enrolment_refused") from None
 
-    @router.post("/enrolment")
+    @router.post("/enrolment", dependencies=[Depends(_require_json)])
     async def enrolment(request: Request) -> dict[str, str]:
         body = await _body(request, {"link_token", "credential"})
         if not isinstance(body["credential"], dict):
@@ -229,7 +229,7 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
             raise HTTPException(status_code=403, detail="enrolment_refused") from None
         return {"scope": approver.scope}
 
-    @router.post("/contact-proof")
+    @router.post("/contact-proof", dependencies=[Depends(_require_json)])
     async def contact_proof(request: Request) -> dict[str, str]:
         body = await _body(request, {"proof_token"})
         try:

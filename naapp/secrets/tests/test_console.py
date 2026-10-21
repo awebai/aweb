@@ -98,15 +98,13 @@ async def test_an_owner_logs_in_with_a_passkey_and_a_revoked_role_ends_the_sessi
         assert (await human.post("/login/options", json={"scope": scope})).status_code == 401
 
 
-async def test_console_logout_requires_the_sessions_csrf_token(world: World):
+async def test_bodiless_console_logout_requires_csrf_and_ends_the_session(world: World):
     scope = await enrol_owner(world, ALICE, "alice@acme.com")
     async with clients(world) as (human, _):
         response = await login(world, human, scope)
-        assert (await human.post("/logout", json={})).status_code == 403
+        assert (await human.post("/logout")).status_code == 403
         assert (
-            await human.post(
-                "/logout", json={}, headers={"X-CSRF-Token": response.json()["csrf_token"]}
-            )
+            await human.post("/logout", headers={"X-CSRF-Token": response.json()["csrf_token"]})
         ).status_code == 200
         assert (await human.get("/session")).status_code == 401
 
@@ -348,9 +346,6 @@ async def test_console_ceremonies_require_json_without_echoing_the_body(world: W
     canary = os.urandom(24).hex()
     headers = {} if content_type is None else {"Content-Type": content_type}
     bodies = {
-        "/login/options": {"scope": canary},
-        "/login": {"scope": canary, "assertion": {}},
-        "/logout": {},
         "/enrolment/options": {"link_token": canary},
         "/enrolment": {"link_token": canary, "credential": {}},
         "/contact-proof": {"proof_token": canary},
