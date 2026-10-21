@@ -69,6 +69,13 @@ installation ID. Reinstall after uninstall creates a new ID. Both allocate the
 next generation from the persistent per-team/app counter inside the registry
 transaction; failed transactions issue no generation.
 
+For the CLI, `aw plugin install <origin>` grants the requested install scopes
+unless `--grant-scope` selects a smaller set. `aw plugin update <app>` preserves
+the team's existing selection by default, dropping scopes the new bytes no
+longer request. It never silently grants new scopes; an admin selects those
+explicitly with `--grant-scope` (repeat or comma-separate; an empty value grants
+none).
+
 Every successful confirmation returns the installation record. It stores the
 fetched bytes and their digest, sets `state: "active"` and
 `origin_verified: true`, and derives registrations from those bytes. New hook
