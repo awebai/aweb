@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 
 import pytest
 
+from aweb_secrets.principal import is_principal
 from aweb_secrets.secret import KINDS, SecretInvalid, SecretRecord, mint_secret_id
 
 RECORD = {
@@ -106,3 +109,29 @@ def test_minted_ids_are_distinct_valid_secret_ids() -> None:
     assert len(ids) == 100
     for secret_id in ids:
         assert SecretRecord.from_after(_record(secret_id=secret_id)).secret_id == secret_id
+
+
+VECTORS = Path(__file__).parents[1] / "vectors"
+
+
+def _secret_kinds_in(node) -> set[str]:
+    if isinstance(node, dict):
+        found = {node["kind"]} if "secret_id" in node and "kind" in node else set()
+        return found.union(*(_secret_kinds_in(value) for value in node.values()))
+    if isinstance(node, list):
+        return set().union(*(_secret_kinds_in(value) for value in node))
+    return set()
+
+
+@pytest.mark.parametrize("vector", ["use-approval-v1.json", "change-v1.json"])
+def test_every_secret_kind_in_the_vectors_is_an_auth_scheme(vector) -> None:
+    cases = json.loads((VECTORS / vector).read_text())["positive_cases"]
+    kinds = _secret_kinds_in(cases)
+    assert kinds
+    assert kinds <= set(KINDS)
+
+
+def test_use_approval_requesters_are_principals() -> None:
+    cases = json.loads((VECTORS / "use-approval-v1.json").read_text())["positive_cases"]
+    requesters = [case["request"]["requester"]["principal"] for case in cases]
+    assert requesters and all(is_principal(principal) for principal in requesters)
