@@ -19,9 +19,6 @@ on:
 permissions:
   contents: read
 
-env:
-  AW_VERSION: "1.36.30"
-
 concurrency:
   group: folio-ci-${{ github.ref }}
   cancel-in-progress: true
@@ -61,19 +58,23 @@ jobs:
           enable-cache: true
           cache-dependency-glob: naapp/folio/uv.lock
 
-      - name: Set up Node
-        uses: actions/setup-node@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
         with:
-          node-version: "22"
+          go-version-file: cli/go/go.mod
+          cache-dependency-path: cli/go/go.sum
 
       - name: Install locked Folio dependencies
         working-directory: naapp/folio
         run: uv sync --locked
 
-      - name: Install the pinned released aw client used by e2e
+      - name: Build aw from the checkout
         run: |
-          npm install --global "@awebai/aw@$AW_VERSION"
-          aw version
+          make -C cli/go build
+          echo "$GITHUB_WORKSPACE/cli/go" >> "$GITHUB_PATH"
+
+      - name: Check the e2e aw build
+        run: bash scripts/check-naapp-e2e-aw.sh
 
       - name: Lint and type-check
         working-directory: naapp/folio

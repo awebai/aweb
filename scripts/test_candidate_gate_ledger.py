@@ -16,7 +16,7 @@ STAGES = "checks unit artifacts integration"
 # use real tools and services, never a replacement runner.
 REAL_RECIPES = frozenset({
     "test-shipping", "_candidate-node-deps", "build", "_candidate-unit-suites",
-    "_candidate-artifact-server", "freshness",
+    "_candidate-artifact-server", "freshness", "e2e-naapp",
 })
 
 
@@ -81,6 +81,10 @@ _candidate-artifact-server:
 \t@test "$$(wc -l < "$$CANDIDATE_LOG_DIR/setup.log")" = 2
 freshness:
 \t@test "$$(redis-cli -u "$$REDIS_URL" PING)" = PONG
+naapp-e2e-packages:
+\t@printf '%s\\n' proof/first proof/second
+e2e-naapp:
+\t@python3 -c 'import os; rows=[row.split() for row in os.environ["NAAPP_E2E_ALLOCATIONS"].splitlines()]; assert [row[0] for row in rows] == ["proof/first", "proof/second"]; assert len({port for row in rows for port in row[2:]}) == 4; assert all(row[1].startswith("aweb-candidate-") and "-naapp-" in row[1] for row in rows); assert os.environ["AWEB_DOCKER_PUBLISHED_HOST"] == "aweb-docker.test"'
 candidate-gate:
 \tbash scripts/candidate-docker-gate.sh
 '''

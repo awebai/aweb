@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -21,16 +21,39 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
-AWID_URL = os.environ.get("FOLIO_E2E_AWID_URL", "http://127.0.0.1:18010")
+
+@dataclass(frozen=True)
+class E2EStack:
+    awid_url: str
+    postgres_url: str
+    compose: list[str]
+
+
+def e2e_stack(env: Mapping[str, str]) -> E2EStack:
+    """The docker-compose stack `make e2e` brings up, as the NAAPP_E2E_* names place it.
+
+    A gate passes a compose project, the host its published ports are reached at, and
+    free host ports; a local run gets the fixed values docker-compose.e2e.yml defaults to.
+    """
+    host = env.get("NAAPP_E2E_HOST", "127.0.0.1")
+    project = env.get("NAAPP_E2E_PROJECT", "folio-e2e")
+    awid_port = env.get("NAAPP_E2E_AWID_PORT", "18010")
+    postgres_port = env.get("NAAPP_E2E_POSTGRES_PORT", "55432")
+    return E2EStack(
+        awid_url=f"http://{host}:{awid_port}",
+        postgres_url=f"postgresql://folio:folio@{host}:{postgres_port}/folio",
+        compose=["docker", "compose", "-p", project, "-f", "docker-compose.e2e.yml"],
+    )
+
+
+STACK = e2e_stack(os.environ)
+AWID_URL = STACK.awid_url
 # Same-operator credential shared with the e2e awid service (docker-compose.e2e.yml).
 AWID_SERVICE_TOKEN = os.environ.get(
     "FOLIO_E2E_AWID_SERVICE_TOKEN", "folio-e2e-awid-service-token-0123456789abcdef"
 )
-POSTGRES_URL = os.environ.get(
-    "FOLIO_E2E_DATABASE_URL",
-    "postgresql://folio:folio@127.0.0.1:55432/folio",
-)
-COMPOSE = ["docker", "compose", "-p", "folio-e2e", "-f", "docker-compose.e2e.yml"]
+POSTGRES_URL = STACK.postgres_url
+COMPOSE = STACK.compose
 
 
 @dataclass(frozen=True)
