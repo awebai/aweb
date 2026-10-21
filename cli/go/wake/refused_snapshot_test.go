@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -112,6 +113,7 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 					opens = append(opens, openedAt)
 					count := len(opens)
 					mu.Unlock()
+					context.AfterFunc(ctx, func() { record("snapshot %d context cancelled", count) })
 					if count == 3 {
 						thirdSnapshot <- openedAt
 					}
@@ -161,6 +163,8 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				broker.mu.Unlock()
 				mu.Lock()
 				t.Logf("snapshot opens=%v fetches=%d acks=%d", opens, fetches.Load(), acks.Load())
+				stacks := make([]byte, 1<<20)
+				t.Logf("goroutines at failure:\n%s", stacks[:runtime.Stack(stacks, true)])
 				mu.Unlock()
 				traceMu.Lock()
 				for _, line := range trace {
