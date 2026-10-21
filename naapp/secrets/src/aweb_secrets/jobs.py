@@ -20,7 +20,7 @@ from typing import Any
 from aweb_naapp.pages import inline_schema_errors, inline_value_valid
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, TransactionManager
 
-from aweb_secrets.operation import CHARSETS
+from aweb_secrets.operation import CHARSETS, OperationTemplate, _schema_types
 from aweb_secrets.policy import IDENTIFIER
 from aweb_secrets.runner_protocol import HEX64, RUNNER_ID, canonical
 
@@ -373,6 +373,43 @@ class JobDefinition:
             if schema["charset"] is not None and not CHARSETS[schema["charset"]].fullmatch(value):
                 return False
         return True
+
+    def validate_mint_mapping(self, slot: int, issuer: OperationTemplate) -> None:
+        """Check recipe coverage, literal constraints and reference types.
+
+        The caller resolves the parent's CURRENT issuer under the shared
+        source/fence locks and separately requires token-issuing store_as_secret.
+        This mapping check supplies neither lookup freshness nor mint authority.
+        Expanded actual values must still pass issuer.params_valid at admission.
+        """
+        body = self.after
+        credentials = body["credentials"]
+        if type(slot) is not int or not 0 <= slot < len(credentials):
+            raise JobRefused("job_not_allowed")
+        recipe = credentials[slot]["mint"]
+        if recipe is None or (recipe["operation_id"], recipe["digest"]) != (
+            issuer.operation_id,
+            issuer.digest,
+        ):
+            raise JobRefused("operation_not_allowed")
+        declared = issuer.after["params"]
+        if set(recipe["params"]) != set(declared):
+            raise JobRefused("params_invalid")
+        for name, mapping in recipe["params"].items():
+            param = declared[name]
+            if "$param" in mapping:
+                reference = body["params"][mapping["$param"]]
+                if _schema_types(reference["schema"]) != _schema_types(param["schema"]):
+                    raise JobRefused("params_invalid")
+            else:
+                value = mapping["value"]
+                if not inline_value_valid(param["schema"], value):
+                    raise JobRefused("params_invalid")
+                charset = param["charset"]
+                if charset is not None and (
+                    not isinstance(value, str) or not CHARSETS[charset].fullmatch(value)
+                ):
+                    raise JobRefused("params_invalid")
 
     def expand_mint_params(self, slot: int, params: Mapping[str, Any]) -> dict[str, Any]:
         """Expand tagged recipe mappings without coercion, after job-parameter checks.
