@@ -100,6 +100,37 @@ never create or alter a store's table: `CREATE TABLE IF NOT EXISTS` under the
 same name collides silently, and which shape wins depends on which migration
 applied first.
 
+### Current link-creator membership
+
+Before opening any transaction for a creator-scoped link use, call
+`proof = await runtime.check_current_member(team_id, certificate_id=..., team_did_key=...)`.
+The team scope must be verified, and the certificate id and team key must come
+from the authenticated mint-time `Principal`, retained as immutable link metadata.
+An observed-principal row or a bare creator DID is not membership evidence.
+
+This uses the request verifier's AWID cache, with the same maximum 60-second
+revocation window. Success returns the frozen `MembershipProof` from
+`aweb_naapp.runtime.team_auth`: `team_id`, `certificate_id`, `team_did_key`,
+`checked_at` and `fresh_until`. Both times use `time.monotonic()` from the
+original facts' fetch-start and expiry. A cache hit does not renew them. The
+proof stays in the same process: never serialize, persist or accept it from a
+request. Facts that expired during lookup raise retryable 503.
+
+After taking the link lock, check the proof's team against both the link scope
+and immutable mint evidence, and its certificate id and key against that
+evidence. Read the monotonic clock after acquiring the lock; refuse a missing,
+mismatched or expired proof (`now > fresh_until`) with 403
+`current_member_required`. There is no network call under the lock.
+`require_current_member(...)` remains a thin wrapper discarding the proof;
+it may do network I/O and must also run before any transaction.
+
+Incomplete evidence, an unknown or
+revoked certificate, or a changed team key raises `HTTPException` with status
+403 and `detail.code=current_member_required`. Unavailable or unreadable AWID
+facts raise 503 with `detail.code=current_membership_unavailable`; propagate
+that retryable failure rather than treating it as revoked authority. The host
+still checks the creator's page/installation permissions separately.
+
 ### App keys
 
 An app names its signing keys by kid, as key files:
