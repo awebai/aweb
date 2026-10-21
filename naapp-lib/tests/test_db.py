@@ -8,9 +8,12 @@ import asyncpg
 import pytest
 import pytest_asyncio
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, DatabaseConfig
+from pgdbm.errors import MigrationError
 from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
 from pydantic_settings import SettingsConfigDict
 
+from aweb_naapp.idempotency import apply_idempotency_migrations
+from aweb_naapp.roles import apply_roles_migrations
 from aweb_naapp.runtime.db import NaappDatabase
 from aweb_naapp.runtime.settings import NaappSettings
 
@@ -147,6 +150,77 @@ async def test_pool_follows_the_settings(database_url: str, tmp_path: Path) -> N
         assert (stats["min_size"], stats["max_size"]) == (2, 3)
     finally:
         await database.disconnect()
+
+
+def _migrations_on_roles(tmp_path: Path) -> Path:
+    path = tmp_path / "role-migrations"
+    path.mkdir()
+    (path / "001_owners.sql").write_text(
+        "CREATE VIEW {{tables.owners}} AS"
+        " SELECT team_id, principal_did FROM {{tables.role_assignments}}"
+        " WHERE role = 'example.owner';\n"
+    )
+    return path
+
+
+async def test_an_app_migration_builds_on_the_stores_it_names(
+    database_url: str, tmp_path: Path
+) -> None:
+    settings = ExampleSettings(_env_file=None, database_url=database_url)
+    database = NaappDatabase(
+        settings,
+        module_name="example",
+        migrations_path=_migrations_on_roles(tmp_path),
+        stores=(apply_idempotency_migrations, apply_roles_migrations),
+    )
+    await database.connect()
+    try:
+        assert await database.db.fetch_value("SELECT to_regclass('owners') IS NOT NULL")
+        applied = await database.db.fetch_all(
+            "SELECT module_name, filename FROM schema_migrations ORDER BY id"
+        )
+        assert _applied(applied) == [
+            _SHARED,
+            *_OUTBOX,
+            ("aweb_naapp_idempotency", "001_idempotency_keys.sql"),
+            ("aweb_naapp_roles", "001_role_assignments.sql"),
+            ("example", "001_owners.sql"),
+        ]
+    finally:
+        await database.disconnect()
+
+
+async def test_an_app_migration_on_a_store_it_does_not_name_fails(
+    database_url: str, tmp_path: Path
+) -> None:
+    settings = ExampleSettings(_env_file=None, database_url=database_url)
+    database = NaappDatabase(
+        settings, module_name="example", migrations_path=_migrations_on_roles(tmp_path)
+    )
+    try:
+        with pytest.raises(MigrationError) as refused:
+            await database.connect()
+        assert isinstance(refused.value.__cause__, asyncpg.UndefinedTableError)
+    finally:
+        await database.disconnect()
+
+
+async def test_reconnecting_with_stores_applies_nothing_twice(
+    database_url: str, tmp_path: Path
+) -> None:
+    settings = ExampleSettings(_env_file=None, database_url=database_url)
+    migrations = _migrations_on_roles(tmp_path)
+    for _ in range(2):
+        database = NaappDatabase(
+            settings,
+            module_name="example",
+            migrations_path=migrations,
+            stores=(apply_roles_migrations,),
+        )
+        await database.connect()
+        count = await database.db.fetch_value("SELECT count(*) FROM schema_migrations")
+        await database.disconnect()
+        assert count == 5
 
 
 async def _default_search_path_is_pg_catalog(database_url: str) -> None:

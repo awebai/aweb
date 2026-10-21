@@ -22,10 +22,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.runtime.approvals import RequestNotCanonical, canonical_request
 from aweb_naapp.runtime.approvals.request import parse_request_json
-from awid.did import public_key_from_did, validate_stable_id
 from awid.utc_timestamps import parse_utc_seconds
+
+from aweb_secrets import destination, grant, operation, policy, secret
+from aweb_secrets.principal import is_did_aw, is_did_key
 
 TYPE = "aweb.secrets.change"
 VERSION = 1
@@ -46,6 +49,7 @@ KINDS: Mapping[str, frozenset[str]] = {
     "job": frozenset({"create", "update"}),
     "runner": frozenset({"create", "update"}),
     "grant": frozenset({"create"}),
+    "grant_template": frozenset({"create", "update"}),
     "role": frozenset({"create"}),
     "approver": frozenset({"create"}),
     "approver_contact": frozenset({"update"}),
@@ -61,11 +65,6 @@ REENABLE_TARGETS = frozenset(
 # The owner role, or an owner-defined user role named in S5's segment charset.
 _ROLE = re.compile(r"secrets\.(owner|role\.[a-z0-9][a-z0-9_-]*)")
 MAX_ROLE_CHARS = 128
-# The ASCII base58btc alphabet. Matching it first keeps every DID ASCII and bounded
-# before AWID decodes it.
-_BASE58 = "[1-9A-HJ-NP-Za-km-z]"
-_DID_AW = re.compile(f"did:aw:{_BASE58}{{1,64}}")
-_DID_KEY = re.compile(f"did:key:z{_BASE58}{{1,64}}")
 
 
 class ChangeRefused(ValueError):
@@ -148,21 +147,13 @@ def _timestamp(value: Any, where: str) -> None:
 
 
 def _did_aw(value: Any, where: str) -> None:
-    if not isinstance(value, str) or not _DID_AW.fullmatch(value):
+    if not is_did_aw(value):
         raise ChangeRefused(f"{where} must be a did:aw")
-    try:
-        validate_stable_id(value)
-    except ValueError:
-        raise ChangeRefused(f"{where} must be a did:aw") from None
 
 
 def _did_key(value: Any, where: str) -> None:
-    if not isinstance(value, str) or not _DID_KEY.fullmatch(value):
+    if not is_did_key(value):
         raise ChangeRefused(f"{where} must be an Ed25519 did:key")
-    try:
-        public_key_from_did(value)
-    except ValueError:
-        raise ChangeRefused(f"{where} must be an Ed25519 did:key") from None
 
 
 def _principal(value: Any, where: str) -> None:
@@ -190,17 +181,91 @@ def _fields(value: Any, where: str, shape: Mapping[str, Check]) -> None:
 @dataclass(frozen=True)
 class AfterShape:
     """One frozen ``after`` shape: its fields (``v`` included), the field the
-    item's ``ref`` must equal, and the fields that identify the changed object."""
+    item's ``ref`` must equal, and the fields that identify the changed object.
+
+    ``derived`` computes fields from the whole ``after``, such as a record's
+    digest, refusing an ``after`` that is not a valid record; ``ref_field`` and
+    ``identity`` may name them."""
 
     fields: Mapping[str, Check]
     ref_field: str
     identity: tuple[str, ...]
+    derived: Callable[[Mapping[str, Any], str], Mapping[str, Any]] | None = None
+
+
+def _record_field(value: Any, where: str) -> None:
+    """A field of a record whose whole ``after`` its record type checks, through ``derived``."""
+
+
+def _record_fields(fields: frozenset[str]) -> Mapping[str, Check]:
+    return {field: _V1 if field == "v" else _record_field for field in sorted(fields)}
+
+
+def _record(
+    parse: Callable[[Mapping[str, Any]], Any], digest: Callable[[Any], str] | None = None
+) -> Callable[[Mapping[str, Any], str], Mapping[str, Any]]:
+    def derived(after: Mapping[str, Any], where: str) -> Mapping[str, Any]:
+        try:
+            record = parse(after)
+        except ValueError as exc:
+            raise ChangeRefused(f"{where}: {exc}") from None
+        return {} if digest is None else {"digest": digest(record)}
+
+    return derived
+
+
+def _destination(after: Mapping[str, Any]) -> destination.DestinationRecord:
+    # The deploy's internal-destinations setting is applied when the confirmed
+    # change set is stored, and again at dispatch; the shape checks the form.
+    return destination.DestinationRecord.from_after(
+        after, internal_destinations=InternalDestinations.ALLOWED
+    )
+
+
+def _policy(after: Mapping[str, Any]) -> policy.Policy:
+    return policy.Policy.from_body({k: v for k, v in after.items() if k != "v"})
 
 
 # A shape is found by its kind and v, so v is already the shape's own version here.
 _V1: Check = _positive_int(1)
 
 AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
+    ("secret", 1): AfterShape(
+        fields=_record_fields(secret.FIELDS),
+        ref_field="ref",
+        identity=("ref",),
+        derived=_record(secret.SecretRecord.from_after),
+    ),
+    ("destination", 1): AfterShape(
+        fields=_record_fields(destination.FIELDS),
+        ref_field="destination_id",
+        identity=("destination_id",),
+        derived=_record(_destination),
+    ),
+    ("operation", 1): AfterShape(
+        fields=_record_fields(operation.FIELDS),
+        ref_field="operation_id",
+        identity=("operation_id", "digest"),
+        derived=_record(operation.OperationTemplate.from_after, lambda record: record.digest),
+    ),
+    ("grant", 1): AfterShape(
+        fields=_record_fields(grant.FIELDS),
+        ref_field="grant_id",
+        identity=("grant_id",),
+        derived=_record(grant.GrantRecord.from_after),
+    ),
+    ("grant_template", 1): AfterShape(
+        fields=_record_fields(grant.TEMPLATE_FIELDS),
+        ref_field="grant_template_id",
+        identity=("grant_template_id",),
+        derived=_record(grant.GrantTemplate.from_after),
+    ),
+    ("policy", 1): AfterShape(
+        fields=_record_fields(policy.FIELDS | {"v"}),
+        ref_field="digest",
+        identity=("digest",),
+        derived=_record(_policy, lambda record: record.digest),
+    ),
     ("secret_value", 1): AfterShape(
         fields={"v": _V1, "secret_ref": _text(), "version": _positive_int(1)},
         ref_field="secret_ref",
@@ -287,9 +352,15 @@ def _item(value: Any, where: str) -> tuple[str, tuple[Any, ...]]:
     if shape is None or isinstance(version, bool):
         raise ChangeRefused(f"{where}.after.v names no frozen shape for {kind}")
     _fields(after, f"{where}.after", shape.fields)
-    if after[shape.ref_field] != ref:
+    found = dict(after)
+    if shape.derived is not None:
+        derived = shape.derived(after, f"{where}.after")
+        if set(derived) & set(after):
+            raise ChangeRefused(f"{where}.after: a derived field shadows an after field")
+        found.update(derived)
+    if found[shape.ref_field] != ref:
         raise ChangeRefused(f"{where}.ref must equal after.{shape.ref_field}")
-    return kind, tuple(after[field] for field in shape.identity)
+    return kind, tuple(found[field] for field in shape.identity)
 
 
 def _changes(value: Any, where: str) -> None:
