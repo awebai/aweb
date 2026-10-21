@@ -20,7 +20,7 @@ from typing import Any
 
 from onepassword import Client, Item
 
-from aweb_secrets.custody.sealing import CustodyUnavailable, Plaintext
+from aweb_secrets.custody.sealing import CustodyUnavailable, Plaintext, SealContext
 from aweb_secrets.custody.values import decode_value, encode_value
 from aweb_secrets.operation import CAPTURE_FIELDS
 
@@ -92,6 +92,8 @@ class OnePasswordRead:
     item_version: int
     updated_at: datetime
     value: Plaintext = field(repr=False)
+    reference: OnePasswordReference
+    credential_context: SealContext | None = None
 
 
 def project_item(
@@ -99,6 +101,7 @@ def project_item(
     item: Item,
     *,
     expected_item_version: int | None = None,
+    credential_context: SealContext | None = None,
 ) -> OnePasswordRead:
     """Check exact item/version/field identity and encode through the shared codec."""
     try:
@@ -128,6 +131,8 @@ def project_item(
             item.version,
             updated_at.astimezone(UTC),
             Plaintext(encode_value(reference.kind, values)),
+            reference,
+            credential_context,
         )
     except SecretVersionChanged:
         raise
@@ -153,6 +158,7 @@ class OnePasswordSDK:
         *,
         token: Plaintext,
         expected_item_version: int | None = None,
+        credential_context: SealContext | None = None,
     ) -> OnePasswordRead:
         try:
             reference = OnePasswordReference.from_config(reference.kind, reference.as_config())
@@ -164,7 +170,12 @@ class OnePasswordSDK:
                     integration_version="0.1.0",
                 )
                 item = await client.items.get(reference.vault_id, reference.item_id)
-            return project_item(reference, item, expected_item_version=expected_item_version)
+            return project_item(
+                reference,
+                item,
+                expected_item_version=expected_item_version,
+                credential_context=credential_context,
+            )
         except CustodyUnavailable:
             raise
         except Exception:
