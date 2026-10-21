@@ -222,3 +222,38 @@ def test_a_compressed_response_is_withheld(encoding: str) -> None:
 def test_an_identity_encoded_response_is_returned() -> None:
     result = _handle(b"{}", headers=[("Content-Type", "application/json"), ("Content-Encoding", "identity")])
     assert result.disposition == "returned"
+
+
+def _typed(content_type: str | None, content_types: list[str] | None):
+    headers = [("Content-Type", content_type)] if content_type else [("X-Request-Id", "r")]
+    return handle_response(
+        status=200,
+        headers=headers,
+        body=b'{"id": "x"}',
+        truncated=False,
+        max_bytes=4096,
+        projection=None,
+        known=_known(),
+        token_issuing=False,
+        content_types=content_types,
+    )
+
+
+@pytest.mark.parametrize(
+    "content_type", ["application/json", "application/json; charset=utf-8", "Application/JSON"]
+)
+def test_a_declared_content_type_is_returned(content_type: str) -> None:
+    assert _typed(content_type, ["application/json"]).disposition == "returned"
+
+
+@pytest.mark.parametrize("content_type", ["text/html", "application/jsonp", None])
+def test_an_undeclared_content_type_is_withheld(content_type: str | None) -> None:
+    result = _typed(content_type, ["application/json"])
+    assert result.disposition == "withheld"
+    assert result.withheld_reason == "content_type_not_allowed"
+    assert result.body is None
+    assert result.status == 200
+
+
+def test_without_declared_content_types_any_type_is_returned() -> None:
+    assert _typed("text/html", None).disposition == "returned"

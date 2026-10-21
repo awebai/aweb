@@ -1,0 +1,15 @@
+# BuildKit reads this file for builds that use naapp/library/Dockerfile; patterns are
+# relative to the build context, the repository root. The Dockerfile copies only
+# explicit paths, and these keep a working checkout's local files out of them.
+**/.env
+**/.env.*
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.DS_Store
+**/*.pem
+**/*.key
+**/.aw

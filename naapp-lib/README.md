@@ -52,6 +52,16 @@ denied address, and sends a request only to the destination it matches,
 through one pinned, verified connection. Redirects come back as responses, no proxy is read from
 the environment, and a failure is classed as not sent or of unknown outcome.
 
+The email sender, `aweb_naapp.email`, sends a naapp's links and notices, one
+recipient per message, over SMTP with TLS required and the certificate
+verified. It is pure standard library and needs no extra.
+`EmailSettings.from_env(prefix)` reads `<PREFIX>EMAIL_SMTP_HOST`, `_SMTP_PORT`,
+`_TLS` (`starttls` or `implicit`), `_USERNAME`, `_FROM`, an optional
+`_CA_FILE`, and the password from the key file named by `_PASSWORD_FILE`
+(`aweb_naapp.key_file`), never from the environment; anything missing or
+malformed fails at startup. A failed send raises `EmailNotSent` with a code, and
+neither errors nor logs carry the body or the full recipient.
+
 A server that produces hook events (`docs/hook-events.md`) uses
 `aweb_naapp.hooks.producer` and `aweb_naapp.hooks.transport`, with the `hooks`,
 `outbox` and `egress` extras. `HookProducer.enqueue(tx, ...)` signs an event and
@@ -89,7 +99,8 @@ An app names its signing keys by kid, as key files:
 `<PREFIX>APP_KEY_FILES='{"<kid>": "/run/secrets/<file>"}'`. A key file holds the
 32-byte Ed25519 seed as 64 hex characters, with one trailing newline allowed. It
 must be a regular file of at most 1 KiB, and must not be group- or world-writable. The manifest
-declares which kid signs which purpose, and the app does not start unless the
+declares which kid signs which purpose: a version 2 manifest in `app_keys`, a version 1
+manifest's `event_emitters` as app-event keys. The app does not start unless the
 configured key is the declared one. An app with `<PREFIX>APP_EVENTS_ORIGIN` set
 (https, or http on loopback) must hold its declared app-event key. That key may instead be given as
 `<PREFIX>APP_EMIT_KEY_SEED_HEX` with `<PREFIX>APP_EMIT_KID`, a form that signs
