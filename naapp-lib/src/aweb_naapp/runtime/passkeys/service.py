@@ -31,6 +31,7 @@ nothing about AWID membership, team identity or key custody.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import secrets
 import uuid
@@ -75,8 +76,17 @@ from aweb_naapp.runtime.approvals import (
     Purpose,
     challenge_binding,
 )
+from aweb_naapp.runtime.approvals.challenge import challenge_preimage
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind, AuditSink
 from aweb_naapp.runtime.links import LinkLifetime, link_verifier, new_link_token
+from aweb_naapp.runtime.passkeys.proof import (
+    PasskeyInstallationContext,
+    PasskeyProofUnavailable,
+    ProofContextResolver,
+    ProofContextUnavailable,
+    RetainedPasskeyProof,
+    passkey_evidence_commitment,
+)
 from aweb_naapp.runtime.passkeys.rp import RelyingParty
 from aweb_naapp.runtime.passkeys.webauthn import (
     WebAuthnRefused,
@@ -288,23 +298,35 @@ def _enrolment_challenge(enrolment_id: str, subject: str, nonce: bytes) -> bytes
     return hashlib.sha256(ENROLMENT_PREFIX + canonical_json_bytes(fields)).digest()
 
 
-def _login_challenge(scope: str, subject: str, nonce: bytes) -> bytes:
+def _login_preimage(scope: str, subject: str, nonce: bytes) -> bytes:
     fields = {"nonce": nonce.hex(), "scope": scope, "subject": subject}
-    return hashlib.sha256(LOGIN_PREFIX + canonical_json_bytes(fields)).digest()
+    return LOGIN_PREFIX + canonical_json_bytes(fields)
 
 
-def _contact_cancel_challenge(subject: str, pending_contact_sha256: str, nonce: bytes) -> bytes:
+def _login_challenge(scope: str, subject: str, nonce: bytes) -> bytes:
+    return hashlib.sha256(_login_preimage(scope, subject, nonce)).digest()
+
+
+def _contact_cancel_preimage(subject: str, pending_contact_sha256: str, nonce: bytes) -> bytes:
     fields = {
         "subject": subject,
         "pending_contact_sha256": pending_contact_sha256,
         "nonce": nonce.hex(),
     }
-    return hashlib.sha256(CONTACT_CANCEL_PREFIX + canonical_json_bytes(fields)).digest()
+    return CONTACT_CANCEL_PREFIX + canonical_json_bytes(fields)
+
+
+def _contact_cancel_challenge(subject: str, pending_contact_sha256: str, nonce: bytes) -> bytes:
+    return hashlib.sha256(_contact_cancel_preimage(subject, pending_contact_sha256, nonce)).digest()
+
+
+def _contact_change_preimage(subject: str, new_contact_sha256: str, nonce: bytes) -> bytes:
+    fields = {"contact_sha256": new_contact_sha256, "nonce": nonce.hex(), "subject": subject}
+    return CONTACT_CHANGE_PREFIX + canonical_json_bytes(fields)
 
 
 def _contact_change_challenge(subject: str, new_contact_sha256: str, nonce: bytes) -> bytes:
-    fields = {"contact_sha256": new_contact_sha256, "nonce": nonce.hex(), "subject": subject}
-    return hashlib.sha256(CONTACT_CHANGE_PREFIX + canonical_json_bytes(fields)).digest()
+    return hashlib.sha256(_contact_change_preimage(subject, new_contact_sha256, nonce)).digest()
 
 
 _CURRENT = "superseded_at IS NULL AND effective_at <= $2"
@@ -339,6 +361,7 @@ class Passkeys:
         lockout_floor: LockoutPolicy | None = None,
         clock: Callable[[], datetime] = _utcnow,
         owner_scopes: Callable[[str], bool] = lambda scope: True,
+        proof_context: ProofContextResolver | None = None,
     ) -> None:
         """`lockout` is the app's or owner's policy; `lockout_floor` is the
         deployment's, at or above the module floors. The policy must meet the
@@ -353,6 +376,7 @@ class Passkeys:
         self._enrolment_ttl = enrolment_ttl
         self._challenge_ttl = challenge_ttl
         self._owner_scopes = owner_scopes
+        self._proof_context = proof_context
         floor = lockout_floor or LockoutPolicy()
         self._lockout = lockout or floor
         self._lockout.require_at_least(
@@ -942,16 +966,54 @@ class Passkeys:
         approval_id: str | None = None,
         task_answer_ref: str | None = None,
         new_contact_sha256: str | None = None,
+        scope: str | None = None,
+        binding_kind: str | None = None,
+        preimage: bytes | None = None,
+        covered_request: bytes | None = None,
     ) -> None:
-        now = self._clock()
         async with self.db.transaction() as tx:
+            context = None
+            if purpose != "enrolment":
+                if (
+                    self._proof_context is None
+                    or scope is None
+                    or binding_kind is None
+                    or preimage is None
+                ):
+                    raise ProofContextUnavailable()
+                bound = await tx.fetch_value(
+                    "SELECT scope FROM {{tables.passkey_approvers}} "
+                    "WHERE subject=$1 AND scope=$2 AND superseded_at IS NULL",
+                    subject,
+                    scope,
+                )
+                if bound is None:
+                    raise ProofContextUnavailable()
+                installation = await self._proof_context(scope, tx=tx)
+                if not isinstance(installation, PasskeyInstallationContext):
+                    raise ProofContextUnavailable()
+                context = canonical_json_bytes(
+                    {
+                        **installation.fields(),
+                        "scope": scope,
+                        "origin": self.rp.origin,
+                        "rp_id": self.rp.rp_id,
+                        "require_up": True,
+                        "require_uv": True,
+                        "binding_kind": binding_kind,
+                    }
+                )
+                if hashlib.sha256(preimage).digest() != challenge:
+                    raise PasskeyProofUnavailable()
+            now = self._clock()
             await tx.execute(
                 "DELETE FROM {{tables.passkey_challenges}} WHERE expires_at <= $1", now
             )
             await tx.execute(
                 "INSERT INTO {{tables.passkey_challenges}} (challenge, purpose, subject, "
                 "enrolment_id, approval_id, task_answer_ref, contact_sha256, nonce, created_at, "
-                "expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                "expires_at,proof_context,challenge_preimage,covered_request) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,$11,$12,$13)",
                 challenge,
                 purpose,
                 subject,
@@ -962,6 +1024,9 @@ class Passkeys:
                 nonce,
                 now,
                 now + self._challenge_ttl,
+                context,
+                preimage,
+                covered_request,
             )
             await tx.execute(
                 "DELETE FROM {{tables.passkey_challenges}} WHERE challenge IN ("
@@ -979,7 +1044,7 @@ class Passkeys:
             "UPDATE {{tables.passkey_challenges}} SET used_at = $3 "
             "WHERE challenge = $1 AND purpose = $2 AND used_at IS NULL "
             "RETURNING subject, enrolment_id, approval_id, task_answer_ref, contact_sha256, "
-            "nonce, expires_at",
+            "nonce, created_at, expires_at, proof_context, challenge_preimage, covered_request",
             challenge,
             purpose,
             self._clock(),
@@ -1113,6 +1178,8 @@ class Passkeys:
         approval: Approval | None = None,
         task_answer_ref: str | None = None,
         audit: tuple[AuditKind, dict[str, str]] | None = None,
+        *,
+        issued: Mapping[str, Any],
     ) -> str:
         """Verify an assertion of `subject`'s current passkey over `challenge`,
         advance its counter and record the evidence, with `audit`'s event in
@@ -1143,17 +1210,56 @@ class Passkeys:
         except WebAuthnRefused as exc:
             raise AuthenticationFailed("assertion did not verify") from exc
 
+        if issued["proof_context"] is None or issued["challenge_preimage"] is None:
+            raise PasskeyProofUnavailable()
+        context = json.loads(issued["proof_context"])
+        if context["origin"] != self.rp.origin or context["rp_id"] != self.rp.rp_id:
+            raise PasskeyProofUnavailable()
         evidence_ref = str(uuid.uuid4())
         async with self.db.transaction() as tx:
             advanced = await tx.fetch_value(
                 "UPDATE {{tables.passkey_credentials}} SET sign_count = $2 "
                 "WHERE credential_id = $1 AND revoked_at IS NULL "
-                "AND (sign_count < $2 OR (sign_count = 0 AND $2 = 0)) RETURNING credential_id",
+                "AND sign_count=$3 AND (sign_count < $2 OR (sign_count = 0 AND $2 = 0)) RETURNING credential_id",
                 credential_id,
                 verified.new_sign_count,
+                credential["sign_count"],
             )
             if advanced is None:
                 raise AuthenticationFailed("authenticator counter did not advance")
+            verified_at = self._clock()
+            metadata = dict(
+                evidence_ref=evidence_ref,
+                subject=subject,
+                purpose=str(purpose),
+                verified_at=verified_at,
+                challenge_issued_at=issued["created_at"],
+                challenge_expires_at=issued["expires_at"],
+                sign_count_before=credential["sign_count"],
+                sign_count_after=verified.new_sign_count,
+            )
+            if approval is not None:
+                metadata.update(
+                    approval_id=approval.approval_id,
+                    request_sha256=approval.request_sha256,
+                    policy_ref=approval.policy_ref,
+                    policy_version=approval.policy_version,
+                )
+                if task_answer_ref is not None:
+                    metadata["task_answer_ref"] = task_answer_ref
+            retained = RetainedPasskeyProof.from_parts(
+                context=context,
+                metadata=metadata,
+                challenge_preimage=issued["challenge_preimage"],
+                expected_challenge=challenge,
+                credential_public_key_cose=credential["public_key"],
+                credential_id=credential_id,
+                authenticator_data=base64url_to_bytes(proof["response"]["authenticatorData"]),
+                client_data_json=base64url_to_bytes(proof["response"]["clientDataJSON"]),
+                signature=base64url_to_bytes(proof["response"]["signature"]),
+                covered_request=issued["covered_request"],
+            )
+            commitment = passkey_evidence_commitment(retained)
             await tx.execute(
                 "INSERT INTO {{tables.passkey_assertions}} (evidence_ref, subject, credential_id, "
                 "purpose, approval_id, request_sha256, policy_ref, policy_version, "
@@ -1169,7 +1275,19 @@ class Passkeys:
                 approval.policy_version if approval else None,
                 task_answer_ref,
                 verified.new_sign_count,
-                self._clock(),
+                verified_at,
+            )
+            await tx.execute(
+                "INSERT INTO {{tables.passkey_proofs}} "
+                "(evidence_ref,app_id,team_id,installation_id,generation,record,commitment) "
+                "VALUES($1,$2,$3,$4,$5,$6,$7)",
+                evidence_ref,
+                context["app_id"],
+                context["team_id"],
+                context["installation_id"],
+                context["generation"],
+                canonical_json_bytes(retained.export()),
+                commitment,
             )
             if audit is not None:
                 kind, details = audit
@@ -1191,10 +1309,16 @@ class Passkeys:
         candidate: Candidate,
         purpose: Purpose,
         task_answer_ref: str | None,
+        *,
+        covered_request: bytes | None = None,
     ) -> Mapping[str, Any]:
         """Assertion options for one candidate, listing only their passkeys."""
         if candidate.subject_type != SUBJECT_TYPE:
             raise AuthenticationFailed("candidate is not an app-local passkey holder")
+        if not isinstance(covered_request, bytes) or (
+            hashlib.sha256(covered_request).hexdigest() != approval.request_sha256
+        ):
+            raise PasskeyProofUnavailable()
         if not await self._active_credentials(candidate.subject):
             raise AuthenticationFailed("candidate has no current passkey")
         nonce = secrets.token_bytes(32)
@@ -1206,6 +1330,10 @@ class Passkeys:
             nonce,
             approval_id=approval.approval_id,
             task_answer_ref=task_answer_ref,
+            scope=candidate.scope,
+            binding_kind="approval",
+            preimage=challenge_preimage(approval, candidate, purpose, nonce, task_answer_ref),
+            covered_request=covered_request,
         )
         return await self._assertion_options(candidate.subject, challenge)
 
@@ -1232,7 +1360,7 @@ class Passkeys:
         ):
             raise AuthenticationFailed("assertion does not answer this challenge")
         evidence_ref = await self._verify_assertion(
-            candidate.subject, challenge, proof, purpose, approval, task_answer_ref
+            candidate.subject, challenge, proof, purpose, approval, task_answer_ref, issued=issued
         )
         return Evidence(
             assurance=Assurance.PASSKEY,
@@ -1257,7 +1385,15 @@ class Passkeys:
             raise AuthenticationFailed("approver has no current passkey")
         nonce = secrets.token_bytes(32)
         challenge = _login_challenge(scope, approver["subject"], nonce)
-        await self._issue_challenge(challenge, "login", approver["subject"], nonce)
+        await self._issue_challenge(
+            challenge,
+            "login",
+            approver["subject"],
+            nonce,
+            scope=scope,
+            binding_kind="login",
+            preimage=_login_preimage(scope, approver["subject"], nonce),
+        )
         return await self._assertion_options(approver["subject"], challenge)
 
     async def verify_login(self, scope: str, proof: Mapping[str, Any]) -> PasskeyLogin:
@@ -1282,6 +1418,7 @@ class Passkeys:
             proof,
             "login",
             audit=(AuditKind.APPROVER_LOGGED_IN, {"scope": scope}),
+            issued=issued,
         )
         return PasskeyLogin(
             subject=approver["subject"], contact=approver["contact"], evidence_ref=evidence_ref
@@ -1307,7 +1444,14 @@ class Passkeys:
         digest = contact_sha256(new_contact)
         challenge = _contact_change_challenge(approver["subject"], digest, nonce)
         await self._issue_challenge(
-            challenge, "contact_change", approver["subject"], nonce, new_contact_sha256=digest
+            challenge,
+            "contact_change",
+            approver["subject"],
+            nonce,
+            new_contact_sha256=digest,
+            scope=scope,
+            binding_kind="contact_change",
+            preimage=_contact_change_preimage(approver["subject"], digest, nonce),
         )
         return await self._assertion_options(approver["subject"], challenge)
 
@@ -1332,7 +1476,7 @@ class Passkeys:
         ):
             raise AuthenticationFailed("assertion does not answer this contact change")
         evidence_ref = await self._verify_assertion(
-            approver["subject"], challenge, proof, "contact_change"
+            approver["subject"], challenge, proof, "contact_change", issued=issued
         )
         async with self.db.transaction() as tx:
             change = await self._schedule_contact(
@@ -1573,7 +1717,14 @@ class Passkeys:
         digest = contact_sha256(pending["pending_contact"])
         challenge = _contact_cancel_challenge(pending["subject"], digest, nonce)
         await self._issue_challenge(
-            challenge, "contact_change", pending["subject"], nonce, new_contact_sha256=digest
+            challenge,
+            "contact_change",
+            pending["subject"],
+            nonce,
+            new_contact_sha256=digest,
+            scope=scope,
+            binding_kind="contact_cancel",
+            preimage=_contact_cancel_preimage(pending["subject"], digest, nonce),
         )
         return await self._assertion_options(pending["subject"], challenge)
 
@@ -1596,7 +1747,7 @@ class Passkeys:
         ):
             raise AuthenticationFailed("assertion does not answer this cancellation")
         evidence_ref = await self._verify_assertion(
-            pending["subject"], challenge, proof, "contact_change"
+            pending["subject"], challenge, proof, "contact_change", issued=issued
         )
         now = self._clock()
         async with self.db.transaction() as tx:
@@ -1632,14 +1783,102 @@ class Passkeys:
         )
         return PasskeyEvidence(**row) if row else None
 
+    async def retained_proof(
+        self, evidence_ref: str, *, tx: TransactionManager | None = None
+    ) -> RetainedPasskeyProof:
+        """Restricted historical export; callers authorize its disclosure.
+
+        This grants no current authority and performs no live scope resolution.
+        Legacy summaries and lifecycle-deleted proof have no proof fallback.
+        """
+        source = tx if tx is not None else self.db
+        row = await source.fetch_one(
+            "SELECT * FROM {{tables.passkey_proofs}} WHERE evidence_ref=$1", evidence_ref
+        )
+        if row is None:
+            raise PasskeyProofUnavailable()
+        try:
+            proof = RetainedPasskeyProof.from_export(json.loads(row["record"]))
+        except (ValueError, KeyError, TypeError):
+            raise PasskeyProofUnavailable() from None
+        if (
+            proof.metadata["evidence_ref"] != evidence_ref
+            or any(
+                proof.context[field] != row[field]
+                for field in ("app_id", "team_id", "installation_id", "generation")
+            )
+            or passkey_evidence_commitment(proof) != row["commitment"]
+        ):
+            raise PasskeyProofUnavailable()
+        return proof
+
+    async def evidence_commitment(
+        self,
+        evidence_ref: str,
+        *,
+        context: PasskeyInstallationContext,
+        scope: str,
+        subject: str,
+        purpose: str,
+        tx: TransactionManager | None = None,
+    ) -> str:
+        """One helper for the caller's already-authorized, scoped evidence.
+
+        Expected context comes from the admitted installation. Liveness,
+        session expiry and action authority are separate caller responsibilities.
+        """
+        if not isinstance(context, PasskeyInstallationContext):
+            raise PasskeyProofUnavailable()
+        proof = await self.retained_proof(evidence_ref, tx=tx)
+        if any(proof.context[k] != v for k, v in context.fields().items()) or (
+            proof.context["scope"],
+            proof.metadata["subject"],
+            proof.metadata["purpose"],
+        ) != (scope, subject, purpose):
+            raise PasskeyProofUnavailable()
+        return passkey_evidence_commitment(proof)
+
+    async def delete_proofs_in(
+        self, tx: TransactionManager, *, context: PasskeyInstallationContext
+    ) -> int:
+        """Delete this app/team/installation's proofs across all generations.
+
+        The caller owns lifecycle authorization and its transaction. Historical
+        summary/audit records may remain, but can never recreate the proof.
+        """
+        if not isinstance(context, PasskeyInstallationContext):
+            raise PasskeyProofUnavailable()
+        rows = await tx.fetch_all(
+            "DELETE FROM {{tables.passkey_proofs}} WHERE app_id=$1 AND team_id=$2 "
+            "AND installation_id=$3 RETURNING evidence_ref",
+            context.app_id,
+            context.team_id,
+            context.installation_id,
+        )
+        await tx.execute(
+            "DELETE FROM {{tables.passkey_challenges}} WHERE "
+            "(convert_from(proof_context,'UTF8')::jsonb)->>'app_id'=$1 AND "
+            "(convert_from(proof_context,'UTF8')::jsonb)->>'team_id'=$2 AND "
+            "(convert_from(proof_context,'UTF8')::jsonb)->>'installation_id'=$3",
+            context.app_id,
+            context.team_id,
+            context.installation_id,
+        )
+        return len(rows)
+
 
 class PasskeyAuthenticator:
     """The approval primitive's `passkey` assurance adapter."""
 
     assurance = Assurance.PASSKEY
 
-    def __init__(self, passkeys: Passkeys) -> None:
+    def __init__(self, passkeys: Passkeys, covered_request: bytes | None = None) -> None:
         self._passkeys = passkeys
+        self._covered_request = covered_request
+
+    def with_frozen_request(self, canonical: bytes) -> PasskeyAuthenticator:
+        """A fresh per-ceremony adapter; no mutable cross-request cache."""
+        return PasskeyAuthenticator(self._passkeys, canonical)
 
     async def challenge(
         self,
@@ -1648,7 +1887,9 @@ class PasskeyAuthenticator:
         purpose: Purpose,
         task_answer_ref: str | None,
     ) -> Mapping[str, Any]:
-        return await self._passkeys.approval_options(approval, candidate, purpose, task_answer_ref)
+        return await self._passkeys.approval_options(
+            approval, candidate, purpose, task_answer_ref, covered_request=self._covered_request
+        )
 
     async def verify(
         self,
