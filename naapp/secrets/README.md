@@ -29,8 +29,9 @@ The manifest's authoring source is `src/aweb_secrets/manifest.py`. The committed
 `app_keys` entry's `did_key` from `SECRETS_APP_KEY_FILES`. The template fixes each
 kid and its purposes; it contains no signing key or deployment did:key. Configure
 all three keys with the shared K0 key-file format: a 32-byte Ed25519 seed as
-64 hex characters with an optional trailing newline, in owner-only files.
-Group- or world-writable files are refused. For example:
+64 hex characters with an optional trailing newline. Files must be regular
+files and must not be group- or world-writable; symlinks to regular files are
+supported. Read permissions are left to the deployment platform. For example:
 
 ```text
 SECRETS_APP_KEY_FILES={"secrets:hook-event-1":"/run/keys/hook-event","secrets:hook-delivery-1":"/run/keys/hook-delivery","secrets:grant-read-1":"/run/keys/grant-read"}
