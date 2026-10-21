@@ -22,6 +22,9 @@ _HEAD = (
 
 @asynccontextmanager
 async def stalled_registry_url(*, byte_interval: float = 0.02) -> AsyncGenerator[str]:
+    writers: set[asyncio.StreamWriter] = set()
+    handlers: set[asyncio.Task[None]] = set()
+
     async def answer_slowly(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             await reader.readuntil(b"\r\n\r\n")
@@ -33,13 +36,30 @@ async def stalled_registry_url(*, byte_interval: float = 0.02) -> AsyncGenerator
         except (ConnectionError, asyncio.IncompleteReadError):
             pass
         finally:
+            writers.discard(writer)
             writer.close()
+            try:
+                await writer.wait_closed()
+            except ConnectionError:
+                pass
 
-    server = await asyncio.start_server(answer_slowly, "127.0.0.1", 0)
+    def connected(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        # Register synchronously at acceptance, before the handler can run.
+        writers.add(writer)
+        task = asyncio.create_task(answer_slowly(reader, writer))
+        handlers.add(task)
+        task.add_done_callback(handlers.discard)
+
+    server = await asyncio.start_server(connected, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
     try:
         yield f"http://127.0.0.1:{port}"
     finally:
         server.close()
-        server.close_clients()
+        # Server.close_clients() is not available on our Python 3.12 minimum.
+        for writer in tuple(writers):
+            writer.close()
+        for task in tuple(handlers):
+            task.cancel()
+        await asyncio.gather(*handlers, return_exceptions=True)
         await server.wait_closed()
