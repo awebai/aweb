@@ -30,7 +30,7 @@
 .gs-step__body { min-width: 0; }
 .gs-step__title { font: 650 var(--step-1)/1.2 var(--font-sans); margin: 0.25rem 0 0; letter-spacing: -0.01em; }
 .gs-step__what { color: var(--muted); margin: var(--s1) 0 var(--s2); max-width: 70ch; }
-.gs-step__what a { color: var(--accent); font-weight: 550; }
+.gs-step__what a, .gs-step__what a code { color: var(--ink); font-weight: 550; text-decoration: underline; text-underline-offset: 2px; }
 .gs-step__what code { font: 500 0.88em/1.4 var(--font-mono); background: var(--surface-2);
   border: 1px solid var(--line); border-radius: 5px; padding: 0.08em 0.34em; }
 .gs-step .cmd { margin-top: var(--s2); }
