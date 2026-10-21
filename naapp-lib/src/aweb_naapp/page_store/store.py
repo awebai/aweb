@@ -55,6 +55,16 @@ def _require_transaction(tx) -> None:
         raise TypeError("a caller-owned TransactionManager is required")
 
 
+def _projection_names(values, *, minimum, maximum) -> None:
+    if (
+        not isinstance(values, (list, tuple))
+        or not minimum <= len(values) <= maximum
+        or any(not isinstance(v, str) or not v or v == "*" for v in values)
+        or len(set(values)) != len(values)
+    ):
+        raise StoreError("schema_invalid")
+
+
 async def apply_page_store_migrations(
     db: AsyncDatabaseManager, ledger: AsyncDatabaseManager
 ) -> None:
@@ -1113,14 +1123,61 @@ class PageStore(LifecycleMixin):
                 if name == "record_ids" and allow_live and values == "*":
                     continue
                 minimum = 0 if name == "record_ids" else 1
-                if (
-                    not isinstance(values, (list, tuple))
-                    or not minimum <= len(values) <= maximum
-                    or any(not isinstance(v, str) or not v or v == "*" for v in values)
-                    or len(set(values)) != len(values)
-                ):
-                    raise StoreError("schema_invalid")
+                _projection_names(values, minimum=minimum, maximum=maximum)
         return entries
+
+    async def collection_access_on(
+        self, tx, scope, *, creator_id, collection, mode, record_ids="*"
+    ):
+        """Current collection authority after the host checks its creator proof.
+
+        Live wildcard authority needs no record query. Named/pinned checks are
+        bounded and share the same row/field/schema policy as data projections.
+        """
+        _require_transaction(tx)
+        if (
+            not isinstance(creator_id, str)
+            or not creator_id
+            or not isinstance(collection, str)
+            or not collection
+            or mode not in ("live", "pinned")
+        ):
+            raise StoreError("schema_invalid")
+        if record_ids != "*":
+            _projection_names(record_ids, minimum=0, maximum=200)
+        document, access, actor = await self._load_actor(tx, scope, creator_id, shared=True)
+        definition = next((c for c in document["collections"] if c["id"] == collection), None)
+        if definition is None:
+            return None
+        fields = access.visible_fields(actor, definition)
+        if not fields:
+            return None
+        selected = None
+        if mode == "pinned" or record_ids != "*":
+            args = self._record_access_args(
+                scope,
+                definition,
+                access,
+                actor,
+                fields=fields,
+                record_ids=None if record_ids == "*" else list(record_ids),
+            )
+            rows = await tx.fetch_all(
+                AUTHORIZED_RECORDS + "SELECT record->>'id' AS id FROM authorized LIMIT 201", *args
+            )
+            if len(rows) > 200:
+                raise StoreError("action_denied", 403)
+            selected = sorted(row["id"] for row in rows)
+        await self._fence(scope)
+        return {
+            "page_rev": document["rev"],
+            "id": definition["id"],
+            "mode": definition["mode"],
+            "schema_version": definition["schema_version"],
+            "schema": access.redact_schema(actor, definition),
+            "fields": sorted(fields),
+            "record_ids": selected,
+        }
 
     @staticmethod
     def _snapshot_collections(source):

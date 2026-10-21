@@ -174,6 +174,31 @@ commit/rollback. Make no network calls while these locks are held. These
 member entry points require an authenticated admitted member; link holders use
 the separately checked creator/projection path below.
 
+`principal_id(principal, scope)`, exported from `aweb_naapp.page_store`, is the
+store's canonical ACL identity helper. It checks the member's team and uses a
+registry-verified `did:aw` when available, otherwise the signing `did:key`.
+
+`collection_access_on(tx, scope, creator_id=..., collection=..., mode=...,
+record_ids="*")` supplies current collection authority to a checked host
+adapter. It requires the caller's transaction and holds the page `FOR SHARE`.
+The host has already checked the immutable creator evidence and current
+membership; a stored creator string alone does not establish membership. The
+result contains `page_rev`, `id`, collection `mode` (owned/synced),
+`schema_version`, redacted `schema`, visible `fields` and `record_ids`.
+An absent collection or no visible fields returns `None`; page deletion or
+lost page access retains the ordinary `resource_not_found` refusal.
+
+The input mode is `live` or `pinned`. Live wildcard returns
+`record_ids: null`, explicitly dynamic, without querying record IDs. A named
+list, including `[]`, checks only its at most 200 IDs against current row ACLs.
+Pinned wildcard inspects at most 201 authorized IDs and refuses with
+`action_denied` if more than 200 are visible. Schema annotation redaction and
+authorized SQL are shared with ordinary projections. This metadata carries no
+record values or sync-source envelopes. N5 maps the dynamic result to its
+explicit dynamic authority variant; live row values/count/cursors still come
+from `query_widget_on`. For a table bootstrap, feed that query page's returned
+named IDs and checked fields to `read_projection_on` in the same transaction.
+
 `query_widget_on(tx, scope, creator_id=..., widget_id=..., bind=...,
 link_id=..., expected_page_rev=None, projection=...)` serves a checked live link
 on the caller's `TransactionManager`. The host supplies the verified link ID,
