@@ -217,6 +217,10 @@ ROOT_CONSUMERS = {
         "secrets-runner-protocol-v1.json",
         '(Path(__file__).parents[3] / "docs" / "vectors" / "secrets-runner-protocol-v1.json")',
     ),
+    PurePosixPath("naapp/secrets/runner/tests/test_protocol.py"): _consumer(
+        "secrets-runner-protocol-v1.json",
+        'Path(__file__).resolve().parents[4] / "docs/vectors/secrets-runner-protocol-v1.json"',
+    ),
     PurePosixPath("naapp/secrets/tests/test_vector_identifiers.py"): _consumer(
         "secrets-runner-protocol-v1.json",
         'ROOT / "docs" / "vectors" / "secrets-runner-protocol-v1.json"',

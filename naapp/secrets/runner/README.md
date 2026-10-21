@@ -6,9 +6,10 @@ uses its own signing and encryption keys; it is not an AWID team member.
 The implementation provides the client side of the published
 [S0 protocol](../../../docs/secrets-runner-protocol.md): signed requests,
 assignment verification, HPKE opening and a durable SQLite replay journal.
-Registration is available as a command. Local job validation, execution and the
-claim/report loop are subsequent slices of S15b; this package does not yet execute
-assignments.
+Registration is available as a command. The local execution library checks job
+pins and runs host executables with bounded, sanitized output. The claim/report
+loop, OCI runtime and separate-user end-to-end acceptance remain subsequent
+slices of S15b; this package does not yet execute service assignments.
 
 Run registration as the dedicated runner OS user:
 
@@ -49,12 +50,43 @@ no group or other permissions. The database is created with mode 0600; symbolic
 links, hard links and public files are refused. Deployment must also keep this
 directory outside agent write authority. SQLite failures refuse work.
 
+Local job preparation uses a runner-owned JSON configuration with exactly three
+keys: `v: 1`, `agent_uids` (the actual agent OS UIDs), and `jobs`. Each `jobs`
+entry is keyed by job ID and contains `digest` and `definition`: the owner-approved
+`job/1` record. Both the server assignment and this independent local pin must
+match. Keep the configuration and its parent directories outside the agents'
+write authority. The configured agent UID list must be nonempty; the runner's
+actual effective UID and UID 0 are refused as agent identities. This checks the
+declared Unix user boundary; operators must list every agent that shares the host.
+
+The local library re-reads that protected configuration and re-hashes the
+executable and every declared file before each execution. A changed configuration
+refuses work until explicitly reloaded. Root-owned OS files are allowed; files or
+parent directories writable by another user are refused. Trusted root-owned
+sticky ancestor directories, such as `/tmp`, may contain a runner-owned private
+directory. Parameter validation uses the shared pages validators, and credentials
+use the sole `aweb-secrets-values` codec. Credential environment bindings name an
+explicit slot and field; every slot must use one consistent field family. Missing
+fields and NUL-bearing selected values refuse work. This never stringifies a
+credential object or chooses a field by dictionary order.
+
+Host execution uses literal argument elements, an empty starting environment
+plus the declared names, closed stdin, and a separate process group. Both output
+pipes are drained under one combined byte bound, with strict UTF-8 validation,
+known-value redaction and credential-shape detection before a report is built.
+The deadline includes descendant-held pipes; timeout or cancellation kills the
+process group and closes the runner's pipes. A delayed `started` report cannot
+extend that deadline. A trusted job can escape a Unix process group, so this is
+not a process sandbox. Use the required dedicated user/container deployment
+boundary. OCI jobs currently refuse rather than falling back to host execution.
+
 Run the focused checks from this directory:
 
 ```sh
 uv sync --locked
 uv run pytest tests/test_protocol.py tests/test_journal.py
 uv run pytest tests/test_registration.py
+uv run pytest tests/test_filesystem.py tests/test_jobs.py tests/test_execution.py
 uv run ruff check src tests
 uv run mypy src
 ```
