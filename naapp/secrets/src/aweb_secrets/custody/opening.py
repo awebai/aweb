@@ -3,8 +3,11 @@
 SDK reads run outside every held authority transaction/lock. The final checker
 does DB reads only under the caller's already-held authority; it never takes
 new locks, allocates, invalidates, activates or emits. Rotation reconciliation
-is a separate pre-S3 transaction. After S3 dispatching commits, open() rereads
-the exact binding before returning bytes; failures belong to not_sent.
+is a separate pre-S3 transaction. Broker open() follows committed dispatching;
+its pre-send failures are not_sent. Runner preparation opens original durably
+admitted contexts outside locks before rebuilding/checking the unchanged plan
+in a fresh final release transaction. Only a still-admitted runner preparation
+may refuse; a published winner is replayed without reopening or resealing.
 """
 
 from __future__ import annotations
@@ -175,10 +178,12 @@ class OnePasswordOpener:
             raise SecretVersionChanged(observation.item_version)
 
     async def open(self, context: SealContext) -> Plaintext:
-        """Fresh reread after dispatching commits, before any value release.
+        """Fresh exact read, never a grant of dispatch authority.
 
-        Failure/mismatch closes the original S3 attempt as not_sent. A caller
-        must never substitute the newly observed value into that attempt.
+        Broker calls after dispatching commits: a pre-send failure is not_sent.
+        Runner calls for the original durably admitted run before the fresh
+        DB-only release fence; only a still-admitted failure may be refused.
+        Never substitute a newer version or reopen a published assignment.
         """
         binding = await active_binding(self._db, context)
         credential = await self._credential_opener.open(binding.credential_context)

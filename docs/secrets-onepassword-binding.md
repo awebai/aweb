@@ -98,11 +98,27 @@ writes. A changed remote version raises `SecretVersionChanged`; a missing,
 disabled, destroyed, foreign or superseded binding/token refuses. Neither
 result activates a version. Native custody requires `observation is None`.
 
-After dispatching commits, `await opener.open(context)` returns the existing
-redacting `Plaintext`. For 1Password it reads the item afresh, requires the exact
+`await opener.open(context)` returns the existing redacting `Plaintext`. For 1Password it reads the item afresh, requires the exact
 authorized item version, then rechecks the local binding/credential epoch
 before returning. There is no native fallback or value cache. Successful real
 vault reads and phase-correct S13 composition are separate release proofs.
+
+For broker use, `open(exact_context)` follows the committed dispatching fence;
+a subsequent pre-send failure remains `not_sent`. For runner release, derive
+exact contexts solely from the ORIGINAL durably admitted run/ordered slots and
+persisted plan association, then open through the same private `UseSecretOpener`
+outside every held DB transaction/lock. Keep plaintext and original known
+values transient for that original run/version/reference/token epoch. Do not
+retain a transaction-bound `PreparedRun` across the read. Rebuild/check the
+unchanged persisted plan and exact contexts in the sole fresh DB-only final
+release fence; only then atomically persist dispatching, alias, sealed/signed
+assignment, nonce and outbox before bytes leave. Changed authority or commit
+failure discards preparation. A concurrent published assignment wins over losing
+preparation, including a losing SDK error; replay uses stored bytes, never
+reopen/reseal. Only a still-admitted run may become refused on preparation
+failure, with operational/refusal outbox and nonce recorded atomically. No SDK
+I/O under locks, second authority path, approval rearm or replacement-version
+transplant. See [runner protocol §4.2](secrets-runner-protocol.md#42-one-dispatch-one-assignment).
 
 ## Token replacement and dependencies
 
@@ -175,14 +191,16 @@ lookup has no newly activated version or successful `after_ref`.
 The final S3 `check_observation(tx, context, observation)` performs DB-only
 comparisons under authority already held, followed by the final installation
 and live-time checks. It cannot allocate versions, acquire late B2 locks,
-revoke approvals, or enqueue observation consequences. After `dispatching`
-commits, `opener.open(exact_context)` rereads before any upstream byte or runner
-release. A late mismatch or read failure closes the original attempt through
+revoke approvals, or enqueue observation consequences. For broker use, after
+`dispatching` commits, `opener.open(exact_context)` rereads before any upstream
+byte. A late broker mismatch or read failure closes the original attempt through
 S3 as `not_sent`; it never transplants a new version into that admitted intent.
+Runner preparation uses the exception above, before its final assignment fence;
+a preparation failure may refuse only a still-admitted original run.
 Any remote-version reconciliation then runs separately with complete prelocks.
 
 Phase-correct audit matters: pre-S3 failures produce a refused use event.
-Post-commit/pre-release failures produce `not_sent`, with their cause retained
+Broker post-commit/pre-send failures produce `not_sent`, with their cause retained
 in console/operational state. The current hook catalog forbids `refusal_code`
 on `not_sent`; producers must not attach that field or fabricate a pre-S3
 refusal. The shared observation act/authority and invalid-value refusal-code
