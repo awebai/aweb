@@ -6,8 +6,8 @@ guards and origin-fetch cutover land together. The app-facing grant API is
 separate; see [app-registry.md](app-registry.md).
 
 All paths below are relative to the OSS server mount. Authentication is the
-existing verified team-auth or internal-auth context. `team_id` is a query
-parameter identifying the selected team and must match that context. Body
+existing verified team-auth or internal-auth context. `team_id` may identify the selected team in the query and must match that
+context; omitting it uses the authenticated team. Body
 fields never establish the caller's identity, team or installation authority.
 
 The host installs `app.state.install_admin_policy` on the serving application.
@@ -95,8 +95,8 @@ install authority never activates an owner-controlled hook.
 
 Existing rows migrate to `pending_origin_verification`, preserving pins,
 scopes and assigned installation identity. Migrations perform no network work.
-The deploy operator runs the pending-installation verifier immediately after
-migration; ordinary app calls are interrupted until verification completes.
+The deploy operator runs `aweb verify-pending-app-installations` immediately
+after migration; ordinary app calls are interrupted until verification completes.
 Core mail and chat remain available.
 
 `POST /v1/apps/{app_id}/reverify?team_id=...` takes
@@ -106,6 +106,8 @@ checks that the same pending identity/generation/digest is still current.
 Matching bytes activate it without changing scopes, identity or generation.
 A mismatch or fetch failure leaves it pending and records a bounded error code.
 The admin surface displays that reason and offers another re-verify action.
+A worker runs `aweb run-installation-verifications` periodically to process the
+queue; the job pin is checked again before activation.
 
 ## Member requests and retirement
 
@@ -114,7 +116,24 @@ The request stores a previewed app identity, origin, digest and requested scopes
 it grants no authority. The admin previews the pinned request and explicitly
 confirms its granted scopes through the same origin verification and policy
 checks. A changed origin response requires another preview before approval.
-The request-list and approval HTTP shapes remain to be finalized with that flow.
+`POST /v1/apps/requests` takes `app_id`, `origin`, `digest` and
+`requested_scopes`, all pinned to a server origin fetch, and returns a pending
+`request_id` with status 201. It grants no tools or scopes. `aw plugin request
+<origin>` uses this path and leaves local tools unchanged.
+
+`GET /v1/apps/requests` returns the caller's requests; `?mine=false` requires
+install-admin authority and returns the team's requests. The response is
+`{"team_id":"...","requests":[...]}` with request identity, pin, scopes,
+requester, state and resulting installation identity if approved.
+
+`POST /v1/apps/requests/{request_id}/approve` takes `granted_scopes` and an
+optional `expected_generation` (required when updating an existing installation).
+It checks current admin policy before fetching and again in the write
+transaction. The origin must still serve the request's pin, and selected scopes
+must be a subset of the request. Approval and installation commit together.
+`POST /v1/apps/requests/{request_id}/decline` resolves a pending request without
+installing anything. Both refuse an already resolved request with
+`409 installation_request_resolved`.
 
 Uninstall is `POST /v1/apps/{app_id}/uninstall?team_id=...` with
 `{"expected_generation":1}`. It locks the same current installation row as

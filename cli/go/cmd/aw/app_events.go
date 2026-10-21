@@ -48,7 +48,7 @@ func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string
 	body := installRegistrationBody(resolved, fetchedDigest, expected)
 	var installed appInstallationReceipt
 	if err := client.Post(ctx, "/v1/apps/install?team_id="+url.QueryEscape(selection.TeamID), body, &installed); err != nil {
-		return fmt.Errorf("register app installation (existing local installation retained; ask an admin if refused): %w", err)
+		return fmt.Errorf("register app installation (existing local installation retained; request approval with aw plugin request %s): %w", manifest.App.Origin, err)
 	}
 	if installed.InstallationID == "" || installed.Generation <= 0 || installed.State != "active" || !installed.OriginVerified || installed.Digest != fetchedDigest {
 		return fmt.Errorf("installation_identity_required: the team server returned an invalid confirmation")
