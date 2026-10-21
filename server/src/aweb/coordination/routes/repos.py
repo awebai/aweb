@@ -18,6 +18,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 from redis.asyncio import Redis
 
+from aweb.audit import OperatorAuditRoute, audit_success
+
 from ...db import DatabaseInfra, get_db_infra
 from awid.pagination import encode_cursor, validate_pagination_params
 from ...presence import clear_workspace_presence
@@ -27,7 +29,7 @@ from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_w
 logger = logging.getLogger(__name__)
 
 
-router = APIRouter(prefix="/v1/repos", tags=["repos"])
+router = APIRouter(prefix="/v1/repos", tags=["repos"], route_class=OperatorAuditRoute)
 
 
 def canonicalize_git_url(origin_url: str) -> str:
@@ -358,67 +360,69 @@ async def delete_repo(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> RepoDeleteResponse:
     """Soft-delete a repo and cascade to workspaces."""
-    aweb_db = db.get_manager("aweb")
-
-    repo = await aweb_db.fetch_one(
-        """
-        SELECT id, team_id FROM {{tables.repos}}
-        WHERE id = $1 AND team_id = $2 AND deleted_at IS NULL
-        """,
-        str(repo_id),
-        identity.team_id,
-    )
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repo not found")
-
-    workspace_rows = await aweb_db.fetch_all(
-        """
-        SELECT workspace_id FROM {{tables.workspaces}}
-        WHERE repo_id = $1 AND deleted_at IS NULL
-        """,
-        str(repo_id),
-    )
-    workspace_ids = [str(row["workspace_id"]) for row in workspace_rows]
-
-    # Soft-delete workspaces
-    if workspace_ids:
-        await aweb_db.execute(
+    manager = db.get_manager("aweb")
+    async with manager.transaction() as aweb_db:
+        repo = await aweb_db.fetch_one(
             """
-            UPDATE {{tables.workspaces}}
-            SET deleted_at = NOW()
+            SELECT id, team_id FROM {{tables.repos}}
+            WHERE id = $1 AND team_id = $2 AND deleted_at IS NULL
+            """,
+            str(repo_id),
+            identity.team_id,
+        )
+        if not repo:
+            raise HTTPException(status_code=404, detail="Repo not found")
+
+        workspace_rows = await aweb_db.fetch_all(
+            """
+            SELECT workspace_id FROM {{tables.workspaces}}
             WHERE repo_id = $1 AND deleted_at IS NULL
             """,
             str(repo_id),
         )
+        workspace_ids = [str(row["workspace_id"]) for row in workspace_rows]
 
-    # Delete claims for affected workspaces
-    claims_deleted = 0
-    if workspace_ids:
-        result = await aweb_db.fetch_one(
-            """
-            WITH deleted AS (
-                DELETE FROM {{tables.task_claims}}
-                WHERE workspace_id = ANY($1::uuid[])
-                RETURNING id
+        # Soft-delete workspaces
+        if workspace_ids:
+            await aweb_db.execute(
+                """
+                UPDATE {{tables.workspaces}}
+                SET deleted_at = NOW()
+                WHERE repo_id = $1 AND deleted_at IS NULL
+                """,
+                str(repo_id),
             )
-            SELECT COUNT(*) as count FROM deleted
+
+        # Delete claims for affected workspaces
+        claims_deleted = 0
+        if workspace_ids:
+            result = await aweb_db.fetch_one(
+                """
+                WITH deleted AS (
+                    DELETE FROM {{tables.task_claims}}
+                    WHERE workspace_id = ANY($1::uuid[])
+                    RETURNING id
+                )
+                SELECT COUNT(*) as count FROM deleted
+                """,
+                workspace_ids,
+            )
+            claims_deleted = result["count"] if result else 0
+
+        # Soft-delete the repo
+        await aweb_db.execute(
+            """
+            UPDATE {{tables.repos}}
+            SET deleted_at = NOW()
+            WHERE id = $1
             """,
-            workspace_ids,
+            str(repo_id),
         )
-        claims_deleted = result["count"] if result else 0
 
-    # Clear Redis presence
+        await audit_success(aweb_db, request, identity.team_id)
+
+    # Redis follows the committed deletion; failed SQL/audit leaves it intact.
     presence_cleared = await clear_workspace_presence(redis, workspace_ids)
-
-    # Soft-delete the repo
-    await aweb_db.execute(
-        """
-        UPDATE {{tables.repos}}
-        SET deleted_at = NOW()
-        WHERE id = $1
-        """,
-        str(repo_id),
-    )
 
     logger.info(
         "Repo soft-deleted: id=%s workspaces=%d claims=%d presence=%d",

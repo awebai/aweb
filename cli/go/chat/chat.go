@@ -751,8 +751,10 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 		targetAlias != rawTarget &&
 		!strings.Contains(targetAlias, "/")
 	requireUniqueConcreteAlias := bareAliasTarget
-	pendingResp, err := client.ChatPending(ctx)
-	if err != nil {
+	// Session selection needs routing metadata, not decrypted previews from
+	// every pending conversation (including unrelated ones).
+	var pendingResp awid.ChatPendingResponse
+	if err := client.Get(ctx, "/v1/chat/pending", &pendingResp); err != nil {
 		return "", false, fmt.Errorf("getting pending chats: %w", err)
 	}
 	matchesSelectedTeam := func(itemTeamID string) bool {
@@ -1477,23 +1479,18 @@ func Open(ctx context.Context, client *awid.Client, targetAlias string) (*OpenRe
 
 // History fetches all messages in a conversation.
 func History(ctx context.Context, client *awid.Client, targetAlias string) (*HistoryResult, error) {
+	return HistoryWithOptions(ctx, client, targetAlias, false, 1000)
+}
+
+// HistoryWithOptions resolves a recipient before fetching the selected history
+// page. Filters reach the server before any message is decrypted.
+func HistoryWithOptions(ctx context.Context, client *awid.Client, targetAlias string, unreadOnly bool, limit int) (*HistoryResult, error) {
 	sessionID, _, err := findLatestSession(ctx, client, targetAlias)
 	if err != nil {
 		return nil, err
 	}
 
-	messagesResp, err := client.ChatHistory(ctx, awid.ChatHistoryParams{
-		SessionID: sessionID,
-		Limit:     1000,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("getting messages: %w", err)
-	}
-
-	return &HistoryResult{
-		SessionID: sessionID,
-		Messages:  buildMessages(messagesResp.Messages),
-	}, nil
+	return HistoryBySession(ctx, client, sessionID, "", unreadOnly, limit)
 }
 
 // HistoryBySession fetches messages by explicit session id. It is used by local

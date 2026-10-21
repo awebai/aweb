@@ -418,6 +418,15 @@ and grant scopes. Restart custody after upgrading: an already-running process
 keeps its old capabilities. Upgrade with the services stopped, as in
 [Upgrading aw under running services](terminal-wake-broker.md#upgrading-aw-under-running-services). The marker is advertised starting with aw 1.36.31.
 
+Before unwrapping, custody independently fetches the stored message as the
+resident and compares its encrypted envelope with the requested one. This
+readability and message-binding check prevents custody from decrypting arbitrary
+caller-supplied ciphertext; a grant seat does not replace it with its own read.
+`aw chat history` applies `--limit` and `--unread-only` before decrypting messages,
+and recipient lookup does not decrypt unrelated pending-chat previews. HTTP and
+custody requests retain their individual timeouts; a history page does not share
+one cumulative API timeout. Explicit caller cancellation still stops the work.
+
 Scopes are `mail.read`, `mail.send`, `chat.read`, `chat.send`,
 `events.read`, `coord.read`, `coord.write`, `presence.write`,
 `contacts.read`, and `contacts.write`. The `normal-agent` bundle expands to
@@ -451,6 +460,25 @@ This is bounded rechecking, not instantaneous idle-stream disconnection. Existin
 finite notification streams keep their current behavior. Custody's authoritative
 status cache remains bounded to 30 seconds. Registry revocation freshness remains
 subject to the registry client's existing cache policy.
+
+## User-data signatures
+
+`aw id sign` injects its timestamp into the caller's JSON object, canonicalizes
+it, then signs the UTF-8 bytes `aweb.user-signature/1\n` followed by that canonical
+JSON. The newline is a literal byte. Verifiers of user signatures must prepend
+this exact prefix. There is no unprefixed compatibility mode: these signatures
+cannot authorize AWID log entries, controller operations or request authentication.
+Protocol-specific commands construct and sign their own protocol artifacts.
+
+`aw id request` signs a target-bound v2 request envelope through the same
+signer as SDK JSON, raw, streaming and connect requests. It binds the final
+external origin, method, raw path and query, actual body hash and timestamp.
+Without `--team-auth`, it binds the selected `did_aw` (empty for a local
+identity) and refuses caller JSON. With `--team-auth`, it binds the active
+certificate's team; optional `--sign` fields cannot replace any authoritative
+claim, including `did_aw`. A refusal never triggers a v1 fallback. Publish this
+client only after both the OSS server and every embedding host deploy the v2
+verifier, following the server-then-Cloud-then-client release order.
 
 ## Message verification and trust
 

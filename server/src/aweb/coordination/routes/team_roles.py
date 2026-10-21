@@ -14,6 +14,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, model_validator
 
+from aweb.audit import OperatorAuditRoute, audit_success
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
@@ -23,7 +24,7 @@ from ..defaults import get_default_bundle
 
 logger = logging.getLogger(__name__)
 
-roles_router = APIRouter(prefix="/v1/roles", tags=["roles"])
+roles_router = APIRouter(prefix="/v1/roles", tags=["roles"], route_class=OperatorAuditRoute)
 router = roles_router
 
 DEFAULT_TEAM_ROLES_BUNDLE: Dict[str, Any] = get_default_bundle()
@@ -508,30 +509,32 @@ async def create_team_roles_endpoint(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> CreateTeamRolesResponse:
     """Create a versioned team roles record for the team."""
-    aweb_db = db.get_manager("aweb")
+    manager = db.get_manager("aweb")
+    async with manager.transaction() as aweb_db:
+        bundle_dict = payload.bundle.model_dump()
 
-    bundle_dict = payload.bundle.model_dump()
+        team_roles_version = await create_team_roles_version(
+            aweb_db,
+            team_id=identity.team_id,
+            base_roles_id=payload.base_team_roles_id,
+            bundle=bundle_dict,
+            created_by_alias=identity.alias,
+        )
 
-    team_roles_version = await create_team_roles_version(
-        aweb_db,
-        team_id=identity.team_id,
-        base_roles_id=payload.base_team_roles_id,
-        bundle=bundle_dict,
-        created_by_alias=identity.alias,
-    )
+        await audit_success(aweb_db, request, identity.team_id)
 
-    logger.info(
-        "Team roles created via API: team=%s id=%s version=%d",
-        identity.team_id,
-        team_roles_version.id,
-        team_roles_version.version,
-    )
+        logger.info(
+            "Team roles created via API: team=%s id=%s version=%d",
+            identity.team_id,
+            team_roles_version.id,
+            team_roles_version.version,
+        )
 
-    return CreateTeamRolesResponse(
-        team_roles_id=team_roles_version.id,
-        team_id=team_roles_version.team_id,
-        version=team_roles_version.version,
-    )
+        return CreateTeamRolesResponse(
+            team_roles_id=team_roles_version.id,
+            team_id=team_roles_version.team_id,
+            version=team_roles_version.version,
+        )
 
 
 @roles_router.get("/{team_roles_id}")
@@ -595,34 +598,36 @@ async def activate_team_roles_endpoint(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> ActivateTeamRolesResponse:
     """Set a team roles version as the active bundle for the team."""
-    aweb_db = db.get_manager("aweb")
+    manager = db.get_manager("aweb")
+    async with manager.transaction() as aweb_db:
+        previous_active = await aweb_db.fetch_one(
+            """
+            SELECT id FROM {{tables.team_roles}}
+            WHERE team_id = $1 AND is_active = true
+            """,
+            identity.team_id,
+        )
+        previous_roles_id = str(previous_active["id"]) if previous_active else None
 
-    previous_active = await aweb_db.fetch_one(
-        """
-        SELECT id FROM {{tables.team_roles}}
-        WHERE team_id = $1 AND is_active = true
-        """,
-        identity.team_id,
-    )
-    previous_roles_id = str(previous_active["id"]) if previous_active else None
+        await activate_team_roles(
+            aweb_db,
+            team_id=identity.team_id,
+            roles_id=team_roles_id,
+        )
 
-    await activate_team_roles(
-        aweb_db,
-        team_id=identity.team_id,
-        roles_id=team_roles_id,
-    )
+        await audit_success(aweb_db, request, identity.team_id)
 
-    logger.info(
-        "Team roles activated via API: team=%s id=%s (was: %s)",
-        identity.team_id,
-        team_roles_id,
-        previous_roles_id,
-    )
+        logger.info(
+            "Team roles activated via API: team=%s id=%s (was: %s)",
+            identity.team_id,
+            team_roles_id,
+            previous_roles_id,
+        )
 
-    return ActivateTeamRolesResponse(
-        activated=True,
-        active_team_roles_id=team_roles_id,
-    )
+        return ActivateTeamRolesResponse(
+            activated=True,
+            active_team_roles_id=team_roles_id,
+        )
 
 
 @roles_router.post("/reset")
@@ -632,52 +637,54 @@ async def reset_team_roles_to_default_endpoint(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> ResetTeamRolesResponse:
     """Reset the team's active team roles to the current default bundle."""
-    aweb_db = db.get_manager("aweb")
+    manager = db.get_manager("aweb")
+    async with manager.transaction() as aweb_db:
+        previous_active = await aweb_db.fetch_one(
+            """
+            SELECT id FROM {{tables.team_roles}}
+            WHERE team_id = $1 AND is_active = true
+            """,
+            identity.team_id,
+        )
+        previous_roles_id = str(previous_active["id"]) if previous_active else None
 
-    previous_active = await aweb_db.fetch_one(
-        """
-        SELECT id FROM {{tables.team_roles}}
-        WHERE team_id = $1 AND is_active = true
-        """,
-        identity.team_id,
-    )
-    previous_roles_id = str(previous_active["id"]) if previous_active else None
+        try:
+            fresh_bundle = get_default_bundle(force_reload=True)
+        except Exception as exc:
+            logger.error("Failed to reload default bundle: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to reload default team roles bundle: {exc}",
+            ) from exc
 
-    try:
-        fresh_bundle = get_default_bundle(force_reload=True)
-    except Exception as exc:
-        logger.error("Failed to reload default bundle: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to reload default team roles bundle: {exc}",
-        ) from exc
+        team_roles_version = await create_team_roles_version(
+            aweb_db,
+            team_id=identity.team_id,
+            base_roles_id=previous_roles_id,
+            bundle=fresh_bundle,
+            created_by_alias=None,
+        )
+        await activate_team_roles(
+            aweb_db,
+            team_id=identity.team_id,
+            roles_id=team_roles_version.id,
+        )
 
-    team_roles_version = await create_team_roles_version(
-        aweb_db,
-        team_id=identity.team_id,
-        base_roles_id=previous_roles_id,
-        bundle=fresh_bundle,
-        created_by_alias=None,
-    )
-    await activate_team_roles(
-        aweb_db,
-        team_id=identity.team_id,
-        roles_id=team_roles_version.id,
-    )
+        await audit_success(aweb_db, request, identity.team_id)
 
-    logger.info(
-        "Team roles reset to default via API: team=%s id=%s version=%d (was: %s)",
-        identity.team_id,
-        team_roles_version.id,
-        team_roles_version.version,
-        previous_roles_id,
-    )
+        logger.info(
+            "Team roles reset to default via API: team=%s id=%s version=%d (was: %s)",
+            identity.team_id,
+            team_roles_version.id,
+            team_roles_version.version,
+            previous_roles_id,
+        )
 
-    return ResetTeamRolesResponse(
-        reset=True,
-        active_team_roles_id=team_roles_version.id,
-        version=team_roles_version.version,
-    )
+        return ResetTeamRolesResponse(
+            reset=True,
+            active_team_roles_id=team_roles_version.id,
+            version=team_roles_version.version,
+        )
 
 
 @roles_router.post("/deactivate")
@@ -687,40 +694,42 @@ async def deactivate_team_roles_endpoint(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> DeactivateTeamRolesResponse:
     """Deactivate team roles by replacing the active bundle with an empty bundle."""
-    aweb_db = db.get_manager("aweb")
+    manager = db.get_manager("aweb")
+    async with manager.transaction() as aweb_db:
+        previous_active = await aweb_db.fetch_one(
+            """
+            SELECT id FROM {{tables.team_roles}}
+            WHERE team_id = $1 AND is_active = true
+            """,
+            identity.team_id,
+        )
+        previous_roles_id = str(previous_active["id"]) if previous_active else None
 
-    previous_active = await aweb_db.fetch_one(
-        """
-        SELECT id FROM {{tables.team_roles}}
-        WHERE team_id = $1 AND is_active = true
-        """,
-        identity.team_id,
-    )
-    previous_roles_id = str(previous_active["id"]) if previous_active else None
+        team_roles_version = await create_team_roles_version(
+            aweb_db,
+            team_id=identity.team_id,
+            base_roles_id=previous_roles_id,
+            bundle={"roles": {}, "adapters": {}},
+            created_by_alias=identity.alias,
+        )
+        await activate_team_roles(
+            aweb_db,
+            team_id=identity.team_id,
+            roles_id=team_roles_version.id,
+        )
 
-    team_roles_version = await create_team_roles_version(
-        aweb_db,
-        team_id=identity.team_id,
-        base_roles_id=previous_roles_id,
-        bundle={"roles": {}, "adapters": {}},
-        created_by_alias=identity.alias,
-    )
-    await activate_team_roles(
-        aweb_db,
-        team_id=identity.team_id,
-        roles_id=team_roles_version.id,
-    )
+        await audit_success(aweb_db, request, identity.team_id)
 
-    logger.info(
-        "Team roles deactivated via API: team=%s id=%s version=%d (was: %s)",
-        identity.team_id,
-        team_roles_version.id,
-        team_roles_version.version,
-        previous_roles_id,
-    )
+        logger.info(
+            "Team roles deactivated via API: team=%s id=%s version=%d (was: %s)",
+            identity.team_id,
+            team_roles_version.id,
+            team_roles_version.version,
+            previous_roles_id,
+        )
 
-    return DeactivateTeamRolesResponse(
-        deactivated=True,
-        active_team_roles_id=team_roles_version.id,
-        version=team_roles_version.version,
-    )
+        return DeactivateTeamRolesResponse(
+            deactivated=True,
+            active_team_roles_id=team_roles_version.id,
+            version=team_roles_version.version,
+        )

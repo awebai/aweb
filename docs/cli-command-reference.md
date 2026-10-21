@@ -367,7 +367,7 @@ Subcommands:
 - `resolve` Resolve a did:aw to its current did:key
 - `rotate-key` Rotate the current global identity signing key at the registry
 - `show` Show the current identity and registry status
-- `sign` Sign a canonical JSON payload with the local identity key
+- `sign` Sign user data with a domain-separated local identity signature
 - `team` Team membership plus protocol/admin certificate operations
 - `verify` Verify the full audit log for a did:aw
 
@@ -720,8 +720,8 @@ Flags:
 - `--header stringArray Additional header in 'Name: Value' form`
 - `-h, --help help for request`
 - `--raw Print only the upstream response body`
-- `--sign string JSON object describing the signed payload fields`
-- `--sign-file string Read the JSON sign payload from a file`
+- `--sign string Additional signed fields (requires --team-auth)`
+- `--sign-file string Read additional signed fields from a file (requires --team-auth)`
 - `--team-auth Attach the active team certificate and sign a team-bound request payload`
 
 ## `id resolve`
@@ -777,7 +777,7 @@ Flags:
 
 ### `id sign`
 
-Sign a canonical JSON payload with the local identity key
+Sign user data with a domain-separated local identity signature
 
 Flags:
 - `-h, --help help for sign`
@@ -811,6 +811,9 @@ Subcommands:
 - `reissue-cert` Protocol/admin: mint and register a fresh certificate for the same member key
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
+- `rotate-key` Rotate the team controller key, re-signing the team's AWID records with it
+- `set-server` Publish the team's coordination server at AWID, signed by the team controller key
+- `show-server` Show and verify the team's published coordination server
 - `switch` Switch the active team for this identity
 
 Flags:
@@ -1133,6 +1136,55 @@ Flags:
 - `-h, --help help for request`
 - `--name string Suggested member name for the new team membership`
 - `--team string Canonical team ID (<name>:<domain>)`
+
+## `id team rotate-key`
+
+### `id team rotate-key`
+
+Replace the team controller key at AWID with a new local key, under the namespace
+controller key. Every record the team key has signed at AWID (the team-server record,
+custodian, member-custody and member-person records) is verified, re-signed by the
+new key and swapped with the key in one atomic request.
+
+Every member certificate is signed by the team key, so after a rotation all of them are
+invalid: re-issue each with `aw id team reissue-cert`. If the command is interrupted,
+run it again: it resumes with the same new key.
+
+Flags:
+- `-h, --help help for rotate-key`
+- `--namespace string Namespace domain`
+- `--registry string Registry origin override`
+- `--team string Team name`
+
+## `id team set-server`
+
+### `id team set-server`
+
+Publish the team's aweb.team-server/1 record at AWID: the coordination server
+URL that installed apps use for this team, signed by the local team controller key.
+
+The record must be newer than the published one; republishing the same record is
+accepted unchanged. After a team key rotation, publish again with the new key.
+
+Flags:
+- `-h, --help help for set-server`
+- `--namespace string Namespace domain`
+- `--registry string Registry origin override`
+- `--team string Team name`
+- `--url string Coordination server URL (https origin with optional path prefix)`
+
+## `id team show-server`
+
+### `id team show-server`
+
+Read the team's aweb.team-server/1 record from AWID and verify it against the
+team's current key. A record signed by any other key is refused.
+
+Flags:
+- `-h, --help help for show-server`
+- `--namespace string Namespace domain`
+- `--registry string Registry origin override`
+- `--team string Team name`
 
 ## `id team switch`
 

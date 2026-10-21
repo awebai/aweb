@@ -45,7 +45,6 @@ _GS_STEP_STYLE = """    <style>
 _SKILL_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SKILLS_DIR = _REPO_ROOT / "skills"
-_CONTAINER_SKILLS_DIR = Path("/app/skills")
 
 # folio's identity in the shared naapp chrome. The aweb design system, the chrome,
 # the manifest-driven llms.txt blocks, and the /reference page come from aweb_naapp;
@@ -124,10 +123,6 @@ def _skills_dir() -> Path:
     configured = os.environ.get("FOLIO_SKILLS_DIR")
     if configured:
         return Path(configured)
-    if _SKILLS_DIR.is_dir():
-        return _SKILLS_DIR
-    if _CONTAINER_SKILLS_DIR.is_dir():
-        return _CONTAINER_SKILLS_DIR
     return _SKILLS_DIR
 
 

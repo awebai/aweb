@@ -24,7 +24,7 @@ from awid.atomic_claim import (
 from awid.did import public_key_from_did, stable_id_from_did_key, stable_id_from_public_key, validate_stable_id
 from awid.dns_verify import DomainVerifier
 from awid.dns_auth import validate_did_key as _validate_dns_did_key
-from awid.dns_auth import verify_signed_json_request
+from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
 from awid.dns_auth import enforce_timestamp_skew
 from awid.log import (
     identity_state_hash as awid_identity_state_hash,
@@ -39,7 +39,7 @@ from awid_service.routes.dns_namespace_reverify import reverify_namespace_row
 
 _ADDRESS_ALREADY_BOUND_DETAIL = "address already bound to a different did_aw"
 _DID_CURRENT_KEY_MISMATCH_DETAIL = "did_aw current key does not match"
-router = APIRouter(prefix="/v1/namespaces/{domain}/addresses", tags=["addresses"])
+router = APIRouter(prefix="/v1/namespaces/{domain}/addresses", tags=["addresses"], route_class=ControllerAuthRoute)
 logger = logging.getLogger(__name__)
 
 _STALE_THRESHOLD = timedelta(hours=24)
@@ -73,7 +73,7 @@ _ATOMIC_CLAIM_CONFLICT_CODES = (
 )
 
 
-def _verify_address_signature(
+async def _verify_address_signature(
     request: Request,
     *,
     domain: str,
@@ -87,7 +87,7 @@ def _verify_address_signature(
         "operation": operation,
     }
     payload.update(signed_preconditions or {})
-    return verify_signed_json_request(request, payload_dict=payload)
+    return await verify_controller_json_request(request, payload_dict=payload)
 
 
 # ---------------------------------------------------------------------------
@@ -564,7 +564,7 @@ async def register_address(
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
 
-    caller_did = _verify_address_signature(
+    caller_did = await _verify_address_signature(
         request, domain=domain, name=body.name, operation="register_address",
     )
 
@@ -1052,7 +1052,7 @@ async def update_address(
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
 
-    caller_did = _verify_address_signature(
+    caller_did = await _verify_address_signature(
         request, domain=domain, name=name, operation="update_address",
     )
 
@@ -1121,7 +1121,7 @@ async def delete_address(
         for field in ("expected_address_id", "expected_did_aw", "expected_current_did_key"):
             if value := getattr(body, field):
                 signed_preconditions[field] = value
-    caller_did = _verify_address_signature(
+    caller_did = await _verify_address_signature(
         request,
         domain=domain,
         name=name,
@@ -1204,7 +1204,7 @@ async def reassign_address(
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
 
-    caller_did = _verify_address_signature(
+    caller_did = await _verify_address_signature(
         request, domain=domain, name=name, operation="reassign_address",
     )
 

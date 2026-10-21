@@ -91,8 +91,8 @@ name sent to the server. The server never fetches the manifest itself.
 The install route in [`app-registry.md`](app-registry.md) records those values
 under the supplied manifest digest. The full emitted type is
 `<app_id>/<local_type>`, for example `folio/doc.changed`. A key is accepted only
-when its `(app_id, origin, digest, kid, did_key)` row is active for the team's
-currently installed digest.
+when its `(team_id, app_id, origin, digest, kid, did_key)` row, registered by
+that team's own install, is active for the team's currently installed digest.
 
 The app owns the emit private key. A team agent, a team controller, and an
 embedding host must not reuse their signing keys as app emit keys.
@@ -145,6 +145,15 @@ The verifier requires:
 
 This credential proves an installed app emit key authorized one request. It is
 not a team certificate and does not grant arbitrary app or team operations.
+
+`app-event` is one purpose of the server's purpose-bound app credential
+verifier (`server/src/aweb/app_credentials.py`). Every purpose has its own
+`Authorization` prefix, its own exact signed `auth` value and its own key
+source, so a credential signed for one purpose is refused for any other: an
+`app-event` credential is never accepted where another purpose is required, and
+a credential signed for another purpose is refused at `/v1/events/app`. Emit
+keys (`event_emitters`) are `app-event` keys only; registered app keys
+(`team_app_keys`) sign only the purposes they declare.
 
 ## Emit body and response
 

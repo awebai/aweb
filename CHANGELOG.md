@@ -4,6 +4,268 @@
 
 ## Release preparations
 
+### Release preparation: aweb-naapp 0.1.0
+
+The first release of `aweb-naapp`, the shared naapp toolkit in `naapp-lib/`.
+
+- Publishes PyPI `aweb-naapp` from the new `aweb-naapp-vX.Y.Z` tag lane. Its
+  `runtime` extra requires `awid-service>=0.5.30`, the first AWID release with
+  the principal-attestation records the runtime reads, so `awid-service` 0.5.30
+  must be public first. The publisher waits for it.
+- `make check-naapp-lib-package` builds the sdist and wheel, checks that the
+  wheel ships every package data file and names no path dependency, and
+  installs every extra from the built wheel into a fresh environment and
+  imports every module.
+- The PyPI publisher now maps each tag lane to its package and directory. A
+  new PyPI lane could otherwise have published `awid-service` instead of its
+  own package.
+
+### Release preparation: server 1.27.30
+
+Server changes are since `server-v1.27.29`.
+
+- **Security:** a team's revocation of an app emit key now outlives the
+  manifest digest it was made under. Installing new bytes that list the same
+  key id and `did_key` again registered the key active; it now stays revoked.
+- **Operator-facing:** `POST /v1/apps/install` is an audited operator route
+  (`apps.install`). A successful install writes its audit row in the same
+  transaction as the registration, and an authenticated refusal is recorded
+  after rollback. Without a verified audit actor on the request, a successful
+  install is refused with 500 and nothing is written. Certificate callers get
+  one from the server's own authentication. Identity-grant callers are refused
+  with 403, and the refusal is attributed to the grant's subject. An embedding host that
+  authenticates callers itself must set one with `set_verified_audit_actor`
+  before the route runs. Do not pin this release into a host until that host's
+  actor bridge is proven for `apps.install`.
+- App installs may carry the exact manifest bytes (`manifest`, base64). When
+  present, they must hash to the install's `digest`, and the app's emit keys,
+  event declarations and requested scopes come from those bytes. The install's
+  version, events and emitters must match the bytes, and its `granted_scopes`
+  must be a subset of the scopes the bytes request; otherwise the install is
+  refused with 422 and nothing is written. Installs without bytes behave as
+  before. Migration `028_team_app_install_bytes` records, per install, whether
+  it was registered from bytes, so operators can measure when every client
+  sends them.
+- The install body is bounded before it is parsed. A manifest over 10 MiB
+  (its padded base64 length), or an install body over that base64 length
+  plus 1 MiB, is refused with 413.
+- App request credentials are verified by purpose through one verifier. App
+  event emission keeps its credential and behaviour. Migration
+  `027_team_app_keys` adds the installing team's app keys and the purposes each
+  may sign. No route accepts the new read purposes in this release.
+- **Security:** signed agent-status and agent-activity documents accept their
+  times only as `YYYY-MM-DDTHH:MM:SSZ` in ASCII digits. A time written with
+  other scripts' digits, such as a fullwidth year, was parsed as that instant.
+  It is now refused as `invalid_value`, as other verifiers already refuse it.
+- **Deploy order:** this server requires `awid-service>=0.5.30`. Publish
+  AWID 0.5.30 before server 1.27.30.
+
+### Release preparation: aw 1.36.45
+
+CLI changes are since `aw-v1.36.44`. Prepared alongside server 1.27.30 and AWID 0.5.30.
+
+- **Security:** all root-authenticated SDK and CLI requests now sign
+  target-bound v2 envelopes, including identity-only `aw id request`.
+  Certificate and identity claims share one signer; grants keep their separate
+  target-bound protocol. This closes the interim identity-v1 retargeting
+  residual. The client does not fall back to v1 after a refusal.
+- **Upgrade requirement:** self-hosted aweb servers must run **1.27.29 or later
+  before users upgrade aw to 1.36.45**. Embedding hosts must also deploy the v2
+  certificate and identity verifiers before their users upgrade the client.
+
+- `aw plugin install` and `aw plugin update` send the exact fetched manifest
+  bytes with the install, for v1 manifests whose declared origin is the
+  install origin. Other installs are sent without bytes, as before.
+- `aw id team rotate-key --team <name> --namespace <domain>` rotates the team
+  controller key under the namespace controller key, on AWID's atomic path.
+  It reads every record the team key has signed at AWID in a few pages
+  (`/signed-records`): the `aweb.team-server/1` record and the custodian,
+  member-custody and member-person records, those of revoked certificates
+  included. It verifies each against the team's current key before
+  re-signing it with the new key, and sends them with the key change in one
+  request, so the team-server record stays valid across the rotation instead of
+  having to be republished with `aw id team set-server`.
+  - If AWID's `409 resigned_records_incomplete` names custodian records the
+    command did not send, for example ones published during the run, it
+    fetches and verifies those and retries exactly once. Any other refusal, or
+    a second one, leaves the key unchanged and exits non-zero with AWID's
+    detail.
+  - The new key is stored as pending before AWID sees it and becomes the team
+    key once AWID holds it. Running the command again after an interruption
+    resumes with the same key.
+  - Every member certificate is signed by the team key, so after a rotation all
+    of them are invalid. The command says so; re-issue each with
+    `aw id team reissue-cert`.
+- **Deploy order:** the atomic rotation needs AWID 0.5.30. An older AWID
+  refuses the request with `422`, because its rotate body forbids unknown
+  fields, and the team key stays unchanged.
+
+### Release preparation: AWID 0.5.30
+
+Changes are since `awid-v0.5.29` / `awid-service-v0.5.29`.
+Publishes PyPI `awid-service` 0.5.30 and the `awid` image 0.5.30.
+
+- Publish and serve the team-key-signed records behind principal attestation
+  (`docs/principal-attestation.md`, `docs/member-person.md`):
+  `aweb.team-custodian/1` at `PUT|GET /v1/namespaces/{domain}/teams/{name}/custodians/{custodian_id}`,
+  `aweb.member-custody/1` at `…/certificates/{certificate_id}/custody` and
+  `aweb.member-person/1` at `…/certificates/{certificate_id}/person`.
+  Publishing requires the team controller's covering (v2) controller
+  envelope; each record must verify under the current team key. Custodian
+  and person records only move forward; a custody record is immutable apart
+  from a re-sign after rotation. A publish that races a key rotation is
+  refused with `409 team_key_changed`. `GET` is anonymous for public and
+  private teams, by exact key, with one identical `404` for an unknown team,
+  key or record. The custody and person reads disclose whether a
+  certificate's key is held by a custodian and whether the controller
+  declares its member one person. Publishes are limited to 3000/hour per IP
+  and 2500/hour per team; reads to 60 per 60 seconds per IP; the trusted
+  service token is exempt. Migration `009_principal_attestation_records`;
+  the records are deleted with their team or certificate.
+  Conformance: `docs/vectors/principal-attestation-v1.json`.
+- `POST /v1/namespaces/{domain}/teams/{name}/rotate` accepts optional
+  `resigned_records` (`team_server`, `team_custodians`, `member_custody`,
+  `member_person`): every stored team-key-signed record, re-signed by the new
+  key, unchanged apart from `team_did_key` and a newer `issued_at`. AWID swaps
+  the key and replaces the records in one transaction. A record that does not
+  verify is `422`; a set that is incomplete, has extras or changes a record is
+  `409 resigned_records_incomplete` with `{ missing, extra, changed }` per kind
+  (`team_server` as a boolean), and nothing changes. The rotate body is
+  streamed against `AWID_ROTATE_MAX_BODY_BYTES` (default and minimum 4 MiB);
+  larger bodies are `413`. A rotation without `resigned_records` behaves as
+  before: the team's records, including its `aweb.team-server/1` record, stay
+  signed by the old key and verifiers refuse them until they are published
+  again under the new key. No released `aw` sends `resigned_records` yet.
+- `GET /v1/namespaces/{domain}/teams/{name}/signed-records` returns, in
+  keyset pages, every team-key-signed record the team has stored, including
+  those of revoked certificates. A team-key rotation must re-sign all of them,
+  and reading them one by one ran into the per-record read limit for any team
+  of more than about 30 certificates. Only the team key (a path signature) or
+  the trusted service token may read it, whatever the team's visibility; every
+  refusal is the 404 of an unknown team.
+  It has its own `attestation_record_list` bucket.
+- Nothing consumes these records yet: they are inputs for apps that verify
+  `X-AWEB-Principal-Attestation` with the in-repo `aweb_naapp` verifier,
+  which refuses an attestation whose records are not registered.
+- **Security:** a team's `aweb.team-server/1` record accepts its `issued_at`
+  only as `YYYY-MM-DDTHH:MM:SSZ` in ASCII digits, naming a real calendar date.
+  A year written with other scripts' digits, such as fullwidth digits, was
+  stored, although the Go verifier refuses it; an impossible date failed with
+  500. Both are now refused as `record_invalid`, as the Go verifier refuses
+  them. Conformance: `docs/vectors/team-server-record-v1.json`.
+- **Deploy order:** deploy this AWID, with migration 009, before anything
+  publishes the records. It needs no aweb server or `aw` change.
+
+### Release preparation: aw 1.36.44
+
+CLI changes are since `aw-v1.36.43`. Prepared alongside server 1.27.29 and AWID 0.5.29.
+
+- **Security:** `aw id sign` now signs only domain-separated user data, using
+  `aweb.user-signature/1\n` before canonical JSON. Its signatures cannot authorize
+  protocol operations. Internal protocol credentials retain their established
+  bytes. `aw id request --team-auth` remains target-bound v2; non-team requests
+  temporarily sign only fixed v1 identity claims and refuse caller JSON.
+  **Known residual:** compact-v1 identity requests remain retargetable until
+  identity-v2 verification deploys and the subsequent client release emits v2.
+
+- `aw chat history <recipient>` applies its limit and unread filter before
+  custody decryption, skips unrelated pending previews during session lookup,
+  and uses individual request timeouts rather than one budget for the whole page.
+
+- `aw id team set-server --url <server_url>` signs the team's
+  `aweb.team-server/1` record locally with the team controller key and
+  publishes it at AWID. `aw id team show-server` reads the record and verifies
+  it against the team's current key. Records and signatures are verified byte
+  for byte as AWID does (`docs/vectors/team-server-record-v1.json`).
+  This release has no team-key rotation command. After the team key changes,
+  the published record no longer verifies, and naapps fail closed for that team
+  until the record is published again with `aw id team set-server`.
+- **Deploy order:** deploy AWID 0.5.29 with migration
+  `008_team_server_records` before any `aw` publishes records.
+
+### Release preparation: server 1.27.30
+
+Server changes are since server 1.27.29.
+
+- Team-certificate decoding and signature checks are one shared
+  implementation, `awid.team_certificate`, used by the server's team auth, the
+  naapp team-auth verifier and the hook delivery receiver. A certificate
+  header that does not decode to an object, is over 8 KiB, nests too deeply,
+  or carries a lone-surrogate escape is a 401 ("Malformed certificate" or a
+  failed signature), never a 500.
+- Needs an awid-service release that carries `awid.team_certificate`.
+
+### Release preparation: AWID 0.5.29
+
+Changes are since `awid-v0.5.28` / `awid-service-v0.5.28`.
+Publishes PyPI `awid-service` 0.5.29 and the `awid` image 0.5.29.
+
+- Accept controller request envelopes binding the operation, configured public
+  audience, HTTP method, external raw path/query and exact body hash, with a
+  distinct AWID protocol type and a separate covering parent authorization.
+- Keep legacy controller envelopes accepted with per-operation usage counts;
+  their retirement requires a separate cutoff.
+- Require a matching team-signed certificate blob for every new registration;
+  historical blob-free records remain readable.
+- Configure `AWID_PUBLIC_ORIGINS` before clients emit v2. Deploy this accepting
+  AWID first; current clients remain on the legacy form until that deployment.
+- Publish and serve the team's `aweb.team-server/1` record, which names the
+  team's coordination server and is signed by the team's current key
+  (`docs/awid-sot.md`). `PUT /v1/namespaces/{domain}/teams/{name}/server`
+  accepts only a newer record, at most five minutes in the future, with a
+  bounded body and `server_url`. An unknown team and a team without a verified
+  record both answer the same `404`, so publishing never reveals that a
+  private team exists. `GET` on the same path is anonymous for public and
+  private teams alike, by design: a naapp must discover a team's server
+  before it can authenticate to it, and every request to that server is still
+  authenticated. Migration `008_team_server_records`.
+- **Deploy order:** deploy this AWID, with migration 008, before `aw` publishes
+  records. The aweb server does not read the record yet; that arrives with a
+  later server release. A custodial deployment backfills records for its
+  existing teams before any naapp depends on discovery. Teams without a
+  record fail closed at naapps. The backfill does not block this release.
+
+### Release preparation: server 1.27.29
+
+Server changes are since `server-v1.27.28`. Prepared alongside aw 1.36.44.
+
+- **Security:** a caller-supplied chat `session_id` is a locator, never
+  membership. Reusing an existing session requires the caller to be an active
+  stored participant; an id that names a mail conversation, or a chat the caller
+  is not in, is refused with 409 and nothing is written. Participants are never
+  added through session create, and a concurrent create that collides is a 409,
+  never a silent join. Fresh signed session ids remain supported.
+- Add an operator audit trail for role publication and repo deletion: verified
+  actor, principal, authentication mode, target, outcome and request ID, without
+  message or playbook content. Successful writes and audit records commit
+  together; authenticated refusals are recorded after rollback.
+- Supply the shared verified-context audit interface for Cloud's owner/admin
+  human-only role/repo writes. Cloud applies that admin policy before mounted
+  OSS routes, including certificate and API-key callers; standalone OSS keeps
+  its own publication policy. Publish this server package before the Cloud pin.
+- Accept target-bound v2 request envelopes for certificate and identity-only
+  authentication. Signatures bind the configured public audience, HTTP method,
+  external raw path and query, and body hash; identity-only proofs confer no
+  team membership. Legacy compact v1 remains accepted and is counted by auth
+  family, route template and aw client version. Deploy this server support and
+  Cloud's verifiers before publishing the aw client that emits v2; clients must
+  not fall back to v1 after a v2 refusal.
+- App emit keys, event declarations and the app version projection belong to
+  the installing team, and an app id's origin is bound per team (migrations
+  024-026). A key registered by one team is never active for another team's
+  install of the same app and digest; within a team a key id keeps its first
+  did_key (a different one is refused with 409) and a revoked key stays
+  revoked. Registry-entry keys and declarations are not carried over, because
+  they record no installing team, so app events for existing installs are
+  refused (fail closed) until reseeded.
+- Add the operator command `aweb reseed-app-registrations --origin <origin>
+  [--manifest-file <bytes>]`. It recreates every team's declarations, emit keys
+  and version projection from exact manifest bytes that hash to the team's
+  pinned digest, never changes subscriptions, reports teams on another digest
+  or with a conflicting key id, and exits 1 when any team was left unchanged.
+  Deploy: save each installed app origin's manifest bytes before migrating,
+  then reseed immediately after, so the refused window lasts minutes.
+
 ### Release preparation: aw 1.36.43
 
 CLI changes are since `aw-v1.36.42`. No server change; server stays 1.27.28.

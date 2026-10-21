@@ -352,3 +352,26 @@ class TestDashboardJWT:
 
         with pytest.raises(ValueError, match="not configured"):
             verify_dashboard_token(token, "")
+
+
+class TestCertificateWithALoneSurrogate:
+    """A lone-surrogate JSON escape survives the JSON parse, then cannot be
+    canonicalised. It is a failed signature, never an encoding error."""
+
+    def test_is_a_failed_signature(self):
+        from aweb.team_auth import _verify_certificate_signature, parse_and_verify_certificate
+
+        team_sk, _, team_did_key = _make_keypair()
+        _, _, agent_did_key = _make_keypair()
+        cert = _make_certificate(team_sk, team_did_key, agent_did_key)
+        text = json.dumps(cert).replace('"version": 1', '"note": "\\ud800", "version": 1')
+        poisoned = json.loads(text)
+        assert _verify_certificate_signature(poisoned, team_did_key) is False
+        with pytest.raises(ValueError) as refused:
+            parse_and_verify_certificate(
+                base64.b64encode(text.encode()).decode(),
+                request_did_key=agent_did_key,
+                team_public_key_resolver=lambda _team_id: team_did_key,
+                revocation_checker=lambda _team_id, _cert_id: False,
+            )
+        assert str(refused.value) == "Certificate signature verification failed"

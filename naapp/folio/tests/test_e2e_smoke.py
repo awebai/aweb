@@ -353,6 +353,21 @@ def folio_origin(folio: RunningFolio) -> str:
     return folio.origin
 
 
+def aw_workspace_env(*, home: Path) -> dict[str, str]:
+    """Environment for a disposable aw workspace, free of the caller's own aw identity
+    and config selection."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AW_"))}
+    env.update(
+        {
+            "HOME": str(home),
+            "AWEB_URL": "http://127.0.0.1:1",
+            "AWID_REGISTRY_URL": AWID_URL,
+            "NO_COLOR": "1",
+        }
+    )
+    return env
+
+
 @pytest.fixture()
 def aw_workspace_factory(tmp_path: Path) -> Callable[[str], AWWorkspace]:
     _require_e2e_enabled()
@@ -362,16 +377,7 @@ def aw_workspace_factory(tmp_path: Path) -> Callable[[str], AWWorkspace]:
         home = tmp_path / name / "home"
         workspace.mkdir(parents=True)
         home.mkdir(parents=True)
-        env = os.environ.copy()
-        env.update(
-            {
-                "HOME": str(home),
-                "AWEB_URL": "http://127.0.0.1:1",
-                "AWID_REGISTRY_URL": AWID_URL,
-                "NO_COLOR": "1",
-            }
-        )
-        return AWWorkspace(path=workspace, env=env)
+        return AWWorkspace(path=workspace, env=aw_workspace_env(home=home))
 
     return make
 
@@ -597,12 +603,10 @@ def test_document_endpoints_versions_raw_utf8_and_attribution(
     assert appended["latest"]["created_by_alias"] == team.alias
     assert appended["latest"]["certificate_id"] == team.certificate_id
 
-    billing = _get_billing(folio, team)
-    assert billing["team_id"] == team.team_id
-    assert billing["tier"] == "free"
-    assert billing["caps"]["max_documents"] >= 1
-    assert billing["caps"]["max_versions_per_doc"] >= 2
-    assert billing["usage"] == {"documents": 1, "max_versions_per_doc": 2}
+    assert _get_billing(folio, team) == {
+        "team_id": team.team_id,
+        "usage": {"documents": 1, "max_versions_per_doc": 2},
+    }
 
     versions = _list_versions(folio, team, "handoff")
     assert [item["version_number"] for item in versions] == [2, 1]
@@ -731,10 +735,12 @@ def test_replay_negatives_reject_path_method_and_audience(
     _assert_aw_status(wrong_aud, 401, context="signed audience for backend host")
 
 
-def test_real_aw_free_document_cap_and_billing(folio: RunningFolio, aw_workspace: AWWorkspace) -> None:
+def test_real_aw_usage_is_measured_not_capped(
+    folio: RunningFolio, aw_workspace: AWWorkspace, tmp_path: Path
+) -> None:
     team = _provision_team(aw_workspace)
 
-    for index in range(3):
+    for index in range(4):
         created = _create_document(
             folio,
             team,
@@ -743,21 +749,11 @@ def test_real_aw_free_document_cap_and_billing(folio: RunningFolio, aw_workspace
             body="hello",
         )
         assert created["slug"] == f"note-{index}"
+    for version in range(2, 52):
+        appended = _append_version(folio, team, slug="note-0", body=f"v{version}", tmp_path=tmp_path)
+        assert appended["current_version"] == version
 
-    billing = _get_billing(folio, team)
-    assert billing["team_id"] == team.team_id
-    assert billing["tier"] == "free"
-    assert billing["caps"] == {"max_documents": 3, "max_versions_per_doc": 50}
-    assert billing["usage"] == {"documents": 3, "max_versions_per_doc": 1}
-
-    blocked = _aw_request(
-        team,
-        "POST",
-        f"{folio.origin}/v1/documents",
-        body=json.dumps({"slug": "note-3", "title": "Note 3", "body": "blocked"}),
-    )
-    assert blocked.returncode != 0
-    error_text = blocked.stdout + blocked.stderr
-    assert "free_tier_limit_exceeded" in error_text
-    assert "documents" in error_text
-    assert "subscriptions are not yet available" in error_text
+    assert _get_billing(folio, team) == {
+        "team_id": team.team_id,
+        "usage": {"documents": 4, "max_versions_per_doc": 51},
+    }

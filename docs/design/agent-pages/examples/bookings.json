@@ -1,0 +1,262 @@
+{
+  "page_format": "aweb.page/1",
+  "page_id": "bookings-fixture",
+  "locale": "en",
+  "title": "Bookings — synthetic data",
+  "rev": 1,
+  "layout_version": 1,
+  "owner": "agent-fixture",
+  "policy_ref": "staff-read",
+  "layout": [
+    {
+      "id": "title",
+      "type": "heading",
+      "props": {
+        "text": "Bookings",
+        "level": 1
+      }
+    },
+    {
+      "id": "bookings-table",
+      "type": "table",
+      "props": {
+        "columns": [
+          {
+            "field": "arrival",
+            "label": "Arrival",
+            "format": "date"
+          },
+          {
+            "field": "departure",
+            "label": "Departure",
+            "format": "date"
+          },
+          {
+            "field": "status",
+            "label": "Status",
+            "format": "status"
+          }
+        ],
+        "row_actions": [
+          "propose-accept",
+          "propose-decline"
+        ]
+      },
+      "bind": {
+        "collection": "bookings",
+        "sort": [
+          {
+            "field": "arrival",
+            "direction": "asc"
+          }
+        ],
+        "limit": 50
+      }
+    },
+    {
+      "id": "local-note",
+      "type": "form",
+      "props": {
+        "fields": [
+          {
+            "id": "booking_id",
+            "kind": "select",
+            "label": "Booking",
+            "required": true,
+            "options": [
+              {
+                "value": "booking-1",
+                "label": "2026-11-02"
+              }
+            ]
+          },
+          {
+            "id": "note",
+            "kind": "text",
+            "label": "Internal note",
+            "required": true
+          }
+        ],
+        "submit_action": "edit-note"
+      }
+    },
+    {
+      "id": "annotations-list",
+      "type": "list",
+      "props": {
+        "fields": {
+          "title": "booking_id",
+          "body": "note"
+        }
+      },
+      "bind": {
+        "collection": "annotations",
+        "limit": 50
+      }
+    }
+  ],
+  "collections": [
+    {
+      "id": "bookings",
+      "schema_version": 1,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "arrival": {
+            "type": "string",
+            "format": "date"
+          },
+          "departure": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "accepted",
+              "declined"
+            ]
+          },
+          "guest_ref": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "arrival",
+          "departure",
+          "status",
+          "guest_ref"
+        ],
+        "additionalProperties": false
+      },
+      "mode": "synced",
+      "records": [
+        {
+          "id": "booking-1",
+          "rev": 1,
+          "value": {
+            "arrival": "2026-11-02",
+            "departure": "2026-11-05",
+            "status": "pending",
+            "guest_ref": "guest-fixture"
+          },
+          "source": {
+            "system": "pms-fixture",
+            "external_id": "booking-synthetic-1",
+            "version": "booking-v9",
+            "synced_at": "2026-10-19T10:00:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "id": "annotations",
+      "schema_version": 1,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "booking_id": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "booking_id",
+          "note"
+        ],
+        "additionalProperties": false
+      },
+      "mode": "owned",
+      "records": [
+        {
+          "id": "note-1",
+          "rev": 1,
+          "value": {
+            "booking_id": "booking-1",
+            "note": "The request needs review."
+          }
+        }
+      ]
+    }
+  ],
+  "widget_state": {},
+  "actions": [
+    {
+      "id": "propose-accept",
+      "kind": "intent",
+      "label": "Request acceptance",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "record_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "record_id"
+        ],
+        "additionalProperties": false
+      },
+      "policy_ref": "manager-request",
+      "target": "agent-fixture",
+      "operation": "pms.booking.accept",
+      "requires_approval": true
+    },
+    {
+      "id": "propose-decline",
+      "kind": "intent",
+      "label": "Request decline",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "record_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "record_id"
+        ],
+        "additionalProperties": false
+      },
+      "policy_ref": "manager-request",
+      "target": "agent-fixture",
+      "operation": "pms.booking.decline",
+      "requires_approval": true
+    },
+    {
+      "id": "edit-note",
+      "kind": "edit",
+      "label": "Save local note",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "booking_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "booking_id",
+          "note"
+        ],
+        "additionalProperties": false
+      },
+      "policy_ref": "staff-edit",
+      "operation": "annotation.replace"
+    }
+  ]
+}
