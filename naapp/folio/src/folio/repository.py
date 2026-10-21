@@ -116,6 +116,7 @@ async def list_documents(db: AsyncDatabaseManager, *, principal: Principal) -> l
         FROM {{tables.documents}} d
         LEFT JOIN {{tables.document_versions}} v ON v.document_id = d.document_id
         WHERE d.team_id = $1
+          AND NOT EXISTS (SELECT 1 FROM {{tables.collection_documents}} c WHERE c.document_id=d.document_id)
         GROUP BY d.document_id, d.slug, d.title, d.created_at, d.updated_at
         ORDER BY d.updated_at DESC, d.slug ASC
         """,
@@ -175,7 +176,8 @@ async def append_version(
     body: str,
 ) -> dict:
     document = await db.fetch_one(
-        "SELECT document_id FROM {{tables.documents}} WHERE team_id = $1 AND slug = $2",
+        """SELECT d.document_id FROM {{tables.documents}} d WHERE d.team_id = $1 AND d.slug = $2
+           AND NOT EXISTS (SELECT 1 FROM {{tables.collection_documents}} c WHERE c.document_id=d.document_id)""",
         principal.team_id,
         slug,
     )
@@ -218,7 +220,8 @@ async def append_version(
 
 async def list_versions(db: AsyncDatabaseManager, *, principal: Principal, slug: str) -> list[dict]:
     document = await db.fetch_one(
-        "SELECT document_id FROM {{tables.documents}} WHERE team_id = $1 AND slug = $2",
+        """SELECT d.document_id FROM {{tables.documents}} d WHERE d.team_id = $1 AND d.slug = $2
+           AND NOT EXISTS (SELECT 1 FROM {{tables.collection_documents}} c WHERE c.document_id=d.document_id)""",
         principal.team_id,
         slug,
     )

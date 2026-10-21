@@ -3,7 +3,12 @@
 import asyncio
 import logging
 
-from aweb_naapp.page_store import PageStore, RetentionPolicy, StoreError, apply_page_store_migrations
+from aweb_naapp.page_store import (
+    PageStore,
+    RetentionPolicy,
+    StoreError,
+    apply_page_store_migrations,
+)
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
 
 from folio.config import Settings

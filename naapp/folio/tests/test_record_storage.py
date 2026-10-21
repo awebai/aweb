@@ -3,11 +3,11 @@
 import pytest
 from aweb_naapp.page_store import Access, StoreError
 from aweb_naapp.runtime.team_auth import Principal
+from test_record_collections import SCOPE, VALUE
 
 from folio.config import Settings
 from folio.record_collections import DISCOVERY_SCHEMA, DISCOVERY_TITLE, build_collection_page
 from folio.record_storage import RecordStorage
-from test_record_collections import SCOPE, VALUE
 
 POLICY = {
     "version": "synthetic-folio-test", "content_purge_days": 7, "audit_content_days": 90,
