@@ -24,6 +24,7 @@ class ApproverRecord:
     scope: str
     principal_did: str | None
     change_id: str
+    covers: tuple[str, ...] = ()
 
 
 async def record_approver(
@@ -71,7 +72,7 @@ async def approvers_for_secrets(
     coverage; this function never discovers or invents ancestry."""
     rows = await tx.fetch_all(
         """
-        SELECT approver_ref, scope, principal_did, change_id FROM {{tables.approvers}}
+        SELECT approver_ref, scope, principal_did, change_id, covers FROM {{tables.approvers}}
         WHERE installation_id = $1 AND team_id = $2 AND covers ?| $3::text[]
         ORDER BY approver_ref
         FOR SHARE
@@ -86,6 +87,7 @@ async def approvers_for_secrets(
             scope=row["scope"],
             principal_did=row["principal_did"],
             change_id=row["change_id"],
+            covers=tuple(json.loads(row["covers"])),
         )
         for row in rows
     ]

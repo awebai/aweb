@@ -123,3 +123,45 @@ under that exact source grant in the same sorted B2 revocation union. It joins
 the intent in the same installation/team; direct approvals under other grants
 remain untouched. Omit it for the existing exact-secret, all-version selection.
 `void_use_approvals` remains the version-replacement operation.
+
+Run-slot approvals use the same B2 service and `apply_use_approval_migrations`.
+`run_approvals.request_run_approvals(tx, approvals, prepared=..., principal=...,
+reason=...)` accepts only the internal planner's `PreparedRun`. The planner
+already holds installation, requester roles, full ancestry/grant unions and
+CURRENT runner/job/operation/template locks. S12 locks one sorted covering-record
+union for the run, intersects parent/template policy scopes per slot, and mints
+one approval for each required slot. The signed use-approval/1 `run_job` keeps
+exactly its existing five fields. After authorizing the B2 ceremony, the console
+calls `run_approval_view(tx, installation_id=..., team_id=..., approval_id=...)`
+to read the complete plan, original ordinal, actual mapped issuer values and
+complete child grant authority from that approval's immutable same-scope
+plan/slot association. No live definition or caller-supplied plan enriches the
+view. Only new results have `pending`; deliver those after commit.
+A repeated request returns the same B2 refs with `pending=None`.
+
+`admit_run_approvals(tx, approvals, prepared=...)` consumes every required B2
+approval under the original run dispatch ID inside one savepoint. Any pending,
+denied or stale slot refuses the joint admission. After all awaited work and the
+joint marker write, it runs the live prepared recheck and frozen approval expiry
+check; refusal rolls back consumption, outcome, audit and marker together.
+No-approval runs still get the final recheck and one admission marker. Once that
+marker commits, retrieval returns `may_send=False`; an internal mint or retry ID
+cannot reconsume B2 or rearm this marker.
+
+The result and read-only `run_approval_record(tx, installation_id=..., team_id=...,
+run_id=...)` expose original run/intent/dispatch IDs, plan digest and ordered
+slot/B2 refs. The frozen plan, all slot associations and joint marker are
+immutable. These records are inert: S13 verifies the same-scope persisted match
+inside its transaction before constructing `AdmittedRun`, and owns execution,
+CURRENT/forest/role rechecks and the mint/child mapping. Job and issuance
+availability guards remain closed.
+
+Containment's `select_use_approval_ids(tx, installation_id=..., team_id=...,
+secret_ids=...)` reads sorted distinct B2 IDs across ordinary uses and run slots,
+all versions and states. Union confirmation IDs and call `Approvals.lock_many`
+once before any callback/consumption. `use_approval_secret_ids(tx, ...,
+approval_id=...)` resolves the exact scoped source targets of an approval for
+application authorization; a full frozen-plan view gives no action coverage over
+other slots. Unknown/out-of-scope targets and empty/no-B2 plans return empty
+results. The existing scoped `void_use_approvals` and `revoke_use_approvals`
+selectors include run slots in the same single B2 revocation union.
