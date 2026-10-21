@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from datetime import timedelta
 from pathlib import Path
 
@@ -31,6 +32,13 @@ from pgdbm.core import TransactionManager
 VECTOR = json.loads((Path(__file__).parents[1] / "vectors" / "use-approval-v1.json").read_text())
 POSITIVE = VECTOR["positive_cases"]
 NEGATIVE = VECTOR["negative_cases"]
+DESIGN = Path(__file__).resolve().parents[3] / "docs" / "design" / "secrets.md"
+
+
+def _auth_schemes() -> set[str]:
+    """The kinds in the secrets §7.5 table, the closed v1 set (decision 36)."""
+    section = DESIGN.read_text().split("### 7.5 Auth schemes", 1)[1].split("\n### ", 1)[0]
+    return set(re.findall(r"^\| `([a-z0-9-]+)` \|", section, flags=re.MULTILINE))
 
 
 def _bytes(value: str) -> bytes:
@@ -43,6 +51,19 @@ def _covered(case: dict) -> dict:
 
 def test_the_vector_uses_b2s_single_prefix():
     assert VECTOR["prefix"].encode() == DOMAIN_PREFIX
+
+
+def test_secret_kinds_are_the_auth_schemes():
+    assert VECTOR["secret_kinds"] == sorted(_auth_schemes())
+    assert set(VECTOR["secret_kinds"]) == {
+        "bearer",
+        "basic",
+        "header",
+        "query",
+        "oauth2-client-credentials",
+        "aws-sigv4",
+    }
+    assert {case["request"]["secret"]["kind"] for case in POSITIVE} <= set(VECTOR["secret_kinds"])
 
 
 @pytest.mark.parametrize("case", POSITIVE, ids=lambda case: case["name"])

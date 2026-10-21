@@ -5,6 +5,7 @@ on:
     tags:
       - "server-v*"
       - "awid-service-v*"
+      - "aweb-naapp-v*"
 
 permissions:
   contents: read

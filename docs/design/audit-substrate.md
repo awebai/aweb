@@ -200,7 +200,7 @@ objects and no free text). The hooks catalog vector records it.
 | `returned_hmac` | A producer-keyed HMAC of the bytes returned to the agent, after projection and redaction. It is absent when the result is `withheld`. It is an HMAC and not a plain hash, because returned bytes may still carry a credential that redaction missed. |
 | `disposition`, `derived_secret_id` | `returned`, `withheld` or `stored_as_secret`, on `completed`. |
 | `undeclared_credential` | Boolean, on `completed`: the response carried a credential that was not declared. |
-| `redaction_count`, `refusal_code` | `refusal_code` is a fixed enum, recorded in the catalog vector: `grant_missing`, `grant_revoked`, `operation_not_allowed`, `open_request_not_allowed`, `policy_rate_limited`, `policy_window_closed`, `destination_not_in_scope`, `destination_address_denied`, `internal_destinations_disabled`, `header_not_allowed`, `params_invalid`, `token_issuing_denied`, `secret_disabled`, `installation_disabled`, `secret_version_changed`, `custody_unavailable`, `attestation_unavailable`, `approval_denied`, `approval_expired`, `approval_revoked`, `approval_unrenderable`, `distinct_approver_required`, `reconciliation_pending`, `idempotency_conflict`, `audit_target_unavailable`, `audit_delivery_stalled`, `runner_unavailable`, `job_not_allowed`. |
+| `redaction_count`, `refusal_code` | `refusal_code` is a fixed enum, recorded in the catalog vector: `grant_missing`, `grant_revoked`, `operation_not_allowed`, `open_request_not_allowed`, `policy_rate_limited`, `policy_window_closed`, `destination_not_in_scope`, `destination_address_denied`, `internal_destinations_disabled`, `header_not_allowed`, `params_invalid`, `token_issuing_denied`, `secret_disabled`, `installation_disabled`, `generation_superseded`, `secret_version_changed`, `custody_unavailable`, `attestation_unavailable`, `approval_denied`, `approval_expired`, `approval_revoked`, `approval_unrenderable`, `distinct_approver_required`, `reconciliation_pending`, `dispatch_in_flight`, `idempotency_conflict`, `audit_target_unavailable`, `audit_delivery_stalled`, `runner_unavailable`, `job_not_allowed`. |
 
 A withheld value and an undeclared credential are properties of the
 `completed` event, not separate events: one effect, one event.
@@ -704,6 +704,11 @@ Per team and chain epoch, under a row lock on the team's chain head:
   did_key, previous_checkpoint_sha256}`. It is issued periodically while
   events arrive and on demand, and the owner can export it. External anchoring
   is future work (logs-spec §8).
+- **Logs' key purposes.** Logs signs receipts and checkpoints with its own
+  key, declared in its v2 manifest's `app_keys` with the purposes
+  `logs-receipt`, `logs-checkpoint` or both (one kid may carry both). Only
+  logs and the verifiers of its artefacts consume them. The bytes are
+  specified in [the logs chain](../logs-chain.md).
 - **`verify`** recomputes the chain over a range or from a checkpoint. It
   re-checks retained provenance signatures and commitments, and reports
   `intact`, `broken_at`, `missing` (gaps), purged ranges with their governing
