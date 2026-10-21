@@ -461,3 +461,73 @@ async def test_separate_token_activation_then_binding_and_rebinding_use_one_acti
     assert (await active_binding(w.db, replacement.context)).credential_context == token
     with pytest.raises(CustodyUnavailable):
         await active_binding(w.db, binding.context)
+
+
+async def test_rotated_disabled_root_recovers_only_through_confirmed_reenable_and_rebinding(world):
+    from aweb_secrets.containment import disable_secret_tree
+    from aweb_secrets.custody.opening import UseSecretOpener
+
+    w = world
+    scope, record, _, old, _, first, _ = await initial(w)
+    await apply(w, first)
+    async with w.db.transaction() as tx:
+        await w.fence.check(tx, w.admitted)
+        assert await hold_role(tx, ALICE, OWNER_ROLE)
+        await disable_secret_tree(
+            tx,
+            w.approvals,
+            w.custody,
+            installation_id=INSTALLATION_ID,
+            team_id=TEAM,
+            secret_id=record.secret_id,
+            revoked_by="owner",
+        )
+        token = await w.custody.stage_backend_credential(
+            tx,
+            installation_id=INSTALLATION_ID,
+            team_id=TEAM,
+            value=encode_value("bearer", {"value": os.urandom(24).hex()}),
+        )
+    rotation, _ = await pending(w, scope, [token_item(token)], [token])
+    await apply(w, rotation)
+    with pytest.raises(CustodyUnavailable):
+        await staged(w, token=token, create=False)
+
+    reenable, approval_id = await pending(
+        w,
+        scope,
+        [
+            {
+                "kind": "reenable",
+                "op": "enable",
+                "ref": record.ref,
+                "after": {"v": 1, "target_kind": "secret", "target_ref": record.ref},
+            }
+        ],
+        [],
+    )
+    result = await apply(w, reenable)
+    assert result.affected_secret_ids == (record.secret_id,)
+    assert (await w.approvals.get(approval_id)).state is ApprovalState.CONSUMED
+    row = await w.db.fetch_one("SELECT state,active_version FROM {{tables.secrets}}")
+    assert row["state"] == "active" and row["active_version"] is None
+    assert not await w.db.fetch_value(
+        "SELECT disabled_at IS NOT NULL FROM {{tables.custody_secrets}} WHERE secret_id=$1",
+        record.secret_id,
+    )
+    opener = UseSecretOpener(
+        w.db,
+        native=w.custody.opener,
+        credential_opener=w.custody.backend_credential_opener,
+    )
+    with pytest.raises(CustodyUnavailable):
+        await opener.open(old.context)
+    _, _, replacement, _ = await staged(w, token=token, create=False)
+    assert replacement.context.version > old.context.version
+    with pytest.raises(CustodyUnavailable):
+        await opener.open(replacement.context)
+    rebind, _ = await pending(w, scope, [binding_item(replacement)], [replacement.context])
+    await apply(w, rebind)
+    assert (await active_binding(w.db, replacement.context)).credential_context == token
+    with pytest.raises(CustodyUnavailable):
+        await active_binding(w.db, old.context)
