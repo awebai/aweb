@@ -27,6 +27,25 @@
   body. The `path_param_percent_encoding` interpretation vector no longer
   sends a `/`, and new `reject_path_param_*` cases pin the refusal.
 
+### Folio
+
+- Folio runs on the shared `aweb-naapp` runtime: its settings, database,
+  manifest serving, public surface (landing, reference, llms.txt, robots, skills,
+  fonts) and health routes are naapp-lib's, and `/health` reports the deployed
+  commit.
+- `folio/doc.changed` events are written to an outbox in the same transaction
+  as the document write and delivered from there: a failed delivery is retried
+  instead of dropped, and a rolled-back write leaves no event.
+- Folio checks a certificate's did:aw in **observe** mode
+  (`FOLIO_DID_AW_PROFILE=observe` is its default): every request is admitted
+  and each check's outcome is logged. It moves to require only once observe
+  measurement shows no refused live callers and Juan approves (aweb-acgh.11
+  rollout).
+- Deploy note: the shared settings cap `FOLIO_AUTH_CACHE_TTL_SECONDS` at 60 and
+  `FOLIO_TIMESTAMP_SKEW_SECONDS` at 300, and require `FOLIO_AWID_SERVICE_TOKEN`,
+  when set, to be at least 32 bytes; Folio refuses to start otherwise. The first
+  boot applies the shared naapp migrations (observed principals, outbox).
+
 ## Release preparations
 
 ### Release preparation: aweb-naapp 0.2.0

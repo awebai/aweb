@@ -1,14 +1,19 @@
 ---
 name: team-cert-verification
-description: Use when implementing or reviewing AWID team-certificate authentication — verifying the request-bound v2 team-auth envelope, porting folio auth.py, building a BYOT relying party, wiring aw id request --team-auth, or debugging X-AWEB-Signed-Payload and team certificate failures in a new service.
+description: Use when implementing or reviewing AWID team-certificate authentication — verifying the request-bound v2 team-auth envelope, adopting the shared naapp runtime, building a BYOT relying party, wiring aw id request --team-auth, or debugging X-AWEB-Signed-Payload and team certificate failures in a new service.
 ---
 
 # Team certificate verification
 
 Use this when your service is a BYOT relying party: agents present a DIDKey
 signature plus an AWID team certificate on every team-scoped request. The code
-ground truth is `src/folio/auth.py`; the test ground truth is
-`tests/test_auth_v2_envelope.py`. Port both and keep the tests green.
+ground truth is `naapp-lib/src/aweb_naapp/runtime/team_auth.py`; the test ground truth is
+`naapp-lib/tests/runtime/test_team_auth_envelope.py`, together with
+`naapp-lib/tests/runtime/test_team_auth_vectors.py` and
+`naapp-lib/tests/runtime/test_awid_team_cache.py`. These paths are relative to
+the aweb repository root. Reuse `NaappRuntime.principal` from
+`naapp-lib/src/aweb_naapp/runtime/app.py` rather than copying a verifier into
+each app.
 
 ## Envelope contract
 
@@ -30,15 +35,15 @@ X-AWEB-Signed-Payload: <base64url-no-padding canonical-JSON of the signed payloa
 Rules:
 
 - The signed-payload header is base64url with no padding (`=` is rejected in
-  folio; see `src/folio/auth.py:137-146`).
+  folio; see `naapp-lib/src/aweb_naapp/runtime/team_auth.py`).
 - Parsed JSON must round-trip to the same canonical bytes:
-  `canonical_json(parsed) == decoded bytes` (`src/folio/auth.py:188-193`).
+  `canonical_json_bytes(parsed) == decoded bytes` (`naapp-lib/src/aweb_naapp/runtime/team_auth.py`).
 - The Ed25519 signature verifies over those decoded presented bytes, not over a
-  payload the server reconstructs (`src/folio/auth.py:217-220`).
+  payload the server reconstructs (`naapp-lib/src/aweb_naapp/runtime/team_auth.py`).
 
 ## Ten verification steps
 
-Follow this implementation order when porting `src/folio/auth.py`. The cert is
+These steps describe the shared verifier; use them when reviewing its integration. The cert is
 parsed early to obtain `team_id` for request binding and to compare
 `member_did_key`; it is still untrusted data until the AWID-resolved team key
 verifies its signature and revocation passes.
@@ -81,27 +86,30 @@ verifies its signature and revocation passes.
 
 - **Path is raw target, not router path.** Use ASGI `raw_path` plus raw
   `query_string`, preserving percent-encoding and query order; include
-  `root_path` for mounted apps. See `src/folio/auth.py:149-173` and
-  `tests/test_auth_v2_envelope.py:258-272`.
+  `root_path` for mounted apps. See `naapp-lib/src/aweb_naapp/runtime/team_auth.py` and
+  `naapp-lib/tests/runtime/test_team_auth_envelope.py`.
 - **Audience canonicalization must match aweb.** Use the same origin rules as
   `aweb.team_auth_envelope` / `awid.log.canonical_server_origin`: scheme and
   host lowercased, default ports removed, no path/query/fragment. See
-  `src/folio/auth.py:209-215` and the interop check in
-  `tests/test_auth_v2_envelope.py:312-343`.
+  `naapp-lib/src/aweb_naapp/runtime/team_auth.py` and the interop check in
+  `naapp-lib/tests/runtime/test_team_auth_envelope.py`.
 - **Signature verification uses presented bytes.** Decode
   `X-AWEB-Signed-Payload`, verify those bytes, then compare parsed claims to the
   actual request. Do not sign or verify a server-reconstructed dictionary.
 
 ## AWID facts and caching
 
-- Cache only public AWID facts: team public key and revoked certificate ids
-  (`src/folio/auth.py:43-100`).
-- If the cache entry is unexpired, use it; if expired, refresh. On refresh
-  failure, fail closed with 503 instead of trusting the presented cert
-  (`src/folio/auth.py:58-87`).
-- Unknown team is 401; AWID unavailable or missing/invalid team-key facts are
-  503 (`src/folio/auth.py:67-87`).
-- Revoked certificate id is 401 (`src/folio/auth.py:287-288`).
+- `AWIDTeamCache` in `naapp-lib/src/aweb_naapp/runtime/team_auth.py` caches
+  successful AWID facts in memory for at most 60 seconds. Folio's
+  `FOLIO_AUTH_CACHE_TTL_SECONDS` defaults to 60 and accepts 1..60 seconds.
+- Without a service token, certificate status is cached per `(team_id,
+  certificate_id)`. An unknown certificate is 401; unavailable or malformed
+  status, including HTTP 429, is 503. See
+  `naapp-lib/tests/runtime/test_awid_team_cache.py`.
+- With a service token, team public keys and published/revoked certificate ids
+  are cached per team. An unpublished or revoked certificate is refused.
+- Use an unexpired entry; after expiry refresh or fail closed. Failed refreshes
+  never extend the cache lifetime or make the presented certificate authoritative.
 - Misconfigured `public_origin` should make every v2 request fail closed. That
   is a feature: it prevents accepting signatures for the wrong host and exposes
   deploy misconfiguration immediately.
@@ -121,10 +129,11 @@ verifies its signature and revocation passes.
 
 ## References
 
-- `src/folio/auth.py` — copyable FastAPI verifier implementation.
-- `tests/test_auth_v2_envelope.py` — spec by example; port it with the code and
-  keep it green.
+- `naapp-lib/src/aweb_naapp/runtime/team_auth.py` — shared FastAPI verifier implementation.
+- `naapp-lib/tests/runtime/test_team_auth_envelope.py` — request-binding and refusal examples.
+- `naapp-lib/tests/runtime/test_team_auth_vectors.py` — shared interop vectors.
+- `naapp-lib/tests/runtime/test_awid_team_cache.py` — caching, publication and status failures.
 - `docs/sot.md` Authentication envelope section — product/source-of-truth
   contract (`docs/sot.md:61-126` on main when this skill was written).
-- `aweb/docs/vectors/team-auth-envelope-v2.json` and `aweb/test-vectors/` —
+- `docs/vectors/team-auth-envelope-v2.json` and `test-vectors/` —
   byte-for-byte interop fixtures used by the tests.
