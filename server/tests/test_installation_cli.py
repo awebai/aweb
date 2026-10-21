@@ -48,7 +48,10 @@ async def test_cli_member_request_admin_install_update_and_refused_update_preser
     }))
     (home / "identity.yaml").chmod(0o600)
     process_env = {**os.environ, "AW_HOME": str(tmp_path / "plugin-store"), "AW_NO_UPDATE_CHECK": "1",
-                   "SSL_CERT_FILE": str(origin.tls.certificates.ca_file)}
+                   "SSL_CERT_FILE": str(origin.tls.certificates.ca_file),
+                   # On macOS, opt into the Go 1.27 SSL_CERT_FILE behavior even
+                   # when the module retains its earlier Go compatibility defaults.
+                   "GODEBUG": ",".join(filter(None, [os.environ.get("GODEBUG"), "x509sslcertoverrideplatform=1"]))}
     for name in ("AW_IDENTITY_HOME", "AW_TEAM", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
         process_env.pop(name, None)
 

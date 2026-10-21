@@ -609,7 +609,7 @@ async def test_registry_entry_emit_keys_are_not_active_for_a_team(aweb_cloud_db)
         INSERT INTO {{tables.app_registry_emit_keys}} (app_id, origin, digest, key_id, did_key)
         VALUES ('folio', 'https://folio.aweb.ai', $1, 'emit-entry', $2)
         """,
-        DIGEST,
+        await db.fetch_value("SELECT digest FROM {{tables.team_app_installs}} WHERE team_id=$1", TEAM_ID),
         entry_did,
     )
 
