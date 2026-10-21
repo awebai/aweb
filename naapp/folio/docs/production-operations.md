@@ -99,5 +99,34 @@ Rollback never deploys a commit: a commit deploy rebuilds under the service's
 current settings, which for a commit from before the repository-root build
 fails. Rolling back across that change uses the earlier deploy's artifact.
 
-The deployed commit is read from the Render API. Folio's `/health` does not
-report it yet.
+The deployed commit is read from the Render API and Folio's shared `/health`
+build identity (`RENDER_GIT_COMMIT`, with `FOLIO_GIT_SHA` as a fallback).
+
+
+## Filled manifest and emit-key configuration
+
+The committed `src/folio/aweb-app.json` is a template. It declares the stable
+`folio:emit-1` kid and local event type `doc.changed`; the shared runtime fills
+its public did:key from configuration before serving either manifest URL.
+Keep the production app id `folio` (`FOLIO_APP_ID`), kid and
+`FOLIO_PUBLIC_ORIGIN=https://folio.aweb.ai` unchanged. App id is stable for the
+entire deployment lifetime: changing it orphans installed grants.
+
+The existing `FOLIO_APP_EMIT_KID=folio:emit-1` and secret
+`FOLIO_APP_EMIT_KEY_SEED_HEX`, together with `FOLIO_APP_EVENTS_ORIGIN`, remain
+sufficient. No new emit-key environment variable is required. Alternatively,
+`FOLIO_APP_KEY_FILES` is a JSON map from each declared kid to a mounted signing-key
+file; do not configure both a file and a seed for the same kid. Every declared
+kid requires a configured key even when outbound event delivery is disabled.
+Never place a production seed or private key in the committed template.
+
+The template's local event declaration changes the manifest digest. Emitted
+event bodies, subscriptions and stream wakes still use `folio/doc.changed`:
+the server matches that namespace against installed app `folio` and local type
+`doc.changed`. The redeploy handoff must include updating **every existing
+Folio install** to the new digest immediately after deploy, through
+`aw plugin update folio` or the install API. Until an install is updated, the
+hosted MCP offers no Folio tools for that team. Key rotation likewise adds a
+new declared kid beside the old one, yields a new digest, and needs a re-pin.
+These are separately authorized operator actions; a code landing performs none
+of them.

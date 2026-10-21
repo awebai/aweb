@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from aweb_naapp.roles import PrincipalKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
@@ -65,9 +66,16 @@ async def _locked_setting(tx: TransactionManager, installation_id: str) -> str:
 
 
 async def _require_owners(
-    tx: TransactionManager, *, installation_id: str, team_id: str, directory: OwnerDirectory
+    tx: TransactionManager,
+    *,
+    installation_id: str,
+    team_id: str,
+    directory: OwnerDirectory,
+    excluding: PrincipalKey | None = None,
 ) -> None:
     owners = await directory.enrolled_owners(tx, installation_id=installation_id, team_id=team_id)
+    if excluding is not None:
+        owners = [owner for owner in owners if owner != excluding]
     if len(owners) < MIN_FOUR_EYES_OWNERS:
         raise ChangeRefused(
             "four eyes needs at least two enrolled owners", code="four_eyes_needs_two_owners"
@@ -103,11 +111,24 @@ async def relax_four_eyes(tx: TransactionManager, *, installation_id: str) -> No
 
 
 async def keep_four_eyes_owners(
-    tx: TransactionManager, *, installation_id: str, team_id: str, directory: OwnerDirectory
+    tx: TransactionManager,
+    *,
+    installation_id: str,
+    team_id: str,
+    directory: OwnerDirectory,
+    excluding: PrincipalKey | None = None,
 ) -> None:
     """Refuse an owner revocation that would leave four eyes with fewer than
-    two enrolled owners. Call it after the role delete, in its transaction."""
+    two enrolled owners. Call it after the role delete, in its transaction.
+    During owner recovery, pass the recovering owner as ``excluding``: its
+    passkey is unavailable throughout the mandatory cooling-off period. B3's
+    directory reader uses its own connection, so the explicit exclusion also
+    accounts for a recovery designation not yet committed by this transaction."""
     if await _locked_setting(tx, installation_id) == "required":
         await _require_owners(
-            tx, installation_id=installation_id, team_id=team_id, directory=directory
+            tx,
+            installation_id=installation_id,
+            team_id=team_id,
+            directory=directory,
+            excluding=excluding,
         )
