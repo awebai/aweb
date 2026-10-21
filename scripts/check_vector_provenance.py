@@ -48,9 +48,38 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("server/tests/test_human_channels_participants.py"): _consumer(
+        "human-channels-participants-v1.json", "ROOT / 'docs/vectors/human-channels-participants-v1.json'",
+    ),
+    PurePosixPath("cli/go/awid/human_channels_participants_test.go"): _consumer(
+        "human-channels-participants-v1.json", '"../../../docs/vectors/human-channels-participants-v1.json"',
+    ),
+    PurePosixPath("server/tests/test_human_channels_presence.py"): _consumer(
+        "human-channels-presence-v1.json", "ROOT / 'docs/vectors/human-channels-presence-v1.json'",
+    ),
+    PurePosixPath("cli/go/awid/human_channels_presence_test.go"): _consumer(
+        "human-channels-presence-v1.json", '"../../../docs/vectors/human-channels-presence-v1.json"',
+    ),
+    PurePosixPath("server/tests/test_human_channels_e2ee_spike.py"): _consumer(
+        "human-channels-e2ee-spike.json", "ROOT / 'docs/vectors/human-channels-e2ee-spike.json'",
+    ),
+    PurePosixPath("cli/go/awid/human_channels_e2ee_spike_test.go"): _consumer(
+        "human-channels-e2ee-spike.json", '"../../../docs/vectors/human-channels-e2ee-spike.json"',
+    ),
+    PurePosixPath("server/tests/test_human_channels_contract.py"): _consumer(
+        {"human-channels-v1.json", "human-channels-profile-v1.json"},
+        "ROOT / 'docs/vectors/human-channels-v1.json'",
+        "ROOT / 'docs/vectors/human-channels-profile-v1.json'",
+    ),
+    PurePosixPath("cli/go/awid/human_channels_contract_test.go"): _consumer(
+        {"human-channels-v1.json", "human-channels-profile-v1.json"},
+        '"../../../docs/vectors/human-channels-v1.json"',
+        '"../../../docs/vectors/human-channels-profile-v1.json"',
+    ),
     PurePosixPath("cli/go/awid/app_task_authorization_test.go"): _consumer(
         "app-task-authorization-v1.json",
         '"../../../docs/vectors/app-task-authorization-v1.json"',
+
     ),
     PurePosixPath("cli/go/awid/page_proposal_test.go"): _consumer(
         "page-proposal-v1.json",
@@ -501,6 +530,19 @@ PACKAGE_GUARDS = {
     ),
 }
 NON_CONSUMING_CODE_REFERENCES = {
+    PurePosixPath("scripts/freeze_human_channels_presence.py"): (
+        "docs/vectors/human-channels-presence-v1.json",
+    ),
+    PurePosixPath("scripts/spikes/human_channels_e2ee.py"): (
+        "docs/vectors/human-channels-e2ee-spike.json",
+    ),
+    PurePosixPath("scripts/freeze_human_channels_profile.py"): (
+        "docs/vectors/human-channels-profile-v1.json",
+        "docs/vectors/human-channels-v1.json",
+    ),
+    PurePosixPath("cli/go/awid/human_channels_contract.go"): (
+        "docs/vectors/human-channels-profile-v1.json",
+    ),
     PurePosixPath("naapp/folio/tests/test_surfaces.py"): (
         'decoy / "docs" / "vectors" / "team-auth-envelope-v2.json"',
         "assert not is_aweb_root(decoy)",

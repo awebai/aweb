@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 46
+`docs/vectors/*.json` is the only public protocol-vector authority for the
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the two classified
 package copies below. An unclassified hand-maintained copy is forbidden even when
@@ -689,3 +689,35 @@ npm test
 
 A vector change is incomplete until every listed consumer for that fixture
 passes and the lifecycle label above still describes what the bytes prove.
+
+## Human-channel P0 freeze candidate
+
+- `human-channels-profile-v1.json` — exact new DTO grammar/capability registry;
+  not an advertised service feature. Python/Go compiled grammar is checked against
+  this authority.
+- `human-channels-v1.json` — shared structural canonical bytes, digest/signature
+  and refusal vectors with a public synthetic key. These do not establish actual
+  owner, recipient, membership or custody authority.
+
+The [P0 contract](../human-channels-contract-v1.md) fixes the public embedding
+ports and signature boundary. X-E2/X-GF encrypted re-share/federation annexes
+remain refused until exact-SHA Athena review; current native fixtures are unchanged.
+
+`human-channels-e2ee-spike.json` is an **unfrozen** X-E2 laboratory fixture, consumed by `server/tests/test_human_channels_e2ee_spike.py` and `cli/go/awid/human_channels_e2ee_spike_test.go`. It enables no profile.
+
+## Human-channel presence verification
+
+`human-channels-presence-v1.json` supplies P8's exact native/binding approval
+signatures, verified DTOs and refusal neighbors. Python and Go read the root
+bytes directly. The embedded contexts are **trusted test authority facts**, not
+a public request/context wire format; consumers must build those facts from
+independent authenticated current sources. No P0/native fixture is rewritten.
+
+## Human-channel participant identity readiness
+
+`human-channels-participants-v1.json` is shared by Python and Go participant
+helpers. Its synthetic **private** adapter inputs test session-pairwise HMAC
+derivation; they are never message/provenance fields. Author projections test
+exact session/subject/signer binding and external/untrusted guest assurance.
+They assume independently verified signer facts and do not authorize membership
+or activate managed chat. See [P3 readiness](../human-channels-participants.md).
