@@ -108,7 +108,7 @@ async def test_logs_is_ready_with_its_chain_tables(tmp_path: Path, database) -> 
 
 
 async def test_a_running_logs_checkpoints_each_team_whose_chain_moved(tmp_path: Path, database) -> None:
-    settings, manifest_path = _deployment(tmp_path, database.config.get_dsn())
+    settings, manifest_path = _deployment_on(tmp_path, database)
     settings = settings.model_copy(update={"checkpoint_interval_seconds": 0.05})
     signer = chain_signer(settings, load_manifest(manifest_path.read_bytes()))
     signing, signature = signed_event("core", event_id=str(uuid.uuid4()), seq=1)
