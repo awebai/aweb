@@ -20,6 +20,7 @@ from awid.a2a_publication import (
     a2a_publication_canonical,
     normalize_a2a_delegation_fields,
     normalize_a2a_publication_fields,
+    parse_contract_time,
     signed_assertion_digest,
     validate_route_id,
 )
@@ -590,3 +591,15 @@ async def test_a2a_publication_feature_flag_disabled(client, awid_db_infra, cont
     assert resp.status_code == 404, resp.text
     assert resp.json()["detail"]["code"] == "a2a_primitive_disabled"
     assert await _counts(awid_db_infra) == (0, 0)
+
+
+def test_contract_time_parses_ascii_utc_seconds():
+    assert parse_contract_time("2026-01-20T10:00:00Z", field_name="expires_at") == datetime(
+        2026, 1, 20, 10, 0, tzinfo=timezone.utc
+    )
+
+
+@pytest.mark.parametrize("value", ["\uff12\uff10\uff12\uff16-01-20T10:00:00Z", "2026-02-30T10:00:00Z"])
+def test_contract_time_refuses_non_ascii_digits_and_impossible_dates(value):
+    with pytest.raises(ValueError):
+        parse_contract_time(value, field_name="expires_at")
