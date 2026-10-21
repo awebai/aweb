@@ -493,3 +493,158 @@ test("malformed fragment is scrubbed before the constructor refuses", async ({
   expect(code).toBe("link_unavailable");
   expect(new URL(page.url()).hash).toBe("");
 });
+
+for (const [status, code] of [
+  [404, "link_unavailable"],
+  [429, "safety_rate_limited"],
+  [503, "authority_unavailable"],
+  [403, "current_member_required"],
+  ["malformed", "exchange_refused"],
+  ["not-json", "exchange_refused"],
+]) {
+  test(`N5 exchange refusal ${status} preserves code/status without a session or retry`, async ({
+    page,
+  }) => {
+    let exchanges = 0;
+    page.on("request", (request) => {
+      if (request.url().includes("/session")) ++exchanges;
+    });
+    await page.goto(origin + "/#k=" + vectors.secrets[0].secret);
+    const result = await page.evaluate(async (refusal) => {
+      const { createLinkClient } = await import("/page-link-client.js");
+      const client = createLinkClient({
+        linkId: "lnk-test",
+        sessionPath: `/mounted/v1/links/lnk-test/session?refusal=${refusal}`,
+      });
+      const error = await client.connect().then(
+        () => ({ code: "accepted" }),
+        (error) => ({ code: error.code, status: error.status }),
+      );
+      const request = await client.request("/mounted/v1/pages/records").then(
+        () => "sent",
+        (error) => error.code,
+      );
+      return { error, request, csrf: client.csrfToken() };
+    }, status);
+    expect(result.error).toEqual({
+      code,
+      status: typeof status === "number" ? status : 503,
+    });
+    expect(result.csrf).toBeNull();
+    expect(result.request).toBe("session_expired");
+    expect(exchanges).toBe(1);
+  });
+}
+
+// Hold the real fetch after the HTTP response has arrived, to place the
+// session boundary between server admission and the client continuation.
+async function holdPost(page) {
+  await page.evaluate(() => {
+    const original = window.fetch;
+    let release, started;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    window.postHeld = new Promise((resolve) => {
+      started = resolve;
+    });
+    window.releasePost = release;
+    window.postSignal = null;
+    window.clientTraffic = [];
+    window.fetch = async (...args) => {
+      window.clientTraffic.push({
+        path: new URL(args[0]).pathname,
+        method: args[1]?.method || "GET",
+      });
+      const response = await original(...args);
+      if (
+        args[1]?.method === "POST" &&
+        new URL(args[0]).pathname.endsWith("/actions")
+      ) {
+        window.postSignal = args[1].signal;
+        started();
+        await gate;
+        if (window.postSignal.aborted)
+          throw new DOMException("Aborted", "AbortError");
+      }
+      return response;
+    };
+    window.postResult = client
+      .request("/mounted/v1/pages/records/actions", {
+        method: "POST",
+        body: '{"idempotency_key":"held-write"}',
+      })
+      .then(
+        async (response) => ({
+          status: response.status,
+          body: await response.json(),
+        }),
+        (error) => ({ code: error.code }),
+      );
+  });
+  await page.evaluate(() => window.postHeld);
+}
+
+test("a committed POST response survives session expiry during fetch", async ({
+  page,
+}) => {
+  await mount(page);
+  const metadata = await page.evaluate(() => client.connect());
+  await holdPost(page);
+  await page.evaluate((expires) => {
+    Date.now = () => Date.parse(expires) + 1;
+    window.releasePost();
+  }, metadata.expires_at);
+  const result = await page.evaluate(() => window.postResult);
+  expect(result.status).toBe(200);
+  expect(result.body.verified).toBe(true);
+  expect(await page.evaluate(() => window.clientTraffic)).toHaveLength(1);
+});
+
+test("renewal waits for a POST response and never aborts or resends it", async ({
+  page,
+}) => {
+  await mount(page);
+  await page.evaluate(() => client.connect());
+  await holdPost(page);
+  const waiting = await page.evaluate(async () => {
+    window.renewalResult = client.connect().then(
+      () => "renewed",
+      (error) => error.code,
+    );
+    return {
+      aborted: window.postSignal.aborted,
+      exchanges: window.clientTraffic.filter((r) => r.path.endsWith("/session"))
+        .length,
+    };
+  });
+  expect(waiting).toEqual({ aborted: false, exchanges: 0 });
+  await page.evaluate(() => window.releasePost());
+  const result = await page.evaluate(async () => ({
+    post: await window.postResult,
+    renewal: await window.renewalResult,
+    writes: window.clientTraffic.filter((r) => r.path.endsWith("/actions"))
+      .length,
+  }));
+  expect(result.post.status).toBe(200);
+  expect(result.post.body.verified).toBe(true);
+  expect(result.renewal).toBe("renewed");
+  expect(result.writes).toBe(1);
+  expect(await page.evaluate(() => window.postSignal.aborted)).toBe(false);
+});
+
+test("clear remains terminal and aborts a POST waiting for its response", async ({
+  page,
+}) => {
+  await mount(page);
+  await page.evaluate(() => client.connect());
+  await holdPost(page);
+  await page.evaluate(() => client.clear());
+  expect(await page.evaluate(() => window.postSignal.aborted)).toBe(true);
+  await page.evaluate(() => window.releasePost());
+  expect(await page.evaluate(() => window.postResult)).toEqual({
+    code: "client_cleared",
+  });
+  expect(await page.evaluate(() => client.csrfToken())).toBeNull();
+  expect(await page.evaluate(() => window.clientTraffic)).toHaveLength(1);
+});

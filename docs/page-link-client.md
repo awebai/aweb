@@ -36,7 +36,10 @@ secret and public key to the exchange. Unsupported browsers refuse with
 expiry and public link metadata (`page_id`, `mode`, `actions`). Session ID,
 private key and CSRF token remain in the closure. Concurrent calls share the
 pending exchange. A later explicit `connect()` renews the session with a new
-key and invalidates outstanding work from the previous session.
+key. Renewal waits for pending writes, then invalidates previous-session reads;
+it never aborts a write or its response body. A completed write returns its
+response even if the session expired during the fetch. Explicit `clear()` stays
+terminal and aborts writes as well as reads.
 
 `request(rawPathWithQuery, {method, body, contentType})` returns a Fetch
 `Response`; the host interprets HTTP errors and maps the JSON to its adapter.
@@ -79,8 +82,9 @@ Invalid input raises an error with `code: request_invalid`; missing fragments
 use `link_unavailable`, malformed exchange receipts use `session_invalid`, and
 unconnected/expired sessions use `session_expired`. Authority teardown uses
 `client_cleared`, renewal invalidation uses `session_changed`. Exchange refusals
-preserve the server's error code and HTTP `status`. Network/JSON errors propagate
-to the host without automatic retry.
+preserve N5's `detail.code` and HTTP `status`. A malformed refusal uses
+`exchange_refused` with its status; malformed successful receipts use
+`session_invalid`. Other network errors propagate without automatic retry.
 
 ## Focused verification
 
@@ -102,6 +106,7 @@ A separate loopback fixture serves the same module and verifies its requests
 with the real `aweb_naapp.runtime.link_requests.verify_link_request_bytes` and
 canonical Ed25519 key parser. It exercises mounted reads/queries, UTF-8 writes,
 fresh retry nonces, body snapshots, cookie omission, redirect refusal, expiry,
-renewal and clearing. This is transport conformance; application authorization,
-store projections and final effects require their owners' real integration
-journeys.
+renewal and clearing. Error probes use the production N5 `refusal_response`
+serializer and assert codes/status without a session or automatic retry. This
+is transport conformance; application authorization, store projections and
+final effects require their owners' real integration journeys.

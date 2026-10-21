@@ -9,8 +9,11 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
+from urllib.parse import parse_qs, urlsplit
 
 from aweb_naapp.pages.render import page_shell
+from aweb_naapp.runtime.capability_links import LinkRefused
+from aweb_naapp.runtime.capability_links.routes import refusal_response
 from aweb_naapp.runtime.link_requests import (
     LinkRequestRefused,
     check_session_did_key,
@@ -29,6 +32,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         self.wfile.write(json.dumps(value).encode())
+
+    def refuse(self, code, status):
+        # The same serializer the real N5 exchange route calls.
+        response = refusal_response(LinkRefused(code, status))
+        self.send_response(response.status_code)
+        for name, value in response.headers.items():
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(response.body)
 
     def do_GET(self):
         if self.path == "/":
@@ -56,10 +68,29 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-        if self.path == "/mounted/v1/links/lnk-test/session":
+        route = urlsplit(self.path)
+        if route.path == "/mounted/v1/links/lnk-test/session":
+            refusal = parse_qs(route.query).get("refusal", [""])[0]
+            codes = {
+                "404": "link_unavailable",
+                "429": "safety_rate_limited",
+                "503": "authority_unavailable",
+                "403": "current_member_required",
+            }
+            if refusal in codes:
+                self.refuse(codes[refusal], int(refusal))
+                return
+            if refusal in {"malformed", "not-json"}:
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    b'{"detail": {"code": 42}}' if refusal == "malformed" else b"Unavailable"
+                )
+                return
             request = json.loads(body)
             if request["secret"] != SECRET:
-                self.reply({"code": "link_unavailable"}, 404)
+                self.refuse("link_unavailable", 404)
                 return
             check_session_did_key(request["session_did_key"])
             session_id = "lks-" + secrets.token_hex(8)
@@ -119,7 +150,7 @@ class Handler(BaseHTTPRequestHandler):
                 }
             )
         except (LinkRequestRefused, KeyError, AssertionError, AttributeError, ValueError):
-            self.reply({"code": "signature_invalid"}, 401)
+            self.refuse("signature_invalid", 401)
 
     def log_message(self, *_):
         pass

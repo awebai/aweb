@@ -97,6 +97,7 @@ function createLinkClient({
   const origin = location.origin;
   let epoch = 0, session = null, connecting = null, cleared = false;
   let controller = new AbortController();
+  const writeController = new AbortController(), pendingWrites = /* @__PURE__ */ new Set();
   if (!matches(id, linkId) || !token(secret, 32))
     throw fail("link_unavailable");
   function target(path) {
@@ -126,12 +127,15 @@ function createLinkClient({
   function connect() {
     if (cleared) return Promise.reject(fail("client_cleared"));
     if (connecting) return connecting;
-    const expected = ++epoch;
-    controller.abort();
-    controller = new AbortController();
-    const signal = controller.signal;
-    session = null;
+    let expected = epoch;
     const pending = (async () => {
+      while (pendingWrites.size) await Promise.allSettled([...pendingWrites]);
+      current(expected);
+      expected = ++epoch;
+      controller.abort();
+      controller = new AbortController();
+      const signal = controller.signal;
+      session = null;
       let pair;
       try {
         pair = await crypto.subtle.generateKey("Ed25519", false, [
@@ -152,14 +156,25 @@ function createLinkClient({
         body: JSON.stringify({ secret, session_did_key: did })
       });
       current(expected);
-      const data = await response.json();
-      current(expected);
-      if (!data || typeof data !== "object") throw fail("session_invalid");
-      if (!response.ok)
+      let data;
+      try {
+        data = await response.json();
+      } catch {
+        current(expected);
         throw fail(
-          typeof data.code === "string" ? data.code : "exchange_refused",
+          response.ok ? "session_invalid" : "exchange_refused",
           response.status
         );
+      }
+      current(expected);
+      if (!response.ok) {
+        const code = data?.detail?.code;
+        throw fail(
+          matches(/^[a-z][a-z0-9_]{0,63}$/, code) ? code : "exchange_refused",
+          response.status
+        );
+      }
+      if (!data || typeof data !== "object") throw fail("session_invalid");
       const expiry = Date.parse(data.expires_at);
       if (!matches(id, data.session_id) || !token(data.csrf_token, 16) || !Number.isFinite(expiry) || expiry <= Date.now() || !data.link || typeof data.link.page_id !== "string")
         throw fail("session_invalid");
@@ -192,7 +207,7 @@ function createLinkClient({
     );
     return pending;
   }
-  async function request(path, { method = "GET", body, contentType = "application/json" } = {}) {
+  async function performRequest(path, { method = "GET", body, contentType = "application/json" } = {}) {
     const expected = epoch;
     active(expected);
     const url = target(path);
@@ -200,7 +215,7 @@ function createLinkClient({
       throw fail("request_invalid");
     const bytes = body === void 0 ? new Uint8Array() : typeof body === "string" ? utf8.encode(body) : body instanceof Uint8Array ? new Uint8Array(body) : null;
     if (!bytes) throw fail("request_invalid");
-    const snapshot = session, signal = controller.signal;
+    const snapshot = session, signal = ["GET", "HEAD"].includes(method) ? controller.signal : writeController.signal;
     const digest = await crypto.subtle.digest("SHA-256", bytes);
     active(expected);
     const headers = await signLinkRequest(
@@ -228,12 +243,22 @@ function createLinkClient({
         headers,
         ...body !== void 0 ? { body: bytes } : {}
       });
-      active(expected);
+      if (["GET", "HEAD"].includes(method)) active(expected);
+      else current(expected);
       return response;
     } catch (error) {
       current(expected);
       throw error;
     }
+  }
+  function request(path, options2) {
+    const operation = performRequest(path, options2);
+    if (!["GET", "HEAD"].includes(options2?.method ?? "GET")) {
+      pendingWrites.add(operation);
+      const settled = () => pendingWrites.delete(operation);
+      operation.then(settled, settled);
+    }
+    return operation;
   }
   return {
     connect,
@@ -243,6 +268,7 @@ function createLinkClient({
       cleared = true;
       ++epoch;
       controller.abort();
+      writeController.abort();
       secret = null;
       session = null;
       connecting = null;
