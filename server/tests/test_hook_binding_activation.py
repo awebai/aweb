@@ -105,7 +105,12 @@ class Owner:
 
 
 @pytest_asyncio.fixture
-async def env(aweb_cloud_db, shared_test_pool):
+async def env(aweb_cloud_db, shared_test_pool, monkeypatch):
+    # The registry runs on the shared test pool; its settings still require a URL.
+    monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
+    # The server reads private teams with the trusted service token, as in production.
+    service_token = f"hook-bindings-service-token-{uuid4().hex}"
+    monkeypatch.setenv("AWID_SERVICE_TOKEN", service_token)
     db = aweb_cloud_db.aweb_db
     await _seed_team_and_agent(db, team_id=TEAM)
     await _seed_team_and_agent(db, team_id=OTHER_TEAM)
@@ -124,6 +129,7 @@ async def env(aweb_cloud_db, shared_test_pool):
         async with registry_app.router.lifespan_context(registry_app):
             registry = RegistryClient(
                 registry_url="http://registry.test", transport=httpx.ASGITransport(app=registry_app),
+                service_token=service_token,
             )
             try:
                 yield type("Env", (), {
@@ -160,8 +166,8 @@ async def _bindings(env, *, team_id=TEAM, installation_id=INSTALLATION, generati
 async def _hook_keys(db, *, purposes=("hook-event", "hook-delivery"), team_id=TEAM, digest=DIGEST):
     await db.execute(
         "INSERT INTO {{tables.team_app_keys}} (team_id, app_id, origin, digest, key_id, did_key, purposes)"
-        " VALUES ($1, 'logs', $2, $3, 'logs:hooks-1', $4, $5::TEXT[])",
-        team_id, ORIGIN, digest, _did(SigningKey.generate()), list(purposes),
+        " VALUES ($1, 'logs', $2, $3, $4, $5, $6::TEXT[])",
+        team_id, ORIGIN, digest, f"logs:{uuid4().hex[:8]}", _did(SigningKey.generate()), list(purposes),
     )
 
 
