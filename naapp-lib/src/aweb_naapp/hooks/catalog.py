@@ -1,7 +1,9 @@
 """The aweb.hooks catalog: each hook's class, producers and strict payload allowlist.
 
-``load_catalog`` reads the public catalog vector for a catalog version
-strictly: an unknown key at any level, a duplicate key, a float or a reference
+``packaged_catalog`` loads aweb.hooks v1 from the copy shipped in this package,
+which is byte for byte the public catalog vector, so an installed app needs no
+repository checkout. ``load_catalog`` reads a
+catalog file strictly: an unknown key at any level, a duplicate key, a float or a reference
 that does not resolve refuses the whole file. ``Catalog.validate`` then checks
 one event payload against its hook, in the fixed order the file's scheme
 states, and reports the first fault as ``PayloadRefused(code, field)``.
@@ -13,6 +15,8 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import cache
+from importlib.resources import files
 from typing import Any
 
 PAYLOAD_ERRORS = (
@@ -218,6 +222,12 @@ class Catalog:
             allowed = spec.command_classes[payload["command_class"]]
             if any(effect not in allowed for effect in payload["local_effects"]):
                 raise PayloadRefused("rule_violation", "local_effects")
+
+
+@cache
+def packaged_catalog() -> Catalog:
+    """The aweb.hooks v1 catalog shipped in this package."""
+    return load_catalog(files("aweb_naapp.hooks").joinpath("catalog-v1.json").read_bytes())
 
 
 def load_catalog(data: bytes) -> Catalog:
