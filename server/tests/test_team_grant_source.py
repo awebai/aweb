@@ -11,6 +11,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from aweb.app_registry import install_app
+from aweb_naapp.manifest import load_manifest
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKey
 from aweb_naapp.runtime.authorization import (
@@ -329,8 +330,10 @@ async def test_b1_maps_missing_to_403_and_unavailable_to_503(installed):
         certificate_id="unused",
         team_did_key="unused",
     )
-    tools = DeclaredTools.from_manifest(
-        {
+    manifest = load_manifest(
+        json.dumps({
+            "manifest_version": 1,
+            "app": {"id": IDENTITY.app_id, "version": "1.0", "origin": IDENTITY.origin},
             "tools": [
                 {
                     "name": "list",
@@ -339,8 +342,9 @@ async def test_b1_maps_missing_to_403_and_unavailable_to_503(installed):
                     "scopes": ["notebook:read"],
                 }
             ]
-        }
+        }).encode()
     )
+    tools = DeclaredTools.from_manifest(manifest)
 
     async def allow(*args):
         return True
@@ -349,6 +353,7 @@ async def test_b1_maps_missing_to_403_and_unavailable_to_503(installed):
         return await authorize_request(
             request,
             principal=principal,
+            caller="agent",
             tools=tools,
             grants=source,
             policy=allow,
