@@ -528,3 +528,58 @@ async def test_source_grant_union_is_scoped_and_atomic(uses, include_descendants
         bool((await uses.approvals.get(descendant[2].pending.approval.approval_id)).revoked_at)
         is include_descendants
     )
+
+
+@pytest.mark.parametrize("include_descendants", [False, True])
+async def test_replacement_union_preserves_current_root(uses, include_descendants):  # noqa: F811
+    await seed(uses)
+    root = SecretRecord.from_after(SECRET)
+    old_root = await request_child(uses, root)
+    derived, _ = await child(uses)
+    first_child = await request_child(uses, derived)
+    await approve(uses, first_child[2], "finance@acme.com")
+    other_secret, _ = await child(uses, secret_id="sec_other001")
+    unrelated = await request_child(uses, other_secret)
+    async with uses.world.db.transaction() as tx:
+        await records.set_active_version(tx, INSTALLATION_ID, TEAM, derived.secret_id, 2)
+    second_child = await request_child(uses, derived)
+    async with uses.world.db.transaction() as tx:
+        await records.set_active_version(tx, INSTALLATION_ID, TEAM, SECRET_ID, 5)
+    current_root = await request_child(uses, root)
+    descendant_ids = [derived.secret_id, derived.secret_id] if include_descendants else []
+
+    async def void(tx, installation=INSTALLATION_ID, team=TEAM):
+        return await use_approvals.void_use_approvals(
+            tx,
+            uses.approvals,
+            installation_id=installation,
+            team_id=team,
+            secret_id=SECRET_ID,
+            current_version=5,
+            revoked_by="owner",
+            descendant_secret_ids=descendant_ids,
+        )
+
+    expected = {old_root[2].pending.approval.approval_id}
+    if include_descendants:
+        expected.update(
+            item[2].pending.approval.approval_id for item in (first_child, second_child)
+        )
+    async with uses.world.db.transaction() as tx:
+        assert await void(tx, installation="other-installation") == []
+        assert await void(tx, team="other:example.com") == []
+    with pytest.raises(RuntimeError):
+        async with uses.world.db.transaction() as tx:
+            assert set(await void(tx)) == expected
+            raise RuntimeError("rollback")
+    for item in (old_root, first_child, second_child, current_root, unrelated):
+        assert (await uses.approvals.get(item[2].pending.approval.approval_id)).revoked_at is None
+    async with uses.world.db.transaction() as tx:
+        assert set(await void(tx)) == expected
+    assert (
+        await uses.approvals.get(current_root[2].pending.approval.approval_id)
+    ).revoked_at is None
+    assert (await uses.approvals.get(unrelated[2].pending.approval.approval_id)).revoked_at is None
+    for item in (old_root, first_child, second_child):
+        approval = await uses.approvals.get(item[2].pending.approval.approval_id)
+        assert bool(approval.revoked_at) is (item is old_root or include_descendants)

@@ -232,6 +232,13 @@ exactly one dispatch of that exact request.
   `PendingApproval`, which the app passes to `deliver` after the commit, so no
   link points at an approval that rolled back. Audit events go to the app's
   `AuditSink` inside the transaction of the change they record.
+- **Bulk locks.** `lock_many(tx, approval_ids)` holds existing approval rows in
+  ascending ID order until the supplied transaction ends, with no writes,
+  audit or request-digest advisory locks. Missing and duplicate IDs are harmless.
+  `revoke_many` takes these sorted locks itself. For several batches or a
+  confirmation plus containment, prelock the complete union before any individual
+  B2 call; take app authority and covering-record locks first. Sorting each
+  separate batch cannot order locks across the whole operation.
 - **Storage.** `ApprovalStore` is the interface; `PgApprovalStore(db)` keeps
   the records in the app's own pgdbm schema, and `migrate()` applies its
   migrations (module `aweb_naapp_approvals`).
