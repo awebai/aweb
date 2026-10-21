@@ -3,20 +3,28 @@ team-auth, its manifest and its health. Real AWID routes, real PostgreSQL."""
 
 from __future__ import annotations
 
+import hashlib
+import json
+import secrets
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import httpx
 import pytest
-from aweb_naapp.manifest import canonical_bytes
+from aweb_naapp.manifest import canonical_bytes, fill_manifest, load_manifest
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
+from aweb_naapp.runtime.app_keys import AppKeyError
 from aweb_naapp.runtime.authorization import DeclaredTool, Grant
 from aweb_naapp.runtime.health import CheckResult, HealthCheck
 from aweb_naapp.runtime.team_auth import Principal
-from aweb_naapp_testing import REGISTRY_URL, Member
+from aweb_naapp_testing import REGISTRY_URL, Member, attested
+from awid.did import did_from_public_key
 from fastapi import Request
+from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME, SecretsService, create_app
@@ -89,32 +97,57 @@ async def database_url(test_db_factory) -> str:
     return database.config.get_dsn()
 
 
+KEY_PURPOSES = {
+    "secrets:hook-event-1": ["hook-event"],
+    "secrets:hook-delivery-1": ["hook-delivery"],
+    "secrets:grant-read-1": ["app-grant-read"],
+}
+
+
+def _key_files(directory: Path) -> dict[str, Path]:
+    directory.mkdir(parents=True, exist_ok=True)
+    keys = {}
+    for number, kid in enumerate(KEY_PURPOSES):
+        path = directory / f"key-{number}"
+        path.write_text(secrets.token_hex(32) + "\n", encoding="utf-8")
+        path.chmod(0o600)
+        keys[kid] = path
+    return keys
+
+
+def _settings(database_url: str, directory: Path) -> SecretsSettings:
+    return SecretsSettings(
+        _env_file=None,
+        database_url=database_url,
+        public_origin=API,
+        app_id="secrets-test",
+        console_origin=CONSOLE,
+        awid_registry_url=REGISTRY_URL,
+        app_key_files=_key_files(directory),
+    )
+
+
 @asynccontextmanager
 async def running(
     registry, database_url: str, *, grants: InstalledTeams, kms_ok: bool = True
 ) -> AsyncIterator[Running]:
-    settings = SecretsSettings(
-        _env_file=None,
-        database_url=database_url,
-        public_origin=API,
-        console_origin=CONSOLE,
-        awid_registry_url=REGISTRY_URL,
-    )
-    service = create_app(
-        settings,
-        grants=grants,
-        policy=allow_all,
-        kms=kms_check(kms_ok),
-        awid_transport=registry.transport,
-    )
-    async with service.api_app.router.lifespan_context(service.api_app):
-        async with (
-            httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=API) as api,
-            httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=service), base_url=CONSOLE
-            ) as console,
-        ):
-            yield Running(service, api, console)
+    with TemporaryDirectory() as directory:
+        settings = _settings(database_url, Path(directory))
+        service = create_app(
+            settings,
+            grants=grants,
+            policy=allow_all,
+            kms=kms_check(kms_ok),
+            awid_transport=registry.transport,
+        )
+        async with service.api_app.router.lifespan_context(service.api_app):
+            async with (
+                httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=API) as api,
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=service), base_url=CONSOLE
+                ) as console,
+            ):
+                yield Running(service, api, console)
 
 
 async def test_the_database_holds_every_table_admission_reads(registry, database_url) -> None:
@@ -203,17 +236,43 @@ def test_every_tool_is_signed_with_team_auth_and_declares_its_scopes() -> None:
 
 def test_no_tool_handles_a_secret_value() -> None:
     names = {tool["name"] for tool in TOOLS}
-    assert names == {"list", "describe", "request", "run", "status", "cancel", "contain"}
+    assert names == {
+        "list",
+        "describe",
+        "request",
+        "run",
+        "status",
+        "cancel",
+        "contain",
+        "propose-change",
+        "activity",
+    }
 
 
 async def test_the_manifest_is_served_on_the_api_origin_only(registry, database_url) -> None:
     async with running(registry, database_url, grants=InstalledTeams({})) as app:
-        for path in ("/.well-known/aweb-app.json", "/aweb-app.json"):
+        for path in ("/manifests/v2.json", "/aweb-app.json"):
             response = await app.api.get(path)
             assert response.status_code == 200
             assert response.json()["tools"] == TOOLS
             assert response.json()["app"]["origin"] == API
             assert (await app.console.get(path)).status_code == 404
+        assert (await app.api.get("/.well-known/aweb-app.json")).status_code == 404
+        catalog = await app.api.get("/.well-known/aweb-app-versions.json")
+        assert catalog.status_code == 200
+        manifest = await app.api.get("/aweb-app.json")
+        assert catalog.json() == {
+            "catalog_version": 1,
+            "app_id": "secrets-test",
+            "variants": [
+                {
+                    "manifest_version": 2,
+                    "url": "/manifests/v2.json",
+                    "digest": "sha256:" + hashlib.sha256(manifest.content).hexdigest(),
+                }
+            ],
+        }
+        assert (await app.console.get("/.well-known/aweb-app-versions.json")).status_code == 404
 
 
 # --- Every tool is admitted only through team-auth ----------------------------
@@ -228,8 +287,12 @@ async def test_a_tool_admits_a_signed_installed_member_and_refuses_an_unsigned_r
         unsigned = await app.api.request(tool["method"], _path(tool))
         assert unsigned.status_code == 401
         admitted = await app.api.request(**_signed(member, tool))
-        assert admitted.status_code == 501, admitted.text
-        assert admitted.json()["detail"]["code"] == "not_implemented"
+        if tool["invocation_contexts"] == ["surface"]:
+            assert admitted.status_code == 403
+            assert admitted.json()["detail"]["code"] == "tool_context_denied"
+        else:
+            assert admitted.status_code == 501, admitted.text
+            assert admitted.json()["detail"]["code"] == "not_implemented"
 
 
 async def test_a_member_whose_team_has_not_installed_secrets_is_refused(
@@ -302,7 +365,7 @@ async def test_health_reports_the_commit_the_database_kms_and_the_outbox(
         response = await app.api.get("/health")
         assert response.status_code == 200
         body = response.json()
-        assert body["service"] == "secrets"
+        assert body["service"] == "secrets-test"
         assert body["build"] == {"git_sha": COMMIT}
         assert body["checks"] == {
             "database": {"ok": True},
@@ -320,17 +383,11 @@ async def test_the_service_is_not_ready_without_kms(registry, database_url) -> N
         assert (await app.console.get("/ready")).status_code == 503
 
 
-async def test_a_failing_check_serves_no_error_detail(registry, database_url) -> None:
+async def test_a_failing_check_serves_no_error_detail(registry, database_url, tmp_path) -> None:
     async def failing_kms() -> CheckResult:
         raise RuntimeError("KMSInvalidStateException: arn:aws:kms:eu-west-1:000000000000:key/x")
 
-    settings = SecretsSettings(
-        _env_file=None,
-        database_url=database_url,
-        public_origin=API,
-        console_origin=CONSOLE,
-        awid_registry_url=REGISTRY_URL,
-    )
+    settings = _settings(database_url, tmp_path)
     service = create_app(
         settings,
         grants=InstalledTeams({}),
@@ -347,3 +404,97 @@ async def test_a_failing_check_serves_no_error_detail(registry, database_url) ->
             assert response.json()["checks"]["kms"] == {"ok": False}
             assert response.json()["checks"]["database"] == {"ok": False}
         assert set((await api.get("/ready")).json()["checks"]) == {"database", "outbox", "kms"}
+
+
+async def test_the_served_v2_bytes_come_from_the_template_and_configured_keys(
+    registry, database_url
+) -> None:
+    async with running(registry, database_url, grants=InstalledTeams({})) as app:
+        runtime = app.service.runtime
+        keys = {
+            kid: did_from_public_key(
+                bytes(SigningKey(bytes.fromhex(path.read_text().strip())).verify_key)
+            )
+            for kid, path in runtime.settings.app_key_files.items()
+        }
+        expected = fill_manifest(MANIFEST, app_id="secrets-test", origin=API, did_keys=keys)
+        response = await app.api.get("/aweb-app.json")
+        assert response.content == expected == runtime.manifest_bytes
+        resolved = load_manifest(response.content)
+        assert resolved.manifest_version == 2
+        assert {kid: list(purposes) for kid, _, purposes in resolved.app_keys} == KEY_PURPOSES
+        assert {kid: did for kid, did, _ in resolved.app_keys} == keys
+
+
+async def test_a_verified_dashboard_member_reaches_every_declared_tool(
+    registry, database_url, member
+) -> None:
+    issuer = SigningKey.generate()
+    custodian = "console.secrets.test"
+    await registry.add_custody(member, custodian_id=custodian, issuer=issuer)
+    async with running(
+        registry, database_url, grants=InstalledTeams({member.team_id: ALL_SCOPES})
+    ) as app:
+        for tool in TOOLS:
+            signed = _signed(member, tool)
+            signed["headers"] = attested(
+                member,
+                signed["headers"],
+                issuer=issuer,
+                custodian_id=custodian,
+                channel="dashboard",
+            )
+            response = await app.api.request(**signed)
+            assert response.status_code == 501
+            assert response.json()["detail"]["code"] == "not_implemented"
+
+
+def test_the_template_declares_only_signed_tools_and_the_two_hook_productions() -> None:
+    assert MANIFEST["manifest_version"] == 2
+    assert {key["kid"]: key["purposes"] for key in MANIFEST["app_keys"]} == KEY_PURPOSES
+    assert all("did_key" not in key for key in MANIFEST["app_keys"])
+    for tool in TOOLS:
+        assert tool.get("auth", "") == ""
+        assert tool["invocation_contexts"] == (
+            ["surface"] if tool["name"] in {"propose-change", "activity"} else ["agent", "surface"]
+        )
+    hooks = MANIFEST["hooks"]
+    assert hooks["registration_version"] == 1
+    assert hooks.get("registrations", []) == []
+    assert {item["hook"] for item in hooks["productions"]} == {
+        "post-secret-use-hook",
+        "post-governance-hook",
+    }
+    assert all(
+        item["catalog"] == {"id": "aweb.hooks", "version": 1} for item in hooks["productions"]
+    )
+
+
+def test_app_key_configuration_is_taken_from_the_secrets_environment(tmp_path, monkeypatch) -> None:
+    keys = _key_files(tmp_path)
+    monkeypatch.setenv(
+        "SECRETS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in keys.items()})
+    )
+    assert SecretsSettings(_env_file=None).app_key_files == keys
+
+
+def test_an_undeclared_configured_key_is_refused_before_startup(tmp_path) -> None:
+    settings = _settings("postgresql://localhost/unused", tmp_path)
+    settings.app_key_files["secrets:undeclared"] = next(iter(settings.app_key_files.values()))
+    with pytest.raises(AppKeyError):
+        create_app(settings, grants=InstalledTeams({}), policy=allow_all, kms=kms_check(True))
+
+
+@pytest.mark.parametrize("kid", KEY_PURPOSES)
+def test_every_declared_key_must_be_configured(tmp_path, kid: str) -> None:
+    settings = _settings("postgresql://localhost/unused", tmp_path)
+    settings.app_key_files.pop(kid)
+    with pytest.raises(AppKeyError):
+        create_app(settings, grants=InstalledTeams({}), policy=allow_all, kms=kms_check(True))
+
+
+def test_the_hosted_identity_is_refused_at_another_reachable_origin(tmp_path) -> None:
+    settings = _settings("postgresql://localhost/unused", tmp_path)
+    settings.app_id = "secrets"
+    with pytest.raises(ValueError):
+        create_app(settings, grants=InstalledTeams({}), policy=allow_all, kms=kms_check(True))

@@ -233,6 +233,60 @@ async def test_login_responses_carry_the_console_headers(console: Console) -> No
         assert response.headers["referrer-policy"] == "no-referrer"
 
 
+@pytest.mark.parametrize(
+    ("path", "body", "field", "error_type"),
+    [
+        (
+            "/login/options",
+            {"scope": {"unexpected": "submitted-value"}},
+            "scope",
+            "string_type",
+        ),
+        (
+            "/login",
+            {"scope": ["submitted-value"], "assertion": {}},
+            "scope",
+            "string_type",
+        ),
+        (
+            "/login",
+            {"scope": OWNER_A, "assertion": "submitted-value"},
+            "assertion",
+            "dict_type",
+        ),
+        (
+            "/login",
+            {"scope": OWNER_A, "assertion": ["submitted-value"]},
+            "assertion",
+            "dict_type",
+        ),
+        (
+            "/login",
+            {"scope": OWNER_A, "unrelated": "submitted-value"},
+            "assertion",
+            "missing",
+        ),
+    ],
+    ids=[
+        "options-scope",
+        "login-scope",
+        "assertion-string",
+        "assertion-list",
+        "missing-assertion",
+    ],
+)
+async def test_login_validation_returns_only_location_and_type(
+    console: Console, path: str, body: dict[str, Any], field: str, error_type: str
+) -> None:
+    async with _client(_app(console, _limiter(console))) as client:
+        response = await client.post(path, json=body)
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": [{"loc": ["body", field], "type": error_type}]}
+    assert "set-cookie" not in response.headers
+    assert response.headers["cache-control"] == "no-store"
+
+
 async def _closed(console: Console) -> int:
     return await console.db.fetch_value(
         "SELECT count(*) FROM {{tables.console_sessions}} WHERE closed_at IS NOT NULL"
