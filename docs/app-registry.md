@@ -1,5 +1,7 @@
 # App registry and team grants
 
+Status: **experimental**.
+
 The registry records each team's installation identity, pinned manifest bytes,
 origin, generation, scopes and state. It is optional: core mail, chat and
 coordination do not require an app installation.
