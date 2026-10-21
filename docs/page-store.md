@@ -155,6 +155,30 @@ Widget state accepts only `message`, `progress` and `busy`. Unsent form input,
 focus and scroll belong to the renderer's local state. The host clears the
 renderer before any actor or authority change.
 
+`query_widget(scope, principal, widget_id=..., bind=...,
+expected_page_rev=None)` uses that same query engine for admitted members. An
+omitted revision selects the current page revision while holding its lock;
+`read_widget` still requires the renderer's expected revision.
+
+`query_widget_on(tx, scope, creator_id=..., widget_id=..., bind=...,
+link_id=..., expected_page_rev=None, projection=...)` serves a checked live link
+on the caller's `TransactionManager`. The host supplies the verified link ID,
+canonical creator identity and checked projection, and checks current creator
+membership, session, revocation and expiry on every page. Missing projection
+is refused. Hold the link lock until the query completes, with no intervening
+network calls after acquiring the store's page lock.
+
+The checked projection intersects current row/field ACLs in authorized SQL
+before filtering, sorting, counting or pagination. `count` is the complete
+matching authorized set, with at most 200 records per page. Only this checked
+query path accepts `record_ids: "*"`, for live read-only grants whose minted
+collection and fields remain fixed while rows follow current creator access.
+Named lists remain literal, including `[]` for zero rows, count zero and no
+cursor. Cursors additionally bind the link ID and complete checked projection;
+they cannot cross links, creators or projection changes. A revision change
+invalidates pagination and the host restarts from the first page. N5 refuses
+dynamic-row grants with actions; writes keep their separate admission checks.
+
 `read_projection_on(tx, scope, creator_id=..., projection=...,
 expected_page_rev=None, source_snapshot=None)` loads bounded collection data on
 the caller's content transaction and requires a pgdbm `TransactionManager`
@@ -166,6 +190,8 @@ so the revision and current ACL remain stable while the projection is loaded.
 Current row/field ACLs intersect the explicit named collection/record/field
 projection; SQL uses the same authorized-record projection as widget reads.
 Schema annotation redaction is shared with ordinary reads and exports.
+Named row lists accept zero through 200 IDs. Empty means no rows; wildcard
+markers are refused here and by both full-page pinned snapshot entry points.
 
 The result is `{page_rev, collections: [{id, schema_version, schema, records}]}`;
 each record contains only `id`, `rev` and its projected `value`. Assets are

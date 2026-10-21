@@ -1040,7 +1040,7 @@ class PageStore(LifecycleMixin):
         ]
 
     @staticmethod
-    def _projection_entries(projection):
+    def _projection_entries(projection, *, allow_live=False):
         if not isinstance(projection, Mapping) or set(projection) - {"collections", "assets"}:
             raise StoreError("schema_invalid")
         entries = projection.get("collections")
@@ -1060,9 +1060,12 @@ class PageStore(LifecycleMixin):
             seen.add(cid)
             for name, maximum in (("record_ids", 200), ("fields", 64)):
                 values = entry[name]
+                if name == "record_ids" and allow_live and values == "*":
+                    continue
+                minimum = 0 if name == "record_ids" else 1
                 if (
                     not isinstance(values, (list, tuple))
-                    or not 1 <= len(values) <= maximum
+                    or not minimum <= len(values) <= maximum
                     or any(not isinstance(v, str) or not v or v == "*" for v in values)
                     or len(set(values)) != len(values)
                 ):
@@ -1293,138 +1296,239 @@ class PageStore(LifecycleMixin):
         return result
 
     async def read_widget(self, scope, principal, *, widget_id, expected_page_rev, bind):
-        if not isinstance(bind, dict):
-            raise StoreError("schema_invalid", details=[{"pointer": "/bind"}])
         async with self.db.transaction() as tx:
             document, access, actor = await self._load(tx, scope, principal)
-            self._precondition(document, expected_page_rev)
-            widget = next((w for w in widgets(document["layout"]) if w["id"] == widget_id), None)
-            if (
-                widget is None
-                or not widget.get("bind")
-                or bind.get("collection") != widget["bind"]["collection"]
+            return await self._query_widget_on(
+                tx,
+                scope,
+                document,
+                access,
+                actor,
+                widget_id=widget_id,
+                expected_page_rev=expected_page_rev,
+                bind=bind,
+            )
+
+    async def query_widget(self, scope, principal, *, widget_id, bind, expected_page_rev=None):
+        """Query a stored widget at the current revision, or a requested revision."""
+        async with self.db.transaction() as tx:
+            document, access, actor = await self._load(tx, scope, principal)
+            return await self._query_widget_on(
+                tx,
+                scope,
+                document,
+                access,
+                actor,
+                widget_id=widget_id,
+                expected_page_rev=expected_page_rev,
+                bind=bind,
+                allow_current=True,
+            )
+
+    async def query_widget_on(
+        self,
+        tx,
+        scope,
+        *,
+        creator_id,
+        widget_id,
+        bind,
+        link_id,
+        expected_page_rev=None,
+        projection=None,
+    ):
+        """Read a checked live link while its caller holds the link/session lock.
+
+        creator_id, link_id and projection come from checked current link context,
+        never request JSON. The host rechecks membership/lifecycle on every page.
+        """
+        _require_transaction(tx)
+        if (
+            not isinstance(creator_id, str)
+            or not creator_id
+            or not isinstance(link_id, str)
+            or not link_id
+            or projection is None
+        ):
+            raise StoreError("schema_invalid")
+        self._projection_entries(projection, allow_live=True)
+        document, access, actor = await self._load_actor(tx, scope, creator_id, shared=True)
+        return await self._query_widget_on(
+            tx,
+            scope,
+            document,
+            access,
+            actor,
+            widget_id=widget_id,
+            expected_page_rev=expected_page_rev,
+            bind=bind,
+            allow_current=True,
+            projection=projection,
+            link_id=link_id,
+        )
+
+    async def _query_widget_on(
+        self,
+        tx,
+        scope,
+        document,
+        access,
+        actor,
+        *,
+        widget_id,
+        expected_page_rev,
+        bind,
+        allow_current=False,
+        projection=None,
+        link_id=None,
+    ):
+        if allow_current and expected_page_rev is None:
+            expected_page_rev = document["rev"]
+        self._precondition(document, expected_page_rev)
+        if not isinstance(bind, dict):
+            raise StoreError("schema_invalid", details=[{"pointer": "/bind"}])
+        widget = next((w for w in widgets(document["layout"]) if w["id"] == widget_id), None)
+        if (
+            widget is None
+            or not widget.get("bind")
+            or bind.get("collection") != widget["bind"]["collection"]
+        ):
+            raise StoreError("query_denied", 403)
+        definition = next(c for c in document["collections"] if c["id"] == bind["collection"])
+        fields = access.visible_fields(actor, definition)
+        record_ids = None
+        if projection is not None:
+            entries = self._projection_entries(projection, allow_live=True)
+            selected = next((e for e in entries if e["collection"] == definition["id"]), None)
+            if selected is None:
+                raise StoreError("action_denied", 403)
+            fields &= set(selected["fields"])
+            record_ids = None if selected["record_ids"] == "*" else list(selected["record_ids"])
+        probe = copy.deepcopy(document)
+        probe["layout"] = [
+            {
+                "id": widget_id,
+                "type": "table",
+                "props": {
+                    "columns": [{"field": f, "label": f, "format": "text"} for f in sorted(fields)]
+                },
+                "bind": bind,
+            }
+        ]
+        probe["widget_state"] = {}
+        validated(probe)
+        if {f.get("field") for f in bind.get("all", []) + bind.get("sort", [])} - fields:
+            raise StoreError("query_denied", 403)
+        for predicate in bind.get("all", []):
+            field_schema = definition["schema"]["properties"][predicate["field"]]
+            values = (
+                predicate.get("value", [])
+                if predicate.get("op") == "in"
+                else [predicate.get("value")]
+            )
+            if not isinstance(values, list) or not all(
+                Draft202012Validator(field_schema).is_valid(value) for value in values
             ):
-                raise StoreError("query_denied", 403)
-            definition = next(c for c in document["collections"] if c["id"] == bind["collection"])
-            fields = access.visible_fields(actor, definition)
-            probe = copy.deepcopy(document)
-            probe["layout"] = [
-                {
-                    "id": widget_id,
-                    "type": "table",
-                    "props": {
-                        "columns": [
-                            {"field": f, "label": f, "format": "text"} for f in sorted(fields)
-                        ]
-                    },
-                    "bind": bind,
-                }
-            ]
-            probe["widget_state"] = {}
-            validated(probe)
-            if {f.get("field") for f in bind.get("all", []) + bind.get("sort", [])} - fields:
-                raise StoreError("query_denied", 403)
-            for predicate in bind.get("all", []):
-                field_schema = definition["schema"]["properties"][predicate["field"]]
-                values = (
-                    predicate.get("value", [])
-                    if predicate.get("op") == "in"
-                    else [predicate.get("value")]
-                )
-                if not isinstance(values, list) or not all(
-                    Draft202012Validator(field_schema).is_valid(value) for value in values
-                ):
-                    raise StoreError("schema_invalid", details=[{"pointer": "/bind/all"}])
-            query = {
-                "widget_id": widget_id,
-                "bind": {k: v for k, v in bind.items() if k != "cursor"},
-            }
-            digest = hashlib.sha256(canonical(query).encode()).hexdigest()
-            offset = 0
-            if bind.get("cursor"):
-                cursor = await tx.fetch_one(
-                    "SELECT row_offset FROM {{tables.page_cursors}} WHERE token=$1 AND scope=$2 AND principal=$3 AND page_rev=$4 AND query_hash=$5 AND expires_at>NOW()",
-                    bind["cursor"],
-                    scope.key,
-                    actor,
-                    document["rev"],
-                    digest,
-                )
-                if cursor is None:
-                    raise StoreError("cursor_invalid", 409)
-                offset = cursor["row_offset"]
-            args = self._record_access_args(scope, definition, access, actor)
-
-            def parameter(value):
-                args.append(value)
-                return f"${len(args)}"
-
-            clauses, orders = [], []
-            for predicate in bind.get("all", []):
-                field = parameter(predicate["field"])
-                expression = f"COALESCE(record->'value'->{field}::text, 'null'::jsonb)"
-                if predicate["op"] == "in":
-                    values = parameter([canonical(value) for value in predicate["value"]])
-                    clauses.append(f"{expression} = ANY({values}::jsonb[])")
-                else:
-                    operator = {
-                        "eq": "=",
-                        "ne": "<>",
-                        "lt": "<",
-                        "lte": "<=",
-                        "gt": ">",
-                        "gte": ">=",
-                    }[predicate["op"]]
-                    value = parameter(canonical(predicate["value"]))
-                    clauses.append(f"{expression} {operator} {value}::jsonb")
-            filter_args = list(args)
-            for order in bind.get("sort", []):
-                field = parameter(order["field"])
-                direction = "ASC" if order["direction"] == "asc" else "DESC"
-                orders.append(f"record->'value'->{field}::text {direction} NULLS FIRST")
-            orders.append("record->>'id' ASC")
-            where = " AND ".join(clauses) or "TRUE"
-            authorized = AUTHORIZED_RECORDS
-            count = await tx.fetch_value(
-                authorized + "SELECT count(*) FROM authorized WHERE " + where, *filter_args
+                raise StoreError("schema_invalid", details=[{"pointer": "/bind/all"}])
+        query = {
+            "widget_id": widget_id,
+            "bind": {k: v for k, v in bind.items() if k != "cursor"},
+        }
+        if link_id is not None:
+            query.update(link_id=link_id, projection=projection)
+        digest = hashlib.sha256(canonical(query).encode()).hexdigest()
+        offset = 0
+        if bind.get("cursor"):
+            cursor = await tx.fetch_one(
+                "SELECT row_offset FROM {{tables.page_cursors}} WHERE token=$1 AND scope=$2 AND principal=$3 AND page_rev=$4 AND query_hash=$5 AND expires_at>NOW()",
+                bind["cursor"],
+                scope.key,
+                actor,
+                document["rev"],
+                digest,
             )
-            limit = bind.get("limit", 200)
-            # Only order expressions may add parameters absent from count().
-            # PostgreSQL requires every supplied parameter to appear, so bind
-            # order fields separately in the paginated statement below.
-            query_sql = (
-                authorized
-                + "SELECT record FROM authorized WHERE "
-                + where
-                + " ORDER BY "
-                + ",".join(orders)
+            if cursor is None:
+                raise StoreError("cursor_invalid", 409)
+            offset = cursor["row_offset"]
+        args = self._record_access_args(
+            scope,
+            definition,
+            access,
+            actor,
+            fields=fields if projection is not None else None,
+            record_ids=record_ids,
+        )
+
+        def parameter(value):
+            args.append(value)
+            return f"${len(args)}"
+
+        clauses, orders = [], []
+        for predicate in bind.get("all", []):
+            field = parameter(predicate["field"])
+            expression = f"COALESCE(record->'value'->{field}::text, 'null'::jsonb)"
+            if predicate["op"] == "in":
+                values = parameter([canonical(value) for value in predicate["value"]])
+                clauses.append(f"{expression} = ANY({values}::jsonb[])")
+            else:
+                operator = {
+                    "eq": "=",
+                    "ne": "<>",
+                    "lt": "<",
+                    "lte": "<=",
+                    "gt": ">",
+                    "gte": ">=",
+                }[predicate["op"]]
+                value = parameter(canonical(predicate["value"]))
+                clauses.append(f"{expression} {operator} {value}::jsonb")
+        filter_args = list(args)
+        for order in bind.get("sort", []):
+            field = parameter(order["field"])
+            direction = "ASC" if order["direction"] == "asc" else "DESC"
+            orders.append(f"record->'value'->{field}::text {direction} NULLS FIRST")
+        orders.append("record->>'id' ASC")
+        where = " AND ".join(clauses) or "TRUE"
+        authorized = AUTHORIZED_RECORDS
+        count = await tx.fetch_value(
+            authorized + "SELECT count(*) FROM authorized WHERE " + where, *filter_args
+        )
+        limit = bind.get("limit", 200)
+        # Only order expressions may add parameters absent from count().
+        # PostgreSQL requires every supplied parameter to appear, so bind
+        # order fields separately in the paginated statement below.
+        query_sql = (
+            authorized
+            + "SELECT record FROM authorized WHERE "
+            + where
+            + " ORDER BY "
+            + ",".join(orders)
+        )
+        limit_arg, offset_arg = parameter(limit), parameter(offset)
+        selected = [
+            decoded(r["record"])
+            for r in await tx.fetch_all(
+                query_sql + f" LIMIT {limit_arg} OFFSET {offset_arg}", *args
             )
-            limit_arg, offset_arg = parameter(limit), parameter(offset)
-            selected = [
-                decoded(r["record"])
-                for r in await tx.fetch_all(
-                    query_sql + f" LIMIT {limit_arg} OFFSET {offset_arg}", *args
-                )
-            ]
-            next_cursor = None
-            if offset + limit < count:
-                next_cursor = secrets.token_urlsafe(32)
-                await tx.execute(
-                    "INSERT INTO {{tables.page_cursors}} VALUES($1,$2,$3,$4,$5,$6,NOW()+INTERVAL '15 minutes')",
-                    next_cursor,
-                    scope.key,
-                    actor,
-                    document["rev"],
-                    digest,
-                    offset + limit,
-                )
-            await self._fence(scope)
-            return {
-                "page_rev": document["rev"],
-                "records": selected,
-                "next_cursor": next_cursor,
-                "count": count,
-            }
+        ]
+        next_cursor = None
+        if offset + limit < count:
+            next_cursor = secrets.token_urlsafe(32)
+            await tx.execute(
+                "INSERT INTO {{tables.page_cursors}} VALUES($1,$2,$3,$4,$5,$6,NOW()+INTERVAL '15 minutes')",
+                next_cursor,
+                scope.key,
+                actor,
+                document["rev"],
+                digest,
+                offset + limit,
+            )
+        await self._fence(scope)
+        return {
+            "page_rev": document["rev"],
+            "records": selected,
+            "next_cursor": next_cursor,
+            "count": count,
+        }
 
     async def _purge_content(self, scope, tombstone_rev):
         async with self.db.transaction() as tx:
