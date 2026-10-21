@@ -17,13 +17,13 @@ import asyncio
 import socket
 from collections.abc import AsyncIterator
 from datetime import timedelta
-from pathlib import Path
 from typing import Annotated, Any
 
 import pytest
 import uvicorn
 from fastapi import APIRouter, Depends, FastAPI, Response
 from playwright.async_api import Browser, CDPSession, Page, async_playwright
+from playwright.async_api import Error as PlaywrightError
 
 from aweb_naapp.console import (
     ClientIdentity,
@@ -156,13 +156,15 @@ async def service(test_db_factory, registry) -> AsyncIterator[Console]:
 @pytest.fixture
 async def browser() -> AsyncIterator[Browser]:
     async with async_playwright() as playwright:
-        executable = Path(playwright.chromium.executable_path)
-        if not executable.exists():
+        try:
+            browser = await playwright.chromium.launch()
+        except PlaywrightError as error:
+            if "Executable doesn't exist" not in str(error):
+                raise
             pytest.fail(
-                f"Chromium for Playwright is not installed at {executable}. The candidate-gate "
-                "image installs it; locally, run `uv run playwright install chromium`."
+                "Chromium for Playwright is not installed. The candidate-gate image installs "
+                "its headless shell; locally, run `uv run playwright install chromium`."
             )
-        browser = await playwright.chromium.launch()
         try:
             yield browser
         finally:
