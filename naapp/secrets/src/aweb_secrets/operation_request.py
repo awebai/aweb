@@ -130,7 +130,7 @@ def render_operation(
     if idempotency and idempotency_key:
         sent.append((idempotency["header"], idempotency_key))
 
-    header_allow = sorted({name.lower() for name in fixed} | allowed)
+    header_allow = sorted({name.lower() for name in fixed} | allowed | reserved)
     destination = parse_destination(
         {
             "host": after["url"]["host"],

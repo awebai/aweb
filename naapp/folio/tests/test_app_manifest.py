@@ -6,8 +6,9 @@ import json
 import re
 from urllib.parse import quote
 
-from aweb_naapp.manifest import canonical_bytes, read_manifest_bytes
+from aweb_naapp.manifest import canonical_bytes
 from fastapi.testclient import TestClient
+from manifest_config import served_manifest
 
 import folio.api as folio_api
 from folio.aweb_manifest import MANIFEST, MANIFEST_PATH
@@ -215,12 +216,10 @@ def _interpret(manifest: dict, verb: str, args: dict) -> dict:
 def test_committed_manifest_is_canonical_and_matches_source() -> None:
     committed = MANIFEST_PATH.read_bytes()
 
-    # The committed file is the byte-stable source of truth the cli team digest-pins.
+    # The committed file is the canonical template; deployments fill its keys.
     assert committed == canonical_bytes(MANIFEST)
     # Canonical form is idempotent: re-canonicalizing the committed bytes is a no-op.
     assert committed == canonical_bytes(json.loads(committed))
-    # The reader the route uses returns those exact bytes.
-    assert read_manifest_bytes(MANIFEST_PATH) == committed
 
 
 def test_manifest_conforms_to_m1_1_schema() -> None:
@@ -246,17 +245,12 @@ def test_manifest_conforms_to_m1_1_schema() -> None:
 
 def test_manifest_declares_doc_changed_event_and_emit_key() -> None:
     events = {event["type"]: event for event in MANIFEST.get("events", [])}
-    assert "folio/doc.changed" in events
-    doc_changed = events["folio/doc.changed"]
+    assert "doc.changed" in events
+    doc_changed = events["doc.changed"]
     assert doc_changed["default_delivery_intent"] == "wake"
     assert doc_changed["description"]
-    # folio self-custodies its emit key; the manifest declares the PUBLIC did_key.
-    assert MANIFEST["event_emitters"] == [
-        {
-            "kid": "folio:emit-1",
-            "did_key": "did:key:z6MkhddL2VEzVjKeh36xFg4ULcfWN4Q9VgK6oQ3mdCNJEPWv",
-        }
-    ]
+    # The template declares the kid; deployment configuration supplies its key.
+    assert MANIFEST["event_emitters"] == [{"kid": "folio:emit-1"}]
 
 
 def test_conformance_validator_rejects_host_injecting_paths() -> None:
@@ -307,8 +301,8 @@ def test_interpreted_spec_append_present_asset_image() -> None:
     assert theme_set["mutation"] is True
 
 
-def test_well_known_route_serves_raw_committed_bytes() -> None:
-    committed = MANIFEST_PATH.read_bytes()
+def test_well_known_route_serves_canonical_filled_bytes() -> None:
+    expected = canonical_bytes(served_manifest("https://folio.aweb.ai"))
 
     # Public discovery doc: no certificate presented, still 200.
     response = _client().get("/.well-known/aweb-app.json")
@@ -316,5 +310,5 @@ def test_well_known_route_serves_raw_committed_bytes() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
     assert response.headers["x-content-type-options"] == "nosniff"
-    assert response.content == committed
-    assert hashlib.sha256(response.content).hexdigest() == hashlib.sha256(committed).hexdigest()
+    assert response.content == expected
+    assert hashlib.sha256(response.content).hexdigest() == hashlib.sha256(expected).hexdigest()

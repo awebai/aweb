@@ -438,7 +438,7 @@ def updated(**changes: Any) -> dict[str, Any]:
 
 RESHAPED = [
     {"kind": "header", "kind_params": {"name": "X-Api-Key", "prefix": ""}},
-    {"backend": "1password"},
+    {"backend": "onepassword"},
 ]
 
 
@@ -607,7 +607,7 @@ async def test_first_ingest_commits_before_reshape_checks_history(world: World) 
 
 
 @pytest.mark.parametrize(
-    "changed", [{"kind": "basic", "kind_params": {}}, {"backend": "1password"}]
+    "changed", [{"kind": "basic", "kind_params": {}}, {"backend": "onepassword"}]
 )
 async def test_ingest_rechecks_the_record_after_waiting_for_reshape(world: World, changed) -> None:
     await enrol_owner(world, ALICE, "alice@acme.com")
@@ -688,7 +688,7 @@ async def test_ingest_without_a_parent_requires_an_initial_create_candidate(worl
     [
         {"kind": "query", "kind_params": {"param": "token"}},
         {"kind": "header", "kind_params": {"name": "X-Other-Key", "prefix": ""}},
-        {"backend": "1password"},
+        {"backend": "onepassword"},
     ],
 )
 @pytest.mark.parametrize("stage", ["draft", "confirm"])
