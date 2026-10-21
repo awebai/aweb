@@ -55,6 +55,7 @@ class OperationRequest:
     projection: list[str] | None
     content_types: list[str]
     token_issuing: bool
+    result_handling: str
     amz_allowed: list[str]
 
 
@@ -129,7 +130,7 @@ def render_operation(
     if idempotency and idempotency_key:
         sent.append((idempotency["header"], idempotency_key))
 
-    header_allow = sorted({name.lower() for name in fixed} | allowed)
+    header_allow = sorted({name.lower() for name in fixed} | allowed | reserved)
     destination = parse_destination(
         {
             "host": after["url"]["host"],
@@ -157,5 +158,6 @@ def render_operation(
         projection=template.projection,
         content_types=list(after["response"]["content_types"]),
         token_issuing=template.token_issuing,
+        result_handling=after["result_handling"],
         amz_allowed=[name for name in header_allow if name.startswith(_AMZ_PREFIX)],
     )

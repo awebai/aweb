@@ -150,6 +150,23 @@ async def test_the_request_is_frozen_at_mint(world: World):
     assert isinstance(raised.value.__context__, asyncpg.exceptions.RaiseError)
 
 
+async def test_an_approval_never_outlives_the_expiry_its_request_shows(world: World):
+    shown = world.approvals.now() + timedelta(minutes=3)
+    _, approval = await mint(world, expires_at=shown)
+    assert approval.expires_at == shown
+    approval = await decide(world, approval)
+    world.clock.advance(timedelta(minutes=3))
+    assert await refusal(world.approvals.admit(approval.approval_id, REQUEST, "op-1")) is (
+        Refusal.EXPIRED
+    )
+
+
+async def test_the_policy_ttl_still_bounds_a_later_shown_expiry(world: World):
+    later = world.approvals.now() + timedelta(hours=1)
+    _, approval = await mint(world, expires_at=later)
+    assert approval.expires_at == world.approvals.now() + timedelta(minutes=10)
+
+
 async def test_link_tokens_are_stored_only_as_verifier_hashes(world: World):
     await mint(world)
     token = world.mailbox.last_token()
@@ -342,6 +359,26 @@ async def test_retrieving_the_same_admitted_attempt_is_not_a_new_dispatch(world:
     await world.approvals.admit(approval.approval_id, REQUEST, "op-1")
     again = await world.approvals.admit(approval.approval_id, REQUEST, "op-1")
     assert not again.first
+    assert (await world.audit.kinds()).count("dispatch_admitted") == 1
+
+
+async def test_retrieve_returns_only_the_stable_result_of_the_same_admitted_attempt(
+    world: World,
+):
+    approval = await approved(world)
+    assert await world.approvals.retrieve(approval.approval_id, REQUEST, "op-1") is None
+    await world.approvals.admit(approval.approval_id, REQUEST, "op-1")
+    retrieved = await world.approvals.retrieve(approval.approval_id, REQUEST, "op-1")
+    assert retrieved is not None and not retrieved.first and not retrieved.may_send
+    assert await world.approvals.retrieve(approval.approval_id, REQUEST, "op-2") is None
+    other = {**REQUEST, "source_version": 2}
+    assert await refusal(world.approvals.retrieve(approval.approval_id, other, "op-1")) is (
+        Refusal.REQUEST_MISMATCH
+    )
+    await world.approvals.record_outcome(approval.approval_id, "op-1", DispatchOutcome.NOT_SENT)
+    assert await world.approvals.retrieve(approval.approval_id, REQUEST, "op-1") is None
+    record = await world.approvals.get(approval.approval_id)
+    assert record.dispatch_outcome is DispatchOutcome.NOT_SENT
     assert (await world.audit.kinds()).count("dispatch_admitted") == 1
 
 

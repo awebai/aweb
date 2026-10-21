@@ -442,6 +442,7 @@ def test_authorization_follows_the_served_manifest_for_a_self_hosted_origin(tmp_
         _env_file=None,
         database_url="postgresql://localhost/unused",
         public_origin="http://self.test",
+        app_id="self-example",
     )
     runtime = NaappRuntime(
         settings,

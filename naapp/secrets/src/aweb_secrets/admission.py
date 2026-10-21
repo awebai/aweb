@@ -12,7 +12,8 @@ transaction, and every step refuses rather than guesses:
 4. the secret must be enabled and confirmed, and a grant to the principal or one
    of its secrets roles must cover the request;
 5. that grant's policy must admit it: the action, the time window, the
-   attestation predicates, then one token from each rate bucket.
+   attestation predicates, then one token from each of its rate buckets, taken
+   through the shared :mod:`aweb_naapp.ratelimit`.
 
 Candidate grants are tried in a fixed order, grants to the principal before
 grants to its roles, each by grant id. The first that admits is used and only
@@ -29,6 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from aweb_naapp import ratelimit
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired, claim
 from aweb_naapp.roles import PrincipalKey, hold_role, principal_key, roles_of
 from aweb_naapp.runtime.attestation import VerifiedAttestation
@@ -45,19 +47,47 @@ from aweb_secrets import records
 from aweb_secrets.grant import GrantRecord, is_secrets_role
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
-from aweb_secrets.rate import RateLimited, charge, lock_buckets
 
 # How long a request id keeps answering with its first intent (§11.2).
 IDEMPOTENCY_RETENTION = timedelta(days=30)
 
 
-class AdmissionRefused(Exception):
-    """The request is not admitted; ``code`` is the frozen refusal code."""
+RATE_LIMITED = "policy_rate_limited"
 
-    def __init__(self, code: str, status: int = 403) -> None:
+
+class AdmissionRefused(Exception):
+    """The request is not admitted; ``code`` is the frozen refusal code.
+
+    A rate refusal carries ``retry_after_s``, the whole seconds until the
+    policy's buckets hold a token again; any other refusal carries 0.
+    """
+
+    def __init__(self, code: str, status: int = 403, *, retry_after_s: int = 0) -> None:
         super().__init__(code)
         self.code = code
         self.status = status
+        self.retry_after_s = retry_after_s
+
+
+def _charges(
+    installation: AdmittedInstallation, secret_id: str, principal_did: str, policy: Policy
+) -> list[ratelimit.Charge]:
+    """One charge per bucket of the policy's rate (§4.4), keyed by the policy as well,
+    so admissions under one policy never refill another policy's buckets."""
+    charges = []
+    for bucket in policy.body["rate"]:
+        parts = [installation.installation_id, policy.digest, secret_id]
+        if bucket["per"] == "principal_secret":
+            parts.append(principal_did)
+        charges.append(
+            ratelimit.Charge(
+                bucket=f"secrets.{bucket['per']}",
+                key="\x1f".join(parts),
+                capacity=bucket["capacity"],
+                window_s=bucket["window_s"],
+            )
+        )
+    return charges
 
 
 @dataclass(frozen=True)
@@ -247,14 +277,6 @@ async def _admit_once(
         if policy is None:
             raise RuntimeError("a grant references a policy that cannot be read")
         policies.append(policy)
-    await lock_buckets(
-        tx,
-        installation.installation_id,
-        stored.record.secret_id,
-        key.principal_did,
-        [(policy.digest, policy.body["rate"]) for policy in policies],
-        now=now,
-    )
 
     first_refusal: AdmissionRefused | None = None
     for candidate, policy in zip(candidates, policies, strict=True):
@@ -263,22 +285,20 @@ async def _admit_once(
             refusal = "policy_window_closed"
         if refusal is None and not policy.attestation_satisfied(attestation):
             refusal = "attestation_unavailable"
+        retry_after_s = 0
         if refusal is None:
-            try:
-                await charge(
-                    tx,
-                    installation.installation_id,
-                    stored.record.secret_id,
-                    key.principal_did,
-                    policy.digest,
-                    policy.body["rate"],
-                    now=now,
-                )
-            except RateLimited:
-                refusal = RateLimited.code
+            charges = _charges(installation, stored.record.secret_id, key.principal_did, policy)
+            # Candidates take their buckets one after another. The installation
+            # fence's row lock, taken first, serializes every admission that can
+            # charge these buckets, which are all keyed by this installation, so
+            # their lock order across candidates cannot cycle.
+            decision = await ratelimit.take(tx, charges, now=now) if charges else None
+            if decision is not None and decision.throttled:
+                refusal = RATE_LIMITED
+                retry_after_s = decision.retry_after_s
         if refusal is not None:
             first_refusal = first_refusal or AdmissionRefused(
-                refusal, RateLimited.status if refusal == RateLimited.code else 403
+                refusal, 429 if refusal == RATE_LIMITED else 403, retry_after_s=retry_after_s
             )
             continue
         approval_required = policy.body["approval"] == "per_use" or stored.record.approve_only
