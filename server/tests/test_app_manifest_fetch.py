@@ -63,9 +63,9 @@ class Origin:
 
 
 @pytest_asyncio.fixture
-async def origin(tmp_path):
+async def origin(tmp_path_factory):
     host = local_address()
-    certificates = make_certificates(tmp_path, [NAME], [host])
+    certificates = make_certificates(tmp_path_factory.mktemp("manifest-origin"), [NAME], [host])
     dns = DnsServer(records={(NAME, "A"): [host]})
     routes = {}
 

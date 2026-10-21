@@ -13,8 +13,9 @@ from aweb.installations import install_verified_manifest_on
 from aweb.service_errors import ConflictError
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
-from fastapi import FastAPI, Request
+from fastapi import Request
 from nacl.signing import SigningKey
+from tests.test_app_events_http import _build_events_app
 
 TEAM = store_fixture.TEAM
 origin = store_fixture.origin
@@ -46,8 +47,7 @@ async def install_version(db, origin, version, did, expected=None):
 
 
 async def emit_probe(db, signing):
-    app = FastAPI()
-    app.state.public_origin = "http://test"
+    app = _build_events_app(db)
 
     @app.post("/probe")
     async def probe(request: Request):
@@ -85,7 +85,8 @@ async def test_version_switch_keeps_event_revocation_authoritative(db, origin, v
     signing = SigningKey.generate()
     did = did_from_public_key(bytes(signing.verify_key))
     first = await install_version(db, origin, versions[0], did)
-    assert (await emit_probe(db, signing)).status_code == 200
+    accepted = await emit_probe(db, signing)
+    assert accepted.status_code == 200, accepted.text
     if revocation == "before":
         await revoke_old_representation(db, versions[0])
         assert (await emit_probe(db, signing)).status_code == 403
