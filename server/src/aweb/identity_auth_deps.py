@@ -14,7 +14,7 @@ from aweb.awid_error_handling import (
     awid_registry_not_configured_exception,
 )
 from aweb.auth_context import GrantContext
-from aweb.auth_metrics import count_legacy_request_auth
+from aweb.request_auth_replay import admit_verified_request
 from aweb.team_auth_envelope import identity_auth_signature_payload
 from aweb.config import require_registered_certificates
 from aweb.deps import get_db
@@ -95,8 +95,8 @@ async def resolve_identity_auth(request: Request) -> IdentityAuth:
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature") from exc
 
     if not did_aw:
-        if envelope.version == 1:
-            count_legacy_request_auth(request, "identity")
+        await admit_verified_request(request, envelope=envelope, did_key=did_key,
+                                     signature_b64=signature_b64, family="identity")
         return IdentityAuth(did_key=did_key, did_aw=None, address=None)
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
@@ -121,6 +121,9 @@ async def resolve_identity_auth(request: Request) -> IdentityAuth:
     if not resolution or resolution.current_did_key != did_key:
         raise HTTPException(status_code=401, detail="did:aw does not match Authorization did:key")
 
+    await admit_verified_request(request, envelope=envelope, did_key=did_key,
+                                 signature_b64=signature_b64, family="identity")
+
     address = None
     try:
         addresses = await registry_client.list_did_addresses(did_aw)
@@ -130,8 +133,6 @@ async def resolve_identity_auth(request: Request) -> IdentityAuth:
         first = addresses[0]
         address = f"{first.domain}/{first.name}"
 
-    if envelope.version == 1:
-        count_legacy_request_auth(request, "identity")
     return IdentityAuth(did_key=did_key, did_aw=did_aw, address=address)
 
 

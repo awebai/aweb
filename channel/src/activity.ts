@@ -1,9 +1,9 @@
+import { createClaudeChannelClient } from "./client.js";
 // Agent activity for a Claude Code session (docs/agent-activity.md, "Emitters"):
 // the plugin owns the session's emitter and listens for its hooks.
 import { unlinkSync } from "node:fs";
 import {
   createActivityEmitter,
-  createChannelClient,
   endActivity,
   type ActivityEmitter,
   type AgentConfig,
@@ -36,7 +36,7 @@ export async function startClaudeActivity(
   const log = options.log ?? ((line: string) => console.error(line));
   try {
     if (typeof process.getuid !== "function") throw new Error("this platform has no per-user socket directory");
-    const emitter = createActivityEmitter(config, createChannelClient(config), { workRoot: workdir, log });
+    const emitter = createActivityEmitter(config, createClaudeChannelClient(config), { workRoot: workdir, log });
     const dir = options.dir ?? activitySocketDir(process.getuid());
     ensureOwnerOnlyDir(dir);
     removeDeadSockets(dir);

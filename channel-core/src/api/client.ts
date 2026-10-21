@@ -3,6 +3,7 @@ import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import { readBoundedJSON, readSafeErrorExcerpt } from "./response.js";
 import { computeDIDKey } from "../identity/did.js";
+import { clientMetadataHeaders, type ClientMetadata } from "../client_metadata.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -54,6 +55,7 @@ export class APIClient {
   constructor(
     private baseURL: string,
     private auth: APIClientAuth,
+    private clientMetadata?: ClientMetadata,
   ) {}
 
   hasTeamCertificateAuth(teamID: string): boolean {
@@ -110,6 +112,7 @@ export class APIClient {
     const bodyText = body === undefined ? "" : JSON.stringify(body);
     const headers: Record<string, string> = {
       Accept: "application/json",
+      ...clientMetadataHeaders(this.clientMetadata),
       ...this.authHeaders(method, path, bodyText),
     };
     if (noCache) headers["Cache-Control"] = "no-cache";
@@ -142,6 +145,7 @@ export class APIClient {
       redirect: "error",
       headers: {
         Accept: "text/event-stream",
+        ...clientMetadataHeaders(this.clientMetadata),
         "Cache-Control": "no-cache",
         ...this.authHeaders("GET", path, ""),
       },

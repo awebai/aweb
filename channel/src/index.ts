@@ -11,7 +11,6 @@ import {
   type AgentEvent,
   type ChannelAwakening,
   CHANNEL_CORE_SECURITY_CONTRACT,
-  createChannelClient,
   createRegistryResolver,
   dispatchAgentEvent,
   formatEventStreamState,
@@ -32,6 +31,8 @@ import {
   startChannelLoop,
 } from "@awebai/channel-core";
 import { startClaudeActivity } from "./activity.js";
+import { CHANNEL_CLIENT_METADATA, createClaudeChannelClient } from "./client.js";
+export { createClaudeChannelClient, CHANNEL_CLIENT_METADATA } from "./client.js";
 
 // Re-exported so the built plugin bundle carries the channel-core security
 // contract sentinel that the freshness gate (check-package-dist.mjs) asserts.
@@ -97,7 +98,7 @@ export function createChannelRegistryResolver(
   config: RegistryIdentityConfig,
   resolveTxt?: ResolveTxt,
 ) {
-  return createRegistryResolver(config, resolveTxt);
+  return createRegistryResolver(config, resolveTxt, CHANNEL_CLIENT_METADATA);
 }
 
 export interface ChannelTraceSink {
@@ -174,7 +175,7 @@ async function main() {
     return;
   }
 
-  const client = createChannelClient(config);
+  const client = createClaudeChannelClient(config);
   // Fail closed: a corrupt/unreadable trust store must abort startup, never
   // silently start with a discarded (empty) store.
   const pinStore = await loadSessionPinStore((message) => {

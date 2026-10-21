@@ -22,6 +22,7 @@ interface InitLine {
   oatsBin?: string;
   awCommand?: string;
   paused?: boolean;
+  clientVersion?: string;
   bindings: BindingConfig[];
 }
 
@@ -154,9 +155,10 @@ async function start(init: InitLine): Promise<void> {
     const config = await resolveConfig(init.home, { identityHome: binding.identity_home, teamID: binding.team_id });
     const grantScopes = new Set(config.grantScopes || []);
     bindingCapabilities.set(binding.binding_id, { grant: config.authMode === "grant", scopes: grantScopes });
-    const client = createChannelClient(config);
+    const metadata = { name: "aweb-wake", version: init.clientVersion || "dev" };
+    const client = createChannelClient(config, metadata);
     const pinStore = binding.pin_store_path ? await loadPinStore(binding.pin_store_path) : await loadPinStore();
-    const trust = new SenderTrustManager(client, createRegistryResolver(config), config.teamID, config.did, config.stableID);
+    const trust = new SenderTrustManager(client, createRegistryResolver(config, undefined, metadata), config.teamID, config.did, config.stableID);
     const deliveryStore = await DeliveryStore.load(binding.delivery_store_path);
     consumers.push(consumeAgentEvents({
       client,

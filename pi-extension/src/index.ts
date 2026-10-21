@@ -1,9 +1,10 @@
+import { PI_CLIENT_METADATA, createPiChannelClient } from "./client.js";
+export { createPiChannelClient, PI_CLIENT_METADATA } from "./client.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   type ActivityEmitter,
   createActivityEmitter,
   endActivity,
-  createChannelClient,
   createRegistryResolver,
   type ChannelAwakening,
   formatEventStreamState,
@@ -55,7 +56,7 @@ export function createPiRegistryResolver(
   config: RegistryIdentityConfig,
   resolveTxt?: ResolveTxt,
 ) {
-  return createRegistryResolver(config, resolveTxt);
+  return createRegistryResolver(config, resolveTxt, PI_CLIENT_METADATA);
 }
 
 /**
@@ -345,7 +346,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
     let client;
     try {
       config = await loadChannelConfig(ctx.cwd);
-      client = createChannelClient(config);
+      client = createPiChannelClient(config);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       pi.sendMessage({

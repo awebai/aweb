@@ -4,6 +4,7 @@ import { appendFile, mkdir, open, readFile, rename, rm } from "node:fs/promises"
 import { lock } from "proper-lockfile";
 
 import { APIClient } from "./api/client.js";
+import { identifiedFetch, type ClientMetadata } from "./client_metadata.js";
 import { streamAgentEvents, formatEventStreamState, type AgentEvent, type EventStreamState, type EventStreamObserver } from "./api/events.js";
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
@@ -346,8 +347,9 @@ export interface RegistryIdentityConfig {
 export function createRegistryResolver(
   config: RegistryIdentityConfig,
   resolveTxt?: ResolveTxt,
+  clientMetadata?: ClientMetadata,
 ): RegistryResolver {
-  return new RegistryResolver(fetch, resolveTxt, undefined, {
+  return new RegistryResolver(identifiedFetch(clientMetadata), resolveTxt, undefined, {
     fallbackRegistryURL: resolveRegistryFallbackURL(config.registryURL),
     identityAddress: config.address,
   });
@@ -362,7 +364,7 @@ export function createChannelClient(config: {
   teamCertificateHeader: string;
   authMode?: "team" | "grant";
   grantID?: string;
-}): APIClient {
+}, clientMetadata?: ClientMetadata): APIClient {
   const client = new APIClient(config.baseURL, {
     did: config.did,
     stableID: config.stableID,
@@ -371,7 +373,7 @@ export function createChannelClient(config: {
     teamCertificateHeader: config.teamCertificateHeader,
     authMode: config.authMode,
     grantID: config.grantID,
-  });
+  }, clientMetadata);
   if (config.authMode !== "grant" && !client.hasTeamCertificateAuth(config.teamID)) {
     throw new Error(`selected active team ${config.teamID} is missing certificate signing authentication`);
   }
