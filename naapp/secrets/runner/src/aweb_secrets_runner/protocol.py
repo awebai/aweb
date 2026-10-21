@@ -275,7 +275,7 @@ def verify_assignment(
         or (issued - now).total_seconds() > 120
     ):
         raise Refused("assignment_expired")
-    journal.accept(assignment["dispatch_id"], expires_at=expires.timestamp(), now=now.timestamp())
+    journal.accept(assignment["dispatch_id"], expires_at=expires.timestamp())
     return VerifiedAssignment(canonical(doc))
 
 

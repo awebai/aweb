@@ -49,10 +49,10 @@ def test_request_has_exact_public_signature():
 @pytest.mark.parametrize("vector", VECTORS["assignments"], ids=lambda v: v["name"])
 def test_assignment_vectors(vector, tmp_path):
     runner = vector["runner"]
-    journal = Journal(tmp_path / "journal.sqlite3")
     now = datetime.fromisoformat(vector["now"])
+    journal = Journal(tmp_path / "journal.sqlite3", clock=now.timestamp)
     for dispatch in runner["journal"]:
-        journal.accept(dispatch, expires_at=now.timestamp() + 300, now=now.timestamp())
+        journal.accept(dispatch, expires_at=now.timestamp() + 300)
     kwargs = dict(
         origin=runner["origin"],
         runner_id=runner["runner_id"],
@@ -89,7 +89,9 @@ def test_sealing_vectors(vector):
 def test_invalid_assignments_do_not_poison_journal(tmp_path):
     good = VECTORS["assignments"][0]
     wrong = next(v for v in VECTORS["assignments"] if v["name"] == "forged-signature")
-    journal = Journal(tmp_path / "journal.sqlite3")
+    journal = Journal(
+        tmp_path / "journal.sqlite3", clock=datetime.fromisoformat(good["now"]).timestamp
+    )
     kwargs = {k: good["runner"][k] for k in ("origin", "runner_id", "service_kid")}
     kwargs.update(now=datetime.fromisoformat(good["now"]), journal=journal)
     with pytest.raises(Refused, match="assignment_invalid"):

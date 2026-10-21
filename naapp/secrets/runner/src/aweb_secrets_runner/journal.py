@@ -3,7 +3,8 @@
 import os
 import sqlite3
 import stat
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -11,8 +12,9 @@ from .errors import Refused
 
 
 class Journal:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, clock: Callable[[], float] = time.time):
         self.path = path
+        self.clock = clock
         try:
             directory = path.parent.lstat()
             if (
@@ -58,12 +60,13 @@ class Journal:
         finally:
             connection.close()
 
-    def accept(self, dispatch_id: str, *, expires_at: float, now: float) -> None:
-        if now >= expires_at:
-            raise Refused("assignment_expired")
+    def accept(self, dispatch_id: str, *, expires_at: float) -> None:
         try:
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
+                now = self.clock()
+                if now >= expires_at:
+                    raise Refused("assignment_expired")
                 connection.execute("DELETE FROM dispatches WHERE expires_at <= ?", (now,))
                 try:
                     connection.execute(
