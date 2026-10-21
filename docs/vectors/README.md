@@ -15,8 +15,8 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 `docs/vectors/*.json` is the only public protocol-vector authority for the 36
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
-references consume these root bytes directly or through the one classified
-package copy below. An unclassified hand-maintained copy is forbidden even when
+references consume these root bytes directly or through the two classified
+package copies below. An unclassified hand-maintained copy is forbidden even when
 its bytes happen to match; `make test-vector-provenance` rejects a returning
 mirror or unclassified consumer-local link.
 
@@ -25,6 +25,7 @@ The other tracked vector directories have disjoint, explicit purposes:
 | Directory | Classification |
 |---|---|
 | `cli/go/internal/conformance/vectors/` | Consumer-local Go fixtures plus the byte-enforced `team-auth-envelope-v2.json` package copy linked by the currently pinned naapp reference generator. |
+| `naapp-lib/src/aweb_naapp/hooks/catalog-v1.json` | The byte-enforced package copy of `hook-catalog-v1.json`, shipped in the naapp-lib wheel so an installed app loads the catalog (`aweb_naapp.hooks.catalog.packaged_catalog`) with no repository checkout. |
 | `naapp/folio/tests/vectors/` | App test snapshots; `app-emit-credential-v1.json` is byte-checked against its Go consumer authority. |
 | `naapp/library/tests/vectors/` | App snapshots plus Library blueprint input/output goldens; the app-emit snapshot is byte-checked. |
 | `naapp/secrets/vectors/` | secrets' app-internal contracts: the `aweb.secrets.use-approval/1` request object under B2's prefix, and the transition-to-hook-action table checked against `hook-catalog-v1.json`. Each file is consumed by a test in `naapp/secrets/tests/`. |

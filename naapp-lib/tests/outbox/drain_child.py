@@ -1,7 +1,7 @@
 """A drain process for the outbox crash test: it materializes one target, then
 blocks inside the send until the test kills it.
 
-Usage: drain_child.py <database dsn> <file to create once sending>
+Usage: drain_child.py <database dsn> <schema, or "" for none> <file to create once sending>
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ from pgdbm import AsyncDatabaseManager, DatabaseConfig
 from aweb_naapp.outbox import RetryPolicy, StoredEvent, Target, drain
 
 
-async def main(dsn: str, sending: Path) -> None:
-    db = AsyncDatabaseManager(DatabaseConfig(connection_string=dsn))
+async def main(dsn: str, schema: str, sending: Path) -> None:
+    db = AsyncDatabaseManager(DatabaseConfig(connection_string=dsn, schema=schema or None))
     await db.connect()
 
     async def resolver(event: StoredEvent) -> list[Target]:
@@ -38,4 +38,4 @@ async def main(dsn: str, sending: Path) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main(sys.argv[1], Path(sys.argv[2])))
+    asyncio.run(main(sys.argv[1], sys.argv[2], Path(sys.argv[3])))

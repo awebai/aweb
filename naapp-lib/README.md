@@ -52,6 +52,14 @@ denied address, and sends a request only to the destination it matches,
 through one pinned, verified connection. Redirects come back as responses, no proxy is read from
 the environment, and a failure is classed as not sent or of unknown outcome.
 
+### Database schema
+
+An app's tables live in `<PREFIX>DB_SCHEMA` (default `public`). The runtime pins
+every connection's search_path to it, so the app works whatever its database
+role's default search_path is. A new app should set its own schema: apps that
+share one database also share the runtime's own tables (the outbox, observed
+principals) unless their schemas differ.
+
 ### App keys
 
 An app names its signing keys by kid, as key files:
