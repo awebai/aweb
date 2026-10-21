@@ -308,6 +308,10 @@ def _check(after: Any) -> None:
         handling == "deny" or after["token_issuing"],
         "only a token-issuing operation handles its result",
     )
+    _require(
+        handling != "withhold" or after["response"]["projection"] is not None,
+        "a withheld result returns only its projection, so withhold needs one",
+    )
     if handling == "store_as_secret":
         _check_store_as_secret(after["store_as_secret"])
     else:

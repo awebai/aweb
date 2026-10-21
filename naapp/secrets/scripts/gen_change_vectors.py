@@ -491,6 +491,16 @@ refused_records = [
         mutated_records(setitem(["changes", 5, "after", "result_handling"], "withhold")),
     ),
     (
+        "operation-withhold-without-projection",
+        mutated_records(
+            lambda c: (
+                setitem(["changes", 5, "after", "token_issuing"], True)(c),
+                setitem(["changes", 5, "after", "result_handling"], "withhold")(c),
+                setitem(["changes", 5, "after", "response", "projection"], None)(c),
+            )
+        ),
+    ),
+    (
         "grant-template-role-outside-secrets",
         mutated_records(setitem(["changes", 3, "after", "subject"], {"role": "logs.reader"})),
     ),
