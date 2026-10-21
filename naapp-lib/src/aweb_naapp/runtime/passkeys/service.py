@@ -68,6 +68,7 @@ from aweb_naapp.runtime.approvals import (
     ApproverRetirement,
     Assurance,
     AuthenticationFailed,
+    Candidate,
     DeliveryStatus,
     DispatchOutcome,
     Evidence,
@@ -201,7 +202,7 @@ class PasskeyLogin:
 
 @dataclass(frozen=True)
 class PasskeyEvidence:
-    """The restricted record behind an `auth_evidence_ref`."""
+    """The restricted record behind a decision's `decided_by.evidence_ref`."""
 
     evidence_ref: str
     subject: str
@@ -362,7 +363,9 @@ class Passkeys:
             raise DesignationRefused("the first approver needs app-role.designate")
         if previous is not None and kind != RECOVER_ACT:
             raise DesignationRefused("replacing an approver needs app-credential.recover")
-        approver = Approver(subject=str(uuid.uuid4()), subject_type=SUBJECT_TYPE, contact=contact)
+        approver = Approver(
+            scope=scope, subject=str(uuid.uuid4()), subject_type=SUBJECT_TYPE, contact=contact
+        )
         effective_at = now
         notified: list[str] = []
         if previous is not None:
@@ -500,12 +503,9 @@ class Passkeys:
         if not admission.first:
             raise DesignationRefused("the owner approval has already been used")
         approval = await approvals.get(approval_id)
-        assert approval is not None
-        scope = await tx.fetch_value(
-            "SELECT scope FROM {{tables.passkey_approvers}} WHERE subject = $1",
-            approval.approver_subject,
-        )
-        if scope is None or not self._owner_scopes(scope):
+        assert approval is not None and approval.decided_by is not None
+        decider = approval.decided_by
+        if not self._owner_scopes(decider.scope):
             raise DesignationRefused("the approval was not decided by an owner")
         await approvals.record_outcome(
             approval_id,
@@ -516,8 +516,8 @@ class Passkeys:
         )
         return OwnerApproval(
             approval_id=approval_id,
-            approver_subject=approval.approver_subject,
-            approver_scope=scope,
+            approver_subject=decider.subject,
+            approver_scope=decider.scope,
             transaction_id=await _transaction_id(tx),
         )
 
@@ -570,7 +570,10 @@ class Passkeys:
             notice = Notice(NoticeKind.RECOVERY_STARTED, scope, current["effective_at"])
             notices = tuple((contact, notice) for contact in sorted({r["contact"] for r in rows}))
         approver = Approver(
-            subject=current["subject"], subject_type=SUBJECT_TYPE, contact=current["contact"]
+            scope=scope,
+            subject=current["subject"],
+            subject_type=SUBJECT_TYPE,
+            contact=current["contact"],
         )
         return Designation(
             approver=approver,
@@ -653,29 +656,36 @@ class Passkeys:
 
     # The directory
 
-    async def designated_approver(self, policy: ActionPolicy) -> Approver | None:
-        """The current approver for the policy's scope, once in effect and enrolled."""
+    async def designated_approver(self, scope: str) -> Approver | None:
+        """The scope's current approver, once in effect and enrolled."""
         row = await self.db.fetch_one(
             f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact "
             "FROM {{tables.passkey_approvers}} a "
             f"WHERE scope = $1 AND {_CURRENT} AND EXISTS ("
             "SELECT 1 FROM {{tables.passkey_credentials}} c "
             "WHERE c.subject = a.subject AND c.revoked_at IS NULL)",
-            policy.approver_scope,
+            scope,
             self._clock(),
         )
         if row is None:
             return None
-        return Approver(subject=row["subject"], subject_type=SUBJECT_TYPE, contact=row["contact"])
+        return Approver(
+            scope=scope, subject=row["subject"], subject_type=SUBJECT_TYPE, contact=row["contact"]
+        )
 
-    async def is_current(self, approver_subject: str, policy: ActionPolicy) -> bool:
+    async def candidates(self, policy: ActionPolicy, request: Mapping[str, Any]) -> list[Approver]:
+        """The current approver of each of the policy's scopes that has one."""
+        found = [await self.designated_approver(scope) for scope in policy.approver_scopes]
+        return [approver for approver in found if approver is not None]
+
+    async def is_current(self, scope: str, subject: str) -> bool:
         return bool(
             await self.db.fetch_value(
                 "SELECT EXISTS (SELECT 1 FROM {{tables.passkey_approvers}} "
                 f"WHERE subject = $1 AND {_CURRENT} AND scope = $3)",
-                approver_subject,
+                subject,
                 self._clock(),
-                policy.approver_scope,
+                scope,
             )
         )
 
@@ -699,7 +709,8 @@ class Passkeys:
 
     async def _usable_enrolment(self, link_token: str) -> dict[str, Any]:
         row = await self.db.fetch_one(
-            "SELECT e.enrolment_id, e.subject, e.expires_at, e.revoked_at, e.used_at, a.contact "
+            "SELECT e.enrolment_id, e.subject, e.expires_at, e.revoked_at, e.used_at, "
+            "a.contact, a.scope "
             "FROM {{tables.passkey_enrolments}} e JOIN {{tables.passkey_approvers}} a "
             "ON a.subject = e.subject "
             "WHERE e.verifier_sha256 = $1 AND a.superseded_at IS NULL",
@@ -855,7 +866,10 @@ class Passkeys:
                 tx,
             )
         return Approver(
-            subject=enrolment["subject"], subject_type=SUBJECT_TYPE, contact=enrolment["contact"]
+            scope=enrolment["scope"],
+            subject=enrolment["subject"],
+            subject_type=SUBJECT_TYPE,
+            contact=enrolment["contact"],
         )
 
     # Assertions
@@ -964,27 +978,33 @@ class Passkeys:
         return evidence_ref
 
     async def approval_options(
-        self, approval: Approval, purpose: Purpose, task_answer_ref: str | None
+        self,
+        approval: Approval,
+        candidate: Candidate,
+        purpose: Purpose,
+        task_answer_ref: str | None,
     ) -> Mapping[str, Any]:
-        if approval.approver_subject_type != SUBJECT_TYPE:
-            raise AuthenticationFailed("approver is not an app-local passkey holder")
-        if not await self._active_credentials(approval.approver_subject):
-            raise AuthenticationFailed("approver has no current passkey")
+        """Assertion options for one candidate, listing only their passkeys."""
+        if candidate.subject_type != SUBJECT_TYPE:
+            raise AuthenticationFailed("candidate is not an app-local passkey holder")
+        if not await self._active_credentials(candidate.subject):
+            raise AuthenticationFailed("candidate has no current passkey")
         nonce = secrets.token_bytes(32)
-        challenge = challenge_binding(approval, purpose, nonce, task_answer_ref)
+        challenge = challenge_binding(approval, candidate, purpose, nonce, task_answer_ref)
         await self._issue_challenge(
             challenge,
             purpose.value,
-            approval.approver_subject,
+            candidate.subject,
             nonce,
             approval_id=approval.approval_id,
             task_answer_ref=task_answer_ref,
         )
-        return await self._assertion_options(approval.approver_subject, challenge)
+        return await self._assertion_options(candidate.subject, challenge)
 
     async def verify_approval_assertion(
         self,
         approval: Approval,
+        candidate: Candidate,
         purpose: Purpose,
         proof: Mapping[str, Any],
         task_answer_ref: str | None,
@@ -997,17 +1017,18 @@ class Passkeys:
         if (
             issued is None
             or issued["approval_id"] != approval.approval_id
-            or issued["subject"] != approval.approver_subject
+            or issued["subject"] != candidate.subject
             or issued["task_answer_ref"] != task_answer_ref
-            or challenge_binding(approval, purpose, issued["nonce"], task_answer_ref) != challenge
+            or challenge_binding(approval, candidate, purpose, issued["nonce"], task_answer_ref)
+            != challenge
         ):
             raise AuthenticationFailed("assertion does not answer this challenge")
         evidence_ref = await self._verify_assertion(
-            approval.approver_subject, challenge, proof, purpose, approval, task_answer_ref
+            candidate.subject, challenge, proof, purpose, approval, task_answer_ref
         )
         return Evidence(
             assurance=Assurance.PASSKEY,
-            subject=approval.approver_subject,
+            subject=candidate.subject,
             subject_type=SUBJECT_TYPE,
             evidence_ref=evidence_ref,
         )
@@ -1151,17 +1172,22 @@ class PasskeyAuthenticator:
         self._passkeys = passkeys
 
     async def challenge(
-        self, approval: Approval, purpose: Purpose, task_answer_ref: str | None
+        self,
+        approval: Approval,
+        candidate: Candidate,
+        purpose: Purpose,
+        task_answer_ref: str | None,
     ) -> Mapping[str, Any]:
-        return await self._passkeys.approval_options(approval, purpose, task_answer_ref)
+        return await self._passkeys.approval_options(approval, candidate, purpose, task_answer_ref)
 
     async def verify(
         self,
         approval: Approval,
+        candidate: Candidate,
         purpose: Purpose,
         proof: Mapping[str, Any],
         task_answer_ref: str | None,
     ) -> Evidence:
         return await self._passkeys.verify_approval_assertion(
-            approval, purpose, proof, task_answer_ref
+            approval, candidate, purpose, proof, task_answer_ref
         )
