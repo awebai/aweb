@@ -73,7 +73,7 @@ obj("NarrowStopAck", {"version": enum("aweb-chat-narrow-stop-ack-v1"), "session_
 obj("VerifiedPresence", {"version": enum("aweb-verified-presence-v1"), "subject": participant, "platform": platform, "scope": ref("PresenceScope"), "mode": enum("native"), "operation": enum("register", "replace", "remove"), "expected_generation": "uint", "request_id": "uuid", "intent_hash": "hash", "authorization_revision": "opaque", "expires_at": "timestamp"})
 obj("NativeOperationRequest", {"version": enum("aweb-native-operation-intent-v1"), "operation_id": "uuid", "agent": "did", "session_id": "uuid", "input_id": "uuid", "input_hash": "hash", "owner": enum("native", "aweb"), "expected_generation": "uint", "expected_fence": "uint", "operation": enum("claim", "start", "renew", "complete", "reconcile", "resolve"), "audience": "text", "signer": "did", "signing_key_id": "didkey", "issued_at": "timestamp", "expires_at": "timestamp"}, {"evidence_hash": "hash", "decision": enum("reuse_reply", "resume_proved_safe", "retry_duplicate_risk", "keep_blocked"), "owner_authorization": ref("SignedArtifact")})
 obj("MessageView", {"kind": kind, "message_id": "uuid", "envelope": "text", "envelope_hash": "hash", "author": ref("AuthorProjection")}, {"conversation_id": "uuid", "acceptance": ref("SignedArtifact")})
-obj("NativePlaintext", {"from": "text", "from_did": "didkey", "to": "text", "to_did": "didkey", "type": kind, "subject": "string", "body": "string", "timestamp": "timestamp"}, {"message_id": "uuid", "conversation_id": "uuid", "from_stable_id": "didaw", "to_stable_id": "didaw", "priority": enum("low", "normal", "high", "urgent"), "wait_seconds": "uint", "reply_to": "text", "sender_leaving": "bool", "hang_on": "bool", "via": "platform_kind"})
+obj("NativePlaintext", {"from": "text", "from_did": "didkey", "to": "string", "to_did": "didkey_list", "type": kind, "subject": "string", "body": "string", "timestamp": "timestamp"}, {"message_id": "uuid", "conversation_id": "uuid", "from_stable_id": "didaw", "to_stable_id": "didaw_list", "priority": enum("low", "normal", "high", "urgent"), "wait_seconds": "uint", "reply_to": "text", "sender_leaving": "bool", "hang_on": "bool", "via": "platform_kind"})
 obj("NativeV2Content", {"inner_version": {"integer_const": 2}, "kind": kind, "message_id": "uuid", "conversation_id": "string", "created_at": "timestamp", "from": "json_object", "recipients": arr("json_object"), "body": "string"}, {"subject": "string", "attachments": arr("json_object"), "reply_to_message_id": "uuid", "via": "platform_kind"})
 
 obj("ManagedPlaintext", {"version": enum("aweb-managed-chat-plaintext-v1"), "type": enum("chat"), "message_id": "uuid", "conversation_id": "uuid", "group_context": ref("GroupContext"), "recipients": arr(participant), "body": "string", "signer": "did", "signing_key_id": "didkey", "created_at": "timestamp"}, {"via": "platform_kind", "reply_to_message_id": "uuid"})
@@ -101,7 +101,7 @@ COMMIT = 'commitment:'+'11'*32
 
 def sample(rule, depth=0):
     if isinstance(rule, str):
-        return {'did':DID, 'didaw':DID, 'didkey':DIDKEY, 'uuid':UUID, 'hash':HASH, 'commitment':COMMIT, 'timestamp':'2026-10-21T00:00:00Z', 'uint':0, 'positive_uint':1, 'limit':100, 'bool':True, 'json_object':{}, 'string':'', 'platform_kind':'telegram', 'opaque':'vector', 'text':'café <>& ☃', 'signature':base64.b64encode(bytes(64)).decode().rstrip('=')}[rule]
+        return {'did':DID, 'didaw':DID, 'didkey':DIDKEY, 'didkey_list':DIDKEY, 'didaw_list':DID, 'uuid':UUID, 'hash':HASH, 'commitment':COMMIT, 'timestamp':'2026-10-21T00:00:00Z', 'uint':0, 'positive_uint':1, 'limit':100, 'bool':True, 'json_object':{}, 'string':'', 'platform_kind':'telegram', 'opaque':'vector', 'text':'café <>& ☃', 'signature':base64.b64encode(bytes(64)).decode().rstrip('=')}[rule]
     if 'enum' in rule:return rule['enum'][0]
     if 'integer_const' in rule:return rule['integer_const']
     if 'ref' in rule:return sample_object(rule['ref'])
@@ -120,6 +120,7 @@ def sample_object(name):
     if name=='SignedArtifact':
         v['signed_payload']='{}';v['signature']=base64.b64encode(key.sign(b'{}').signature).decode().rstrip('=')
     if name=='PageResult':v['has_more']=False
+    if name=='NativePlaintext':v['to']=sample('text')
     if name=='NativeV2Content':v['subject']=''
     return v
 
@@ -158,6 +159,20 @@ for name,schema,v in [
 ]:
     canonical=json.dumps(v,sort_keys=True,ensure_ascii=False,separators=(',',':'))
     valid.append({'name':name,'schema':schema,'value':v,'canonical':canonical,'sha256':'sha256:'+hashlib.sha256(canonical.encode()).hexdigest(),'signature':base64.b64encode(key.sign(canonical.encode()).signature).decode().rstrip('=')})
+for k in ("mail", "chat"):
+    for via in (None, "telegram"):
+        v=sample_object("NativePlaintext");v["type"]=k
+        if k=="mail":v.update(to="",to_did="",to_stable_id="")
+        else:v.update(to="alice,bob",to_did=",".join(sorted([DIDKEY,DIDKEY+"2"])),to_stable_id=",".join(sorted([DID,DID+"-second"])))
+        if via:v["via"]=via
+        canonical=json.dumps(v,sort_keys=True,ensure_ascii=False,separators=(',',':'))
+        valid.append({'name':'native_existing_'+k+'_'+str(via),'schema':'NativePlaintext','value':v,'canonical':canonical,'sha256':'sha256:'+hashlib.sha256(canonical.encode()).hexdigest(),'signature':base64.b64encode(key.sign(canonical.encode()).signature).decode().rstrip('=')})
+v=sample_object("ManagedPlaintext");v["group_context"]["author_ref"]=sample_object("BridgedParticipant")
+canonical=json.dumps(v,sort_keys=True,ensure_ascii=False,separators=(',',':'))
+valid.append({'name':'managed_guest_signer','schema':'ManagedPlaintext','value':v,'canonical':canonical,'sha256':'sha256:'+hashlib.sha256(canonical.encode()).hexdigest(),'signature':base64.b64encode(key.sign(canonical.encode()).signature).decode().rstrip('=')})
+v=sample_object("PresenceIntent");v.update(issued_at="0001-10-21T00:00:00Z",expires_at="0001-10-21T01:00:00Z")
+canonical=json.dumps(v,sort_keys=True,ensure_ascii=False,separators=(',',':'))
+valid.append({'name':'timestamp_year_0001','schema':'PresenceIntent','value':v,'canonical':canonical,'sha256':'sha256:'+hashlib.sha256(canonical.encode()).hexdigest(),'signature':base64.b64encode(key.sign(canonical.encode()).signature).decode().rstrip('=')})
 tampered=[]
 for source,field,replacement in [('NativePlaintext_mail_telegram','via','msteams'),('GroupContext','message_id','22222222-2222-4222-8222-222222222222'),('PresenceIntent','expected_generation',1),('CheckpointReceipt','acceptance_seq',2),('ManagedPlaintext','body','modified')]:
     original=next(x for x in valid if x['name']==source);v=copy.deepcopy(original['value']);v[field]=replacement
@@ -194,6 +209,16 @@ v={'version':'aweb-human-resolve-v1','session_id':UUID};bad('resolve_partial_sel
 v=sample_object('PresenceBindingIntent');v['authorization']='owner';bad('binding_owner_proof_required','PresenceBindingIntent',v)
 bad('native_intent_is_not_binding_approval','PresenceBindingIntent',sample_object('PresenceIntent'),'invalid')
 bad('native_owner_proof_is_not_binding_proof','BindingOwnershipProof',sample_object('OwnershipProof'),'invalid')
+v=copy.deepcopy(byname['PresenceIntent']['value']);v['issued_at']='0000-10-21T00:00:00Z';bad('timestamp_year_0000','PresenceIntent',v)
+for field,values in [("to_did",[DIDKEY+","+DIDKEY, DIDKEY+"2,"+DIDKEY, DID, DIDKEY+",", " "+DIDKEY]),("to_stable_id",[DID+","+DID, DID+"-second,"+DID, DIDKEY])]:
+    for value in values:
+        v=sample_object("NativePlaintext");v[field]=value;bad('native_target_list_'+field+'_'+value,'NativePlaintext',v)
+for kind in ("native","bridged"):
+    v=sample_object("ManagedPlaintext")
+    v["group_context"]["author_ref"]=sample_object("NativeParticipant" if kind=="native" else "BridgedParticipant")
+    v["signer"]=DID+"-other";bad('managed_signer_mismatch_'+kind,'ManagedPlaintext',v)
+v=sample_object("BridgedParticipant");v['subject']='did:aw:pretend-member';bad('guest_subject_is_not_did','BridgedParticipant',v)
+v=sample_object("SignedArtifact");v['signed_payload']='{ }';v['signature']=base64.b64encode(key.sign(b'{ }').signature).decode().rstrip('=');bad('noncanonical_signed_payload','SignedArtifact',v)
 negative += [{'name':'duplicate_key','schema':'NativeParticipant','json':'{"kind":"native","kind":"bridged","did":"'+DID+'"}','code':'invalid'}, {'name':'unknown_schema','schema':'FutureV9','json':'{}','code':'unsupported'}, {'name':'float_counter','schema':'GroupContext','json':json.dumps(byname['GroupContext']['value']).replace('"membership_epoch": 0','"membership_epoch": 1.0'),'code':'invalid'}]
 vectors={'profile':'aweb-human-channels-v1','provenance':'P0 conformance; public deterministic seed; freeze requires exact-SHA review','public_test_seed_hex':seed.hex(),'public_test_key_hex':bytes(key.verify_key).hex(),'valid':valid,'invalid':negative,'tampered':tampered}
 (ROOT/'docs/vectors/human-channels-v1.json').write_text(json.dumps(vectors,indent=2,ensure_ascii=False)+'\n')

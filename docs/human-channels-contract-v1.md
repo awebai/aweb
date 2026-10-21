@@ -32,15 +32,22 @@ required field, unsafe integers, trailing JSON, unknown fields and unsupported
 schemas. Counters are integers in 0..9007199254740991; positive counters start
 at 1. UUIDs are lowercase hex with hyphens; digests are `sha256:` plus 64 lowercase
 hex characters; private-policy commitments use `commitment:` plus 64 lowercase
-hex characters. New control timestamps are UTC second-precision `...Z`.
+hex characters. New control timestamps are Gregorian years 0001–9999, UTC second-precision
+`...Z`; year 0000 refuses in both languages.
 
 `SignedArtifact = {signed_payload, signature}` preserves the exact canonical
 JSON string, signed directly with Ed25519; signature is standard base64 without
 padding, 64 decoded bytes. The payload's `version` domain-separates artifact
 families. Its `signer` and `signing_key_id` must match an independently verified
 current identity / operation-time authority chain, never a key fetched from an
-untrusted payload URL. A receiver verifies original signed bytes; it does not
-reconstruct a payload by dropping fields. `sha256` commitments refer to the
+untrusted payload URL. Before signature verification or head hashing, `require_canonical_signed_payload`
+(Python) / `RequireCanonicalHumanChannelsSignedPayload` (Go) require the original
+payload bytes to equal canonical JSON. `SignedArtifact` parsing applies this
+check to its embedded `signed_payload` too. Typed decoding alone permits JSON
+formatting differences and is not this signed-byte boundary. Reject rather than
+re-serialize noncanonical signed bytes, even if their signature verifies. A
+receiver verifies original signed bytes; it does not reconstruct a payload by
+dropping fields. `sha256` commitments refer to the
 UTF-8 payload/envelope string itself, not JSON encoding of that string.
 
 Endpoint wrappers retain the design's names: membership/presence/native calls
@@ -59,7 +66,14 @@ of projecting a guest as an ordinary verified native author. No in-place upgrade
 without all affected consumers' capability/consent compatibility.
 
 `NativePlaintext` freezes P1's optional `via` placement in existing signed payloads
-for mail/chat, with omission unchanged. `NativeV2Content` freezes its placement in
+for mail/chat, with omission unchanged. `to` is a string, including the empty
+string used by local MCP mail. `to_did` is empty or a lexicographically sorted,
+de-duplicated comma list of `did:key` values; optional `to_stable_id` is empty or
+the same list form of `did:aw` values. No trimming, empty list items, mixed DID
+kinds or duplicate targets are introduced. Existing local-mail and group-chat
+payloads have valid neighbors both with and without `via`.
+
+`NativeV2Content` freezes its placement in
 protected inner content, **not** the outer envelope/AAD/header hash. Its identity
 refs/attachment descriptors retain the exact existing E2EE/acfn validators; these
 opaque nested native values are not a new key assertion grammar. P1 must preserve
@@ -241,7 +255,11 @@ The service owns one supported asyncpg/PostgreSQL transaction and exposes that
 exact connection for the embedding's **own** tables. The embedding cannot read
 OSS tables, independently commit, run network operations while holding session
 locks or publish events directly. `claim_ingress` serializes
-`(authenticated issuer, namespace, key)` with immutable input hash. Exact retries
+`(authenticated issuer, namespace, key)` with immutable input hash.
+`IngressKey.issuer` must exactly equal the unit of work's authenticated principal;
+claim, accept/finish and result recovery refuse a caller-supplied different issuer
+before effects or disclosure. A DTO naming another principal cannot select its
+idempotency namespace. Exact retries
 return the original committed `IngressResult` (including original signed receipt
 and caller result); conflicting hash/bytes/message kind or UUID refuses. New
 claims remain transaction-local, not a lasting lease. Unfinished claims,
@@ -285,6 +303,12 @@ The next head is the SHA256 of the canonical signed **payload**; retain its
 signature and independently validated identity/authority proof alongside it.
 Checkpoint intents are control-chain entries too; their original service receipt
 records the resulting epoch/head. A timestamp is not a serialization boundary.
+
+`ManagedPlaintext.signer` must equal `group_context.author_ref.did` for a native
+author, or `group_context.author_ref.bridge` for a bridged author. Both conformance
+readers enforce this local binding before independent signature and authority
+verification. Bridged subjects starting with `did:` refuse; a guest subject
+cannot masquerade as a native member DID.
 
 `ManagedPlaintext` is the explicitly negotiated plaintext chat shape, not a
 native-author envelope with an unsigned guest sidecar. Its signature binds the
@@ -356,7 +380,12 @@ intervals. A narrow stop confers neither grant.
 
 `PresenceIntent` binds register/replace/remove, exact typed subject, platform,
 platform/session scope, native mode, service audience, expected generation,
-request ID, signer/key, authorization lane and freshness. Subject signing and
+request ID, signer/key, authorization lane and freshness. The generation stays
+monotonic per `(subject, platform, scope)` across removal and unbind, including
+when private settings rows are deleted; it never resets to zero. Each successful
+mutation advances it. `request_id` is single-use for mutation across these intent
+families; exact original-result recovery is allowed but never applies or
+reactivates an old operation. Subject signing and
 independently verified owner signing are distinct; owner lane includes original
 ownership proof, never a caller-asserted owner string. `OwnershipProof` is the
 configured ownership authority's signed assertion of exact subject/owner,

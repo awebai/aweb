@@ -42,6 +42,9 @@ func TestHumanChannelsSharedVectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if err := RequireCanonicalHumanChannelsSignedPayload(canonical); err != nil {
+				t.Fatal(err)
+			}
 			if string(canonical) != c.Canonical {
 				t.Fatalf("canonical mismatch: %s", canonical)
 			}
@@ -63,6 +66,19 @@ func TestHumanChannelsSharedVectors(t *testing.T) {
 	}
 	for _, c := range vectors.Invalid {
 		t.Run(c.Name, func(t *testing.T) {
+			if c.Name == "noncanonical_signed_payload" {
+				var artifact struct {
+					SignedPayload string `json:"signed_payload"`
+					Signature     string `json:"signature"`
+				}
+				if err := json.Unmarshal([]byte(c.JSON), &artifact); err != nil {
+					t.Fatal(err)
+				}
+				signature, err := base64.RawStdEncoding.DecodeString(artifact.Signature)
+				if err != nil || !ed25519.Verify(pub, []byte(artifact.SignedPayload), signature) {
+					t.Fatal("noncanonical refusal must have a valid original-byte signature")
+				}
+			}
 			_, err := DecodeHumanChannelsRecord(c.Schema, []byte(c.JSON))
 			var refusal *HumanChannelsContractError
 			if !errors.As(err, &refusal) || refusal.Code != c.Code {
@@ -138,5 +154,13 @@ func TestHumanChannelsTamperAndFutureCapability(t *testing.T) {
 	r.Value["external_account_id"] = "not-public"
 	if _, err = r.Canonical(); err == nil {
 		t.Fatal("mutation bypassed grammar")
+	}
+}
+
+func TestHumanChannelsSignedPayloadRequiresCanonicalBytes(t *testing.T) {
+	for _, raw := range []string{`{ }`, `{"b":1,"a":2}`, `{"a":"\u0061"}`, `{"a":1.0}`, `{"a":-0}`, `[]`, `{"a":1,"a":1}`, `{"a":"\ud800"}`, "\xff"} {
+		if err := RequireCanonicalHumanChannelsSignedPayload([]byte(raw)); err == nil {
+			t.Fatalf("noncanonical bytes accepted: %q", raw)
+		}
 	}
 }

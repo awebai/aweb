@@ -26,7 +26,11 @@ class HumanChannelsUnitOfWork(Protocol):
         ...
 
     async def claim_ingress(self, key: ContractRecord) -> ContractRecord | None:
-        """IngressKey -> existing IngressResult or new transaction-local claim."""
+        """IngressKey -> original result or new transaction-local claim.
+
+        key.issuer must equal this UoW's authenticated principal, never a caller
+        chosen namespace. Refuse mismatch before effects or result disclosure.
+        """
         ...
 
     async def accept(self, prepared: ContractRecord) -> ContractRecord:
@@ -56,7 +60,10 @@ class HumanChannelsService(Protocol):
         ...
 
     async def ingress_result(self, auth: MessagingAuth, key: ContractRecord) -> ContractRecord:
-        """IngressKey -> IngressResult; restricted to that issuer and current authority."""
+        """IngressKey -> IngressResult; issuer must equal authenticated principal.
+
+        Current authority is required; another issuer's result is not disclosed.
+        """
         ...
 
     async def list(self, auth: MessagingAuth, request: ContractRecord) -> ContractRecord:

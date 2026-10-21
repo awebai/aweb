@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"io"
 	"regexp"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -323,6 +325,31 @@ func hcMatch(rule, value any, field string) error {
 		}
 		return nil
 	}
+	if r == "didkey_list" || r == "didaw_list" {
+		if !ok {
+			return hcError("invalid", field)
+		}
+		if str == "" {
+			return nil
+		}
+		items := strings.Split(str, ",")
+		if !sort.StringsAreSorted(items) {
+			return hcError("invalid", field)
+		}
+		primitive := "didkey"
+		if r == "didaw_list" {
+			primitive = "didaw"
+		}
+		for i, item := range items {
+			if i > 0 && items[i-1] == item {
+				return hcError("invalid", field)
+			}
+			if err := hcMatch(primitive, item, field); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if !ok || str == "" {
 		return hcError("invalid", field)
 	}
@@ -330,7 +357,7 @@ func hcMatch(rule, value any, field string) error {
 		return hcError("invalid", field)
 	}
 	if r == "timestamp" {
-		if _, err := time.Parse("2006-01-02T15:04:05Z", str); err != nil {
+		if parsed, err := time.Parse("2006-01-02T15:04:05Z", str); err != nil || parsed.Year() < 1 {
 			return hcError("invalid", field)
 		}
 	}
@@ -478,10 +505,24 @@ func hcRelations(schema string, v map[string]any) error {
 		if len(v["bridges"].([]any)) > 0 && v["confidentiality"] != "bridge_readable" {
 			return hcError("invalid", "bridge-readable label")
 		}
+	case "SignedArtifact":
+		return RequireCanonicalHumanChannelsSignedPayload([]byte(v["signed_payload"].(string)))
+	case "BridgedParticipant":
+		if strings.HasPrefix(v["subject"].(string), "did:") {
+			return hcError("invalid", "guest subject")
+		}
 	case "ManagedPlaintext":
 		ctx := v["group_context"].(map[string]any)
 		if v["message_id"] != ctx["message_id"] || v["conversation_id"] != ctx["session_id"] {
 			return hcError("invalid", "group context")
+		}
+		author := ctx["author_ref"].(map[string]any)
+		signerField := "did"
+		if author["kind"] == "bridged" {
+			signerField = "bridge"
+		}
+		if v["signer"] != author[signerField] {
+			return hcError("invalid", "author signer")
 		}
 	case "AuthorProjection":
 		guest := v["author"].(map[string]any)["kind"] == "bridged"
@@ -536,4 +577,30 @@ func hcWithinDepth(v any, depth int) bool {
 		}
 	}
 	return true
+}
+
+// RequireCanonicalHumanChannelsSignedPayload checks original new-profile bytes.
+// It does not verify a signature, typed schema or authority, and must not be used
+// to narrow legacy native signing serialization.
+func RequireCanonicalHumanChannelsSignedPayload(raw []byte) error {
+	if len(raw) > humanChannelsMaxBytes || !utf8.Valid(raw) || !hcValidEscapes(raw) {
+		return hcError("invalid", "signed payload")
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	value, err := hcReadJSON(dec, 0)
+	if err != nil {
+		return err
+	}
+	if _, ok := value.(map[string]any); !ok {
+		return hcError("invalid", "signed payload object")
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return hcError("invalid", "trailing JSON")
+	}
+	canonical, err := StrictCanonicalJSON(value)
+	if err != nil || !bytes.Equal(raw, canonical) {
+		return hcError("invalid", "noncanonical signed payload")
+	}
+	return nil
 }

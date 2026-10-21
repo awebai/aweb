@@ -106,6 +106,15 @@ def _match(rule: Any, value: Any, field: str) -> None:
         if type(value) is not str:
             raise ContractError("invalid", field)
         return
+    if rule in ("didkey_list", "didaw_list"):
+        if type(value) is not str:
+            raise ContractError("invalid", field)
+        items = value.split(",") if value else []
+        if items != sorted(set(items)):
+            raise ContractError("invalid", field)
+        for item in items:
+            _match("didkey" if rule == "didkey_list" else "didaw", item, field)
+        return
     if type(value) is not str or not value:
         raise ContractError("invalid", field)
     patterns = {
@@ -154,6 +163,10 @@ def _validate(schema: str, value: Any) -> None:
 
 def _relations(schema: str, v: dict[str, Any]) -> None:
     """Only local shape relations; no inference of custody or authorization."""
+    if schema == "SignedArtifact":
+        require_canonical_signed_payload(v["signed_payload"].encode("utf-8"))
+    if schema == "BridgedParticipant" and v["subject"].startswith("did:"):
+        raise ContractError("invalid", "guest subject")
     if schema == "ResolveRequest":
         selector_fields = v.keys() - {"version"}
         if selector_fields not in ({"team_id", "selector"}, {"session_id", "participant"}):
@@ -213,6 +226,9 @@ def _relations(schema: str, v: dict[str, Any]) -> None:
     if schema == "ManagedPlaintext":
         if v["message_id"] != v["group_context"]["message_id"] or v["conversation_id"] != v["group_context"]["session_id"]:
             raise ContractError("invalid", "group context")
+        author = v["group_context"]["author_ref"]
+        if v["signer"] != author["did" if author["kind"] == "native" else "bridge"]:
+            raise ContractError("invalid", "author signer")
     if schema == "AuthorProjection":
         guest = v["author"]["kind"] == "bridged"
         if guest and (v["author_assurance"] != "platform_attested" or v["trust_status"] != "external_untrusted" or v["verified"]):
@@ -250,3 +266,22 @@ def require_capability(record: ContractRecord, capability: str) -> None:
     _validate("Capabilities", record.value)
     if capability not in PROFILE["capabilities"] or capability not in record.value["enabled"]:
         raise ContractError("unsupported", "capability")
+
+
+def require_canonical_signed_payload(raw: bytes) -> None:
+    """Require original new-profile signed bytes; never silently reserialize.
+
+    This is a byte/JSON check, not a signature, typed-schema or authority check.
+    Legacy native payloads retain their existing serialization rules.
+    """
+    if len(raw) > MAX_BYTES:
+        raise ContractError("invalid", "signed payload size")
+    try:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs)
+        _safe_json(value)
+        if type(value) is not dict or raw != json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode():
+            raise ContractError("invalid", "noncanonical signed payload")
+    except (ValueError, UnicodeError, RecursionError) as error:
+        if isinstance(error, ContractError):
+            raise
+        raise ContractError("invalid", "signed payload") from error

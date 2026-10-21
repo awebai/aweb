@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from nacl.signing import VerifyKey
 
-from aweb.human_channels.contract import ContractError, decode_record, canonical_record, require_capability, PROFILE
+from aweb.human_channels.contract import ContractError, decode_record, canonical_record, require_capability, require_canonical_signed_payload, PROFILE
 
 ROOT = Path(__file__).resolve().parents[2]
 VECTORS = json.loads((ROOT / 'docs/vectors/human-channels-v1.json').read_text())
@@ -21,6 +21,7 @@ def test_shared_canonical_signature_vectors(case):
     raw = json.dumps(case['value'], ensure_ascii=False).encode()
     record = decode_record(case['schema'], raw)
     canonical = canonical_record(record)
+    require_canonical_signed_payload(canonical)
     assert canonical.decode() == case['canonical']
     assert 'sha256:' + hashlib.sha256(canonical).hexdigest() == case['sha256']
     import base64
@@ -67,3 +68,19 @@ def test_canonicalization_rechecks_mutated_dto():
     record.value['external_account_id'] = 'not-public'
     with pytest.raises(ContractError):
         canonical_record(record)
+
+
+@pytest.mark.parametrize('raw', [b'{ }', b'{"b":1,"a":2}', b'{"a":"\\u0061"}', b'{"a":1.0}', b'{"a":-0}', b'[]', b'{"a":1,"a":1}', b'{"a":"\\ud800"}', b'\xff'])
+def test_signed_payload_requires_original_canonical_bytes(raw):
+    with pytest.raises(ContractError):
+        require_canonical_signed_payload(raw)
+
+
+def test_valid_signature_does_not_make_noncanonical_artifact_acceptable():
+    import base64
+    case = next(c for c in VECTORS['invalid'] if c['name'] == 'noncanonical_signed_payload')
+    artifact = json.loads(case['json'])
+    VerifyKey(bytes.fromhex(VECTORS['public_test_key_hex'])).verify(
+        artifact['signed_payload'].encode(), base64.b64decode(artifact['signature'] + '=='))
+    with pytest.raises(ContractError):
+        decode_record('SignedArtifact', case['json'].encode())

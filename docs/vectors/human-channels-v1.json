@@ -1435,6 +1435,137 @@
       "canonical": "{\"author\":{\"did\":\"did:aw:human-channels-vector\",\"kind\":\"native\"},\"author_assurance\":\"native\",\"confidentiality\":\"end_to_end\",\"signer_verified\":true,\"trust_status\":\"verified\",\"verified\":true,\"via\":\"future_chat\"}",
       "sha256": "sha256:5ead4022f945ac418b5295f664ed7b02bf9604980592b8d2870d84707483d211",
       "signature": "sz5q/Tv1s0wz+qT5yD/p6dNgGDM1uchUZ11vYvnZeKMma9bw1UT3JFSSLMntNF+z8Y8vH+IM06Ye7OU86hrrAA"
+    },
+    {
+      "name": "native_existing_mail_None",
+      "schema": "NativePlaintext",
+      "value": {
+        "from": "café <>& ☃",
+        "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "to": "",
+        "to_did": "",
+        "type": "mail",
+        "subject": "",
+        "body": "",
+        "timestamp": "2026-10-21T00:00:00Z",
+        "to_stable_id": ""
+      },
+      "canonical": "{\"body\":\"\",\"from\":\"café <>& ☃\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"subject\":\"\",\"timestamp\":\"2026-10-21T00:00:00Z\",\"to\":\"\",\"to_did\":\"\",\"to_stable_id\":\"\",\"type\":\"mail\"}",
+      "sha256": "sha256:017ec9c422fd0b0b3dfeff1959bf279bbe0b58ecf455136c38bc85cdd04f9a71",
+      "signature": "D3JJ74ncH+ddM0ZxZ9a+fAOj34C5hDWKRQrvx6cAE0Snjvogyu4wGjNkCNpI5wWqkkFOPEu0kT7JBsUECRTLBw"
+    },
+    {
+      "name": "native_existing_mail_telegram",
+      "schema": "NativePlaintext",
+      "value": {
+        "from": "café <>& ☃",
+        "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "to": "",
+        "to_did": "",
+        "type": "mail",
+        "subject": "",
+        "body": "",
+        "timestamp": "2026-10-21T00:00:00Z",
+        "to_stable_id": "",
+        "via": "telegram"
+      },
+      "canonical": "{\"body\":\"\",\"from\":\"café <>& ☃\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"subject\":\"\",\"timestamp\":\"2026-10-21T00:00:00Z\",\"to\":\"\",\"to_did\":\"\",\"to_stable_id\":\"\",\"type\":\"mail\",\"via\":\"telegram\"}",
+      "sha256": "sha256:19dafdc3e1c24a8562b5671b808560bf046ae82c8b3ef0d0dd7750e7337fb100",
+      "signature": "sMoJGBLnD6D23ccMhfPfjAvAiMiY7JjRY5dbb1py9wCjDMvrFbMXdeW5IOK6ImicY2h9ttBpexYaH7GoWW6/CA"
+    },
+    {
+      "name": "native_existing_chat_None",
+      "schema": "NativePlaintext",
+      "value": {
+        "from": "café <>& ☃",
+        "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "to": "alice,bob",
+        "to_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd,did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd2",
+        "type": "chat",
+        "subject": "",
+        "body": "",
+        "timestamp": "2026-10-21T00:00:00Z",
+        "to_stable_id": "did:aw:human-channels-vector,did:aw:human-channels-vector-second"
+      },
+      "canonical": "{\"body\":\"\",\"from\":\"café <>& ☃\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"subject\":\"\",\"timestamp\":\"2026-10-21T00:00:00Z\",\"to\":\"alice,bob\",\"to_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd,did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd2\",\"to_stable_id\":\"did:aw:human-channels-vector,did:aw:human-channels-vector-second\",\"type\":\"chat\"}",
+      "sha256": "sha256:8900e3b12a2a9786da0775ca6d833f5285c96d588e38d3efbc1aaa1321025dc0",
+      "signature": "jl/f5b61RoPdqy6FVbreAPqLbXnTx19vv75CobDINuH7k4nOJFoXwOqzDEAKkZisoALKSkJjWtIILJnAnq0fAA"
+    },
+    {
+      "name": "native_existing_chat_telegram",
+      "schema": "NativePlaintext",
+      "value": {
+        "from": "café <>& ☃",
+        "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "to": "alice,bob",
+        "to_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd,did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd2",
+        "type": "chat",
+        "subject": "",
+        "body": "",
+        "timestamp": "2026-10-21T00:00:00Z",
+        "to_stable_id": "did:aw:human-channels-vector,did:aw:human-channels-vector-second",
+        "via": "telegram"
+      },
+      "canonical": "{\"body\":\"\",\"from\":\"café <>& ☃\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"subject\":\"\",\"timestamp\":\"2026-10-21T00:00:00Z\",\"to\":\"alice,bob\",\"to_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd,did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd2\",\"to_stable_id\":\"did:aw:human-channels-vector,did:aw:human-channels-vector-second\",\"type\":\"chat\",\"via\":\"telegram\"}",
+      "sha256": "sha256:7a53f1cb183eaf52fee4f257ff74c8aec943dc8dc5cbe2e77170b9695b1658bb",
+      "signature": "2wqoBBJ5oZCw51oxUA5UzHaqfAVQQwhVxJtVV9jFjxpNZrPE0tUBAGv3uQu3vX12J0iZRGGgdzvO3Z3ZSpoGAA"
+    },
+    {
+      "name": "managed_guest_signer",
+      "schema": "ManagedPlaintext",
+      "value": {
+        "version": "aweb-managed-chat-plaintext-v1",
+        "type": "chat",
+        "message_id": "11111111-1111-4111-8111-111111111111",
+        "conversation_id": "11111111-1111-4111-8111-111111111111",
+        "group_context": {
+          "session_id": "11111111-1111-4111-8111-111111111111",
+          "membership_epoch": 0,
+          "membership_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "author_ref": {
+            "kind": "bridged",
+            "bridge": "did:aw:human-channels-vector",
+            "subject": "vector"
+          },
+          "message_id": "11111111-1111-4111-8111-111111111111"
+        },
+        "recipients": [],
+        "body": "",
+        "signer": "did:aw:human-channels-vector",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "created_at": "2026-10-21T00:00:00Z"
+      },
+      "canonical": "{\"body\":\"\",\"conversation_id\":\"11111111-1111-4111-8111-111111111111\",\"created_at\":\"2026-10-21T00:00:00Z\",\"group_context\":{\"author_ref\":{\"bridge\":\"did:aw:human-channels-vector\",\"kind\":\"bridged\",\"subject\":\"vector\"},\"membership_epoch\":0,\"membership_hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"message_id\":\"11111111-1111-4111-8111-111111111111\",\"session_id\":\"11111111-1111-4111-8111-111111111111\"},\"message_id\":\"11111111-1111-4111-8111-111111111111\",\"recipients\":[],\"signer\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"type\":\"chat\",\"version\":\"aweb-managed-chat-plaintext-v1\"}",
+      "sha256": "sha256:f66898abcaa75a72096fb1bf0e737577148a68b88190d46465d1212e0fa8e5a3",
+      "signature": "47G4DnClzxhdpnkDqpYocKHmUEQv6gjee99fVOWUmprV3Esv3IF7hwGA3Yb2wy1Fdk/+HWwtQPcHAYcM/bVMBw"
+    },
+    {
+      "name": "timestamp_year_0001",
+      "schema": "PresenceIntent",
+      "value": {
+        "version": "aweb-presence-intent-v1",
+        "operation": "register",
+        "subject": {
+          "kind": "native",
+          "did": "did:aw:human-channels-vector"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "café <>& ☃",
+        "expected_generation": 0,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "authorization": "subject",
+        "signer": "did:aw:human-channels-vector",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "issued_at": "0001-10-21T00:00:00Z",
+        "expires_at": "0001-10-21T01:00:00Z"
+      },
+      "canonical": "{\"audience\":\"café <>& ☃\",\"authorization\":\"subject\",\"expected_generation\":0,\"expires_at\":\"0001-10-21T01:00:00Z\",\"issued_at\":\"0001-10-21T00:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"subject\":{\"did\":\"did:aw:human-channels-vector\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+      "sha256": "sha256:1cea4a2212f1b8d321a9f32d63ada8bd4bc60af17a865480610c1ee71f7349d2",
+      "signature": "e/OX7PKNgR7J+vi8PUWJKp7ZQkox0YODuaQUE+WV6RTfGi/Nl1nFTYFjipx+BTujbAWSlsv4KLAFa6xTLHTCDQ"
     }
   ],
   "invalid": [
@@ -2276,6 +2407,84 @@
       "name": "native_owner_proof_is_not_binding_proof",
       "schema": "BindingOwnershipProof",
       "json": "{\"version\":\"aweb-presence-owner-proof-v1\",\"subject\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"owner\":\"did:aw:human-channels-vector\",\"platform\":\"telegram\",\"scope\":{\"kind\":\"platform\"},\"operations\":[],\"audience\":\"café <>& ☃\",\"authorization_revision\":\"vector\",\"signer\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"issued_at\":\"2026-10-21T00:00:00Z\",\"expires_at\":\"2026-10-21T00:00:00Z\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "timestamp_year_0000",
+      "schema": "PresenceIntent",
+      "json": "{\"version\":\"aweb-presence-intent-v1\",\"operation\":\"register\",\"subject\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"platform\":\"telegram\",\"scope\":{\"kind\":\"platform\"},\"mode\":\"native\",\"audience\":\"café <>& ☃\",\"expected_generation\":0,\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"authorization\":\"subject\",\"signer\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"issued_at\":\"0000-10-21T00:00:00Z\",\"expires_at\":\"2026-10-21T00:00:00Z\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "native_target_list_to_did_did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd,did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "schema": "NativePlaintext",
+      "json": "{\"from\":\"café <>& ☃\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"to\":\"café <>& ☃\",\"to_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd,did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"type\":\"mail\",\"subject\":\"\",\"body\":\"\",\"timestamp\":\"2026-10-21T00:00:00Z\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "native_target_list_to_did_did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd2,did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "schema": "NativePlaintext",
+      "json": "{\"from\":\"café <>& ☃\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"to\":\"café <>& ☃\",\"to_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd2,did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"type\":\"mail\",\"subject\":\"\",\"body\":\"\",\"timestamp\":\"2026-10-21T00:00:00Z\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "native_target_list_to_did_did:aw:human-channels-vector",
+      "schema": "NativePlaintext",
+      "json": "{\"from\":\"café <>& ☃\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"to\":\"café <>& ☃\",\"to_did\":\"did:aw:human-channels-vector\",\"type\":\"mail\",\"subject\":\"\",\"body\":\"\",\"timestamp\":\"2026-10-21T00:00:00Z\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "native_target_list_to_did_did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd,",
+      "schema": "NativePlaintext",
+      "json": "{\"from\":\"café <>& ☃\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"to\":\"café <>& ☃\",\"to_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd,\",\"type\":\"mail\",\"subject\":\"\",\"body\":\"\",\"timestamp\":\"2026-10-21T00:00:00Z\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "native_target_list_to_did_ did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "schema": "NativePlaintext",
+      "json": "{\"from\":\"café <>& ☃\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"to\":\"café <>& ☃\",\"to_did\":\" did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"type\":\"mail\",\"subject\":\"\",\"body\":\"\",\"timestamp\":\"2026-10-21T00:00:00Z\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "native_target_list_to_stable_id_did:aw:human-channels-vector,did:aw:human-channels-vector",
+      "schema": "NativePlaintext",
+      "json": "{\"from\":\"café <>& ☃\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"to\":\"café <>& ☃\",\"to_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"type\":\"mail\",\"subject\":\"\",\"body\":\"\",\"timestamp\":\"2026-10-21T00:00:00Z\",\"to_stable_id\":\"did:aw:human-channels-vector,did:aw:human-channels-vector\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "native_target_list_to_stable_id_did:aw:human-channels-vector-second,did:aw:human-channels-vector",
+      "schema": "NativePlaintext",
+      "json": "{\"from\":\"café <>& ☃\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"to\":\"café <>& ☃\",\"to_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"type\":\"mail\",\"subject\":\"\",\"body\":\"\",\"timestamp\":\"2026-10-21T00:00:00Z\",\"to_stable_id\":\"did:aw:human-channels-vector-second,did:aw:human-channels-vector\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "native_target_list_to_stable_id_did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "schema": "NativePlaintext",
+      "json": "{\"from\":\"café <>& ☃\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"to\":\"café <>& ☃\",\"to_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"type\":\"mail\",\"subject\":\"\",\"body\":\"\",\"timestamp\":\"2026-10-21T00:00:00Z\",\"to_stable_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "managed_signer_mismatch_native",
+      "schema": "ManagedPlaintext",
+      "json": "{\"version\":\"aweb-managed-chat-plaintext-v1\",\"type\":\"chat\",\"message_id\":\"11111111-1111-4111-8111-111111111111\",\"conversation_id\":\"11111111-1111-4111-8111-111111111111\",\"group_context\":{\"session_id\":\"11111111-1111-4111-8111-111111111111\",\"membership_epoch\":0,\"membership_hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"author_ref\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"message_id\":\"11111111-1111-4111-8111-111111111111\"},\"recipients\":[],\"body\":\"\",\"signer\":\"did:aw:human-channels-vector-other\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"created_at\":\"2026-10-21T00:00:00Z\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "managed_signer_mismatch_bridged",
+      "schema": "ManagedPlaintext",
+      "json": "{\"version\":\"aweb-managed-chat-plaintext-v1\",\"type\":\"chat\",\"message_id\":\"11111111-1111-4111-8111-111111111111\",\"conversation_id\":\"11111111-1111-4111-8111-111111111111\",\"group_context\":{\"session_id\":\"11111111-1111-4111-8111-111111111111\",\"membership_epoch\":0,\"membership_hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"author_ref\":{\"kind\":\"bridged\",\"bridge\":\"did:aw:human-channels-vector\",\"subject\":\"vector\"},\"message_id\":\"11111111-1111-4111-8111-111111111111\"},\"recipients\":[],\"body\":\"\",\"signer\":\"did:aw:human-channels-vector-other\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"created_at\":\"2026-10-21T00:00:00Z\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "guest_subject_is_not_did",
+      "schema": "BridgedParticipant",
+      "json": "{\"kind\":\"bridged\",\"bridge\":\"did:aw:human-channels-vector\",\"subject\":\"did:aw:pretend-member\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "noncanonical_signed_payload",
+      "schema": "SignedArtifact",
+      "json": "{\"signed_payload\":\"{ }\",\"signature\":\"bfoRmG4FVndNsVHvLjOg5n/EbSS2XEcUrT7EgKOspqJt2eW+gGQUqsCj0kUiKid2VSj276sm1x9HWbQx9/7gAQ\"}",
       "code": "invalid"
     },
     {
