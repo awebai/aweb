@@ -177,7 +177,7 @@ Per-hook payloads, beyond the common envelope:
 | --- | --- |
 | `post-secret-use-hook` | Defined here, and the secrets design cites it. See the flat allowlist below. |
 | `post-governance-hook` | `act` (catalog enum: `role.designated`, `role.revoked`, `credential.enrolled`, `credential.recovered`, `credential.revoked`, `grant.created`, `grant.changed`, `grant.revoked`, `resource.created`, `resource.version_added`, `resource.disabled`, `resource.enabled`, `resource.replaced`, `policy.changed`, `runner.registered`, `runner.deregistered`, `installation.disabled`, `installation.enabled`); `direction` (`widening` or `narrowing`, fixed per act by the catalog and checked at ingest); `role`, `resource_type` (bounded app-local tokens matching `^[a-z][a-z0-9_.-]{0,63}$`); `subject_ref`, `resource_ref`, optional `before_ref`/`after_ref` (opaque); `authority` (`owner_act`, `passkey_session`, `team_cert`); optional `owner_act_sha256` (owner-act-rooted acts), `approval_evidence_sha256` (passkey-confirmed acts), `approval_id`, `policy_digest`, `reason_code`. A governance act that cannot enqueue does not commit. |
-| `post-manifest-command-hook` | `app_id`, `tool`, `operation_kind` (`mutation`, `read`, `refusal`), `request_sha256` over the canonical request bytes of the manifest mapping, declared opaque `resource_refs`, `http_status`, optional `result_ref`. Parameter values are not copied; the digest commits to them. |
+| `post-manifest-command-hook` | `app_id`, `tool`, `operation_kind` (`mutation`, `read`, `refusal`), `request_sha256` (historical name; producer-keyed HMAC-SHA-256 of the canonical request, as specified below), declared opaque `resource_refs`, `http_status`, optional `result_ref`. Parameter values are not copied; the HMAC commits to them. |
 | `post-mutation-hook` | `mutation_type` (§A10), `target_ref`, optional `before_ref`/`after_ref` (revision or state refs), and the per-type fields in the catalog (status values, assignee identities, `content_mode`). Never bodies, subjects, previews or titles. |
 | `post-command-hook` | `command` (canonical command path), `flags` (names only, plus values of catalog-declared enum flags), `local_effects` (enumerated, e.g. `identity_key_created`, `team_certificate_stored`, `app_approval_recorded`, `grant_minted`), `exit_status`. |
 
@@ -207,6 +207,28 @@ A withheld value and an undeclared credential are properties of the
 `installation_id`, generation and the principal are carried by the envelope's
 `producer` and `actor` (§A6). **Digest rule (security):** no payload digest is
 ever unsalted over bytes that contain or may echo a credential.
+
+**Manifest request commitment (decision 70, K4 design delta).** The digest
+rule forbids an unsalted digest of bytes that contain or may echo a
+credential. Generic manifest-tool parameters can hold a credential even
+before injection; restricting intentional secret ingress to surfaces is a
+policy, not a property of those bytes. For `post-manifest-command-hook`,
+`request_sha256` therefore retains its wire name and 64-character lowercase
+hex shape but means producer-keyed **HMAC-SHA-256**, never plain SHA-256.
+The exact domain-separated input, installation context and independent
+producer-local key lifecycle are specified in
+[the public hook contract](../hook-events.md#post-manifest-command-hook).
+No signing seed, team key or public key is used as the HMAC key. A missing or
+malformed key prevents startup of a runtime configured to produce this hook.
+The receiver verifies producer provenance and field shape; it cannot verify
+the request bytes from this commitment. Rotation affects future commitments,
+while retries retain the originally signed event bytes.
+
+This delta changes only the manifest-command hook's commitment semantics.
+It does not redefine secrets' frozen approval request or its pre-injection
+digests. The catalog's field set and shape stay unchanged; no frozen vector
+is rewritten in this design-only change. K4 proves the producer algorithm
+and credential-shaped input handling before emitting this hook in production.
 
 ### A3. Registration and owner activation
 

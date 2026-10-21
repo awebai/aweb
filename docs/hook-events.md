@@ -88,9 +88,14 @@ identifier such as `task:<uuid>`: at most 128 characters, with no spaces, `@`,
 `+` or `=`, so it cannot carry an email address or a padded base64 token.
 
 **Digest rule.** No payload digest is ever unsalted over bytes that contain, or
-may echo, a credential. `request_sha256` and `params_sha256` cover the request
-**before** credential injection. Response bytes are committed only through a
-producer-keyed HMAC (`upstream_response_hmac`, `returned_hmac`).
+may echo, a credential. For `post-secret-use-hook`, `request_sha256` and
+`params_sha256` cover the request **before** credential injection. For
+`post-manifest-command-hook`, the historical field name `request_sha256`
+means a producer-keyed HMAC-SHA-256, as specified below: even an uninjected
+generic tool request may contain a credential. Response bytes are committed
+only through a producer-keyed HMAC (`upstream_response_hmac`, `returned_hmac`).
+See [audit-substrate §A2](design/audit-substrate.md#a2-the-catalog-v1),
+"Manifest request commitment".
 
 **Check order.** A consumer checks an event's payload in this order and reports
 the first fault:
@@ -163,10 +168,41 @@ strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
 ### `post-manifest-command-hook`
 
 `app_id`, `tool`, `operation_kind` (`mutation`, `read` or `refusal`),
-`request_sha256` and `http_status` are required. `request_sha256` is the
-SHA-256 of the canonical request bytes of the manifest mapping. Parameter
-values are not copied; the digest commits to them. A refusal carries no
-`result_ref`.
+`request_sha256` and `http_status` are required. For this hook,
+`request_sha256` is a producer-keyed HMAC-SHA-256 commitment, encoded as 64
+lowercase hexadecimal characters. The historical name is retained; a plain
+SHA-256 is never emitted here. Surface-only secret ingress does not prove
+that a generic tool's parameters contain no credentials.
+
+The producer computes:
+
+```text
+request_sha256 = hex_lower(HMAC-SHA-256(K,
+    "aweb.post-manifest-command.request/1\n" || canonical(context) || "\n" ||
+    canonical_request_bytes))
+```
+
+`context` contains exactly `app_id`, `team_id`, `installation_id`, `generation`
+and `tool`, from the admitted installation and matched manifest tool, encoded
+with the envelope's canonical JSON rules. `canonical_request_bytes` are the
+canonical request bytes of that tool's manifest mapping, before credential
+injection. Only the commitment leaves the producer; parameter values and
+concrete paths or queries are never copied into event fields.
+
+`K` is an independent, randomly generated 32-byte producer-local secret,
+persisted in the producer's private configuration. It is never a signing seed,
+a public key, a team key or a manifest field, and is never sent to a target.
+The runtime loads it through the shared key-file reader as 64 hexadecimal
+characters, with one trailing newline allowed. A runtime configured to produce
+this hook fails startup if the key is absent or malformed. All
+replicas of that producer use the same key. Rotation changes subsequent
+commitments; retries deliver the already-signed outbox bytes without
+recomputing them. Cross-key comparisons have no meaning.
+
+The target verifies the event's signature and the commitment's shape. It
+cannot recompute this HMAC and does not obtain proof of the request's contents;
+the commitment is the authenticated producer's statement. A refusal carries
+no `result_ref`.
 
 ### `post-mutation-hook`
 
