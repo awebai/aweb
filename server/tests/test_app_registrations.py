@@ -95,7 +95,7 @@ def test_manifest_registration_refuses_bytes_that_do_not_match_the_install(app_i
 
 
 def test_manifest_registration_refuses_an_unsupported_manifest_version():
-    manifest = json.dumps({"manifest_version": 2, "app": {"id": "notes", "origin": ORIGIN, "version": "1"}}).encode()
+    manifest = json.dumps({"manifest_version": 3, "app": {"id": "notes", "origin": ORIGIN, "version": "1"}}).encode()
 
     with pytest.raises(ValidationError):
         manifest_registration(manifest, app_id="notes", origin=ORIGIN, digest=_digest(manifest))

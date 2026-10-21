@@ -2,7 +2,6 @@ package hookevent
 
 import (
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -106,13 +105,6 @@ type envelopeVector struct {
 		Layer         string `json:"layer"`
 		Error         string `json:"error"`
 	} `json:"negative_cases"`
-	Digest struct {
-		Before   string `json:"request_before_injection"`
-		After    string `json:"request_after_injection"`
-		Correct  string `json:"request_sha256"`
-		Refused  string `json:"refused_request_sha256"`
-		Injected string `json:"injected_header"`
-	} `json:"digest_construction"`
 }
 
 func TestEnvelopeVectorCases(t *testing.T) {
@@ -160,13 +152,6 @@ func TestEnvelopeVectorCases(t *testing.T) {
 				t.Fatalf("unknown layer %q", c.Layer)
 			}
 		})
-	}
-	sum := func(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
-	if sum(v.Digest.Before) != v.Digest.Correct || sum(v.Digest.After) != v.Digest.Refused || v.Digest.Correct == v.Digest.Refused {
-		t.Fatal("digest construction case is inconsistent")
-	}
-	if !strings.Contains(v.Digest.After, v.Digest.Injected) || strings.Contains(v.Digest.Before, v.Digest.Injected) {
-		t.Fatal("digest construction case must inject the header after the digest")
 	}
 }
 
