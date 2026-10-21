@@ -181,6 +181,9 @@ page-store = [
 pages = [
     { name = "jsonschema" },
 ]
+ratelimit = [
+    { name = "pgdbm" },
+]
 roles = [
     { name = "pgdbm" },
 ]
@@ -225,6 +228,7 @@ requires-dist = [
     { name = "pgdbm", marker = "extra == 'idempotency'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'outbox'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'page-store'", specifier = ">=0.5.0" },
+    { name = "pgdbm", marker = "extra == 'ratelimit'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'roles'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'runtime'", specifier = ">=0.5.0" },
     { name = "publicsuffixlist", marker = "extra == 'egress'", specifier = "==1.1.0.20261018" },
@@ -234,7 +238,7 @@ requires-dist = [
     { name = "pynacl", marker = "extra == 'signing-key'", specifier = ">=1.6.2" },
     { name = "webauthn", marker = "extra == 'runtime'", specifier = ">=3.0.1" },
 ]
-provides-extras = ["runtime", "outbox", "signing-key", "dispatch", "idempotency", "roles", "pages", "egress", "hooks", "page-store"]
+provides-extras = ["runtime", "outbox", "signing-key", "dispatch", "idempotency", "roles", "ratelimit", "pages", "egress", "hooks", "page-store"]
 
 [package.metadata.requires-dev]
 dev = [
