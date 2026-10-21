@@ -259,7 +259,16 @@ the approval, decision, policy and the app's own origin.
   approval. Retiring approvals before removing the authority inverts that
   order and can deadlock with such a path.
 - A contact change needs the approver's own passkey, takes effect after a delay
-  (at least 24 h) and is notified to the old and the new contact.
+  (at least 24 h) and is notified to the old and the new contact. An owner can
+  also schedule one through an owner-confirmed change, with
+  `change_contact_by_owner(tx, scope=..., new_contact=..., evidence=...)` on an
+  `OwnerApproval` admitted in that transaction. The delay and notices are the
+  same, and the notices go out with `send_notices` after the commit. It
+  changes the contact only: no passkey is enrolled at the new contact without
+  a recovery. The last owner's own contact is refused (`last_owner_protected`).
+  Only one change may be pending at a time (`contact_change_pending`). The
+  approver cancels a pending change from either path with their own passkey
+  (`contact_cancel_options`, `cancel_pending_contact`), and the cancel wins.
 - These durations are floors. App or owner policy may lengthen them, and
   deploy configuration may raise the floor itself (`lockout_floor`); nothing
   can go below 72 h and 24 h.
