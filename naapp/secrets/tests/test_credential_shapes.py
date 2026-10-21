@@ -55,6 +55,11 @@ def test_a_credential_named_json_field_with_a_value_is_detected(key: str) -> Non
     assert has_credential_shape(json.dumps({"data": {key: "some-value"}}).encode())
 
 
+@pytest.mark.parametrize("value", [["issued"], [{"value": "issued"}], {"value": ["issued"]}])
+def test_a_credential_field_keeps_its_meaning_for_nested_string_values(value) -> None:
+    assert has_credential_shape(json.dumps({"SessionToken": value}).encode())
+
+
 @pytest.mark.parametrize("key", ["access_token", "SecretAccessKey"])
 def test_an_empty_or_non_string_credential_field_is_not_detected(key: str) -> None:
     for value in ("", None, 0, False, []):

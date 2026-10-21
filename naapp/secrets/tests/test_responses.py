@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import json
+import secrets
 
 import pytest
 
@@ -171,6 +172,51 @@ def test_a_projection_naming_an_empty_credential_field_is_returned() -> None:
     body = json.dumps({"Credentials": {"SessionToken": ""}, "id": "x"}).encode()
     result = _handle(body, projection=["/Credentials/SessionToken", "/id"], token_issuing=True)
     assert result.disposition == "returned"
+
+
+@pytest.mark.parametrize("pointer", ["/Credentials", "/Credentials/SessionToken", "/Credentials/SessionToken/0", "/Credentials/SessionToken/0/value"])
+@pytest.mark.parametrize("token_issuing", [True, False])
+def test_projecting_a_credential_array_or_its_descendants_is_withheld(pointer: str, token_issuing: bool) -> None:
+    body = json.dumps({"Credentials": {"SessionToken": [{"value": secrets.token_urlsafe(24)}]}}).encode()
+    result = _handle(body, projection=[pointer], token_issuing=token_issuing)
+    assert result.disposition == "withheld"
+    assert result.withheld_reason == "credential_shaped"
+    assert result.body is None
+    assert result.undeclared_credential is not token_issuing
+
+
+@pytest.mark.parametrize("pointer", ["/Credentials/SessionToken", "/Credentials/SessionToken/0"])
+def test_projecting_a_credential_string_array_is_withheld(pointer: str) -> None:
+    body = json.dumps({"Credentials": {"SessionToken": [secrets.token_urlsafe(24)]}}).encode()
+    result = _handle(body, projection=[pointer], token_issuing=True)
+    assert result.disposition == "withheld"
+    assert result.body is None
+
+
+@pytest.mark.parametrize("body", [b'{"id":"ok"}', b'{"access_token":"issued"}', b'error'])
+@pytest.mark.parametrize("header_name", ["Location", "X-Request-Id", "ETag"])
+@pytest.mark.parametrize("field", ["access_token", "access%5Ftoken"])
+def test_an_issued_credential_in_an_allowed_header_is_never_returned(body: bytes, header_name: str, field: str) -> None:
+    # The new value is not in KnownValues. A safe projection or an error body
+    # must not let it leave through headers, even if the body is withheld.
+    result = _handle(
+        body,
+        headers=[("Content-Type", "application/json"), (header_name, f"https://upstream.example/next?{field}={secrets.token_urlsafe(24)}")],
+        projection=["/id"],
+        token_issuing=True,
+    )
+    assert result.headers == [("Content-Type", "application/json")]
+
+
+def test_withholding_the_body_does_not_return_credential_shaped_headers() -> None:
+    result = _handle(
+        json.dumps({"SessionToken": secrets.token_urlsafe(24)}).encode(),
+        headers=[("Location", f"https://upstream.example/next?access_token={secrets.token_urlsafe(24)}")],
+        token_issuing=True,
+    )
+    assert result.disposition == "withheld"
+    assert result.body is None
+    assert result.headers == []
 
 
 @pytest.mark.parametrize("pointer", ["id", "/a/~2", "/a/~"])

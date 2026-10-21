@@ -21,8 +21,13 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import unquote
 
-from aweb_secrets.credential_shapes import has_credential_shape, is_credential_field
+from aweb_secrets.credential_shapes import (
+    has_credential_shape,
+    has_credential_value,
+    is_credential_field,
+)
 from aweb_secrets.redaction import KnownValues
 
 _PASSED_HEADERS = frozenset(
@@ -95,7 +100,8 @@ def _resolve(document: Any, tokens: Sequence[str]) -> Any:
 
 def _project(body: bytes, projection: Sequence[str], *, complete: bool) -> tuple[bytes, bool]:
     """The values the pointers name, keyed by pointer, and whether one of them
-    is a non-empty string in a credential-named field. A body that is cut or
+    contains a non-empty string under a credential-named field, including
+    arrays and descendants. A body that is cut or
     is not JSON yields none."""
     parsed = [(pointer, _pointer_tokens(pointer)) for pointer in projection]
     projected: dict[str, Any] = {}
@@ -111,7 +117,8 @@ def _project(body: bytes, projection: Sequence[str], *, complete: bool) -> tuple
                 if value is not _MISSING:
                     projected[pointer] = value
                     names_credential |= (
-                        is_credential_field(tokens[-1]) and isinstance(value, str) and value != ""
+                        any(is_credential_field(token) for token in tokens)
+                        and has_credential_value(value)
                     )
     encoded = json.dumps(projected, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return encoded, names_credential
@@ -145,6 +152,11 @@ def handle_response(
         if _passes(name):
             value, count = known.redact_text(value)
             redaction_count += count
+            # Issued credentials are not yet known values. Inspect headers
+            # independently of body projection/withholding; URL-decode names
+            # such as access%5Ftoken as well as the raw header value.
+            if has_credential_shape(value.encode()) or has_credential_shape(unquote(value).encode()):
+                continue
             passed.append((name, value))
 
     def withheld(

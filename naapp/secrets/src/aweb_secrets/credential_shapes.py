@@ -57,10 +57,21 @@ def is_credential_field(name: str) -> bool:
     return name.lower().replace("_", "").replace("-", "") in _CREDENTIAL_FIELDS
 
 
+def has_credential_value(value: Any) -> bool:
+    """A credential field contains a nonempty string, directly or nested."""
+    if isinstance(value, str):
+        return value != ""
+    if isinstance(value, dict):
+        return any(has_credential_value(item) for item in value.values())
+    if isinstance(value, list):
+        return any(has_credential_value(item) for item in value)
+    return False
+
+
 def _json_has_credential_field(value: Any) -> bool:
     if isinstance(value, dict):
         return any(
-            (is_credential_field(key) and isinstance(item, str) and item != "")
+            (is_credential_field(key) and has_credential_value(item))
             or _json_has_credential_field(item)
             for key, item in value.items()
         )
