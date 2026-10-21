@@ -113,12 +113,22 @@ def create_app(
         assert redis is not None
         lifespan = _make_library_lifespan(db_infra, redis, rate_limiter)
 
-    try:
-        service_version = pkg_version("awid-service")
-    except Exception:
-        service_version = "dev"
+    app = FastAPI(title="awid.ai registry", version=_service_version(), lifespan=lifespan)
+    mount_registry(app)
+    return app
 
-    app = FastAPI(title="awid.ai registry", version=service_version, lifespan=lifespan)
+
+def _service_version() -> str:
+    try:
+        return pkg_version("awid-service")
+    except Exception:
+        return "dev"
+
+
+def mount_registry(app: FastAPI) -> None:
+    """AWID's routes on ``app``, its ops routes and its registry, with the
+    configuration they read."""
+    service_version = _service_version()
 
     @app.get("/", tags=["ops"])
     async def root() -> dict:
@@ -156,12 +166,6 @@ def create_app(
     async def ops_health(request: Request) -> dict:
         return await _health_payload(request)
 
-    mount_registry(app)
-    return app
-
-
-def mount_registry(app: FastAPI) -> None:
-    """AWID's registry routes on ``app``, with the configuration they read."""
     app.state.rotate_max_body_bytes = rotate_max_body_bytes_from_env()
 
     # Covering controller signatures use configuration, never Host/forwarded headers.

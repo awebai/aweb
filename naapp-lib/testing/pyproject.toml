@@ -13,6 +13,15 @@ dependencies = [
   "dnspython>=2.7.0",
 ]
 
+[project.optional-dependencies]
+# The aweb coordination server in-process (aweb.testing), found through a
+# team's AWID record as a naapp finds it. Needs Redis at REDIS_URL.
+server = [
+  "aweb",
+  "pytest-asyncio>=1.2.0",
+  "redis>=6.4.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -23,3 +32,4 @@ packages = ["src/aweb_naapp_testing"]
 [tool.uv.sources]
 aweb-naapp = { path = "..", editable = true }
 awid-service = { path = "../../awid", editable = true }
+aweb = { path = "../../server", editable = true }

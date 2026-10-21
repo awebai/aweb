@@ -24,6 +24,7 @@ import httpx
 from fastapi import FastAPI
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
+from redis.asyncio import Redis
 
 from awid.did import did_from_public_key
 from awid.ratelimit import NoOpRateLimiter
@@ -148,9 +149,10 @@ def signed_team_server_record(
 
 @asynccontextmanager
 async def running_registry(
-    database_url: str, *, service_token: str | None = SERVICE_TOKEN
+    database_url: str, *, service_token: str | None = SERVICE_TOKEN, redis: Redis | None = None
 ) -> AsyncIterator[Registry]:
-    """AWID, with its migrations applied, on the empty database at ``database_url``."""
+    """AWID, with its migrations applied, on the empty database at ``database_url``.
+    Its health reports the ``redis`` it is given, and fails without one."""
     pool = await AsyncDatabaseManager.create_shared_pool(
         DatabaseConfig(connection_string=database_url, schema=None)
     )
@@ -159,6 +161,7 @@ async def running_registry(
         await infra.initialize(shared_pool=pool, run_migrations=True)
         app = FastAPI()
         app.state.db = infra
+        app.state.redis = redis
         app.state.db_schema = infra.schema
         app.state.rate_limiter = NoOpRateLimiter()
         app.state.awid_service_token = service_token

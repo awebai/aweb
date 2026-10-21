@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import os
+
 import httpx
 import pytest
 import pytest_asyncio
@@ -14,6 +16,7 @@ from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from awid.team_server_record import verify_team_server_record
 from nacl.signing import SigningKey
+from redis.asyncio import Redis
 
 from awid_service.main import create_app
 from awid_service.testing import REGISTRY_URL, running_registry
@@ -49,7 +52,7 @@ async def database_url(test_db_factory) -> str:
 async def test_the_registry_serves_every_route_awid_serves(database_url) -> None:
     served = {route.path for route in create_app().routes}
     async with running_registry(database_url) as registry:
-        assert {route.path for route in registry.app.routes} >= served - {"/", "/health", "/ops/health"}
+        assert {route.path for route in registry.app.routes} >= served
 
 
 @pytest.mark.asyncio
@@ -121,3 +124,13 @@ async def test_the_transport_records_requests_and_carries_faults(database_url) -
             registry.transport.down = True
             with pytest.raises(httpx.ConnectError):
                 await client.get(path)
+
+
+@pytest.mark.asyncio
+async def test_the_registry_reports_its_health_with_the_redis_it_is_given(database_url) -> None:
+    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0")) as redis:
+        async with running_registry(database_url, redis=redis) as registry:
+            client = RegistryClient(registry_url=REGISTRY_URL, transport=registry.transport)
+            health = await client.health()
+    assert health["status"] == "ok"
+    assert health["checks"]["redis"] == health["checks"]["database"] == "ok"
