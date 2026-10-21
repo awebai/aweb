@@ -243,6 +243,15 @@ ROOT_CONSUMERS = {
         "page-format-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "page-format-v1.json"',
     ),
+    PurePosixPath("naapp-lib/tests/runtime/capability_links/conftest.py"): _consumer(
+        ("link-capability-v1.json", "link-request-v1.json"),
+        'AWEB_ROOT / "docs" / "vectors" / "link-capability-v1.json"',
+        'AWEB_ROOT / "docs" / "vectors" / "link-request-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/runtime/test_link_request_vectors.py"): _consumer(
+        "link-request-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "link-request-v1.json"',
+    ),
     PurePosixPath("naapp-lib/tests/pages/test_page_proposal_vectors.py"): _consumer(
         "page-proposal-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "page-proposal-v1.json"',

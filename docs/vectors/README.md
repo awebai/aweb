@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 42
+`docs/vectors/*.json` is the only public protocol-vector authority for the 44
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the two classified
 package copies below. An unclassified hand-maintained copy is forbidden even when
@@ -264,6 +264,26 @@ signer's pre-signing checks with their refusals, and ordered prepare, submit,
 replay and renewal steps with the expected result of each. The responses and
 checks are checked by `aweb_naapp.runtime.task_requests`; the sequence is for a
 pages naapp. See [page actions](../page-actions.md) §3.
+
+### `link-request-v1.json`
+
+Capability-link requests (aweb-acgg.10): secret verifiers, and
+`aweb.link-request/1` payloads, signing bytes and Ed25519 signatures by a
+session key, with verification cases that give the request each payload must
+bind and the clock. The reference consumer is `aweb_naapp.runtime.link_requests`
+in `naapp-lib/tests/runtime/`. See [page links](../page-links.md) §2–§3.
+
+### `link-capability-v1.json`
+
+Capability-link semantics (aweb-acgg.10), for the app that serves links:
+delegation against the creator's authority, one link's ordered use steps
+(projection, constraints, nonce replay and idempotent retry, Origin and CSRF,
+narrowing when the creator loses authority, stream re-checks, revocation),
+receipt retries after use, revocation and expiry, asset grants for native
+media, revocation and one-use races under the link's row lock, and exchange
+rate limiting that a stranger cannot turn against a holder. The delegation and
+lockout cases are checked by `aweb_naapp.runtime.capability_links`. See
+[page links](../page-links.md) §1 and §4–§6.
 
 ### `page-proposal-v1.json`
 
