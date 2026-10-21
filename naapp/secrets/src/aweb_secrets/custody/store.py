@@ -316,6 +316,24 @@ class Custody:
             secret_id,
         )
 
+    async def enable(
+        self, tx: TransactionManager, *, installation_id: str, team_id: str, secret_id: str
+    ) -> None:
+        """Restore custody access as part of the caller's confirmed reenable.
+
+        This only clears the disabled marker. Destroyed versions stay destroyed,
+        and retained version/shape history stays intact. The caller authorizes
+        the widening act and updates the secret's record in this transaction.
+        """
+        await tx.execute(
+            "UPDATE {{tables.custody_secrets}} SET disabled_at = NULL"
+            " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3"
+            " AND disabled_at IS NOT NULL",
+            installation_id,
+            team_id,
+            secret_id,
+        )
+
     async def destroy(self, tx: TransactionManager, context: SealContext) -> None:
         """Delete one version's wrapped data key and ciphertext from the live store.
 
