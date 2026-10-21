@@ -50,6 +50,25 @@ loopback development origin. Choose that ID before installing: changing it later
 creates a different app identity and orphans existing installations; it does not
 rename or migrate them.
 
+### Public surfaces
+
+`aweb_secrets.surfaces` supplies the landing, `/reference`, `/llms.txt` and
+packaged agent skills on the shared `aweb_naapp` design system and chrome. The
+reference and operation blocks use the runtime's resolved manifest, including
+the deployment's app id. Fonts, social card and skills ship in the package.
+`SECRETS_SKILLS_DIR` can override the packaged skills directory.
+
+The composition owner replaces the API app's separate manifest and health
+mounts with `mount_public_surfaces(api, runtime=runtime, health_checks=checks)`,
+where `checks` is the complete existing mapping (runtime checks plus KMS).
+The helper serves only public documentation/assets and the runtime's unchanged
+manifest and health routes. Mount it only on the public API app; the separate
+passkey console keeps its own health routes and CSP.
+
+Landing wording is copy v1 approved by Juan on 2026-10-21. Its read-back promise
+is about app interfaces: the service handles transient plaintext, and the vault
+and runner host retain their documented trust boundaries (§14 of the design).
+
 Tests compare the filled served bytes against the shared canonical filler and
 load them with the X8/C3 interpreter. The shared conformance inputs are
 `test-vectors/app-manifests/app-manifest-v2-v1.json` and
