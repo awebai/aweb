@@ -5,7 +5,7 @@ API_PORT ?= 8765
 PROD_CONFIG ?= ops/render-production.json
 
 test:
-	uv run pytest -q
+	uv run pytest -q -m "not e2e"
 
 test-server:
 	uv run pytest -q

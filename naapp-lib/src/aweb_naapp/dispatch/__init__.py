@@ -135,7 +135,14 @@ OnTransition = Callable[[TransactionManager, Transition], Awaitable[None]]
 
 class Fence(Protocol):
     """Whatever may stop a dispatch, re-read inside the transaction that admits
-    or begins it."""
+    or begins it.
+
+    ``prepare`` must take the transaction's first lock. A caller that also
+    holds other rows (roles, approvals) takes them only after S3 returns, or
+    calls ``prepare`` itself before taking them; S3 then calls it again, so it
+    must be safe to repeat in one transaction, as a repeated SELECT ... FOR
+    UPDATE is.
+    """
 
     async def prepare(self, tx: TransactionManager) -> None:
         """Runs before S3 takes any lock; takes every lock the fence needs,
