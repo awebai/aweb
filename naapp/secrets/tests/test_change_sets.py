@@ -767,6 +767,8 @@ async def test_a_confirmed_contact_change_is_scheduled_and_announced(world: Worl
     await decide(world, await draft(world, change), "alice@acme.com")
     await _confirm_and_deliver(world, change)
     assert set(world.inbox.notices) == {"f@acme.com", "f-new@acme.com"}
+    # Only the new contact receives the proof that makes the change count.
+    assert list(world.inbox.proofs) == ["f-new@acme.com"]
 
 
 async def test_a_second_contact_change_waits_for_the_first(world: World) -> None:
