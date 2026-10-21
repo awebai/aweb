@@ -1199,9 +1199,18 @@ and hook records; the mint's receipt retains the real `derived_grant_id`.
 needs its **own** explicit `run` grant/template pin for any job. Such a grant
 does not inherit the parent's permission. A durable-delivery job slot may name
 that child directly, or its fixed ancestor when the requested child's recorded
-lineage proves the relationship. Only the slot matching the run request's
-selected secret accepts this descendant substitution; other slots retain their
-fixed selectors. The same actual-ref/ordinal assignment rule applies. The job
+lineage proves the relationship. Before freezing the plan, collect every
+`durable` slot whose fixed selector names either the selected child itself or
+any of its recorded ancestors in the same installation and team. **Exactly one
+slot must match.** Zero or multiple matches refuse with `job_not_allowed`
+before any approval, mint or credential release. An exact child match does not
+take priority over an ancestor match; neither list order nor ancestor proximity
+breaks a tie. The agent cannot supply a slot override. Freeze that single slot's
+ordinal and actual child ID in the run plan and recheck the relationship at the
+release fence. Only that slot substitutes the selected child; other slots retain
+their fixed selectors. For example, slots naming both a child's root and its
+parent are ambiguous and refuse; a job naming only one of those ancestors has
+one eligible slot. The same actual-ref/ordinal assignment rule applies. The job
 is still the installation CURRENT definition, its digest must match the child's
 grant and the runner's local pin, and its durable-delivery confirmation is
 required. A pre-existing job with no internal mint recipe can therefore be
