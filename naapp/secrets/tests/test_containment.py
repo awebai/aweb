@@ -195,3 +195,54 @@ async def test_kill_switch_refuses_new_admission_and_replay(uses):  # noqa: F811
         with pytest.raises(AdmissionRefused) as refused:
             await request_child(uses, first, request_id=request_id)
         assert refused.value.code == "installation_disabled"
+
+
+async def test_overlapping_replacements_lock_siblings_before_requested_child(uses):  # noqa: F811
+    from tests.test_containment_service import service
+
+    await seed(uses)
+    sibling, _ = await child(uses, secret_id="sec_000000")
+    requested, _ = await child(uses, secret_id="sec_000001")
+    svc = await service(uses)
+    db = uses.world.db
+
+    async def prepare():
+        async with db.transaction() as tx:
+            await uses.world.fence.admit(tx, uses.grant)
+            await svc.prepare_replacements(
+                tx,
+                installation_id=INSTALLATION_ID,
+                team_id=TEAM,
+                secret_ids=(SECRET_ID, requested.secret_id),
+            )
+
+    task = None
+    try:
+        async with db.transaction() as holder:
+            await holder.fetch_value(
+                "SELECT secret_id FROM {{tables.secrets}} WHERE secret_id=$1 FOR UPDATE",
+                sibling.secret_id,
+            )
+            pid = await holder.fetch_value("SELECT pg_backend_pid()")
+            task = asyncio.create_task(prepare())
+            async with asyncio.timeout(5):
+                while not await db.fetch_value(
+                    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))",
+                    pid,
+                ):
+                    await asyncio.sleep(0.01)
+            # Canonical order must reach the earlier sibling before it takes
+            # the requested child lock, despite that child being an input root.
+            async with db.transaction() as observer:
+                assert (
+                    await observer.fetch_value(
+                        "SELECT secret_id FROM {{tables.secrets}} WHERE secret_id=$1 FOR UPDATE NOWAIT",
+                        requested.secret_id,
+                    )
+                    == requested.secret_id
+                )
+        await asyncio.wait_for(task, 5)
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
