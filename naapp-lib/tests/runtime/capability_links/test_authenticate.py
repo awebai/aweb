@@ -111,13 +111,18 @@ async def test_a_request_that_does_not_match_its_signature_is_refused(
     assert (refused.value.code, refused.value.status) == ("signature_invalid", 401)
 
 
-async def test_an_expired_or_unknown_session_is_refused(db: AsyncDatabaseManager, session) -> None:
+async def test_an_expired_session_is_unavailable_after_signature_verification(
+    db: AsyncDatabaseManager, session
+) -> None:
     await db.execute(
         "UPDATE {{tables.link_sessions}} SET expires_at = $1 WHERE session_id = $2", NOW, session
     )
     with pytest.raises(LinkRefused) as refused:
         await _authenticate(db, **_request(VALID["action-post"]))
-    assert refused.value.code == "signature_invalid"
+    assert (refused.value.code, refused.value.status) == ("link_unavailable", 410)
+    with pytest.raises(LinkRefused) as unsigned:
+        await _authenticate(db, **_request(VALID["action-post"], authorization=None))
+    assert (unsigned.value.code, unsigned.value.status) == ("signature_invalid", 401)
 
 
 async def test_a_stale_request_is_authorization_expired(db: AsyncDatabaseManager, session) -> None:

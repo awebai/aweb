@@ -1,4 +1,4 @@
-"""Capability links (docs/page-links.md §1-§3, §6): mint, exchange and signed requests.
+"""Capability links (docs/page-links.md §1-§6).
 
 A member mints a link for a bounded projection of one page and an explicit
 list of allowed actions, never more than they can read and do themselves. The
@@ -12,8 +12,10 @@ a page now, which it consults at mint and at every use, so a link narrows as
 its creator's access does. Rate limits use :mod:`aweb_naapp.ratelimit`, whose
 migrations the app applies too.
 
-The link's lifecycle under its row lock, receipts, reads, actions, asset
-grants and streams build on this module.
+Reads and submissions take the link's row lock in the caller's transaction.
+The app loads a checked read projection before releasing that transaction;
+its action port looks up receipts and applies actions on the same transaction.
+Asset grants and streams build on this lifecycle.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from awid.signing import canonical_json_bytes
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
+from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired
 from aweb_naapp.ratelimit import Charge, Decision, take
 from aweb_naapp.runtime.link_requests import (
     LinkRequestRefused,
@@ -52,6 +55,9 @@ CLOCK_WINDOW = timedelta(seconds=60)
 # link-default-v1 (§6): (capacity, window_s) per bucket.
 EXCHANGES_PER_LINK = (10, 60)
 EXCHANGES_PER_CLIENT = (30, 60)
+READS_PER_SESSION = (120, 60)
+WRITES_PER_LINK = (20, 60)
+WRITES_PER_CLIENT = (60, 60)
 
 MAX_COLLECTIONS = 16
 MAX_RECORDS = 200
@@ -173,6 +179,70 @@ class LinkCaller:
 
     link_id: str
     session_id: str
+
+
+@dataclass(frozen=True)
+class LinkRead:
+    """A checked projection; load it before releasing the caller's transaction.
+
+    ``mode`` and ``page_rev`` select the pinned or live page version. The app
+    applies its row/field ACLs as ``creator`` as well as this projection.
+    """
+
+    scope: LinkScope
+    creator: str
+    mode: str
+    page_rev: int | None
+    projection: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class LinkAction:
+    """Context built after link verification, for the app's action port.
+
+    The creator supplies delegated authority; ``caller`` is anonymous link
+    provenance, never a member Principal. The app validates the action schema,
+    expected revisions and field policy within ``projection``, and writes its
+    effect, audit, outbox and receipt on the supplied transaction. It must not
+    open another transaction, commit this transaction, or dispatch external effects.
+    """
+
+    scope: LinkScope
+    caller: LinkCaller
+    creator: str
+    mode: str
+    page_rev: int | None
+    projection: Mapping[str, Any]
+    constraints: Mapping[str, Any]
+    kind: str
+    intent_sponsor_did: str | None
+    request: Mapping[str, Any]
+    key: tuple[str, ...]
+    request_hash: bytes
+
+
+@dataclass(frozen=True)
+class ActionReceipt:
+    """The app's stored operation and its bounded response, with no link secrets."""
+
+    operation_id: str
+    result: Mapping[str, Any]
+
+
+class ActionPort(Protocol):
+    """N3's receipt and action seam. Both methods use the supplied transaction.
+
+    ``lookup`` is read-only; ``apply`` claims the same key/hash in the shared
+    idempotency store and writes the receipt with the effect. A matching retry
+    returns only the prior bounded receipt, not a fresh page read. N5 owns the
+    link lock; the app neither takes a second link lock nor fabricates a member.
+    """
+
+    async def lookup(
+        self, tx: TransactionManager, *, key: tuple[str, ...], request_hash: bytes
+    ) -> ActionReceipt | None: ...
+
+    async def apply(self, tx: TransactionManager, *, action: LinkAction) -> ActionReceipt: ...
 
 
 async def apply_capability_link_migrations(db: AsyncDatabaseManager) -> None:
@@ -565,7 +635,7 @@ async def authenticate(
         """,
         session_id,
     )
-    if session is None or now >= session["expires_at"]:
+    if session is None:
         raise _signature_invalid()
     try:
         payload = verify_link_request_bytes(
@@ -583,6 +653,8 @@ async def authenticate(
         )
     except LinkRequestRefused as exc:
         raise LinkRefused(exc.code, 401) from exc
+    if now >= session["expires_at"]:
+        raise LinkRefused("link_unavailable", 410)
     issued_at = _parse_timestamp(payload["issued_at"])
     async with db.transaction() as tx:
         recorded = await tx.fetch_value(
@@ -605,6 +677,275 @@ async def authenticate(
         if not hmac.compare_digest(digest, bytes(session["csrf_sha256"])):
             raise _denied()
     return LinkCaller(link_id=session["link_id"], session_id=session_id)
+
+
+def _scope(record: Mapping[str, Any]) -> LinkScope:
+    return LinkScope(record["team_id"], record["installation_id"], record["page_id"])
+
+
+async def _locked_link(
+    tx: TransactionManager, *, caller: LinkCaller, write: bool, now: datetime
+) -> Mapping[str, Any]:
+    """Serialize against revocation, and recheck the session before any receipt."""
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    lock = "FOR UPDATE" if write else "FOR SHARE"
+    row = await tx.fetch_one(
+        "SELECT record, revoked_at, expires_at, one_use, used_at "
+        "FROM {{tables.capability_links}} WHERE link_id = $1 " + lock,
+        caller.link_id,
+    )
+    if row is None:
+        raise LinkRefused("link_unavailable", 410)
+    session = await tx.fetch_one(
+        "SELECT link_id, expires_at FROM {{tables.link_sessions}} WHERE session_id = $1",
+        caller.session_id,
+    )
+    if session is None or session["link_id"] != caller.link_id or now >= session["expires_at"]:
+        raise LinkRefused("link_unavailable", 410)
+    return row
+
+
+def _check_lifecycle(row: Mapping[str, Any], now: datetime) -> None:
+    if (
+        row["revoked_at"] is not None
+        or now >= row["expires_at"]
+        or (row["one_use"] and row["used_at"] is not None)
+    ):
+        raise LinkRefused("link_unavailable", 410)
+
+
+def _select_projection(
+    requested: Mapping[str, Any] | None, granted: Mapping[str, Any]
+) -> dict[str, Any]:
+    if requested is None:
+        return dict(granted)
+    if not isinstance(requested, Mapping) or set(requested) != {"collections", "assets"}:
+        raise _schema("projection")
+    collections = requested["collections"]
+    if not isinstance(collections, list) or len(collections) > MAX_COLLECTIONS:
+        raise _schema("collections")
+    allowed = {entry["collection"]: entry for entry in granted["collections"]}
+    checked = []
+    for entry in collections:
+        if not isinstance(entry, Mapping) or set(entry) != {"collection", "record_ids", "fields"}:
+            raise _schema("collection")
+        if not _identifier(entry["collection"]):
+            raise _schema("collection")
+        records = _identifiers(entry["record_ids"], 1, MAX_RECORDS)
+        fields = _field_names(entry["fields"])
+        grant = allowed.get(entry["collection"])
+        if (
+            grant is None
+            or not set(records) <= set(grant["record_ids"])
+            or not set(fields) <= set(grant["fields"])
+        ):
+            raise _denied()
+        checked.append({"collection": entry["collection"], "record_ids": records, "fields": fields})
+    if not _distinct([entry["collection"] for entry in checked]):
+        raise _schema("collections")
+    assets = _identifiers(requested["assets"], 0, MAX_ASSETS)
+    if not set(assets) <= set(granted["assets"]):
+        raise _denied()
+    return {"collections": checked, "assets": assets}
+
+
+async def read(
+    tx: TransactionManager,
+    authority: LinkAuthority,
+    *,
+    caller: LinkCaller,
+    page_id: str,
+    projection: Mapping[str, Any] | None = None,
+    now: datetime,
+) -> LinkRead:
+    """Admit a projection read under FOR SHARE (§4–§6).
+
+    ``caller`` comes from :func:`authenticate`. The app must load the returned
+    projection within this same transaction, never after its lock is released.
+    A subset remains readable when the creator loses an unrelated field.
+    """
+    row = await _locked_link(tx, caller=caller, write=False, now=now)
+    _check_lifecycle(row, now)
+    record = _record(row["record"])
+    if record["page_id"] != page_id:
+        raise _denied()
+    selected = _select_projection(projection, record["projection"])
+    creator = record["created_by"]["principal_did"]
+    if (
+        await _freeze_projection(
+            tx, authority, creator=creator, page_id=page_id, projection=selected
+        )
+        is None
+    ):
+        raise _denied()
+    limit = await take(tx, [Charge("link.read", caller.session_id, *READS_PER_SESSION)], now=now)
+    if not limit.allowed:
+        raise _limited(limit)
+    return LinkRead(_scope(record), creator, record["mode"], record["page_rev"], selected)
+
+
+def _action_request(body: bytes) -> dict[str, Any]:
+    request = _strict_object(body)
+    required = {"action_id", "input", "idempotency_key"}
+    if (
+        not isinstance(request, dict)
+        or not required <= set(request)
+        or set(request) - required - {"expected_page_rev", "expected_record_revs"}
+    ):
+        raise _schema("action request")
+    if (
+        not _identifier(request["action_id"])
+        or not isinstance(request["input"], dict)
+        or not isinstance(request["idempotency_key"], str)
+        or re.fullmatch(r"[A-Za-z0-9._-]{1,128}", request["idempotency_key"]) is None
+    ):
+        raise _schema("action request")
+    try:
+        canonical_json_bytes(request)
+    except (UnicodeEncodeError, ValueError, TypeError, RecursionError) as exc:
+        raise _schema("action request") from exc
+    return request
+
+
+async def admit(
+    tx: TransactionManager,
+    authority: LinkAuthority,
+    actions: ActionPort,
+    *,
+    caller: LinkCaller,
+    page_id: str,
+    body: bytes,
+    client: str,
+    now: datetime,
+) -> ActionReceipt:
+    """Admit an edit or anonymous intent (§4–§6), in the caller's transaction.
+
+    The body is the same bytes :func:`authenticate` bound to the request.
+    Receipt lookup precedes lifecycle/authority under FOR UPDATE. An admitted
+    one-use operation and its receipt commit together; a failure rolls both
+    back. Fresh nonces allow retries, whose result survives use or revocation
+    only while the session lives. ``client`` follows the trusted proxy rule.
+    """
+    request = _action_request(body)
+    request_hash = hashlib.sha256(
+        canonical_json_bytes({"operation": "link.action", "page_id": page_id, "request": request})
+    ).digest()
+    row = await _locked_link(tx, caller=caller, write=True, now=now)
+    record = _record(row["record"])
+    key = (
+        record["installation_id"],
+        record["team_id"],
+        "link:" + caller.link_id,
+        request["idempotency_key"],
+    )
+    try:
+        stored = await actions.lookup(tx, key=key, request_hash=request_hash)
+        if stored is not None:
+            return stored
+        _check_lifecycle(row, now)
+        if record["page_id"] != page_id:
+            raise _denied()
+        allowed = next(
+            (a for a in record["actions"] if a["action_id"] == request["action_id"]), None
+        )
+        if allowed is None:
+            raise _denied()
+        constraints = allowed["constraints"]
+        for field, value in constraints.items():
+            if field not in request["input"] or canonical_json_bytes(
+                request["input"][field]
+            ) != canonical_json_bytes(value):
+                raise _denied()
+        creator = record["created_by"]["principal_did"]
+        kind = await authority.action_kind(tx, page_id=page_id, action_id=request["action_id"])
+        if kind not in _LINK_KINDS or not await authority.can_act(
+            tx,
+            creator=creator,
+            page_id=page_id,
+            action_id=request["action_id"],
+            constraints=constraints,
+        ):
+            raise _denied()
+        sponsor = record["intent_sponsor_did"]
+        if kind == "intent" and (
+            sponsor is None or not await authority.is_team_agent(tx, did=sponsor)
+        ):
+            raise _denied()
+        limit = await take(
+            tx,
+            [
+                Charge("link.write", caller.link_id, *WRITES_PER_LINK),
+                Charge("link.write.client", client, *WRITES_PER_CLIENT),
+            ],
+            now=now,
+        )
+        if not limit.allowed:
+            raise _limited(limit)
+        receipt = await actions.apply(
+            tx,
+            action=LinkAction(
+                scope=_scope(record),
+                caller=caller,
+                creator=creator,
+                mode=record["mode"],
+                page_rev=record["page_rev"],
+                projection=record["projection"],
+                constraints=constraints,
+                kind=kind,
+                intent_sponsor_did=sponsor,
+                request=request,
+                key=key,
+                request_hash=request_hash,
+            ),
+        )
+    except (IdempotencyConflict, IdempotencyExpired) as exc:
+        raise LinkRefused(exc.code, exc.status) from exc
+    if row["one_use"]:
+        await tx.execute(
+            "UPDATE {{tables.capability_links}} SET used_at = $2, used_by_operation = $3 "
+            "WHERE link_id = $1",
+            caller.link_id,
+            now,
+            receipt.operation_id,
+        )
+    return receipt
+
+
+async def revoke(
+    tx: TransactionManager,
+    *,
+    scope: LinkScope,
+    link_id: str,
+    actor: str,
+    is_owner: bool,
+    now: datetime,
+) -> None:
+    """Revoke as the creator or a verified owner, under the admission lock (§4).
+
+    The app supplies ``scope``, ``actor`` and ``is_owner`` from its verified
+    team-auth context and writes the audit on this transaction.
+    """
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    row = await tx.fetch_one(
+        "SELECT created_by FROM {{tables.capability_links}} WHERE link_id = $1 "
+        "AND team_id = $2 AND installation_id = $3 AND page_id = $4 FOR UPDATE",
+        link_id,
+        scope.team_id,
+        scope.installation_id,
+        scope.page_id,
+    )
+    if row is None:
+        raise _unavailable()
+    if row["created_by"] != actor and not is_owner:
+        raise _denied()
+    await tx.execute(
+        "UPDATE {{tables.capability_links}} SET revoked_at = COALESCE(revoked_at, $2) "
+        "WHERE link_id = $1",
+        link_id,
+        now,
+    )
 
 
 async def expire_sessions(db: AsyncDatabaseManager, *, now: datetime) -> int:
