@@ -29,7 +29,7 @@ def after():
         "exec": {"path": "/usr/local/bin/backup", "sha256": "a" * 64, "files": []},
         "oci": None,
         "argv": ["--", {"$param": "database", "slot": "positional"}],
-        "env": {"DB_ADMIN": {"$credential": "db-admin"}},
+        "env": {"DB_ADMIN": {"$credential": "db-admin", "field": "value"}},
         "cwd": "/srv/backup",
         "timeout_s": 60,
         "output": {"max_bytes": 4096, "projection": ["/exit_code"]},
@@ -37,6 +37,73 @@ def after():
         "credentials": [{"secret_ref": "db-admin", "delivery": "durable", "mint": None}],
         "allow_durable": True,
     }
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        ["value"],
+        ["username"],
+        ["password"],
+        ["username", "password", "password"],
+        ["client_id", "client_secret"],
+        ["client_secret"],
+        ["access_key_id", "secret_access_key", "session_token"],
+        ["session_token"],
+    ],
+)
+def test_credential_env_fields_select_one_whole_mapping_family(fields):
+    body = after()
+    body["env"] = {
+        "CRED_" + str(i): {"$credential": "db-admin", "field": field}
+        for i, field in enumerate(fields)
+    }
+    job = JobDefinition.from_after(body)
+    assert job.after["env"] == body["env"]
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        {"$credential": "db-admin"},
+        {"$credential": "db-admin", "field": "token"},
+        {"$credential": "db-admin", "field": ""},
+        {"$credential": "db-admin", "field": None},
+        {"$credential": "db-admin", "field": ["value"]},
+        {"$credential": "db-admin", "field": "value", "default": ""},
+        {"$credential": "unknown", "field": "value"},
+    ],
+)
+def test_credential_env_fields_refuse_implicit_unknown_or_extended_bindings(binding):
+    body = after()
+    body["env"] = {"DB_ADMIN": binding}
+    with pytest.raises(JobInvalid):
+        JobDefinition.from_after(body)
+
+
+@pytest.mark.parametrize("fields", [["value", "password"], ["client_id", "access_key_id"]])
+def test_credential_slot_cannot_mix_decoder_families(fields):
+    body = after()
+    body["env"] = {
+        "CRED_" + str(i): {"$credential": "db-admin", "field": field}
+        for i, field in enumerate(fields)
+    }
+    with pytest.raises(JobInvalid):
+        JobDefinition.from_after(body)
+
+
+def test_different_credential_slots_can_select_different_families():
+    body = after()
+    body["credentials"].append({"secret_ref": "other", "delivery": "durable", "mint": None})
+    body["env"] = {
+        "DB_ADMIN": {"$credential": "db-admin", "field": "password"},
+        "API_KEY": {"$credential": "other", "field": "value"},
+    }
+    first = JobDefinition.from_after(body)
+    body["env"]["DB_ADMIN"]["field"] = "username"
+    second = JobDefinition.from_after(body)
+    assert second.digest != first.digest
+    assert first.after["env"]["DB_ADMIN"]["field"] == "password"
 
 
 def test_positional_and_option_value_have_different_leading_dash_boundaries():
@@ -66,7 +133,7 @@ def test_positional_and_option_value_have_different_leading_dash_boundaries():
 )
 def test_code_loading_env_targets_are_refused(name):
     body = after()
-    body["env"] = {name: {"$credential": "db-admin"}}
+    body["env"] = {name: {"$credential": "db-admin", "field": "value"}}
     with pytest.raises(JobInvalid):
         JobDefinition.from_after(body)
 
@@ -81,7 +148,7 @@ def test_durable_flag_and_all_template_references_are_checked():
     with pytest.raises(JobInvalid):
         JobDefinition.from_after(body)
     body = after()
-    body["env"] = {"DB_ADMIN": {"$credential": "other-secret"}}
+    body["env"] = {"DB_ADMIN": {"$credential": "other-secret", "field": "value"}}
     with pytest.raises(JobInvalid):
         JobDefinition.from_after(body)
 
@@ -255,7 +322,7 @@ def test_durable_descendant_substitution_returns_the_unique_slot(refs):
 
     body = after()
     body["credentials"][0]["secret_ref"] = refs[0]
-    body["env"] = {"DB_ADMIN": {"$credential": refs[0]}}
+    body["env"] = {"DB_ADMIN": {"$credential": refs[0], "field": "value"}}
     job = JobDefinition.from_after(body)
     assert unique_durable_slot(job, lineage_refs=["root-admin", "db-admin", "fresh-child"]) == 0
 
@@ -268,7 +335,10 @@ def test_two_matching_ancestors_and_exact_child_plus_ancestor_are_ambiguous():
         body["credentials"] = [
             {"secret_ref": ref, "delivery": "durable", "mint": None} for ref in selectors
         ]
-        body["env"] = {"CRED_" + str(i): {"$credential": ref} for i, ref in enumerate(selectors)}
+        body["env"] = {
+            "CRED_" + str(i): {"$credential": ref, "field": "value"}
+            for i, ref in enumerate(selectors)
+        }
         job = JobDefinition.from_after(body)
         with pytest.raises(JobRefused) as refused:
             unique_durable_slot(job, lineage_refs=["root-admin", "db-admin", "fresh-child"])
@@ -299,7 +369,7 @@ def test_unique_slot_keeps_other_slots_fixed_and_preserves_the_ordinal():
 
     body = after()
     body["credentials"].insert(0, {"secret_ref": "unrelated", "delivery": "durable", "mint": None})
-    body["env"]["OTHER_ADMIN"] = {"$credential": "unrelated"}
+    body["env"]["OTHER_ADMIN"] = {"$credential": "unrelated", "field": "value"}
     job = JobDefinition.from_after(body)
     assert unique_durable_slot(job, lineage_refs=["db-admin", "fresh-child"]) == 1
     assert job.after == body
@@ -328,7 +398,11 @@ def test_unique_slot_keeps_other_slots_fixed_and_preserves_the_ordinal():
     ],
 )
 def test_additional_loader_and_proxy_env_names_are_refused_for_all_values(name):
-    for value in ["fixed-owner-value", {"$param": "database"}, {"$credential": "db-admin"}]:
+    for value in [
+        "fixed-owner-value",
+        {"$param": "database"},
+        {"$credential": "db-admin", "field": "value"},
+    ]:
         body = after()
         body["env"][name] = value
         with pytest.raises(JobInvalid):

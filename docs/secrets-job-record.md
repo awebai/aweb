@@ -16,7 +16,7 @@ The change/1 item's `ref` is `job_id`. Its `after` has exactly these fields:
 | `exec` | `{path, sha256, files:[{path, sha256}]}`, or null for OCI |
 | `oci` | `{image, read_only_paths}`, or null for exec |
 | `argv` | Ordered strings or `{$param:name, slot:positional\|option_value}` |
-| `env` | Names to strings, `{$param:name}`, or `{$credential:secret_ref}` |
+| `env` | Names to strings, `{$param:name}`, or `{$credential:secret_ref, field:name}` |
 | `cwd` | Absolute path |
 | `timeout_s` | Integer 1 to 3600 seconds |
 | `output` | `{max_bytes, projection}`; 1 byte to 16 MiB, nonempty distinct JSON pointers |
@@ -44,6 +44,19 @@ and declared files already use absolute paths. The runner starts with an empty
 environment. S13's runner dispatch sweep bound must exceed the exported
 `MAX_TIMEOUT_S` plus its sweep margin. Every parameter and credential has a
 declared use; a credential is placed only in a declared environment target.
+
+Every credential reference has exactly the keys `$credential` and `field`, even
+for a single-field value. Each slot selects at least one field, all from one
+structured-value family: `value`; `username`/`password`;
+`client_id`/`client_secret`; or `access_key_id`/`secret_access_key`/`session_token`.
+Subsets and repeated bindings are permitted. The shared codec's field table is
+the authority; no dictionary-order selection or empty fallback is inferred.
+The field binding is part of the immutable digest. The confirming/release path
+must additionally check the actual delivered kind, selected-field presence and
+NUL refusal under [runner protocol §4.4](secrets-runner-protocol.md#44-explicit-environment-fields).
+The runner validates the whole structured mapping with that sole codec before
+selecting env values. Old one-key bindings are invalid; stored pins are never
+silently rewritten.
 
 For `durable`, `mint` is null and `allow_durable` is true. For `short_lived`,
 `secret_ref` is the fixed parent/slot label and `mint` is exactly
