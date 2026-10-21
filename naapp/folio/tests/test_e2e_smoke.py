@@ -574,14 +574,14 @@ def test_real_aw_team_auth_smoke(folio: RunningFolio, aw_workspace: AWWorkspace)
     assert _assert_aw_success(result, context="list documents smoke").strip() == "[]"
 
 
-def test_private_team_needs_the_awid_service_token(
+def test_private_team_member_authenticates_without_the_awid_service_token(
     folio_without_awid_service_token: RunningFolio, aw_workspace: AWWorkspace
 ) -> None:
+    # Without a service token Folio checks the member's certificate through
+    # AWID's per-certificate status, which a private team's members can use too.
     team = _provision_team(aw_workspace)
     result = _aw_request(team, "GET", f"{folio_without_awid_service_token.origin}/v1/documents")
-    assert result.returncode != 0
-    assert "HTTP 403" in result.stderr
-    assert "team_private_unreadable" in result.stdout
+    assert _assert_aw_success(result, context="private team without service token").strip() == "[]"
 
 
 def test_document_endpoints_versions_raw_utf8_and_attribution(

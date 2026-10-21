@@ -1,16 +1,14 @@
 import secrets
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
 from aweb_naapp.runtime.app import NOINDEX_ROBOTS_HEADER, NaappRuntime, mount_naapp_routes
+from aweb_naapp.runtime.team_auth import Principal, record_observed_principal
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from pgdbm import AsyncDatabaseManager
 
-from folio.auth import AWIDTeamCache, Principal, authenticate_request
 from folio.aweb_manifest import MANIFEST_PATH
 from folio.cloudflare_stream import stream_iframe_url
 from folio.config import Settings, get_settings
@@ -87,35 +85,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         migrations_path=_MIGRATIONS_DIR,
         manifest_path=MANIFEST_PATH,
     )
-    holder: dict[str, object] = {}
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        holder["team_cache"] = AWIDTeamCache(
-            registry_url=resolved.awid_registry_url,
-            ttl_seconds=resolved.auth_cache_ttl_seconds,
-            service_token=resolved.awid_service_token,
-        )
-        async with runtime.lifespan(app):
-            yield
-
-    app = FastAPI(title="folio", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="folio", version="0.1.0", lifespan=runtime.lifespan)
 
     def db() -> AsyncDatabaseManager:
         return runtime.db()
 
-    def team_cache() -> AWIDTeamCache:
-        cache = holder.get("team_cache")
-        if not isinstance(cache, AWIDTeamCache):
-            raise RuntimeError("folio auth cache is not initialized")
-        return cache
-
-    async def principal(
-        request: Request,
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
-        cache: Annotated[AWIDTeamCache, Depends(team_cache)],
-    ) -> Principal:
-        return await authenticate_request(request, settings=resolved, team_cache=cache, db=database)
+    async def principal(request: Request) -> Principal:
+        # The team member who signed the request, recorded as observed. Every
+        # document, link, asset and theme is scoped to its certificate's team.
+        member = await runtime.principal(request)
+        await record_observed_principal(runtime.db(), member)
+        return member
 
     async def landing() -> str:
         return render_landing_page(public_origin=resolved.public_origin)

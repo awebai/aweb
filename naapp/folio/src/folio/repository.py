@@ -10,10 +10,10 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from aweb_naapp.runtime.event_emit import AppEvents
+from aweb_naapp.runtime.team_auth import Principal
 from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 
-from folio.auth import Principal
 from folio.cloudflare_stream import CloudflareStreamClient, stream_direct_upload_expires_at
 from folio.config import Settings
 from folio.event_emit import emit_doc_changed
