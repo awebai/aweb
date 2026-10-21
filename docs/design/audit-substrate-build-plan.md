@@ -122,6 +122,34 @@ commit together; rollback and a lost recording fence emit no child pair.
 K4 supplies the generic framing/key helper once; S13 consumes it. No live
 producer is enabled before kit, ingest, resolution and owner activation.
 
+### Decision 84: retained passkey proof (aweb-acgh.39)
+
+The shared contract/vectors preserve secrets §10.4's independent public-key
+check. The held summary-HMAC draft is superseded: approval_evidence_sha256 is
+SHA-256 of length-framed exact proof, key, challenge preimage and frozen
+verification context, with the B2 covered request bound transitively by its
+existing hash. No rotating commitment key is needed. Vector authority is
+`docs/vectors/passkey-evidence-v1.json`. Review is R+A, with B3, secrets-design,
+S13 and S14 fit checks before implementation.
+
+Juan assigns B3 the retention and sole canonical helper after acceptance.
+Thread scope, consumed challenge/preimage and exact StoredRequest.canonical
+bytes into verification. Capture raw assertion/key/context atomically with
+successful counter CAS/evidence insertion; an ordered migration adds retention.
+S13/S14 consume the reviewed helper only. Tests must distinguish trusted-key
+verification from an evidence lookup, preserve client-data bytes and the
+challenge's null task-answer spelling, verify request/policy/installation
+bindings, reject substituted valid proof, and recompute after rotation without
+a retired secret. Counters/timestamps/authority history must not be overstated
+as signed facts. Lifecycle deletion limits proof retrieval. The byte-vector
+reader uses real assertions; real B3 transaction/persistence/helper proofs
+remain its implementation responsibility.
+
+No actor field/mode or catalog wire shape is added. Console governance uses
+the identity-free system actor, retaining distinct authorizing and affected
+subjects; secret-use keeps its requesting-member actor. Audit target/delivery
+availability still never gates narrowing.
+
 ### Decision 76: independent K4 helper (aweb-acgh.16.8.1)
 
 The generic helper is `aweb_naapp.hooks.commitment`, shared by K4 and S13.

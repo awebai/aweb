@@ -253,6 +253,31 @@ expectations change together; there is no parallel version. S13 builds on this
 shape after kit/ingest/resolution support and owner activation. B2's frozen
 approval bytes remain unchanged.
 
+**Passkey proof and console actors (decision 84, aweb-acgh.39).** Juan
+preserves secrets §10.4: a reviewer holding the independently trusted approver
+public key can check the approval later without trusting B3's verdict. B3
+retains the exact assertion, COSE key, challenge preimage, frozen verification
+context and B2 covered-request sidecar in restricted storage. Both hooks'
+`approval_evidence_sha256` fields commit the exact proof and context through
+unkeyed SHA-256, with domain, fixed length framing and step-by-step independent
+verification in [the public contract](../hook-events.md#passkey-evidence-commitments-and-console-actors).
+This replaces the held summary HMAC, whose destroyed key could not support
+that verification. The verified assertion/context are non-secret proof
+artifacts; credential-bearing B2 request bytes stay outside the outer hash and
+are bound transitively through their existing hash in the signed challenge.
+The request/params audit HMACs and §A2 rules for agent bytes are unchanged.
+
+Only the proof commitment is published; raw bytes, authorizing subject,
+credential ID and counters remain restricted. Frozen proof verifies after key
+rotation, revocation or replacement without a live service or retired secret.
+App-lifecycle deletion ends proof retrieval; the surviving commitment alone
+cannot reconstruct it. Console governance uses the existing identity-free
+system actor; payload subject_ref stays the affected subject. Secret-use keeps
+the requesting-member actor. Authenticator-signed facts and service metadata
+are distinguished. No envelope mode, catalog field or containment gate is
+added. B3 implements the one shared helper after R+A; S13/S14 do not serialize
+it locally.
+
 ### A3. Registration and owner activation
 
 **Manifest slot (C3), as D1 specifies it** (`agent-pages.md` §5 "Versioned

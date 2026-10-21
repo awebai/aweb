@@ -4,7 +4,7 @@ Status: **specified experimental public contract, not yet shipped**. Owner: the
 aweb OSS hooks lane (aweb-acgh.16). This document is the source of truth for the
 `aweb.hooks` catalog, version 1, for owner-activated hook bindings, and for how
 a producer signs and delivers hook events. Its machine-readable authority is
-four vectors:
+four existing vectors and one proposed evidence vector:
 
 - `docs/vectors/hook-catalog-v1.json`: the hooks, their payload allowlists and
   rules, with positive and negative cases;
@@ -13,6 +13,8 @@ four vectors:
 - `docs/vectors/hook-event-envelope-v1.json`: the signed event envelope;
 - `docs/vectors/hook-delivery-credential-v1.json`: the request credential that
   carries an event to a target.
+- `docs/vectors/passkey-evidence-v1.json`: proposed evidence bytes, pending
+  decision-84 proof contract below; producer activation waits for R+A/helper.
 
 The strict catalog reader is `aweb_naapp.hooks.catalog`
 (`naapp-lib/src/aweb_naapp/hooks/catalog.py`). The envelope and credential
@@ -236,9 +238,211 @@ strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
 `authority` is how the act was authorized:
 
 - `owner_act` requires `owner_act_sha256`;
-- `passkey_session` requires `approval_evidence_sha256`;
+- `passkey_session` requires `approval_evidence_sha256`, the independently
+  verifiable proof commitment defined below;
 - `team_cert` is allowed only for a narrowing act, and never for
   `resource.replaced`.
+
+### Passkey evidence commitments and console actors
+
+**Decision 84, aweb-acgh.39; proposed for R+A.** Juan ruled that the proof is
+kept: secrets §10.4's promise of later checking with the approver's public key
+stays intact. This replaces the held summary-HMAC proposal at `90a3443b3`.
+S13/S14 wait for the reviewed shared B3 helper; they build no local serializer.
+
+`approval_evidence_sha256`, in both governance and secret-use hooks, is
+**SHA-256 of the retained proof and frozen verification context**, encoded as
+64 lowercase hexadecimal characters. It is not a digest of an evidence ref,
+a verification summary or a reconstructed assertion, and it is not keyed.
+The target ordinarily receives only this commitment. An authorized reviewer
+who also receives the restricted evidence can recompute it and independently
+verify the assertion under the reviewer's trusted approver public key.
+
+**Restricted retention.** On successful verification B3 retains, atomically
+with the credential-counter CAS and evidence insertion:
+
+- the exact decoded `authenticatorData`, `clientDataJSON` and `signature`
+  bytes, credential ID, and exact COSE public-key bytes used by the verifier;
+- the exact domain-prefixed challenge preimage, its expected challenge bytes,
+  and the frozen context `C` and metadata `M` below;
+- for an approval, the exact `StoredRequest.canonical` covered-request bytes
+  used by B2, including the existing policy wrapper. These are a restricted
+  sidecar, transitively bound by the signed challenge's request hash;
+- the commitment and its immutable association to the evidence record and
+  authorization. A session or approval refers to that association, not a
+  caller's later headers, live policy, new key or recomputed request.
+
+These are new retained proof fields, not fields claimed to exist in today's
+summary-only `PasskeyEvidence`. Scope, original challenge state and B2 covered
+bytes must be threaded into B3's verification seam. Existing credential-ID
+lookup and summary data may remain restricted store columns. Neither is a
+substitute for the proof. No raw proof, subject, scope, key, credential ID,
+locator or counter is added to a hook payload. The raw authenticator data
+necessarily contains its signed counter: stripping or normalizing it would
+change the signature input. Contacts, session/CSRF tokens, private keys, device
+labels and request headers are not retained by this proof contract.
+
+**Context `C`.** Exactly these fields, resolved from authoritative state:
+
+| Fields | Frozen value |
+| --- | --- |
+| `app_id`, `team_id`, `installation_id`, `generation` | The producer's installation; generation is a positive safe-range integer. |
+| `scope` | The verified login or approval-candidate scope, not a browser body or the affected payload's `role`/`subject_ref`. |
+| `origin`, `rp_id` | The expected app WebAuthn origin and RP ID used in verification. |
+| `require_up`, `require_uv` | Both JSON `true`; user presence and verification are required. |
+| `binding_kind` | `approval`, `login`, `contact_change` or `contact_cancel`, selecting the existing challenge construction below. |
+
+**Metadata `M`.** Required fields are `evidence_ref`, `subject`, `purpose`,
+`verified_at`, `challenge_issued_at`, `challenge_expires_at`,
+`sign_count_before` and `sign_count_after`. Subject is the app-local
+authorizing principal. Purpose is B3's verified `approve`, `reject`, `view`,
+`login` or `contact_change`. Counters are integers from 0 through 2^32-1,
+never booleans; the after value must equal the counter in authenticator data.
+`sign_count_before` is the counter supplied to the verifier, not an independent
+proof of prior database history. Optional `approval_id`, `request_sha256`, `policy_ref`, `policy_version` and
+`task_answer_ref` are present exactly when non-null in the verified approval
+record; otherwise they are omitted. `policy_version` is a positive safe-range
+integer. Login/contact records have no approval fields. An approval requires
+its approval ID, request hash and policy ref/version; its task answer may be
+absent. Record, candidate/session subject, purpose, scope and approval bindings
+must agree before the helper produces a commitment.
+
+`C` and `M` use canonical UTF-8 JSON: keys sorted by Unicode code point, no
+insignificant whitespace, literal Unicode without normalization, no floats or
+nulls. Quote and backslash are escaped; backspace, tab, LF, form feed and CR
+use `\b`, `\t`, `\n`, `\f`, `\r`; other U+0000–U+001F characters use lowercase
+`\u00xx`; slash is not escaped. Identifier strings are nonempty valid UTF-8.
+Times are the original timezone-aware instants, converted to UTC and written
+`YYYY-MM-DDTHH:MM:SS.ffffffZ`, with exactly six fractional digits and no
+precision loss; naive times are refused. `verified_at` must be within the
+retained challenge lifetime. No extra fields enter either object.
+
+**Challenge and covered request.** Keep the existing constructions unchanged:
+
+- `approval`: `aweb.approval-challenge/1` plus LF, then B2's canonical JSON of
+  exactly `approval_id`, `candidate_subject`, `candidate_subject_type`, `nonce`,
+  `policy_ref`, `policy_version`, `purpose`, `request_sha256`, `task_answer_ref`.
+  The subject type is `app_local`; the fresh nonce is 32 bytes as lowercase hex.
+  **An absent task answer is JSON null here**, as the existing challenge
+  contract requires. Do not rebuild these bytes with `M`'s omission rules.
+- `login`: `aweb.passkey-login/1` plus LF, then canonical JSON of exactly
+  `nonce`, `scope`, `subject`.
+- `contact_change` and `contact_cancel`: the existing
+  `aweb.passkey-contact-change/1` or `aweb.passkey-contact-cancel/1` plus LF,
+  then canonical JSON of `nonce`, `subject`, and respectively
+  `contact_sha256` or `pending_contact_sha256`. Both have purpose
+  `contact_change` and retain their verified scope.
+
+The expected challenge is SHA-256 of these **exact preimage bytes**. It must
+match both retained expected-challenge bytes and the decoded challenge in the
+raw client data. The nonce is the one consumed by that successful ceremony,
+not a new nonce generated for audit. Preimage fields must agree with `C`/`M`.
+
+The approval sidecar is exactly `aweb.approval-request/1` plus LF and canonical
+`{"policy":{"ref":R,"version":V},"request":Q}`. Hash the entire sidecar,
+including domain and wrapper; compare it to `request_sha256` in the challenge
+and metadata, and compare the wrapper's policy pin. For secrets, also compare
+Q's team/installation/generation to `C` using the frozen secrets request
+contract. This neither changes B2 hashing nor serializes a live `ActionPolicy`.
+B2's rules allow null in its existing covered bytes; `C`/`M`'s no-null rule
+does not rewrite them. The sidecar itself may contain agent-entered credentials:
+it stays restricted and is **not appended directly** to the public-hash input.
+Its existing B2 hash in the verified challenge binds it transitively.
+
+**Commitment bytes.** Let `frame(B) = u64be(len(B)) || B`, using byte lengths.
+The fixed order is:
+
+```text
+approval_evidence_sha256 = lowerhex(SHA-256(
+  UTF8("aweb.passkey-evidence/1\n") ||
+  frame(canonical(C)) || frame(canonical(M)) ||
+  frame(challenge_preimage) || frame(credential_public_key_cose) ||
+  frame(credential_id) || frame(authenticator_data) ||
+  frame(client_data_json) || frame(signature)
+))
+```
+
+Binary fields are the exact retained bytes, never their transport base64,
+JSON, hex spelling, re-encoded COSE key or parsed/re-serialized client data.
+An export/vector uses strict lowercase hex for those bytes and verifies every
+length. Missing proof/sidecar, malformed encodings, inconsistent bindings and
+unverified assertions are refused, never replaced by a summary/hash fallback.
+B3 provides the sole canonical helper after R+A. The existing request/params
+HMAC helpers and their key rules are unchanged.
+
+**Why unkeyed (§A2).** Decision 84 treats the verified assertion and frozen
+verification context as non-secret proof artifacts. They contain no signing
+private key, session token, secret-use body or raw parameter value. The input
+commits the full signature and fresh challenge nonce, not an enumerable
+subject/device/counter tuple. A digest alone does not expose those bytes for
+public dictionary testing; installation and RP context prevent identical
+preimages across apps. Privacy still requires restricted proof disclosure;
+someone given the proof can of course recompute its commitment. Reusing one
+login's proof links its governance effects, and that is intentional. Raw B2
+request bytes remain outside this input. §A2 still requires producer-keyed
+HMAC for the manifest/secret-use request and params fields: this is no exception
+for arbitrary agent bytes.
+
+**Retention and rotation.** There is no commitment key to keep or destroy.
+Compute and persist the proof, context and commitment once; reuse the original
+association and signed outbox bytes. Hook signing-key rotation and credential
+replacement/revocation never rewrite them or substitute a current public key.
+The historical public key remains with the retained proof. A new installation
+or generation requires a new authorization, not relabeling old evidence.
+Retention, deletion, backup erasure and disclosure follow the app's data
+lifecycle. An ordered migration adds proof storage; no existing migration is
+edited. A legacy summary without proof cannot be upgraded into proof or used
+as a summary-HMAC fallback. After lifecycle deletion the hook/chain commitment
+may remain, but the deleted proof is unavailable and later proof retrieval is
+not promised. A retained/exported proof verifies without any live service or
+retired HMAC/signing secret.
+
+**Independent review.** Given a producer-signed hook, restricted proof export,
+the reviewer's independently trusted approver public key and expected app/RP
+context, a reviewer performs these checks without accepting B3's verdict:
+
+1. Verify the hook's producer provenance and extract its commitment; bind
+   `C`'s app/team/installation/generation to that event. Where present, match
+   the hook's approval ID/decision to `M`'s approval ID/purpose. Compare the retained
+   COSE key's algorithm and public values with the trusted approver key, and
+   the origin/RP/scope with the reviewer's expected authorization context.
+   A key or context supplied only by the evidence record is not its own anchor.
+2. Check the closed record, canonical encodings and bindings. For an approval,
+   recompute the exact B2 sidecar hash and policy pin; check Q against the
+   intended frozen operation and installation. Recompute the exact challenge
+   preimage hash; match it to the retained challenge and raw client data.
+3. Apply [WebAuthn assertion verification](https://www.w3.org/TR/2026/REC-webauthn-3-20260825/#sctn-verifying-assertion):
+   check client-data type, challenge and expected origin; RP ID hash, UP/UV and
+   other required authenticator checks; verify the signature over exact
+   `authenticator_data || SHA-256(client_data_json)` under that trusted key.
+   Check the signed counter against the frozen before/after values using B3's
+   existing rule (strict increase unless both are zero), not today's counter.
+4. Independently rebuild all framed commitment bytes, hash them and compare
+   to the signed hook field. A substituted assertion/context/key fails this
+   binding even if its signature happens to verify. Keep the exact original
+   signature bytes; never normalize a signature before hashing.
+5. Report separately what is proved: the trusted credential signed the
+   request-bound assertion; its exact retained proof matches the hook. Service
+   timestamps, prior-counter history, scope eligibility and one-time effect
+   consumption are service/audit-state claims, not extra authenticator-signed
+   facts. A login proves authentication to its scope, not a fresh signature
+   over every later console action. No named-human or custody claim is added.
+
+**Console actor.** For governance authorized solely by an app-local passkey
+session, actor is exactly `{"authority_mode":"system","attestations":[]}`.
+The app producer identifies the executor; payload `authority: passkey_session`
+and the commitment link its verified authorization. No team DID, alias,
+certificate, grant or invented principal attestation is added. The authorizing
+subject stays restricted; payload `subject_ref` identifies the affected
+subject and `role` the affected role, not the authorizing scope. They need not
+be equal. For secret-use the actor remains the requesting member, not the
+approver. Do not copy retained credential IDs into `approval_credential_id`,
+or the authorizing B3 subject into `approver_id`, as an evidence-disclosure
+shortcut. No envelope actor mode or field is added.
+
+Narrowing actions remain ungated on audit target/delivery availability. The
+new proof convention changes no containment authorization or audit gate.
+The conformance vector is [passkey evidence v1](vectors/passkey-evidence-v1.json).
 
 ### `post-manifest-command-hook`
 
