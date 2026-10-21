@@ -113,3 +113,6 @@ and creator. Empty collections open as empty tables.
 A usable capability URL is never stored in an operation receipt. Deliberately
 pinned snapshots retain their separate frozen semantics; the dashboard table
 click is a live self-view, with no share-mode chooser.
+
+After reloading a table page, open it again from the dashboard Documents entry
+or the original link. The page explains this when its link is unavailable.

@@ -48,3 +48,4 @@ pi-extension/skills/
 /agents/instances/
 .api.pid
 .api.log
+test-results/

@@ -1,4 +1,4 @@
-.PHONY: test test-server lint compile run e2e e2e-up e2e-down api-serve api-stop \
+.PHONY: test test-server test-record-table-ui lint compile run e2e e2e-up e2e-down api-serve api-stop \
 	prod-status prod-deploy prod-wait prod-verify prod-rollback
 
 API_PORT ?= 8765
@@ -9,6 +9,10 @@ test:
 
 test-server:
 	uv run pytest -q
+
+# Uses the shared renderer's locked browser-test dependencies (npm ci --prefix ../../naapp-lib/renderer).
+test-record-table-ui:
+	env -u NO_COLOR ../../naapp-lib/renderer/node_modules/.bin/playwright test tests/browser/record-table.spec.mjs
 
 lint:
 	uv run ruff check .
