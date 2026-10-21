@@ -33,7 +33,7 @@ from nacl.signing import SigningKey
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.hooks.catalog import Catalog, packaged_catalog
-from aweb_naapp.hooks.envelope import CATALOG_ID, CATALOG_VERSION, sign
+from aweb_naapp.hooks.envelope import CATALOG_ID, CATALOG_VERSION, sign, signing_bytes
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.outbox import OutboxEvent, StoredEvent, Target, enqueue, mint_event_id
 from aweb_naapp.outbox import next_sequence as _next_sequence
@@ -75,7 +75,12 @@ class Registration:
 
 @dataclass(frozen=True)
 class RegistrationView:
-    """A team's active registrations for one hook, as read at ``as_of``."""
+    """A team's active registrations for one hook, as read at ``as_of``.
+
+    ``as_of`` is when this producer read the view, on its own clock: a source
+    that copies a server's timestamp could make a view look fresh for longer,
+    or stale at once, by the clock difference.
+    """
 
     team_id: str
     hook: str
@@ -206,7 +211,6 @@ class HookProducer:
         now = self._clock()
         if critical:
             self._gate(hook, team_id, occurred_at, now, view)
-        seq = await _next_sequence(tx, scope=f"{self.producer.name}:{hook}", team_id=team_id)
         event_id = mint_event_id()
         occurred = _event_time(occurred_at)
         envelope = {
@@ -217,13 +221,19 @@ class HookProducer:
             "event_id": str(event_id),
             "trace": _trace(signed_trace_id),
             "team_id": team_id,
-            "producer": self.producer.fields(seq),
+            "producer": self.producer.fields(1),
             "actor": dict(actor),
             "occurred_at": occurred,
             "fired_at": max(occurred, _event_time(now)),
             "result_status": result_status,
             "payload": dict(payload),
         }
+        # Check the whole event before the counter moves, so a refused event
+        # never spends a seq: producer.seq stays gap-free even when the caller
+        # catches the refusal and commits.
+        signing_bytes(envelope)
+        seq = await _next_sequence(tx, scope=f"{self.producer.name}:{hook}", team_id=team_id)
+        envelope["producer"] = self.producer.fields(seq)
         signing, signature = sign(self.producer.seed, envelope)
         await enqueue(
             tx,

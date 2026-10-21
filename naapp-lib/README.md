@@ -52,6 +52,16 @@ denied address, and sends a request only to the destination it matches,
 through one pinned, verified connection. Redirects come back as responses, no proxy is read from
 the environment, and a failure is classed as not sent or of unknown outcome.
 
+A server that produces hook events (`docs/hook-events.md`) uses
+`aweb_naapp.hooks.producer` and `aweb_naapp.hooks.transport`, with the `hooks`,
+`outbox` and `egress` extras. `HookProducer.enqueue(tx, ...)` signs an event and
+stores it on the outbox's `hooks` channel in the effect's own transaction. An
+audit-critical event is refused with `audit_target_unavailable` unless the
+registration view the caller read beforehand is fresh and holds a registration
+owed it. The drain resolves deliveries with `hook_targets(registrations)`, and
+`HookTransport` re-checks each binding, signs a `hook-delivery` request and sends
+it through the egress guard to the binding's endpoint only.
+
 ### Database schema
 
 An app's tables live in `<PREFIX>DB_SCHEMA` (default `public`). The runtime pins

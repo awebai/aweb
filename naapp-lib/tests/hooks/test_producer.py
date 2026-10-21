@@ -30,9 +30,9 @@ from aweb_naapp.outbox import StoredEvent, apply_outbox_migrations
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 CASES = {
     case["name"]: case
-    for case in json.loads(
-        (AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json").read_bytes()
-    )["positive_cases"]
+    for case in json.loads((AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json").read_bytes())[
+        "positive_cases"
+    ]
 }
 TEAM = "backend:example.com"
 SEED = bytes(range(32))
@@ -116,7 +116,9 @@ async def test_an_enqueued_event_is_signed_by_the_producer_and_stored_on_the_hoo
     db,
 ) -> None:
     producer = app_producer()
-    event_id = await enqueue(db, producer, "post-manifest-command-hook", "manifest_command_mutation")
+    event_id = await enqueue(
+        db, producer, "post-manifest-command-hook", "manifest_command_mutation"
+    )
     (row,) = await events(db)
     assert row["event_id"] == event_id
     assert row["kind"] == "post-manifest-command-hook"
@@ -166,6 +168,24 @@ async def test_an_enqueue_rolls_back_with_its_effect_and_spends_no_seq(db) -> No
             )
             raise RuntimeError("the effect failed")
     assert await events(db) == []
+    await enqueue(db, producer, "post-manifest-command-hook", "manifest_command_mutation")
+    (row,) = await events(db)
+    assert json.loads(bytes(row["payload"]).split(b"\n", 1)[1])["producer"]["seq"] == 1
+
+
+async def test_a_refused_enqueue_spends_no_seq_even_when_the_caller_commits(db) -> None:
+    producer = app_producer()
+    async with db.transaction() as tx:
+        with pytest.raises(Refused):
+            await producer.enqueue(
+                tx,
+                hook="post-manifest-command-hook",
+                team_id=TEAM,
+                payload=payload("manifest_command_mutation"),
+                actor={"authority_mode": "team_cert", "attestations": []},
+                occurred_at=NOW,
+                result_status="success",
+            )
     await enqueue(db, producer, "post-manifest-command-hook", "manifest_command_mutation")
     (row,) = await events(db)
     assert json.loads(bytes(row["payload"]).split(b"\n", 1)[1])["producer"]["seq"] == 1
@@ -269,11 +289,19 @@ async def test_a_signed_trace_id_is_kept_and_an_absent_one_is_minted(db) -> None
     producer = app_producer()
     signed = "4bf92f3577b34da6a3ce929d0e0e4736"
     await enqueue(
-        db, producer, "post-manifest-command-hook", "manifest_command_mutation", signed_trace_id=signed
+        db,
+        producer,
+        "post-manifest-command-hook",
+        "manifest_command_mutation",
+        signed_trace_id=signed,
     )
     await enqueue(db, producer, "post-manifest-command-hook", "manifest_command_mutation")
     await enqueue(
-        db, producer, "post-manifest-command-hook", "manifest_command_mutation", signed_trace_id="0" * 32
+        db,
+        producer,
+        "post-manifest-command-hook",
+        "manifest_command_mutation",
+        signed_trace_id="0" * 32,
     )
     traces = [
         json.loads(bytes(row["payload"]).split(b"\n", 1)[1])["trace"] for row in await events(db)
