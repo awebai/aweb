@@ -743,11 +743,37 @@ class Containment:
         action: str,
         target: str | None,
     ) -> bool:
-        """Authorize under the caller's installation fence; return owner status.
+        """Authorize the action and retain its exact login credential through tx.
 
-        The action must recheck exact login-evidence liveness through B3 after
-        these application locks and retain all locks through commit.
+        The caller admits the installation first and uses S4 for session expiry
+        and CSRF. Application authority locks precede B3's scope/credential locks.
+        Return whether the authorized caller is an owner.
         """
+        owner = await self._console_authority(
+            tx,
+            admitted=admitted,
+            session=session,
+            action=action,
+            target=target,
+        )
+        if not await self.passkeys.login_evidence_is_current(
+            session.scope,
+            session.subject,
+            session.evidence_ref,
+            tx=tx,
+        ):
+            raise ContainmentRefused("login_evidence_unavailable", 401)
+        return owner
+
+    async def _console_authority(
+        self,
+        tx: TransactionManager,
+        *,
+        admitted: AdmittedInstallation,
+        session: ConsoleSession,
+        action: str,
+        target: str | None,
+    ) -> bool:
         owner = await self.directory.owner_of(tx, session.scope)
         if (
             owner is not None
