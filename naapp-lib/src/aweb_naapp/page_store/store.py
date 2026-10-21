@@ -86,10 +86,12 @@ class PageStore(LifecycleMixin):
         retention: RetentionPolicy | None,
         lifecycle=None,
         lifecycle_authorizer=None,
+        record_validator=None,
     ):
         self.db, self.ledger, self.retention = db, ledger, retention
         self.lifecycle = lifecycle
         self.lifecycle_authorizer = lifecycle_authorizer
+        self.record_validator = record_validator
         self._ready = False
 
     async def start(self) -> None:
@@ -216,7 +218,16 @@ class PageStore(LifecycleMixin):
             raise StoreError(error.code, error.status) from error
 
     async def _commit(
-        self, tx, scope, principal, transaction, document, old_rev, changed, record_revs=None
+        self,
+        tx,
+        scope,
+        principal,
+        transaction,
+        document,
+        old_rev,
+        changed,
+        record_revs=None,
+        receipt_details=None,
     ):
         if old_rev >= MAX_REV:
             raise StoreError("revision_exhausted", 409)
@@ -226,6 +237,7 @@ class PageStore(LifecycleMixin):
             "page_rev": document["rev"],
             "record_revs": record_revs or {},
             "audit_id": str(transaction),
+            **(receipt_details or {}),
         }
         await tx.execute(
             "UPDATE {{tables.pages}} SET document=$2::jsonb,policy_version=$3,retention_policy=$4::jsonb WHERE scope=$1",
@@ -279,6 +291,14 @@ class PageStore(LifecycleMixin):
     async def create(self, scope, principal, document, *, access: Access, key: str):
         async with self.db.transaction() as tx:
             return await self._create(tx, scope, principal, document, access=access, key=key)
+
+    async def create_on(self, tx, scope, principal, document, *, access, key):
+        """Join page creation and app discovery metadata in the caller transaction."""
+        _require_transaction(tx)
+        async with tx.transaction() as creation_tx:
+            return await self._create(
+                creation_tx, scope, principal, document, access=access, key=key
+            )
 
     async def _create(
         self, tx, scope, principal, document, *, access: Access, key: str, request_context=None
@@ -334,6 +354,7 @@ class PageStore(LifecycleMixin):
         )
         for collection in document["collections"]:
             for record in collection["records"]:
+                self._validate_record(scope, document, collection, record)
                 await self._put_record(tx, scope, collection["id"], record)
             definition = {k: v for k, v in collection.items() if k != "records"}
             await tx.execute(
@@ -375,6 +396,97 @@ class PageStore(LifecycleMixin):
             state=state,
             sync=False,
         )
+
+    async def add_record(self, scope, principal, *, collection, values, key, record_id=None):
+        change = {
+            "op": "create",
+            "collection": collection,
+            "id": record_id,
+            "expected_rev": 0,
+            "value": values,
+        }
+        return await self._record_write(
+            scope,
+            principal,
+            key=key,
+            change=change,
+            request={
+                "op": "add_record",
+                "collection": collection,
+                "record_id": record_id,
+                "values": values,
+            },
+        )
+
+    async def patch_record(
+        self, scope, principal, *, collection, record_id, expected_rev, patch, key
+    ):
+        change = {
+            "op": "patch",
+            "collection": collection,
+            "id": record_id,
+            "expected_rev": expected_rev,
+            "patch": patch,
+        }
+        return await self._record_write(
+            scope,
+            principal,
+            key=key,
+            change=change,
+            request={
+                "op": "patch_record",
+                "collection": collection,
+                "record_id": record_id,
+                "expected_rev": expected_rev,
+                "patch": patch,
+            },
+        )
+
+    async def delete_record(self, scope, principal, *, collection, record_id, expected_rev, key):
+        change = {
+            "op": "delete",
+            "collection": collection,
+            "id": record_id,
+            "expected_rev": expected_rev,
+        }
+        return await self._record_write(
+            scope,
+            principal,
+            key=key,
+            change=change,
+            request={
+                "op": "delete_record",
+                "collection": collection,
+                "record_id": record_id,
+                "expected_rev": expected_rev,
+            },
+        )
+
+    async def _record_write(self, scope, principal, *, key, change, request):
+        if (
+            not isinstance(change["collection"], str)
+            or not change["collection"]
+            or (change["id"] is None and request["op"] != "add_record")
+            or (
+                change["id"] is not None and (not isinstance(change["id"], str) or not change["id"])
+            )
+        ):
+            raise StoreError("schema_invalid")
+        async with self.db.transaction() as tx:
+            # Keep the current revision under the same lock, but never put this
+            # derived revision in the original row request's retry identity.
+            document, _, _ = await self._load(tx, scope, principal, "write")
+            return await self._mutate_on(
+                tx,
+                scope,
+                principal,
+                expected_rev=document["rev"],
+                key=key,
+                records=[change],
+                state=None,
+                sync=False,
+                request=request,
+            )
 
     async def sync(self, scope, principal, *, expected_rev, key, records):
         # Sync admission is an owner operation. Apps must also authenticate the source adapter.
@@ -432,7 +544,9 @@ class PageStore(LifecycleMixin):
                 sync=sync,
             )
 
-    async def _mutate_on(self, tx, scope, principal, *, expected_rev, key, records, state, sync):
+    async def _mutate_on(
+        self, tx, scope, principal, *, expected_rev, key, records, state, sync, request=None
+    ):
         self._policy()
         document, access, actor = await self._load(
             tx, scope, principal, "owner" if sync else "write"
@@ -442,16 +556,29 @@ class PageStore(LifecycleMixin):
             scope,
             principal,
             key,
-            {
+            request
+            if request is not None
+            else {
                 "op": "sync" if sync else "mutate",
                 "expected_rev": expected_rev,
                 "records": records,
                 "state": state,
             },
         )
+        row_request = request is not None
         if replay:
+            if row_request:
+                definition = next(
+                    c for c in document["collections"] if c["id"] == request["collection"]
+                )
+                original = replay.get("record", {}).get("value", {})
+                if not access.visible_row(actor, definition["id"], replay["record_id"]) or set(
+                    original
+                ) - access.value_fields(actor, definition, original):
+                    raise StoreError("action_denied", 403)
             return replay
         self._precondition(document, expected_rev)
+        receipt_details = None
         revisions, changed, seen = {}, [], set()
         collections = {c["id"]: c for c in document["collections"]}
         for change in records:
@@ -462,9 +589,12 @@ class PageStore(LifecycleMixin):
                 "expected_rev",
                 "value",
                 "source",
+                "patch",
             }:
                 raise StoreError("schema_invalid")
             cid, rid = change.get("collection"), change.get("id")
+            if row_request and request["op"] == "add_record" and rid is None:
+                rid = "rec_" + uuid4().hex
             if (cid, rid) in seen:
                 raise StoreError("schema_invalid")
             seen.add((cid, rid))
@@ -483,7 +613,7 @@ class PageStore(LifecycleMixin):
             expected = change.get("expected_rev")
             if expected is None:
                 raise StoreError("precondition_required", 428)
-            if operation not in {"create", "update", "delete"}:
+            if operation not in {"create", "update", "patch", "delete"}:
                 raise StoreError("schema_invalid")
             if type(expected) is not int or (
                 (operation == "create" and (row is not None or expected != 0))
@@ -497,10 +627,16 @@ class PageStore(LifecycleMixin):
             if rev > MAX_REV:
                 raise StoreError("revision_exhausted", 409)
             previous = decoded(row["record"])["value"] if row and row["record"] else {}
-            proposed = change.get("value") if isinstance(change.get("value"), dict) else {}
-            allowed = access.value_fields(actor, collection, set(previous) | set(proposed))
-            if row and set(previous) - allowed:
-                raise StoreError("action_denied", 403)
+            if operation == "patch":
+                proposed = change.get("patch")
+                if not isinstance(proposed, dict) or not proposed or "value" in change or sync:
+                    raise StoreError("schema_invalid")
+                allowed = access.value_fields(actor, collection, proposed)
+            else:
+                proposed = change.get("value") if isinstance(change.get("value"), dict) else {}
+                allowed = access.value_fields(actor, collection, set(previous) | set(proposed))
+                if row and set(previous) - allowed:
+                    raise StoreError("action_denied", 403)
             if operation == "delete":
                 await tx.execute(
                     "UPDATE {{tables.page_records}} SET rev=$4,record=NULL WHERE scope=$1 AND collection=$2 AND record_id=$3",
@@ -510,22 +646,36 @@ class PageStore(LifecycleMixin):
                     rev,
                 )
             else:
-                value = change.get("value")
-                if not isinstance(value, dict) or set(value) - allowed:
+                supplied = proposed if operation == "patch" else change.get("value")
+                if not isinstance(supplied, dict) or set(supplied) - allowed:
                     raise StoreError("action_denied", 403)
+                value = (
+                    {**previous, **copy.deepcopy(supplied)} if operation == "patch" else supplied
+                )
                 record = {"id": rid, "rev": rev, "value": value}
                 if sync:
                     record["source"] = change.get("source")
                 elif "source" in change:
                     raise StoreError("schema_invalid")
-                self._validate_record(document, collection, record)
+                self._validate_record(scope, document, collection, record)
                 await self._put_record(tx, scope, cid, record)
+            if row_request:
+                receipt_details = {"record_id": rid, "rev": rev}
+                if operation == "delete":
+                    receipt_details["deleted"] = True
+                else:
+                    visible = access.value_fields(actor, collection, value)
+                    receipt_details["record"] = {
+                        "id": rid,
+                        "rev": rev,
+                        "value": {k: copy.deepcopy(v) for k, v in value.items() if k in visible},
+                    }
             revisions[f"{cid}/{rid}"] = rev
             changed.append(
                 {
                     "collection": cid,
                     "record_id": rid,
-                    "fields": sorted(change.get("value") or {}),
+                    "fields": sorted(proposed),
                     "operation": operation,
                 }
             )
@@ -536,11 +686,18 @@ class PageStore(LifecycleMixin):
             changed.append({"widget_state": sorted(state)})
         await self._project(tx, scope, copy.deepcopy(document), access, access.owner)
         return await self._commit(
-            tx, scope, principal, transaction, document, expected_rev, changed, revisions
+            tx,
+            scope,
+            principal,
+            transaction,
+            document,
+            expected_rev,
+            changed,
+            revisions,
+            receipt_details=receipt_details,
         )
 
-    @staticmethod
-    def _validate_record(document, collection, record):
+    def _validate_record(self, scope, document, collection, record):
         probe = {
             **document,
             "layout": [],
@@ -549,6 +706,8 @@ class PageStore(LifecycleMixin):
             "collections": [{**collection, "records": [record]}],
         }
         validated(probe)
+        if self.record_validator is not None:
+            self.record_validator(scope, copy.deepcopy(collection), copy.deepcopy(record))
 
     async def append_layout(
         self, scope, principal, *, expected_rev, key, layout, title=None, locale=None
@@ -676,7 +835,7 @@ class PageStore(LifecycleMixin):
                     record["value"] = values[record["id"]]
                     record["rev"] += 1
                     revisions[f"{collection}/{record['id']}"] = record["rev"]
-                self._validate_record(document, definition, record)
+                self._validate_record(scope, document, definition, record)
                 await self._put_record(tx, scope, collection, record)
             await tx.execute(
                 "INSERT INTO {{tables.page_schemas}} VALUES($1,$2,$3,$4::jsonb)",

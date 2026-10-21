@@ -76,6 +76,42 @@ The argument must be a pgdbm `TransactionManager`, not a database manager.
 Locks remain held until the caller commits or rolls back. Make no network
 calls between the mutation and the end of that transaction.
 
+`create_on(tx, scope, principal, document, access=..., key=...)` uses the same
+caller-owned transaction and savepoint rules for creation. Join app discovery
+metadata in that transaction, using an idempotent insert keyed by page ID and
+the returned creation receipt. A failed caller transaction rolls back both.
+
+For row-local tools, `add_record(scope, principal, collection=..., values=...,
+key=..., record_id=None)`, `patch_record(..., record_id=..., expected_rev=...,
+patch=..., key=...)` and `delete_record(..., record_id=..., expected_rev=...,
+key=...)` use the current page revision under its write lock. They require no
+caller page revision; record update/delete still compare the supplied record
+revision. The retry identity is the original add/patch/delete input, excluding
+the derived page revision. A generated `rec_` ID is allocated only after the
+claim, and a committed retry returns its original ID. Deleted IDs remain
+unreusable tombstones.
+
+Patches shallowly merge only supplied top-level fields. Omitted fields survive;
+`null` is a value subject to the schema, and an empty patch is refused. The
+store validates the whole merged record before committing. A writer may patch
+an allowed field while other fields remain hidden and unchanged internally.
+The returned durable receipt contains `record_id`, `rev`, the ordinary page
+receipt, and for add/patch the original authorized `record: {id, rev, value}`;
+delete returns `deleted: true`. Replays use that stored outcome even after later
+row edits/deletion. Current row/field access is checked again: if the original
+outcome can no longer be disclosed, the retry refuses with `action_denied`.
+
+An app may supply `PageStore(..., record_validator=callable)` for its additional
+value rules. After shared C1 validation, the synchronous trusted callable gets
+`(scope, collection_definition, complete_record)`; the last argument is the full
+record envelope, not just its value. It sees the whole merged record inside
+the write and raises `StoreError("schema_invalid", details=...)` to refuse.
+It must not mutate input, do network I/O or control transactions. The hook also
+validates initial creation, sync, schema migration and portable imports. For
+example an app can check real ISO calendar dates while C1's frozen `format`
+annotations retain their existing meaning. No merge or ACL logic belongs in
+that callback.
+
 The content transaction writes data, audit, receipt and the shared outbox
 together. The independent request claim commits first; a failed content
 transaction leaves a recoverable claim rather than an invented success receipt.
