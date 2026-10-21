@@ -109,6 +109,21 @@ async def running(
             yield Running(service, api, console)
 
 
+async def test_the_database_holds_every_table_admission_reads(registry, database_url) -> None:
+    async with running(registry, database_url, grants=InstalledTeams({})) as running_app:
+        db = running_app.service.runtime.db()
+        for table in (
+            "secrets",
+            "grants",
+            "intents",
+            "role_assignments",
+            "idempotency_keys",
+            "installation_fences",
+            "config_revisions",
+        ):
+            assert await db.fetch_value(f"SELECT to_regclass('{table}') IS NOT NULL"), table
+
+
 def _path(tool: dict) -> str:
     path = tool["path"]
     for name, value in EXAMPLE_PATH_VALUES.items():

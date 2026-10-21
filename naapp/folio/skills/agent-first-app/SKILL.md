@@ -33,10 +33,9 @@ Build this instead:
 - one request-bound team-certificate verifier — load
   `skills/team-cert-verification/SKILL.md` for that boundary;
 - team-scoped data keyed only from the verified certificate `team_id`;
-- structured errors: 401 fail-closed for auth, 402 with `limit`, `current`,
-  and `max` for caps;
+- structured errors: 401 fail-closed for auth;
 - team-unit billing: the human appears once to pay, not to authenticate;
-- free-tier caps from day one so no team is grandfathered into uncapped use.
+- usage measured per team from day one and reported to its members.
 
 ## Agent-first surface checklist
 
