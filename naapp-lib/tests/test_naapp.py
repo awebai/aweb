@@ -95,7 +95,7 @@ def test_css_is_sha_pinned() -> None:
     # The served bundle hash covers both the vendored design SOT and the
     # naapp-only component layer.
     assert naapp.aweb_css_sha256() == naapp.CSS_SHA256
-    # The vendored design-system file remains byte-identical to the ac SOT.
+    # The vendored design-system file remains byte-identical to its source.
     assert naapp.vendored_aweb_css_sha256() == naapp.VENDORED_AWEB_CSS_SHA256
 
 

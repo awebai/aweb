@@ -170,6 +170,7 @@ async def test_listener_restart_is_operator_only_and_catches_pending_mail(
             first_id, conversation_id, binary, root, env, _):
         listener = RecipientListener(privacy_app.app)
         await listener.start()
+        privacy_app.app.state.public_origin = listener.url
         env = dict(env, AWEB_URL=listener.url)
         workspace_path = Path(env["AWEB_IDENTITY_HOME"]) / "workspace.yaml"
         workspace = json.loads(workspace_path.read_text())
