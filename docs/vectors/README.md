@@ -389,7 +389,7 @@ The `aweb.hooks` catalog, version 1 (aweb-acgh.16.1; contract in
 [`hook-events.md`](../hook-events.md)). It names the five hooks with their
 firing class, producer kinds, audit-critical rule and precedence. It holds each
 hook's flat payload allowlist: value types with patterns and bounds, required
-fields, enums (including the 28 `post-secret-use-hook` refusal codes), the
+fields, enums (including the 32 `post-secret-use-hook` refusal codes), the
 conditional rules, each `post-governance-hook` act's fixed direction, every
 `post-mutation-hook` type with its own fields, and the `post-command-hook`
 command classes with their local effects. Positive cases validate. Each
@@ -402,6 +402,16 @@ as a float, is given as JSON text in `payload_json`. The strict reader in
 key, float or unresolved reference. Any payload change, including an addition,
 is a new catalog version. secrets' `test_hook_actions_vector.py` checks its
 transition-to-action table against it.
+
+Decision 73 deliberately re-freezes the pre-deployment secret-use shape in
+place: `request_sha256` and `params_sha256` have HMAC-SHA-256 meaning, and
+`completed`/`stored_as_secret` requires `derived_secret_id` and
+`derived_grant_id` together, forbidden elsewhere. The paired creation case and
+single-fault negatives are part of this vector. Its managed package copy and
+secrets' transition examples change in the same stack. The envelope vector's
+old plain-SHA demonstration is removed without changing signed cases;
+producer MAC input/lifecycle proofs belong to K4/S13. There is no parallel
+catalog version because no deployed producer or consumer uses this hook.
 
 ### `hook-binding-cases-v1.json`
 
