@@ -11,6 +11,7 @@ from datetime import timedelta
 import pytest
 from aweb_naapp.roles import principal_key
 from aweb_naapp.runtime.approvals import ApprovalState, DispatchOutcome
+from aweb_naapp.runtime.audit import AuditKind
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 
 from aweb_secrets import derived_lineage, records, use_approvals
@@ -260,6 +261,67 @@ async def test_expiry_during_a_later_lock_wait_refuses_new_authority(uses, stage
         if task is not None and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("retry", [False, True])
+@pytest.mark.parametrize("expires", [False, True])
+async def test_expiry_during_b2_decider_read_rolls_back_send_authority(uses, retry, expires):  # noqa: F811
+    await seed(uses)
+    secret, _ = await child(uses)
+    admission, dispatch_id, pending = await request_child(uses, secret)
+    await approve(uses, pending, "finance@acme.com")
+    approval_id = pending.pending.approval.approval_id
+    if retry:
+        assert (await admit(uses, admission, dispatch_id)).admission.may_send
+        await uses.approvals.record_outcome(approval_id, str(dispatch_id), DispatchOutcome.NOT_SENT)
+    db = uses.world.db
+    dispatch_snapshot = (
+        "SELECT consumed_operation_id, consumed_at, dispatch_outcome, outcome_at "
+        "FROM {{tables.approvals}} WHERE approval_id=$1"
+    )
+    before = await db.fetch_one(dispatch_snapshot, approval_id)
+    admitted_events = await db.fetch_value(
+        "SELECT count(*) FROM {{tables.audit_outbox}} WHERE kind=$1",
+        AuditKind.DISPATCH_ADMITTED.value,
+    )
+    task = None
+    try:
+        async with db.transaction() as holder:
+            blocker = await holder.fetch_value("SELECT pg_backend_pid()")
+            # Only B2's decider read touches this table during admission.
+            # Its plain SELECT must really wait, without replacing any adapter.
+            await holder.execute("LOCK TABLE {{tables.passkey_approvers}} IN ACCESS EXCLUSIVE MODE")
+            task = asyncio.create_task(admit(uses, admission, dispatch_id, max_ttl_s=60))
+            async with asyncio.timeout(5):
+                while not await db.fetch_value(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                    "WHERE $1=ANY(pg_blocking_pids(pid)) "
+                    "AND query LIKE '%passkey_approvers%')",
+                    blocker,
+                ):
+                    await asyncio.sleep(0.01)
+            if expires:
+                uses.clock.now += timedelta(seconds=61)
+        result = await asyncio.wait_for(task, 5)
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    after = await uses.approvals.get(approval_id)
+    events_after = await db.fetch_value(
+        "SELECT count(*) FROM {{tables.audit_outbox}} WHERE kind=$1",
+        AuditKind.DISPATCH_ADMITTED.value,
+    )
+    if not expires:
+        assert result.refusal is None and result.admission.may_send
+        assert after.dispatch_outcome is DispatchOutcome.DISPATCHING
+        assert events_after == admitted_events + 1
+        return
+    assert result.refusal == "secret_disabled" and result.admission is None
+    assert dict(await db.fetch_one(dispatch_snapshot, approval_id)) == dict(before)
+    assert events_after == admitted_events
+    assert after.revoked_at is not None
+    assert after.state is (ApprovalState.CONSUMED if retry else ApprovalState.REVOKED)
 
 
 async def test_an_unlisted_ancestor_approver_is_refused_before_mint(uses):  # noqa: F811

@@ -78,6 +78,9 @@ ancestor authority are rechecked before first sends and `NOT_SENT` retries;
 already admitted dispatches remain retrievable without authorizing another send.
 Expiry is checked again after blocking coverage/approval reads, before mint
 commits or a new send is admitted.
+B2 admission runs in a savepoint and ancestry expiry is checked after B2's own
+asynchronous reads and writes. An expired result rolls back tentative consumption,
+outcome and audit writes, then voids the approval in the caller's transaction.
 
 Containment calls `revoke_use_approvals(tx, approvals, installation_id=...,
 team_id=..., secret_ids=descendant_ids, revoked_by=..., reason=...)` in the same

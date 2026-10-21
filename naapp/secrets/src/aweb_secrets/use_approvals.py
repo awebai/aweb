@@ -490,7 +490,19 @@ async def admit_approved_use(
         if refusal is not None:
             await _void(tx, approvals, approval_id, refusal)
             return UseAdmission(admission=None, refusal=refusal)
-        admitted = await approvals.admit(approval_id, request, str(dispatch_id), tx=tx)
+        # B2 awaits its own policy/decider/dispatch reads. Its consumption,
+        # outcome and audit writes remain tentative until ancestry is checked
+        # after that work; expiry rolls them back before the outer tx voids.
+        async with tx.transaction() as attempt:
+            admitted = await approvals.admit(approval_id, request, str(dispatch_id), tx=attempt)
+            refusal = await _ancestry_refusal(
+                attempt, approvals, nodes, request["grant_id"], max_ttl_s
+            )
+            if refusal is not None:
+                raise UseApprovalRefused(refusal, "the secret expired during dispatch admission")
+    except UseApprovalRefused as exc:
+        await _void(tx, approvals, approval_id, exc.code)
+        return UseAdmission(admission=None, refusal=exc.code)
     except ApprovalRefused as exc:
         return UseAdmission(
             admission=None, refusal=await _refusal(tx, approvals, approval_id, exc.reason)
