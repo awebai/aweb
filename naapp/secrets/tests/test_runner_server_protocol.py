@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 from aweb_naapp.nonces import apply_nonce_migrations, consume_nonce
 
-from aweb_secrets.runner_protocol import RunnerRefused, parse_request, verify_request
+from aweb_secrets.runner_protocol import (
+    RunnerRefused,
+    consume_request,
+    parse_request,
+    verify_request,
+)
 
 VECTOR = json.loads(
     (Path(__file__).parents[3] / "docs/vectors/secrets-runner-protocol-v1.json").read_text()
@@ -47,13 +52,7 @@ async def test_server_consumes_request_vectors(db, case):
                 await consume_nonce(
                     tx, scope="runner:" + runner_id, nonce=nonce, expires_at=checked.expires_at
                 )
-            if not await consume_nonce(
-                tx,
-                scope="runner:" + checked.runner_id,
-                nonce=checked.nonce,
-                expires_at=checked.expires_at,
-            ):
-                raise RunnerRefused("runner_request_replayed")
+            await consume_request(tx, checked, clock=lambda: at(case["now"]))
         return checked
 
     if "error" in case["expected"]:
@@ -62,11 +61,14 @@ async def test_server_consumes_request_vectors(db, case):
         assert refused.value.code == case["expected"]["error"]
     else:
         checked = await receive()
-        assert checked.runner_id == parsed_id(case)
-
-
-def parsed_id(case):
-    return parse_request(case["header"]).runner_id
+        assert (
+            await db.fetch_value(
+                "SELECT count(*) FROM {{tables.scoped_nonces}} WHERE scope=$1 AND nonce=$2",
+                "runner:" + checked.runner_id,
+                checked.nonce,
+            )
+            == 1
+        )
 
 
 def test_server_assignment_matches_s0_signed_bytes():
@@ -92,3 +94,21 @@ def test_server_assignment_matches_s0_signed_bytes():
     )
     assert result == expected
     assert verify_assignment(dict(case, body_json=json.dumps(result))) == p
+
+
+async def test_only_verified_requests_consume_and_pruning_keeps_skew_pad(db):
+    from datetime import timedelta
+
+    from aweb_secrets.runner_protocol import prune_request_nonces
+
+    valid = next(c for c in VECTOR["requests"] if c["name"] == "valid")
+    parsed = parse_request(valid["header"])
+    async with db.transaction() as tx:
+        with pytest.raises(TypeError):
+            await consume_request(tx, parsed, clock=lambda: at(valid["now"]))
+        assert await tx.fetch_value("SELECT count(*) FROM {{tables.scoped_nonces}}") == 0
+        await consume_nonce(
+            tx, scope="runner:" + parsed.runner_id, nonce=parsed.nonce, expires_at=parsed.expires_at
+        )
+        assert await prune_request_nonces(tx, now=parsed.expires_at + timedelta(seconds=120)) == 0
+        assert await prune_request_nonces(tx, now=parsed.expires_at + timedelta(seconds=121)) == 1

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -26,6 +27,7 @@ from awid.did import did_from_public_key, public_key_from_did
 from awid.signing import canonical_json_bytes
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
+from pgdbm import TransactionManager
 
 REQUEST_TYPE = "aweb.secrets.runner-request"
 ASSIGNMENT_TYPE = "aweb.secrets.runner-assignment"
@@ -112,6 +114,11 @@ class ParsedRequest:
         return self.timestamp + SKEW
 
 
+@dataclass(frozen=True)
+class VerifiedRequest(ParsedRequest):
+    """Verified through time/binding, awaiting durable nonce consumption."""
+
+
 def parse_request(header: str) -> ParsedRequest:
     """Step 1 only; this type is not proof of a registered runner."""
     try:
@@ -148,7 +155,7 @@ def verify_request(
     path: str,
     body: bytes,
     now: datetime,
-) -> ParsedRequest:
+) -> VerifiedRequest:
     """Steps 2–5; the caller must still consume step 6 inside the effect transaction."""
     p = parsed.payload
     if registered_kid is None or p["kid"] != registered_kid:
@@ -171,7 +178,40 @@ def verify_request(
         raise ValueError("clock must be aware")
     if abs(now - parsed.timestamp) > SKEW:
         raise RunnerRefused("runner_request_stale")
-    return parsed
+    return VerifiedRequest(parsed.payload, parsed.raw, parsed.signature, parsed.timestamp)
+
+
+async def consume_request(
+    tx: TransactionManager,
+    verified: VerifiedRequest,
+    *,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> None:
+    """Consume in the effect transaction; never accept an unverified parsed header."""
+    from aweb_naapp.nonces import consume_nonce
+
+    if not isinstance(verified, VerifiedRequest):
+        raise TypeError("consume requires a verified runner request")
+    if abs(clock() - verified.timestamp) > SKEW:
+        raise RunnerRefused("runner_request_stale")
+    inserted = await consume_nonce(
+        tx,
+        scope="runner:" + verified.runner_id,
+        nonce=verified.nonce,
+        expires_at=verified.expires_at,
+    )
+    # A conflict may wait for a concurrent request. Time still precedes replay.
+    if abs(clock() - verified.timestamp) > SKEW:
+        raise RunnerRefused("runner_request_stale")
+    if not inserted:
+        raise RunnerRefused("runner_request_replayed")
+
+
+async def prune_request_nonces(tx: TransactionManager, *, now: datetime) -> int:
+    """Keep an extra skew interval before pruning on a service instance's clock."""
+    from aweb_naapp.nonces import prune_nonces
+
+    return await prune_nonces(tx, now=now - SKEW)
 
 
 def sign_assignment(
