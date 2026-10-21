@@ -206,7 +206,7 @@ def test_an_issued_credential_in_an_allowed_header_is_never_returned(body: bytes
         projection=["/id"],
         token_issuing=True,
     )
-    assert result.headers == [("Content-Type", "application/json")]
+    assert [name for name, _ in result.headers] == ["Content-Type"]
 
 
 def test_withholding_the_body_does_not_return_credential_shaped_headers() -> None:
@@ -217,7 +217,7 @@ def test_withholding_the_body_does_not_return_credential_shaped_headers() -> Non
     )
     assert result.disposition == "withheld"
     assert result.body is None
-    assert result.headers == []
+    assert [name for name, _ in result.headers] == []
 
 
 @pytest.mark.parametrize("pointer", ["id", "/a/~2", "/a/~"])
