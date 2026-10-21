@@ -169,6 +169,11 @@ actor and page. Conflicts retain drafts and display an explicit recovery choice;
 no silent retry overwrites another revision. `clear` discards drafts and content.
 No browser storage is used to share drafts across actors.
 
+Capability-link hosts use the separate shared
+[browser link client](page-link-client.md) for exchange and signed HTTP
+transport. Compose it into `host.read`/`host.invoke`; keep its closure outside
+page JSON and clear it together with the renderer on authority changes.
+
 ## Local fixture gallery and browser tests
 
 From the repository's `naapp-lib` directory:

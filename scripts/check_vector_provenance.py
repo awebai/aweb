@@ -230,6 +230,10 @@ ROOT_CONSUMERS = {
         "secrets-runner-protocol-v1.json",
         'ROOT / "docs" / "vectors" / "secrets-runner-protocol-v1.json"',
     ),
+    PurePosixPath("naapp-lib/renderer/tests/link-client.spec.mjs"): _consumer(
+        "link-request-v1.json",
+        '"../../../docs/vectors/link-request-v1.json"',
+    ),
     PurePosixPath("naapp-lib/renderer/tests/render.spec.mjs"): _consumer(
         "page-format-v1.json",
         '"../../../docs/vectors/page-format-v1.json"',
