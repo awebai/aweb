@@ -170,8 +170,9 @@ network calls after acquiring the store's page lock.
 
 The checked projection intersects current row/field ACLs in authorized SQL
 before filtering, sorting, counting or pagination. `count` is the complete
-matching authorized set, with at most 200 records per page. Only this checked
-query path accepts `record_ids: "*"`, for live read-only grants whose minted
+matching authorized set, with at most 200 records per page. Checked-link
+records contain exactly `{id, rev, value}`, excluding sync-source metadata.
+Only this checked query path accepts `record_ids: "*"`, for live read-only grants whose minted
 collection and fields remain fixed while rows follow current creator access.
 Named lists remain literal, including `[]` for zero rows, count zero and no
 cursor. Cursors additionally bind the link ID and complete checked projection;

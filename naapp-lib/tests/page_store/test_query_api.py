@@ -207,3 +207,32 @@ async def test_dynamic_rows_never_reach_bounded_capture_and_empty_named_rows_sta
             expected_page_rev=1,
         )
         assert captured["collections"][0]["records"] == []
+
+
+async def test_checked_link_excludes_synced_source_metadata_from_each_record_page(store):
+    document = table()
+    collection = document["collections"][0]
+    collection["mode"] = "synced"
+    for record in collection["records"]:
+        record["source"] = {
+            "system": "customer-sync",
+            "external_id": "PRIVATE-UPSTREAM-" + record["id"],
+            "version": "v1",
+            "synced_at": "2026-10-20T00:00:00Z",
+        }
+    await create(store, document)
+    projection = selection(ids="*", fields=("label",))
+    bind = {"collection": "items", "limit": 1, "sort": [{"field": "label", "direction": "asc"}]}
+    first = await linked(store, projection=projection, bind=bind)
+    second = await linked(
+        store, projection=projection, bind={**bind, "cursor": first["next_cursor"]}
+    )
+    assert first["count"] == second["count"] == 2
+    assert first["next_cursor"] and second["next_cursor"] is None
+    assert first["records"] + second["records"] == [
+        {"id": "row-000", "rev": 1, "value": {"label": "match"}},
+        {"id": "row-001", "rev": 1, "value": {"label": "match"}},
+    ]
+    assert "PRIVATE-UPSTREAM" not in repr(first) + repr(second)
+    member = await store.query_widget(SCOPE, OWNER, widget_id="items", bind={"collection": "items"})
+    assert member["records"][0]["source"] == collection["records"][0]["source"]

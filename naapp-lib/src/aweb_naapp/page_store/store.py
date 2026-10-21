@@ -1510,6 +1510,8 @@ class PageStore(LifecycleMixin):
                 query_sql + f" LIMIT {limit_arg} OFFSET {offset_arg}", *args
             )
         ]
+        if projection is not None:
+            selected = [{key: record[key] for key in ("id", "rev", "value")} for record in selected]
         next_cursor = None
         if offset + limit < count:
             next_cursor = secrets.token_urlsafe(32)
