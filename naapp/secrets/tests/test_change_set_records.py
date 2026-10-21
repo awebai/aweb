@@ -638,7 +638,9 @@ async def test_ingest_rechecks_the_record_after_waiting_for_reshape(world: World
             await wait_blocked(world, waiter, holder)
         with pytest.raises((ValueInvalid, CustodyUnavailable)):
             await asyncio.wait_for(task, 5)
-        assert not await world.db.fetch_value("SELECT 1 FROM {{tables.custody_secrets}}")
+        assert (
+            await world.db.fetch_value("SELECT last_version FROM {{tables.custody_secrets}}") == 0
+        )
     finally:
         if task is not None and not task.done():
             task.cancel()
@@ -667,3 +669,107 @@ async def test_ingest_without_a_parent_requires_an_initial_create_candidate(worl
                 value=encode_value("bearer", {"value": os.urandom(24).hex()}),
             )
     assert not await world.db.fetch_value("SELECT 1 FROM {{tables.custody_secrets}}")
+
+
+@pytest.mark.parametrize(
+    "altered",
+    [
+        {"kind": "query", "kind_params": {"param": "token"}},
+        {"kind": "header", "kind_params": {"name": "X-Other-Key", "prefix": ""}},
+        {"backend": "1password"},
+    ],
+)
+@pytest.mark.parametrize("stage", ["draft", "confirm"])
+async def test_an_initial_sealed_value_cannot_be_given_a_different_shape(
+    world: World, altered, stage: str
+) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    original = {**SECRET, "kind": "header", "kind_params": {"name": "X-Api-Key", "prefix": ""}}
+    changed = {**original, **altered}
+    change = change_set(
+        drafter=by_member(CAROL), changes=[item("secret", "create", "payments-live", changed)]
+    )
+    if stage == "confirm":
+        await decide(world, await draft(world, change), "alice@acme.com")
+    async with world.db.transaction() as tx:
+        await world.custody.sealer.ingest(
+            tx,
+            installation_id=INSTALLATION_ID,
+            team_id=TEAM,
+            secret_id=SECRET_ID,
+            initial=SecretRecord.from_after(original),
+            value=encode_value("header", {"value": os.urandom(24).hex()}),
+        )
+    with pytest.raises(ChangeRefused) as refused:
+        if stage == "draft":
+            await draft(world, change)
+        else:
+            await confirm_change(world, change)
+    assert refused.value.code == "sealed_secret_fixed"
+
+
+async def test_a_value_item_is_bound_to_the_initial_candidates_placement(world: World) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    sealed = await sealed_value(world)
+    change = change_set(
+        drafter=by_member(CAROL),
+        changes=[
+            item("secret", "create", "payments-live", {**SECRET, **RESHAPED[0]}),
+            secret_value(sealed.version),
+        ],
+    )
+    with pytest.raises(ChangeRefused) as refused:
+        await draft(world, change, [sealed])
+    assert refused.value.code == "sealed_secret_fixed"
+
+
+@pytest.mark.parametrize("first", ["ingest", "create"])
+async def test_initial_ingest_and_creation_serialize_their_shape_binding(
+    world: World, first
+) -> None:
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    change = change_set(
+        drafter=by_member(CAROL),
+        changes=[item("secret", "create", "payments-live", {**SECRET, **RESHAPED[0]})],
+    )
+    await decide(world, await draft(world, change), "alice@acme.com")
+    ready = asyncio.get_running_loop().create_future()
+
+    async def create(tx):
+        return await world.change_sets.confirm(
+            tx,
+            change["change_id"],
+            operation_id="initial-create-race",
+            fence=world.fence,
+            admitted=world.admitted,
+        )
+
+    async def ingest(tx):
+        return await world.custody.sealer.ingest(
+            tx,
+            installation_id=INSTALLATION_ID,
+            team_id=TEAM,
+            secret_id=SECRET_ID,
+            initial=SecretRecord.from_after(SECRET),
+            value=encode_value("bearer", {"value": os.urandom(24).hex()}),
+        )
+
+    async def second():
+        async with world.db.transaction() as tx:
+            ready.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
+            return await (create(tx) if first == "ingest" else ingest(tx))
+
+    task = None
+    try:
+        async with world.db.transaction() as tx:
+            holder = await tx.fetch_value("SELECT pg_backend_pid()")
+            await (ingest(tx) if first == "ingest" else create(tx))
+            task = asyncio.create_task(second())
+            waiter = await asyncio.wait_for(ready, 5)
+            await wait_blocked(world, waiter, holder)
+        with pytest.raises((ChangeRefused, CustodyUnavailable)):
+            await asyncio.wait_for(task, 5)
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

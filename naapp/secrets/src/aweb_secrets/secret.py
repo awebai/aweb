@@ -200,17 +200,15 @@ def widened_fields(current: SecretRecord, after: SecretRecord) -> frozenset[str]
     return frozenset(widened)
 
 
+def sealed_shape(record: SecretRecord) -> dict[str, Any]:
+    """The non-secret interpretation and placement fixed after the first seal."""
+    params = dict(record.kind_params)
+    if record.kind == "oauth2-client-credentials":
+        params.pop("scope")
+    return {"kind": record.kind, "backend": record.backend, "kind_params": params}
+
+
 def sealed_shape_changed(current: SecretRecord, after: SecretRecord) -> bool:
     """Whether an update changes a sealed value's interpretation or destination
     (decision 65). OAuth scope remains editable."""
-    if current.kind != after.kind or current.backend != after.backend:
-        return True
-    placement = {
-        "bearer": (),
-        "basic": (),
-        "header": ("name", "prefix"),
-        "query": ("param",),
-        "oauth2-client-credentials": ("token_endpoint", "client_auth"),
-        "aws-sigv4": ("region", "service"),
-    }[current.kind]
-    return any(current.kind_params[name] != after.kind_params[name] for name in placement)
+    return sealed_shape(current) != sealed_shape(after)

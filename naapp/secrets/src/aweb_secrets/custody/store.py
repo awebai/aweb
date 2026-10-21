@@ -12,6 +12,10 @@ UPDATE for reshaping. Existing ingest validates against the record re-read under
 that lock; only initial-create drafts may have no parent yet. All callers run
 at READ COMMITTED. Reshape checks retained custody history in a separate
 statement after acquiring UPDATE, so an ingest it waited for is visible.
+Initial drafts also pin their immutable shape in custody history. Confirmation
+pins a zero-version custody row after creating the parent, so a concurrent
+initial ingest and create serialize on the same key even before a parent is
+visible. A zero-version pin may be reshaped; a sealed history may not.
 """
 
 from __future__ import annotations
@@ -26,7 +30,7 @@ from typing import Literal
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
-from aweb_secrets.secret import SecretRecord
+from aweb_secrets.secret import SecretRecord, sealed_shape
 
 from .sealing import (
     CustodyUnavailable,
@@ -99,17 +103,20 @@ class SecretSealer:
         allocated = await tx.fetch_one(
             """
             INSERT INTO {{tables.custody_secrets}}
-                (installation_id, team_id, secret_id, last_version)
-            VALUES ($1, $2, $3, 1)
+                (installation_id, team_id, secret_id, last_version, immutable_shape)
+            VALUES ($1, $2, $3, 1, $4)
             ON CONFLICT (installation_id, team_id, secret_id) DO UPDATE
                 SET last_version = {{tables.custody_secrets}}.last_version + 1
+                WHERE {{tables.custody_secrets}}.immutable_shape = EXCLUDED.immutable_shape
             RETURNING last_version, disabled_at
             """,
             installation_id,
             team_id,
             secret_id,
+            json.dumps(sealed_shape(record)),
         )
-        assert allocated is not None
+        if allocated is None:
+            raise CustodyUnavailable("the sealed secret's immutable shape differs")
         if allocated["disabled_at"] is not None:
             raise CustodyUnavailable("the secret is disabled")
         version = int(allocated["last_version"])
@@ -216,6 +223,66 @@ class Custody:
             version=row["version"],
             updated_at=row["created_at"],
             state="disabled" if row["disabled_at"] is not None else "active",
+        )
+
+    async def shape_allows(
+        self, tx: TransactionManager, *, installation_id: str, team_id: str, record: SecretRecord
+    ) -> bool:
+        """Draft-time check only. Confirmation must atomically bind_shape."""
+        row = await tx.fetch_one(
+            "SELECT last_version, immutable_shape FROM {{tables.custody_secrets}}"
+            " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3",
+            installation_id,
+            team_id,
+            record.secret_id,
+        )
+        return (
+            row is None
+            or row["last_version"] == 0
+            or (
+                row["immutable_shape"] is not None
+                and json.loads(row["immutable_shape"]) == sealed_shape(record)
+            )
+        )
+
+    async def bind_shape(
+        self, tx: TransactionManager, *, installation_id: str, team_id: str, record: SecretRecord
+    ) -> bool:
+        """Pin a confirmed record after locking its parent. Initial ingest and
+        initial creation take turns on this key, even with no visible parent.
+        Only a history that never sealed a version may change its shape."""
+        return bool(
+            await tx.fetch_value(
+                "INSERT INTO {{tables.custody_secrets}} AS c"
+                " (installation_id, team_id, secret_id, last_version, immutable_shape)"
+                " VALUES ($1, $2, $3, 0, $4)"
+                " ON CONFLICT (installation_id, team_id, secret_id) DO UPDATE"
+                " SET immutable_shape = EXCLUDED.immutable_shape"
+                " WHERE c.last_version = 0 OR c.immutable_shape = EXCLUDED.immutable_shape"
+                " RETURNING 1",
+                installation_id,
+                team_id,
+                record.secret_id,
+                json.dumps(sealed_shape(record)),
+            )
+        )
+
+    async def value_matches(
+        self, tx: TransactionManager, context: SealContext, record: SecretRecord
+    ) -> bool:
+        """Whether a live sealed version was ingested for this immutable shape."""
+        return bool(
+            await tx.fetch_value(
+                "SELECT 1 FROM {{tables.custody_secrets}} c"
+                " JOIN {{tables.sealed_versions}} v USING (installation_id, team_id, secret_id)"
+                " WHERE c.installation_id = $1 AND c.team_id = $2 AND c.secret_id = $3"
+                " AND v.version = $4 AND c.immutable_shape = $5::jsonb",
+                context.installation_id,
+                context.team_id,
+                context.secret_id,
+                context.version,
+                json.dumps(sealed_shape(record)),
+            )
         )
 
     async def ever_sealed(

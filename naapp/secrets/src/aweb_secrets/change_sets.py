@@ -269,7 +269,7 @@ class ChangeSets:
                 )
         await self._bind_sealed(tx, change, sealed)
         for item in change["changes"]:
-            if item["kind"] == "secret" and item["op"] == "update":
+            if item["kind"] == "secret":
                 await self._check_sealed_shape(
                     tx, installation_id, team_id, SecretRecord.from_after(item["after"]), lock=False
                 )
@@ -336,14 +336,15 @@ class ChangeSets:
         or as stored, at the item's version."""
         installation_id, team_id = change["installation_id"], change["team_id"]
         named: set[tuple[str, int]] = set()
-        drafted: dict[str, str] = {}
+        drafted: dict[str, SecretRecord] = {}
+        bindings: list[tuple[SealContext, SecretRecord]] = []
         for index, item in enumerate(change["changes"]):
             after = item["after"]
             if item["kind"] == "secret":
-                drafted[after["ref"]] = after["secret_id"]
+                drafted[after["ref"]] = SecretRecord.from_after(after)
             elif item["kind"] == "secret_value":
-                secret_id = drafted.get(after["secret_ref"])
-                if secret_id is None:
+                record = drafted.get(after["secret_ref"])
+                if record is None:
                     stored = await records.secret_by_ref(
                         tx, installation_id, team_id, after["secret_ref"]
                     )
@@ -352,8 +353,16 @@ class ChangeSets:
                             f"change.changes[{index}]: no secret {after['secret_ref']}",
                             code="secret_unknown",
                         )
-                    secret_id = stored.record.secret_id
+                    record = stored.record
+                secret_id = record.secret_id
                 named.add((secret_id, after["version"]))
+                context = SealContext(
+                    installation_id=installation_id,
+                    team_id=team_id,
+                    secret_id=secret_id,
+                    version=after["version"],
+                )
+                bindings.append((context, record))
         brought = {(context.secret_id, context.version) for context in sealed}
         if named - brought:
             raise ChangeRefused(
@@ -364,6 +373,12 @@ class ChangeSets:
             raise ChangeRefused(
                 "a sealed value is not named by any secret value", code="sealed_value_unbound"
             )
+
+        for context, record in bindings:
+            if not await self._custody.value_matches(tx, context, record):
+                raise ChangeRefused(
+                    "the sealed value does not match its secret record", code="sealed_secret_fixed"
+                )
 
     def _destination(self, after: Mapping[str, Any], where: str) -> DestinationRecord:
         try:
@@ -562,6 +577,12 @@ class ChangeSets:
                     if await _secret_exists(tx, installation_id, record):
                         raise _exists(kind, record.secret_id)
                     await records.create_secret(tx, installation_id, team_id, record)
+                    if not await self._custody.bind_shape(
+                        tx, installation_id=installation_id, team_id=team_id, record=record
+                    ):
+                        raise ChangeRefused(
+                            "the sealed secret's shape is fixed", code="sealed_secret_fixed"
+                        )
                 else:
                     if await tx.fetch_value(
                         "SELECT 1 FROM {{tables.secrets}}"
@@ -638,16 +659,23 @@ class ChangeSets:
             team_id,
             record.secret_id,
         )
-        if row is None:
-            return  # Applying the update reports record_missing.
-        current = SecretRecord.from_after(_request(row["record"]))
-        if sealed_shape_changed(current, record) and await self._custody.ever_sealed(
-            tx, installation_id=installation_id, team_id=team_id, secret_id=record.secret_id
-        ):
-            raise ChangeRefused(
-                "a sealed secret's kind, backend and value placement are fixed",
-                code="sealed_secret_fixed",
+        if row is not None:
+            current = SecretRecord.from_after(_request(row["record"]))
+            if sealed_shape_changed(current, record) and await self._custody.ever_sealed(
+                tx, installation_id=installation_id, team_id=team_id, secret_id=record.secret_id
+            ):
+                raise ChangeRefused("a sealed secret's shape is fixed", code="sealed_secret_fixed")
+        allowed = (
+            await self._custody.bind_shape(
+                tx, installation_id=installation_id, team_id=team_id, record=record
             )
+            if lock and row is not None
+            else await self._custody.shape_allows(
+                tx, installation_id=installation_id, team_id=team_id, record=record
+            )
+        )
+        if not allowed:
+            raise ChangeRefused("a sealed secret's shape is fixed", code="sealed_secret_fixed")
 
     async def _replace_value(
         self, tx: TransactionManager, change: Mapping[str, Any], after: Mapping[str, Any]
@@ -659,6 +687,16 @@ class ChangeSets:
         if stored is None:
             raise records.RecordMissing(f"no secret {after['secret_ref']}")
         secret_id = stored.record.secret_id
+        context = SealContext(
+            installation_id=installation_id,
+            team_id=team_id,
+            secret_id=secret_id,
+            version=after["version"],
+        )
+        if not await self._custody.value_matches(tx, context, stored.record):
+            raise ChangeRefused(
+                "the sealed value does not match its secret record", code="sealed_secret_fixed"
+            )
         await records.set_active_version(tx, installation_id, team_id, secret_id, after["version"])
         if stored.active_version is not None and stored.active_version != after["version"]:
             await self._custody.destroy(
