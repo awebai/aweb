@@ -2,16 +2,23 @@
 through the shared egress guard.
 
 Before each send the transport re-reads the producer's registration view: a
-binding that is gone is ``Cancelled`` and nothing is sent, and a stale view is
-retried, so a revocation stops deliveries within the freshness bound. Each
+binding that is gone, or whose endpoint is no longer the one stored with the
+delivery, is ``Cancelled`` and nothing is sent, and a stale view is retried,
+so a revocation stops deliveries within the freshness bound. Each
 request is signed afresh (``aweb_naapp.hooks.delivery.sign_delivery``) and sent
 to the endpoint stored with the delivery, the owner-activated binding's origin
 and path, never anywhere else.
 
-Egress is the guard's: HTTPS only, redirects returned and never followed. A
-destination inside the deployment's network is reachable only when a
-self-hosted operator both allows internal destinations on its egress and names
-the network here; a hosted deployment does neither, whatever an owner
+Egress is the guard's: HTTPS only, redirects returned and never followed.
+Every binding is first sent as a public destination. Whether its address is
+internal is a fact about the operator's network, not about the binding, so
+when the guard refuses that attempt because the name resolves to a denied
+address, and only then, a self-hosted operator who both allows internal
+destinations on its egress and names the network here gets exactly one more
+attempt: the same request as an internal destination, which the guard resolves
+afresh and accepts only if every address is inside that network. The guard
+refuses before connecting, so the first attempt sent nothing. A hosted
+deployment does neither, so its first refusal is final, whatever an owner
 configures.
 """
 
@@ -25,15 +32,17 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from aweb_naapp.egress import (
+    Destination,
     Egress,
     EgressNotSent,
     EgressOutcomeUnknown,
     EgressRefused,
     HeaderRules,
     InternalDestinations,
+    Response,
     parse_destination,
 )
-from aweb_naapp.hooks.delivery import SIGNED_PAYLOAD_HEADER, sign_delivery
+from aweb_naapp.hooks.delivery import SIGNED_PAYLOAD_HEADER, Delivery, sign_delivery
 from aweb_naapp.hooks.producer import Registrations
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.outbox import (
@@ -71,7 +80,8 @@ class HookTransport:
 
     ``seed`` is the producer's key, the one that signs its events.
     ``internal_cidr`` names the deployment network a self-hosted operator lets
-    hooks reach; it requires an egress that allows internal destinations.
+    hooks reach, as well as the public internet; it requires an egress that
+    allows internal destinations.
     """
 
     def __init__(
@@ -98,8 +108,15 @@ class HookTransport:
         view = await self._registrations.view(event.team_id, event.kind)
         if view is None or not view.is_fresh(self._clock()):
             return Retryable("registrations_unavailable")
-        if all(r.binding_id != target.id for r in view.registrations):
+        current = next((r for r in view.registrations if r.binding_id == target.id), None)
+        if current is None:
             return Cancelled("binding_revoked")
+        if (current.origin, current.method, current.path) != (
+            target.meta["origin"],
+            target.meta["method"],
+            target.meta["path"],
+        ):
+            return Cancelled("binding_changed")
         if event.signature is None:
             return Permanent("unsigned_event")
 
@@ -114,49 +131,67 @@ class HookTransport:
                 event.payload,
                 event.signature,
                 None,
-                datetime.now(UTC),
+                self._clock(),
             )
-            destination = parse_destination(
-                self._destination(origin, method, path),
-                internal_destinations=self._egress.addresses.internal_destinations,
-            )
+            public = self._parse(self._destination(origin, method, path))
         except (Refused, EgressRefused) as refused:
             return Permanent(f"unsendable:{getattr(refused, 'code', 'refused')}")
 
-        authorization = delivery.headers["Authorization"]
-        signed_payload = delivery.headers[SIGNED_PAYLOAD_HEADER]
         try:
-            response = await self._egress.send(
-                delivery.method,
-                url,
-                destination,
-                header_rules=_RULES,
-                headers=[("Content-Type", "application/json")],
-                injected=[
-                    ("Authorization", authorization),
-                    (SIGNED_PAYLOAD_HEADER, signed_payload),
-                ],
-                body=delivery.body,
-            )
+            response = await self._send(delivery, url, public)
         except EgressRefused as refused:
-            return Permanent(f"egress_refused:{refused.code}")
+            if refused.code != "destination_address_denied" or self._internal_cidr is None:
+                return Permanent(f"egress_refused:{refused.code}")
+            # The one retry: the same request, inside the operator's network.
+            try:
+                internal = self._parse(
+                    {
+                        **self._destination(origin, method, path),
+                        "network": "internal",
+                        "cidr": str(self._internal_cidr),
+                    }
+                )
+                response = await self._send(delivery, url, internal)
+            except EgressRefused as refused_inside:
+                return Permanent(f"egress_refused:{refused_inside.code}")
+            except EgressNotSent:
+                return Retryable("not_sent")
+            except EgressOutcomeUnknown:
+                return Retryable("outcome_unknown")
         except EgressNotSent:
             return Retryable("not_sent")
         except EgressOutcomeUnknown:
             return Retryable("outcome_unknown")
         return _classify(response.status, response.body, str(event.event_id))
 
-    def _destination(self, origin: str, method: str, path: str) -> dict[str, Any]:
+    async def _send(self, delivery: Delivery, url: str, destination: Destination) -> Response:
+        return await self._egress.send(
+            delivery.method,
+            url,
+            destination,
+            header_rules=_RULES,
+            headers=[("Content-Type", "application/json")],
+            injected=[
+                ("Authorization", delivery.headers["Authorization"]),
+                (SIGNED_PAYLOAD_HEADER, delivery.headers[SIGNED_PAYLOAD_HEADER]),
+            ],
+            body=delivery.body,
+        )
+
+    def _parse(self, entry: dict[str, Any]) -> Destination:
+        return parse_destination(
+            entry, internal_destinations=self._egress.addresses.internal_destinations
+        )
+
+    @staticmethod
+    def _destination(origin: str, method: str, path: str) -> dict[str, Any]:
         parts = urlsplit(origin)
-        entry: dict[str, Any] = {
+        return {
             "host": parts.hostname,
             "port": parts.port or 443,
             "path": path,
             "methods": [method],
         }
-        if self._internal_cidr is not None:
-            entry.update(network="internal", cidr=str(self._internal_cidr))
-        return entry
 
 
 def _classify(status: int, body: bytes, event_id: str) -> Outcome:

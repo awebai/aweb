@@ -62,6 +62,19 @@ owed it. The drain resolves deliveries with `hook_targets(registrations)`, and
 `HookTransport` re-checks each binding, signs a `hook-delivery` request and sends
 it through the egress guard to the binding's endpoint only.
 
+Operators: a hook target is sent to as a public destination. A self-hosted
+operator who also wants hooks to reach targets inside its own network allows
+internal destinations on the egress and passes that network as
+`HookTransport(internal_cidr=...)`; a target the guard refuses as a private
+address is then tried once more inside that network, and only there. This is
+an opt-in to server-side requests into your network: any activated binding
+whose origin resolves inside `internal_cidr` becomes reachable, and a
+third-party app's owner controls its own DNS, so keep `internal_cidr` as
+narrow as the hosts of your own apps. A hosted deployment allows neither, so
+private addresses are never reached. Before rotating the producer's hook key,
+drain the `hooks` channel: undelivered events carry the old key's signature,
+and their deliveries would end rejected.
+
 ### Database schema
 
 An app's tables live in `<PREFIX>DB_SCHEMA` (default `public`). The runtime pins

@@ -224,7 +224,15 @@ async def test_a_critical_event_with_a_fresh_active_registration_is_enqueued(db)
 
 @pytest.mark.parametrize(
     "case",
-    ["no_view", "stale_view", "no_registration", "inside_the_active_from_pad", "other_hook"],
+    [
+        "no_view",
+        "stale_view",
+        "view_from_the_future",
+        "no_registration",
+        "inside_the_active_from_pad",
+        "other_hook",
+        "other_team",
+    ],
 )
 async def test_a_critical_event_without_a_target_owed_is_refused(db, case) -> None:
     gate = {
@@ -235,6 +243,16 @@ async def test_a_critical_event_without_a_target_owed_is_refused(db, case) -> No
             registrations=(registration(active_from=NOW + timedelta(milliseconds=1)),)
         ),
         "other_hook": view("post-governance-hook", registrations=(registration(),)),
+        "view_from_the_future": view(
+            as_of=NOW + timedelta(seconds=1), registrations=(registration(),)
+        ),
+        "other_team": RegistrationView(
+            team_id="other:example.com",
+            hook="post-secret-use-hook",
+            as_of=NOW,
+            max_age=timedelta(seconds=60),
+            registrations=(registration(),),
+        ),
     }[case]
     with pytest.raises(Refused) as refused:
         await enqueue(db, app_producer(), "post-secret-use-hook", "secret_use_refused", view=gate)
@@ -260,6 +278,33 @@ async def test_a_registration_active_from_the_moment_of_the_effect_counts(db) ->
         "post-secret-use-hook",
         "secret_use_refused",
         view=view(registrations=(registration(active_from=NOW),)),
+    )
+    assert len(await events(db)) == 1
+
+
+async def test_an_event_dated_in_the_future_is_refused(db) -> None:
+    # A future occurred_at could let a registration still inside its
+    # active_from pad count as owed.
+    with pytest.raises(Refused) as refused:
+        await enqueue(
+            db,
+            app_producer(),
+            "post-secret-use-hook",
+            "secret_use_refused",
+            occurred_at=NOW + timedelta(seconds=6),
+            view=view(registrations=(registration(active_from=NOW + timedelta(seconds=6)),)),
+        )
+    assert refused.value.code == "invalid_value"
+    assert await events(db) == []
+
+
+async def test_an_event_within_the_clock_allowance_is_accepted(db) -> None:
+    await enqueue(
+        db,
+        app_producer(),
+        "post-manifest-command-hook",
+        "manifest_command_mutation",
+        occurred_at=NOW + timedelta(seconds=5),
     )
     assert len(await events(db)) == 1
 

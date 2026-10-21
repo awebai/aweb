@@ -364,22 +364,75 @@ async def test_a_hosted_deployment_never_reaches_a_private_address(db, target) -
     assert target.tls.seen == []
 
 
+async def test_a_private_target_is_tried_as_public_then_reached_inside_the_operators_network(
+    db, target
+) -> None:
+    views = Views(target.view())
+    target.replies = [(200, {"event_id": "", "disposition": "appended"})]
+    assert isinstance(await deliver_once(db, target, views), Acked)
+    # Resolved twice: once for the public attempt the guard refused before
+    # connecting, once more, afresh, for the internal attempt.
+    assert target.dns.queries[(NAME, "A")] == 2
+    assert len(target.tls.seen) == 1
+
+
+async def test_a_private_target_outside_the_operators_network_is_refused(db, target) -> None:
+    views = Views(target.view())
+    await enqueue_secret_use(db, views)
+    elsewhere = transport(target, views, internal_cidr=ip_network("10.231.0.0/16"))
+    outcome = await elsewhere.deliver(await stored_event(db), target_of(target))
+    assert outcome == Permanent("egress_refused:destination_address_denied")
+    assert target.tls.seen == []
+    assert target.dns.queries[(NAME, "A")] == 2
+
+
+async def test_without_an_operator_network_the_first_refusal_is_final(db, target) -> None:
+    views = Views(target.view())
+    await enqueue_secret_use(db, views)
+    allowed_but_unnamed = transport(target, views, internal_cidr=None)
+    outcome = await allowed_but_unnamed.deliver(await stored_event(db), target_of(target))
+    assert outcome == Permanent("egress_refused:destination_address_denied")
+    assert target.tls.seen == []
+    assert target.dns.queries[(NAME, "A")] == 1
+
+
+async def test_a_refusal_other_than_a_denied_address_is_never_retried(db, target) -> None:
+    views = Views(target.view())
+    await enqueue_secret_use(db, views)
+    origin = f"https://unknown.hooks.test:{target.tls.port}"
+    views.current = target.view(
+        Registration(
+            binding_id=BINDING,
+            origin=origin,
+            method="POST",
+            path=PATH,
+            active_from=datetime.now(UTC) - timedelta(minutes=5),
+        )
+    )
+    unknown = Target(
+        BINDING, {"binding_id": BINDING, "origin": origin, "method": "POST", "path": PATH}
+    )
+    outcome = await transport(target, views).deliver(await stored_event(db), unknown)
+    assert isinstance(outcome, Retryable)
+    assert target.dns.queries[("unknown.hooks.test", "A")] == 1
+    assert target.tls.seen == []
+
+
 def test_an_internal_cidr_needs_an_operator_who_allows_internal_destinations(target) -> None:
     with pytest.raises(ValueError):
         transport(target, Views(), egress=target.egress(AddressPolicy()))
 
 
-async def test_the_request_goes_to_the_stored_endpoint(db, target) -> None:
+async def test_a_stored_endpoint_the_view_no_longer_lists_is_cancelled(db, target) -> None:
     views = Views(target.view())
     await enqueue_secret_use(db, views)
-    stored_endpoint = Target(
+    elsewhere = Target(
         BINDING,
         {"binding_id": BINDING, "origin": target.origin, "method": "POST", "path": "/elsewhere"},
     )
-    await transport(target, views).deliver(await stored_event(db), stored_endpoint)
-    (seen,) = target.tls.seen
-    assert seen.request_line.split(" ")[:2] == ["POST", "/elsewhere"]
-    assert target.refusals == []
+    outcome = await transport(target, views).deliver(await stored_event(db), elsewhere)
+    assert outcome == Cancelled("binding_changed")
+    assert target.tls.seen == []
 
 
 # --- the drain ---

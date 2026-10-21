@@ -17,6 +17,10 @@ leaves the event pending.
 Inside a secrets dispatch, call the dispatch fence's ``prepare`` before
 ``enqueue``: the fence must take the transaction's first lock, and ``enqueue``
 locks the producer's sequence row.
+
+Rotating the producer key: drain the ``hooks`` channel first. Undelivered
+events are signed with the old key, and a delivery is signed with the key
+that signed its event, so deliveries left behind end rejected.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ from aweb_naapp.outbox import next_sequence as _next_sequence
 
 __all__ = [
     "HOOKS_CHANNEL",
+    "OCCURRED_AT_SKEW",
     "VIEW_MAX_AGE",
     "HookProducer",
     "Registration",
@@ -52,6 +57,9 @@ __all__ = [
 HOOKS_CHANNEL = "hooks"
 # The resolution freshness bound: a view older than this is never used (§A4).
 VIEW_MAX_AGE = timedelta(seconds=60)
+# How far past this producer's clock an event may say it occurred. Small, so a
+# registration still inside its active_from pad can never count as owed.
+OCCURRED_AT_SKEW = timedelta(seconds=5)
 _EVENT_TIME = "%Y-%m-%dT%H:%M:%S"
 
 Clock = Callable[[], datetime]
@@ -209,6 +217,8 @@ class HookProducer:
         self._catalog.validate(hook, payload)
         critical = self._catalog.is_audit_critical(hook, payload)
         now = self._clock()
+        if occurred_at > now + OCCURRED_AT_SKEW:
+            raise Refused("invalid_value", "occurred_at is in the future")
         if critical:
             self._gate(hook, team_id, occurred_at, now, view)
         event_id = mint_event_id()
