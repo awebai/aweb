@@ -159,6 +159,9 @@ hooks = [
     { name = "pgdbm" },
     { name = "pynacl" },
 ]
+outbox = [
+    { name = "pgdbm" },
+]
 runtime = [
     { name = "awid-service" },
     { name = "fastapi" },
@@ -512,7 +515,7 @@ name = "folio"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "aweb-naapp" },
+    { name = "aweb-naapp", extra = ["outbox", "runtime"] },
     { name = "awid-service" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -538,7 +541,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aweb-naapp", editable = "../../naapp-lib" },
+    { name = "aweb-naapp", extras = ["runtime", "outbox"], editable = "../../naapp-lib" },
     { name = "awid-service", editable = "../../awid" },
     { name = "fastapi", specifier = ">=0.116.1" },
     { name = "httpx", specifier = ">=0.28.1" },
