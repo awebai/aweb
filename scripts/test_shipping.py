@@ -48,6 +48,10 @@ class TagContractTest(unittest.TestCase):
         (root / "awid/pyproject.toml").write_text(
             '[project]\nname = "awid-service"\nversion = "2.3.4"\n', encoding="utf-8"
         )
+        (root / "naapp-lib").mkdir()
+        (root / "naapp-lib/pyproject.toml").write_text(
+            '[project]\nname = "aweb-naapp"\nversion = "0.1.0"\n', encoding="utf-8"
+        )
         for directory, version in (
             ("channel", "3.4.5"),
             ("pi-extension", "4.5.6"),
@@ -66,10 +70,11 @@ class TagContractTest(unittest.TestCase):
         temporary, root = self.repository()
         self.addCleanup(temporary.cleanup)
         source, versions = CANDIDATE.validate_tags(
-            root, ["server-v1.2.3", "awid-service-v2.3.4", "channel-v3.4.5"]
+            root, ["server-v1.2.3", "awid-service-v2.3.4", "aweb-naapp-v0.1.0", "channel-v3.4.5"]
         )
         self.assertEqual(len(source), 40)
         self.assertEqual(versions["server-v"], "1.2.3")
+        self.assertEqual(versions["aweb-naapp-v"], "0.1.0")
         with self.assertRaisesRegex(CANDIDATE.CandidateRefusal, "does not match"):
             CANDIDATE.validate_tags(root, ["server-v1.2.4"])
 
@@ -115,6 +120,53 @@ class TagContractTest(unittest.TestCase):
         PUBLISH.request_json = lambda _url: (404, {})
         with self.assertRaisesRegex(PUBLISH.PublishRefusal, "not public"):
             PUBLISH.require_pi_aw_floor(root, timeout_seconds=0)
+
+
+class PypiLaneContractTest(unittest.TestCase):
+    def test_each_pypi_lane_publishes_the_package_its_manifest_names(self):
+        import tomllib
+
+        for prefix, (package, directory, _needs_awid) in PUBLISH.PYPI_LANES.items():
+            manifest = PUBLISH.MANIFESTS[prefix]
+            self.assertEqual(Path(manifest).parent.as_posix(), directory, prefix)
+            project = tomllib.loads((ROOT / manifest).read_text(encoding="utf-8"))["project"]
+            self.assertEqual(project["name"], package, prefix)
+            self.assertEqual(CANDIDATE.MANIFESTS[prefix], manifest, prefix)
+
+    def test_the_aweb_naapp_lane_waits_for_awid_then_builds_naapp_lib(self):
+        temporary, root = TagContractTest.repository(self)
+        self.addCleanup(temporary.cleanup)
+        originals = (PUBLISH.run, PUBLISH.request_json, os.environ.get("UV_PUBLISH_TOKEN"))
+
+        def restore():
+            PUBLISH.run, PUBLISH.request_json = originals[0], originals[1]
+            if originals[2] is None:
+                os.environ.pop("UV_PUBLISH_TOKEN", None)
+            else:
+                os.environ["UV_PUBLISH_TOKEN"] = originals[2]
+
+        self.addCleanup(restore)
+        os.environ["UV_PUBLISH_TOKEN"] = "test-token-not-a-secret"
+        asked: list[str] = []
+        built: list[tuple[str, ...]] = []
+
+        class Built(Exception):
+            pass
+
+        def request_json(url):
+            asked.append(url)
+            return 200, {}
+
+        def run(_root, *argv, **_kwargs):
+            built.append(argv)
+            raise Built
+
+        PUBLISH.request_json, PUBLISH.run = request_json, run
+        with self.assertRaises(Built):
+            PUBLISH.publish_pypi(root, "aweb-naapp-v", "0.1.0")
+        self.assertEqual(asked, ["https://pypi.org/pypi/awid-service/2.3.4/json"])
+        self.assertEqual(built[0][:2], ("uv", "build"))
+        self.assertEqual(built[0][-1], "naapp-lib")
 
 
 class ReleaseStampContractTest(unittest.TestCase):

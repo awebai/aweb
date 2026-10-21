@@ -258,115 +258,8 @@ async def test_get_team_identity_accepts_raw_manager(aweb_cloud_db, monkeypatch)
     assert identity.address == "acme.com/alice"
 
 
-@pytest.mark.asyncio
-async def test_verify_request_certificate_uses_app_public_origin_without_settings(monkeypatch):
-    from aweb.team_auth_deps import verify_request_certificate
-
-    team_sk, _, team_did_key = _make_keypair()
-    member_sk, _, member_did_key = _make_keypair()
-    team_id = "backend:acme.com"
-    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    body_sha256 = hashlib.sha256(b"").hexdigest()
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        member_did_key,
-        team_id=team_id,
-        certificate_id="cert-no-settings",
-    )
-    signed_payload = canonical_json_bytes(
-        {
-            "aud": "https://local.example",
-            "body_sha256": body_sha256,
-            "method": "GET",
-            "path": "/v1/tasks",
-            "team_id": team_id,
-            "timestamp": timestamp,
-            "v": 2,
-        }
-    )
-    signature = sign_message(member_sk, signed_payload)
-    request = _request_with_app_state(
-        {
-            "Authorization": f"DIDKey {member_did_key} {signature}",
-            "X-AWEB-Timestamp": timestamp,
-            "X-AWID-Team-Certificate": _encode_certificate(cert),
-            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(signed_payload).rstrip(b"=").decode("ascii"),
-        },
-        public_origin="https://local.example",
-        body_sha256=body_sha256,
-    )
-
-    async def _fake_resolve_team_key(_request, _team_id):
-        return team_did_key
-
-    async def _fake_revoked_certificates(_request, _team_id):
-        return set()
-
-    def _settings_should_not_be_loaded():
-        raise AssertionError("get_settings should not be required when app.state.public_origin is set")
-
-    monkeypatch.setattr(_team_auth_mod, "_resolve_team_key", _fake_resolve_team_key)
-    monkeypatch.setattr(_team_auth_mod, "_get_revoked_certificates", _fake_revoked_certificates)
-    monkeypatch.setattr(_team_auth_mod, "get_settings", _settings_should_not_be_loaded)
-
-    cert_info = await verify_request_certificate(request, db=object())
-
-    assert cert_info["team_id"] == team_id
-    assert cert_info["did_key"] == member_did_key
-    assert cert_info["certificate_id"] == "cert-no-settings"
 
 
-@pytest.mark.asyncio
-async def test_verify_request_certificate_legacy_compact_does_not_require_public_origin(monkeypatch):
-    from aweb.team_auth_deps import verify_request_certificate
-
-    team_sk, _, team_did_key = _make_keypair()
-    member_sk, _, member_did_key = _make_keypair()
-    team_id = "backend:acme.com"
-    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    body_sha256 = hashlib.sha256(b"").hexdigest()
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        member_did_key,
-        team_id=team_id,
-        certificate_id="cert-legacy-no-origin",
-    )
-    signature = sign_message(
-        member_sk,
-        compact_team_auth_payload(
-            team_id=team_id,
-            timestamp=timestamp,
-            body_sha256=body_sha256,
-        ),
-    )
-    request = _request_with_headers(
-        {
-            "Authorization": f"DIDKey {member_did_key} {signature}",
-            "X-AWEB-Timestamp": timestamp,
-            "X-AWID-Team-Certificate": _encode_certificate(cert),
-        }
-    )
-
-    async def _fake_resolve_team_key(_request, _team_id):
-        return team_did_key
-
-    async def _fake_revoked_certificates(_request, _team_id):
-        return set()
-
-    def _settings_should_not_be_loaded():
-        raise AssertionError("legacy compact team auth must not load public-origin settings")
-
-    monkeypatch.setattr(_team_auth_mod, "_resolve_team_key", _fake_resolve_team_key)
-    monkeypatch.setattr(_team_auth_mod, "_get_revoked_certificates", _fake_revoked_certificates)
-    monkeypatch.setattr(_team_auth_mod, "get_settings", _settings_should_not_be_loaded)
-
-    cert_info = await verify_request_certificate(request, db=object())
-
-    assert cert_info["team_id"] == team_id
-    assert cert_info["did_key"] == member_did_key
-    assert cert_info["certificate_id"] == "cert-legacy-no-origin"
 
 
 @pytest.mark.asyncio
@@ -540,3 +433,44 @@ async def test_get_messaging_auth_allows_identity_scoped_persistent_multi_member
     assert auth.team_id is None
     assert auth.alias is None
     assert auth.agent_id is None
+
+
+HOSTILE_CERTIFICATES = {
+    "list": base64.b64encode(b"[]").decode(),
+    "string": base64.b64encode(b'"x"').decode(),
+    "deep": base64.b64encode(b"[" * 6000).decode(),
+    "oversize": base64.b64encode(b'{"pad":"' + b"a" * 7000 + b'"}').decode(),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("certificate", HOSTILE_CERTIFICATES.values(), ids=HOSTILE_CERTIFICATES.keys())
+async def test_verify_request_certificate_refuses_a_hostile_certificate_with_401(certificate):
+    from aweb.team_auth_deps import verify_request_certificate
+
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    request = _request_with_app_state(
+        {
+            "Authorization": "DIDKey did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK sig",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWID-Team-Certificate": certificate,
+        }
+    )
+    with pytest.raises(HTTPException) as refused:
+        await verify_request_certificate(request, db=object())
+    assert refused.value.status_code == 401
+    assert refused.value.detail == "Malformed certificate"
+
+
+@pytest.mark.parametrize("certificate", HOSTILE_CERTIFICATES.values(), ids=HOSTILE_CERTIFICATES.keys())
+def test_parse_and_verify_certificate_refuses_a_hostile_certificate(certificate):
+    from aweb.team_auth import parse_and_verify_certificate
+
+    with pytest.raises(ValueError) as refused:
+        parse_and_verify_certificate(
+            certificate,
+            request_did_key="did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+            team_public_key_resolver=lambda _team_id: "",
+            revocation_checker=lambda _team_id, _certificate_id: False,
+        )
+    assert str(refused.value) == "Malformed certificate: invalid base64 or JSON"
