@@ -7,7 +7,8 @@ and rolls back with it. The first claim of a key wins. A later claim with the
 same bytes gets the stored receipt, and with different bytes a conflict.
 After the app's retention the key is expired: it is refused and never runs
 again. :func:`expire_keys` then clears an expired key's request hash and
-receipt, leaving the key alone as a content-free tombstone.
+receipt, leaving the key alone as a content-free tombstone. :func:`lookup`
+answers what a claim of a key would, without claiming it.
 
 The caller rechecks the principal's current read permission before it returns
 a stored receipt.
@@ -88,7 +89,34 @@ async def claim(
     )
     if inserted is not None:
         return Receipt(receipt_ref=inserted, created=True)
-    stored = await tx.fetch_one(
+    stored = await _stored(tx, key, request_hash)
+    if stored is None:
+        raise RuntimeError("an idempotency key conflicted but cannot be read")
+    return stored
+
+
+async def lookup(
+    db: AsyncDatabaseManager | TransactionManager,
+    *,
+    key: Sequence[str],
+    request_hash: bytes,
+) -> Receipt | None:
+    """The stored receipt for ``key`` and these bytes, or None if the key was
+    never claimed; it claims nothing.
+
+    Raises :class:`IdempotencyConflict` and :class:`IdempotencyExpired` exactly
+    as :func:`claim` would.
+    """
+    if not key or not request_hash:
+        raise ValueError("a lookup needs a key and a request hash")
+    return await _stored(db, list(key), request_hash)
+
+
+async def _stored(
+    db: AsyncDatabaseManager | TransactionManager, key: list[str], request_hash: bytes
+) -> Receipt | None:
+    """What a claim of an existing ``key`` answers: its receipt, a conflict or expiry."""
+    stored = await db.fetch_one(
         """
         SELECT request_hash, receipt_ref, expires_at <= NOW() AS expired
         FROM {{tables.idempotency_keys}} WHERE key = $1
@@ -96,7 +124,7 @@ async def claim(
         key,
     )
     if stored is None:
-        raise RuntimeError("an idempotency key conflicted but cannot be read")
+        return None
     if stored["expired"]:
         raise IdempotencyExpired("the idempotency key has expired")
     if stored["request_hash"] is None or bytes(stored["request_hash"]) != request_hash:
