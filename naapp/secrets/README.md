@@ -37,3 +37,19 @@ make test
 ```
 
 The tests need PostgreSQL, as pgdbm's test fixtures configure it.
+
+`aweb_secrets.approval_email.ApprovalEmailDelivery` implements B2 delivery for
+both use and change approvals. Composition supplies a shared
+`aweb_naapp.email.Mailer` and the trusted absolute console endpoint:
+
+```python
+delivery = ApprovalEmailDelivery(mailer=mailer, approval_url=console_origin + "/approvals")
+```
+
+Send through `Approvals.deliver(pending)` after the minting transaction commits.
+Each designated approver receives only a static notice and its own locator, with
+the opaque token URL-encoded in `#token=...`; no request details go in email.
+The console posts that token in JSON to its B2 ceremonies and requires a passkey
+to show the frozen request and decide. SMTP failures return `FAILED` without an
+automatic retry. The shared sender reads `SECRETS_EMAIL_*` configuration and its
+password file through `EmailSettings.from_env("SECRETS_")`.
