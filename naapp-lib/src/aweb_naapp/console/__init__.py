@@ -114,7 +114,8 @@ class ConsoleSessions:
 
     A session lasts while its subject can still log in: on every request it is
     refused, and closed, once the subject is no longer the scope's in-effect
-    approver with an unrevoked passkey, or the app no longer admits the scope.
+    approver, the exact passkey behind its login evidence is revoked, or the
+    app no longer admits the scope.
     """
 
     def __init__(
@@ -182,11 +183,20 @@ class ConsoleSessions:
             COOKIE_NAME, "", max_age=0, path="/", secure=True, httponly=True, samesite="strict"
         )
 
+    def _required(self) -> HTTPException:
+        response = Response()
+        self.clear_cookie(response)
+        return HTTPException(
+            status_code=401,
+            detail="console_session_required",
+            headers={"Set-Cookie": response.headers["set-cookie"]},
+        )
+
     async def current(self, request: Request) -> ConsoleSession:
         """The request's open session; a state change must also carry its CSRF token."""
         token = request.cookies.get(COOKIE_NAME)
         if not token:
-            raise HTTPException(status_code=401, detail="console_session_required")
+            raise self._required()
         row = await self._db.fetch_one(
             """
             SELECT * FROM {{tables.console_sessions}}
@@ -195,13 +205,15 @@ class ConsoleSessions:
             _sha256(token),
         )
         if row is None:
-            raise HTTPException(status_code=401, detail="console_session_required")
+            raise self._required()
         if not (
-            await self.passkeys.can_log_in(row["scope"], row["subject"])
+            await self.passkeys.login_evidence_is_current(
+                row["scope"], row["subject"], row["evidence_ref"]
+            )
             and await self.scopes(row["scope"])
         ):
             await self._close(bytes(row["token_sha256"]))
-            raise HTTPException(status_code=401, detail="console_session_required")
+            raise self._required()
         if request.method not in SAFE_METHODS:
             supplied = request.headers.get(CSRF_HEADER, "")
             if not hmac.compare_digest(_sha256(supplied), bytes(row["csrf_sha256"])):
