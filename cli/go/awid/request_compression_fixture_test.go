@@ -2,7 +2,9 @@ package awid
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +14,12 @@ import (
 
 func newCompressionTestServer(t *testing.T, handler http.Handler) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(handler)
+	// A listener can reuse an earlier fixture's port. Isolate the complete base,
+	// while preserving the real process cache within each fixture and its clients.
+	mount := "/" + base64.RawURLEncoding.EncodeToString([]byte(t.TempDir()))
+	server := httptest.NewServer(http.StripPrefix(mount, handler))
+	server.URL += mount
+	return server
 }
 
 func TestCompressionFixtureDoesNotPoisonReusedListener(t *testing.T) {
@@ -78,8 +85,12 @@ func TestCompressionFixtureDoesNotPoisonReusedListener(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	body, readErr := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("reused listener returned %d", resp.StatusCode)
+		t.Fatalf("reused listener returned %d: %s", resp.StatusCode, body)
 	}
 }
