@@ -48,6 +48,7 @@ for (const step of spec.steps) {
   else if (step.op === "turn_started") emitter.turnStarted();
   else if (step.op === "tool") emitter.tool(step.name, step.input);
   else if (step.op === "turn_ended") emitter.turnEnded();
+  else if (step.op === "drain") await emitter.drained();
   else if (step.op === "wait") await new Promise((resolve) => setTimeout(resolve, step.ms));
   else throw new Error(`unknown step ${step.op}`);
 }

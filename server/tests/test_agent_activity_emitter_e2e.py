@@ -82,9 +82,9 @@ async def test_an_attributed_turn_reaches_the_server_signed_and_in_order(privacy
         result = await _run_emitter(env, "alice", root, [
             {"op": "wake", "session_id": session_id},
             {"op": "turn_started"},
-            {"op": "wait", "ms": 600},
+            {"op": "drain"},
             {"op": "tool", "name": "Bash", "input": {"command": "pytest -q tests/"}},
-            {"op": "wait", "ms": 600},
+            {"op": "drain"},
             {"op": "turn_ended"},
         ])
         relayed = await _relayed(pubsub, 3)
@@ -210,8 +210,8 @@ async def _run_runtime_emitter(env, identity_home, steps):
     return json.loads(stdout.decode().strip().splitlines()[-1])
 
 
-TURN = [{"op": "turn_started"}, {"op": "wait", "ms": 600},
-        {"op": "tool", "name": "Bash", "input": {"command": "make test"}}, {"op": "wait", "ms": 600},
+TURN = [{"op": "turn_started"}, {"op": "drain"},
+        {"op": "tool", "name": "Bash", "input": {"command": "make test"}}, {"op": "drain"},
         {"op": "turn_ended"}]
 
 
