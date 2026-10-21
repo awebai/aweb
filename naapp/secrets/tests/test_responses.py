@@ -196,12 +196,13 @@ def test_projecting_a_credential_string_array_is_withheld(pointer: str) -> None:
 @pytest.mark.parametrize("body", [b'{"id":"ok"}', b'{"access_token":"issued"}', b'error'])
 @pytest.mark.parametrize("header_name", ["Location", "X-Request-Id", "ETag"])
 @pytest.mark.parametrize("field", ["access_token", "access%5Ftoken"])
-def test_an_issued_credential_in_an_allowed_header_is_never_returned(body: bytes, header_name: str, field: str) -> None:
+@pytest.mark.parametrize("separator", ["?", "#"])
+def test_an_issued_credential_in_an_allowed_header_is_never_returned(body: bytes, header_name: str, field: str, separator: str) -> None:
     # The new value is not in KnownValues. A safe projection or an error body
     # must not let it leave through headers, even if the body is withheld.
     result = _handle(
         body,
-        headers=[("Content-Type", "application/json"), (header_name, f"https://upstream.example/next?{field}={secrets.token_urlsafe(24)}")],
+        headers=[("Content-Type", "application/json"), (header_name, f"https://upstream.example/next{separator}{field}={secrets.token_urlsafe(24)}")],
         projection=["/id"],
         token_issuing=True,
     )

@@ -35,7 +35,7 @@ _CREDENTIAL_FIELDS = frozenset(
 _FIELD_NAME = r"[A-Za-z][A-Za-z0-9_-]{2,40}"
 _JSON_FIELD = re.compile(rf'"({_FIELD_NAME})"\s*:\s*"[^"]')
 _XML_FIELD = re.compile(rf"<({_FIELD_NAME})>\s*[^<\s]")
-_FORM_FIELD = re.compile(rf"(?:^|[&?\s])({_FIELD_NAME})=[^&\s]")
+_FORM_FIELD = re.compile(rf"(?:^|[&?#\s])({_FIELD_NAME})=[^&\s]")
 
 _TOKEN_PATTERNS = [
     re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"),
