@@ -61,6 +61,18 @@ verifies the source adapter. Schema migration validates every retained row,
 including rows past the first snapshot. Deleted record IDs remain tombstones.
 There is no generic patch path to policy, provenance, revisions or schemas.
 
+`mutate_on(tx, scope, principal, expected_rev=..., key=..., records=..., state=...)`
+uses a caller-owned transaction from the content database. It applies the same
+owned-record, field, revision and idempotency checks as `mutate`, so the caller
+can join page effects and its own outbox or journal writes in one commit. The
+caller commits or rolls back; a refusal rolls back the page changes to a
+savepoint even when the caller catches it to record a failure. The independent
+request claim survives a rollback and follows the same retry rules below.
+An accepted retry returns the first receipt without rewriting the page. The
+caller must also make its joined writes idempotent: key journal entries by that
+receipt's `transaction_id`, and derive a distinct stable event ID for each
+joined outbox event. The page-change event already uses the transaction ID.
+
 The content transaction writes data, audit, receipt and the shared outbox
 together. The independent request claim commits first; a failed content
 transaction leaves a recoverable claim rather than an invented success receipt.

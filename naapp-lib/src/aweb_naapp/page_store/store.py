@@ -367,113 +367,148 @@ class PageStore(LifecycleMixin):
         if type(expected_rev) is not int or expected_rev != document["rev"]:
             raise StoreError("revision_conflict", 409, details={"page_rev": document["rev"]})
 
+    async def mutate_on(self, tx, scope, principal, *, expected_rev, key, records=(), state=None):
+        """Apply an owned mutation on the caller's content-database transaction.
+
+        The caller owns commit/rollback and can atomically join action state or
+        task-mirror outbox writes. All ordinary page/record/field guards and the
+        independent restore-safe request claim apply. Use a transaction from
+        this store's database; this method never opens or commits a content
+        transaction of its own. A savepoint rolls back all page effects on
+        refusal even if the caller catches the error and records a failure.
+        """
+        async with tx.transaction() as mutation_tx:
+            return await self._mutate_on(
+                mutation_tx,
+                scope,
+                principal,
+                expected_rev=expected_rev,
+                key=key,
+                records=records,
+                state=state,
+                sync=False,
+            )
+
     async def _mutate(self, scope, principal, *, expected_rev, key, records, state, sync):
         self._policy()
         async with self.db.transaction() as tx:
-            document, access, actor = await self._load(
-                tx, scope, principal, "owner" if sync else "write"
-            )
-            transaction, replay = await self._claim(
+            return await self._mutate_on(
                 tx,
                 scope,
                 principal,
-                key,
-                {
-                    "op": "sync" if sync else "mutate",
-                    "expected_rev": expected_rev,
-                    "records": records,
-                    "state": state,
-                },
+                expected_rev=expected_rev,
+                key=key,
+                records=records,
+                state=state,
+                sync=sync,
             )
-            if replay:
-                return replay
-            self._precondition(document, expected_rev)
-            revisions, changed, seen = {}, [], set()
-            collections = {c["id"]: c for c in document["collections"]}
-            for change in records:
-                if not isinstance(change, dict) or set(change) - {
-                    "op",
-                    "collection",
-                    "id",
-                    "expected_rev",
-                    "value",
-                    "source",
-                }:
-                    raise StoreError("schema_invalid")
-                cid, rid = change.get("collection"), change.get("id")
-                if (cid, rid) in seen:
-                    raise StoreError("schema_invalid")
-                seen.add((cid, rid))
-                collection = collections.get(cid)
-                if collection is None or not access.visible_row(actor, cid, rid):
-                    raise StoreError("action_denied", 403)
-                if (collection["mode"] == "synced") != sync:
-                    raise StoreError("synced_write_denied", 403)
-                row = await tx.fetch_one(
-                    "SELECT rev,record FROM {{tables.page_records}} WHERE scope=$1 AND collection=$2 AND record_id=$3",
+
+    async def _mutate_on(self, tx, scope, principal, *, expected_rev, key, records, state, sync):
+        self._policy()
+        document, access, actor = await self._load(
+            tx, scope, principal, "owner" if sync else "write"
+        )
+        transaction, replay = await self._claim(
+            tx,
+            scope,
+            principal,
+            key,
+            {
+                "op": "sync" if sync else "mutate",
+                "expected_rev": expected_rev,
+                "records": records,
+                "state": state,
+            },
+        )
+        if replay:
+            return replay
+        self._precondition(document, expected_rev)
+        revisions, changed, seen = {}, [], set()
+        collections = {c["id"]: c for c in document["collections"]}
+        for change in records:
+            if not isinstance(change, dict) or set(change) - {
+                "op",
+                "collection",
+                "id",
+                "expected_rev",
+                "value",
+                "source",
+            }:
+                raise StoreError("schema_invalid")
+            cid, rid = change.get("collection"), change.get("id")
+            if (cid, rid) in seen:
+                raise StoreError("schema_invalid")
+            seen.add((cid, rid))
+            collection = collections.get(cid)
+            if collection is None or not access.visible_row(actor, cid, rid):
+                raise StoreError("action_denied", 403)
+            if (collection["mode"] == "synced") != sync:
+                raise StoreError("synced_write_denied", 403)
+            row = await tx.fetch_one(
+                "SELECT rev,record FROM {{tables.page_records}} WHERE scope=$1 AND collection=$2 AND record_id=$3",
+                scope.key,
+                cid,
+                rid,
+            )
+            operation = change.get("op")
+            expected = change.get("expected_rev")
+            if expected is None:
+                raise StoreError("precondition_required", 428)
+            if operation not in {"create", "update", "delete"}:
+                raise StoreError("schema_invalid")
+            if type(expected) is not int or (
+                (operation == "create" and (row is not None or expected != 0))
+                or (
+                    operation != "create"
+                    and (row is None or row["record"] is None or row["rev"] != expected)
+                )
+            ):
+                raise StoreError("revision_conflict", 409)
+            rev = 1 if row is None else row["rev"] + 1
+            if rev > MAX_REV:
+                raise StoreError("revision_exhausted", 409)
+            previous = decoded(row["record"])["value"] if row and row["record"] else {}
+            proposed = change.get("value") if isinstance(change.get("value"), dict) else {}
+            allowed = access.value_fields(actor, collection, set(previous) | set(proposed))
+            if row and set(previous) - allowed:
+                raise StoreError("action_denied", 403)
+            if operation == "delete":
+                await tx.execute(
+                    "UPDATE {{tables.page_records}} SET rev=$4,record=NULL WHERE scope=$1 AND collection=$2 AND record_id=$3",
                     scope.key,
                     cid,
                     rid,
+                    rev,
                 )
-                operation = change.get("op")
-                expected = change.get("expected_rev")
-                if expected is None:
-                    raise StoreError("precondition_required", 428)
-                if operation not in {"create", "update", "delete"}:
-                    raise StoreError("schema_invalid")
-                if type(expected) is not int or (
-                    (operation == "create" and (row is not None or expected != 0))
-                    or (
-                        operation != "create"
-                        and (row is None or row["record"] is None or row["rev"] != expected)
-                    )
-                ):
-                    raise StoreError("revision_conflict", 409)
-                rev = 1 if row is None else row["rev"] + 1
-                if rev > MAX_REV:
-                    raise StoreError("revision_exhausted", 409)
-                previous = decoded(row["record"])["value"] if row and row["record"] else {}
-                proposed = change.get("value") if isinstance(change.get("value"), dict) else {}
-                allowed = access.value_fields(actor, collection, set(previous) | set(proposed))
-                if row and set(previous) - allowed:
+            else:
+                value = change.get("value")
+                if not isinstance(value, dict) or set(value) - allowed:
                     raise StoreError("action_denied", 403)
-                if operation == "delete":
-                    await tx.execute(
-                        "UPDATE {{tables.page_records}} SET rev=$4,record=NULL WHERE scope=$1 AND collection=$2 AND record_id=$3",
-                        scope.key,
-                        cid,
-                        rid,
-                        rev,
-                    )
-                else:
-                    value = change.get("value")
-                    if not isinstance(value, dict) or set(value) - allowed:
-                        raise StoreError("action_denied", 403)
-                    record = {"id": rid, "rev": rev, "value": value}
-                    if sync:
-                        record["source"] = change.get("source")
-                    elif "source" in change:
-                        raise StoreError("schema_invalid")
-                    self._validate_record(document, collection, record)
-                    await self._put_record(tx, scope, cid, record)
-                revisions[f"{cid}/{rid}"] = rev
-                changed.append(
-                    {
-                        "collection": cid,
-                        "record_id": rid,
-                        "fields": sorted(change.get("value") or {}),
-                        "operation": operation,
-                    }
-                )
-            if state is not None:
-                if not isinstance(state, dict):
-                    raise StoreError("schema_invalid", details=[{"pointer": "/widget_state"}])
-                document["widget_state"].update(copy.deepcopy(state))
-                changed.append({"widget_state": sorted(state)})
-            await self._project(tx, scope, copy.deepcopy(document), access, access.owner)
-            return await self._commit(
-                tx, scope, principal, transaction, document, expected_rev, changed, revisions
+                record = {"id": rid, "rev": rev, "value": value}
+                if sync:
+                    record["source"] = change.get("source")
+                elif "source" in change:
+                    raise StoreError("schema_invalid")
+                self._validate_record(document, collection, record)
+                await self._put_record(tx, scope, cid, record)
+            revisions[f"{cid}/{rid}"] = rev
+            changed.append(
+                {
+                    "collection": cid,
+                    "record_id": rid,
+                    "fields": sorted(change.get("value") or {}),
+                    "operation": operation,
+                }
             )
+        if state is not None:
+            if not isinstance(state, dict):
+                raise StoreError("schema_invalid", details=[{"pointer": "/widget_state"}])
+            document["widget_state"].update(copy.deepcopy(state))
+            changed.append({"widget_state": sorted(state)})
+        await self._project(tx, scope, copy.deepcopy(document), access, access.owner)
+        return await self._commit(
+            tx, scope, principal, transaction, document, expected_rev, changed, revisions
+        )
 
     @staticmethod
     def _validate_record(document, collection, record):
