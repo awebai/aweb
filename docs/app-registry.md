@@ -94,7 +94,11 @@ Current rules:
   a team, a key id keeps the `did_key` it was first registered with: an install
   supplying a different `did_key` for a registered key id is refused with
   `409`, and the install is not applied. Rotate a key under a new key id.
-  Reinstalling never reactivates a revoked key.
+  Reinstalling never reactivates a revoked key. Key identity and revocation
+  history span both v1 `event_emitters` and v2 `app_keys`: changing manifest
+  version never resets either. Registration carries the earliest revocation
+  for the same team, app, key id and `did_key`; verification also checks that
+  shared history, including rows registered before the version switch.
 - Scopes are normalized and stored. Without `manifest` (below), the server
   cannot prove that the granted scopes are within the manifest's
   `tools[].scopes`.

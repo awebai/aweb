@@ -126,6 +126,124 @@ async def db(aweb_cloud_db):
 # --- registration -----------------------------------------------------------------
 
 
+async def _install_event_key_version(db, entry: dict[str, Any], manifest_version: int):
+    document = copy.deepcopy(VECTOR["base_manifests"][f"v{manifest_version}"])
+    if manifest_version == 1:
+        document["event_emitters"] = [{"kid": entry["kid"], "did_key": entry["did_key"]}]
+    else:
+        document["app_keys"] = [entry]
+    manifest = _canonical(document)
+    await install_app(
+        db, team_id=TEAM_ID, app_id=APP_ID, origin=ORIGIN,
+        app_version=document["app"]["version"], manifest_version=manifest_version,
+        digest=_digest(manifest), granted_scopes=[], manifest=manifest,
+    )
+    return _digest(manifest)
+
+
+def _key_table(manifest_version: int) -> str:
+    return {1: "team_app_emit_keys", 2: "team_app_keys"}[manifest_version]
+
+
+async def _event_probe(db, signer, entry):
+    path = f"/probe/{APP_EVENT}"
+    return await _post(
+        _probe_app(db), path, EMIT_BODY,
+        _signed_for_app(APP_EVENT, signer, entry, path=path, body=EMIT_BODY),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("old_version,new_version", [(1, 2), (2, 1)])
+@pytest.mark.parametrize("revoked", [False, True])
+async def test_event_key_history_survives_a_manifest_version_switch(db, old_version, new_version, revoked):
+    signer, entry = _key("event-history", [APP_EVENT])
+    await _install_event_key_version(db, entry, old_version)
+    if revoked:
+        await db.execute(
+            f"UPDATE {{{{tables.{_key_table(old_version)}}}}} SET revoked_at = NOW() "
+            "WHERE team_id = $1 AND app_id = $2 AND key_id = $3",
+            TEAM_ID, APP_ID, entry["kid"],
+        )
+
+    digest = await _install_event_key_version(db, entry, new_version)
+    response = await _event_probe(db, signer, entry)
+
+    assert response.status_code == (403 if revoked else 200), response.text
+    row = await db.fetch_one(
+        f"SELECT revoked_at FROM {{{{tables.{_key_table(new_version)}}}}} "
+        "WHERE team_id = $1 AND app_id = $2 AND digest = $3 AND key_id = $4",
+        TEAM_ID, APP_ID, digest, entry["kid"],
+    )
+    assert (row["revoked_at"] is not None) == revoked
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("old_version,new_version", [(1, 2), (2, 1)])
+async def test_event_verification_checks_revocation_in_the_other_representation(db, old_version, new_version):
+    signer, entry = _key("event-history", [APP_EVENT])
+    await _install_event_key_version(db, entry, old_version)
+    await _install_event_key_version(db, entry, new_version)
+    await db.execute(
+        f"UPDATE {{{{tables.{_key_table(old_version)}}}}} SET revoked_at = NOW() "
+        "WHERE team_id = $1 AND app_id = $2 AND key_id = $3",
+        TEAM_ID, APP_ID, entry["kid"],
+    )
+
+    response = await _event_probe(db, signer, entry)
+
+    assert response.status_code == 403, response.text
+    # Reinstalling the already-present target row must carry the history too.
+    await _install_event_key_version(db, entry, new_version)
+    rows = await db.fetch_all(
+        "SELECT revoked_at FROM {{tables.team_app_emit_keys}} "
+        "WHERE team_id = $1 AND app_id = $2 AND key_id = $3 UNION ALL "
+        "SELECT revoked_at FROM {{tables.team_app_keys}} "
+        "WHERE team_id = $1 AND app_id = $2 AND key_id = $3",
+        TEAM_ID, APP_ID, entry["kid"],
+    )
+    assert len(rows) == 2
+    assert rows[0]["revoked_at"] is not None
+    assert rows[0]["revoked_at"] == rows[1]["revoked_at"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("old_version,new_version", [(1, 2), (2, 1)])
+async def test_a_key_id_cannot_change_identity_across_representations(db, old_version, new_version):
+    signer, entry = _key("event-history", [APP_EVENT])
+    digest = await _install_event_key_version(db, entry, old_version)
+    _, other = _key(entry["kid"], [APP_EVENT])
+
+    with pytest.raises(ConflictError):
+        await _install_event_key_version(db, other, new_version)
+
+    installed = await db.fetch_one(
+        "SELECT digest FROM {{tables.team_app_installs}} WHERE team_id = $1 AND app_id = $2",
+        TEAM_ID, APP_ID,
+    )
+    assert installed["digest"] == digest
+    assert (await _event_probe(db, signer, entry)).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("old_version,new_version", [(1, 2), (2, 1)])
+async def test_event_verification_refuses_a_preexisting_cross_table_identity_conflict(db, old_version, new_version):
+    signer, entry = _key("event-history", [APP_EVENT])
+    await _install_event_key_version(db, entry, old_version)
+    await _install_event_key_version(db, entry, new_version)
+    _, other = _key(entry["kid"], [APP_EVENT])
+    # A row pair produced before the shared identity check was introduced.
+    await db.execute(
+        f"UPDATE {{{{tables.{_key_table(old_version)}}}}} SET did_key = $4 "
+        "WHERE team_id = $1 AND app_id = $2 AND key_id = $3",
+        TEAM_ID, APP_ID, entry["kid"], other["did_key"],
+    )
+
+    response = await _event_probe(db, signer, entry)
+
+    assert response.status_code == 403, response.text
+
+
 @pytest.mark.asyncio
 async def test_a_v2_install_registers_exactly_the_bytes_app_keys(db):
     _, read = _key("read-1", [APP_GRANT_READ, HOOK_RESOLVE])

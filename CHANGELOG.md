@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Security:** app keys retain their identity and revocation history across
+  v1 `event_emitters` and v2 `app_keys`. Switching manifest versions cannot
+  reactivate a revoked event key or bind its key id to a different `did_key`;
+  both registration and credential verification consult the shared history.
+
 - aw reads manifest version 2 as well as version 1. `aw plugin install` and
   `aw plugin update` read an app's variant catalog first and select the
   highest version they support. Only a missing catalog falls back to the
