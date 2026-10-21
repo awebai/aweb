@@ -17,13 +17,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from aweb.awid_error_handling import (
-    AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
     awid_registry_not_configured_exception,
 )
 from aweb.db import DatabaseInfra, get_db_infra
 from aweb.hook_bindings import (
     HookBinding,
+    OwnerActTeamKeyUnavailable,
     activate_binding,
     core_owner_act_verifier,
     list_app_bindings,
@@ -149,11 +149,13 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
             signing=signing, signature=payload.signature,
         )
     except ServiceError as exc:
+        if exc.status_code >= 500:
+            logger.error("Hook-binding owner act failed: %s", exc.detail, exc_info=True)
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    except AWID_DEPENDENCY_ERRORS as exc:
+    except OwnerActTeamKeyUnavailable as exc:
         # The team key is read before any transaction, so nothing was written.
         logger.warning("AWID registry dependency failed reading the owner-act team key", exc_info=True)
-        raise awid_dependency_http_exception(exc, operation="AWID owner-act team key") from exc
+        raise awid_dependency_http_exception(exc.dependency_error, operation="AWID owner-act team key") from exc
     return _as_response(binding)
 
 

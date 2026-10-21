@@ -9,6 +9,7 @@ current key in a real AWID registry and the bindings in PostgreSQL, is real.
 from __future__ import annotations
 
 import base64
+from contextlib import aclosing
 
 import pytest
 from fastapi import FastAPI
@@ -202,4 +203,79 @@ async def test_a_server_without_a_registry_client_refuses_without_changing_anyth
         )
     assert response.status_code == 500
     assert "registry client not configured" in response.json()["detail"]
+    assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 0
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_registry_is_a_classified_503_and_the_same_act_can_retry(env, monkeypatch, caplog):
+    from awid.registry import RegistryClient
+    from tests.awid_stall_support import stalled_registry_url
+
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    monkeypatch.setattr(hook_routes, "get_team_identity", _identity(TEAM))
+    signing, signature = env.owner.sign("hook-binding.activate", registration)
+    url = f"/v1/apps/hook-bindings/{registration.binding_id}/activate"
+    async with stalled_registry_url() as registry_url:
+        async with aclosing(RegistryClient(registry_url=registry_url, timeout_seconds=0.3)) as registry:
+            app = _app(env, registry)
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post(url, json=_body(signing, signature))
+
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == "AWID owner-act team key upstream unavailable (TimeoutError)"
+    assert "AWID registry dependency failed reading the owner-act team key" in caplog.text
+    assert "TimeoutError" in caplog.text
+    assert await env.db.fetch_value(
+        "SELECT state FROM {{tables.app_hook_bindings}} WHERE binding_id = $1", registration.binding_id,
+    ) == "pending"
+    assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 0
+    async with await _client(env, monkeypatch) as client:
+        retried = await client.post(url, json=_body(signing, signature))
+    assert retried.status_code == 200, retried.text
+
+
+@pytest.mark.asyncio
+async def test_a_database_timeout_is_not_reported_as_an_awid_failure(env, monkeypatch, caplog):
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    signing, signature = env.owner.sign("hook-binding.activate", registration)
+    # A real PostgreSQL query exceeds asyncpg's client deadline at the binding
+    # read. The route must not mistake that builtin TimeoutError for AWID's.
+    original_fetch_one = env.db.fetch_one
+
+    async def stalled_read(query, *args, **kwargs):
+        return await original_fetch_one("SELECT pg_sleep(1)", timeout=0.01)
+
+    monkeypatch.setattr(env.db, "fetch_one", stalled_read)
+    async with await _client(env, monkeypatch) as client:
+        with pytest.raises(TimeoutError):
+            await client.post(
+                f"/v1/apps/hook-bindings/{registration.binding_id}/activate", json=_body(signing, signature),
+            )
+    assert "AWID registry dependency failed" not in caplog.text
+    assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 0
+
+
+@pytest.mark.asyncio
+async def test_a_misconfigured_verifier_is_logged_and_changes_nothing(env, monkeypatch, caplog):
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    signing, signature = env.owner.sign("hook-binding.activate", registration)
+    monkeypatch.setattr(hook_routes, "get_team_identity", _identity(TEAM))
+    app = _app(env, env.registry)
+    app.state.public_origin = ""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            f"/v1/apps/hook-bindings/{registration.binding_id}/activate", json=_body(signing, signature),
+        )
+    assert response.status_code == 500, response.text
+    assert response.json()["detail"].startswith("verifier_misconfigured:")
+    errors = [record for record in caplog.records if record.name == hook_routes.__name__ and record.levelname == "ERROR"]
+    assert len(errors) == 1
+    assert "verifier_misconfigured" in errors[0].getMessage()
+    assert errors[0].exc_info is not None
+    assert await env.db.fetch_value(
+        "SELECT state FROM {{tables.app_hook_bindings}} WHERE binding_id = $1", registration.binding_id,
+    ) == "pending"
     assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 0

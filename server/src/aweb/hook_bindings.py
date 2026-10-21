@@ -27,6 +27,7 @@ from aweb_naapp.hooks.strictjson import Refused
 from awid.team_ids import parse_team_id
 
 from aweb.app_registry import normalize_app_id, normalize_digest, normalize_origin, validate_team_id
+from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 REGISTRATION = "registration"
@@ -292,18 +293,32 @@ async def list_app_bindings(db, *, team_id: str, app_id: str) -> list[HookBindin
     return [binding_from_row(row) for row in rows]
 
 
+class OwnerActTeamKeyUnavailable(Exception):
+    """An AWID dependency failure confined to the owner-act team-key read."""
+
+    def __init__(self, dependency_error: Exception) -> None:
+        self.dependency_error = dependency_error
+        super().__init__(str(dependency_error))
+
+
 def core_owner_act_verifier(*, audience: str, registry_client: Any) -> OwnerActVerifier:
     """The server's owner-act verifier: core's closed vocabulary, its public
     origin as audience, and the team's controller key read fresh from AWID."""
 
     async def team_key_for(team_id: str) -> str:
         domain, name = parse_team_id(team_id)
-        team = await registry_client.get_team_fresh(domain, name)
+        try:
+            team = await registry_client.get_team_fresh(domain, name)
+        except AWID_DEPENDENCY_ERRORS as exc:
+            raise OwnerActTeamKeyUnavailable(exc) from exc
         if team is None or not team.team_did_key:
             raise Refused("owner_required", "the team has no controller key at its registry")
         return team.team_did_key
 
-    return OwnerActVerifier(scope=OWNER_ACT_SCOPE, audience=audience, acts=CORE_ACTS, team_key_for=team_key_for)
+    try:
+        return OwnerActVerifier(scope=OWNER_ACT_SCOPE, audience=audience, acts=CORE_ACTS, team_key_for=team_key_for)
+    except Refused as refused:
+        raise _service_error(refused) from refused
 
 
 # Every refusal of the act itself is 403 with its code, except that a valid act
