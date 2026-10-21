@@ -139,6 +139,10 @@
     "uuid": {
       "kind": "string",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "hmac_sha256_hex": {
+      "kind": "string",
+      "pattern": "^[0-9a-f]{64}$"
     }
   },
   "hooks": {
@@ -231,11 +235,11 @@
           "required": false
         },
         "request_sha256": {
-          "type": "sha256_hex",
+          "type": "hmac_sha256_hex",
           "required": false
         },
         "params_sha256": {
-          "type": "sha256_hex",
+          "type": "hmac_sha256_hex",
           "required": false
         },
         "grant_id": {
@@ -359,6 +363,10 @@
             "job_not_allowed"
           ],
           "required": false
+        },
+        "derived_grant_id": {
+          "type": "ref",
+          "required": false
         }
       },
       "rules": [
@@ -421,7 +429,8 @@
             "disposition",
             "derived_secret_id",
             "returned_hmac",
-            "undeclared_credential"
+            "undeclared_credential",
+            "derived_grant_id"
           ]
         },
         {
@@ -454,7 +463,8 @@
             ]
           },
           "require": [
-            "derived_secret_id"
+            "derived_secret_id",
+            "derived_grant_id"
           ]
         },
         {
@@ -466,7 +476,8 @@
             ]
           },
           "forbid": [
-            "derived_secret_id"
+            "derived_secret_id",
+            "derived_grant_id"
           ]
         },
         {
@@ -738,7 +749,7 @@
           "required": true
         },
         "request_sha256": {
-          "type": "sha256_hex",
+          "type": "hmac_sha256_hex",
           "required": true
         },
         "http_status": {
@@ -1773,6 +1784,19 @@
         ],
         "exit_status": 0
       }
+    },
+    {
+      "name": "secret_use_completed_stored_child_link",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "stored_as_secret",
+        "derived_secret_id": "secret:child-1",
+        "derived_grant_id": "grant:child-1",
+        "grant_id": "grant:issuer-1",
+        "undeclared_credential": false
+      }
     }
   ],
   "negative_cases": [
@@ -2165,6 +2189,76 @@
       },
       "error": "invalid_value",
       "field": "flags"
+    },
+    {
+      "name": "stored_child_missing_grant",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "stored_as_secret",
+        "derived_secret_id": "secret:child-1",
+        "grant_id": "grant:issuer-1",
+        "undeclared_credential": false
+      },
+      "error": "rule_violation",
+      "field": "derived_grant_id"
+    },
+    {
+      "name": "stored_child_missing_secret",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "stored_as_secret",
+        "derived_grant_id": "grant:child-1",
+        "grant_id": "grant:issuer-1",
+        "undeclared_credential": false
+      },
+      "error": "rule_violation",
+      "field": "derived_secret_id"
+    },
+    {
+      "name": "returned_with_child_grant",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "returned",
+        "derived_grant_id": "grant:child-1",
+        "grant_id": "grant:issuer-1",
+        "undeclared_credential": false,
+        "returned_hmac": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "error": "rule_violation",
+      "field": "derived_grant_id"
+    },
+    {
+      "name": "withheld_with_child_grant",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "withheld",
+        "derived_grant_id": "grant:child-1",
+        "grant_id": "grant:issuer-1",
+        "undeclared_credential": false
+      },
+      "error": "rule_violation",
+      "field": "derived_grant_id"
+    },
+    {
+      "name": "refused_with_child_grant",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "derived_grant_id": "grant:child-1",
+        "grant_id": "grant:issuer-1",
+        "refusal_code": "params_invalid"
+      },
+      "error": "rule_violation",
+      "field": "derived_grant_id"
     }
   ]
 }
