@@ -83,6 +83,27 @@ versions are destroyed. OAuth scope and descriptions remain editable. Both draft
 and confirmation refuse a reshape; confirmation serializes with ingest under the
 parent-then-custody lock order documented in `custody.store`.
 
+The human app can mount owner value ingress alongside the shared console:
+
+```python
+from aweb_secrets.console_values import ConsoleValues, console_values_router
+
+human_app.include_router(
+    console_values_router(ConsoleValues(console=owner_console, custody=custody))
+)
+```
+
+`POST /installations/{installation_id}/backend-credentials/onepassword/versions`
+accepts a JSON object with one `value` string and the current tab's
+`X-CSRF-Token`. It uses the authoritative installation lookup, current owner
+role and exact live login evidence, then seals the token through native custody.
+The no-store response is the inert `backend_credential/1` after record
+(`v`, `backend`, `credential_id`, `version`). Activation belongs to the existing
+fresh passkey-approved `ChangeSets.confirm` flow. Keep this router on the human
+origin; entered bytes and response bodies must never be logged or stored in
+browser storage. Customers enter their own team's token; composition provides
+no operator token loader.
+
 `aweb_secrets.approval_email.ApprovalEmailDelivery` implements B2 delivery for
 both use and change approvals. Composition supplies a shared
 `aweb_naapp.email.Mailer` and the trusted absolute console endpoint:
