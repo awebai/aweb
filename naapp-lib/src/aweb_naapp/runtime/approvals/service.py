@@ -553,6 +553,11 @@ class Approvals:
         authenticator = self._authenticators.get(assurance)
         if authenticator is None:
             raise ApprovalRefused(Refusal.AUTHENTICATOR_UNAVAILABLE)
+        # A retaining adapter gets this ceremony's exact immutable covered
+        # bytes without changing the Authenticator contract for other adapters.
+        bind_request = getattr(authenticator, "with_frozen_request", None)
+        if bind_request is not None:
+            authenticator = bind_request(await self._store.request_canonical(approval.request_ref))
         return authenticator
 
     async def challenge(

@@ -19,7 +19,13 @@ from pgdbm import AsyncDatabaseManager
 from aweb_naapp.console import MAX_SESSION, ConsoleSessions, apply_console_migrations
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from aweb_naapp.runtime.approvals import ApprovalRevocation, PgApprovalStore
-from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty, verify_registration
+from aweb_naapp.runtime.passkeys import (
+    PasskeyInstallationContext,
+    Passkeys,
+    ProofContextUnavailable,
+    RelyingParty,
+    verify_registration,
+)
 from tests.runtime.approvals.support import AuditOutbox
 from tests.runtime.approvals.test_passkeys import Contacts
 
@@ -121,6 +127,19 @@ async def console_world(
     store = PgApprovalStore(db)
     await store.migrate()
     contacts = Contacts()
+
+    async def resolve_context(scope, *, tx):
+        if (
+            await tx.fetch_value(
+                "SELECT scope FROM {{tables.passkey_approvers}} WHERE scope=$1 "
+                "AND superseded_at IS NULL",
+                scope,
+            )
+            is None
+        ):
+            raise ProofContextUnavailable()
+        return PasskeyInstallationContext("fixture", "team", "installation", 1)
+
     passkeys = Passkeys(
         db,
         rp=RelyingParty(origin=origin, name="Console"),
@@ -129,6 +148,7 @@ async def console_world(
         retirement=ApprovalRevocation(store, audit),
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
+        proof_context=resolve_context,
     )
     await passkeys.migrate()
     await apply_owner_act_migrations(db)

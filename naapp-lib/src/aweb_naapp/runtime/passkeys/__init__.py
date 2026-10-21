@@ -1,5 +1,13 @@
 """App-local WebAuthn passkey approvers for the approval primitive."""
 
+from aweb_naapp.runtime.passkeys.proof import (
+    PasskeyInstallationContext,
+    PasskeyProofUnavailable,
+    ProofContextResolver,
+    ProofContextUnavailable,
+    RetainedPasskeyProof,
+    passkey_evidence_commitment,
+)
 from aweb_naapp.runtime.passkeys.rp import RelyingParty
 from aweb_naapp.runtime.passkeys.service import (
     CONTACT_CHANGE_DELAY_FLOOR,
@@ -32,6 +40,12 @@ from aweb_naapp.runtime.passkeys.webauthn import (
 )
 
 __all__ = [
+    "PasskeyInstallationContext",
+    "PasskeyProofUnavailable",
+    "ProofContextResolver",
+    "ProofContextUnavailable",
+    "RetainedPasskeyProof",
+    "passkey_evidence_commitment",
     "CONTACT_CHANGE_DELAY_FLOOR",
     "MAX_OUTSTANDING_CHALLENGES",
     "RECOVERY_COOLING_OFF_FLOOR",
