@@ -52,6 +52,16 @@ denied address, and sends a request only to the destination it matches,
 through one pinned, verified connection. Redirects come back as responses, no proxy is read from
 the environment, and a failure is classed as not sent or of unknown outcome.
 
+The email sender, `aweb_naapp.email`, sends a naapp's links and notices, one
+recipient per message, over SMTP with TLS required and the certificate
+verified. It is pure standard library and needs no extra.
+`EmailSettings.from_env(prefix)` reads `<PREFIX>EMAIL_SMTP_HOST`, `_SMTP_PORT`,
+`_TLS` (`starttls` or `implicit`), `_USERNAME`, `_FROM`, an optional
+`_CA_FILE`, and the password from the key file named by `_PASSWORD_FILE`
+(`aweb_naapp.key_file`), never from the environment; anything missing or
+malformed fails at startup. A failed send raises `EmailNotSent` with a code, and
+neither errors nor logs carry the body or the full recipient.
+
 A server that produces hook events (`docs/hook-events.md`) uses
 `aweb_naapp.hooks.producer` and `aweb_naapp.hooks.transport`, with the `hooks`,
 `outbox` and `egress` extras. `HookProducer.enqueue(tx, ...)` signs an event and
@@ -83,17 +93,47 @@ role's default search_path is. A new app should set its own schema: apps that
 share one database also share the runtime's own tables (the outbox, observed
 principals) unless their schemas differ.
 
+Each shared store, meaning every `aweb_naapp` module with its own migration
+module (the outbox, idempotency and rate limits among them), owns its tables in
+the app's schema, and its migrations apply before the app's own. An app's migrations
+never create or alter a store's table: `CREATE TABLE IF NOT EXISTS` under the
+same name collides silently, and which shape wins depends on which migration
+applied first.
+
 ### App keys
 
 An app names its signing keys by kid, as key files:
 `<PREFIX>APP_KEY_FILES='{"<kid>": "/run/secrets/<file>"}'`. A key file holds the
 32-byte Ed25519 seed as 64 hex characters, with one trailing newline allowed. It
-must be a regular file of at most 1 KiB, and must not be group- or world-writable. The manifest
-declares which kid signs which purpose, and the app does not start unless the
-configured key is the declared one. An app with `<PREFIX>APP_EVENTS_ORIGIN` set
-(https, or http on loopback) must hold its declared app-event key. That key may instead be given as
-`<PREFIX>APP_EMIT_KEY_SEED_HEX` with `<PREFIX>APP_EMIT_KID`, a form that signs
-app events only.
+must be a regular file of at most 1 KiB, and must not be group- or world-writable. The
+app-event key may instead be given as `<PREFIX>APP_EMIT_KEY_SEED_HEX` with
+`<PREFIX>APP_EMIT_KID`, a form that signs app events only. An app with
+`<PREFIX>APP_EVENTS_ORIGIN` set (https, or http on loopback) must hold its app-event key.
+
+### The served manifest
+
+The committed `aweb-app.json` is a template. It declares the app's kids and the
+purposes each signs (a version 2 manifest in `app_keys`, a version 1 manifest's
+`event_emitters` as app-event keys), its local event types, and the hosted
+`app.id` default, and it commits no `did_key`. At startup the runtime fills in
+the deployment's own `<PREFIX>APP_ID`, its public origin, and each declared kid's
+did:key derived from that kid's configured key, then serves the canonical bytes
+(`aweb_naapp.manifest.fill_manifest`). The app does not start if a declared kid
+has no configured key, if a key is configured for a kid the template does not
+declare, if the template commits a did:key or names an event type with an app
+prefix, if the filled manifest is invalid,
+or if it would serve the hosted app id at an origin others can reach (anything
+but the hosted origin or a loopback origin, private-network addresses included).
+
+Operator rules:
+- **The app id is permanent.** Keep `<PREFIX>APP_ID` stable for the deployment's
+  lifetime: installations are bound to it, so changing it orphans them.
+- **Rotating a key is a new kid.** Add the new kid beside the old one in the
+  template, configure its key, and deploy. The served bytes change, so every team
+  re-pins the new digest; a kid keeps the did:key it was first published with.
+- The same configuration always serves byte-identical manifest and catalog
+  bytes, on every replica and restart, so their digests can be recorded at
+  deploy.
 
 ### Health
 

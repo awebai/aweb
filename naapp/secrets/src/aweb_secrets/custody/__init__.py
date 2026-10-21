@@ -1,6 +1,6 @@
 """Custody of secret values: envelope sealing at rest behind a key provider."""
 
-from aweb_naapp.signing_key import KeyFileError
+from aweb_naapp.key_file import KeyFileError
 
 from .providers import AwsKmsProvider, LocalKeyFileProvider
 from .sealing import (
@@ -22,8 +22,12 @@ from .store import (
     SecretSealer,
     apply_custody_migrations,
 )
+from .values import ValueInvalid, decode_value, encode_value
 
 __all__ = [
+    "ValueInvalid",
+    "decode_value",
+    "encode_value",
     "AwsKmsProvider",
     "Custody",
     "CustodyUnavailable",

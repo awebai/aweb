@@ -24,18 +24,18 @@ import logging
 import secrets
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pydantic import BaseModel
 
+from aweb_naapp import ratelimit
 from aweb_naapp.runtime.approvals import AuthenticationFailed
 from aweb_naapp.runtime.passkeys import Passkeys
 
@@ -49,6 +49,7 @@ COOKIE_NAME = "__Host-console"
 CSRF_HEADER = "X-CSRF-Token"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 LOGIN_REFUSED = "login_refused"
+LOGIN_BUCKET = "console.login.client"
 
 CONSOLE_HEADERS = {
     "Content-Security-Policy": (
@@ -82,6 +83,7 @@ class ConsoleSession:
 
 
 async def apply_console_migrations(db: AsyncDatabaseManager) -> None:
+    await ratelimit.apply_ratelimit_migrations(db)
     await AsyncMigrationManager(
         db, migrations_path=str(MIGRATIONS_PATH), module_name=MIGRATIONS_MODULE
     ).apply_pending_migrations()
@@ -91,14 +93,14 @@ def _sha256(value: str) -> bytes:
     return hashlib.sha256(value.encode("utf-8")).digest()
 
 
-async def _housekeeping(db: AsyncDatabaseManager, table: str, statement: str, *args: Any) -> None:
+async def _housekeeping(table: str, work: Awaitable[Any]) -> None:
     """Run a housekeeping delete after the request's writes have committed.
 
     A failure leaves rows for a later prune and must not fail a request whose
     work is already done, so it is logged, by table and error type only.
     """
     try:
-        await db.execute(statement, *args)
+        await work
     except Exception as error:
         logger.warning("console prune of %s failed: %s", table, type(error).__name__)
 
@@ -152,13 +154,14 @@ class ConsoleSessions:
         # insert has committed and skipping rows another transaction holds,
         # bounds the table without ever waiting on a login.
         await _housekeeping(
-            self._db,
             "console_sessions",
-            """
-            DELETE FROM {{tables.console_sessions}} WHERE token_sha256 IN (
-                SELECT token_sha256 FROM {{tables.console_sessions}}
-                WHERE expires_at <= NOW() OR closed_at IS NOT NULL FOR UPDATE SKIP LOCKED)
-            """,
+            self._db.execute(
+                """
+                DELETE FROM {{tables.console_sessions}} WHERE token_sha256 IN (
+                    SELECT token_sha256 FROM {{tables.console_sessions}}
+                    WHERE expires_at <= NOW() OR closed_at IS NOT NULL FOR UPDATE SKIP LOCKED)
+                """
+            ),
         )
         return IssuedSession(token, csrf_token, expires_at, int(self._ttl.total_seconds()))
 
@@ -249,15 +252,15 @@ class LoginVolume:
 
 
 class LoginLimiter:
-    """A fixed-window limit on login requests per client, metered per scope.
+    """A token-bucket limit on login requests per client, metered per scope.
 
-    A client's window starts at its first request and lasts ``window``.
-
-    Login needs no prior authentication, so without it a flood of login
-    requests could keep evicting the real person's challenge. ``admit`` raises
-    429 with ``Retry-After`` once a client has made ``limit`` requests in the
-    current window. Every request, throttled or not, is counted for its scope,
-    and volume older than ``volume_retention`` is dropped as new volume is written.
+    Each client has a bucket of ``limit`` tokens that refills ``limit`` per
+    ``window``, in the shared limiter (:mod:`aweb_naapp.ratelimit`). Login needs
+    no prior authentication, so without it a flood of login requests could keep
+    evicting the real person's challenge. ``admit`` raises 429 with
+    ``Retry-After`` once a client's bucket is empty. Every request, throttled or
+    not, is counted for its scope, and volume older than ``volume_retention`` is
+    dropped after the request commits, as full buckets are swept.
     """
 
     def __init__(
@@ -268,38 +271,30 @@ class LoginLimiter:
         limit: int,
         window: timedelta,
         volume_retention: timedelta = timedelta(days=30),
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if limit <= 0 or window <= timedelta(0) or volume_retention <= timedelta(0):
             raise ValueError("a login limit, its window and the volume retention must be positive")
+        if window.total_seconds() != int(window.total_seconds()):
+            raise ValueError("a login window is a whole number of seconds")
         self._db = db
         self._identity = client_identity
         self._limit = limit
         self._window = window
         self._volume_retention = volume_retention
+        self._clock = clock
 
     async def admit(self, request: Request, scope: str) -> None:
-        client = self._identity.of(request)
+        now = self._clock()
+        charge = ratelimit.Charge(
+            bucket=LOGIN_BUCKET,
+            # The client's identity, hashed: bounded whatever a proxy header holds.
+            key=_sha256(self._identity.of(request)).hex(),
+            capacity=self._limit,
+            window_s=int(self._window.total_seconds()),
+        )
         async with self._db.transaction() as tx:
-            # A client whose window has ended starts a new one at this request.
-            row = await tx.fetch_one(
-                """
-                INSERT INTO {{tables.console_login_attempts}} AS a
-                    (client_key, window_start, attempts)
-                VALUES ($1, NOW(), 1)
-                ON CONFLICT (client_key) DO UPDATE SET
-                    window_start = CASE WHEN a.window_start + $2 <= NOW()
-                                        THEN NOW() ELSE a.window_start END,
-                    attempts = CASE WHEN a.window_start + $2 <= NOW()
-                                    THEN 1 ELSE a.attempts + 1 END
-                RETURNING attempts,
-                    ceil(extract(epoch FROM window_start + $2 - NOW()))::int AS retry_after
-                """,
-                client,
-                self._window,
-            )
-            if row is None:
-                raise RuntimeError("the login attempt was not counted")
-            throttled = row["attempts"] > self._limit
+            decision = await ratelimit.take(tx, [charge], now=now)
             await tx.execute(
                 """
                 INSERT INTO {{tables.console_login_volume}} AS v
@@ -310,39 +305,31 @@ class LoginLimiter:
                 """,
                 scope,
                 self._window.total_seconds(),
-                int(throttled),
+                int(decision.throttled),
             )
-        await self._prune()
-        if throttled:
+        await self._prune(now)
+        if decision.throttled:
             raise HTTPException(
                 status_code=429,
                 detail="login_rate_limited",
-                headers={"Retry-After": str(max(1, row["retry_after"]))},
+                headers={"Retry-After": str(decision.retry_after_s)},
             )
 
-    async def _prune(self) -> None:
-        """Drop ended windows and volume past its retention, after the request's
-        writes have committed; rows another transaction holds are left for a
-        later prune, so a prune never waits on a login."""
+    async def _prune(self, now: datetime) -> None:
+        """Sweep full buckets and drop volume past its retention, after the
+        request's writes have committed; rows another transaction holds are left
+        for a later prune, so a prune never waits on a login."""
+        await _housekeeping("rate_buckets", ratelimit.sweep(self._db, now=now, limit=16))
         await _housekeeping(
-            self._db,
-            "console_login_attempts",
-            """
-            DELETE FROM {{tables.console_login_attempts}} WHERE client_key IN (
-                SELECT client_key FROM {{tables.console_login_attempts}}
-                WHERE window_start + $1 <= NOW() FOR UPDATE SKIP LOCKED)
-            """,
-            self._window,
-        )
-        await _housekeeping(
-            self._db,
             "console_login_volume",
-            """
-            DELETE FROM {{tables.console_login_volume}} WHERE (scope, window_start) IN (
-                SELECT scope, window_start FROM {{tables.console_login_volume}}
-                WHERE window_start < NOW() - $1::interval FOR UPDATE SKIP LOCKED)
-            """,
-            self._volume_retention,
+            self._db.execute(
+                """
+                DELETE FROM {{tables.console_login_volume}} WHERE (scope, window_start) IN (
+                    SELECT scope, window_start FROM {{tables.console_login_volume}}
+                    WHERE window_start < NOW() - $1::interval FOR UPDATE SKIP LOCKED)
+                """,
+                self._volume_retention,
+            ),
         )
 
     async def volume(self, scope: str, *, since: timedelta) -> LoginVolume:
@@ -367,7 +354,8 @@ class LoginLimiter:
 
 class ConsoleRoute(APIRoute):
     """A route on the console origin: every response, refusals included,
-    carries the console headers."""
+    carries the console headers. Validation errors expose only location and
+    type, never submitted input or validator metadata."""
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         handler = super().get_route_handler()
@@ -380,7 +368,11 @@ class ConsoleRoute(APIRoute):
                     {"detail": error.detail}, error.status_code, headers=error.headers
                 )
             except RequestValidationError as error:
-                response = JSONResponse({"detail": jsonable_encoder(error.errors())}, 422)
+                detail = [
+                    {"loc": problem["loc"], "type": problem["type"]}
+                    for problem in error.errors()
+                ]
+                response = JSONResponse({"detail": detail}, 422)
             response.headers.update(CONSOLE_HEADERS)
             return response
 
