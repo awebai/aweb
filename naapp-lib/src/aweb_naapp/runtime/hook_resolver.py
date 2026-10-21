@@ -9,7 +9,10 @@ follows it. Answers are reused through :class:`FreshnessCache` for at most
 :class:`Resolution` says how old its data may be: ``as_of`` is the wall-clock
 time its request was sent, which the server read after, and ``max_age_seconds``
 the window it was reused for, so a caller bounding the data's age measures the
-data, not the time it asked.
+data, not the time it asked. That bound holds because the server's resolution
+endpoints read their bindings from its database per request, after the request
+arrives; if they ever answer from a server-side cache, ``as_of`` must come from
+the server's own read time instead.
 
 A binding is listed while its state is active, including before its
 ``active_from``. The caller compares ``active_from`` with an event's
