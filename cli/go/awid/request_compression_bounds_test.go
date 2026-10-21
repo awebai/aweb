@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -36,7 +35,7 @@ func TestRequestCompressionBodyBoundaries(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var probes atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := newCompressionTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/health" {
 					probes.Add(1)
 					w.Header().Set("Accept-Encoding", "gzip")
@@ -74,7 +73,7 @@ func TestRequestCompressionBodyBoundaries(t *testing.T) {
 
 func TestRequestCompressionDiscoveryIsUnauthenticatedAndNeverFollowsRedirects(t *testing.T) {
 	var targetHits atomic.Int32
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	target := newCompressionTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		targetHits.Add(1)
 		w.Header().Set("Accept-Encoding", "gzip")
 	}))
@@ -82,7 +81,7 @@ func TestRequestCompressionDiscoveryIsUnauthenticatedAndNeverFollowsRedirects(t 
 	for _, status := range []int{200, 302, 503} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			var probes atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := newCompressionTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/health" {
 					probes.Add(1)
 					for _, key := range []string{"Authorization", "Cookie", "X-AWEB-Signed-Payload", "X-AWID-Team-Certificate"} {
@@ -130,7 +129,7 @@ func TestRequestCompressionDiscoveryIsUnauthenticatedAndNeverFollowsRedirects(t 
 func TestRequestCompressionProbeDeadlineAndCanceledWaiter(t *testing.T) {
 	opened := make(chan struct{})
 	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newCompressionTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
 			close(opened)
 			<-release
@@ -171,7 +170,7 @@ func TestRequestCompressionProbeDeadlineAndCanceledWaiter(t *testing.T) {
 
 func TestRequestCompressionFailedProbeFallsBackWithinDiscoveryBudget(t *testing.T) {
 	var probes atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newCompressionTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
 			probes.Add(1)
 			<-r.Context().Done()
@@ -201,7 +200,7 @@ func TestClientRequestCompressionPreservesSendRetryPolicy(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			var writes, probes atomic.Int32
 			var first []byte
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := newCompressionTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/health" {
 					probes.Add(1)
 					w.Header().Set("Accept-Encoding", "gzip")
@@ -247,7 +246,7 @@ func TestOnboardingRequestCompression(t *testing.T) {
 	for _, kind := range []string{"claim", "redeem", "signup"} {
 		t.Run(kind, func(t *testing.T) {
 			var writes atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := newCompressionTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/health" {
 					w.Header().Set("Accept-Encoding", "gzip")
 					return
