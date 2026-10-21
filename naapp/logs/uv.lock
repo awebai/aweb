@@ -267,7 +267,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp-testing"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "../../naapp-lib/testing" }
 dependencies = [
     { name = "aweb-naapp", extra = ["hooks", "runtime"] },
