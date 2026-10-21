@@ -252,6 +252,7 @@ def test_registration_command_has_no_code_argument():
     )
     assert help_result.returncode == 0
     assert b"--code" not in help_result.stdout
+    code = encode64(os.urandom(32))
     refused = subprocess.run(
         [
             sys.executable,
@@ -263,13 +264,14 @@ def test_registration_command_has_no_code_argument():
             "--state-dir",
             "/unused",
             "--code",
-            "fixture",
+            code,
         ],
         capture_output=True,
         check=False,
     )
     assert refused.returncode == 2
-    assert b"unrecognized arguments" in refused.stderr
+    assert code.encode() not in refused.stdout + refused.stderr
+    assert refused.stderr == b"runner_arguments_invalid\n"
 
 
 def test_terminal_prompt_does_not_echo_the_code(service):

@@ -6,13 +6,20 @@ import json
 import sys
 import warnings
 from pathlib import Path
+from typing import NoReturn
 
 from .errors import Refused
 from .registration import register
 
 
+class _Parser(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        # Rejected arguments can contain a credential from an obsolete invocation.
+        self.exit(2, "runner_arguments_invalid\n")
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="aweb-secrets-runner")
+    parser = _Parser(prog="aweb-secrets-runner")
     commands = parser.add_subparsers(dest="command", required=True)
     registration = commands.add_parser("register", help="register local keys and pin the service")
     registration.add_argument("--origin", required=True)
