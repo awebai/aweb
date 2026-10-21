@@ -844,6 +844,7 @@ native-v2 AAD, inner fixed-header projection, key-wrap and explicit no-fallback
 semantics. Optional platform-only via is inner content under its existing outer
 ciphertext commitment, never a new outer field. Guest/group encrypted context
 and historical re-share remain explicitly unavailable until X-E2's separate
-annex is frozen with exact-SHA Athena review; federation likewise awaits X-GF.
+annex is frozen after an independent security review of its exact commit;
+federation likewise awaits X-GF.
 A wire encrypted to a hosted/bridge key is not E2EE to the human. Custody and
 verified whole-session membership policy, never via, determine that disclosure.
