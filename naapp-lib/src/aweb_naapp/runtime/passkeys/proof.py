@@ -297,12 +297,22 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
         _require(APPROVAL_FIELDS - {"task_answer_ref"} <= set(metadata))
         _require(metadata["purpose"] in {"approve", "reject", "view"})
         _require(_integer(metadata["policy_version"], 1))
+        _require(_integer(fields["policy_version"], 1))
         _require(all(_text(metadata[k]) for k in ("approval_id", "request_sha256", "policy_ref")))
+        if "task_answer_ref" in metadata:
+            _require(_text(metadata["task_answer_ref"]))
+        if fields["task_answer_ref"] is not None:
+            _require(_text(fields["task_answer_ref"]))
         _require(
             fields["candidate_subject"] == metadata["subject"]
             and fields["candidate_subject_type"] == "app_local"
         )
-        _require(all(fields[key] == metadata.get(key) for key in APPROVAL_FIELDS | {"purpose"}))
+        _require(
+            all(
+                type(fields[key]) is type(metadata.get(key)) and fields[key] == metadata.get(key)
+                for key in APPROVAL_FIELDS | {"purpose"}
+            )
+        )
         _require(bool(re.fullmatch(r"[0-9a-f]{64}", metadata["request_sha256"])))
         if not isinstance(proof.covered_request, bytes):
             raise PasskeyProofUnavailable()
@@ -313,9 +323,14 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
         _require(
             b"aweb.approval-request/1\n" + canonical_json_bytes(wrapper) == proof.covered_request
         )
+        policy = wrapper["policy"]
+        _require(isinstance(policy, dict) and set(policy) == {"ref", "version"})
+        _require(_text(policy["ref"]) and _integer(policy["version"], 1))
         _require(
-            wrapper["policy"]
-            == {"ref": metadata["policy_ref"], "version": metadata["policy_version"]}
+            type(policy["ref"]) is type(metadata["policy_ref"])
+            and policy["ref"] == metadata["policy_ref"]
+            and type(policy["version"]) is type(metadata["policy_version"])
+            and policy["version"] == metadata["policy_version"]
         )
         request = wrapper["request"]
         if isinstance(request, dict):
