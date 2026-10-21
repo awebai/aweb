@@ -15,7 +15,7 @@ from aweb_naapp.runtime.audit import AuditKind
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 
 from aweb_secrets import derived_lineage, records, use_approvals
-from aweb_secrets.admission import admit_use
+from aweb_secrets.admission import AdmissionRefused, admit_use
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
@@ -112,6 +112,7 @@ async def request_child(context, secret, request_id=None, *, max_ttl_s=3600, sta
             request=replace(use_request(request_id or str(uuid.uuid4())), secret_ref=secret.ref),
             attestation=None,
             now=context.clock(),
+            clock=context.clock,
         )
         pending = await use_approvals.request_use_approval(
             tx,
@@ -380,7 +381,7 @@ async def test_an_ancestor_grant_revoked_before_mint_refuses_the_request(uses): 
     secret, _ = await child(uses)
     async with uses.world.db.transaction() as tx:
         await records.revoke_grant(tx, INSTALLATION_ID, source)
-    with pytest.raises(UseApprovalRefused) as refused:
+    with pytest.raises(AdmissionRefused) as refused:
         await request_child(uses, secret)
     assert refused.value.code == "grant_revoked"
 
@@ -464,3 +465,66 @@ async def test_scoped_invalidation_commits_with_grant_revoke_and_preserves_other
             await uses.approvals.get(item[2].pending.approval.approval_id)
         ).state is ApprovalState.REVOKED
     assert (await uses.approvals.get(untouched[2].pending.approval.approval_id)).revoked_at is None
+
+
+@pytest.mark.parametrize("include_descendants", [False, True])
+async def test_source_grant_union_is_scoped_and_atomic(uses, include_descendants):  # noqa: F811
+    source = await seed(uses)
+    root = SecretRecord.from_after(SECRET)
+    direct_pending = await request_child(uses, root)
+    direct_approved = await request_child(uses, root)
+    await approve(uses, direct_approved[2], "finance@acme.com")
+    derived, _ = await child(uses)
+    descendant = await request_child(uses, derived)
+    # This valid ID sorts before the source grant's hexadecimal digest suffix,
+    # so real admission chooses it for the control approvals on the same secret.
+    async with uses.world.db.transaction() as tx:
+        digest = await tx.fetch_value(
+            "SELECT policy_digest FROM {{tables.grants}} WHERE grant_id=$1", source
+        )
+        other_grant = grant_record("grt_----control", SECRET_ID, digest)
+        await records.create_grant(tx, INSTALLATION_ID, TEAM, other_grant)
+    controls = [await request_child(uses, root), await request_child(uses, root)]
+    await approve(uses, controls[1][2], "finance@acme.com")
+    assert all(item[0].grant_id == other_grant.grant_id for item in controls)
+    assert direct_pending[0].grant_id == direct_approved[0].grant_id == source
+    ids = [derived.secret_id, derived.secret_id] if include_descendants else []
+
+    async def invalidate(tx, installation=INSTALLATION_ID, team=TEAM, grant=source):
+        return await use_approvals.revoke_use_approvals(
+            tx,
+            uses.approvals,
+            installation_id=installation,
+            team_id=team,
+            secret_ids=ids,
+            source_grant_id=grant,
+            revoked_by="owner",
+            reason="grant_revoked",
+        )
+
+    expected = {item[2].pending.approval.approval_id for item in (direct_pending, direct_approved)}
+    if include_descendants:
+        expected.add(descendant[2].pending.approval.approval_id)
+    async with uses.world.db.transaction() as tx:
+        assert await invalidate(tx, installation="other-installation") == []
+        assert await invalidate(tx, team="other:example.com") == []
+    with pytest.raises(RuntimeError):
+        async with uses.world.db.transaction() as tx:
+            await records.revoke_grant(tx, INSTALLATION_ID, source)
+            assert set(await invalidate(tx)) == expected
+            raise RuntimeError("rollback")
+    for item in (direct_pending, direct_approved, descendant, *controls):
+        assert (await uses.approvals.get(item[2].pending.approval.approval_id)).revoked_at is None
+    async with uses.world.db.transaction() as tx:
+        await records.revoke_grant(tx, INSTALLATION_ID, source)
+        assert set(await invalidate(tx)) == expected
+    for item in (direct_pending, direct_approved):
+        assert (
+            await uses.approvals.get(item[2].pending.approval.approval_id)
+        ).state is ApprovalState.REVOKED
+    for item in controls:
+        assert (await uses.approvals.get(item[2].pending.approval.approval_id)).revoked_at is None
+    assert (
+        bool((await uses.approvals.get(descendant[2].pending.approval.approval_id)).revoked_at)
+        is include_descendants
+    )

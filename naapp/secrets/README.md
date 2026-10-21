@@ -87,4 +87,8 @@ team_id=..., secret_ids=descendant_ids, revoked_by=..., reason=...)` in the same
 fenced transaction as the grant revocation and descendant state changes. The
 caller supplies the exact descendant IDs from stored lineage. The selector
 uses the existing scoped approval registry and leaves other siblings untouched.
+Pass `source_grant_id=revoked_grant_id` to include direct approvals admitted
+under that exact source grant in the same sorted B2 revocation union. It joins
+the intent in the same installation/team; direct approvals under other grants
+remain untouched. Omit it for the existing exact-secret, all-version selection.
 `void_use_approvals` remains the version-replacement operation.
