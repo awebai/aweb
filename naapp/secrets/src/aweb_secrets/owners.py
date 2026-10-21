@@ -154,6 +154,28 @@ class OwnerDirectory:
             return False
         return await self._passkeys.is_current(scope, subject)
 
+    async def enrolled_owners(
+        self, db: AsyncDatabaseManager | TransactionManager, *, installation_id: str, team_id: str
+    ) -> list[PrincipalKey]:
+        """The installation's owners that hold secrets.owner and have an enrolled,
+        in-effect passkey. Roles are read through ``db``, so a caller's own
+        uncommitted role change counts."""
+        rows = await db.fetch_all(
+            "SELECT scope, principal_did FROM {{tables.owner_principals}}"
+            " WHERE installation_id = $1 AND team_id = $2 ORDER BY principal_did",
+            installation_id,
+            team_id,
+        )
+        owners: list[PrincipalKey] = []
+        for row in rows:
+            principal = PrincipalKey(team_id=team_id, principal_did=row["principal_did"])
+            if not await has_role(db, principal, OWNER_ROLE):
+                continue
+            if await self._passkeys.designated_approver(row["scope"]) is None:
+                continue
+            owners.append(principal)
+        return owners
+
     async def _owner(self, scope: str) -> PrincipalKey | None:
         """The owner a scope stands for, while it holds secrets.owner; None
         for a scope that is not an owner scope or whose owner lost the role."""
