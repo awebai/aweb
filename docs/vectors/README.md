@@ -403,9 +403,14 @@ reference, a rule violation, a direction that differs from the catalog's, and an
 effect outside its command class. A payload that this file may not hold, such
 as a float, is given as JSON text in `payload_json`. The strict reader in
 `aweb_naapp.hooks.catalog` refuses the whole file on any unknown key, duplicate
-key, float or unresolved reference. Any payload change, including an addition,
-is a new catalog version. secrets' `test_hook_actions_vector.py` checks its
-transition-to-action table against it.
+key, float or unresolved reference. Once a deployed hook producer or consumer
+exists, a payload change, including an addition, requires a new catalog version
+and explicit consumer updates. Until that first deployment, pre-release shapes
+are re-frozen in place (decisions 44, 73 and 93), without parallel compatibility
+versions. Published library code alone does not establish a deployed hook
+producer or consumer. The deployment condition must be verified before an
+in-place re-freeze. secrets' `test_hook_actions_vector.py` checks its
+transition-to-action table against the catalog.
 
 Decision 92 adds catalog cases for the exclusive non-widening
 `resource.version_observed` / `backend_observation` mapping, its required opaque

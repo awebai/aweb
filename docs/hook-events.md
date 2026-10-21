@@ -249,11 +249,13 @@ strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
 
 ### Observed backend versions (decision 92)
 
-**Catalog freeze pending.** Decision 92 fixes activation and its non-widening
-classification. This draft stages the additive act/code in catalog v1; its
-in-place re-freeze still needs an explicit ruling against the normal
-new-version rule. No producer emits the new entries until that ruling and
-the shared contract's R+A are complete.
+**Deployment verification pending.** Decision 92 fixes activation and its
+non-widening classification. Decision 93 permits this draft's in-place catalog
+v1 re-freeze only after concrete verification that no deployed hook producer or
+consumer exists. Otherwise it requires the next ordered catalog version with
+explicit consumer updates. No producer emits the new entries until that
+condition and the shared contract's R+A are complete. The decision-93 receipt
+is `0c3beb68-15c7-49d2-9799-4d45ff95ed07` (2026-10-21).
 
 For a 1Password-backed secret, the grant authorizes the immutable vault, item
 and field reference. The vault is the owner's value-ingress and rotation path.
