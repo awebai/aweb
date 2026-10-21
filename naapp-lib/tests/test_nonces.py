@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
 from aweb_naapp.nonces import apply_nonce_migrations, consume_nonce, prune_nonces
 
 NOW = datetime(2026, 10, 21, tzinfo=UTC)
