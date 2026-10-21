@@ -27,7 +27,9 @@ _PACKAGE = Path(__file__).resolve().parent
 SKILLS = Skills(app_name="secrets", env_var="SECRETS_SKILLS_DIR", source_dir=_PACKAGE / "skills")
 
 
-def _site(*, public_origin: str, title: str, description: str) -> naapp.SiteConfig:
+def _site(
+    *, public_origin: str, console_origin: str, title: str, description: str
+) -> naapp.SiteConfig:
     return naapp.SiteConfig(
         origin=public_origin.rstrip("/"),
         brand="secrets",
@@ -62,24 +64,27 @@ def _site(*, public_origin: str, title: str, description: str) -> naapp.SiteConf
             ),
         ),
         footer_bottom="secrets is a Native Agentic App on the aweb.ai hub. awid is the identity authority.",
-        header_actions=(),
+        header_actions=(naapp.NavLink("Console", console_origin.rstrip("/") + "/"),),
         source_url="https://github.com/awebai/aweb/tree/main/naapp/secrets",
         og_image="/og-card.png",
     )
 
 
-def _start_steps(public_origin: str, manifest: dict[str, Any]) -> tuple[naapp.NumberedStep, ...]:
+def _start_steps(
+    public_origin: str, console_origin: str, manifest: dict[str, Any]
+) -> tuple[naapp.NumberedStep, ...]:
     verb = shlex.quote(manifest["app"]["id"])
+    console = escape(console_origin.rstrip("/") + "/", quote=True)
     return (
         naapp.NumberedStep(
             "Install secrets on your team",
             "Add the app to your aweb team and connect its audit hook to logs. Open secrets' "
-            "own console to complete owner setup and enroll a passkey.",
+            f'<a href="{console}">own console</a> to complete owner setup and enroll a passkey.',
             f"aw plugin install {shlex.quote(public_origin.rstrip('/'))}",
         ),
         naapp.NumberedStep(
             "Connect 1Password",
-            "In the console, connect a read-only service account for a dedicated vault. "
+            f'In the <a href="{console}">console</a>, connect a read-only service account for a dedicated vault. '
             "Choose the item and field by reference; credential values stay stored in 1Password.",
         ),
         naapp.NumberedStep(
@@ -100,10 +105,13 @@ def _start_steps(public_origin: str, manifest: dict[str, Any]) -> tuple[naapp.Nu
     )
 
 
-def render_landing_page(*, public_origin: str, manifest: dict[str, Any] | None = None) -> str:
+def render_landing_page(
+    *, public_origin: str, console_origin: str, manifest: dict[str, Any] | None = None
+) -> str:
     manifest = MANIFEST if manifest is None else manifest
     site = _site(
         public_origin=public_origin,
+        console_origin=console_origin,
         title="secrets — controlled credential use for teams of agents",
         description=(
             "Let your agent team use credentials under grants, policies and passkey "
@@ -111,30 +119,28 @@ def render_landing_page(*, public_origin: str, manifest: dict[str, Any] | None =
             "and recorded."
         ),
     )
-    steps = naapp.render_numbered_steps(_start_steps(public_origin, manifest))
+    steps = naapp.render_numbered_steps(_start_steps(public_origin, console_origin, manifest))
     return naapp.page(
         site,
         f"""
     <section class="hero-center">
       <div class="wrap">
-        <p class="kicker">Native Agentic App · {escape(public_origin.removeprefix("https://").removeprefix("http://").rstrip("/"))}</p>
         <h1>Where teams of agents share credentials under control</h1>
         <p class="lede">Give an agent permission to use a credential for a task. Keep the value out of its tools and conversation.</p>
+        <div class="cta-row">
+          <a class="btn primary btn--lg" href="#use">Get started</a>
+          <a class="btn secondary btn--lg" href="/llms.txt">Read llms.txt</a>
+        </div>
         <p class="lede">With 1Password, the credential stays stored in your team's own vault. secrets reads it only to carry out an authorized use; it keeps no stored copy.</p>
         <figure class="hero-card">
           <p class="prose-intro">Agent team → Grant + policy → Passkey when required → HTTP operation / Pinned runner job</p>
           <figcaption class="prose-outro">Permission to act, with every use attributed and recorded.</figcaption>
         </figure>
-        <div class="cta-row">
-          <a class="btn primary btn--lg" href="#use">Get started</a>
-          <a class="btn secondary btn--lg" href="/llms.txt">Read llms.txt</a>
-        </div>
       </div>
     </section>
     <section class="section section--tint">
       <div class="wrap">
         <div class="section-head">
-          <p class="kicker">Why this exists</p>
           <h2>Share what a credential can do</h2>
           <p>An agent may need to deploy a service, call an API or query a database. It needs permission for that work. secrets gives it a bounded way to ask.</p>
         </div>
@@ -147,14 +153,16 @@ def render_landing_page(*, public_origin: str, manifest: dict[str, Any] | None =
     </section>
     <section class="section" id="use">
       <div class="wrap">
-        <div class="section-head"><p class="kicker">Get started</p><h2>Connect a vault. Grant a task. Let the team work.</h2></div>
+        <div class="section-head"><h2>Connect a vault. Grant a task. Let the team work.</h2>
+          <p>First, install a supported version of aw and connect your team using the <a href="https://aweb.ai/docs/cli-tutorial/">getting-started guide</a>.</p>
+        </div>
         {steps}
         <p class="prose-outro">Read the <a href="/reference">API reference</a> for commands and parameters, <a href="/llms.txt">llms.txt</a> for agent instructions, and <a href="/skills/">skills</a> for task workflows.</p>
       </div>
     </section>
     <section class="section section--tint">
       <div class="wrap">
-        <div class="section-head"><p class="kicker">What secrets does</p><h2>Two ways to use a secret</h2></div>
+        <div class="section-head"><h2>Two ways to use a secret</h2></div>
         <div class="card-grid card-grid--auto">
           <article class="card"><h3>The broker makes the HTTP call</h3><p>An agent requests an allowed action. secrets checks its identity, grant and policy, obtains approval when required, then makes the HTTPS call with the credential. The agent receives a bounded result with output filtering and redaction.</p></article>
           <article class="card"><h3>The runner carries out a pinned job</h3><p>A registered process on your team's machine receives a credential for one authorized job. The credential goes to the job process, not the model. Jobs and parameters are defined in advance; agents cannot supply arbitrary commands. Use a dedicated OS user or container outside the agents' write access. The runner host is trusted with the credential.</p></article>
@@ -182,7 +190,7 @@ def render_landing_page(*, public_origin: str, manifest: dict[str, Any] | None =
     </section>
     <section class="section" id="engineers">
       <div class="wrap">
-        <div class="section-head"><p class="kicker">For engineers</p><h2>A bounded action and an attributable record</h2></div>
+        <div class="section-head"><h2>A bounded action and an attributable record</h2></div>
         <div class="prose">
           <p>Each brokered use or runner job requires a verified member principal with a matching grant under a recorded policy. <code>approve_only</code> binds an enrolled approver's passkey decision to the frozen request. Intent and outcome are recorded, with audit events durably queued before dispatch.</p>
           <p>These guarantees depend on secrets being the credential's sole path to agents and on its service, vault, identity and runner trust boundaries. Redaction does not prove confidentiality: a result may contain something derived from a credential. A passkey proves an enrolled authenticator. An upstream effect may be uncertain; secrets records that uncertainty instead of treating it as success.</p>
@@ -198,12 +206,15 @@ def render_landing_page(*, public_origin: str, manifest: dict[str, Any] | None =
     )
 
 
-def render_reference_page(*, public_origin: str, manifest: dict[str, Any] | None = None) -> str:
+def render_reference_page(
+    *, public_origin: str, console_origin: str, manifest: dict[str, Any] | None = None
+) -> str:
     manifest = MANIFEST if manifest is None else manifest
     return naapp.render_reference(
         manifest,
         _site(
             public_origin=public_origin,
+            console_origin=console_origin,
             title="secrets — API reference",
             description="Credential operations from the canonical app manifest. Team identity, grants, policy and invocation contexts apply.",
         ),
@@ -216,7 +227,9 @@ def render_reference_page(*, public_origin: str, manifest: dict[str, Any] | None
     )
 
 
-def llms_txt(*, public_origin: str, manifest: dict[str, Any] | None = None) -> str:
+def llms_txt(
+    *, public_origin: str, console_origin: str, manifest: dict[str, Any] | None = None
+) -> str:
     manifest = MANIFEST if manifest is None else manifest
     origin = public_origin.rstrip("/")
     verb = manifest["app"]["id"]
@@ -236,10 +249,14 @@ values stay stored in the team's vault; secrets reads them during dispatch.
 The service and runner host are trusted with plaintext. Not zero-knowledge.
 
 Origin: {origin}
+Console: {console_origin.rstrip("/")}/
 Manifest: {origin}/aweb-app.json
 Reference: {origin}/reference
 
 ## Getting started
+
+First, install a supported version of aw and connect your team using the
+getting-started guide: https://aweb.ai/docs/cli-tutorial/
 
 Install from the origin: aw plugin install {shlex.quote(origin)}
 Complete owner/passkey setup, connect 1Password, configure grants and activate
@@ -291,11 +308,16 @@ to every active target refuses new uses; enqueue is not proof of delivery.
 
 
 def mount_public_surfaces(
-    api: FastAPI, *, runtime: NaappRuntime, health_checks: Mapping[str, HealthCheck]
+    api: FastAPI,
+    *,
+    runtime: NaappRuntime,
+    health_checks: Mapping[str, HealthCheck],
+    console_origin: str,
 ) -> None:
     """Mount on the public API app, replacing its manifest/health mounts.
 
     Composition supplies its complete check mapping (runtime checks plus KMS).
+    It also supplies the actual console origin, whose root owns setup/sign-in.
     Do not mount this on the passkey console, whose origin and CSP are separate.
     """
     from aweb_naapp.runtime.app import mount_naapp_routes
@@ -304,15 +326,19 @@ def mount_public_surfaces(
     manifest = json.loads(runtime.manifest_bytes)
 
     async def landing() -> str:
-        return render_landing_page(public_origin=origin, manifest=manifest)
+        return render_landing_page(
+            public_origin=origin, console_origin=console_origin, manifest=manifest
+        )
 
     mount_naapp_routes(
         api,
         runtime=runtime,
         skills=SKILLS,
         landing=landing,
-        reference_html=render_reference_page(public_origin=origin, manifest=manifest),
-        llms_txt=llms_txt(public_origin=origin, manifest=manifest),
+        reference_html=render_reference_page(
+            public_origin=origin, console_origin=console_origin, manifest=manifest
+        ),
+        llms_txt=llms_txt(public_origin=origin, console_origin=console_origin, manifest=manifest),
         fonts_dir=_PACKAGE / "fonts",
         og_card_png=(_PACKAGE / "og-card.png").read_bytes(),
         health_checks=health_checks,

@@ -59,11 +59,15 @@ the deployment's app id. Fonts, social card and skills ship in the package.
 `SECRETS_SKILLS_DIR` can override the packaged skills directory.
 
 The composition owner replaces the API app's separate manifest and health
-mounts with `mount_public_surfaces(api, runtime=runtime, health_checks=checks)`,
+mounts with `mount_public_surfaces(api, runtime=runtime, health_checks=checks, console_origin=settings.console_origin)`,
 where `checks` is the complete existing mapping (runtime checks plus KMS).
 The helper serves only public documentation/assets and the runtime's unchanged
 manifest and health routes. Mount it only on the public API app; the separate
 passkey console keeps its own health routes and CSP.
+
+The console origin is explicit: its root is the reviewed console shell's
+setup/sign-in entry. Public links carry no authority. Publishing the landing
+depends on mounting that shell and the owner's content/forms on the human app.
 
 Landing wording is copy v1 approved by Juan on 2026-10-21. Its read-back promise
 is about app interfaces: the service handles transient plaintext, and the vault

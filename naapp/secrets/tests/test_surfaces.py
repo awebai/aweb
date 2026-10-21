@@ -26,10 +26,11 @@ from aweb_secrets.surfaces import (
 )
 
 ORIGIN = "https://secrets.aweb.ai"
+CONSOLE = "https://console.secrets.test"
 
 
 def test_landing_has_shared_chrome_steps_and_working_document_links() -> None:
-    html = render_landing_page(public_origin=ORIGIN)
+    html = render_landing_page(public_origin=ORIGIN, console_origin=CONSOLE)
     assert len(re.findall(r"<h1[ >]", html)) == 1
     assert '<header class="site-header">' in html
     assert f"/css/aweb.{naapp.CSS_SHA256[:12]}.css" in html
@@ -39,6 +40,19 @@ def test_landing_has_shared_chrome_steps_and_working_document_links() -> None:
     for href in ("#use", "/reference", "/llms.txt", "/skills/", "/aweb-app.json"):
         assert f'href="{href}"' in html
     assert "<style" not in html
+    assert 'class="kicker"' not in html
+
+
+def test_setup_links_use_the_configured_console_and_guide_precedes_install() -> None:
+    console = "https://owners.team.example/"
+    html = render_landing_page(public_origin=ORIGIN, console_origin=console)
+    assert html.count(f'href="{console}"') >= 2
+    guide = "https://aweb.ai/docs/cli-tutorial/"
+    assert html.index(f'href="{guide}"') < html.index("<pre>")
+    assert f'href="{console}"' in render_reference_page(
+        public_origin=ORIGIN, console_origin=console
+    )
+    assert console in llms_txt(public_origin=ORIGIN, console_origin=console)
 
 
 def test_reference_and_llms_follow_the_supplied_manifest_not_a_tool_list() -> None:
@@ -55,8 +69,8 @@ def test_reference_and_llms_follow_the_supplied_manifest_not_a_tool_list() -> No
             "invocation_contexts": ["agent", "surface"],
         }
     )
-    text = llms_txt(public_origin=ORIGIN, manifest=manifest)
-    html = render_reference_page(public_origin=ORIGIN, manifest=manifest)
+    text = llms_txt(public_origin=ORIGIN, console_origin=CONSOLE, manifest=manifest)
+    html = render_reference_page(public_origin=ORIGIN, console_origin=CONSOLE, manifest=manifest)
     assert html.count('<article class="ref-op"') == len(manifest["tools"])
     for tool in manifest["tools"]:
         assert naapp.llms.operation_block(tool, manifest["app"]["id"]) in text
@@ -74,7 +88,7 @@ def test_reference_and_llms_follow_the_supplied_manifest_not_a_tool_list() -> No
 def test_getting_started_commands_fit_the_composed_manifest() -> None:
     manifest = copy.deepcopy(MANIFEST)
     manifest["app"]["id"] = "self-hosted-secrets"
-    html = render_landing_page(public_origin=ORIGIN, manifest=manifest)
+    html = render_landing_page(public_origin=ORIGIN, console_origin=CONSOLE, manifest=manifest)
     tools = {tool["name"]: tool for tool in manifest["tools"]}
     commands = [
         shlex.split(line)
@@ -101,7 +115,7 @@ def _runtime(tmp_path: Path) -> NaappRuntime:
     settings = SecretsSettings(
         _env_file=None,
         public_origin=ORIGIN,
-        console_origin="https://console.secrets.test",
+        console_origin=CONSOLE,
         app_key_files=keys,
     )
     return NaappRuntime(
@@ -122,7 +136,7 @@ async def test_public_routes_mount_only_on_api_and_keep_manifest_assets_and_heal
         return CheckResult(ok=False)
 
     checks = {**runtime.health_checks(), "kms": unavailable_kms}
-    mount_public_surfaces(api, runtime=runtime, health_checks=checks)
+    mount_public_surfaces(api, runtime=runtime, health_checks=checks, console_origin=CONSOLE)
     service = SecretsService(runtime, api, console)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=service), base_url=ORIGIN
@@ -141,7 +155,7 @@ async def test_public_routes_mount_only_on_api_and_keep_manifest_assets_and_heal
         served = await client.get("/aweb-app.json")
         assert served.content == runtime.manifest_bytes
         assert (await client.get("/llms.txt")).text == llms_txt(
-            public_origin=ORIGIN, manifest=json.loads(served.content)
+            public_origin=ORIGIN, console_origin=CONSOLE, manifest=json.loads(served.content)
         )
         css = await client.get(f"/css/aweb.{naapp.CSS_SHA256[:12]}.css")
         assert css.text == naapp.aweb_css()
