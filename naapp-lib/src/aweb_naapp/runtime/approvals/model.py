@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any, Protocol
@@ -90,7 +90,7 @@ UNRECONCILED_OUTCOMES = (DispatchOutcome.DISPATCHING, DispatchOutcome.OUTCOME_UN
 class Refusal(StrEnum):
     NOT_FOUND = "not_found"
     POLICY_UNKNOWN = "policy_unknown"
-    NO_APPROVER = "no_approver"
+    NO_ELIGIBLE_APPROVER = "no_eligible_approver"
     LINK_UNAVAILABLE = "link_unavailable"
     NOT_PENDING = "not_pending"
     NOT_APPROVED = "not_approved"
@@ -123,18 +123,28 @@ class ApprovalRefused(Exception):
 class ActionPolicy:
     """Owner-controlled policy for one kind of action.
 
-    `approver_scope` names whose designated approver decides; `ttl` bounds how
-    long an approval and its link stay usable. `link_reveals_request` says
-    whether opening the link shows the request before the approver
-    authenticates; by default it does only below passkey assurance.
+    `approver_scopes` names the scopes whose designated approvers are eligible
+    to decide; any one of them decides. `ttl` bounds how long an approval and
+    its links stay usable. `link_reveals_request` says whether opening a link
+    shows the request before the approver authenticates; by default it does
+    only below passkey assurance. `allow_requester_approval` keeps the
+    requester eligible when they are also a designated approver; by default
+    the requester is excluded. `requested_by` is compared with an approver's
+    subject and, when set, the principal they stand for, so it holds only when
+    the app names the requester the same way.
     """
 
     policy_ref: str
     version: int
     min_assurance: Assurance
     ttl: timedelta
-    approver_scope: str
+    approver_scopes: tuple[str, ...]
     link_reveals_request: bool | None = None
+    allow_requester_approval: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.approver_scopes:
+            raise ValueError("a policy needs at least one approver scope")
 
     def reveals_request_on_link(self) -> bool:
         if self.link_reveals_request is not None:
@@ -144,11 +154,37 @@ class ActionPolicy:
 
 @dataclass(frozen=True)
 class Approver:
-    """The owner-designated human, with the contact the owner registered."""
+    """An owner-designated human in one scope, with the contact the owner
+    registered. `principal_did` is the team principal the approver stands for,
+    when the app has mapped one; a task presentation needs it."""
 
+    scope: str
     subject: str
     subject_type: str
     contact: str
+    principal_did: str | None = None
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """One eligible approver, frozen on the approval at mint. A candidate
+    retired since then no longer decides."""
+
+    scope: str
+    subject: str
+    subject_type: str
+    principal_did: str | None = None
+    retired_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class DecidedBy:
+    """The candidate who decided, and how strongly they were authenticated."""
+
+    scope: str
+    subject: str
+    assurance: Assurance
+    evidence_ref: str
 
 
 @dataclass(frozen=True)
@@ -169,10 +205,8 @@ class Approval:
     policy_ref: str
     policy_version: int
     requested_by: str
-    approver_subject: str
-    approver_subject_type: str
-    authenticator: Assurance | None
-    auth_evidence_ref: str | None
+    candidates: tuple[Candidate, ...]
+    decided_by: DecidedBy | None
     presentation_kind: PresentationKind
     presentation_ref: str | None
     task_answer_ref: str | None
@@ -185,6 +219,9 @@ class Approval:
     consumed_operation_id: str | None
     dispatch_outcome: DispatchOutcome | None
     response_status: str | None
+
+    def candidate(self, subject: str) -> Candidate | None:
+        return next((c for c in self.candidates if c.subject == subject), None)
 
     def state_at(self, now: datetime) -> ApprovalState:
         """The effective state. A consumed approval whose dispatch was never
@@ -208,6 +245,26 @@ class RequesterView:
 
 
 @dataclass(frozen=True)
+class PendingDelivery:
+    """One candidate's link, still to be sent once the minting transaction
+    has committed. The token never appears in a repr."""
+
+    approver: Approver
+    link_token: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class PendingApproval:
+    """An approval minted in the caller's transaction, and the links still to
+    send with `Approvals.deliver` after that transaction commits. Only the
+    app holds it; the requester gets `view`."""
+
+    view: RequesterView
+    approval: Approval
+    deliveries: tuple[PendingDelivery, ...]
+
+
+@dataclass(frozen=True)
 class LinkedApproval:
     """The approver-facing read behind an approval link; it consumes nothing.
     `request` is None until the approver authenticates, unless the policy lets
@@ -220,12 +277,14 @@ class LinkedApproval:
 @dataclass(frozen=True)
 class TaskAnswerEvidence:
     """What the app verified about a task answer: the member-signed answer and
-    its authoritative receipt, for this approval and decision."""
+    its authoritative receipt, for this approval and decision. `answered_by` is
+    the principal derived from the answering certificate."""
 
     task_answer_ref: str
     approval_id: str
     decision: Decision
     request_sha256: str
+    answered_by: str
 
 
 class TaskAnswerRejected(Exception):
@@ -261,11 +320,19 @@ class PolicySource(Protocol):
 
 
 class ApproverDirectory(Protocol):
-    async def designated_approver(self, policy: ActionPolicy) -> Approver | None: ...
+    """The app's trusted source of approvers. A caller never names one."""
 
-    async def is_current(self, approver_subject: str, policy: ActionPolicy) -> bool:
-        """Whether this approver is still the current designation for the policy.
-        An approval is only as good as its approver's current designation."""
+    async def candidates(
+        self, policy: ActionPolicy, request: Mapping[str, Any]
+    ) -> Sequence[Approver]:
+        """The individually designated approvers eligible for this request
+        under this policy, one per person: never a group, role or shared
+        subject. The app may read the frozen request to find them."""
+        ...
+
+    async def is_current(self, scope: str, subject: str) -> bool:
+        """Whether this approver is still designated in this scope. A decision
+        is only as good as its approver's current designation."""
         ...
 
 
@@ -278,7 +345,7 @@ class ApproverRetirement(Protocol):
 
 
 class ApprovalDelivery(Protocol):
-    """Sends an approval link to the designated approver's registered contact.
+    """Sends a candidate's own approval link to their registered contact.
 
     The app turns the token into a URL on its own origin. The token goes nowhere
     else: not to the requester, not into logs, audit or task text.
@@ -292,8 +359,10 @@ class ApprovalDelivery(Protocol):
 class Authenticator(Protocol):
     """An adapter that proves which human acted, at one assurance level.
 
-    Its challenge binds the approval, the purpose and, for a task presentation,
-    the task answer reference, through `challenge_binding`.
+    Its challenge is for one candidate, and binds the approval, that
+    candidate's subject, the purpose and, for a task presentation, the task
+    answer reference, through `challenge_binding`. It verifies only that
+    candidate's own credentials.
 
     The evidence subject must identify one natural person. Adapters must refuse
     non-individual principals, such as a shared dashboard account: a
@@ -304,12 +373,17 @@ class Authenticator(Protocol):
     assurance: Assurance
 
     async def challenge(
-        self, approval: Approval, purpose: Purpose, task_answer_ref: str | None
+        self,
+        approval: Approval,
+        candidate: Candidate,
+        purpose: Purpose,
+        task_answer_ref: str | None,
     ) -> Mapping[str, Any]: ...
 
     async def verify(
         self,
         approval: Approval,
+        candidate: Candidate,
         purpose: Purpose,
         proof: Mapping[str, Any],
         task_answer_ref: str | None,

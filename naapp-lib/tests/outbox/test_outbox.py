@@ -494,7 +494,7 @@ async def test_nothing_is_lost_or_duplicated_when_a_drain_is_killed_mid_send(
         await enqueue(tx, event)
     sending = tmp_path / "sending"
     child = subprocess.Popen(
-        [sys.executable, str(_CHILD), db.config.get_dsn(), str(sending)],
+        [sys.executable, str(_CHILD), db.config.get_dsn(), db.schema or "", str(sending)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
     )
