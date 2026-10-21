@@ -494,3 +494,32 @@ async def test_the_approval_lives_as_long_as_the_policy_says(uses):
     _, _, pending = await request(uses)
     approval = pending.pending.approval
     assert approval.expires_at - approval.created_at == timedelta(seconds=600)
+
+
+async def test_a_grant_revoked_before_the_approval_is_requested_is_refused_as_revoked(uses):
+    await designate(uses, "finance", "finance@acme.com")
+    await install(uses)
+    async with uses.world.db.transaction() as tx:
+        admission = await admit_use(
+            tx,
+            fence=uses.world.fence,
+            grant=uses.grant,
+            principal=REQUESTER,
+            request=use_request(),
+            attestation=None,
+            now=uses.clock(),
+        )
+    async with uses.world.db.transaction() as tx:
+        await records.revoke_grant(tx, INSTALLATION_ID, admission.grant_id)
+    with pytest.raises(UseApprovalRefused) as refused:
+        async with uses.world.db.transaction() as tx:
+            await request_use_approval(
+                tx,
+                uses.approvals,
+                admission=admission,
+                dispatch_id=uuid.uuid4(),
+                principal=REQUESTER,
+                action=open_action(),
+                reason="refund",
+            )
+    assert refused.value.code == "grant_revoked"

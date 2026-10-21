@@ -82,13 +82,10 @@ def _approver_scopes(installation_id: str, team_id: str, policy: Policy) -> tupl
     return tuple(scopes)
 
 
-async def _action_policy(tx: TransactionManager, policy_ref: str) -> ActionPolicy | None:
-    """The B2 policy behind a use-approval reference, while its grant is active
-    and still names its digest; None otherwise, which voids its approvals."""
-    parts = policy_ref.split("|")
-    if len(parts) != 5 or parts[0] != POLICY_PREFIX:
-        return None
-    _, installation_id, team_id, grant_id, digest = parts
+async def _granted_policy(
+    tx: TransactionManager, installation_id: str, team_id: str, grant_id: str, digest: str
+) -> Policy | None:
+    """The policy, while the grant is active and still names its digest."""
     current = await tx.fetch_value(
         "SELECT 1 FROM {{tables.grants}} WHERE grant_id = $1 AND installation_id = $2 "
         "AND team_id = $3 AND policy_digest = $4 AND revoked_at IS NULL",
@@ -97,9 +94,25 @@ async def _action_policy(tx: TransactionManager, policy_ref: str) -> ActionPolic
         team_id,
         digest,
     )
-    policy = await records.policy(tx, installation_id, digest) if current else None
+    return await records.policy(tx, installation_id, digest) if current else None
+
+
+async def _action_policy(tx: TransactionManager, policy_ref: str) -> ActionPolicy | None:
+    """The B2 policy behind a use-approval reference, while its grant is active
+    and still names its digest; None otherwise, which voids its approvals."""
+    parts = policy_ref.split("|")
+    if len(parts) != 5 or parts[0] != POLICY_PREFIX:
+        return None
+    _, installation_id, team_id, grant_id, digest = parts
+    policy = await _granted_policy(tx, installation_id, team_id, grant_id, digest)
     if policy is None:
         return None
+    return _b2_policy(policy_ref, installation_id, team_id, policy)
+
+
+def _b2_policy(
+    policy_ref: str, installation_id: str, team_id: str, policy: Policy
+) -> ActionPolicy | None:
     scopes = _approver_scopes(installation_id, team_id, policy)
     if not scopes:
         return None
@@ -238,7 +251,16 @@ async def request_use_approval(
     policy_ref = use_policy_ref(
         intent["installation_id"], intent["team_id"], intent["grant_id"], intent["policy_digest"]
     )
-    policy = await _action_policy(tx, policy_ref)
+    granted = await _granted_policy(
+        tx,
+        intent["installation_id"],
+        intent["team_id"],
+        intent["grant_id"],
+        intent["policy_digest"],
+    )
+    if granted is None:
+        raise UseApprovalRefused("grant_revoked", "the grant or its policy changed")
+    policy = _b2_policy(policy_ref, intent["installation_id"], intent["team_id"], granted)
     if policy is None:
         raise UseApprovalRefused("no_eligible_approver", "the policy lists no approver")
     request = use_approval_request(
