@@ -10,6 +10,9 @@ mkdir -p "$EVIDENCE"
 COMPOSE=(docker compose -p abrm-folio --project-directory "$ROOT" -f "$ROOT/scripts/e2e/folio-wakes.compose.yml")
 BUILDER="folio-wakes-$$"
 WORK="$(mktemp -d /tmp/folio-wakes-bin.XXXXXX)"
+# The Folio deployment's manifest, mounted by the compose file (written below).
+export FOLIO_WAKES_MANIFEST="$WORK/aweb-app.json"
+: >"$FOLIO_WAKES_MANIFEST"
 cleanup() {
   status=$?
   "${COMPOSE[@]}" unpause aweb >/dev/null 2>&1 || true
@@ -30,6 +33,10 @@ trap cleanup EXIT
 docker buildx create --name "$BUILDER" --driver docker-container \
   --driver-opt memory=2g,cpu-period=100000,cpu-quota=200000 >/dev/null
 "${COMPOSE[@]}" build --builder "$BUILDER" >"$EVIDENCE/build.log" 2>&1
+# Folio checks its emit key against its manifest at startup, so the deployment's
+# manifest exists before Folio starts.
+docker run --rm --entrypoint /app/.venv/bin/python -v "$ROOT/scripts/e2e:/e2e:ro" \
+  abrm-folio-folio /e2e/folio_wakes_manifest.py 0.1.0 true >"$FOLIO_WAKES_MANIFEST"
 "${COMPOSE[@]}" up --no-build -d --wait
 if [[ -z "${AW_BIN:-}" ]]; then
   (cd "$ROOT/cli/go" && go build -o "$WORK/aw" ./cmd/aw)

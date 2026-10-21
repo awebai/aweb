@@ -538,7 +538,11 @@ def test_health_endpoints_are_public(folio: RunningFolio) -> None:
     for path in ("/health", "/live", "/ready"):
         response = httpx.get(f"{folio.origin}{path}", timeout=10.0)
         assert response.status_code == 200, response.text
-        assert response.json() == {"status": "ok", "service": "folio"}
+        body = response.json()
+        assert body["status"] == "ok" and body["service"] == "folio", body
+        assert "git_sha" in body["build"], body
+    checks = httpx.get(f"{folio.origin}/health", timeout=10.0).json()["checks"]
+    assert checks["database"]["ok"] and checks["outbox"]["ok"], checks
 
 
 def test_no_envelope_fails_closed(folio_origin: str) -> None:
@@ -547,6 +551,8 @@ def test_no_envelope_fails_closed(folio_origin: str) -> None:
 
 
 def test_well_known_manifest_is_public_and_byte_stable(folio: RunningFolio) -> None:
+    from aweb_naapp.manifest import read_manifest_bytes
+
     from folio.aweb_manifest import MANIFEST_PATH
 
     # Public discovery doc: no team-auth envelope, still 200.
@@ -554,9 +560,12 @@ def test_well_known_manifest_is_public_and_byte_stable(folio: RunningFolio) -> N
 
     assert response.status_code == 200, response.text
     assert response.headers["content-type"].startswith("application/json")
-    # The running container serves the committed file bytes verbatim (the digest
-    # the cli team pins), not a runtime re-serialization keyed off public_origin.
-    assert response.content == MANIFEST_PATH.read_bytes()
+    # The running app serves the committed manifest for its configured public
+    # origin, fixed at startup and identical on every fetch. With the committed
+    # origin (production) those are the committed bytes; test_surfaces pins that.
+    assert response.content == read_manifest_bytes(MANIFEST_PATH, folio.origin)
+    again = httpx.get(f"{folio.origin}/.well-known/aweb-app.json", timeout=10.0)
+    assert again.content == response.content
 
 
 def test_real_aw_team_auth_smoke(folio: RunningFolio, aw_workspace: AWWorkspace) -> None:

@@ -27,3 +27,7 @@ services:
         value: "5"
       - key: FOLIO_DB_STATEMENT_CACHE_SIZE
         value: "0"
+      # Observe the did:aw current-key check until observe measurement shows no
+      # refused live callers and Juan approves REQUIRE (aweb-acgh.11 rollout).
+      - key: FOLIO_DID_AW_PROFILE
+        value: observe

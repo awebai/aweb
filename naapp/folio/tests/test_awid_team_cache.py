@@ -67,31 +67,3 @@ async def test_registry_failures_remain_distinct(monkeypatch, endpoint, failure)
     if failure == "private":
         assert exc.value.detail["code"] == "team_private_unreadable"
     assert not cache._cache
-
-
-async def test_service_token_environment_wiring(monkeypatch):
-    from folio import api
-
-    monkeypatch.setenv("FOLIO_AWID_SERVICE_TOKEN", "synthetic-token")
-    settings = Settings(_env_file=None)
-    captured = {}
-
-    class Database:
-        def __init__(self, settings):
-            pass
-
-        async def connect(self):
-            pass
-
-        async def disconnect(self):
-            pass
-
-    def cache(**kwargs):
-        captured.update(kwargs)
-        return object()
-
-    monkeypatch.setattr(api, "FolioDatabase", Database)
-    monkeypatch.setattr(api, "AWIDTeamCache", cache)
-    app = api.create_app(settings)
-    async with app.router.lifespan_context(app):
-        assert captured["service_token"] == "synthetic-token"

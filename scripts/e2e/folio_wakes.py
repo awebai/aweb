@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -27,22 +28,24 @@ def run(args, **kw):
     return result.stdout
 
 def configure_manifest(version, events=True):
-    # Configure the real Folio served file for this disposable deployment and
-    # public test emitter. No substitute HTTP server or auth bypass.
-    code = '''import json
-from folio.aweb_manifest import MANIFEST_PATH, MANIFEST
-from awid.did import did_from_public_key
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-m=json.loads(json.dumps(MANIFEST))
-m['app']['origin']='http://127.0.0.1:38765'
-m['app']['version']=VERSION
-if not EVENTS: m['events']=[]
-key=Ed25519PrivateKey.from_private_bytes(bytes.fromhex('01'*32))
-m['event_emitters']=[{'kid':'folio:emit-test','did_key':did_from_public_key(key.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw))}]
-MANIFEST_PATH.write_text(json.dumps(m))
-'''.replace('VERSION', repr(version)).replace('EVENTS', repr(events))
-    run(COMPOSE + ['exec', '-T', '-u', 'root', 'folio', '/app/.venv/bin/python', '-c', code])
+    # The disposable deployment's real manifest file, declaring the public test
+    # emitter. No substitute HTTP server or auth bypass.
+    manifest = run(['docker', 'run', '--rm', '--entrypoint', '/app/.venv/bin/python', '-v', str(ROOT / 'scripts/e2e') + ':/e2e:ro', 'abrm-folio-folio', '/e2e/folio_wakes_manifest.py', version, 'true' if events else 'false'])
+    with open(os.environ['FOLIO_WAKES_MANIFEST'], 'w', encoding='utf-8') as handle:
+        handle.write(manifest.strip())
+    # Folio reads its manifest once at startup, so it serves the new bytes after a restart.
+    run(COMPOSE + ['restart', 'folio'])
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            with urllib.request.urlopen(FOLIO + '/health', timeout=5) as response:
+                if response.status == 200:
+                    return
+        except (urllib.error.URLError, ConnectionError, TimeoutError):
+            pass
+        if time.monotonic() > deadline:
+            raise AssertionError('folio did not come back after the manifest change')
+        time.sleep(0.5)
 
 with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
     root = Path(td).resolve()
@@ -118,10 +121,18 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
     assert any(e['kind'] == 'app' and e['deliveryIntent'] == 'wake' and e['meta']['resource_ref'] == 'wake-proof' for e in received), received
     assert absent == [], absent
     print('PASS Folio write wakes installer through channel-core; unsubscribed peer receives nothing', flush=True)
-    def emitted(slug):
+    def stored(slug):
         # The events the real aweb server verified and stored for this document.
         rows = run(COMPOSE + ['exec', '-T', 'postgres', 'psql', '-U', 'aweb', '-d', 'aweb', '-Atc', "SELECT payload::text FROM aweb.app_events WHERE team_id='" + team + "' AND resource_ref='" + slug + "' ORDER BY created_at, event_id"])
         return [json.loads(line) for line in rows.splitlines()]
+    def emitted(slug, count, within=60):
+        # Folio delivers events from its outbox after the write commits, so wait
+        # for the expected number, then long enough to see a duplicate arrive.
+        deadline = time.monotonic() + within
+        while len(rows := stored(slug)) < count and time.monotonic() < deadline:
+            time.sleep(0.5)
+        time.sleep(2)
+        return stored(slug)
     def folio_request(who, method, path, body):
         return json.loads(aw(who, 'id', 'request', method, FOLIO + path, '--team-auth', '--raw', '--header', 'Content-Type: application/json', '--body', json.dumps(body)).stdout)
     def human_edit(url, body, base_version):
@@ -132,21 +143,33 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read())
     aw('alice', 'folio', 'create', '--slug', 'every-change', '--title', 'Every change', '--body', 'one')
-    assert emitted('every-change') == [{'version': '1', 'source': 'api'}], emitted('every-change')
+    assert emitted('every-change', 1) == [{'version': '1', 'source': 'api'}], stored('every-change')
     aw('alice', 'folio', 'append', '--slug', 'every-change', '--body', 'two')
     folio_request('alice', 'POST', '/v1/documents/every-change/versions/template', {'name': 'memo', 'slots': {'cover': {'title': 'Three'}}})
-    assert emitted('every-change')[1:] == [{'version': '2', 'source': 'api'}, {'version': '3', 'source': 'api'}], emitted('every-change')
+    assert emitted('every-change', 3)[1:] == [{'version': '2', 'source': 'api'}, {'version': '3', 'source': 'api'}], stored('every-change')
     print('PASS create, append and append-template each emit exactly one metadata-only event', flush=True)
     link = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'editable': True})
     a = stream('alice')
     assert human_edit(link['url'], 'four, by a human', 3) == (200, {'version_number': 4})
     assert human_edit(link['url'], 'stale', 3)[0] == 409
-    assert emitted('every-change')[3:] == [{'version': '4', 'source': 'present-link'}], emitted('every-change')
+    assert emitted('every-change', 4)[3:] == [{'version': '4', 'source': 'present-link'}], stored('every-change')
     # The stream replays its lookback window, so earlier api events arrive too; the
     # stored rows above prove exactly-one, this proves the human edit wakes the agent.
     woken = [e for e in events(a) if e['kind'] == 'app' and e['meta']['resource_ref'] == 'every-change' and json.loads(e['meta']['payload']) == {'version': '4', 'source': 'present-link'}]
     assert len(woken) == 1 and woken[0]['deliveryIntent'] == 'wake', woken
     print('PASS human edit through an editable link wakes the subscribed agent once; rejected edit emits nothing', flush=True)
+    # Folio stores each event in its own outbox, in the write's transaction, and
+    # delivers it from there: a committed write leaves exactly one row, a rejected
+    # one none. (Folio's database is "library" on the shared Postgres.)
+    def outboxed():
+        return int(run(COMPOSE + ['exec', '-T', 'postgres', 'psql', '-U', 'aweb', '-d', 'library', '-Atc', "SELECT COUNT(*) FROM outbox_events WHERE team_id='" + team + "' AND kind='folio/doc.changed'"]).strip())
+    before = outboxed()
+    folio_request('alice', 'POST', '/v1/documents', {'slug': 'outboxed', 'title': 'Outboxed', 'body': 'one'})
+    assert outboxed() == before + 1, (before, outboxed())
+    assert human_edit(link['url'], 'stale again', 3)[0] == 409
+    assert outboxed() == before + 1, (before, outboxed())
+    assert emitted('outboxed', 1) == [{'version': '1', 'source': 'api'}], stored('outboxed')
+    print('PASS each write stores its event in the outbox with the write; a rejected edit stores none', flush=True)
     data('bob', 'events', 'subscribe', 'folio/doc.changed', '--intent', 'steer', '--resource', 'wake-proof')
     b = stream('bob')
     aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'third')
@@ -230,7 +253,7 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
     def emit_with_other_key(team_id, kid):
         code = '''import json, urllib.error, urllib.request
 from datetime import UTC, datetime
-from folio.app_emit import sign_app_emit_credential
+from aweb_naapp.runtime.app_emit import sign_app_emit_credential
 target = "http://127.0.0.1:38000/v1/events/app"
 body = json.dumps({"type": "folio/doc.changed", "resource_ref": "wake-proof", "payload": {}}).encode()
 cred = sign_app_emit_credential(private_key=bytes.fromhex(SEED), method="POST", target=target, team_id=TEAM, app_id="folio", key_id=KID, body=body, timestamp=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))

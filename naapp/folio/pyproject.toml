@@ -16,7 +16,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-  "aweb-naapp",
+  "aweb-naapp[runtime,outbox]",
   "awid-service",
   "fastapi>=0.116.1",
   "httpx>=0.28.1",
