@@ -7470,6 +7470,17 @@ function element(tag, text3, className) {
   if (className) node.className = className;
   return node;
 }
+function chrome(tag, text3, className) {
+  const node = element(tag, text3, className);
+  node.lang = "en";
+  return node;
+}
+function formattedValue(value, format2, ...options) {
+  const node = element("bdi", valueText(value, format2, ...options));
+  if (["date", "date-time", "number", "money_minor"].includes(format2))
+    node.lang = "en";
+  return node;
+}
 function valueText(value, format2 = "text", locale = "en", timeZone, currency) {
   if (value === null || value === void 0) return "\u2014";
   if (format2 === "date" || format2 === "date-time") {
@@ -7735,14 +7746,14 @@ function createActions({ host, getPage, update, announce }) {
     for (const { field, file } of files) {
       assertCurrent(context);
       if (!host.upload) throw { code: "unavailable" };
-      const digest = await fileDigest(file);
+      const digest2 = await fileDigest(file);
       assertCurrent(context);
       const request2 = requestFor(context, {
         field_id: field.id,
         name: file.name,
         mime: file.type,
         size: file.size,
-        file_sha256: digest
+        file_sha256: digest2
       });
       const credential2 = await csrf(context);
       assertCurrent(context);
@@ -7764,10 +7775,10 @@ function createActions({ host, getPage, update, announce }) {
     return receipt;
   }
   function feedback(box) {
-    const error2 = element("p", null, "field-error");
+    const error2 = chrome("p", null, "field-error");
     error2.setAttribute("role", "alert");
     error2.hidden = true;
-    const status = element("p", null, "action-status");
+    const status = chrome("p", null, "action-status");
     status.setAttribute("role", "status");
     const recovery = element("div", null, "conflict-recovery");
     box.append(error2, status, recovery);
@@ -7817,14 +7828,17 @@ function createActions({ host, getPage, update, announce }) {
       update(page);
       assertCurrent(context);
       recovery.updated?.(page.rev);
-      const save = element("button", "Save my changes");
+      const save = chrome("button", recovery.saveLabel || "Save my changes");
       save.type = "button";
       save.onclick = (event) => {
         if (!event.isTrusted) return;
         assertCurrent(context);
         recovery.save(page.rev);
       };
-      const discard = element("button", "Discard my changes");
+      const discard = chrome(
+        "button",
+        recovery.discardLabel || "Discard my changes"
+      );
       discard.type = "button";
       discard.onclick = (event) => {
         if (!event.isTrusted) return;
@@ -7901,10 +7915,8 @@ function createActions({ host, getPage, update, announce }) {
     for (const field of p.fields) {
       const group = element("div", null, "form-field");
       const isRequired = field.required || action.input_schema.required?.includes(field.id);
-      const label = element(
-        "label",
-        field.label + (isRequired ? " (required)" : "")
-      );
+      const label = element("label", field.label);
+      if (isRequired) label.append(chrome("span", " (required)"));
       const id = `field-${w.id}-${field.id}`;
       label.htmlFor = id;
       let input;
@@ -7920,6 +7932,7 @@ function createActions({ host, getPage, update, announce }) {
         input.type = field.kind === "number" ? "text" : field.kind === "file" ? "file" : field.kind === "checkbox" ? "checkbox" : field.kind === "date" ? "date" : "text";
       }
       input.id = id;
+      if (field.kind === "file" || field.kind === "date") input.lang = "en";
       input.name = field.id;
       input.dataset.focusKey = `field:${field.id}`;
       const required = field.required || action.input_schema.required?.includes(field.id);
@@ -7937,7 +7950,7 @@ function createActions({ host, getPage, update, announce }) {
       input.addEventListener("change", () => {
         baseRev ??= getPage()?.rev;
       });
-      const error2 = element("p", null, "field-error");
+      const error2 = chrome("p", null, "field-error");
       error2.id = `${id}-error`;
       error2.hidden = true;
       input.setAttribute("aria-describedby", `${id}-description ${error2.id}`);
@@ -8052,7 +8065,15 @@ function createActions({ host, getPage, update, announce }) {
                 if (JSON.stringify(latest[id]) !== JSON.stringify(baseline[id])) {
                   control.error.hidden = false;
                   control.error.classList.add("conflict-message");
-                  control.error.textContent = `Changed while you were editing: now ${fieldValueText(control.field, latest[id])}`;
+                  const value = element(
+                    "bdi",
+                    fieldValueText(control.field, latest[id])
+                  );
+                  value.lang = control.field.kind === "checkbox" ? "en" : getPage().locale || "en";
+                  control.error.replaceChildren(
+                    "Changed while you were editing: now ",
+                    value
+                  );
                 }
               }
             },
@@ -8104,18 +8125,19 @@ function createActions({ host, getPage, update, announce }) {
     const label = element("label", p.label);
     const input = element("input");
     input.type = "file";
+    input.lang = "en";
     input.id = `upload-${w.id}`;
     label.htmlFor = input.id;
     input.accept = p.accept.join(",");
-    const selected = element(
+    const selected = chrome(
       "p",
       `${fileTypes(p.accept)}, up to ${fileSize(p.max_bytes)}.`,
       "field-description"
     );
-    const submit = element("button", "Upload");
+    const submit = chrome("button", "Upload");
     submit.type = "submit";
     submit.disabled = !policy(p.action, { widget_id: w.id }).allowed;
-    let file, pending = false;
+    let file, pending = false, baseRev;
     input.onchange = () => {
       file = input.files[0];
       selectionChanged();
@@ -8140,6 +8162,7 @@ function createActions({ host, getPage, update, announce }) {
       event.preventDefault();
       if (pending || !event.isTrusted) return;
       const selectedFile = file;
+      ui.status.textContent = "";
       const message = acceptableFile(selectedFile, p.accept, p.max_bytes);
       if (message) {
         ui.error.hidden = false;
@@ -8153,20 +8176,23 @@ function createActions({ host, getPage, update, announce }) {
       }
       pending = true;
       submit.disabled = true;
+      submit.hidden = false;
+      ui.recovery.replaceChildren();
+      ui.error.classList.remove("conflict-message");
       node.setAttribute("aria-busy", "true");
       ui.status.textContent = "Uploading\u2026";
       ui.error.hidden = true;
       let context;
       try {
-        context = capture(w, p.action);
-        const digest = await fileDigest(selectedFile);
+        context = capture(w, p.action, void 0, baseRev);
+        const digest2 = await fileDigest(selectedFile);
         assertCurrent(context);
         const request = {
           ...requestFor(context, {
             name: selectedFile.name,
             mime: selectedFile.type,
             size: selectedFile.size,
-            file_sha256: digest
+            file_sha256: digest2
           }),
           file: selectedFile
         };
@@ -8181,7 +8207,33 @@ function createActions({ host, getPage, update, announce }) {
         ui.status.textContent = `${selectedFile.name} uploaded.`;
         announce(ui.status.textContent);
       } catch (error2) {
-        await showError(ui, error2, void 0, context);
+        ui.status.textContent = "";
+        await showError(
+          ui,
+          error2,
+          {
+            saveLabel: "Retry upload",
+            discardLabel: "Discard file",
+            updated() {
+              submit.hidden = true;
+              ui.error.classList.add("conflict-message");
+            },
+            save(revision) {
+              baseRev = revision;
+              node.requestSubmit(submit);
+            },
+            discard(revision) {
+              baseRev = revision;
+              file = void 0;
+              input.value = "";
+              submit.hidden = false;
+              ui.error.classList.remove("conflict-message");
+              restoreFocus(input, ui.status, context);
+              announce("File selection discarded.");
+            }
+          },
+          context
+        );
       } finally {
         pending = false;
         node.setAttribute("aria-busy", "false");
@@ -8208,12 +8260,591 @@ function createActions({ host, getPage, update, announce }) {
   };
 }
 
+// digests.mjs
+function scalarString(value) {
+  for (const point of value)
+    if (point.codePointAt(0) >= 55296 && point.codePointAt(0) <= 57343)
+      throw new TypeError("Unpaired surrogate");
+  return JSON.stringify(value);
+}
+function compareKeys(left, right) {
+  const a = Array.from(left, (c) => c.codePointAt(0)), b = Array.from(right, (c) => c.codePointAt(0));
+  for (let i = 0; i < Math.min(a.length, b.length); i++)
+    if (a[i] !== b[i]) return a[i] - b[i];
+  return a.length - b.length;
+}
+function canonical(value) {
+  if (value === null || typeof value === "boolean")
+    return JSON.stringify(value);
+  if (typeof value === "string") return scalarString(value);
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || Object.is(value, -0))
+      throw new TypeError("Safe integers only");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype)
+    return "{" + Object.keys(value).sort(compareKeys).map((key) => scalarString(key) + ":" + canonical(value[key])).join(",") + "}";
+  throw new TypeError("Not JSON");
+}
+async function digest(prefix, value) {
+  const bytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(prefix + "\n" + canonical(value))
+  );
+  return "sha256:" + Array.from(
+    new Uint8Array(bytes),
+    (byte) => byte.toString(16).padStart(2, "0")
+  ).join("");
+}
+var proposalDigest = (collection, record) => digest("aweb.page-proposal/1", {
+  collection,
+  record_id: record.id,
+  value: record.value
+});
+var bundleDigest = (items) => digest("aweb.page-bundle/1", items);
+
+// decision-display.mjs
+var refuse = (code2) => {
+  throw Object.assign(new Error(code2), { code: code2 });
+};
+function decisionRows(cardOptions, evidence, value) {
+  if (!Array.isArray(evidence.options) || canonical(cardOptions) !== canonical(evidence.options))
+    refuse("options_mismatch");
+  if (!Array.isArray(evidence.fields) || evidence.fields.length < 1 || evidence.fields.length > 32)
+    refuse("fields_invalid");
+  const fields = /* @__PURE__ */ new Set(), labels = /* @__PURE__ */ new Set();
+  return evidence.fields.map(({ field, label, format: format2 }) => {
+    if (typeof field !== "string" || !field || typeof label !== "string" || !label || fields.has(field) || labels.has(label) || !["text", "date", "number", "money_minor"].includes(format2))
+      refuse("fields_invalid");
+    fields.add(field);
+    labels.add(label);
+    if (!value || !Object.hasOwn(value, field)) refuse("field_missing");
+    let currency = null;
+    if (format2 === "money_minor") {
+      currency = value.currency;
+      if (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency) || !Intl.supportedValuesOf("currency").includes(currency))
+        refuse("currency_missing");
+      if (!Number.isSafeInteger(value[field]) || Object.is(value[field], -0))
+        refuse("money_invalid");
+    }
+    return [label, value[field], format2, currency];
+  });
+}
+
+// decisions.mjs
+var changed = "This proposal changed. Ask the agent for a new proposal.";
+var expired = "This proposal has expired. Ask the agent for a new proposal.";
+var fail = (message) => {
+  throw Object.assign(new Error(message), { publicMessage: message });
+};
+var recordFor = (page, collection, id) => page.collections.find((c) => c.id === collection)?.records.find((r) => r.id === id);
+function createDecision({
+  box,
+  w,
+  host,
+  actions,
+  attempts,
+  getPage,
+  announce
+}) {
+  const p = w.props;
+  const expiresAt = Date.parse(p.expires_at);
+  const isExpired = () => !Number.isFinite(expiresAt) || expiresAt <= Date.now();
+  let disposed = false, serial = 0, busy = false, ready = false, answer, attempt, attemptKey, trustedOptions = [], needsCheck = false;
+  const heading2 = element("h2", p.operation.summary);
+  const metadata = element("dl", null, "decision-metadata");
+  const destination = element(
+    "dd",
+    `${p.operation.summary} \xB7 ${p.operation.destination}`
+  );
+  const expiryLabel = chrome("dt", "Expires"), expiryValue = chrome("dd");
+  metadata.append(
+    chrome("dt", "What approving does"),
+    destination,
+    expiryLabel,
+    expiryValue
+  );
+  function updateExpiry() {
+    expiryLabel.textContent = isExpired() ? "Expired" : "Expires";
+    if (!Number.isFinite(expiresAt)) {
+      expiryValue.textContent = "Expiry unavailable";
+      return;
+    }
+    if (isExpired())
+      expiryValue.textContent = valueText(
+        p.expires_at,
+        "date",
+        "en",
+        host.timeZone
+      );
+    else {
+      const minutes = Math.ceil((expiresAt - Date.now()) / 6e4);
+      const unit = minutes >= 60 ? "hour" : "minute";
+      const amount = unit === "hour" ? Math.ceil(minutes / 60) : Math.max(1, minutes);
+      const relative = new Intl.RelativeTimeFormat("en").format(amount, unit);
+      const time = new Intl.DateTimeFormat("en", {
+        timeStyle: "short",
+        timeZone: host.timeZone
+      }).format(expiresAt);
+      expiryValue.textContent = `${relative} (${time})`;
+    }
+  }
+  const proposal = element("div", null, "decision-proposal");
+  const details = element("details");
+  details.append(chrome("summary", "Proposal details"));
+  for (const text3 of [
+    `Operation: ${p.operation.kind}`,
+    `Source version: ${p.source_version}`,
+    `Record: ${p.collection}/${p.record_id}`,
+    `Revision: ${p.record_rev}`,
+    `Digest: ${p.proposal_sha256}`
+  ])
+    details.append(chrome("p", text3, "field-description"));
+  const bundleSummary = chrome("p", null, "field-description");
+  bundleSummary.hidden = !p.bundle;
+  const recommendation = chrome(
+    "p",
+    null,
+    "field-description decision-recommendation"
+  );
+  recommendation.hidden = true;
+  const form = element("form", null, "decision-form"), choices = element("fieldset");
+  const legend = element("legend", "Your decision");
+  legend.lang = "en";
+  choices.append(legend);
+  const radios = [];
+  function setOptions(options) {
+    trustedOptions = options;
+    if (!radios.length)
+      for (const option of options) {
+        const label = element("label", null, "decision-option"), radio = element("input");
+        radio.type = "radio";
+        radio.name = `decision-${w.id}`;
+        radio.value = option.value;
+        radio.dataset.focusKey = `choice:${option.value}`;
+        label.append(radio, element("span", option.label));
+        choices.append(label);
+        radios.push(radio);
+        radio.onchange = () => paint();
+      }
+    const recommended = options.find((o) => o.value === p.recommendation);
+    recommendation.hidden = !recommended;
+    recommendation.replaceChildren();
+    if (recommended)
+      recommendation.append(
+        "The agent recommends ",
+        optionText(recommended.value),
+        "."
+      );
+  }
+  const submit = element("button", "Record decision", "primary-button");
+  submit.type = "submit";
+  submit.dataset.focusKey = "decision-submit";
+  const status = element("p", "Checking decision\u2026", "decision-status");
+  status.tabIndex = -1;
+  const history = element("p", null, "field-description");
+  history.hidden = true;
+  const stepup = element("p", null, "field-description");
+  const check = element("button", "Check again");
+  check.type = "button";
+  check.hidden = true;
+  for (const node of [history, stepup, submit, status, check]) node.lang = "en";
+  const hint = element(
+    "p",
+    "Choose an option to record your decision.",
+    "field-description"
+  );
+  hint.lang = "en";
+  const recorded = element("div", null, "recorded-choice");
+  recorded.hidden = true;
+  form.append(recorded, choices, stepup, hint, submit, check);
+  box.append(
+    heading2,
+    status,
+    history,
+    bundleSummary,
+    proposal,
+    metadata,
+    recommendation,
+    form,
+    details
+  );
+  const labelFor = (value) => trustedOptions.find((o) => o.value === value)?.label;
+  function optionText(value) {
+    const label = element("bdi", labelFor(value));
+    label.lang = getPage()?.locale || "en";
+    return label;
+  }
+  const selected = () => trustedOptions[radios.findIndex((r) => r.checked)]?.value;
+  function paint() {
+    if (disposed) return;
+    const active = document.activeElement;
+    updateExpiry();
+    if (isExpired() && !answer) {
+      ready = false;
+      status.textContent = expired;
+    }
+    for (const radio of radios)
+      radio.disabled = busy || !ready || !!answer || !!attempt;
+    submit.hidden = !!answer;
+    submit.disabled = busy || !ready || !selected() || isExpired();
+    if (attempt)
+      submit.replaceChildren(
+        "Record ",
+        optionText(attempt.stage.choice),
+        " again"
+      );
+    else if (selected()) submit.replaceChildren(optionText(selected()));
+    else submit.textContent = "Record decision";
+    choices.hidden = !!answer;
+    recorded.hidden = !answer;
+    recorded.replaceChildren();
+    if (answer)
+      recorded.append(
+        chrome("p", "Your decision", "widget-label"),
+        optionText(answer.choice)
+      );
+    recommendation.hidden = !!answer || !trustedOptions.some((o) => o.value === p.recommendation);
+    hint.hidden = !!selected() || !ready || !!answer || !!attempt;
+    status.hidden = !status.textContent;
+    check.hidden = !attempt && !needsCheck || !!answer && !needsCheck;
+    check.disabled = busy;
+    form.setAttribute("aria-busy", String(busy));
+    if (box.contains(active) && (active.disabled || active.hidden))
+      status.focus({ preventScroll: true });
+  }
+  function showRecords(page, evidence) {
+    const record = recordFor(page, p.collection, p.record_id);
+    const items = p.bundle ? record?.value?.items : void 0;
+    const records = p.bundle ? (items || []).map(
+      (item) => recordFor(page, p.items_collection, item.record_id)
+    ) : [record];
+    proposal.replaceChildren();
+    if (p.bundle)
+      bundleSummary.textContent = records.length === 2 ? "One decision covers both items." : `One decision covers all ${records.length} items.`;
+    for (const [index, item] of records.entries()) {
+      if (!item) continue;
+      const section = element(
+        "section",
+        null,
+        p.bundle ? "bundle-item" : "proposal-record"
+      );
+      if (p.bundle)
+        section.append(chrome("h3", `${index + 1} of ${records.length}`));
+      const fields = element("dl");
+      for (const [label, value, format2, currency] of decisionRows(
+        p.options,
+        evidence,
+        item.value
+      )) {
+        const dd = element("dd");
+        dd.append(formattedValue(value, format2, "en", host.timeZone, currency));
+        fields.append(element("dt", label), dd);
+      }
+      section.append(fields);
+      proposal.append(section);
+    }
+  }
+  async function validate(page, evidence, context) {
+    const assert = () => {
+      if (disposed) throw { silent: true };
+      if (context) actions.assertCurrent(context);
+      if (page !== getPage()) fail(changed);
+    };
+    assert();
+    if (!evidence || evidence.task_id !== p.task_id || !Number.isSafeInteger(evidence.task_rev) || !Number.isSafeInteger(evidence.question_rev) || evidence.question_rev < 0)
+      fail(changed);
+    for (const key of [
+      "collection",
+      "record_id",
+      "record_rev",
+      "proposal_sha256",
+      "source_version",
+      "expires_at"
+    ])
+      if (evidence[key] !== p[key]) fail(changed);
+    if (!evidence.operation || canonical(evidence.operation) !== canonical(p.operation))
+      fail(changed);
+    const record = recordFor(page, p.collection, p.record_id);
+    if (!record || record.rev !== p.record_rev) fail(changed);
+    if (p.bundle) {
+      const items = record.value.items;
+      if (!Array.isArray(items) || !Array.isArray(evidence.items) || canonical(evidence.items) !== canonical(items))
+        fail(changed);
+      for (const item of items) {
+        const current = recordFor(page, p.items_collection, item.record_id);
+        if (!current || current.rev !== item.record_rev || await proposalDigest(p.items_collection, current) !== item.proposal_sha256)
+          fail(changed);
+        assert();
+      }
+      if (await bundleDigest(items) !== p.proposal_sha256) fail(changed);
+    } else if (await proposalDigest(p.collection, record) !== p.proposal_sha256)
+      fail(changed);
+    assert();
+    const displayRecords = p.bundle ? record.value.items.map(
+      (item) => recordFor(page, p.items_collection, item.record_id)
+    ) : [record];
+    try {
+      for (const item of displayRecords)
+        decisionRows(p.options, evidence, item.value);
+    } catch {
+      fail(
+        "This proposal's verified choices or display fields changed. Ask the agent for a new proposal."
+      );
+    }
+    if (!Number.isFinite(expiresAt) || evidence.answer?.current !== true && isExpired())
+      fail(expired);
+    if (!["member_session", "passkey"].includes(evidence.authenticator))
+      fail("Verified approval is unavailable.");
+    return record;
+  }
+  function currentReceipt(receipt, evidence) {
+    return receipt?.current === true && receipt.task_id === p.task_id && receipt.question_rev === evidence.question_rev && receipt.proposal_rev === p.record_rev && receipt.proposal_sha256 === p.proposal_sha256 && /^[A-Za-z0-9._-]{1,128}$/.test(receipt.task_answer_ref || "") && !!labelFor(receipt.choice);
+  }
+  function showHistory(evidence) {
+    history.hidden = evidence.answer?.current !== false;
+    const label = labelFor(evidence.answer?.choice);
+    if (label)
+      history.replaceChildren(
+        "Earlier answer: ",
+        optionText(evidence.answer.choice),
+        " \xB7 superseded."
+      );
+    else history.textContent = "Earlier answer is superseded.";
+  }
+  function applyEvidence(evidence) {
+    if (evidence.answer?.current === true) {
+      if (!currentReceipt(evidence.answer, evidence))
+        fail("The recorded decision is unavailable. Check with the agent.");
+      answer = evidence.answer;
+      attempts.delete(attemptKey);
+      attempt = void 0;
+      const pendingVerification = evidence.authenticator === "passkey" && !["approved", "rejected"].includes(answer.approval_state);
+      needsCheck = pendingVerification || answer.choice === "approve" && !["applied", "failed"].includes(evidence.application_state);
+      ready = false;
+      status.textContent = pendingVerification ? "Your decision was recorded. Verification is pending." : evidence.application_state === "applied" ? "Applied." : evidence.application_state === "failed" ? "Your decision was recorded. It could not be applied. Check with the agent." : answer.choice === "approve" ? "You approved this. The agent will apply it." : answer.choice === "reject" ? "You rejected this. The agent will be told." : `Your decision was recorded: ${labelFor(answer.choice)}.`;
+      if (!pendingVerification && !["applied", "failed"].includes(evidence.application_state) && !["approve", "reject"].includes(answer.choice))
+        status.replaceChildren(
+          "Your decision was recorded: ",
+          optionText(answer.choice),
+          "."
+        );
+    } else if (evidence.task_rev !== p.task_rev) {
+      ready = false;
+      status.textContent = changed;
+    } else if (evidence.status !== "open") {
+      ready = false;
+      needsCheck = evidence.status === "pending";
+      status.textContent = evidence.status === "pending" ? "Decision verification is pending." : "This decision is closed.";
+    } else if (!evidence.allowed) {
+      ready = false;
+      status.textContent = "You cannot answer this decision.";
+    } else if (attempts.get(attemptKey)?.state === "inflight") {
+      ready = false;
+      needsCheck = true;
+      status.textContent = "Recording your decision\u2026";
+    } else {
+      ready = true;
+      status.textContent = attempt ? `Your decision wasn't recorded. Try again to record ${labelFor(attempt.stage.choice)}.` : "";
+      if (attempt)
+        status.replaceChildren(
+          "Your decision wasn't recorded. Try again to record ",
+          optionText(attempt.stage.choice),
+          "."
+        );
+    }
+    stepup.textContent = evidence.authenticator === "passkey" ? "A passkey check on the app origin is required to record this decision." : "";
+    paint();
+  }
+  async function inspect(context) {
+    const page = getPage();
+    if (!host.decision || !host.answer) fail("This decision is unavailable.");
+    const evidence = await host.decision(p.task_id);
+    if (disposed) throw { silent: true };
+    if (context) actions.assertCurrent(context);
+    await validate(page, evidence, context);
+    setOptions(evidence.options);
+    if (evidence?.task_id === p.task_id) showHistory(evidence);
+    if (disposed) throw { silent: true };
+    const action = page.actions.find((a) => a.id === p.answer_action);
+    if (!action || action.kind !== "answer")
+      fail("This decision is unavailable.");
+    if (evidence.answer?.current !== true && inputErrors({}, action.input_schema).length)
+      fail(
+        "This decision requires additional input that this page cannot collect. Ask the agent to revise it."
+      );
+    attemptKey = canonical({
+      page_id: page.page_id,
+      task_id: p.task_id,
+      question_rev: evidence.question_rev,
+      collection: p.collection,
+      record_id: p.record_id,
+      record_rev: p.record_rev,
+      proposal_sha256: p.proposal_sha256,
+      operation: p.operation,
+      source_version: p.source_version,
+      expires_at: p.expires_at
+    });
+    const pending = attempts.get(attemptKey);
+    if (pending && evidence.answer?.current !== true) {
+      attempt = structuredClone(pending.request);
+      needsCheck = true;
+      if (attempt.stage.expected_task_rev !== p.task_rev || attempt.action_id !== p.answer_action || attempt.widget_id !== w.id)
+        fail(
+          "An earlier decision is awaiting confirmation. Check with the agent before answering again."
+        );
+      for (const [index, radio] of radios.entries())
+        radio.checked = trustedOptions[index].value === attempt.stage.choice;
+    }
+    return { page, evidence };
+  }
+  async function refresh(announceResult = false) {
+    if (busy || disposed) return;
+    const request = ++serial;
+    try {
+      const { page, evidence } = await inspect();
+      if (request !== serial || disposed) return;
+      showRecords(page, evidence);
+      if (evidence.allowed && evidence.task_rev === p.task_rev && evidence.status === "open" && evidence.answer?.current !== true) {
+        const context = actions.capture(
+          w,
+          p.answer_action,
+          recordFor(page, p.collection, p.record_id)
+        );
+        await actions.csrf(context);
+        if (request !== serial || disposed) return;
+      }
+      applyEvidence(evidence);
+      if (announceResult) announce(status.textContent);
+    } catch (error2) {
+      if (disposed || request !== serial || error2?.silent) return;
+      proposal.replaceChildren();
+      ready = false;
+      needsCheck = true;
+      status.textContent = error2?.code === "csrf_required" ? "The host could not verify this request. Refresh the page." : error2.publicMessage || "This decision is unavailable.";
+      paint();
+      if (announceResult) announce(status.textContent);
+    }
+  }
+  check.onclick = (event) => {
+    if (event.isTrusted && !busy) refresh(true);
+  };
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    if (!event.isTrusted || busy || !ready || !selected() || answer) return;
+    const choice = attempt?.stage.choice || selected();
+    let context;
+    busy = true;
+    status.textContent = "Recording your decision\u2026";
+    announce(status.textContent);
+    ++serial;
+    paint();
+    try {
+      const page = getPage();
+      context = actions.capture(
+        w,
+        p.answer_action,
+        recordFor(page, p.collection, p.record_id)
+      );
+      const inspection = await inspect(context);
+      actions.assertCurrent(context);
+      if (inspection.evidence.task_rev !== p.task_rev || inspection.evidence.status !== "open" || inspection.evidence.answer?.current === true || !inspection.evidence.allowed) {
+        applyEvidence(inspection.evidence);
+        return;
+      }
+      const credential = await actions.csrf(context);
+      actions.assertCurrent(context);
+      if (disposed || getPage() !== inspection.page) fail(changed);
+      if (isExpired()) fail(expired);
+      attempt ??= {
+        page_id: context.page_id,
+        widget_id: w.id,
+        action_id: p.answer_action,
+        task_id: p.task_id,
+        stage: {
+          expected_task_rev: p.task_rev,
+          choice,
+          input: {},
+          proposal_rev: p.record_rev,
+          proposal_sha256: p.proposal_sha256,
+          answer_key: crypto.randomUUID()
+        }
+      };
+      const pending = { request: structuredClone(attempt), state: "inflight" };
+      attempts.set(attemptKey, pending);
+      let receipt;
+      try {
+        receipt = await host.answer(
+          structuredClone(attempt),
+          credential,
+          event
+        );
+      } finally {
+        pending.state = "unknown";
+      }
+      actions.assertCurrent(context);
+      if (disposed) return;
+      if (currentReceipt(receipt, inspection.evidence) && receipt.choice === choice) {
+        applyEvidence({
+          ...inspection.evidence,
+          status: "answered",
+          answer: receipt
+        });
+        announce(status.textContent);
+      } else {
+        ready = false;
+        needsCheck = true;
+        status.textContent = "Decision verification is pending.";
+      }
+    } catch (error2) {
+      if (disposed || error2?.silent) return;
+      proposal.replaceChildren();
+      ready = false;
+      needsCheck = true;
+      status.textContent = attempt ? "The outcome is unknown. Check decision status before retrying." : error2.publicMessage || "This decision is unavailable. Refresh the page.";
+      announce(status.textContent);
+    } finally {
+      busy = false;
+      if (!disposed) {
+        paint();
+        (submit.hidden || submit.disabled ? status : submit).focus({
+          preventScroll: true
+        });
+      }
+    }
+  };
+  paint();
+  refresh();
+  const timer = setInterval(() => {
+    updateExpiry();
+    if (ready && isExpired()) {
+      paint();
+      announce(status.textContent);
+    }
+  }, 1e3);
+  return {
+    refresh,
+    clear() {
+      disposed = true;
+      ++serial;
+      clearInterval(timer);
+    }
+  };
+}
+
 // media.mjs
 function renderMedia(box, w, host) {
   const p = w.props, figure = element("figure");
   box.append(figure);
-  const message = element("p", "Loading media\u2026", "field-description");
+  const message = chrome("p", "Loading media\u2026", "field-description");
   figure.append(message);
+  const unavailable = () => {
+    const alt = element("span", p.alt);
+    alt.lang = box.closest("[lang]")?.lang || "en";
+    message.replaceChildren("Media unavailable. ", alt);
+    message.hidden = false;
+  };
   let disposed = false;
   Promise.resolve().then(() => host.asset?.(p.asset_id)).then((reference2) => {
     if (disposed) return;
@@ -8236,8 +8867,7 @@ function renderMedia(box, w, host) {
       media.append(element("p", p.alt));
     }
     media.onerror = () => {
-      message.textContent = `Media unavailable. ${p.alt}`;
-      message.hidden = false;
+      unavailable();
     };
     media.onload = () => {
       message.hidden = true;
@@ -8249,7 +8879,7 @@ function renderMedia(box, w, host) {
     figure.append(media);
     if (p.caption) figure.append(element("figcaption", p.caption));
   }).catch(() => {
-    if (!disposed) message.textContent = `Media unavailable. ${p.alt}`;
+    if (!disposed) unavailable();
   });
   return () => {
     disposed = true;
@@ -8261,7 +8891,7 @@ function renderMedia(box, w, host) {
   };
 }
 function renderPresence(box, w, host) {
-  const subject = element("p", w.props.subject, "widget-label"), status = element("p", "Unknown"), age = element("p", null, "field-description");
+  const subject = element("p", w.props.subject, "widget-label"), status = chrome("p", "Unknown"), age = chrome("p", null, "field-description");
   box.append(subject, status, age);
   let disposed = false, timer;
   Promise.resolve().then(() => host.health?.(w.props.subject)).then((evidence) => {
@@ -8281,10 +8911,15 @@ function renderPresence(box, w, host) {
         unknown: "Unknown"
       };
       status.textContent = states[evidence.reachable] || states.unknown;
-      if (evidence.reason?.text)
-        status.append(element("span", ` \xB7 ${evidence.reason.text}`));
-      if (evidence.fixing?.text)
-        status.append(element("span", ` ${evidence.fixing.text}`));
+      for (const text3 of [
+        evidence.reason?.text && ` \xB7 ${evidence.reason.text}`,
+        evidence.fixing?.text && ` ${evidence.fixing.text}`
+      ]) {
+        if (!text3) continue;
+        const report = element("span", text3);
+        report.lang = box.closest("[lang]")?.lang || "en";
+        status.append(report);
+      }
       const seconds = Math.max(0, Math.floor((now - observed) / 1e3));
       age.textContent = `Reported ${seconds < 60 ? "less than a minute ago" : `${Math.floor(seconds / 60)} minutes ago`}`;
     }
@@ -8347,15 +8982,12 @@ function dataTable(records, columns, label, locale, timeZone) {
         ["date", "number", "money_minor", "status"].includes(column.format) ? "cell-compact" : "cell-text"
       );
       cell.append(
-        element(
-          "bdi",
-          valueText(
-            record.value[column.field],
-            column.format,
-            locale,
-            timeZone,
-            record.value.currency
-          )
+        formattedValue(
+          record.value[column.field],
+          column.format,
+          locale,
+          timeZone,
+          record.value.currency
         )
       );
       row.append(cell);
@@ -8447,6 +9079,7 @@ function chartGraphic(records, p, seriesIndex) {
         dy: 25
       });
       amount.textContent = valueText(records[i].value[field], "number");
+      amount.setAttribute("lang", "en");
       label.append(category, amount);
       chart.append(label);
       offset += fraction;
@@ -8474,7 +9107,7 @@ function renderCollection({
   const cursors = [query.cursor];
   let cursorIndex = 0;
   const limit = query.limit || 20;
-  const status = element("p", "", "collection-count");
+  const status = chrome("p", "", "collection-count");
   let requestSerial = 0;
   async function change(bind, reset = true) {
     const request = ++requestSerial;
@@ -8513,9 +9146,11 @@ function renderCollection({
     const range = count ? `Showing ${start === Math.min(start + visible.length - 1, count) ? start : `${start}\u2013${Math.min(start + visible.length - 1, count)}`} of ${count}` : "0 records";
     status.textContent = range;
     if (!visible.length)
-      region.append(element("p", "Nothing here yet.", "field-description"));
+      region.append(chrome("p", "Nothing here yet.", "field-description"));
     else if (w.type === "table") {
       const table2 = dataTable(visible, p.columns, t.records, locale, timeZone);
+      table2.caption.lang = "en";
+      table2.caption.id = `records-${w.id}`;
       [...table2.tHead.rows[0].cells].forEach((th, i) => {
         const column = p.columns[i];
         const button = element("button", column.label, "sort-button");
@@ -8541,7 +9176,7 @@ function renderCollection({
         th.replaceChildren(button);
       });
       if (p.row_actions?.length) {
-        const th = element("th", t.actions);
+        const th = chrome("th", t.actions);
         th.scope = "col";
         table2.tHead.rows[0].append(th);
         [...table2.tBodies[0].rows].forEach((row, i) => {
@@ -8554,7 +9189,7 @@ function renderCollection({
       const scroll = element("div", null, "table-scroll");
       scroll.tabIndex = 0;
       scroll.setAttribute("role", "region");
-      scroll.setAttribute("aria-label", t.records);
+      scroll.setAttribute("aria-labelledby", table2.caption.id);
       scroll.append(table2);
       region.append(scroll);
     } else if (w.type === "chart") {
@@ -8567,7 +9202,7 @@ function renderCollection({
         })
       ))
         figure.append(
-          element(
+          chrome(
             "p",
             "Some values cannot be charted. Refer to the data table.",
             "field-description"
@@ -8593,10 +9228,9 @@ function renderCollection({
           swatch.setAttribute("aria-hidden", "true");
           item.append(
             swatch,
-            element(
-              "bdi",
-              `${valueText(record.value[p.x])}: ${valueText(record.value[p.series[i]], "number", locale)}`
-            )
+            element("bdi", valueText(record.value[p.x])),
+            ": ",
+            formattedValue(record.value[p.series[i]], "number", locale)
           );
           labels.append(item);
         });
@@ -8637,7 +9271,7 @@ function renderCollection({
           (field) => schema?.properties?.[field]?.format === "date-time"
         );
         if (timeField) {
-          const time = element(
+          const time = chrome(
             "time",
             valueText(record.value[timeField], "date-time", locale, timeZone),
             "timeline-time"
@@ -8650,16 +9284,13 @@ function renderCollection({
           fields.append(element("dt", slot));
           const dd = element("dd");
           dd.append(
-            element(
-              "bdi",
-              valueText(
-                record.value[field],
-                ["date", "date-time"].includes(
-                  schema?.properties?.[field]?.format
-                ) ? schema.properties[field].format : "text",
-                locale,
-                timeZone
-              )
+            formattedValue(
+              record.value[field],
+              ["date", "date-time"].includes(
+                schema?.properties?.[field]?.format
+              ) ? schema.properties[field].format : "text",
+              locale,
+              timeZone
             )
           );
           fields.append(dd);
@@ -8706,7 +9337,7 @@ function renderCollection({
     }
   };
   box.append(region);
-  const navigation = element("nav", null, "pagination");
+  const navigation = chrome("nav", null, "pagination");
   navigation.setAttribute("aria-label", `${t.pagination}: ${w.id}`);
   navigation.append(status, previous, next);
   box.append(navigation);
@@ -8729,7 +9360,7 @@ function renderCollection({
     },
     showError(message) {
       region.setAttribute("aria-busy", "false");
-      region.replaceChildren(element("p", message));
+      region.replaceChildren(chrome("p", message));
     }
   };
 }
@@ -8826,6 +9457,7 @@ var known = /* @__PURE__ */ new Set([
   "stack",
   "grid",
   "form",
+  "decision_card",
   "button",
   "file_drop",
   "image",
@@ -8835,6 +9467,15 @@ var known = /* @__PURE__ */ new Set([
   ...collectionTypes
 ]);
 var focusables = "a,button,input,select,textarea,[tabindex]";
+function contentHeading(level, text3) {
+  const rank = level + 1;
+  const heading2 = element(rank <= 6 ? `h${rank}` : "div", text3);
+  if (rank > 6) {
+    heading2.setAttribute("role", "heading");
+    heading2.setAttribute("aria-level", String(rank));
+  }
+  return heading2;
+}
 function setChildren(parent, children) {
   children.forEach((node, index) => {
     if (parent.childNodes[index] !== node)
@@ -8852,8 +9493,10 @@ function createPageRenderer({
 }) {
   if (root.contains(destinations) || root.contains(announcements))
     throw new TypeError("Host chrome must be outside the page");
+  destinations.lang = "en";
+  announcements.lang = "en";
   let current, epoch = 0;
-  const cache = /* @__PURE__ */ new Map(), queries = /* @__PURE__ */ new Map(), links = /* @__PURE__ */ new WeakMap();
+  const cache = /* @__PURE__ */ new Map(), queries = /* @__PURE__ */ new Map(), decisionAttempts = /* @__PURE__ */ new Map(), links = /* @__PURE__ */ new WeakMap();
   const title = element("h1", null, "page-title");
   const actions = createActions({
     host,
@@ -8874,6 +9517,7 @@ function createPageRenderer({
     const scroll = [scrollX, scrollY];
     if (before?.page_id !== page?.page_id) {
       actions.clear();
+      decisionAttempts.clear();
       host.confirmLink?.clear?.();
       host.confirmAction?.clear?.();
       for (const entry of cache.values()) entry.cleanup?.();
@@ -8886,7 +9530,7 @@ function createPageRenderer({
     destinations.replaceChildren(element("h2", t.destinations));
     destinations.hidden = true;
     if (page?.page_format !== "aweb.page/1" || !Array.isArray(page.layout)) {
-      const panel = element("section", null, "page-unavailable");
+      const panel = chrome("section", null, "page-unavailable");
       panel.setAttribute("role", "alert");
       panel.append(
         element("h1", t.unsupported),
@@ -8895,13 +9539,14 @@ function createPageRenderer({
       root.replaceChildren(panel);
       for (const entry of cache.values()) entry.cleanup?.();
       actions.clear();
+      decisionAttempts.clear();
       host.confirmLink?.clear?.();
       host.confirmAction?.clear?.();
       cache.clear();
       return;
     }
     title.textContent = page.title;
-    const domains = /* @__PURE__ */ new Set(), used = /* @__PURE__ */ new Set();
+    const domains = /* @__PURE__ */ new Set(), used = /* @__PURE__ */ new Set(), decisionWidgets = /* @__PURE__ */ new Set();
     function rememberLink(url) {
       if (!domains.has(url.host)) {
         domains.add(url.host);
@@ -8929,6 +9574,7 @@ function createPageRenderer({
       rememberLink(url);
     }
     function displayState(box, w, state) {
+      if (w.type === "decision_card") return;
       box.setAttribute("aria-busy", String(!!state.busy));
       let status = [...box.children].find(
         (node) => node.hasAttribute("data-widget-state")
@@ -8940,28 +9586,27 @@ function createPageRenderer({
       }
       status.replaceChildren();
       const message = state.message || (state.busy ? t.busy : "");
-      if (message || state.progress !== void 0)
-        status.append(
-          element(
-            "p",
-            `${message}${state.progress !== void 0 ? `${message ? " \xB7 " : ""}${state.progress}%` : ""}`,
-            "state-message"
-          )
-        );
+      if (message || state.progress !== void 0) {
+        const line = state.message ? element("p", state.message, "state-message") : chrome("p", message, "state-message");
+        if (state.progress !== void 0)
+          line.append(
+            chrome("span", `${message ? " \xB7 " : ""}${state.progress}%`)
+          );
+        status.append(line);
+      }
       if (state.progress !== void 0) {
         const progress = element("progress");
+        progress.lang = "en";
         progress.max = 100;
         progress.value = state.progress;
-        progress.setAttribute(
-          "aria-label",
-          `${known.has(w.type) && w.props?.label || w.id}: ${t.progress}`
-        );
+        progress.setAttribute("aria-label", t.progress);
         status.append(progress);
       }
       status.hidden = !status.childNodes.length;
     }
     function widget(w) {
       used.add(w.id);
+      if (w.type === "decision_card") decisionWidgets.add(w.id);
       const supported = known.has(w.type), p = supported ? w.props : {}, state = page.widget_state?.[w.id] || {};
       const container = w.type === "stack" || w.type === "grid";
       const signature = JSON.stringify([
@@ -8979,7 +9624,7 @@ function createPageRenderer({
           if (value) rememberLink(new URL(value));
         }
         displayState(box, w, state);
-        if (w.bind && entry.pageRev !== page.rev) {
+        if ((w.bind || w.type === "decision_card") && entry.pageRev !== page.rev) {
           entry.pageRev = page.rev;
           entry.refresh?.();
         }
@@ -8995,19 +9640,39 @@ function createPageRenderer({
       box.dataset.widget = w.id;
       if (!supported)
         box.append(
-          element("p", t.unavailable, "widget-label"),
+          chrome("p", t.unavailable, "widget-label"),
           element("p", w.fallback)
         );
-      else if (w.type === "heading") box.append(element(`h${p.level}`, p.text));
-      else if (w.type === "text") {
+      else if (w.type === "heading") {
+        box.append(contentHeading(p.level, p.text));
+      } else if (w.type === "text") {
         const body = element("div", null, "markdown");
         renderMarkdown(body, p.markdown);
+        for (const original of body.querySelectorAll("h1,h2,h3,h4,h5,h6")) {
+          const heading2 = contentHeading(Number(original.tagName.slice(1)));
+          heading2.append(...original.childNodes);
+          original.replaceWith(heading2);
+        }
         for (const { node, url } of inertLinks(body)) pageLink(node, url);
         box.append(body);
       } else if (container) {
         box.classList.add(`gap-${p.gap || "medium"}`);
         if (w.type === "grid") box.classList.add(`columns-${p.columns}`);
         box.append(...w.children.map(widget));
+      } else if (w.type === "decision_card") {
+        const controller = createDecision({
+          box,
+          w,
+          host,
+          actions,
+          attempts: decisionAttempts,
+          getPage: () => current,
+          announce: (text3) => {
+            announcements.textContent = text3;
+          }
+        });
+        refresh = controller.refresh;
+        cleanup = controller.clear;
       } else if (w.type === "form") actions.form(box, w);
       else if (w.type === "button")
         box.append(actions.actionButton(w, p.action, null, p.label));
@@ -9026,7 +9691,7 @@ function createPageRenderer({
           pageLink(link2, url);
           box.append(link2);
         } catch {
-          box.append(element("p", t.unavailable));
+          box.append(chrome("p", t.unavailable));
         }
       } else {
         const content = element("div", null, "bound-content");
@@ -9077,7 +9742,9 @@ function createPageRenderer({
               if (value === void 0 || value === null) {
                 figure.setAttribute("role", "img");
                 figure.setAttribute("aria-label", "No value");
+                figure.lang = "en";
               }
+              if (typeof value === "number") figure.firstChild.lang = "en";
               if (p.unit && value !== void 0 && value !== null)
                 figure.append(element("span", p.unit, "stat-unit"));
               content.append(figure);
@@ -9109,7 +9776,7 @@ function createPageRenderer({
           refresh = async () => {
             const request = ++serial;
             if (controller) controller.beginRefresh();
-            else content.replaceChildren(element("p", t.loading));
+            else content.replaceChildren(chrome("p", t.loading));
             try {
               const result = await read(queries.get(w.id) || w.bind);
               if (request === serial && box.isConnected)
@@ -9118,7 +9785,7 @@ function createPageRenderer({
               if (request !== serial || !box.isConnected) return;
               const message = error2.code === "revision_conflict" ? t.conflict : t.unavailable;
               if (controller) controller.showError(message);
-              else content.replaceChildren(element("p", message));
+              else content.replaceChildren(chrome("p", message));
             }
           };
           refresh();
@@ -9156,11 +9823,18 @@ function createPageRenderer({
         ...Object.keys(before.widget_state || {}),
         ...Object.keys(page.widget_state || {})
       ])) {
+        if (decisionWidgets.has(id)) continue;
         const state = page.widget_state?.[id] || {};
-        if (JSON.stringify(state) !== JSON.stringify(before.widget_state?.[id] || {}))
-          changes.push(state.message || (state.busy ? t.busy : t.updated));
+        if (JSON.stringify(state) !== JSON.stringify(before.widget_state?.[id] || {})) {
+          const message = state.message ? element("span", state.message) : chrome("span", state.busy ? t.busy : t.updated);
+          if (state.message) message.lang = page.locale || "en";
+          changes.push(message);
+        }
       }
-      if (changes.length) announcements.textContent = changes.join(". ");
+      if (changes.length)
+        announcements.replaceChildren(
+          ...changes.flatMap((node, i) => i ? [". ", node] : [node])
+        );
       window.scrollTo(...scroll);
     }
   }
@@ -9170,6 +9844,7 @@ function createPageRenderer({
       host.confirmLink?.clear?.();
       host.confirmAction?.clear?.();
       actions.clear();
+      decisionAttempts.clear();
       for (const entry of cache.values()) entry.cleanup?.();
       ++epoch;
       current = null;

@@ -1,4 +1,4 @@
-import { element, valueText } from "./dom.mjs";
+import { element, chrome, formattedValue, valueText } from "./dom.mjs";
 
 export function selectRecords(records, bind) {
   const compare = (a, b) =>
@@ -53,15 +53,12 @@ function dataTable(records, columns, label, locale, timeZone) {
           : "cell-text",
       );
       cell.append(
-        element(
-          "bdi",
-          valueText(
-            record.value[column.field],
-            column.format,
-            locale,
-            timeZone,
-            record.value.currency,
-          ),
+        formattedValue(
+          record.value[column.field],
+          column.format,
+          locale,
+          timeZone,
+          record.value.currency,
         ),
       );
       row.append(cell);
@@ -156,6 +153,7 @@ function chartGraphic(records, p, seriesIndex) {
         dy: 25,
       });
       amount.textContent = valueText(records[i].value[field], "number");
+      amount.setAttribute("lang", "en");
       label.append(category, amount);
       chart.append(label);
       offset += fraction;
@@ -189,7 +187,7 @@ export function renderCollection({
   const cursors = [query.cursor];
   let cursorIndex = 0;
   const limit = query.limit || 20;
-  const status = element("p", "", "collection-count");
+  const status = chrome("p", "", "collection-count");
   let requestSerial = 0;
   async function change(bind, reset = true) {
     const request = ++requestSerial;
@@ -235,9 +233,11 @@ export function renderCollection({
       : "0 records";
     status.textContent = range;
     if (!visible.length)
-      region.append(element("p", "Nothing here yet.", "field-description"));
+      region.append(chrome("p", "Nothing here yet.", "field-description"));
     else if (w.type === "table") {
       const table = dataTable(visible, p.columns, t.records, locale, timeZone);
+      table.caption.lang = "en";
+      table.caption.id = `records-${w.id}`;
       [...table.tHead.rows[0].cells].forEach((th, i) => {
         const column = p.columns[i];
         const button = element("button", column.label, "sort-button");
@@ -264,7 +264,7 @@ export function renderCollection({
         th.replaceChildren(button);
       });
       if (p.row_actions?.length) {
-        const th = element("th", t.actions);
+        const th = chrome("th", t.actions);
         th.scope = "col";
         table.tHead.rows[0].append(th);
         [...table.tBodies[0].rows].forEach((row, i) => {
@@ -277,7 +277,7 @@ export function renderCollection({
       const scroll = element("div", null, "table-scroll");
       scroll.tabIndex = 0;
       scroll.setAttribute("role", "region");
-      scroll.setAttribute("aria-label", t.records);
+      scroll.setAttribute("aria-labelledby", table.caption.id);
       scroll.append(table);
       region.append(scroll);
     } else if (w.type === "chart") {
@@ -297,7 +297,7 @@ export function renderCollection({
         )
       )
         figure.append(
-          element(
+          chrome(
             "p",
             "Some values cannot be charted. Refer to the data table.",
             "field-description",
@@ -323,10 +323,9 @@ export function renderCollection({
           swatch.setAttribute("aria-hidden", "true");
           item.append(
             swatch,
-            element(
-              "bdi",
-              `${valueText(record.value[p.x])}: ${valueText(record.value[p.series[i]], "number", locale)}`,
-            ),
+            element("bdi", valueText(record.value[p.x])),
+            ": ",
+            formattedValue(record.value[p.series[i]], "number", locale),
           );
           labels.append(item);
         });
@@ -373,7 +372,7 @@ export function renderCollection({
             (field) => schema?.properties?.[field]?.format === "date-time",
           );
         if (timeField) {
-          const time = element(
+          const time = chrome(
             "time",
             valueText(record.value[timeField], "date-time", locale, timeZone),
             "timeline-time",
@@ -386,18 +385,15 @@ export function renderCollection({
           fields.append(element("dt", slot));
           const dd = element("dd");
           dd.append(
-            element(
-              "bdi",
-              valueText(
-                record.value[field],
-                ["date", "date-time"].includes(
-                  schema?.properties?.[field]?.format,
-                )
-                  ? schema.properties[field].format
-                  : "text",
-                locale,
-                timeZone,
-              ),
+            formattedValue(
+              record.value[field],
+              ["date", "date-time"].includes(
+                schema?.properties?.[field]?.format,
+              )
+                ? schema.properties[field].format
+                : "text",
+              locale,
+              timeZone,
             ),
           );
           fields.append(dd);
@@ -450,7 +446,7 @@ export function renderCollection({
     }
   };
   box.append(region);
-  const navigation = element("nav", null, "pagination");
+  const navigation = chrome("nav", null, "pagination");
   navigation.setAttribute("aria-label", `${t.pagination}: ${w.id}`);
   navigation.append(status, previous, next);
   box.append(navigation);
@@ -475,7 +471,7 @@ export function renderCollection({
     },
     showError(message) {
       region.setAttribute("aria-busy", "false");
-      region.replaceChildren(element("p", message));
+      region.replaceChildren(chrome("p", message));
     },
   };
 }
