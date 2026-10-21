@@ -37,6 +37,17 @@ async def assert_original_page(store, *, outbox_count=1):
     )
 
 
+@pytest.mark.parametrize("kind", ["database", "missing"])
+async def test_mutate_on_requires_a_real_transaction_before_writing(store, kind):
+    await create(store)
+    wrong_tx = store.db if kind == "database" else None
+    with pytest.raises(TypeError, match="TransactionManager"):
+        await store.mutate_on(
+            wrong_tx, SCOPE, OWNER, expected_rev=1, key="wrong-tx", records=[record_change()]
+        )
+    await assert_original_page(store)
+
+
 async def test_caller_rollback_discards_page_and_task_mirror_and_same_key_can_retry(store):
     await create(store)
     with pytest.raises(RuntimeError, match="abort action resolution"):

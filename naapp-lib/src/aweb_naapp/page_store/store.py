@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 from jsonschema import Draft202012Validator
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
+from pgdbm.core import TransactionManager
 
 from aweb_naapp.idempotency import (
     IdempotencyConflict,
@@ -377,6 +378,8 @@ class PageStore(LifecycleMixin):
         transaction of its own. A savepoint rolls back all page effects on
         refusal even if the caller catches the error and records a failure.
         """
+        if not isinstance(tx, TransactionManager):
+            raise TypeError("mutate_on requires a TransactionManager")
         async with tx.transaction() as mutation_tx:
             return await self._mutate_on(
                 mutation_tx,

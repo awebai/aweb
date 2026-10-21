@@ -72,6 +72,9 @@ An accepted retry returns the first receipt without rewriting the page. The
 caller must also make its joined writes idempotent: key journal entries by that
 receipt's `transaction_id`, and derive a distinct stable event ID for each
 joined outbox event. The page-change event already uses the transaction ID.
+The argument must be a pgdbm `TransactionManager`, not a database manager.
+Locks remain held until the caller commits or rolls back. Make no network
+calls between the mutation and the end of that transaction.
 
 The content transaction writes data, audit, receipt and the shared outbox
 together. The independent request claim commits first; a failed content
