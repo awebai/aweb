@@ -611,6 +611,7 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `team_app_emit_keys`
 - `team_app_event_types`
 - `team_app_keys`
+- `app_hook_bindings`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 ---

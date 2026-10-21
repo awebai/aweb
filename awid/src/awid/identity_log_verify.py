@@ -19,7 +19,8 @@ from awid.signing import verify_did_key_signature
 MAX_SAFE_SEQUENCE = 2**53 - 1
 MAX_LOG_ENTRIES = 4096
 _HEX_256 = re.compile(r"^[0-9a-f]{64}$")
-_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$")
+# ASCII digits only; Z or a +hh:mm/-hh:mm offset.
+_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$")
 
 
 @dataclass(frozen=True)

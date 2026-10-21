@@ -412,6 +412,19 @@ def _registrations_from_manifest(
     return registration.event_types, registration.emit_keys
 
 
+def _revocation_carried_across_digests(table: str) -> str:
+    """The earliest revocation of one key in the team, under any of the app's digests.
+
+    A team's revocation of a key outlives the digest it was made under, so new
+    bytes that list the same key register it already revoked. For an INSERT
+    whose parameters are $1 team_id, $2 app_id, $5 key_id and $6 did_key.
+    """
+    return (
+        f"(SELECT MIN(revoked_at) FROM {{{{tables.{table}}}}} "
+        "WHERE team_id = $1 AND app_id = $2 AND key_id = $5 AND did_key = $6)"
+    )
+
+
 async def _write_team_registrations(
     tx,
     *,
@@ -464,11 +477,11 @@ async def _write_team_registrations(
         if conflicting:
             raise ConflictError("emit key id is already registered with a different key")
         await tx.execute(
-            """
-            INSERT INTO {{tables.team_app_emit_keys}} (
-                team_id, app_id, origin, digest, key_id, did_key
+            f"""
+            INSERT INTO {{{{tables.team_app_emit_keys}}}} (
+                team_id, app_id, origin, digest, key_id, did_key, revoked_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6)
+            VALUES ($1, $2, $3, $4, $5, $6, {_revocation_carried_across_digests("team_app_emit_keys")})
             ON CONFLICT (team_id, app_id, origin, digest, key_id) DO NOTHING
             """,
             team_id,
