@@ -119,6 +119,24 @@ class ContactChangeRefused(Exception):
         self.reason = reason
 
 
+class RetirementRefused(Exception):
+    """The target or app protection check refused a retirement.
+    Reasons include approver_not_current, credential_not_found and an app's
+    last_owner_protected."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class RetirementProtection(Protocol):
+    async def __call__(self, tx: TransactionManager, scope: str, subject: str) -> None:
+        """Under the scope lock, before writes, refuse if protected.
+        The app holds its installation/role/coverage fences before B3 and
+        enforces its own enrolled-owner population here."""
+        ...
+
+
 DESIGNATE_ACT = "app-role.designate"
 RECOVER_ACT = "app-credential.recover"
 REVOKE_ACT = "app-role.revoke"
@@ -522,6 +540,111 @@ class Passkeys:
                 subject=current["subject"],
                 occurred_at=now,
                 details={"scope": scope, "owner_act_id": act_id, "owner_act_kind": REVOKE_ACT},
+            ),
+            tx,
+        )
+
+    async def retire_in(
+        self,
+        tx: TransactionManager,
+        *,
+        scope: str,
+        subject: str,
+        authorized_by: str,
+        protect: RetirementProtection | None = None,
+    ) -> None:
+        """Retire exactly this designation after the app authorizes containment.
+
+        This method confers no authority and requires no owner act or passkey.
+        The app authenticates/authorizes the actor and holds its authority fences
+        first. The target is bound under the scope lock; protect runs there
+        before any writes. The app can raise RetirementRefused for its own
+        last-owner rule. Passkeys, unused enrolment links and live decisions
+        end in the supplied transaction, including recovery's pending holder.
+        No new authority locks may be acquired once B2 retirement begins.
+        """
+        async with tx.transaction() as attempt:
+            await self._lock_retirement_target(attempt, scope, subject, authorized_by)
+            if protect is not None:
+                await protect(attempt, scope, subject)
+            await self._retire_authorized(attempt, scope, subject, authorized_by, self._clock())
+
+    async def revoke_passkey_in(
+        self,
+        tx: TransactionManager,
+        *,
+        scope: str,
+        subject: str,
+        credential_id: bytes,
+        authorized_by: str,
+        protect: RetirementProtection | None = None,
+    ) -> None:
+        """Revoke one app-authorized credential and void its holder's decisions.
+
+        Another unrevoked credential preserves the designation. Losing the last
+        usable credential retires it as retire_in does. The same target binding,
+        caller authority fences, pre-write protection hook and audit rules apply.
+        A protection callback may close over credential_id when checking siblings.
+        All writes and retirement callbacks commit or roll back together.
+        """
+        async with tx.transaction() as attempt:
+            await self._lock_retirement_target(attempt, scope, subject, authorized_by)
+            credentials = await attempt.fetch_all(
+                "SELECT credential_id FROM {{tables.passkey_credentials}} "
+                "WHERE subject=$1 AND revoked_at IS NULL ORDER BY credential_id FOR UPDATE",
+                subject,
+            )
+            if not any(row["credential_id"] == credential_id for row in credentials):
+                raise RetirementRefused("credential_not_found")
+            if protect is not None:
+                await protect(attempt, scope, subject)
+            now = self._clock()
+            if len(credentials) == 1:
+                await self._retire_authorized(attempt, scope, subject, authorized_by, now)
+            else:
+                await attempt.execute(
+                    "UPDATE {{tables.passkey_credentials}} SET revoked_at=$2 WHERE credential_id=$1",
+                    credential_id,
+                    now,
+                )
+                await self._retirement.approver_retired(
+                    subject, retired_by=authorized_by, tx=attempt
+                )
+            await self._audit.emit(
+                AuditEvent(
+                    kind=AuditKind.APPROVER_PASSKEY_REVOKED,
+                    actor=authorized_by,
+                    subject=subject,
+                    occurred_at=now,
+                    details={"scope": scope, "credential_id": bytes_to_base64url(credential_id)},
+                ),
+                attempt,
+            )
+
+    async def _lock_retirement_target(
+        self, tx: TransactionManager, scope: str, subject: str, authorized_by: str
+    ) -> None:
+        if not isinstance(authorized_by, str) or not authorized_by:
+            raise ValueError("retirement needs an audit actor")
+        current = await tx.fetch_value(
+            "SELECT subject FROM {{tables.passkey_approvers}} "
+            "WHERE scope=$1 AND superseded_at IS NULL FOR UPDATE",
+            scope,
+        )
+        if current is None or current != subject:
+            raise RetirementRefused("approver_not_current")
+
+    async def _retire_authorized(
+        self, tx: TransactionManager, scope: str, subject: str, actor: str, now: datetime
+    ) -> None:
+        await self._retire(tx, subject, actor, now)
+        await self._audit.emit(
+            AuditEvent(
+                kind=AuditKind.APPROVER_RETIRED,
+                actor=actor,
+                subject=subject,
+                occurred_at=now,
+                details={"scope": scope},
             ),
             tx,
         )
