@@ -61,21 +61,33 @@ def service(tmp_path):
             serialization.NoEncryption(),
         )
     )
-    state = {"requests": [], "status": 200}
+    state = {"requests": [], "raw_requests": [], "status": 200}
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
+            raw = self.rfile.read(int(self.headers["Content-Length"]))
+            state["raw_requests"].append((self.path, raw, dict(self.headers)))
             state["requests"].append(
                 (
                     self.path,
-                    json.loads(self.rfile.read(int(self.headers["Content-Length"]))),
+                    json.loads(raw),
                 )
             )
             body = state.get("raw", json.dumps(state["response"]).encode())
+            if event := state.get("received"):
+                event.set()
+            if resume := state.get("resume"):
+                resume.wait(timeout=5)
             self.send_response(state["status"])
-            self.send_header("Content-Length", str(len(body)))
+            if not state.get("omit_length"):
+                self.send_header("Content-Length", str(len(body)))
+            for name, value in state.get("headers", {}).items():
+                self.send_header(name, value)
             self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
+                pass
 
         def log_message(self, *args):
             pass

@@ -101,6 +101,18 @@ If the runner is PID 1 in a container, use an init process, such as Docker's
 `--init` or `tini`, to reap orphaned descendants after process-group cleanup.
 The runner is not a child subreaper.
 
+The outbound transport library uses verified TLS to the registered origin,
+without redirects, ambient proxies or cookie authentication. Every attempt
+signs the exact request body with a fresh nonce and current timestamp. Assignment
+responses are bounded before verification; report acknowledgments must be empty
+204 responses. Public refusal codes are validated without reflecting server
+text. A total deadline bounds long polling and response reads, including a
+server that keeps a connection active indefinitely. Cancellation closes the
+in-flight request. The transport does not automatically retry, open credentials,
+or execute a returned assignment; the durable worker loop remains separate.
+Private state-directory backups include pending sanitized reports until they
+are acknowledged.
+
 Check a registered identity and all local job pins before starting a worker:
 
 ```sh
@@ -123,6 +135,7 @@ Run the focused checks from this directory:
 uv sync --locked
 uv run pytest tests/test_protocol.py tests/test_journal.py tests/test_result_journal.py
 uv run pytest tests/test_registration.py
+uv run pytest tests/test_http.py
 uv run pytest tests/test_filesystem.py tests/test_jobs.py tests/test_execution.py
 uv run pytest tests/test_credential_opening.py tests/test_doctor.py
 uv run ruff check src tests
