@@ -5,7 +5,9 @@
     "id",
     "whoami",
     "introspect",
-    "plugin"
+    "plugin",
+    "run",
+    "help"
   ],
   "mutation_semantics": "Each case starts from a deep copy of base_manifests[base] and applies mutations in order. Paths are RFC 6901 JSON Pointers. op=set replaces or adds the member or array element at path; a final token '-' appends to the array. op=remove deletes the member. The result is serialized as canonical JSON (sorted keys, no insignificant whitespace, UTF-8) and passed to the loader as bytes.",
   "error_codes": {
@@ -663,6 +665,50 @@
         {
           "kid": "app-2026-10",
           "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+        }
+      ]
+    },
+    "namespace-v1": {
+      "manifest_version": 1,
+      "app": {
+        "id": "utility",
+        "version": "1.0.0",
+        "origin": "https://utility.example"
+      },
+      "tools": [
+        {
+          "name": "run",
+          "method": "GET",
+          "path": "/v1/run",
+          "params": []
+        },
+        {
+          "name": "introspect",
+          "method": "GET",
+          "path": "/v1/inspect",
+          "params": []
+        }
+      ]
+    },
+    "namespace-v2": {
+      "manifest_version": 2,
+      "app": {
+        "id": "utility",
+        "version": "1.0.0",
+        "origin": "https://utility.example"
+      },
+      "tools": [
+        {
+          "name": "run",
+          "method": "GET",
+          "path": "/v1/run",
+          "params": []
+        },
+        {
+          "name": "introspect",
+          "method": "GET",
+          "path": "/v1/inspect",
+          "params": []
         }
       ]
     }
@@ -7283,6 +7329,227 @@
       "expected": {
         "accepted": false,
         "error": "app_keys_invalid"
+      }
+    },
+    {
+      "name": "v1_nested_root_names_accepted",
+      "base": "namespace-v1",
+      "mutations": [],
+      "expected": {
+        "accepted": true,
+        "resolved": {
+          "manifest_version": 1,
+          "app_id": "utility",
+          "agent_tools": [
+            "run",
+            "introspect"
+          ],
+          "surface_tools": [
+            "run",
+            "introspect"
+          ],
+          "hook_tools": [],
+          "install_scopes": [],
+          "app_keys": [],
+          "surfaces": [],
+          "usage": null,
+          "lifecycle": null,
+          "hooks": null,
+          "roles": []
+        }
+      }
+    },
+    {
+      "name": "v1_root_run_refused",
+      "base": "namespace-v1",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/app/id",
+          "value": "run"
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v1_root_introspect_refused",
+      "base": "namespace-v1",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/app/id",
+          "value": "introspect"
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v1_nested_help_refused",
+      "base": "namespace-v1",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/0/name",
+          "value": "help"
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v1_nested_help_long_alias_refused",
+      "base": "namespace-v1",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/0/name",
+          "value": "--help"
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v1_nested_help_short_alias_refused",
+      "base": "namespace-v1",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/0/name",
+          "value": "-h"
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v2_nested_root_names_accepted",
+      "base": "namespace-v2",
+      "mutations": [],
+      "expected": {
+        "accepted": true,
+        "resolved": {
+          "manifest_version": 2,
+          "app_id": "utility",
+          "agent_tools": [
+            "run",
+            "introspect"
+          ],
+          "surface_tools": [
+            "run",
+            "introspect"
+          ],
+          "hook_tools": [],
+          "install_scopes": [],
+          "app_keys": [],
+          "surfaces": [],
+          "usage": null,
+          "lifecycle": null,
+          "hooks": null,
+          "roles": []
+        }
+      }
+    },
+    {
+      "name": "v2_root_run_refused",
+      "base": "namespace-v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/app/id",
+          "value": "run"
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v2_root_introspect_refused",
+      "base": "namespace-v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/app/id",
+          "value": "introspect"
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v2_nested_help_refused",
+      "base": "namespace-v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/0/name",
+          "value": "help"
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v2_nested_help_long_alias_refused",
+      "base": "namespace-v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/0/name",
+          "value": "--help"
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v2_nested_help_short_alias_refused",
+      "base": "namespace-v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/0/name",
+          "value": "-h"
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v2_nested_duplicate_root_name_refused",
+      "base": "namespace-v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/1/name",
+          "value": "run"
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
       }
     }
   ],
