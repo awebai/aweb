@@ -7,8 +7,9 @@ pages and app composition owns the mount.
 
 from html import escape
 from pathlib import Path
+from urllib.parse import quote
 
-from aweb_naapp.console import ConsoleRoute, ConsoleSessions
+from aweb_naapp.console import ConsoleRoute, ConsoleSession, ConsoleSessions
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
@@ -25,6 +26,26 @@ def _page(title: str, body: str) -> HTMLResponse:
         '<script src="/console-ui/console.js" defer></script></head>'
         '<body><header><a href="/">Secrets</a></header><main>'
         f"{body}</main></body></html>"
+    )
+
+
+def console_page(*, title: str, body_html: str, session: ConsoleSession) -> HTMLResponse:
+    """Render an authenticated page with a per-tab CSRF availability guard.
+
+    body_html is trusted developer-authored HTML, never a submitted value.
+    Pass the session returned by S4.current and serve through ConsoleRoute.
+    Custody pages use this same wrapper and assets so a new tab with only a
+    cookie gets a scoped passkey sign-in link instead of unusable actions.
+    """
+    scope = escape(session.scope, quote=True)
+    href = "/login?scope=" + quote(session.scope, safe="")
+    return _page(
+        title,
+        f'<section data-console-scope="{scope}" hidden>{body_html}</section>'
+        '<section id="console-reauth-notice"><h1>Sign in to make changes</h1>'
+        "<p>Sign in again in this tab to make changes.</p>"
+        f'<a id="console-reauth" href="{escape(href, quote=True)}">Sign in with your passkey</a>'
+        "</section>",
     )
 
 
@@ -47,12 +68,13 @@ def console_ui_router(*, sessions: ConsoleSessions) -> APIRouter:
     @router.get("/", response_class=HTMLResponse)
     async def home(request: Request) -> Response:
         try:
-            await sessions.current(request)
+            session = await sessions.current(request)
         except HTTPException as error:
             return _login_redirect(error)
-        return _page(
-            "Console",
-            '<div class="heading"><h1>Secrets console</h1>'
+        return console_page(
+            title="Console",
+            session=session,
+            body_html='<div class="heading"><h1>Secrets console</h1>'
             '<form id="logout" action="/logout" method="post">'
             '<button type="submit" class="secondary">Sign out</button></form></div>'
             "<p>Manage your team’s secrets and the people and agents who can use them.</p>"

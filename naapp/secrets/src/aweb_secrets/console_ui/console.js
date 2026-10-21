@@ -4,6 +4,20 @@
   const csrfKey = "aweb.secrets.console.csrf";
   const notice = document.querySelector("#notice");
 
+  // A session cookie is shared across tabs; its CSRF token is tab-local.
+  // Keep authenticated actions hidden until this tab can actually use them.
+  const actions = document.querySelector("[data-console-scope]");
+  if (actions) {
+    try {
+      if (sessionStorage.getItem(csrfKey)) {
+        actions.hidden = false;
+        document.querySelector("#console-reauth-notice").hidden = true;
+      }
+    } catch {
+      // Storage may be disabled. Leave the scoped passkey sign-in visible.
+    }
+  }
+
   function decode(value) {
     const text = value.replace(/-/g, "+").replace(/_/g, "/");
     return Uint8Array.from(atob(text + "=".repeat((4 - text.length % 4) % 4)), c => c.charCodeAt(0));

@@ -5,7 +5,7 @@ import base64
 import socket
 from collections.abc import AsyncIterator
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 import uvicorn
@@ -149,6 +149,19 @@ async def test_browser_login_and_bodiless_csrf_logout(
             await page.get_by_role("link", name="View activity").get_attribute("href")
             == "/activity"
         )
+        # A new browser context can have the session cookie but no tab CSRF.
+        # It must offer re-authentication rather than unusable mutation actions.
+        async with await browser.new_context() as fresh:
+            await fresh.add_cookies(await context.cookies())
+            other = await fresh.new_page()
+            await other.goto(service + "/")
+            assert (await fresh.request.get(service + "/session")).status == 200
+            await expect(other.locator("#console-reauth")).to_be_visible(timeout=2000)
+            await expect(other.locator("[data-console-scope]")).to_be_hidden()
+            href = await other.locator("#console-reauth").get_attribute("href")
+            assert href is not None
+            assert parse_qs(urlsplit(href).query) == {"scope": [scope]}
+            await other.screenshot(path=tmp_path / "console-fresh-tab.png")
         await page.screenshot(path=tmp_path / "console-home.png")
         await page.get_by_role("button", name="Sign out").click()
         await page.wait_for_url(service + "/login")
