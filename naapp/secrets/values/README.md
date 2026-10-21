@@ -16,3 +16,9 @@ uv run mypy src
 
 NUL refusal for process delivery and selecting a declared field belong to the
 runner boundary. The codec does not decide a caller's authority or destination.
+
+`aweb_secrets_values.redaction.KnownValues` and
+`aweb_secrets_values.credential_shapes` provide the same known-value encoding
+redaction, partial-tail handling and credential tripwire used by the app. The
+app re-exports these objects too. They perform no I/O, grant no authority and
+do not replace the caller's output bounds or projection policy.
