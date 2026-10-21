@@ -154,3 +154,10 @@ def test_item_version_change_reports_only_the_observed_version():
     assert refused.value.code == "secret_version_changed"
     assert refused.value.observed_item_version == 7
     assert canary not in str(refused.value) + repr(refused.value)
+
+
+async def test_invalid_whole_value_has_fixed_shape_refusal_not_a_successful_observation():
+    with pytest.raises(CustodyUnavailable) as refused:
+        project_item(reference(), sdk_item([field("credential", "")]))
+    assert refused.value.code == "secret_value_invalid"
+    assert refused.value.__suppress_context__

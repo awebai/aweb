@@ -26,7 +26,7 @@ from aweb_secrets.custody.sealing import (
     Plaintext,
     SealContext,
 )
-from aweb_secrets.custody.values import decode_value, encode_value
+from aweb_secrets.custody.values import ValueInvalid, decode_value, encode_value
 from aweb_secrets.operation import CAPTURE_FIELDS
 
 _ID = re.compile(r"[a-z0-9]{26}")
@@ -90,6 +90,15 @@ class SecretVersionChanged(CustodyUnavailable):
         self.observed_item_version = observed_item_version
 
 
+class SecretValueInvalid(CustodyUnavailable):
+    """A resolved item value violates the reference's immutable codec shape."""
+
+    code = "secret_value_invalid"
+
+    def __init__(self) -> None:
+        super().__init__("the secret value does not match its immutable shape")
+
+
 @dataclass(frozen=True)
 class OnePasswordRead:
     """One transient read; the metadata is safe to describe, the value is not."""
@@ -141,6 +150,8 @@ def project_item(
         )
     except SecretVersionChanged:
         raise
+    except ValueInvalid:
+        raise SecretValueInvalid() from None
     except Exception:
         raise CustodyUnavailable("unusable 1Password item") from None
 

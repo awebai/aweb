@@ -35,7 +35,7 @@ import json
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -58,7 +58,8 @@ from .sealing import (
 from .values import ValueInvalid, decode_value
 
 if TYPE_CHECKING:
-    from .onepassword import OnePasswordRead
+    from .onepassword import OnePasswordRead, OnePasswordReference
+    from .opening import BackendObservation
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_secrets_custody"
@@ -457,20 +458,85 @@ class Custody:
         decoded = decode_value(record.kind, observed.value.reveal())
         if decoded.keys() != dict(reference.fields).keys():
             raise CustodyUnavailable("the observation does not match its selected fields")
+        return await self._store_onepassword_reference(
+            tx,
+            installation_id=installation_id,
+            team_id=team_id,
+            record=record,
+            credential=credential,
+            reference=reference,
+            item_version=observed.item_version,
+            updated_at=observed.updated_at,
+        )
+
+    async def stage_onepassword_observation(
+        self,
+        tx: TransactionManager,
+        observation: BackendObservation,
+    ) -> StagedOnePasswordReference:
+        """Reconciliation-only allocation after the complete forest/B2 prelocks.
+
+        The SDK has validated the whole value and discarded its bytes before
+        this transaction. Recheck its exact active binding, immutable shape and
+        credential epoch; this metadata candidate grants no dispatch authority.
+        """
+        from .opening import active_binding
+
+        context = observation.binding.context
+        row = await tx.fetch_one(
+            "SELECT record FROM {{tables.secrets}}"
+            " WHERE installation_id=$1 AND team_id=$2 AND secret_id=$3 FOR UPDATE",
+            context.installation_id,
+            context.team_id,
+            context.secret_id,
+        )
+        if (
+            row is None
+            or await active_binding(tx, context) != observation.binding
+            or type(observation.item_version) is not int
+            or observation.item_version <= 0
+            or observation.item_version == observation.binding.item_version
+            or not isinstance(observation.updated_at, datetime)
+            or observation.updated_at.utcoffset() is None
+        ):
+            raise CustodyUnavailable("unusable backend observation")
+        return await self._store_onepassword_reference(
+            tx,
+            installation_id=context.installation_id,
+            team_id=context.team_id,
+            record=SecretRecord.from_after(json.loads(row["record"])),
+            credential=observation.binding.credential_context,
+            reference=observation.binding.reference,
+            item_version=observation.item_version,
+            updated_at=observation.updated_at.astimezone(UTC),
+        )
+
+    async def _store_onepassword_reference(
+        self,
+        tx: TransactionManager,
+        *,
+        installation_id: str,
+        team_id: str,
+        record: SecretRecord,
+        credential: SealContext,
+        reference: OnePasswordReference,
+        item_version: int,
+        updated_at: datetime,
+    ) -> StagedOnePasswordReference:
         context = await self.sealer._allocate_validated(
             tx,
             installation_id=installation_id,
             team_id=team_id,
-            secret_id=secret_id,
+            secret_id=record.secret_id,
             shape=sealed_shape(record),
         )
         binding = {
             "v": 1,
-            "secret_id": secret_id,
+            "secret_id": record.secret_id,
             "version": context.version,
             "credential_version": credential.version,
             **reference.as_config(),
-            "item_version": observed.item_version,
+            "item_version": item_version,
         }
         binding_json = json.dumps(binding)
         version_ref = "sv_" + uuid.uuid4().hex
@@ -480,12 +546,12 @@ class Custody:
             " version_ref, binding, item_updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
             installation_id,
             team_id,
-            secret_id,
+            record.secret_id,
             context.version,
             credential.version,
             version_ref,
             binding_json,
-            observed.updated_at,
+            updated_at,
         )
         return StagedOnePasswordReference(context, version_ref, binding_json)
 

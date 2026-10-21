@@ -8,9 +8,8 @@ without changing `secret/1`, `SealContext` or the use-approval version format.
 The two `change/1` projections below apply only through the existing
 passkey-confirmed `ChangeSets.confirm` path. Draft and confirmation compare the
 full scoped server-staged candidates and credential epoch. Parsing or hashing
-a projection supplies no backend authority. Console routes, automatic remote
-version reconciliation and successful external-vault proof remain separate
-release integration work.
+a projection supplies no backend authority. Console routes, S13 reconciliation/release composition and successful external-vault
+proof remain separate release integration work.
 
 ## Console-only change projections
 
@@ -129,7 +128,10 @@ old reference contexts. Preparation discovers the affected reference roots
 without child locks and holds the common installation fence, roles, ancestry,
 grants and complete sorted B2 union, including the confirming approval, before
 any approval consumption or consequence callback. Record and custody writes
-follow that authority phase, parent before custody.
+follow that authority phase, parent before custody. Unlocked dependent discovery
+relies on every active-version writer claiming the installation configuration
+revision before it writes. The automatic reconciliation writer follows the same
+rule; it must not introduce an uncoordinated active-pointer update.
 
 The confirmed transaction invalidates old dependent contexts and use approvals,
 disables descendants, and deletes the old token ciphertext. References
@@ -203,8 +205,18 @@ and successful whole-value/immutable-shape validation. It is internal
 observation data, not a wire format or another authority/planner type. An
 unvalidated or unresolved observation cannot be promoted.
 
-A separate scoped, fenced transaction before S3 prepares the complete
-forest/grant/B2 union, then compares those epochs against current state.
+`BackendReconciler(db=..., custody=..., containment=..., fence=...)` exposes
+`await reconcile(observation, admitted=...)` for S13 composition. It owns a
+separate scoped transaction before S3: F6 first, then the complete forest/grant/B2
+union, followed by epoch comparison and the configuration revision before
+parent/custody writes. It does not consume an owner approval or open a value.
+A changed observation bumps the revision, making prior change-set drafts stale.
+An equal remote version allocates and emits nothing. Its result contains only
+`changed` and scoped `affected_secret_ids` for postcommit cleanup, never a new
+admitted context or permission to retry the original intent. If `changed` is
+true, S13 must refuse the original attempt with `secret_version_changed`; even
+when a stale CAS or outbox failure prevents reconciliation, that attempt must
+still release no value.
 A stale observation cannot change a newer binding. A successful CAS records
 and activates the new local version, invalidates old approvals/descendants,
 and enqueues its required observation event in that same transaction. It
@@ -233,8 +245,12 @@ Phase-correct audit matters: pre-S3 failures produce a refused use event.
 Broker post-commit/pre-send failures produce `not_sent`, with their cause retained
 in console/operational state. The current hook catalog forbids `refusal_code`
 on `not_sent`; producers must not attach that field or fabricate a pre-S3
-refusal. The shared observation act/authority and invalid-value refusal-code
-delta remain with hooks-design until reviewed; this schema slice emits none.
+refusal. The reviewed shared decision92 catalog defines the observation act and
+`secret_value_invalid` refusal code. The SDK adapter raises that fixed code only
+for a resolved value that fails the whole shared codec; missing/deleted/unresolved
+references retain `custody_unavailable`. Producer composition and deployment
+remain gated on updated receiving catalog support; no local serializer or
+unreviewed hook schema is introduced.
 
 Required local outbox storage and the transition share one transaction. A
 failed outbox insert rolls both back and the use still fails closed without

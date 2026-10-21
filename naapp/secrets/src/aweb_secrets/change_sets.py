@@ -25,7 +25,10 @@ A draft that expires or is cancelled revokes its approval and destroys its
 sealed values. Each staged value is bound at draft time to its native value, private token or
 reference item, and checked again at confirmation. Private token replacement
 prepares all dependent roots before B2; only explicitly rebound references can
-activate under the new token. Required proof-bound audit shares the transaction.
+activate under the new token. Unlocked token-dependent discovery relies on
+all active-version writers claiming the configuration revision before writes,
+including automatic backend reconciliation. Required proof-bound audit shares
+the transaction.
 A confirmed value replaces the secret's last one,
 destroying it in the same transaction. A kind whose apply does not exist yet
 is refused at draft time, so no draft can be confirmed and then do nothing.
