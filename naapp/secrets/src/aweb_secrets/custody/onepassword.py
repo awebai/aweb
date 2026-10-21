@@ -1,7 +1,7 @@
 """Read-only 1Password SDK access for one dispatch (§5.3).
 
 The caller opens the installation's owner-entered, natively sealed service
-account token for this use. This adapter accepts only that redacting Plaintext;
+account token for this use. This adapter accepts its paired plaintext/context;
 it has no environment/file token loader, write operations, or client/value cache.
 Every call authenticates and retrieves the exact referenced item afresh. It
 projects selected field IDs through custody's shared value codec. SDK messages,
@@ -20,7 +20,12 @@ from typing import Any
 
 from onepassword import Client, Item
 
-from aweb_secrets.custody.sealing import CustodyUnavailable, Plaintext, SealContext
+from aweb_secrets.custody.sealing import (
+    CustodyUnavailable,
+    OpenedBackendCredential,
+    Plaintext,
+    SealContext,
+)
 from aweb_secrets.custody.values import decode_value, encode_value
 from aweb_secrets.operation import CAPTURE_FIELDS
 
@@ -156,13 +161,12 @@ class OnePasswordSDK:
         self,
         reference: OnePasswordReference,
         *,
-        token: Plaintext,
+        credential: OpenedBackendCredential,
         expected_item_version: int | None = None,
-        credential_context: SealContext | None = None,
     ) -> OnePasswordRead:
         try:
             reference = OnePasswordReference.from_config(reference.kind, reference.as_config())
-            account_token = decode_value("bearer", token.reveal())["value"]
+            account_token = decode_value("bearer", credential.plaintext.reveal())["value"]
             async with asyncio.timeout(self._timeout):
                 client = await Client.authenticate(
                     auth=account_token,
@@ -174,7 +178,7 @@ class OnePasswordSDK:
                 reference,
                 item,
                 expected_item_version=expected_item_version,
-                credential_context=credential_context,
+                credential_context=credential.context,
             )
         except CustodyUnavailable:
             raise

@@ -21,6 +21,11 @@ Validated 1Password candidates use that same retained shape/version history,
 but store only a reference and an opaque audit handle, never the item value.
 Private backend-token staging locks its onepassword_credentials parent before
 the reserved custody key. It creates no ordinary secret or active credential.
+BackendCredentialOpener opens only the exact active token; console composition
+alone holds BackendCredentialPreview for inert reference previews. Both return
+the token paired with its authenticated context. Their read completes before
+unsealing; callers perform SDK I/O outside every held transaction or lock and
+recheck current authority separately before activation or dispatch.
 """
 
 from __future__ import annotations
@@ -42,6 +47,7 @@ from aweb_secrets.secret import SecretRecord, sealed_shape
 from .sealing import (
     CustodyUnavailable,
     KeyProvider,
+    OpenedBackendCredential,
     Plaintext,
     SealContext,
     SealedValue,
@@ -49,7 +55,7 @@ from .sealing import (
     seal_canary,
     unseal,
 )
-from .values import decode_value
+from .values import ValueInvalid, decode_value
 
 if TYPE_CHECKING:
     from .onepassword import OnePasswordRead
@@ -223,6 +229,83 @@ class SecretOpener:
         return await asyncio.to_thread(unseal, self._provider, context, sealed)
 
 
+async def _open_backend_credential(
+    provider: KeyProvider,
+    db: AsyncDatabaseManager,
+    context: SealContext,
+    *,
+    require_active: bool,
+) -> OpenedBackendCredential:
+    if (
+        context.secret_id != BACKEND_CREDENTIAL_ID
+        or type(context.version) is not int
+        or context.version <= 0
+    ):
+        raise CustodyUnavailable("no usable backend credential")
+    row = await db.fetch_one(
+        "SELECT v.key_id, v.wrapped_key, v.nonce, v.ciphertext"
+        " FROM {{tables.onepassword_credentials}} p"
+        " JOIN {{tables.custody_secrets}} c USING (installation_id, team_id)"
+        " JOIN {{tables.sealed_versions}} v USING (installation_id, team_id, secret_id)"
+        " WHERE p.installation_id=$1 AND p.team_id=$2"
+        " AND c.secret_id=p.credential_id AND v.version=$3"
+        " AND c.disabled_at IS NULL AND c.immutable_shape=$4::jsonb"
+        " AND (NOT $5::boolean OR p.active_version=v.version)",
+        context.installation_id,
+        context.team_id,
+        context.version,
+        json.dumps(_BACKEND_CREDENTIAL_SHAPE),
+        require_active,
+    )
+    if row is None:
+        raise CustodyUnavailable("no usable backend credential")
+    sealed = SealedValue(
+        key_id=row["key_id"],
+        wrapped_key=bytes(row["wrapped_key"]),
+        nonce=bytes(row["nonce"]),
+        ciphertext=bytes(row["ciphertext"]),
+    )
+    plaintext = await asyncio.to_thread(unseal, provider, context, sealed)
+    try:
+        decode_value("bearer", plaintext.reveal())
+    except ValueInvalid:
+        raise CustodyUnavailable("unusable backend credential") from None
+    return OpenedBackendCredential(context, plaintext)
+
+
+class BackendCredentialOpener:
+    """Private use-time capability; never opens an inert token candidate.
+
+    Opening is an observation, not an authority fence. The caller must recheck
+    the exact credential epoch under its normal fence after any SDK read.
+    """
+
+    def __init__(self, provider: KeyProvider, db: AsyncDatabaseManager) -> None:
+        self._provider, self._db = provider, db
+
+    async def open(self, context: SealContext) -> OpenedBackendCredential:
+        return await _open_backend_credential(
+            self._provider, self._db, context, require_active=True
+        )
+
+
+class BackendCredentialPreview:
+    """Console-only capability for validating an inert staged token/reference.
+
+    Composition gives this only to the owner-console service. That service
+    authorizes the owner before preview and fences staging/confirmation after
+    the network read. There is no transaction argument and no activation here.
+    """
+
+    def __init__(self, provider: KeyProvider, db: AsyncDatabaseManager) -> None:
+        self._provider, self._db = provider, db
+
+    async def open(self, context: SealContext) -> OpenedBackendCredential:
+        return await _open_backend_credential(
+            self._provider, self._db, context, require_active=False
+        )
+
+
 @dataclass(frozen=True)
 class Description:
     """A secret's custody state: its latest stored version, never its value."""
@@ -259,6 +342,8 @@ class Custody:
         self._db = db
         self.sealer = SecretSealer(provider)
         self.opener = SecretOpener(provider, db)
+        self.backend_credential_opener = BackendCredentialOpener(provider, db)
+        self.backend_credential_preview = BackendCredentialPreview(provider, db)
 
     async def stage_backend_credential(
         self,

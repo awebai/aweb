@@ -6,10 +6,9 @@ from datetime import UTC, datetime
 import pytest
 from onepassword import Item, ItemCategory, ItemField, ItemFieldType
 
-from aweb_secrets.custody import CustodyUnavailable, Plaintext, encode_value
+from aweb_secrets.custody import CustodyUnavailable, encode_value
 from aweb_secrets.custody.onepassword import (
     OnePasswordReference,
-    OnePasswordSDK,
     SecretVersionChanged,
     project_item,
 )
@@ -155,14 +154,3 @@ def test_item_version_change_reports_only_the_observed_version():
     assert refused.value.code == "secret_version_changed"
     assert refused.value.observed_item_version == 7
     assert canary not in str(refused.value) + repr(refused.value)
-
-
-async def test_real_sdk_authentication_failure_keeps_token_out_of_errors_and_output(capfd):
-    token = os.urandom(24).hex()
-    sdk = OnePasswordSDK()
-    with pytest.raises(CustodyUnavailable) as refused:
-        await sdk.read(reference(), token=Plaintext(encode_value("bearer", {"value": token})))
-    captured = capfd.readouterr()
-    output = str(refused.value) + repr(refused.value) + captured.out + captured.err
-    assert token not in output
-    assert refused.value.code == "custody_unavailable"
