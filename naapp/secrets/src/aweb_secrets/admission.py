@@ -30,10 +30,14 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired, claim
-from aweb_naapp.roles import principal_key, roles_of
+from aweb_naapp.roles import PrincipalKey, hold_role, principal_key, roles_of
 from aweb_naapp.runtime.attestation import VerifiedAttestation
 from aweb_naapp.runtime.authorization import Grant
-from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationFence
+from aweb_naapp.runtime.installation import (
+    AdmittedInstallation,
+    InstallationFence,
+    InstallationRefused,
+)
 from aweb_naapp.runtime.team_auth import Principal
 from pgdbm.core import TransactionManager
 
@@ -41,7 +45,7 @@ from aweb_secrets import records
 from aweb_secrets.grant import GrantRecord, is_secrets_role
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
-from aweb_secrets.rate import RateLimited, charge
+from aweb_secrets.rate import RateLimited, charge, lock_buckets
 
 # How long a request id keeps answering with its first intent (§11.2).
 IDEMPOTENCY_RETENTION = timedelta(days=30)
@@ -120,7 +124,8 @@ async def _replayed(
 ) -> Admission:
     row = await tx.fetch_one(
         """
-        SELECT secret_id, grant_id, policy_digest, approval_required FROM {{tables.intents}}
+        SELECT secret_id, grant_id, policy_digest, approval_required, install_generation
+        FROM {{tables.intents}}
         WHERE intent_id = $1 AND installation_id = $2
         """,
         intent_id,
@@ -128,6 +133,10 @@ async def _replayed(
     )
     if row is None:
         raise RuntimeError("an idempotency key stands for an intent that cannot be read")
+    if row["install_generation"] != installation.generation:
+        raise InstallationRefused(
+            "generation_superseded", 409, "The request was admitted under an older generation"
+        )
     still_granted = await records.active_grants(
         tx, installation.installation_id, row["secret_id"], principal_did=principal_did, roles=roles
     )
@@ -156,11 +165,36 @@ async def admit_use(
     """Admit ``request`` in the caller's transaction, or raise :class:`AdmissionRefused`.
 
     ``attestation`` is the verified principal attestation that accompanied the
-    request, or None when it carried none.
+    request, or None when it carried none. The principal's secrets roles are
+    held until the caller's transaction ends, after the installation fence and
+    before anything else, so a role cannot be withdrawn under an admission.
+    Everything after that runs in a savepoint: a refusal leaves no claimed
+    request id, no charged bucket and no intent behind, so a caller may record
+    the denial in the same transaction and commit.
     """
     installation = await fence.admit(tx, grant)
     key = principal_key(principal)
-    roles = [role for role in await roles_of(tx, key) if is_secrets_role(role)]
+    roles = [
+        role
+        for role in await roles_of(tx, key)
+        if is_secrets_role(role) and await hold_role(tx, key, role)
+    ]
+    async with tx.transaction() as attempt:
+        return await _admit_once(
+            attempt, installation, key, roles, principal, request, attestation, now
+        )
+
+
+async def _admit_once(
+    tx: TransactionManager,
+    installation: AdmittedInstallation,
+    key: PrincipalKey,
+    roles: list[str],
+    principal: Principal,
+    request: UseRequest,
+    attestation: VerifiedAttestation | None,
+    now: datetime,
+) -> Admission:
     intent_id = mint_intent_id()
     try:
         receipt = await claim(
@@ -207,11 +241,23 @@ async def admit_use(
         )
     )
 
-    first_refusal: AdmissionRefused | None = None
+    policies: list[Policy] = []
     for candidate in candidates:
         policy = await records.policy(tx, installation.installation_id, candidate.policy_digest)
         if policy is None:
             raise RuntimeError("a grant references a policy that cannot be read")
+        policies.append(policy)
+    await lock_buckets(
+        tx,
+        installation.installation_id,
+        stored.record.secret_id,
+        key.principal_did,
+        [(policy.digest, policy.body["rate"]) for policy in policies],
+        now=now,
+    )
+
+    first_refusal: AdmissionRefused | None = None
+    for candidate, policy in zip(candidates, policies, strict=True):
         refusal = _covers(candidate, policy, request, stored.record.sensitivity, operation)
         if refusal is None and not policy.window_open(now):
             refusal = "policy_window_closed"
@@ -224,6 +270,7 @@ async def admit_use(
                     installation.installation_id,
                     stored.record.secret_id,
                     key.principal_did,
+                    policy.digest,
                     policy.body["rate"],
                     now=now,
                 )

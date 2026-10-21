@@ -6,16 +6,19 @@ import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
+import asyncpg
 import pytest
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME
-from aweb_secrets.rate import RateLimited, charge
+from aweb_secrets.rate import RateLimited, charge, lock_buckets
 
 INSTALLATION = "inst_5d2a9c31"
 SECRET = "sec_19ab42"
 ALICE = "did:aw:alice"
 BOB = "did:aw:bob"
+POLICY_A = "a" * 64
+POLICY_B = "b" * 64
 T0 = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 PER_PRINCIPAL = [{"per": "principal_secret", "capacity": 2, "window_s": 3600}]
 BOTH = [
@@ -33,9 +36,9 @@ async def db(test_db_factory) -> AsyncIterator[AsyncDatabaseManager]:
     yield database
 
 
-async def _charge(db, buckets, principal=ALICE, now=T0) -> None:
+async def _charge(db, buckets, principal=ALICE, now=T0, policy=POLICY_A) -> None:
     async with db.transaction() as tx:
-        await charge(tx, INSTALLATION, SECRET, principal, buckets, now=now)
+        await charge(tx, INSTALLATION, SECRET, principal, policy, buckets, now=now)
 
 
 async def test_requests_within_capacity_are_admitted_and_the_next_is_refused(db) -> None:
@@ -75,7 +78,7 @@ async def test_a_charge_rolls_back_with_the_callers_transaction(db) -> None:
     for _ in range(2):
         with pytest.raises(RuntimeError):
             async with db.transaction() as tx:
-                await charge(tx, INSTALLATION, SECRET, ALICE, PER_PRINCIPAL, now=T0)
+                await charge(tx, INSTALLATION, SECRET, ALICE, POLICY_A, PER_PRINCIPAL, now=T0)
                 raise RuntimeError("admission failed later")
     await _charge(db, PER_PRINCIPAL)
     await _charge(db, PER_PRINCIPAL)
@@ -98,3 +101,27 @@ async def test_concurrent_charges_never_exceed_capacity(db) -> None:
 
     outcomes = await asyncio.gather(*(attempt(i) for i in range(8)))
     assert outcomes.count(True) == 3
+
+
+async def test_each_policy_charges_its_own_buckets(db) -> None:
+    roomy = [{"per": "principal_secret", "capacity": 100, "window_s": 3600}]
+    await _charge(db, PER_PRINCIPAL, policy=POLICY_A)
+    await _charge(db, PER_PRINCIPAL, policy=POLICY_A)
+    # Charging the same secret and principal under another policy leaves A's bucket empty.
+    await _charge(db, roomy, policy=POLICY_B)
+    with pytest.raises(RateLimited):
+        await _charge(db, PER_PRINCIPAL, policy=POLICY_A)
+
+
+async def test_locking_the_candidates_buckets_holds_every_one_of_them(db) -> None:
+    async with db.transaction() as locking:
+        await lock_buckets(
+            locking, INSTALLATION, SECRET, ALICE, [(POLICY_B, BOTH), (POLICY_A, BOTH)], now=T0
+        )
+        for policy in (POLICY_A, POLICY_B):
+            with pytest.raises(asyncpg.LockNotAvailableError):
+                async with db.transaction() as tx:
+                    await tx.execute("SET LOCAL lock_timeout = '100ms'")
+                    await charge(tx, INSTALLATION, SECRET, BOB, policy, BOTH, now=T0)
+        # The holder charges its own buckets without waiting.
+        await charge(locking, INSTALLATION, SECRET, ALICE, POLICY_A, BOTH, now=T0)

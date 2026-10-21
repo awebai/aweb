@@ -158,16 +158,19 @@ CREATE OR REPLACE TRIGGER operation_templates_immutable
     BEFORE UPDATE ON {{tables.operation_templates}}
     FOR EACH ROW EXECUTE FUNCTION {{tables.secrets_refuse_change}}();
 
--- Token buckets of policies' rate limits (§4.4): one per (secret, principal) and
--- one per secret, whose principal_did is ''. Charged in the admission transaction.
+-- Token buckets of policies' rate limits (§4.4): for each policy, one per
+-- (secret, principal) and one per secret, whose principal_did is ''. A policy
+-- charges only its own buckets, so one grant's admissions never refill another
+-- policy's limit. Charged in the admission transaction.
 CREATE TABLE IF NOT EXISTS {{tables.rate_buckets}} (
     installation_id  TEXT NOT NULL,
+    policy_digest    TEXT NOT NULL,
     secret_id        TEXT NOT NULL,
     scope            TEXT NOT NULL CHECK (scope IN ('principal_secret', 'secret')),
     principal_did    TEXT NOT NULL,
     tokens           DOUBLE PRECISION NOT NULL,
     refilled_at      TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (installation_id, secret_id, scope, principal_did),
+    PRIMARY KEY (installation_id, policy_digest, secret_id, scope, principal_did),
     CHECK ((scope = 'secret') = (principal_did = ''))
 );
 

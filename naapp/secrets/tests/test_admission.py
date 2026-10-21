@@ -3,6 +3,7 @@ installation fence, idempotency store and role assignments."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 from collections.abc import AsyncIterator
@@ -10,6 +11,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
+import asyncpg
 import pytest
 from aweb_naapp.idempotency import apply_idempotency_migrations
 from aweb_naapp.roles import apply_roles_migrations, assign, principal_key, unassign
@@ -539,3 +541,124 @@ async def test_a_secret_made_sensitive_refuses_its_unprojected_operations(db, fe
     async with db.transaction() as tx:
         await records.update_secret(tx, INSTALLATION, TEAM, sensitive)
     assert await _refusal(db, fence, request=_named()) == "operation_not_allowed"
+
+
+async def test_a_loose_policy_never_refills_a_strict_ones_buckets(db, fence) -> None:
+    strict = {**POLICY_BODY, "rate": [{"per": "principal_secret", "capacity": 2, "window_s": 3600}]}
+    loose = {
+        **POLICY_BODY,
+        "approval": "per_use",
+        "approvers": ["finance-approver"],
+        "rate": [{"per": "principal_secret", "capacity": 100, "window_s": 3600}],
+    }
+    await _install(db, grant_id="grt_alice001", policy_body=strict)
+    await _install(
+        db, grant_id="grt_role0001", subject={"role": "secrets.owner"}, policy_body=loose
+    )
+    async with db.transaction() as tx:
+        await assign(tx, principal_key(ALICE), "secrets.owner")
+    used = [(await _admit(db, fence, request=_request(f"req_{n}"))).grant_id for n in range(5)]
+    assert used == ["grt_alice001", "grt_alice001", "grt_role0001", "grt_role0001", "grt_role0001"]
+
+
+async def _unassign_blocked(db, principal, role) -> None:
+    with pytest.raises(asyncpg.LockNotAvailableError):
+        async with db.transaction() as tx:
+            await tx.execute("SET LOCAL lock_timeout = '100ms'")
+            await unassign(tx, principal_key(principal), role)
+
+
+async def test_a_role_admitting_a_request_is_held_until_the_admission_commits(db, fence) -> None:
+    await _install(db, subject={"role": "secrets.role.deployers"})
+    async with db.transaction() as tx:
+        await assign(tx, principal_key(BOB), "secrets.role.deployers")
+    async with db.transaction() as admitting:
+        admitted = await admit_use(
+            admitting,
+            fence=fence,
+            grant=_grant_source_grant(),
+            principal=BOB,
+            request=_request(),
+            attestation=None,
+            now=NOW,
+        )
+        assert admitted.grant_id == "grt_alice001"
+        await _unassign_blocked(db, BOB, "secrets.role.deployers")
+    async with db.transaction() as tx:
+        await unassign(tx, principal_key(BOB), "secrets.role.deployers")
+
+
+async def test_a_replay_holds_the_role_it_was_admitted_under(db, fence) -> None:
+    await _install(db, subject={"role": "secrets.role.deployers"})
+    async with db.transaction() as tx:
+        await assign(tx, principal_key(BOB), "secrets.role.deployers")
+    await _admit(db, fence, BOB)
+    async with db.transaction() as replaying:
+        replayed = await admit_use(
+            replaying,
+            fence=fence,
+            grant=_grant_source_grant(),
+            principal=BOB,
+            request=_request(),
+            attestation=None,
+            now=NOW,
+        )
+        assert replayed.replayed
+        await _unassign_blocked(db, BOB, "secrets.role.deployers")
+
+
+async def test_a_refusal_committed_by_its_caller_leaves_no_claim_behind(db, fence) -> None:
+    await _install(db, subject={"principal": BOB.did_aw}, grant_id="grt_bob00001")
+    async with db.transaction() as tx:
+        with pytest.raises(AdmissionRefused):
+            await admit_use(
+                tx,
+                fence=fence,
+                grant=_grant_source_grant(),
+                principal=ALICE,
+                request=_request(),
+                attestation=None,
+                now=NOW,
+            )
+        # The caller records the denial in the same transaction and commits.
+    await _install(db)
+    admitted = await _admit(db, fence)
+    assert not admitted.replayed
+
+
+async def test_a_replay_under_a_superseded_generation_is_refused(db, fence) -> None:
+    await _install(db)
+    await _admit(db, fence)
+    with pytest.raises(InstallationRefused) as refused:
+        await _admit(db, fence, grant=_grant_source_grant(generation=GENERATION + 1))
+    assert refused.value.code == "generation_superseded"
+
+
+async def test_admissions_under_reversed_policy_orders_never_deadlock(db, fence) -> None:
+    # Alice's direct grant is under policy A and her role grant under B; Bob's
+    # direct grant is under B and his role grant under A. Each admission is
+    # refused by its first candidate's window and charges its second, so both
+    # lock both policies' shared per-secret buckets, in opposite candidate orders.
+    closed = {"time_zone": "UTC", "ranges": [{"days": ["sat"], "from": "00:00", "to": "01:00"}]}
+    a = {**POLICY_BODY, "rate": [{"per": "secret", "capacity": 1000, "window_s": 3600}]}
+    b = {**a, "approval_ttl_s": 600}
+    await _install(db, grant_id="grt_alice001", policy_body={**a, "windows": closed})
+    await _install(db, grant_id="grt_alice002", subject={"role": "secrets.role.b"}, policy_body=b)
+    await _install(
+        db,
+        grant_id="grt_bob00001",
+        subject={"principal": BOB.did_aw},
+        policy_body={**b, "windows": closed},
+    )
+    await _install(db, grant_id="grt_bob00002", subject={"role": "secrets.role.a"}, policy_body=a)
+    async with db.transaction() as tx:
+        await assign(tx, principal_key(ALICE), "secrets.role.b")
+        await assign(tx, principal_key(BOB), "secrets.role.a")
+
+    async def admit(principal: Principal, n: int) -> str:
+        return (await _admit(db, fence, principal, request=_request(f"req_{n}"))).grant_id
+
+    outcomes = await asyncio.gather(
+        *(admit(ALICE if n % 2 else BOB, n) for n in range(24)), return_exceptions=True
+    )
+    assert [o for o in outcomes if isinstance(o, BaseException)] == []
