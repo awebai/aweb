@@ -5,8 +5,9 @@ broker holds a :class:`SecretOpener`, which is the only way a stored value is
 unsealed. The app's composition hands each its own; :class:`Custody` holds
 both, with the operations that never reveal a value.
 
-Lock order (decisions 43, 59, 65c): installation fence, role hold, approval
-and candidates, four-eyes setting, revision, then record writes. Within record
+Lock order (decisions 43, 59, 65c, 78): installation fence, role hold,
+replacement/reenable ancestry and grants where applicable, the complete approval
+union and candidates, four-eyes setting, revision, then record writes. Within record
 writes, lock the parent secrets row before custody rows: KEY SHARE for ingest,
 UPDATE for reshaping. Existing ingest validates against the record re-read under
 that lock; only initial-create drafts may have no parent yet. All callers run

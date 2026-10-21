@@ -15,6 +15,7 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,6 +23,8 @@ from typing import Any
 import pytest
 from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
+from aweb_naapp.hooks.producer import HookProducer, ServerProducer
+from aweb_naapp.outbox import apply_outbox_migrations
 from aweb_naapp.roles import PrincipalKey, apply_roles_migrations, assign, has_role, unassign
 from aweb_naapp.runtime.approvals import (
     Approval,
@@ -62,6 +65,7 @@ from aweb_secrets.change_sets import (
     DraftLimit,
     apply_change_set_migrations,
 )
+from aweb_secrets.containment import Containment
 from aweb_secrets.custody import (
     Custody,
     CustodyUnavailable,
@@ -80,6 +84,8 @@ from aweb_secrets.owners import (
     record_owner,
 )
 from aweb_secrets.revisions import apply_revision_migrations, bump_config_revision, config_revision
+from aweb_secrets.tokens import ProcessTokenCache
+from aweb_secrets.use_approvals import apply_use_approval_migrations
 from tests.test_owner_directory import Audit
 
 ORIGIN = "https://secrets.example.com"
@@ -166,6 +172,7 @@ class World:
     inbox: Inbox
     fence: InstallationFence
     admitted: AdmittedInstallation
+    containment: Containment
     devices: dict[str, SoftAuthenticator] = field(default_factory=dict)
 
 
@@ -203,6 +210,8 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
         apply_custody_migrations,
         apply_change_set_migrations,
         apply_installation_migrations,
+        apply_use_approval_migrations,
+        apply_outbox_migrations,
     ):
         await migrate(db)
     installations = Installations()
@@ -223,12 +232,33 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
     key.write_text(os.urandom(32).hex())
     key.chmod(0o600)
     custody = Custody(LocalKeyFileProvider(key), db)
+    producer = HookProducer(
+        ServerProducer.app(
+            origin=ORIGIN,
+            app_id=APP_ID,
+            installation_id=INSTALLATION_ID,
+            generation=1,
+            kid="test-key",
+            seed=os.urandom(32),
+        )
+    )
+    containment = Containment(
+        db=db,
+        fence=fence,
+        approvals=approvals,
+        custody=custody,
+        passkeys=passkeys,
+        directory=directory,
+        tokens=ProcessTokenCache(),
+        governance=partial(producer.enqueue, hook="post-governance-hook"),
+    )
     change_sets = ChangeSets(
         db,
         approvals=approvals,
         passkeys=passkeys,
         directory=directory,
         custody=custody,
+        containment=containment,
         draft_limit=DraftLimit(count=2, window=timedelta(hours=1)),
         internal_destinations=InternalDestinations.DISABLED,
     )
@@ -244,6 +274,7 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
             inbox,
             fence,
             admitted,
+            containment,
         )
 
 
@@ -460,17 +491,17 @@ async def test_the_draft_limit_is_per_member(world: World) -> None:
     await draft(world, change_set(drafter=by_member(BOB), changes=[grant_role(BOB)]))
 
 
-async def test_a_kind_without_an_apply_yet_is_refused_at_draft(world: World) -> None:
+async def test_an_unsupported_reenable_target_is_refused_at_draft(world: World) -> None:
     await enrol_owner(world, ALICE, "alice@acme.com")
     reenable = {
         "kind": "reenable",
         "op": "enable",
-        "ref": "payments-live",
-        "after": {"v": 1, "target_kind": "secret", "target_ref": "payments-live"},
+        "ref": "grt_missing001",
+        "after": {"v": 1, "target_kind": "grant", "target_ref": "grt_missing001"},
     }
     with pytest.raises(ChangeRefused) as refused:
         await draft(world, change_set(drafter=by_member(CAROL), changes=[reenable]))
-    assert refused.value.code == "change_kind_not_applicable"
+    assert refused.value.code == "reenable_target_unsupported"
 
 
 async def test_under_four_eyes_another_owner_confirms_relaxing_it(world: World) -> None:
