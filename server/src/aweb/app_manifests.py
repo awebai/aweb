@@ -18,12 +18,12 @@ from aweb_naapp.egress import (
     Destination,
     DnsResolver,
     Egress,
+    EgressRefused,
     HeaderRules,
     InternalDestinations,
     canonical_url,
     parse_destination,
 )
-from aweb_naapp.egress import EgressRefused
 from aweb_naapp.manifest import (
     MAX_MANIFEST_BYTES,
     SUPPORTED_MANIFEST_VERSIONS,

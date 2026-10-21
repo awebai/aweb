@@ -9,12 +9,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
-from typing import Any
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
-from awid.team_ids import parse_team_id
 from aweb_naapp.manifest import ManifestError, load_manifest
+from awid.team_ids import parse_team_id
 
 from aweb.service_errors import BadRequestError, ConflictError, ValidationError
 
