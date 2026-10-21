@@ -36,7 +36,7 @@ func TestAppApprovalBinaryMintAndDispatchMatrix(t *testing.T) {
 				f := setupAppCustodyFixtureForTeam(t, nil, team, mode)
 				var served atomic.Value
 				f.app.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if serveUnadvertisedHealth(w, r) {
+					if serveUnadvertisedHealth(w, r) || serveNoManifestCatalog(w, r) {
 						return
 					}
 					if r.URL.Path == "/.well-known/aweb-app.json" {

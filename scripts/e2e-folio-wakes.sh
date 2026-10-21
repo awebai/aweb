@@ -36,7 +36,7 @@ docker buildx create --name "$BUILDER" --driver docker-container \
 # Folio checks its emit key against its manifest at startup, so the deployment's
 # manifest exists before Folio starts.
 docker run --rm --entrypoint /app/.venv/bin/python -v "$ROOT/scripts/e2e:/e2e:ro" \
-  abrm-folio-folio /e2e/folio_wakes_manifest.py 0.1.0 true >"$FOLIO_WAKES_MANIFEST"
+  abrm-folio-folio /e2e/folio_wakes_manifest.py 0.1.0 true 1 >"$FOLIO_WAKES_MANIFEST"
 "${COMPOSE[@]}" up --no-build -d --wait
 if [[ -z "${AW_BIN:-}" ]]; then
   (cd "$ROOT/cli/go" && go build -o "$WORK/aw" ./cmd/aw)
