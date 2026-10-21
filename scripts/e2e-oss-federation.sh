@@ -587,6 +587,7 @@ services:
       AWID_REDIS_URL: redis://redis-awid:6379/0
       AWID_HOST: 0.0.0.0
       AWID_PORT: 8010
+      AWID_PUBLIC_ORIGINS: http://awid:8010
       AWID_DB_SCHEMA: awid
       AWID_RATE_LIMIT_DISABLED: "1"
       AWID_SERVICE_TOKEN: aweb-oss-federation-e2e-service-token-32-bytes

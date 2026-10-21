@@ -24,6 +24,9 @@ from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 async def _registry_http(app):
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
+    previous_origins = app.state.awid_public_origins
+    origin = f"http://127.0.0.1:{sock.getsockname()[1]}"
+    app.state.awid_public_origins = (*previous_origins, origin)
     server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
     task = asyncio.create_task(server.serve(sockets=[sock]))
     try:
@@ -37,6 +40,7 @@ async def _registry_http(app):
         server.should_exit = True
         await asyncio.wait_for(task, 5)
         sock.close()
+        app.state.awid_public_origins = previous_origins
 
 
 @pytest.mark.usefixtures("source_cli_binary")

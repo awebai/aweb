@@ -36,6 +36,10 @@ async def registry_listener(env):
     existing = env.app.state.awid_registry_client
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
+    registry_app = existing.transport.app
+    previous_origins = registry_app.state.awid_public_origins
+    origin = f"http://127.0.0.1:{sock.getsockname()[1]}"
+    registry_app.state.awid_public_origins = (*previous_origins, origin)
     server = uvicorn.Server(uvicorn.Config(existing.transport.app, lifespan="off", log_level="error"))
     serving = asyncio.create_task(server.serve(sockets=[sock]))
     client = None
@@ -56,6 +60,7 @@ async def registry_listener(env):
         server.should_exit = True
         await asyncio.wait_for(serving, 5)
         sock.close()
+        registry_app.state.awid_public_origins = previous_origins
 
 
 def grant_headers(grant_home, grant_id, origin, path, method="GET"):
