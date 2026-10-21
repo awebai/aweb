@@ -48,7 +48,7 @@ def test_an_ordinary_response_is_returned_whole() -> None:
     assert result.upstream_bytes == len(body)
 
 
-def test_only_allowed_headers_pass_and_location_is_redacted() -> None:
+def test_only_allowed_headers_without_credential_shapes_pass() -> None:
     result = _handle(
         b"{}",
         headers=[
@@ -74,7 +74,6 @@ def test_only_allowed_headers_pass_and_location_is_redacted() -> None:
         ("X-RateLimit-Remaining", "9"),
         ("X-Request-Id", "req-1"),
         ("Stripe-Request-Id", "req-2"),
-        ("Location", "https://api.example/next?token=[REDACTED:stripe-test]"),
     ]
     assert result.redaction_count == 1
 
@@ -174,6 +173,23 @@ def test_a_projection_naming_an_empty_credential_field_is_returned() -> None:
     assert result.disposition == "returned"
 
 
+@pytest.mark.parametrize("field", ["token", "client_token", "authToken", "bearer-token", "secret_key"])
+@pytest.mark.parametrize("project_parent", [True, False])
+def test_common_credential_fields_are_withheld_through_a_projection(field: str, project_parent: bool) -> None:
+    body = json.dumps({"auth": {field: secrets.token_urlsafe(24)}}).encode()
+    projection = ["/auth"] if project_parent else [f"/auth/{field}"]
+    result = _handle(body, projection=projection, token_issuing=True)
+    assert result.disposition == "withheld"
+    assert result.body is None
+    assert result.withheld_reason == "credential_shaped"
+
+
+def test_a_bare_key_field_is_still_an_ordinary_projected_value() -> None:
+    result = _handle(b'{"key":"item-reference"}', projection=["/key"], token_issuing=True)
+    assert result.disposition == "returned"
+    assert json.loads(result.body) == {"/key": "item-reference"}
+
+
 @pytest.mark.parametrize("pointer", ["/Credentials", "/Credentials/SessionToken", "/Credentials/SessionToken/0", "/Credentials/SessionToken/0/value"])
 @pytest.mark.parametrize("token_issuing", [True, False])
 def test_projecting_a_credential_array_or_its_descendants_is_withheld(pointer: str, token_issuing: bool) -> None:
@@ -195,7 +211,7 @@ def test_projecting_a_credential_string_array_is_withheld(pointer: str) -> None:
 
 @pytest.mark.parametrize("body", [b'{"id":"ok"}', b'{"access_token":"issued"}', b'error'])
 @pytest.mark.parametrize("header_name", ["Location", "X-Request-Id", "ETag"])
-@pytest.mark.parametrize("field", ["access_token", "access%5Ftoken"])
+@pytest.mark.parametrize("field", ["access_token", "access%5Ftoken", "token", "client_token", "authToken", "bearer-token", "secret_key"])
 @pytest.mark.parametrize("separator", ["?", "#"])
 def test_an_issued_credential_in_an_allowed_header_is_never_returned(body: bytes, header_name: str, field: str, separator: str) -> None:
     # The new value is not in KnownValues. A safe projection or an error body

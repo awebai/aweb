@@ -35,6 +35,11 @@ VENDOR_TOKENS = [
     "npm_" + _filler(36),
 ]
 CREDENTIAL_KEYS = [
+    "token",
+    "client_token",
+    "authToken",
+    "bearer-token",
+    "secret_key",
     "access_token",
     "refresh_token",
     "id_token",

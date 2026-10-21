@@ -20,6 +20,11 @@ from typing import Any
 # Credential field names, compared lowercased with "_" and "-" removed.
 _CREDENTIAL_FIELDS = frozenset(
     {
+        "token",
+        "clienttoken",
+        "authtoken",
+        "bearertoken",
+        "secretkey",
         "accesstoken",
         "refreshtoken",
         "idtoken",
