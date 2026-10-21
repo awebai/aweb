@@ -1444,10 +1444,12 @@ the `secret_*`, `request_sha256`/`params_sha256`, `approval_*`, `dispatch_*` and
   issuing grant; `derived_secret_id` names the new child and `derived_grant_id`
   names its fresh grant. It shares the recording transaction with those rows
   (§8.4), so no child is exposed without its enqueued creation receipt. The
-  hook-contract owner puts `derived_grant_id` in catalog v2, preserving v1:
-  both derived refs are required together for this disposition and forbidden
-  elsewhere. Until that v2 seam is accepted, the kit, ingest and resolution
-  support it, and an owner activates the v2 production,
+  hook-contract owner puts `derived_grant_id` in the re-frozen post-secret-use
+  shape (decision 73 delta): both derived refs are required together for this
+  disposition and forbidden elsewhere. This is an in-place schema/vector
+  re-freeze: no deployed producer or consumer uses this hook, so there is no
+  parallel catalog version. Until that shape is accepted, the kit, ingest and
+  resolution support it, and an owner activates the production,
   `store_as_secret` cannot emit or activate; secrets does not add private fields
   to an existing envelope.
 - **`returned_hmac`.** This is an HMAC, keyed by secrets, over the bytes returned
