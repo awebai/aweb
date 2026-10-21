@@ -34,6 +34,12 @@ Server changes are since `server-v1.27.29`.
   event emission keeps its credential and behaviour. Migration
   `027_team_app_keys` adds the installing team's app keys and the purposes each
   may sign. No route accepts the new read purposes in this release.
+- **Security:** signed agent-status and agent-activity documents accept their
+  times only as `YYYY-MM-DDTHH:MM:SSZ` in ASCII digits. A time written with
+  other scripts' digits, such as a fullwidth year, was parsed as that instant.
+  It is now refused as `invalid_value`, as other verifiers already refuse it.
+- **Deploy order:** this server requires `awid-service>=0.5.30`. Publish
+  AWID 0.5.30 before server 1.27.30.
 
 ### Release preparation: aw 1.36.45
 
