@@ -25,13 +25,18 @@ from aweb_naapp.outbox import OutboxEvent, apply_outbox_migrations, enqueue
 from aweb_naapp.page_store.lifecycle import LifecycleMixin
 from aweb_naapp.page_store.models import Access, RetentionPolicy, Scope, StoreError
 from aweb_naapp.page_store.support import canonical, decoded, identity, validated, widgets
-from aweb_naapp.pages import inline_schema_errors, inline_value_valid
+from aweb_naapp.pages import PAGE_SCHEMA, inline_schema_errors, inline_value_valid
 
 if TYPE_CHECKING:
     from aweb_naapp.runtime.team_auth import Principal
 
 ROOT = Path(__file__).parent
 MAX_REV = 2**53 - 1
+KNOWN_WIDGET_TYPES = {
+    definition["properties"]["type"]["const"]
+    for name, definition in PAGE_SCHEMA["$defs"].items()
+    if name.startswith("widget_") and "const" in definition.get("properties", {}).get("type", {})
+}
 
 # Shared by widget queries and bounded live/snapshot-creation projections.
 AUTHORIZED_RECORDS = """WITH authorized AS MATERIALIZED (
@@ -729,13 +734,47 @@ class PageStore(LifecycleMixin):
             collection["records"] = list(gathered[collection["id"]].values())
         return self._redact_snapshot(document, access, actor)
 
-    def _redact_snapshot(self, document, access, actor):
+    def _redact_snapshot(
+        self,
+        document,
+        access,
+        actor,
+        *,
+        keep_records=False,
+        allowed_action_ids=None,
+        allowed_asset_ids=(),
+    ):
         definitions = {c["id"]: c for c in document["collections"]}
         records = {cid: {r["id"]: r for r in c["records"]} for cid, c in definitions.items()}
         required = {cid: {} for cid in definitions}
+        if allowed_action_ids is not None:
+            document["actions"] = [
+                action
+                for action in document["actions"]
+                if action["id"] in allowed_action_ids
+                and action["kind"] in {"edit", "intent"}
+                and (action["kind"] != "edit" or access.permits(actor, "write"))
+            ]
+            allowed_action_ids = {a["id"] for a in document["actions"]}
+        removed_state = set()
         for widget in widgets(document["layout"]):
             denied = False
-            if widget["type"] == "decision_card":
+            if allowed_action_ids is not None:
+                kind, props = widget["type"], widget.get("props", {})
+                denied = kind not in KNOWN_WIDGET_TYPES or kind == "decision_card"
+                if not denied:
+                    if kind in {"image", "video"}:
+                        denied = props["asset_id"] not in allowed_asset_ids
+                    for name in ("action", "submit_action", "answer_action"):
+                        if name in props and props[name] not in allowed_action_ids:
+                            denied = True
+                    for name in ("row_actions", "actions"):
+                        if name in props:
+                            props[name] = [a for a in props[name] if a in allowed_action_ids]
+                    if widget.get("bind"):
+                        # Cursor tokens belong to a live actor/query, never a pinned page.
+                        widget["bind"].pop("cursor", None)
+            if widget["type"] == "decision_card" and not denied:
                 props = widget["props"]
                 cid, rid = props["collection"], props["record_id"]
                 record = records[cid].get(rid)
@@ -760,12 +799,18 @@ class PageStore(LifecycleMixin):
                         required[cid][row["id"]] = row
             binding = widget.get("bind")
             if binding:
-                denied = denied or bool(
-                    self._binding_fields(widget)
-                    - access.visible_fields(actor, definitions[binding["collection"]])
+                denied = (
+                    denied
+                    or binding["collection"] not in definitions
+                    or bool(
+                        self._binding_fields(widget)
+                        - access.visible_fields(actor, definitions[binding["collection"]])
+                    )
                 )
             if denied:
                 wid = widget["id"]
+                removed_state.add(wid)
+                removed_state.update(w["id"] for w in widgets(widget.get("children", [])))
                 widget.clear()
                 widget.update(id=wid, type="access_unavailable", fallback="Unavailable", props={})
         for collection in document["collections"]:
@@ -778,10 +823,14 @@ class PageStore(LifecycleMixin):
                         if k in access.value_fields(actor, collection, r["value"])
                     },
                 }
-                for r in required[collection["id"]].values()
+                for r in (
+                    collection["records"] if keep_records else required[collection["id"]].values()
+                )
                 if access.visible_row(actor, collection["id"], r["id"])
             ]
             collection["schema"] = access.redact_schema(actor, collection)
+        for wid in removed_state:
+            document["widget_state"].pop(wid, None)
         validated(document)
         return document
 
@@ -962,6 +1011,118 @@ class PageStore(LifecycleMixin):
             )
         await self._fence(scope)
         return {"page_rev": revision, "collections": selected}
+
+    async def capture_link_snapshot_on(
+        self,
+        tx,
+        scope,
+        *,
+        creator_id,
+        projection,
+        allowed_action_ids,
+        expected_page_rev,
+    ):
+        """Capture one complete bounded page while the caller holds its mint lock."""
+        return await self._link_snapshot_on(
+            tx,
+            scope,
+            creator_id=creator_id,
+            projection=projection,
+            allowed_action_ids=allowed_action_ids,
+            expected_page_rev=expected_page_rev,
+        )
+
+    async def project_link_snapshot_on(
+        self,
+        tx,
+        scope,
+        *,
+        creator_id,
+        projection,
+        allowed_action_ids,
+        source_snapshot,
+        expected_page_rev=None,
+    ):
+        """Narrow a pinned page under current authority, never filling it from live data."""
+        _require_transaction(tx)
+        if not isinstance(source_snapshot, dict):
+            raise StoreError("schema_invalid")
+        validated(source_snapshot)
+        if source_snapshot["page_id"] != scope.page_id:
+            raise StoreError("schema_invalid")
+        return await self._link_snapshot_on(
+            tx,
+            scope,
+            creator_id=creator_id,
+            projection=projection,
+            allowed_action_ids=allowed_action_ids,
+            expected_page_rev=expected_page_rev,
+            source_snapshot=source_snapshot,
+        )
+
+    async def _link_snapshot_on(
+        self,
+        tx,
+        scope,
+        *,
+        creator_id,
+        projection,
+        allowed_action_ids,
+        expected_page_rev=None,
+        source_snapshot=None,
+    ):
+        _require_transaction(tx)
+        self._projection_entries(projection)
+        assets = projection.get("assets", [])
+        for values, maximum in ((allowed_action_ids, 16), (assets, 64)):
+            if (
+                not isinstance(values, (list, tuple))
+                or len(values) > maximum
+                or any(not isinstance(v, str) or not v for v in values)
+                or len(set(values)) != len(values)
+            ):
+                raise StoreError("schema_invalid")
+        if not isinstance(creator_id, str) or not creator_id:
+            raise StoreError("schema_invalid")
+        current, access, actor = await self._load_actor(tx, scope, creator_id, shared=True)
+        if source_snapshot is None:
+            self._precondition(current, expected_page_rev)
+        document = copy.deepcopy(current if source_snapshot is None else source_snapshot)
+        # A pinned page's metadata, action definitions and values always come from
+        # the source. The current document supplies authority/field bounds only.
+        data_source = (
+            None
+            if source_snapshot is None
+            else {
+                "page_rev": document["rev"],
+                "collections": [
+                    {key: c[key] for key in ("id", "schema_version", "schema", "records")}
+                    for c in document["collections"]
+                ],
+            }
+        )
+        projected = await self.read_projection_on(
+            tx,
+            scope,
+            creator_id=creator_id,
+            projection=projection,
+            expected_page_rev=expected_page_rev,
+            source_snapshot=data_source,
+        )
+        original = {c["id"]: c for c in document["collections"]}
+        document["collections"] = [{**original[c["id"]], **c} for c in projected["collections"]]
+        # Use the ordinary widget/field/schema redactor, retaining the bounded
+        # records rather than only mandatory decision-card bootstrap records.
+        result = self._redact_snapshot(
+            document,
+            access,
+            actor,
+            keep_records=True,
+            allowed_action_ids=set(allowed_action_ids),
+            allowed_asset_ids=set(assets),
+        )
+        await self._fence(scope)
+        return result
 
     async def read_widget(self, scope, principal, *, widget_id, expected_page_rev, bind):
         if not isinstance(bind, dict):

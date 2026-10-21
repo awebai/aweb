@@ -132,9 +132,42 @@ deletion and row/field ACLs. `expected_page_rev` then checks the source revision
 The app must bind the source to the checked link scope and require it for pinned
 mode; an absent or corrupt pinned source must never fall back to live values.
 The input source is neither modified nor supplemented with current values.
-This data projection returns only bounded collection data. N5 owns the complete
-immutable pinned-page record and asset-version retention; full view capture
-through the shared redactor remains a separate integration delta.
+This data projection returns only bounded collection data.
+
+`capture_link_snapshot_on(tx, scope, creator_id=..., projection=...,
+allowed_action_ids=..., expected_page_rev=...)` captures the complete authorized
+`aweb.page/1` at mint. The same transaction and page lock cover the bounded
+collection data, layout, widget state, collection modes and allowed action
+definitions. The result passes the shared C1 validator, including widget,
+depth, value and byte limits, plus C4's projection, 16-action and 64-asset bounds.
+N5 stores it immutably with the link, revision and digest in that transaction.
+The app adapter maps its checked `LinkScope` and creator to the store's scope
+and ACL identity.
+
+`project_link_snapshot_on(tx, scope, creator_id=..., projection=...,
+allowed_action_ids=..., source_snapshot=..., expected_page_rev=None)` narrows
+that complete stored page at use. The source is required, validated and bound
+to the page ID; the app also binds it to the checked installation, team, link
+and revision. Current page ACL/deletion checks and named row/field bounds apply.
+An optional expected revision checks the source, not the current page. Neither
+entry point commits or makes network calls; retain the caller's link lock
+through all view loading.
+
+Both paths use the ordinary store widget/schema redactor. Excluded widgets
+become inert `access_unavailable` placeholders and lose their display state;
+table/card action lists are filtered and only whitelisted edit/intent action
+definitions remain. Edit actions also require current page write permission.
+N5 supplies the whitelist after its current action-policy checks. Unknown
+widget props are not retained in link views. Stored layout, state, schemas,
+values and action definitions are never replaced with current versions or
+widened by a newly allowed action. Host widget reads for pinned views must use
+the stored source through `read_projection_on`, not live `read_widget`.
+
+The projection's available asset IDs bound image/video widgets; losing an
+asset replaces only that media with an unavailable placeholder. The page
+contains asset IDs, never generated fetch URLs or grants. N5's asset adapter
+owns immutable content-version resolution and retention references outside
+the page, including release on revoke/expiry/purge and explicit deletion.
 
 `lint_page(snapshot, allowed_actions=..., projections=...)` returns JSON-pointer
 validation errors or accessible text: labels, values, state, policy-disabled
