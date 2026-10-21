@@ -288,7 +288,7 @@ canonical_json_sha256() {
 run_aw_in() {
   local workdir="$1"
   shift
-  compose run --rm -T --no-deps -w "/work/${workdir##*/}" cli "$@"
+  compose --progress quiet run --rm -T --no-deps -w "/work/${workdir##*/}" cli "$@"
 }
 
 capture_success() {
@@ -694,6 +694,7 @@ $BETA_SERVER_BUILD
       AW_CONFIG_PATH: /work/home/.config/aw/config.yaml
       AWID_REGISTRY_URL: $AWID_URL
       AWID_SKIP_DNS_VERIFY: "1"
+      APP_ENV: development
     volumes:
       - "$E2E_ROOT:/work"
     # FEDERATION_DNS_IP_CLI
