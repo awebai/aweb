@@ -486,6 +486,9 @@ func TestPluginInstallFetchesWellKnownManifestAndUpdateRefreshes(t *testing.T) {
 	var version guarded[string]
 	version.set("1.0.0")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != "/.well-known/aweb-app.json" {
 			t.Fatalf("unexpected manifest request %s %s", r.Method, r.URL.String())
 		}
@@ -566,6 +569,9 @@ func TestInstalledManifestDispatchInvokesTeamAuthRequest(t *testing.T) {
 
 	var sawSignedPayload bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/.well-known/aweb-app.json":
 			w.Header().Set("Content-Type", "application/json")
@@ -643,6 +649,9 @@ func TestInstalledLibraryManifestDispatchTracesRequestsAndResponses(t *testing.T
 	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
 	manifestBytes := readLibraryManifestFixtureForTest(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/.well-known/aweb-app.json":
 			w.Header().Set("Content-Type", "application/json")
@@ -821,6 +830,9 @@ func TestLibraryManifestPluginInstallAndDispatch(t *testing.T) {
 	manifestBytes := readLibraryManifestFixtureForTest(t)
 	var sawListPacks, sawImportToShelf bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/.well-known/aweb-app.json":
 			w.Header().Set("Content-Type", "application/json")
@@ -955,6 +967,9 @@ func TestPluginInstallRejectsMalformedManifestViaSharedValidation(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			home := filepath.Join(tmp, "home-"+strings.NewReplacer(" ", "-", "/", "-").Replace(tc.name))
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveNoManifestCatalog(w, r) {
+					return
+				}
 				if r.URL.Path != "/.well-known/aweb-app.json" {
 					t.Fatalf("unexpected request path %s", r.URL.Path)
 				}
@@ -992,6 +1007,9 @@ func TestPluginInstallDevOriginOverridesSelfHostedOrigin(t *testing.T) {
 	// the operator points aw at the real (self-hosted) base URL.
 	manifest := `{"manifest_version":1,"app":{"id":"devlib","version":"1.0.0","origin":"https://library.aweb.ai"},"tools":[{"name":"ping","auth":"none","method":"GET","path":"/v1/ping","input_schema":{"type":"object","properties":{}},"params":[],"mutation":false}]}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		if r.URL.Path != "/.well-known/aweb-app.json" {
 			t.Fatalf("unexpected request path %s", r.URL.Path)
 		}
@@ -1049,6 +1067,9 @@ func TestPluginInstallRejectsCrossOriginManifestRedirect(t *testing.T) {
 
 	var source *httptest.Server
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		if r.URL.Path != "/.well-known/aweb-app.json" {
 			t.Fatalf("unexpected target path %s", r.URL.Path)
 		}
@@ -1057,6 +1078,9 @@ func TestPluginInstallRejectsCrossOriginManifestRedirect(t *testing.T) {
 	}))
 	defer target.Close()
 	source = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		if r.URL.Path != "/.well-known/aweb-app.json" {
 			t.Fatalf("unexpected source path %s", r.URL.Path)
 		}

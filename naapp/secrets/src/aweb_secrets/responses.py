@@ -2,7 +2,8 @@
 
 A body with a ``Content-Encoding`` other than ``identity`` is withheld: the
 broker asks for identity and never decompresses, so it never returns bytes it
-could not redact or inspect. Otherwise, in order: every known value is
+could not redact or inspect. A named operation's response is also withheld
+when its media type is not one the operation declares. Otherwise, in order: every known value is
 redacted from the whole body as received; the body is cut at its bound, the
 cut reported, and the tail of a cut body redacted so it never ends in part of
 a value; only the allowed response headers pass, redacted; a named
@@ -40,7 +41,7 @@ class BrokeredResult:
     headers: list[tuple[str, str]]
     body: bytes | None
     disposition: Literal["returned", "withheld"]
-    withheld_reason: Literal["credential_shaped", "content_encoded"] | None
+    withheld_reason: Literal["credential_shaped", "content_encoded", "content_type_not_allowed"] | None
     undeclared_credential: bool
     redaction_count: int
     truncated: bool
@@ -58,6 +59,13 @@ def _is_encoded(headers: Sequence[tuple[str, str]]) -> bool:
         and any(coding.strip().lower() not in ("", "identity") for coding in value.split(","))
         for name, value in headers
     )
+
+
+def _media_type(headers: Sequence[tuple[str, str]]) -> str | None:
+    for name, value in headers:
+        if name.lower() == "content-type":
+            return value.split(";", 1)[0].strip().lower()
+    return None
 
 
 def _pointer_tokens(pointer: str) -> list[str]:
@@ -113,6 +121,7 @@ def handle_response(
     projection: Sequence[str] | None,
     known: KnownValues,
     token_issuing: bool,
+    content_types: Sequence[str] | None = None,
 ) -> BrokeredResult:
     """Handle one upstream response.
 
@@ -120,6 +129,8 @@ def handle_response(
     the operation's or policy's bound. ``token_issuing`` is whether the
     operation declares that it issues credentials; a credential-shaped result
     from one that does not is flagged ``undeclared_credential``.
+    ``content_types`` are the media types a named operation accepts; ``None``
+    accepts any.
     """
     upstream_bytes = len(body)
     redaction_count = 0
@@ -130,7 +141,10 @@ def handle_response(
             redaction_count += count
             passed.append((name, value))
 
-    def withheld(reason: Literal["credential_shaped", "content_encoded"], undeclared: bool) -> BrokeredResult:
+    def withheld(
+        reason: Literal["credential_shaped", "content_encoded", "content_type_not_allowed"],
+        undeclared: bool,
+    ) -> BrokeredResult:
         return BrokeredResult(
             status=status,
             headers=passed,
@@ -145,6 +159,8 @@ def handle_response(
 
     if _is_encoded(headers):
         return withheld("content_encoded", False)
+    if content_types is not None and _media_type(headers) not in content_types:
+        return withheld("content_type_not_allowed", False)
 
     body, count = known.redact(body)
     redaction_count += count

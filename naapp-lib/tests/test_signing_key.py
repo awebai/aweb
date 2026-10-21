@@ -8,11 +8,10 @@ from pathlib import Path
 
 import pytest
 
+from aweb_naapp.key_file import KeyFileError, read_key_file
 from aweb_naapp.signing_key import (
-    KeyFileError,
     SigningKeyError,
     parse_signing_key_hex,
-    read_key_file,
     read_signing_key_file,
 )
 
