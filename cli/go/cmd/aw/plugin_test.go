@@ -1134,3 +1134,43 @@ func TestPluginBuiltInCommandWinsOverTrustedPlugin(t *testing.T) {
 		t.Fatalf("expected built-in version output:\n%s", text)
 	}
 }
+
+func TestManifestNestedRootVerbBinary(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	bin := filepath.Join(root, "aw")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	buildAwBinary(t, ctx, bin)
+	var paths guarded[[]string]
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths.set(append(paths.get(), r.Method+" "+r.URL.Path))
+		if r.Header.Get("Authorization") != "" {
+			t.Error("public tool must not be signed")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	appDir := filepath.Join(root, "plugins", "utility")
+	if err := os.MkdirAll(appDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"manifest_version":2,"app":{"id":"utility","version":"1","origin":"` + server.URL + `"},"tools":[{"name":"run","method":"GET","path":"/v1/run","params":[],"auth":"none"},{"name":"introspect","method":"GET","path":"/v1/inspect","params":[],"auth":"none"}]}`
+	if err := os.WriteFile(filepath.Join(appDir, "manifest.json"), []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"utility", "--help"}, {"utility", "help", "run"}, {"utility", "run", "--help"}, {"utility", "run"}, {"utility", "introspect"}} {
+		cmd := exec.CommandContext(ctx, bin, args...)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "AW_HOME="+root, "AWEB_IDENTITY_HOME=", "AW_NO_UPDATE_CHECK=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	if got := strings.Join(paths.get(), ","); got != "GET /v1/run,GET /v1/inspect" {
+		t.Fatalf("requests=%s", got)
+	}
+}
