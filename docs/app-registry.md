@@ -119,8 +119,19 @@ present:
 
 - the bytes must hash to `digest` and name the request's `app_id`, `origin`,
   `app_version` and `manifest_version`;
-- `events` and `event_emitters` come from the bytes. If the request also
-  supplies them, they must equal the bytes' declarations;
+- the bytes must be a valid manifest of either version, read by the one
+  manifest reader that apps and clients share (`aweb_naapp.manifest`, held to
+  `test-vectors/app-manifests/app-manifest-v2-v1.json`). A manifest it refuses
+  is refused with `422`, and the detail carries its stable code;
+- `events` come from the bytes; version 1 `event_emitters` are the app's
+  app-event keys. If the request also supplies them, they must equal the
+  bytes' declarations;
+- version 2 `app_keys` register the app's keys with the purposes the bytes
+  declare for each. They come only from the bytes; there is no request field.
+  A key id keeps its first `did_key` in the team, so a later install naming a
+  different key for it is refused with `409` and nothing is written, and a
+  revoked key stays revoked. A purpose label the server does not know is
+  stored and grants nothing. A key that declares `app-event` signs app events;
 - `granted_scopes` must be a subset of the scopes the bytes' tools request; a
   team may grant less, never more.
 
