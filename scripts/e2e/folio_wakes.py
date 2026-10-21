@@ -27,10 +27,12 @@ def run(args, **kw):
         raise AssertionError(f'{args[:4]} failed: {result.stderr}\n{result.stdout}')
     return result.stdout
 
-def configure_manifest(version, events=True):
+def configure_manifest(version, events=True, manifest_version=1):
     # The disposable deployment's real manifest file, declaring the public test
-    # emitter. No substitute HTTP server or auth bypass.
-    manifest = run(['docker', 'run', '--rm', '--entrypoint', '/app/.venv/bin/python', '-v', str(ROOT / 'scripts/e2e') + ':/e2e:ro', 'abrm-folio-folio', '/e2e/folio_wakes_manifest.py', version, 'true' if events else 'false'])
+    # emitter. No substitute HTTP server or auth bypass. Version 2 declares the
+    # emitter as an app-event app key and adds a hook-only tool, whose scope
+    # install must not grant.
+    manifest = run(['docker', 'run', '--rm', '--entrypoint', '/app/.venv/bin/python', '-v', str(ROOT / 'scripts/e2e') + ':/e2e:ro', 'abrm-folio-folio', '/e2e/folio_wakes_manifest.py', version, 'true' if events else 'false', str(manifest_version)])
     with open(os.environ['FOLIO_WAKES_MANIFEST'], 'w', encoding='utf-8') as handle:
         handle.write(manifest.strip())
     # Folio reads its manifest once at startup, so it serves the new bytes after a restart.
@@ -297,3 +299,23 @@ except urllib.error.HTTPError as exc:
     aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'fifth')
     assert any(e['kind'] == 'app' and e['meta']['resource_ref'] == 'wake-proof' for e in events(a))
     print('PASS operator reseed restores keys and declarations from origin bytes, keeps subscriptions, reports conflicts', flush=True)
+
+    # A version 2 manifest registers against the real server: aw sends no bytes
+    # for it, grants only the scopes of agent and surface tools, takes its
+    # emitter from the app-event app key, and refuses its hook-only verb.
+    configure_manifest('0.2.0', manifest_version=2)
+    raw = urllib.request.urlopen(FOLIO + '/.well-known/aweb-app.json').read()
+    assert json.loads(raw)['manifest_version'] == 2
+    aw('alice', 'plugin', 'update', 'folio')
+    apps = get('alice', '/v1/apps/installed?team_id=' + team)['apps']
+    assert len(apps) == 1, apps
+    assert apps[0]['manifest_version'] == 2 and apps[0]['app_version'] == '0.2.0', apps[0]
+    assert apps[0]['digest'] == 'sha256:' + hashlib.sha256(raw).hexdigest()
+    assert apps[0]['granted_scopes'] == ['folio:read', 'folio:write'], apps[0]['granted_scopes']
+    assert psql("SELECT registered_from_manifest_bytes FROM aweb.team_app_installs WHERE team_id='" + team + "'").strip() == 'f'
+    hook_only = aw('alice', 'folio', 'audit-ingest', check=False)
+    assert hook_only.returncode != 0 and 'tool_context_denied' in hook_only.stderr, hook_only.stderr
+    a = stream('alice')
+    aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'sixth')
+    assert any(e['kind'] == 'app' and e['meta']['resource_ref'] == 'wake-proof' for e in events(a))
+    print('PASS v2 manifest registers without bytes, grants only agent and surface scopes, emits through its app-event key, refuses its hook-only verb', flush=True)
