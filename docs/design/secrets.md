@@ -1113,9 +1113,11 @@ rule does not change the declared read-only mount boundary.
 
 **OCI credential lifetime.** Runtime configuration containing expanded
 credentials belongs to this one run's transient trusted runner context. It may
-be passed privately in memory or held in a private memory-backed runtime bundle
-(directory accessible only to the runner user, credential-bearing files mode
-0600). It must not enter persistent container/daemon metadata, an image layer,
+be passed privately in memory or held in a verified runner-only memory-backed
+runtime bundle and runtime-internal state root (directories mode 0700,
+credential-bearing files mode 0600). Both locations must meet this rule; an
+ordinary disk-backed temporary directory is not a fallback. It must not enter
+persistent container/daemon metadata, an image layer,
 a durable bundle, command-line arguments, diagnostics or the runner journal.
 A standard daemon environment option is not sufficient if it retains values in
 persistent inspectable metadata; removing the container afterward does not
@@ -1123,11 +1125,17 @@ make that earlier persistence conformant. The choice of runtime is local, not
 a new job or protocol field.
 
 The runner bounds this context by the original job deadline and disposes of it
-when the process tree terminates, on preparation/start failure, timeout or
-containment. It stops/reaps the process tree before removing its runtime state;
-on restart it cleans stale private runtime state before accepting new work,
-without executing an uncertain assignment again. No runtime-state bundle is
-mounted into the job for credential transport. Credential values may remain in
+when the process tree terminates, on preparation/start failure, timeout, local
+cancellation/shutdown, or containment observed by the runner. The existing
+claim/started/result protocol has no asynchronous cancellation of an already
+running process: remote containment fences later releases, but cannot promise
+an immediate stop or removal of already delivered credentials. The runner still
+enforces the original job deadline; containment or loss of contact never extends
+it. Section 12's deregistration and outcome-unknown rules remain unchanged.
+It stops/reaps the process tree before removing the bundle and runtime-internal
+state; on restart it cleans stale private runtime state before accepting new
+work, without executing an uncertain assignment again. No runtime-state bundle
+is mounted into the job for credential transport. Credential values may remain in
 the job process's own memory/environment while it runs; runner-host operators
 remain trusted under T8, and no secure-memory-erasure guarantee is added.
 
