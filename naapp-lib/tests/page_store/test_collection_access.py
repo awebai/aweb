@@ -10,14 +10,14 @@ from tests.page_store.test_query_api import table
 from tests.page_store.test_store import OWNER, READER, SCOPE, STRANGER, create
 
 
-async def metadata(store, *, creator=OWNER, mode="live", record_ids="*", collection="items"):
+async def metadata(store, *, creator=OWNER, link_mode="live", record_ids="*", collection="items"):
     async with store.db.transaction() as tx:
         return await store.collection_access_on(
             tx,
             SCOPE,
             creator_id=creator.did_key,
             collection=collection,
-            mode=mode,
+            link_mode=link_mode,
             record_ids=record_ids,
         )
 
@@ -39,7 +39,7 @@ async def test_live_metadata_does_not_query_or_lock_record_ids(store):
         async with store.db.transaction() as tx:
             await tx.execute("SET LOCAL lock_timeout='100ms'")
             result = await store.collection_access_on(
-                tx, SCOPE, creator_id=OWNER.did_key, collection="items", mode="live"
+                tx, SCOPE, creator_id=OWNER.did_key, collection="items", link_mode="live"
             )
     assert result["record_ids"] is None
     assert result["page_rev"] == 1 and result["mode"] == "owned"
@@ -82,7 +82,7 @@ async def test_named_metadata_redacts_schema_and_checks_only_requested_visible_i
 
 async def test_pinned_wildcard_is_bounded_and_empty_is_literal(store):
     await create(store, table(200))
-    pinned = await metadata(store, mode="pinned")
+    pinned = await metadata(store, link_mode="pinned")
     assert len(pinned["record_ids"]) == 200
     await store.add_record(
         SCOPE,
@@ -93,18 +93,18 @@ async def test_pinned_wildcard_is_bounded_and_empty_is_literal(store):
         values={"label": "New", "checked": False},
     )
     with pytest.raises(StoreError) as refused:
-        await metadata(store, mode="pinned")
+        await metadata(store, link_mode="pinned")
     assert (refused.value.code, refused.value.status) == ("action_denied", 403)
     assert (await metadata(store))["record_ids"] is None
-    assert (await metadata(store, mode="pinned", record_ids=["row-200"]))["record_ids"] == [
+    assert (await metadata(store, link_mode="pinned", record_ids=["row-200"]))["record_ids"] == [
         "row-200"
     ]
-    assert (await metadata(store, mode="pinned", record_ids=[]))["record_ids"] == []
+    assert (await metadata(store, link_mode="pinned", record_ids=[]))["record_ids"] == []
 
 
 async def test_empty_pinned_collection_and_current_authority(store):
     await create(store, table(0))
-    assert (await metadata(store, mode="pinned"))["record_ids"] == []
+    assert (await metadata(store, link_mode="pinned"))["record_ids"] == []
     with pytest.raises(StoreError, match="resource_not_found"):
         await metadata(store, creator=STRANGER)
     await store.request_delete(SCOPE, OWNER, expected_rev=1, key="delete")
@@ -120,14 +120,14 @@ async def test_collection_access_requires_a_caller_transaction(store, tx_kind):
             SCOPE,
             creator_id=OWNER.did_key,
             collection="items",
-            mode="live",
+            link_mode="live",
         )
 
 
 @pytest.mark.parametrize(
     "changes",
     [
-        {"mode": "wrong"},
+        {"link_mode": "wrong"},
         {"creator_id": ""},
         {"collection": ""},
         {"record_ids": None},
@@ -143,7 +143,12 @@ async def test_collection_access_refuses_invalid_selection(store, changes):
             await store.collection_access_on(
                 tx,
                 SCOPE,
-                **{"creator_id": OWNER.did_key, "collection": "items", "mode": "live", **changes},
+                **{
+                    "creator_id": OWNER.did_key,
+                    "collection": "items",
+                    "link_mode": "live",
+                    **changes,
+                },
             )
 
 
@@ -151,7 +156,7 @@ async def test_metadata_keeps_current_acl_locked_until_caller_commit(store):
     await create(store)
     async with store.db.transaction() as tx:
         await store.collection_access_on(
-            tx, SCOPE, creator_id=OWNER.did_key, collection="items", mode="live"
+            tx, SCOPE, creator_id=OWNER.did_key, collection="items", link_mode="live"
         )
         with pytest.raises(LockNotAvailableError):
             async with store.db.transaction() as changing:

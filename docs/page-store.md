@@ -178,7 +178,7 @@ the separately checked creator/projection path below.
 store's canonical ACL identity helper. It checks the member's team and uses a
 registry-verified `did:aw` when available, otherwise the signing `did:key`.
 
-`collection_access_on(tx, scope, creator_id=..., collection=..., mode=...,
+`collection_access_on(tx, scope, creator_id=..., collection=..., link_mode=...,
 record_ids="*")` supplies current collection authority to a checked host
 adapter. It requires the caller's transaction and holds the page `FOR SHARE`.
 The host has already checked the immutable creator evidence and current
@@ -188,7 +188,7 @@ result contains `page_rev`, `id`, collection `mode` (owned/synced),
 An absent collection or no visible fields returns `None`; page deletion or
 lost page access retains the ordinary `resource_not_found` refusal.
 
-The input mode is `live` or `pinned`. Live wildcard returns
+The input `link_mode` is `live` or `pinned`. Live wildcard returns
 `record_ids: null`, explicitly dynamic, without querying record IDs. A named
 list, including `[]`, checks only its at most 200 IDs against current row ACLs.
 Pinned wildcard inspects at most 201 authorized IDs and refuses with

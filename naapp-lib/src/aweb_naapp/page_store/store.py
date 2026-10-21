@@ -1127,7 +1127,7 @@ class PageStore(LifecycleMixin):
         return entries
 
     async def collection_access_on(
-        self, tx, scope, *, creator_id, collection, mode, record_ids="*"
+        self, tx, scope, *, creator_id, collection, link_mode, record_ids="*"
     ):
         """Current collection authority after the host checks its creator proof.
 
@@ -1140,7 +1140,7 @@ class PageStore(LifecycleMixin):
             or not creator_id
             or not isinstance(collection, str)
             or not collection
-            or mode not in ("live", "pinned")
+            or link_mode not in ("live", "pinned")
         ):
             raise StoreError("schema_invalid")
         if record_ids != "*":
@@ -1153,7 +1153,7 @@ class PageStore(LifecycleMixin):
         if not fields:
             return None
         selected = None
-        if mode == "pinned" or record_ids != "*":
+        if link_mode == "pinned" or record_ids != "*":
             args = self._record_access_args(
                 scope,
                 definition,
