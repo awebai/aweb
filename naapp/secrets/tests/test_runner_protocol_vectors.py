@@ -357,3 +357,78 @@ def test_every_refusal_code_of_the_contract_has_a_case():
         "assignment_expired",
         "assignment_replayed",
     }
+
+
+# This is a contract reference reader, not a mounted route or release authority.
+HTTP_VECTOR = json.loads(
+    (Path(__file__).parents[3] / "docs" / "vectors" / "secrets-runner-http-v1.json").read_text()
+)
+RESULT_FIELDS = {"exit_code", "stdout", "stderr", "truncated", "result_withheld", "redaction_count"}
+FIELD_FAMILIES = {
+    "bearer": {"value"},
+    "basic": {"username", "password"},
+    "oauth2-client-credentials": {"client_id", "client_secret"},
+    "aws-sigv4": {"access_key_id", "secret_access_key", "session_token"},
+}
+
+
+def _http_body_result(case):
+    raw = case["body_json"].encode("utf-8")
+    limit = case["output_max_bytes"]
+    is_result = case["endpoint"] == "result"
+    if len(raw) > (6 * limit + 1024 if is_result else 4096):
+        return {"status": 413, "code": "runner_request_too_large"}
+    code = "runner_result_invalid" if is_result else "runner_request_invalid"
+    try:
+        body = strict_json(raw, code)
+        _check_values(body, code)
+        if not isinstance(body, dict) or set(body) != (RESULT_FIELDS if is_result else set()):
+            raise Refused(code)
+        if is_result:
+            if type(body["exit_code"]) is not int or type(body["redaction_count"]) is not int:
+                raise Refused(code)
+            if body["redaction_count"] < 0:
+                raise Refused(code)
+            if any(type(body[key]) is not bool for key in ("truncated", "result_withheld")):
+                raise Refused(code)
+            if any(not isinstance(body[key], str) for key in ("stdout", "stderr")):
+                raise Refused(code)
+            if sum(len(body[key].encode("utf-8")) for key in ("stdout", "stderr")) > limit:
+                raise Refused(code)
+            if body["result_withheld"] and (body["stdout"] or body["stderr"]):
+                raise Refused(code)
+    except Refused:
+        return {"status": 400, "code": code}
+    return {"status": 204}
+
+
+@pytest.mark.parametrize("case", HTTP_VECTOR["bodies"], ids=lambda case: case["name"])
+def test_http_body_vectors(case):
+    assert hashlib.sha256(case["body_json"].encode("utf-8")).hexdigest() == case["body_sha256"]
+    assert _http_body_result(case) == case["expected"]
+
+
+@pytest.mark.parametrize("case", HTTP_VECTOR["field_families"], ids=lambda case: case["name"])
+def test_http_env_family_vectors(case):
+    selected = set(case["selected_fields"])
+    candidates = [
+        kind for kind, fields in FIELD_FAMILIES.items() if selected and selected <= fields
+    ]
+    actual = (
+        {"validation_kind": candidates[0]} if len(candidates) == 1 else {"error": "job_invalid"}
+    )
+    assert actual == case["expected"]
+
+
+@pytest.mark.parametrize("case", HTTP_VECTOR["report_statuses"])
+def test_http_report_status_vectors(case):
+    if not case["released"]:
+        status, code, effect = 409, "runner_dispatch_state_conflict", "none"
+    elif case["prior_result"] == "different":
+        status, code, effect = 409, "runner_result_conflict", "none"
+    elif case["prior_result"] == "identical":
+        status, code, effect = 204, None, "none"
+    else:
+        status, code = 204, None
+        effect = "completed" if case["state"] == "dispatching" else "late_evidence"
+    assert (status, code, effect) == (case["expected_status"], case.get("code"), case["effect"])

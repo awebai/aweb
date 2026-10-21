@@ -1020,8 +1020,11 @@ credentials: [{secret_ref, delivery: short_lived | durable, mint}]
 **Credential slots and mint recipes.** Each `secret_ref` is unique in the job's
 ordered credential list and names a fixed secret in the same installation and
 team. It is also the stable slot label used by `env` entries of the form
-`{"$credential": "<secret_ref>"}`. An environment reference must name a declared
-slot. It never names a future random child ref.
+`{"$credential": "<secret_ref>", "field": "<field name>"}`. An environment
+reference names a declared slot and an explicit structured-value field, even
+for a single-field kind. It never names a future random child ref. The field
+families, whole-mapping custody codec and missing-field/NUL refusals are fixed
+in [runner protocol §4.4](../secrets-runner-protocol.md#44-explicit-environment-fields).
 
 - For `short_lived`, `secret_ref` names the **parent** and `mint` is exactly
   `{operation_id, digest, params}`. The operation must resolve for that parent
@@ -1277,9 +1280,15 @@ job's process has the credential (secrets SOT §4).
 
 ### 9.6 Output
 
-The runner returns the exit code and bounded stdout and stderr. It applies
-known-value redaction locally (it knows what it was given) and credential-shape
-detection. secrets applies both again, then the job's output projection. Withheld
+The runner returns the exit code, bounded stdout/stderr and explicit local
+truncation, withhold and redaction metadata. The exact six-field report, combined
+UTF-8 bound, HTTP statuses and replay/late-result rules are fixed in
+[runner protocol §4](../secrets-runner-protocol.md#4-http-bodies-reports-and-credential-fields).
+It applies known-value redaction locally (it knows what it was given) and
+credential-shape detection. secrets applies both again, then the job's output
+projection. Its known-value context must be the original released values in
+dispatch-bound transient memory, never a later vault reread; missing context
+withholds returned streams while preserving exit status and metadata. Withheld
 output follows §7.6.
 
 ## 10. approve_only on the joint approval primitive

@@ -95,6 +95,17 @@ fixed seeds; sealed values were generated once and are checked by opening them.
 Credential plaintexts are fixtures. secrets' `test_runner_protocol_vectors.py`
 consumes every case.
 
+### `secrets-runner-http-v1.json`
+
+[Runner protocol §4](../secrets-runner-protocol.md#4-http-bodies-reports-and-credential-fields)
+body bytes and their private request-binding hashes, six-field result refusals,
+combined UTF-8 bounds, declared env-field families and report-state expectations.
+No credential material is present. The contract reference reader in
+`test_runner_protocol_vectors.py` consumes every case. Mounted server/runner
+implementations still owe nonce, release, CAS, late-evidence and redaction-context
+proofs; these examples do not authorize a dispatch. The existing signed/sealed
+`secrets-runner-protocol-v1.json` bytes are unchanged.
+
 ### `message-signing-v1.json`
 
 Canonical UTF-8 message payloads and expected Ed25519 signatures, including
@@ -624,6 +635,7 @@ reference duplication are mutation-tested failures.
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` |
+| `secrets-runner-http-v1.json` | secrets `test_runner_protocol_vectors.py` |
 | `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
