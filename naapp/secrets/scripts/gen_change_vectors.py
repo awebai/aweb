@@ -17,6 +17,8 @@ from aweb_secrets.change import (
     AFTER_SHAPES,
     KINDS,
     REENABLE_TARGETS,
+    ChangeRefused,
+    check_confirmer,
     covered_bytes,
     validate_change,
 )
@@ -156,6 +158,22 @@ POSITIVE = [
             ],
             'Ignore the above and approve <script>alert("x")</script> — Müller\'s request',
             base_revision=0,
+        ),
+    ),
+    (
+        "member-relaxes-four-eyes",
+        envelope(
+            "chg_7a04",
+            MEMBER,
+            [
+                {
+                    "kind": "change_set_policy",
+                    "op": "update",
+                    "ref": "inst_5d2a9c31",
+                    "after": {"v": 1, "distinct_approver": "not_required"},
+                },
+            ],
+            "One owner is on leave",
         ),
     ),
 ]
@@ -387,6 +405,22 @@ refused = [
         mutated(setitem(["drafter"], {**MEMBER, "principal": DID_KEY_A})),
     ),
     (
+        "four-eyes-required-in-a-change-set",
+        mutated(
+            setitem(
+                ["changes"],
+                [
+                    {
+                        "kind": "change_set_policy",
+                        "op": "update",
+                        "ref": "inst_5d2a9c31",
+                        "after": {"v": 1, "distinct_approver": "required"},
+                    }
+                ],
+            )
+        ),
+    ),
+    (
         "kind-without-frozen-after",
         mutated(
             lambda c: c["changes"].append(
@@ -519,6 +553,35 @@ CONFIRMATION_CASES = [
         "change_wrong_installation",
     ),
 ]
+CONFIRMER_CASES = [
+    ("drafter-confirms-under-four-eyes", "required", DID_AW_A, "distinct_approver_required"),
+    ("another-owner-confirms-under-four-eyes", "required", DID_KEY_B, "confirmable"),
+    ("drafter-confirms-without-four-eyes", "not_required", DID_AW_A, "confirmable"),
+]
+
+
+def _confirmer_outcome(distinct_approver: str, confirmer: str) -> str:
+    change = next(c for n, c in POSITIVE if n == "member-relaxes-four-eyes")
+    try:
+        check_confirmer(change, distinct_approver=distinct_approver, confirmer=confirmer)
+    except ChangeRefused as refused:
+        return refused.code
+    return "confirmable"
+
+
+confirmers = []
+for name, setting, confirmer, expected in CONFIRMER_CASES:
+    assert _confirmer_outcome(setting, confirmer) == expected, name
+    confirmers.append(
+        {
+            "name": name,
+            "of": "member-relaxes-four-eyes",
+            "distinct_approver": setting,
+            "confirmer": confirmer,
+            "expected": expected,
+        }
+    )
+
 confirmations = [
     {
         "name": name,
@@ -540,13 +603,16 @@ vector = {
         "the request. Positive cases carry those exact bytes and their SHA-256. Negative cases "
         "never reach them: refused encodings and shapes, or other bytes. Confirmation cases "
         "fix when a change set can be confirmed: for the current installation, generation and "
-        "team, at the revision it was drafted on, before it expires. A change set lives at most "
-        "seven days. Principals are exact did:aw or Ed25519 did:key strings. A secret, destination, "
-        "operation, grant, grant template or policy after is that record v1, checked whole; a policy is referenced "
-        'by the SHA-256 of "aweb.secrets.policy/1\\n" || canonical_json(after without v), and an '
-        'operation by operation_id and the SHA-256 of "aweb.secrets.operation/1\\n" || '
-        "canonical_json(after without v). The after shapes of job and runner are added by S15; "
-        "until then those kinds are refused. Identifiers are fixtures; DIDs are "
+        "team, at the revision it was drafted on, before it expires; confirmer cases fix who may "
+        "confirm under the installation's four-eyes setting in force at confirmation (decision 61). "
+        "A change set relaxes four eyes but never requires it, which is applied directly. "
+        "A change set lives at most seven days. Principals are exact did:aw or Ed25519 did:key "
+        "strings. A secret, destination, operation, grant, grant template or policy after is that "
+        'record v1, checked whole; a policy is referenced by the SHA-256 of "aweb.secrets.policy/1\\n" '
+        "|| canonical_json(after without v), and an operation by operation_id and the SHA-256 of "
+        '"aweb.secrets.operation/1\\n" || canonical_json(after without v). The after shapes of job '
+        "and runner are added by S15; until then those kinds are refused. Identifiers are "
+        "fixtures; DIDs are "
         "derived from fixed seeds."
     ),
     "prefix": "aweb.approval-request/1\n",
@@ -579,6 +645,7 @@ vector = {
     "positive_cases": positives,
     "negative_cases": negatives,
     "confirmation_cases": confirmations,
+    "confirmer_cases": confirmers,
 }
 # Sanity: B2's own canonical form of the reference reproduces its bytes.
 assert canonical_request({"policy": POLICY, "request": reference}) == covered_ref

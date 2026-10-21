@@ -55,7 +55,12 @@ KINDS: Mapping[str, frozenset[str]] = {
     "approver_contact": frozenset({"update"}),
     "policy": frozenset({"create"}),
     "reenable": frozenset({"enable"}),
+    # Relaxing four eyes for change sets (decision 61). Requiring it narrows and
+    # is applied directly, so a change set only ever carries the relaxing value.
+    "change_set_policy": frozenset({"update"}),
 }
+
+DISTINCT_APPROVER = frozenset({"required", "not_required"})
 
 # What can be disabled, and so re-enabled.
 REENABLE_TARGETS = frozenset(
@@ -188,9 +193,11 @@ class AfterShape:
     ``identity`` may name them."""
 
     fields: Mapping[str, Check]
-    ref_field: str
+    ref_field: str | None
     identity: tuple[str, ...]
     derived: Callable[[Mapping[str, Any], str], Mapping[str, Any]] | None = None
+    # For a per-installation setting: the envelope field the item's ref must equal.
+    envelope_ref: str | None = None
 
 
 def _record_field(value: Any, where: str) -> None:
@@ -296,6 +303,12 @@ AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
         ref_field="role",
         identity=("role", "principal"),
     ),
+    ("change_set_policy", 1): AfterShape(
+        fields={"v": _V1, "distinct_approver": _one_of(frozenset({"not_required"}))},
+        ref_field=None,
+        identity=(),
+        envelope_ref="installation_id",
+    ),
     ("reenable", 1): AfterShape(
         fields={"v": _V1, "target_kind": _one_of(REENABLE_TARGETS), "target_ref": _text()},
         ref_field="target_ref",
@@ -358,7 +371,7 @@ def _item(value: Any, where: str) -> tuple[str, tuple[Any, ...]]:
         if set(derived) & set(after):
             raise ChangeRefused(f"{where}.after: a derived field shadows an after field")
         found.update(derived)
-    if found[shape.ref_field] != ref:
+    if shape.ref_field is not None and found[shape.ref_field] != ref:
         raise ChangeRefused(f"{where}.ref must equal after.{shape.ref_field}")
     return kind, tuple(found[field] for field in shape.identity)
 
@@ -395,6 +408,12 @@ def validate_change(change: Mapping[str, Any]) -> None:
     _fields(change, "change", _ENVELOPE)
     if change["v"] != VERSION:
         raise ChangeRefused(f"change.v must be {VERSION}")
+    for index, item in enumerate(change["changes"]):
+        shape = AFTER_SHAPES[(item["kind"], item["after"]["v"])]
+        if shape.envelope_ref is not None and item["ref"] != change[shape.envelope_ref]:
+            raise ChangeRefused(
+                f"change.changes[{index}].ref must equal change.{shape.envelope_ref}"
+            )
     lifetime = parse_utc_seconds(change["expires_at"]) - parse_utc_seconds(change["issued_at"])
     if not timedelta(0) < lifetime <= MAX_LIFETIME:
         raise ChangeRefused("change.expires_at must be after change.issued_at, within 7 days")
@@ -446,3 +465,30 @@ def check_confirmable(
         )
     if now >= parse_utc_seconds(change["expires_at"]):
         raise ChangeRefused("the change set has expired", code="change_expired")
+
+
+def check_confirmer(
+    change: Mapping[str, Any],
+    *,
+    distinct_approver: str,
+    confirmer: str,
+    drafter_principal: str | None = None,
+) -> None:
+    """Refuse a confirmation that four eyes forbids (decision 61).
+
+    ``distinct_approver`` is the installation's setting in force now, at
+    confirmation, whatever it was when the change set was drafted. While it is
+    ``required``, the confirming principal must differ from the drafter's: a
+    member's principal from the change set, or, for a console draft, the
+    principal behind its scope, which the caller passes as
+    ``drafter_principal``. A drafter whose principal is unknown is refused."""
+    if distinct_approver not in DISTINCT_APPROVER:
+        raise ValueError(f"distinct_approver must be one of {sorted(DISTINCT_APPROVER)}")
+    if distinct_approver == "not_required":
+        return
+    drafter = change["drafter"]
+    drafted_by = drafter["principal"] if drafter["via"] == "team_auth" else drafter_principal
+    if drafted_by is None or drafted_by == confirmer:
+        raise ChangeRefused(
+            "four eyes is required: the drafter cannot confirm", code="distinct_approver_required"
+        )
