@@ -265,15 +265,45 @@ def validate_team_id(team_id: str) -> str:
     return value
 
 
-def _revocation_carried_across_digests(table: str) -> str:
+_APP_KEY_HISTORY_SQL = """
+    SELECT team_id, app_id, key_id, did_key, revoked_at
+    FROM {{tables.team_app_emit_keys}}
+    UNION ALL
+    SELECT team_id, app_id, key_id, did_key, revoked_at
+    FROM {{tables.team_app_keys}}
+"""
+
+_ACTIVE_KEY_HISTORY_SQL = f"""
+    NOT EXISTS (
+        SELECT 1 FROM ({_APP_KEY_HISTORY_SQL}) AS history
+        WHERE history.team_id = k.team_id AND history.app_id = k.app_id
+          AND history.key_id = k.key_id
+          AND (history.did_key <> k.did_key OR history.revoked_at IS NOT NULL)
+    )
+"""
+
+
+async def _key_identity_conflicts(tx, *, team_id: str, app_id: str, kid: str, did_key: str) -> bool:
+    return await tx.fetch_one(
+        f"""
+        SELECT 1 FROM ({_APP_KEY_HISTORY_SQL}) AS history
+        WHERE team_id = $1 AND app_id = $2 AND key_id = $3 AND did_key <> $4
+        LIMIT 1
+        """,
+        team_id, app_id, kid, did_key,
+    ) is not None
+
+
+def _revocation_carried_across_digests() -> str:
     """The earliest revocation of one key in the team, under any of the app's digests.
 
     A team's revocation of a key outlives the digest it was made under, so new
-    bytes that list the same key register it already revoked. For an INSERT
-    whose parameters are $1 team_id, $2 app_id, $5 key_id and $6 did_key.
+    bytes that list the same key register it already revoked, including a
+    v1/v2 representation switch. For an INSERT whose parameters are $1 team_id,
+    $2 app_id, $5 key_id and $6 did_key.
     """
     return (
-        f"(SELECT MIN(revoked_at) FROM {{{{tables.{table}}}}} "
+        f"(SELECT MIN(revoked_at) FROM ({_APP_KEY_HISTORY_SQL}) AS history "
         "WHERE team_id = $1 AND app_id = $2 AND key_id = $5 AND did_key = $6)"
     )
 
@@ -317,26 +347,18 @@ async def _write_team_registrations(
             event_type.description,
         )
     for emit_key in emit_keys:
-        conflicting = await tx.fetch_one(
-            """
-            SELECT 1 FROM {{tables.team_app_emit_keys}}
-            WHERE team_id = $1 AND app_id = $2 AND key_id = $3 AND did_key <> $4
-            LIMIT 1
-            """,
-            team_id,
-            app_id,
-            emit_key.kid,
-            emit_key.did_key,
-        )
-        if conflicting:
+        if await _key_identity_conflicts(
+            tx, team_id=team_id, app_id=app_id, kid=emit_key.kid, did_key=emit_key.did_key
+        ):
             raise ConflictError("emit key id is already registered with a different key")
         await tx.execute(
             f"""
-            INSERT INTO {{{{tables.team_app_emit_keys}}}} (
+            INSERT INTO {{{{tables.team_app_emit_keys}}}} AS registered (
                 team_id, app_id, origin, digest, key_id, did_key, revoked_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, {_revocation_carried_across_digests("team_app_emit_keys")})
-            ON CONFLICT (team_id, app_id, origin, digest, key_id) DO NOTHING
+            VALUES ($1, $2, $3, $4, $5, $6, {_revocation_carried_across_digests()})
+            ON CONFLICT (team_id, app_id, origin, digest, key_id) DO UPDATE SET
+                revoked_at = LEAST(registered.revoked_at, EXCLUDED.revoked_at)
             """,
             team_id,
             app_id,
@@ -346,28 +368,20 @@ async def _write_team_registrations(
             emit_key.did_key,
         )
     for app_key in app_keys:
-        conflicting = await tx.fetch_one(
-            """
-            SELECT 1 FROM {{tables.team_app_keys}}
-            WHERE team_id = $1 AND app_id = $2 AND key_id = $3 AND did_key <> $4
-            LIMIT 1
-            """,
-            team_id,
-            app_id,
-            app_key.kid,
-            app_key.did_key,
-        )
-        if conflicting:
+        if await _key_identity_conflicts(
+            tx, team_id=team_id, app_id=app_id, kid=app_key.kid, did_key=app_key.did_key
+        ):
             raise ConflictError("app key id is already registered with a different key")
         # A team's revocation of a key outlives the digest it was made under:
         # new bytes listing the same key register it already revoked.
         await tx.execute(
             f"""
-            INSERT INTO {{{{tables.team_app_keys}}}} (
+            INSERT INTO {{{{tables.team_app_keys}}}} AS registered (
                 team_id, app_id, origin, digest, key_id, did_key, purposes, revoked_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[], {_revocation_carried_across_digests("team_app_keys")})
-            ON CONFLICT (team_id, app_id, origin, digest, key_id) DO NOTHING
+            VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[], {_revocation_carried_across_digests()})
+            ON CONFLICT (team_id, app_id, origin, digest, key_id) DO UPDATE SET
+                revoked_at = LEAST(registered.revoked_at, EXCLUDED.revoked_at)
             """,
             team_id,
             app_id,
@@ -690,7 +704,7 @@ async def get_active_app_key(
           AND k.did_key = $4
           AND $5 = ANY(k.purposes)
           AND k.revoked_at IS NULL
-        """,
+          AND """ + _ACTIVE_KEY_HISTORY_SQL,
         team_id,
         app_id,
         kid,
@@ -725,7 +739,7 @@ async def get_active_app_emit_key(
           AND k.key_id = $3
           AND k.did_key = $4
           AND k.revoked_at IS NULL
-        """,
+          AND """ + _ACTIVE_KEY_HISTORY_SQL,
         team_id,
         app_id,
         kid,

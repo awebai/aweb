@@ -30,8 +30,9 @@ which confer no ordinary authority. Authentication is verified team auth or the
 host's verified internal context; the requested team must match it.
 
 A key ID keeps its first `did_key` within a team and app. A conflicting key is
-refused with 409 and nothing is written. Revocation survives digest changes;
-reinstall never reactivates a revoked key. Purpose labels come from pinned
+refused with 409 and nothing is written. Identity and revocation history span both v1 emitters and v2 app keys.
+Revocation survives digest and manifest-version changes; reinstall never
+reactivates a revoked key. Purpose labels come from pinned
 bytes. An unknown purpose is stored and grants nothing. Private keys never
 belong in manifests or installation requests.
 
