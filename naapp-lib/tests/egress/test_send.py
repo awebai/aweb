@@ -17,6 +17,13 @@ from ipaddress import ip_address
 from pathlib import Path
 
 import pytest
+from aweb_naapp_testing.network import (
+    Certificates,
+    DnsServer,
+    TlsServer,
+    local_address,
+    make_certificates,
+)
 
 from aweb_naapp.egress import (
     AddressPolicy,
@@ -32,8 +39,6 @@ from aweb_naapp.egress import (
     InternalDestinations,
     parse_destination,
 )
-
-from .servers import Certificates, DnsServer, TlsServer, local_address, make_certificates
 
 NAME = "api.egress.test"
 ALLOWED = AddressPolicy(internal_destinations=InternalDestinations.ALLOWED)

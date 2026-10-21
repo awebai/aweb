@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 import aweb.routes.apps as apps_routes
 from aweb.app_registry import install_app, reserved_app_ids
+from aweb.audit import AuditActor, set_verified_audit_actor
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.service_errors import ConflictError
 from aweb.routes.apps import router as apps_router
@@ -37,6 +38,11 @@ def _build_apps_app(aweb_db) -> FastAPI:
 
 
 async def _fake_team_identity(request, db_infra) -> TeamIdentity:
+    # Real team-certificate auth sets the verified operator-audit actor.
+    set_verified_audit_actor(
+        request,
+        AuditActor(team_id=TEAM_ID, principal_type="c", auth_mode="team_auth_v2", did_key="did:key:z6Mkalice"),
+    )
     return TeamIdentity(
         team_id=TEAM_ID,
         alias="alice",

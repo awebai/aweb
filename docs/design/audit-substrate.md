@@ -200,7 +200,7 @@ objects and no free text). The hooks catalog vector records it.
 | `returned_hmac` | A producer-keyed HMAC of the bytes returned to the agent, after projection and redaction. It is absent when the result is `withheld`. It is an HMAC and not a plain hash, because returned bytes may still carry a credential that redaction missed. |
 | `disposition`, `derived_secret_id` | `returned`, `withheld` or `stored_as_secret`, on `completed`. |
 | `undeclared_credential` | Boolean, on `completed`: the response carried a credential that was not declared. |
-| `redaction_count`, `refusal_code` | `refusal_code` is a fixed enum, recorded in the catalog vector: `grant_missing`, `grant_revoked`, `operation_not_allowed`, `open_request_not_allowed`, `policy_rate_limited`, `policy_window_closed`, `destination_not_in_scope`, `destination_address_denied`, `internal_destinations_disabled`, `header_not_allowed`, `params_invalid`, `token_issuing_denied`, `secret_disabled`, `installation_disabled`, `secret_version_changed`, `custody_unavailable`, `attestation_unavailable`, `approval_denied`, `approval_expired`, `approval_revoked`, `approval_unrenderable`, `distinct_approver_required`, `reconciliation_pending`, `idempotency_conflict`, `audit_target_unavailable`, `audit_delivery_stalled`, `runner_unavailable`, `job_not_allowed`. |
+| `redaction_count`, `refusal_code` | `refusal_code` is a fixed enum, recorded in the catalog vector: `grant_missing`, `grant_revoked`, `operation_not_allowed`, `open_request_not_allowed`, `policy_rate_limited`, `policy_window_closed`, `destination_not_in_scope`, `destination_address_denied`, `internal_destinations_disabled`, `header_not_allowed`, `params_invalid`, `token_issuing_denied`, `secret_disabled`, `installation_disabled`, `generation_superseded`, `secret_version_changed`, `custody_unavailable`, `attestation_unavailable`, `approval_denied`, `approval_expired`, `approval_revoked`, `approval_unrenderable`, `distinct_approver_required`, `reconciliation_pending`, `dispatch_in_flight`, `idempotency_conflict`, `audit_target_unavailable`, `audit_delivery_stalled`, `runner_unavailable`, `job_not_allowed`. |
 
 A withheld value and an undeclared credential are properties of the
 `completed` event, not separate events: one effect, one event.
@@ -260,37 +260,17 @@ and version, hook, `tool`, the resolved `method` and raw `path` from that
 digest's tool mapping, scopes, `reads`, state, `active_from`, `revoked_at`, and
 the SHA-256 of the owner acts that changed it.
 
-**Owner act.** Activation and revocation take an `aweb.owner-act/1`. The
-signing bytes are the literal `aweb.owner-act/1` plus a newline, followed by
-canonical JSON of `{v, type: "aweb.owner-act", act, team_id, aud,
-team_key_did, subject, issued_at, expires_at, nonce}`. For a binding, `act` is
-`hook-binding.activate` or `hook-binding.revoke`, and `subject` is
-`{installation_id, generation, app_id, origin, digest, kind, catalog, hook,
-tool, method, path, scopes, reads}`. The approving client fetched and hashed
-the exact manifest bytes and resolved the tool. The server compares the
-subject with the stored pending binding; it does not fetch.
-
-The prefix is unique to this artifact, so no other team-key-signed object can
-verify as an owner act, nor an owner act as one of them. That covers team
-certificates and AWID controller envelopes, which are both canonical JSON
-without this prefix.
-
-The verifier checks, in order:
-
-- the signature against the *current* AWID team key, fetched fresh (cache of
-  at most 60 s), so a rotated-out key stops working promptly;
-- `aud` in its configured public origins;
-- a lifetime of at most ten minutes;
-- a nonce unused in a stored table (this artifact is rare, so unlike team-auth
-  v2 it is single-use);
-- `act` within **that verifier's closed vocabulary**, with its defined subject.
-  Core accepts only `hook-binding.activate` and `hook-binding.revoke`. Naapps
-  accept the generic app-governance acts below plus their own closed list
-  (logs: §B6). A valid act of another type or audience is refused;
-- an exact subject match with the pending row and current generation.
-
-Any mismatch refuses with a distinct error, and an admin or member signature is
-refused (`owner_required`).
+**Owner act.** Activation and revocation take an `aweb.owner-act/1`, specified
+in [the owner-act contract](../owner-act.md), which is the single source for its
+bytes, acts, subjects and verification order. For a binding, `act` is
+`hook-binding.activate` or `hook-binding.revoke`, and the subject names the
+binding exactly, including its `binding_id`, `catalog_id` and
+`catalog_version`. The approving client fetched and hashed the exact manifest
+bytes and resolved the tool. The server compares the subject with the stored
+pending binding; it does not fetch. The prefix is unique to this artifact, so
+no other team-key-signed object can verify as an owner act, nor an owner act as
+one of them. A verifier proves the current team key, not the person who holds
+it.
 
 **The owner act is every naapp's root of trust for governance.** `aweb_naapp`
 defines three generic app-governance acts, with subject `{app_id,
@@ -724,6 +704,11 @@ Per team and chain epoch, under a row lock on the team's chain head:
   did_key, previous_checkpoint_sha256}`. It is issued periodically while
   events arrive and on demand, and the owner can export it. External anchoring
   is future work (logs-spec §8).
+- **Logs' key purposes.** Logs signs receipts and checkpoints with its own
+  key, declared in its v2 manifest's `app_keys` with the purposes
+  `logs-receipt`, `logs-checkpoint` or both (one kid may carry both). Only
+  logs and the verifiers of its artefacts consume them. The bytes are
+  specified in [the logs chain](../logs-chain.md).
 - **`verify`** recomputes the chain over a range or from a checkpoint. It
   re-checks retained provenance signatures and commitments, and reports
   `intact`, `broken_at`, `missing` (gaps), purged ranges with their governing

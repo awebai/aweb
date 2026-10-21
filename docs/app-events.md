@@ -146,6 +146,15 @@ The verifier requires:
 This credential proves an installed app emit key authorized one request. It is
 not a team certificate and does not grant arbitrary app or team operations.
 
+`app-event` is one purpose of the server's purpose-bound app credential
+verifier (`server/src/aweb/app_credentials.py`). Every purpose has its own
+`Authorization` prefix, its own exact signed `auth` value and its own key
+source, so a credential signed for one purpose is refused for any other: an
+`app-event` credential is never accepted where another purpose is required, and
+a credential signed for another purpose is refused at `/v1/events/app`. Emit
+keys (`event_emitters`) are `app-event` keys only; registered app keys
+(`team_app_keys`) sign only the purposes they declare.
+
 ## Emit body and response
 
 Request:

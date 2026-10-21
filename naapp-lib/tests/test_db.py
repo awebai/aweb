@@ -60,9 +60,13 @@ def _applied(rows: list) -> list[tuple[str, str]]:
 
 
 _SHARED = ("aweb_naapp", "001_observed_principals.sql")
+_OUTBOX = [
+    ("aweb_naapp_outbox", "001_outbox.sql"),
+    ("aweb_naapp_outbox", "002_outbox_channels.sql"),
+]
 
 
-async def test_connect_applies_the_shared_then_the_app_migrations(
+async def test_connect_applies_the_shared_and_outbox_then_the_app_migrations(
     database_url: str, tmp_path: Path
 ) -> None:
     # The app migration references the shared teams table, so it can only
@@ -71,12 +75,12 @@ async def test_connect_applies_the_shared_then_the_app_migrations(
     database = NaappDatabase(settings, module_name="example", migrations_path=_migrations(tmp_path))
     await database.connect()
     try:
-        for table in ("things", "teams", "agents"):
+        for table in ("things", "teams", "agents", "outbox_events", "outbox_deliveries"):
             assert await database.db.fetch_value(f"SELECT to_regclass('{table}') IS NOT NULL")
         applied = await database.db.fetch_all(
             "SELECT module_name, filename FROM schema_migrations ORDER BY id"
         )
-        assert _applied(applied) == [_SHARED, ("example", "001_initial.sql")]
+        assert _applied(applied) == [_SHARED, *_OUTBOX, ("example", "001_initial.sql")]
     finally:
         await database.disconnect()
 
@@ -112,7 +116,7 @@ async def test_an_app_that_already_created_the_shared_tables_keeps_its_rows(
         applied = await database.db.fetch_all(
             "SELECT module_name, filename FROM schema_migrations ORDER BY id"
         )
-        assert _applied(applied) == [("example", "001_initial.sql"), _SHARED]
+        assert _applied(applied) == [("example", "001_initial.sql"), _SHARED, *_OUTBOX]
     finally:
         await database.disconnect()
 
@@ -125,7 +129,7 @@ async def test_reconnecting_applies_nothing_twice(database_url: str, tmp_path: P
         await database.connect()
         count = await database.db.fetch_value("SELECT count(*) FROM schema_migrations")
         await database.disconnect()
-        assert count == 2
+        assert count == 4
 
 
 async def test_pool_follows_the_settings(database_url: str, tmp_path: Path) -> None:

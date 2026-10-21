@@ -1,0 +1,717 @@
+{
+  "name": "hook-binding-cases-v1",
+  "status": "proposed (aweb-acgh.16.1); frozen once reviewed",
+  "scheme": {
+    "authority": "docs/hook-events.md, Bindings",
+    "states": [
+      "pending",
+      "active",
+      "revoked",
+      "superseded"
+    ],
+    "terminal_states": [
+      "revoked",
+      "superseded"
+    ],
+    "transitions": [
+      {
+        "from": "pending",
+        "op": "activate",
+        "to": "active",
+        "signer": "owner"
+      },
+      {
+        "from": "pending",
+        "op": "revoke",
+        "to": "revoked",
+        "signer": "owner"
+      },
+      {
+        "from": "active",
+        "op": "revoke",
+        "to": "revoked",
+        "signer": "owner"
+      },
+      {
+        "from": "pending",
+        "op": "uninstall",
+        "to": "revoked"
+      },
+      {
+        "from": "active",
+        "op": "uninstall",
+        "to": "revoked"
+      },
+      {
+        "from": "pending",
+        "op": "update",
+        "to": "superseded"
+      },
+      {
+        "from": "active",
+        "op": "update",
+        "to": "superseded"
+      }
+    ],
+    "known_catalogs": [
+      {
+        "id": "aweb.hooks",
+        "version": 1
+      }
+    ],
+    "known_hooks": [
+      "post-secret-use-hook",
+      "post-governance-hook",
+      "post-manifest-command-hook",
+      "post-mutation-hook",
+      "post-command-hook"
+    ],
+    "active_from_pad_seconds": 60,
+    "time": "t is seconds from the case's start; every step happens at its t",
+    "owed": "an event is owed to a binding of its hook when the binding is active at the event's t and its active_from is at or before that t",
+    "audit_critical_gate": "pass when at least one binding of the hook is owed the event, refuse otherwise",
+    "undelivered": "bindings whose delivery of this event is still pending when the next step runs",
+    "revoke": "the revoked binding receives the post-mutation-hook event hook_binding.revoked as its final entry, whatever hook it was registered for; its pending deliveries are cancelled; and every other post-mutation-hook registration owed that event is notified, with the count of cancelled deliveries",
+    "refusals": [
+      "owner_required",
+      "unknown_catalog",
+      "binding_not_pending"
+    ],
+    "ops": [
+      "install",
+      "update",
+      "activate",
+      "revoke",
+      "uninstall",
+      "event"
+    ]
+  },
+  "cases": [
+    {
+      "name": "admin_install_leaves_bindings_pending",
+      "steps": [
+        {
+          "t": 0,
+          "op": "install",
+          "generation": 1,
+          "signer": "admin",
+          "bindings": [
+            {
+              "id": "b1",
+              "kind": "registration",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 1,
+              "hook": "post-secret-use-hook"
+            },
+            {
+              "id": "p1",
+              "kind": "production",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 1,
+              "hook": "post-secret-use-hook"
+            }
+          ],
+          "expect": {
+            "states": {
+              "b1": "pending",
+              "p1": "pending"
+            }
+          }
+        },
+        {
+          "t": 5,
+          "op": "event",
+          "event": "e1",
+          "hook": "post-secret-use-hook",
+          "expect": {
+            "owed_to": [],
+            "audit_critical_gate": "refuse"
+          }
+        }
+      ]
+    },
+    {
+      "name": "admin_signer_cannot_activate",
+      "steps": [
+        {
+          "t": 0,
+          "op": "install",
+          "generation": 1,
+          "signer": "admin",
+          "bindings": [
+            {
+              "id": "b1",
+              "kind": "registration",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 1,
+              "hook": "post-secret-use-hook"
+            }
+          ],
+          "expect": {
+            "states": {
+              "b1": "pending"
+            }
+          }
+        },
+        {
+          "t": 1,
+          "op": "activate",
+          "binding": "b1",
+          "signer": "admin",
+          "expect": {
+            "refused": "owner_required",
+            "states": {
+              "b1": "pending"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "owner_activation_and_active_from_pad",
+      "steps": [
+        {
+          "t": 0,
+          "op": "install",
+          "generation": 1,
+          "signer": "admin",
+          "bindings": [
+            {
+              "id": "b1",
+              "kind": "registration",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 1,
+              "hook": "post-secret-use-hook"
+            }
+          ],
+          "expect": {
+            "states": {
+              "b1": "pending"
+            }
+          }
+        },
+        {
+          "t": 10,
+          "op": "activate",
+          "binding": "b1",
+          "signer": "owner",
+          "expect": {
+            "states": {
+              "b1": "active"
+            },
+            "active_from": {
+              "b1": 70
+            }
+          }
+        },
+        {
+          "t": 40,
+          "op": "event",
+          "event": "e1",
+          "hook": "post-secret-use-hook",
+          "expect": {
+            "owed_to": [],
+            "audit_critical_gate": "refuse"
+          }
+        },
+        {
+          "t": 70,
+          "op": "event",
+          "event": "e2",
+          "hook": "post-secret-use-hook",
+          "expect": {
+            "owed_to": [
+              "b1"
+            ],
+            "audit_critical_gate": "pass"
+          }
+        }
+      ]
+    },
+    {
+      "name": "unknown_catalog_cannot_activate",
+      "steps": [
+        {
+          "t": 0,
+          "op": "install",
+          "generation": 1,
+          "signer": "admin",
+          "bindings": [
+            {
+              "id": "b1",
+              "kind": "registration",
+              "catalog_id": "acme.hooks",
+              "catalog_version": 1,
+              "hook": "post-secret-use-hook"
+            },
+            {
+              "id": "b2",
+              "kind": "registration",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 2,
+              "hook": "post-secret-use-hook"
+            },
+            {
+              "id": "b3",
+              "kind": "registration",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 1,
+              "hook": "post-anything-hook"
+            }
+          ],
+          "expect": {
+            "states": {
+              "b1": "pending",
+              "b2": "pending",
+              "b3": "pending"
+            }
+          }
+        },
+        {
+          "t": 1,
+          "op": "activate",
+          "binding": "b1",
+          "signer": "owner",
+          "expect": {
+            "refused": "unknown_catalog",
+            "states": {
+              "b1": "pending"
+            }
+          }
+        },
+        {
+          "t": 2,
+          "op": "activate",
+          "binding": "b2",
+          "signer": "owner",
+          "expect": {
+            "refused": "unknown_catalog",
+            "states": {
+              "b2": "pending"
+            }
+          }
+        },
+        {
+          "t": 3,
+          "op": "activate",
+          "binding": "b3",
+          "signer": "owner",
+          "expect": {
+            "refused": "unknown_catalog",
+            "states": {
+              "b3": "pending"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "new_generation_supersedes_and_never_inherits_activation",
+      "steps": [
+        {
+          "t": 0,
+          "op": "install",
+          "generation": 1,
+          "signer": "admin",
+          "bindings": [
+            {
+              "id": "b1",
+              "kind": "registration",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 1,
+              "hook": "post-secret-use-hook"
+            }
+          ],
+          "expect": {
+            "states": {
+              "b1": "pending"
+            }
+          }
+        },
+        {
+          "t": 1,
+          "op": "activate",
+          "binding": "b1",
+          "signer": "owner",
+          "expect": {
+            "states": {
+              "b1": "active"
+            },
+            "active_from": {
+              "b1": 61
+            }
+          }
+        },
+        {
+          "t": 100,
+          "op": "update",
+          "generation": 2,
+          "signer": "admin",
+          "bindings": [
+            {
+              "id": "b2",
+              "kind": "registration",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 1,
+              "hook": "post-secret-use-hook"
+            }
+          ],
+          "expect": {
+            "states": {
+              "b1": "superseded",
+              "b2": "pending"
+            }
+          }
+        },
+        {
+          "t": 110,
+          "op": "event",
+          "event": "e1",
+          "hook": "post-secret-use-hook",
+          "expect": {
+            "owed_to": [],
+            "audit_critical_gate": "refuse"
+          }
+        },
+        {
+          "t": 120,
+          "op": "activate",
+          "binding": "b1",
+          "signer": "owner",
+          "expect": {
+            "refused": "binding_not_pending",
+            "states": {
+              "b1": "superseded"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "revocation_final_entry_and_cancellation",
+      "steps": [
+        {
+          "t": 0,
+          "op": "install",
+          "generation": 1,
+          "signer": "admin",
+          "bindings": [
+            {
+              "id": "b1",
+              "kind": "registration",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 1,
+              "hook": "post-secret-use-hook"
+            },
+            {
+              "id": "b2",
+              "kind": "registration",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 1,
+              "hook": "post-secret-use-hook"
+            },
+            {
+              "id": "m2",
+              "kind": "registration",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 1,
+              "hook": "post-mutation-hook"
+            }
+          ],
+          "expect": {
+            "states": {
+              "b1": "pending",
+              "b2": "pending",
+              "m2": "pending"
+            }
+          }
+        },
+        {
+          "t": 1,
+          "op": "activate",
+          "binding": "b1",
+          "signer": "owner",
+          "expect": {
+            "states": {
+              "b1": "active"
+            },
+            "active_from": {
+              "b1": 61
+            }
+          }
+        },
+        {
+          "t": 2,
+          "op": "activate",
+          "binding": "b2",
+          "signer": "owner",
+          "expect": {
+            "states": {
+              "b2": "active"
+            },
+            "active_from": {
+              "b2": 62
+            }
+          }
+        },
+        {
+          "t": 3,
+          "op": "activate",
+          "binding": "m2",
+          "signer": "owner",
+          "expect": {
+            "states": {
+              "m2": "active"
+            },
+            "active_from": {
+              "m2": 63
+            }
+          }
+        },
+        {
+          "t": 70,
+          "op": "event",
+          "event": "e1",
+          "hook": "post-secret-use-hook",
+          "undelivered": [
+            "b1"
+          ],
+          "expect": {
+            "owed_to": [
+              "b1",
+              "b2"
+            ],
+            "audit_critical_gate": "pass"
+          }
+        },
+        {
+          "t": 71,
+          "op": "event",
+          "event": "e2",
+          "hook": "post-secret-use-hook",
+          "undelivered": [
+            "b1"
+          ],
+          "expect": {
+            "owed_to": [
+              "b1",
+              "b2"
+            ],
+            "audit_critical_gate": "pass"
+          }
+        },
+        {
+          "t": 80,
+          "op": "revoke",
+          "binding": "b1",
+          "signer": "owner",
+          "expect": {
+            "states": {
+              "b1": "revoked"
+            },
+            "cancelled": {
+              "b1": [
+                "e1",
+                "e2"
+              ]
+            },
+            "final_entry": {
+              "b1": "hook_binding.revoked"
+            },
+            "notified": {
+              "m2": {
+                "mutation_type": "hook_binding.revoked",
+                "cancelled_count": 2
+              }
+            }
+          }
+        },
+        {
+          "t": 85,
+          "op": "event",
+          "event": "e3",
+          "hook": "post-secret-use-hook",
+          "expect": {
+            "owed_to": [
+              "b2"
+            ],
+            "audit_critical_gate": "pass"
+          }
+        }
+      ]
+    },
+    {
+      "name": "uninstall_revokes",
+      "steps": [
+        {
+          "t": 0,
+          "op": "install",
+          "generation": 1,
+          "signer": "admin",
+          "bindings": [
+            {
+              "id": "b1",
+              "kind": "registration",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 1,
+              "hook": "post-mutation-hook"
+            }
+          ],
+          "expect": {
+            "states": {
+              "b1": "pending"
+            }
+          }
+        },
+        {
+          "t": 1,
+          "op": "activate",
+          "binding": "b1",
+          "signer": "owner",
+          "expect": {
+            "states": {
+              "b1": "active"
+            },
+            "active_from": {
+              "b1": 61
+            }
+          }
+        },
+        {
+          "t": 90,
+          "op": "uninstall",
+          "signer": "admin",
+          "expect": {
+            "states": {
+              "b1": "revoked"
+            },
+            "final_entry": {
+              "b1": "hook_binding.revoked"
+            }
+          }
+        },
+        {
+          "t": 95,
+          "op": "event",
+          "event": "e1",
+          "hook": "post-mutation-hook",
+          "expect": {
+            "owed_to": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "target_switch_order_keeps_a_target",
+      "steps": [
+        {
+          "t": 0,
+          "op": "install",
+          "generation": 1,
+          "signer": "admin",
+          "bindings": [
+            {
+              "id": "old",
+              "kind": "registration",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 1,
+              "hook": "post-secret-use-hook"
+            }
+          ],
+          "expect": {
+            "states": {
+              "old": "pending"
+            }
+          }
+        },
+        {
+          "t": 1,
+          "op": "activate",
+          "binding": "old",
+          "signer": "owner",
+          "expect": {
+            "states": {
+              "old": "active"
+            },
+            "active_from": {
+              "old": 61
+            }
+          }
+        },
+        {
+          "t": 100,
+          "op": "install",
+          "generation": 1,
+          "signer": "admin",
+          "app": "second",
+          "bindings": [
+            {
+              "id": "new",
+              "kind": "registration",
+              "catalog_id": "aweb.hooks",
+              "catalog_version": 1,
+              "hook": "post-secret-use-hook"
+            }
+          ],
+          "expect": {
+            "states": {
+              "new": "pending"
+            }
+          }
+        },
+        {
+          "t": 101,
+          "op": "activate",
+          "binding": "new",
+          "signer": "owner",
+          "expect": {
+            "states": {
+              "new": "active"
+            },
+            "active_from": {
+              "new": 161
+            }
+          }
+        },
+        {
+          "t": 130,
+          "op": "event",
+          "event": "e1",
+          "hook": "post-secret-use-hook",
+          "expect": {
+            "owed_to": [
+              "old"
+            ],
+            "audit_critical_gate": "pass"
+          }
+        },
+        {
+          "t": 161,
+          "op": "revoke",
+          "binding": "old",
+          "signer": "owner",
+          "expect": {
+            "states": {
+              "old": "revoked"
+            },
+            "final_entry": {
+              "old": "hook_binding.revoked"
+            }
+          }
+        },
+        {
+          "t": 162,
+          "op": "event",
+          "event": "e2",
+          "hook": "post-secret-use-hook",
+          "expect": {
+            "owed_to": [
+              "new"
+            ],
+            "audit_critical_gate": "pass"
+          }
+        }
+      ]
+    }
+  ]
+}

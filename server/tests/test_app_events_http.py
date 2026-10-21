@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
-import aweb.app_events as app_events
+import aweb.app_credentials as app_credentials
 import aweb.routes.events as events_routes
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
@@ -20,6 +20,7 @@ from aweb.app_events import current_app_events_for_agent
 from aweb.app_registry import (
     AppEmitKey,
     AppEventType,
+    get_active_app_emit_key,
     get_installed_app_event_type,
     install_app,
     list_installed_apps,
@@ -219,7 +220,7 @@ async def test_app_event_emit_accepts_shared_conformance_vector(aweb_cloud_db, m
     # The vector timestamp is fixed for byte parity; this test exercises the
     # verifier bytes/signature path and separately leaves freshness covered by
     # the dedicated stale-timestamp negative vector and route checks.
-    monkeypatch.setattr(app_events, "enforce_timestamp_skew", lambda _timestamp: None)
+    monkeypatch.setattr(app_credentials, "enforce_timestamp_skew", lambda _timestamp: None)
     app = _build_events_app(aweb_cloud_db.aweb_db, public_origin=payload["aud"])
     await _seed_team_and_agent(aweb_cloud_db.aweb_db, team_id=payload["team_id"])
     await _install_folio(
@@ -402,6 +403,34 @@ async def test_app_event_emit_key_is_scoped_to_team_pinned_digest(aweb_cloud_db,
     assert stale_key_resp.status_code == 403, stale_key_resp.text
     assert "App emit key is not registered" in stale_key_resp.json()["detail"]
     assert pinned_key_resp.status_code == 200, pinned_key_resp.text
+
+
+@pytest.mark.asyncio
+async def test_a_revoked_emit_key_stays_revoked_when_a_new_digest_lists_it_again(aweb_cloud_db, monkeypatch):
+    monkeypatch.setattr(events_routes, "get_team_identity", _fake_team_identity)
+    db = aweb_cloud_db.aweb_db
+    signing_key, did_key = _make_app_keypair()
+    await _seed_team_and_agent(db)
+    await _install_folio(db, did_key=did_key, digest="sha256:" + "c" * 64)
+    await db.execute(
+        "UPDATE {{tables.team_app_emit_keys}} SET revoked_at = NOW() WHERE team_id = $1 AND key_id = 'emit-1'",
+        TEAM_ID,
+    )
+
+    await _install_folio(db, did_key=did_key, digest="sha256:" + "d" * 64)
+
+    assert await get_active_app_emit_key(db, team_id=TEAM_ID, app_id="folio", kid="emit-1", did_key=did_key) is None
+    body = json.dumps(
+        {"type": "folio/doc.changed", "resource_ref": "pitch", "payload": {}},
+        separators=(",", ":"),
+    ).encode()
+    async with AsyncClient(transport=ASGITransport(app=_build_events_app(db)), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/events/app",
+            content=body,
+            headers=_signed_app_headers(signing_key=signing_key, did_key=did_key, body=body),
+        )
+    assert response.status_code == 403, response.text
 
 
 @pytest.mark.asyncio

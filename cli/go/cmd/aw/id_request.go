@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -196,42 +195,31 @@ func signIDRequestHeaders(headers http.Header, method string, parsedURL *url.URL
 	if identity == nil || len(identity.SigningKey) != ed25519.PrivateKeySize {
 		return fmt.Errorf("local signing identity is required")
 	}
-	var payload map[string]any
+	claim, value := "did_aw", strings.TrimSpace(identity.StableID)
 	if teamAuth {
-		teamPayload, cert, err := teamSignedRequestPayload(identity, parsedURL, method, bodyBytes, signPayload)
+		cert, err := teamRequestCertificate(identity)
 		if err != nil {
 			return err
 		}
-		payload = teamPayload
 		certHeader, err := awid.EncodeTeamCertificateHeader(cert)
 		if err != nil {
 			return fmt.Errorf("encode team certificate header: %w", err)
 		}
 		headers.Set("X-AWID-Team-Certificate", certHeader)
+		claim, value = "team_id", strings.TrimSpace(identity.TeamID)
 	} else {
-		// Until identity-v2 is deployed, retain ONLY the concrete v1 identity
-		// envelope. Never turn caller JSON into another root-key signing oracle.
 		if len(signPayload) != 0 {
 			return usageError("--sign fields require --team-auth")
 		}
-		payload = map[string]any{
-			"body_sha256": fmt.Sprintf("%x", sha256.Sum256(bodyBytes)),
-			"did_aw":      strings.TrimSpace(identity.StableID),
-		}
 		headers.Del("X-AWID-Team-Certificate")
-		headers.Del("X-AWEB-Signed-Payload")
 	}
-	payload["timestamp"] = timestamp
-	canonical, err := awid.CanonicalJSONValue(payload)
+	didKey, signature, canonical, err := awid.SignRequestCredential(identity.SigningKey, method, parsedURL, claim, value, timestamp, bodyBytes, signPayload)
 	if err != nil {
 		return err
 	}
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(identity.SigningKey, []byte(canonical)))
-	headers.Set("Authorization", fmt.Sprintf("DIDKey %s %s", identity.DIDKey, signature))
+	headers.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
 	headers.Set("X-AWEB-Timestamp", timestamp)
-	if teamAuth {
-		headers.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(canonical)))
-	}
+	headers.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(canonical)))
 	headers.Set("X-AWEB-DID-AW", strings.TrimSpace(identity.StableID))
 	if len(bodyBytes) > 0 && strings.TrimSpace(headers.Get("Content-Type")) == "" {
 		headers.Set("Content-Type", "application/json")
@@ -312,70 +300,35 @@ func loadIDRequestSignPayload(inline, filePath string) (map[string]any, error) {
 	return loadJSONObjectInput(inline, filePath, "sign")
 }
 
-func teamSignedRequestPayload(identity *localSigningIdentity, target *url.URL, method string, body []byte, custom map[string]any) (map[string]any, *awid.TeamCertificate, error) {
+func teamRequestCertificate(identity *localSigningIdentity) (*awid.TeamCertificate, error) {
 	if identity == nil {
-		return nil, nil, fmt.Errorf("local signing identity is required")
+		return nil, fmt.Errorf("local signing identity is required")
 	}
 	if strings.TrimSpace(identity.WorkingDir) == "" || strings.TrimSpace(identity.TeamID) == "" {
-		return nil, nil, usageError("--team-auth requires an aw workspace with an active team")
+		return nil, usageError("--team-auth requires an aw workspace with an active team")
 	}
 	var cert *awid.TeamCertificate
 	var err error
 	if strings.TrimSpace(identity.IdentityHome) != "" {
 		certPath, pathErr := awconfig.IdentityHomeStoredPath(awconfig.IdentityHome{Root: identity.IdentityHome}, awconfig.TeamCertificateRelativePath(identity.TeamID))
 		if pathErr != nil {
-			return nil, nil, pathErr
+			return nil, pathErr
 		}
 		cert, err = awid.LoadTeamCertificate(certPath)
 	} else {
 		cert, err = awconfig.LoadTeamCertificateForTeam(identity.WorkingDir, identity.TeamID)
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("load active team certificate: %w", err)
+		return nil, fmt.Errorf("load active team certificate: %w", err)
 	}
 	if strings.TrimSpace(cert.Team) != strings.TrimSpace(identity.TeamID) {
-		return nil, nil, fmt.Errorf("active team certificate team_id %q does not match selected team %q", cert.Team, identity.TeamID)
+		return nil, fmt.Errorf("active team certificate team_id %q does not match selected team %q", cert.Team, identity.TeamID)
 	}
 	if strings.TrimSpace(cert.MemberDIDKey) != strings.TrimSpace(identity.DIDKey) {
-		return nil, nil, fmt.Errorf("active team certificate member_did_key %q does not match local signing key %q", cert.MemberDIDKey, identity.DIDKey)
+		return nil, fmt.Errorf("active team certificate member_did_key %q does not match local signing key %q", cert.MemberDIDKey, identity.DIDKey)
 	}
 
-	payload := map[string]any{
-		"aud":         target.Scheme + "://" + target.Host,
-		"method":      strings.ToUpper(strings.TrimSpace(method)),
-		"path":        requestTargetPath(target),
-		"team_id":     strings.TrimSpace(identity.TeamID),
-		"body_sha256": fmt.Sprintf("%x", sha256.Sum256(body)),
-		"v":           2,
-	}
-	for key, value := range custom {
-		if _, reserved := teamSignedRequestReservedFields[key]; reserved {
-			return nil, nil, usageError("--sign field %q is reserved by --team-auth", key)
-		}
-		payload[key] = value
-	}
-	return payload, cert, nil
-}
-
-func requestTargetPath(target *url.URL) string {
-	path := target.EscapedPath()
-	if path == "" {
-		path = "/"
-	}
-	if target.RawQuery != "" {
-		path += "?" + target.RawQuery
-	}
-	return path
-}
-
-var teamSignedRequestReservedFields = map[string]struct{}{
-	"aud":         {},
-	"method":      {},
-	"path":        {},
-	"team_id":     {},
-	"body_sha256": {},
-	"timestamp":   {},
-	"v":           {},
+	return cert, nil
 }
 
 func loadJSONObjectInput(inline, filePath, flagName string) (map[string]any, error) {
