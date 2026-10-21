@@ -3,11 +3,35 @@
 The runner connects out to a secrets service and runs locally pinned jobs. It
 uses its own signing and encryption keys; it is not an AWID team member.
 
-This first implementation slice provides the client side of the published
+The implementation provides the client side of the published
 [S0 protocol](../../../docs/secrets-runner-protocol.md): signed requests,
 assignment verification, HPKE opening and a durable SQLite replay journal.
-Registration, the command and job execution are subsequent slices of S15b.
-This package does not yet execute assignments.
+Registration is available as a command. Local job validation, execution and the
+claim/report loop are subsequent slices of S15b; this package does not yet execute
+assignments.
+
+Run registration as the dedicated runner OS user:
+
+```sh
+uv run aweb-secrets-runner register --origin https://secrets.example \
+  --code '<one-use owner-issued code>' --state-dir /absolute/private/runner-state
+```
+
+The command generates Ed25519 and X25519 keys locally, sends their public halves
+over verified TLS, then pins the exact origin, runner ID and service signing key.
+It prints only those public identifiers. `--ca-file` accepts a custom CA bundle
+for a self-hosted service. Registration does not follow redirects or use ambient
+HTTP proxies.
+
+The state directory is created with mode 0700. `identity.json` and the registration
+lock are private to the runner UID. Keys are committed before the exchange and
+the registered identity is written as one fsynced atomic replacement. The code
+is never stored. Concurrent registration refuses before network activity. A
+failed exchange retains the same pending keys and does not retry automatically.
+If the service consumed a code before a lost response, obtain a fresh owner-issued
+code rather than assuming nothing happened. An already registered identity cannot
+be overwritten by this command; rotation requires owner-authorized replacement
+and a fresh state directory.
 
 Verification checks the pinned service key, runner and origin, parameter and
 credential hashes, and the assignment lifetime, in the protocol's specified
@@ -27,6 +51,7 @@ Run the focused checks from this directory:
 ```sh
 uv sync --locked
 uv run pytest tests/test_protocol.py tests/test_journal.py
+uv run pytest tests/test_registration.py
 uv run ruff check src tests
 uv run mypy src
 ```
