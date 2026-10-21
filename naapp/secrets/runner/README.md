@@ -14,8 +14,11 @@ Run registration as the dedicated runner OS user:
 
 ```sh
 uv run aweb-secrets-runner register --origin https://secrets.example \
-  --code '<one-use owner-issued code>' --state-dir /absolute/private/runner-state
+  --state-dir /absolute/private/runner-state
 ```
+
+Enter the one-use owner-issued code at the hidden prompt. Automation supplies one
+line on stdin; the code is never an argument or echoed by the command.
 
 The command generates Ed25519 and X25519 keys locally, sends their public halves
 over verified TLS, then pins the exact origin, runner ID and service signing key.

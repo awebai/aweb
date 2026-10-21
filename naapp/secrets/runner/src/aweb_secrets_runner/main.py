@@ -1,8 +1,10 @@
 """Operator command. Never print private keys or response bodies."""
 
 import argparse
+import getpass
 import json
 import sys
+import warnings
 from pathlib import Path
 
 from .errors import Refused
@@ -14,14 +16,22 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     registration = commands.add_parser("register", help="register local keys and pin the service")
     registration.add_argument("--origin", required=True)
-    registration.add_argument("--code", required=True)
     registration.add_argument("--state-dir", required=True, type=Path)
     registration.add_argument("--ca-file", type=Path)
     args = parser.parse_args()
     try:
+        if sys.stdin.isatty():
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", getpass.GetPassWarning)
+                code = getpass.getpass("Registration code: ")
+        else:
+            code = sys.stdin.readline(256).rstrip("\r\n")
         identity = register(
-            origin=args.origin, code=args.code, state_dir=args.state_dir, ca_file=args.ca_file
+            origin=args.origin, code=code, state_dir=args.state_dir, ca_file=args.ca_file
         )
+    except (EOFError, UnicodeError, getpass.GetPassWarning):
+        print("registration_input_unavailable", file=sys.stderr)
+        return 1
     except Refused as error:
         print(error.code, file=sys.stderr)
         return 1

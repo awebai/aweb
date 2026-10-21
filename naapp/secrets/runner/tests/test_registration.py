@@ -3,9 +3,12 @@
 import ipaddress
 import json
 import os
+import pty
+import select
 import ssl
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -222,13 +225,12 @@ def test_real_registration_command_returns_no_private_material(service):
             "register",
             "--origin",
             service["origin"],
-            "--code",
-            service["code"],
             "--state-dir",
             str(service["state_dir"]),
             "--ca-file",
             str(service["ca_file"]),
         ],
+        input=(service["code"] + "\n").encode(),
         capture_output=True,
         check=False,
     )
@@ -240,3 +242,79 @@ def test_real_registration_command_returns_no_private_material(service):
         not in result.stdout + result.stderr
     )
     assert service["code"].encode() not in result.stdout + result.stderr
+
+
+def test_registration_command_has_no_code_argument():
+    help_result = subprocess.run(
+        [sys.executable, "-m", "aweb_secrets_runner", "register", "--help"],
+        capture_output=True,
+        check=False,
+    )
+    assert help_result.returncode == 0
+    assert b"--code" not in help_result.stdout
+    refused = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "aweb_secrets_runner",
+            "register",
+            "--origin",
+            "https://secrets.example",
+            "--state-dir",
+            "/unused",
+            "--code",
+            "fixture",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    assert refused.returncode == 2
+    assert b"unrecognized arguments" in refused.stderr
+
+
+def test_terminal_prompt_does_not_echo_the_code(service):
+    master, slave = pty.openpty()
+    command = [
+        sys.executable,
+        "-m",
+        "aweb_secrets_runner",
+        "register",
+        "--origin",
+        service["origin"],
+        "--state-dir",
+        str(service["state_dir"]),
+        "--ca-file",
+        str(service["ca_file"]),
+    ]
+    process = subprocess.Popen(
+        command, stdin=slave, stdout=slave, stderr=slave, start_new_session=True
+    )
+    os.close(slave)
+    output = bytearray()
+    sent = False
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if ready:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:
+                    break  # A closed PTY reports EIO on Linux.
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if not sent and b"Registration code: " in output:
+                    os.write(master, (service["code"] + "\n").encode())
+                    sent = True
+            elif process.poll() is not None:
+                break
+        assert sent, bytes(output)
+        assert process.wait(timeout=2) == 0, bytes(output)
+        assert service["code"].encode() not in output
+        assert service["response"]["runner_id"].encode() in output
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+        os.close(master)
