@@ -44,6 +44,7 @@ from aweb_naapp.runtime.team_auth import Principal
 from pgdbm.core import TransactionManager
 
 from aweb_secrets import records
+from aweb_secrets.containment_state import ContainmentRefused, require_enabled
 from aweb_secrets.grant import GrantRecord, is_secrets_role
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
@@ -203,6 +204,10 @@ async def admit_use(
     the denial in the same transaction and commit.
     """
     installation = await fence.admit(tx, grant)
+    try:
+        await require_enabled(tx, installation.installation_id, installation.team_id)
+    except ContainmentRefused as refused:
+        raise AdmissionRefused(refused.code, refused.status) from None
     key = principal_key(principal)
     roles = [
         role
