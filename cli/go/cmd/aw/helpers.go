@@ -531,6 +531,11 @@ func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias strin
 	if found {
 		return c, sel, nil
 	}
+	// Preserve a current-team human alias before native-agent fallback searches
+	// another local membership with the same display label.
+	if _, live, lookupErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetAlias); lookupErr == nil && live {
+		return c, sel, nil
+	}
 
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(sel.WorkspacePath)
 	if err != nil || workspace == nil {

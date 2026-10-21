@@ -69,6 +69,8 @@ async def mail_server(aweb_cloud_db, monkeypatch):
         return {"content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": envelope}
 
     app = _build_test_app(db, None)
+    from aweb.routes.messaging import router as messaging_router
+    app.include_router(messaging_router)
     mcp = create_mcp_app(db_infra=app.state.db, hosted_signer=signer, hosted_encryptor=encryptor)
     app.mount("/mcp", mcp)
     await mcp.startup()
@@ -103,7 +105,8 @@ async def mail_server(aweb_cloud_db, monkeypatch):
                 return json.loads(result["result"]["content"][0]["text"])
 
             yield SimpleNamespace(db=db, human_mail=human_mail, mcp_mail=mcp_mail,
-                                  custody=custody, human=human, human_did=human_did, pilot=pilot)
+                                  custody=custody, human=human, human_did=human_did, pilot=pilot,
+                                  client=client, pilot_key=pilot_key, pilot_did=pilot_did)
     finally:
         await mcp.shutdown()
 
@@ -113,10 +116,6 @@ async def mail_server(aweb_cloud_db, monkeypatch):
 @pytest.mark.parametrize("plaintext", [True, False])
 async def test_mcp_recipient_send_continues_http_conversation(mail_server, target, plaintext):
     server = mail_server
-    if target == "alias":
-        # Bare aliases are an agent-only selector in both public surfaces;
-        # the addressless human uses a DID in the customer flow.
-        await server.db.execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1", UUID(server.human))
     original = await server.human_mail()
     # The HTTP route already reuses this conversation without its ID.
     ordinary = await server.human_mail("another human message")
@@ -204,3 +203,38 @@ async def test_mcp_lookup_preserves_its_existing_selector_validation(mail_server
     sent = await server.mcp_mail(to=alias, plaintext=True)
     assert "error" not in sent, sent
     assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_http_selected_team_human_alias_and_discovery(mail_server):
+    server = mail_server
+    raw = json.dumps({"to_alias":"human", "body":"first contact"}).encode()
+    headers = {"Content-Type":"application/json", **_signed_identity_headers(server.pilot_key, server.pilot_did, "", raw)}
+    sent = await server.client.post("/v1/messages", content=raw, headers=headers)
+    assert sent.status_code == 200, sent.text
+    found = await server.client.get("/v1/messaging/participants/human", headers=_signed_identity_headers(server.pilot_key, server.pilot_did, "", b""))
+    assert found.status_code == 200, found.text
+    assert found.json()["did_aw"] == "did:aw:human"
+    assert found.json()["team_id"] == "ops:acme.com"
+    assert found.json()["encryption_key"] is None  # Plaintext required no assertion.
+    stored = await server.db.fetch_one("SELECT to_did FROM {{tables.messages}} WHERE message_id=$1", UUID(sent.json()["message_id"]))
+    assert stored["to_did"] == "did:aw:human"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["inactive", "wrong_team", "unknown_bare_did"])
+async def test_human_alias_refusal_has_no_message_or_mutation(mail_server, failure):
+    server = mail_server
+    target = {"to_alias":"human"}
+    if failure == "inactive":
+        await server.db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", UUID(server.human))
+    elif failure == "wrong_team":
+        await _insert_team(server.db, "other:acme.com")
+        target = {"to_alias":"other~human"}
+    else:
+        target = {"to_did":"did:aw:unknown-external"}
+    raw = json.dumps({**target,"body":"must refuse"}).encode()
+    response = await server.client.post("/v1/messages", content=raw, headers={"Content-Type":"application/json", **_signed_identity_headers(server.pilot_key, server.pilot_did, "", raw)})
+    assert response.status_code in (404,422), response.text
+    assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 0
+    assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.conversations}}"))["n"] == 0

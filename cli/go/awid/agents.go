@@ -21,24 +21,25 @@ type HeartbeatResponse struct {
 }
 
 type AgentView struct {
-	AgentID       string                  `json:"agent_id"`
-	Alias         string                  `json:"alias"`
-	DIDKey        string                  `json:"did_key"`
-	DIDAW         string                  `json:"did_aw,omitempty"`
-	Address       string                  `json:"address,omitempty"`
-	HumanName     string                  `json:"human_name,omitempty"`
-	AgentType     string                  `json:"agent_type,omitempty"`
-	WorkspaceType string                  `json:"workspace_type,omitempty"`
-	Role          string                  `json:"role,omitempty"`
-	Hostname      string                  `json:"hostname,omitempty"`
-	WorkspacePath string                  `json:"workspace_path,omitempty"`
-	Repo          string                  `json:"repo,omitempty"`
-	Status        string                  `json:"status,omitempty"`
-	LastSeen      string                  `json:"last_seen,omitempty"`
-	Online        bool                    `json:"online,omitempty"`
-	IdentityScope string                  `json:"identity_scope,omitempty"`
-	InboundMode   string                  `json:"inbound_mode,omitempty"`
-	EncryptionKey *EncryptionKeyAssertion `json:"encryption_key,omitempty"`
+	sameServiceParticipant bool                    // Set only by authenticated messaging participant discovery; never a wire claim.
+	AgentID                string                  `json:"agent_id"`
+	Alias                  string                  `json:"alias"`
+	DIDKey                 string                  `json:"did_key"`
+	DIDAW                  string                  `json:"did_aw,omitempty"`
+	Address                string                  `json:"address,omitempty"`
+	HumanName              string                  `json:"human_name,omitempty"`
+	AgentType              string                  `json:"agent_type,omitempty"`
+	WorkspaceType          string                  `json:"workspace_type,omitempty"`
+	Role                   string                  `json:"role,omitempty"`
+	Hostname               string                  `json:"hostname,omitempty"`
+	WorkspacePath          string                  `json:"workspace_path,omitempty"`
+	Repo                   string                  `json:"repo,omitempty"`
+	Status                 string                  `json:"status,omitempty"`
+	LastSeen               string                  `json:"last_seen,omitempty"`
+	Online                 bool                    `json:"online,omitempty"`
+	IdentityScope          string                  `json:"identity_scope,omitempty"`
+	InboundMode            string                  `json:"inbound_mode,omitempty"`
+	EncryptionKey          *EncryptionKeyAssertion `json:"encryption_key,omitempty"`
 }
 
 func (a AgentView) VerifyEncryptionKey(now time.Time) error {
@@ -64,6 +65,15 @@ func (a AgentView) RequireEncryptionKey(now time.Time) (*EncryptionKeyAssertion,
 }
 
 func (c *Client) e2eeRecipientFromAgent(ctx context.Context, agent AgentView) (E2EERecipientKey, error) {
+	if agent.sameServiceParticipant {
+		assertion, err := agent.RequireEncryptionKey(time.Now().UTC())
+		if err != nil {
+			return E2EERecipientKey{}, err
+		}
+		return E2EERecipientKey{DID: strings.TrimSpace(agent.DIDKey), StableID: strings.TrimSpace(agent.DIDAW),
+			Address: strings.TrimSpace(agent.Address), EncryptionKey: assertion,
+			InboundMode: strings.TrimSpace(agent.InboundMode)}, nil
+	}
 	if strings.TrimSpace(agent.DIDAW) != "" {
 		return c.e2eeGlobalRecipientFromAgent(ctx, agent)
 	}

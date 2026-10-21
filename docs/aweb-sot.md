@@ -612,6 +612,9 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `team_app_event_types`
 - `team_app_keys`
 - `app_hook_bindings`
+- `human_channel_sends`
+- `human_channel_ingress`
+- `human_channel_mutations`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 ---
@@ -642,6 +645,7 @@ router entry.
 - `events`
 - `federation`
 - `identity_grants`
+- `messaging`
 - `messages`
 - `reservations`
 - `session_leases`

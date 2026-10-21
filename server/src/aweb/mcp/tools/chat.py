@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.participants import messaging_participant_by_alias
+
 from aweb.attachments import readable_attachments
 
 import asyncio
@@ -16,7 +18,6 @@ from aweb.awid_error_handling import awid_dependency_error_detail
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
     ensure_session,
-    get_agent_by_alias,
     get_message_history,
     get_pending_conversations,
     mark_messages_read,
@@ -367,6 +368,51 @@ async def chat_send(
     public_origin: str | None = None,
 ) -> str:
     auth = get_auth()
+    from aweb.human_channels.http import ingress_requested
+
+    if auth.request is not None and ingress_requested(auth.request):
+        from aweb.human_channels.mcp import send_mcp_native
+        from aweb.human_channels.contract import ContractError
+
+        try:
+            result = await send_mcp_native(
+                db_infra,
+                auth,
+                kind="chat",
+                arguments=dict(
+                    to_alias=to_alias,
+                    to_did=to_did,
+                    to_address=to_address,
+                    session_id=session_id,
+                    message=message,
+                    wait=wait,
+                    wait_seconds=wait_seconds,
+                    leaving=leaving,
+                    hang_on=hang_on,
+                    plaintext=plaintext,
+                ),
+                hosted_signer=hosted_signer,
+                hosted_encryptor=hosted_encryptor,
+            )
+        except ContractError as error:
+            return json.dumps({"error": error.code, "effects": "none"})
+        if wait:
+            row = await db_infra.get_manager("aweb").fetch_one(
+                "SELECT created_at,from_did FROM {{tables.chat_messages}} WHERE message_id=$1",
+                UUID(result["message_id"]),
+            )
+            replies, timed_out = await _wait_for_replies(
+                db_infra.get_manager("aweb"),
+                redis,
+                auth=auth,
+                hosted_decryptor=hosted_decryptor,
+                session_id=UUID(result["session_id"]),
+                participant_did=row["from_did"],
+                after=row["created_at"],
+                wait_seconds=wait_seconds,
+            )
+            result.update(replies=replies, timed_out=timed_out)
+        return json.dumps(result)
     actor_dids = _actor_dids()
     actor_did = (auth.did_key or "").strip() if auth.trusted_proxy else (actor_dids[0] if actor_dids else "")
     actor_agent = await _resolve_actor_agent(db_infra, actor_dids)
@@ -395,7 +441,7 @@ async def chat_send(
         if to_alias:
             if auth.team_id is None:
                 return json.dumps({"error": "to_alias requires team context"})
-            target = await get_agent_by_alias(db_infra, team_id=auth.team_id, alias=to_alias.strip())
+            target = await messaging_participant_by_alias(db_infra, team_id=auth.team_id, alias=to_alias.strip(), selected_team_id=auth.team_id, request=auth.request)
             if not target:
                 return json.dumps({"error": f"Agent '{to_alias}' not found in team"})
         elif to_did:

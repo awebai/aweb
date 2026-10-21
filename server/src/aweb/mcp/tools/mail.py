@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.participants import messaging_participant_by_alias
+
 from aweb.attachments import readable_attachments
 
 import json
@@ -46,7 +48,6 @@ from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
     authorize_message_delivery,
-    get_agent_by_alias,
     resolve_agent_by_did,
     utc_iso as _utc_iso,
 )
@@ -210,6 +211,32 @@ async def send_mail(
 ) -> str:
     """Send an async message by alias, did:aw, or address."""
     auth = get_auth()
+    from aweb.human_channels.http import ingress_requested
+
+    if auth.request is not None and ingress_requested(auth.request):
+        from aweb.human_channels.mcp import send_mcp_native
+        from aweb.human_channels.contract import ContractError
+
+        try:
+            return json.dumps(
+                await send_mcp_native(
+                    db_infra,
+                    auth,
+                    kind="mail",
+                    arguments=dict(
+                        to=to,
+                        conversation_id=conversation_id,
+                        subject=subject,
+                        body=body,
+                        priority=priority,
+                        plaintext=plaintext,
+                    ),
+                    hosted_signer=hosted_signer,
+                    hosted_encryptor=hosted_encryptor,
+                )
+            )
+        except ContractError as error:
+            return json.dumps({"error": error.code, "effects": "none"})
     sender_address = _sender_address(auth)
     if priority not in VALID_PRIORITIES:
         return json.dumps(
@@ -248,6 +275,7 @@ async def send_mail(
                 # Read-only lookup data: MCP already validates its own inputs.
                 # Do not impose HTTP's stricter selector/body validators here.
                 payload=SendMessageRequest.model_construct(body=body, **{selector: recipient_ref}),
+                request=auth.request,
             )
         except (HTTPException, ServiceError) as exc:
             return json.dumps({"error": exc.detail})
@@ -508,8 +536,8 @@ async def send_mail(
     else:
         if not auth.team_id:
             return json.dumps({"error": "Alias delivery requires team context"})
-        recipient = await get_agent_by_alias(
-            db_infra, team_id=auth.team_id, alias=recipient_ref,
+        recipient = await messaging_participant_by_alias(
+            db_infra, team_id=auth.team_id, alias=recipient_ref, selected_team_id=auth.team_id, request=auth.request,
         )
         if recipient is not None:
             recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
