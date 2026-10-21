@@ -25,9 +25,10 @@ from aweb_naapp.runtime.approvals.model import (
     Approval,
     ApprovalState,
     Assurance,
+    Candidate,
+    DecidedBy,
     DeliveryStatus,
     DispatchOutcome,
-    Evidence,
     PresentationKind,
 )
 from aweb_naapp.runtime.links import LinkLifetime
@@ -48,6 +49,7 @@ class StoredRequest:
 class ApprovalLink:
     link_id: str
     approval_id: str
+    candidate_subject: str
     request_sha256: str
     verifier_sha256: str
     created_at: datetime
@@ -67,7 +69,7 @@ class LockedApproval(Protocol):
     async def set_decision(
         self,
         state: ApprovalState,
-        evidence: Evidence,
+        decided_by: DecidedBy,
         task_answer_ref: str | None,
         link_id: str | None,
         at: datetime,
@@ -87,7 +89,7 @@ class ApprovalStore(Protocol):
         self,
         request: StoredRequest,
         approval: Approval,
-        link: ApprovalLink | None,
+        links: Sequence[ApprovalLink],
         tx: TransactionManager,
     ) -> None: ...
 
@@ -113,27 +115,57 @@ class ApprovalStore(Protocol):
         self, approval_ids: Sequence[str], at: datetime, tx: TransactionManager
     ) -> list[Approval]: ...
 
-    async def revoke_approver(
-        self, approver_subject: str, at: datetime, tx: TransactionManager
+    async def retire_candidate(
+        self, subject: str, at: datetime, tx: TransactionManager
     ) -> list[Approval]: ...
 
 
 _APPROVAL_COLUMNS = (
     "approval_id, request_sha256, request_ref, policy_ref, policy_version, requested_by, "
-    "approver_subject, approver_subject_type, authenticator, auth_evidence_ref, "
+    "decided_scope, decided_subject, authenticator, auth_evidence_ref, "
     "presentation_kind, presentation_ref, task_answer_ref, state, delivery_status, "
     "created_at, expires_at, decided_at, revoked_at, consumed_operation_id, dispatch_outcome, "
     "response_status"
 )
+_CANDIDATE_COLUMNS = "subject, scope, subject_type, principal_did, retired_at"
 _LINK_COLUMNS = (
-    "link_id, approval_id, request_sha256, verifier_sha256, created_at, "
+    "link_id, approval_id, candidate_subject, request_sha256, verifier_sha256, created_at, "
     "expires_at, revoked_at, used_at"
 )
 
 
-def _approval(row: dict[str, Any] | None) -> Approval | None:
+def _candidate(row: dict[str, Any]) -> Candidate:
+    return Candidate(
+        scope=row["scope"],
+        subject=row["subject"],
+        subject_type=row["subject_type"],
+        principal_did=row["principal_did"],
+        retired_at=row["retired_at"],
+    )
+
+
+async def _with_candidates(
+    conn: AsyncDatabaseManager | TransactionManager, row: dict[str, Any] | None
+) -> Approval | None:
     if row is None:
         return None
+    rows = await conn.fetch_all(
+        f"SELECT {_CANDIDATE_COLUMNS} FROM {{{{tables.approval_candidates}}}} "
+        "WHERE approval_id = $1 ORDER BY position",
+        row["approval_id"],
+    )
+    return _approval(row, tuple(_candidate(r) for r in rows))
+
+
+def _approval(row: dict[str, Any], candidates: tuple[Candidate, ...]) -> Approval:
+    decided_by = None
+    if row["decided_subject"] is not None:
+        decided_by = DecidedBy(
+            scope=row["decided_scope"],
+            subject=row["decided_subject"],
+            assurance=Assurance(row["authenticator"]),
+            evidence_ref=row["auth_evidence_ref"],
+        )
     return Approval(
         approval_id=row["approval_id"],
         request_sha256=row["request_sha256"],
@@ -141,10 +173,8 @@ def _approval(row: dict[str, Any] | None) -> Approval | None:
         policy_ref=row["policy_ref"],
         policy_version=row["policy_version"],
         requested_by=row["requested_by"],
-        approver_subject=row["approver_subject"],
-        approver_subject_type=row["approver_subject_type"],
-        authenticator=Assurance(row["authenticator"]) if row["authenticator"] else None,
-        auth_evidence_ref=row["auth_evidence_ref"],
+        candidates=candidates,
+        decided_by=decided_by,
         presentation_kind=PresentationKind(row["presentation_kind"]),
         presentation_ref=row["presentation_ref"],
         task_answer_ref=row["task_answer_ref"],
@@ -168,6 +198,7 @@ def _link(row: dict[str, Any] | None) -> ApprovalLink | None:
     return ApprovalLink(
         link_id=row["link_id"],
         approval_id=row["approval_id"],
+        candidate_subject=row["candidate_subject"],
         request_sha256=row["request_sha256"],
         verifier_sha256=row["verifier_sha256"],
         created_at=row["created_at"],
@@ -199,7 +230,7 @@ class _PgLockedApproval:
             self.approval.approval_id,
             *args,
         )
-        self.approval = _approval(row)
+        self.approval = await _with_candidates(self.transaction, row)
         assert self.approval is not None
         return self.approval
 
@@ -218,17 +249,21 @@ class _PgLockedApproval:
     async def set_decision(
         self,
         state: ApprovalState,
-        evidence: Evidence,
+        decided_by: DecidedBy,
         task_answer_ref: str | None,
         link_id: str | None,
         at: datetime,
     ) -> Approval:
+        """Record the one decision, use the decider's link, and revoke every
+        other candidate's link."""
         approval = await self._update(
-            "state = $2, authenticator = $3, auth_evidence_ref = $4, "
-            "task_answer_ref = $5, decided_at = $6",
+            "state = $2, decided_scope = $3, decided_subject = $4, authenticator = $5, "
+            "auth_evidence_ref = $6, task_answer_ref = $7, decided_at = $8",
             state.value,
-            evidence.assurance.value,
-            evidence.evidence_ref,
+            decided_by.scope,
+            decided_by.subject,
+            decided_by.assurance.value,
+            decided_by.evidence_ref,
             task_answer_ref,
             at,
         )
@@ -243,6 +278,7 @@ class _PgLockedApproval:
             )
             if used is None:
                 raise LinkAlreadyUsed(link_id)
+        await _revoke_links(self.transaction, [approval.approval_id], at)
         return approval
 
     async def revoke(self, at: datetime) -> Approval:
@@ -300,7 +336,7 @@ class PgApprovalStore:
         self,
         request: StoredRequest,
         approval: Approval,
-        link: ApprovalLink | None,
+        links: Sequence[ApprovalLink],
         tx: TransactionManager,
     ) -> None:
         await tx.execute(
@@ -321,10 +357,10 @@ class PgApprovalStore:
             approval.policy_ref,
             approval.policy_version,
             approval.requested_by,
-            approval.approver_subject,
-            approval.approver_subject_type,
-            approval.authenticator.value if approval.authenticator else None,
-            approval.auth_evidence_ref,
+            None,
+            None,
+            None,
+            None,
             approval.presentation_kind.value,
             approval.presentation_ref,
             approval.task_answer_ref,
@@ -338,12 +374,25 @@ class PgApprovalStore:
             approval.dispatch_outcome.value if approval.dispatch_outcome else None,
             approval.response_status,
         )
-        if link is not None:
+        for position, candidate in enumerate(approval.candidates):
+            await tx.execute(
+                "INSERT INTO {{tables.approval_candidates}} "
+                "(approval_id, subject, scope, subject_type, principal_did, position) "
+                "VALUES ($1, $2, $3, $4, $5, $6)",
+                approval.approval_id,
+                candidate.subject,
+                candidate.scope,
+                candidate.subject_type,
+                candidate.principal_did,
+                position,
+            )
+        for link in links:
             await tx.execute(
                 f"INSERT INTO {{{{tables.approval_links}}}} ({_LINK_COLUMNS}) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                 link.link_id,
                 link.approval_id,
+                link.candidate_subject,
                 link.request_sha256,
                 link.verifier_sha256,
                 link.created_at,
@@ -353,19 +402,21 @@ class PgApprovalStore:
             )
 
     async def get(self, approval_id: str) -> Approval | None:
-        return _approval(
+        return await _with_candidates(
+            self.db,
             await self.db.fetch_one(
                 f"SELECT {_APPROVAL_COLUMNS} FROM {{{{tables.approvals}}}} WHERE approval_id = $1",
                 approval_id,
-            )
+            ),
         )
 
     async def get_by_request(self, request_ref: str) -> Approval | None:
-        return _approval(
+        return await _with_candidates(
+            self.db,
             await self.db.fetch_one(
                 f"SELECT {_APPROVAL_COLUMNS} FROM {{{{tables.approvals}}}} WHERE request_ref = $1",
                 request_ref,
-            )
+            ),
         )
 
     async def request_canonical(self, request_ref: str) -> bytes:
@@ -395,12 +446,13 @@ class PgApprovalStore:
         self, approval_id: str, tx: TransactionManager | None
     ) -> AsyncIterator[LockedApproval]:
         async with self.transaction(tx) as t:
-            approval = _approval(
+            approval = await _with_candidates(
+                t,
                 await t.fetch_one(
                     f"SELECT {_APPROVAL_COLUMNS} FROM {{{{tables.approvals}}}} "
                     "WHERE approval_id = $1 FOR UPDATE",
                     approval_id,
-                )
+                ),
             )
             if approval is not None:
                 await t.execute(
@@ -416,11 +468,38 @@ class PgApprovalStore:
         and stop the transport retry of those consumed but never sent."""
         return await self._revoke_live(tx, "approval_id = ANY($1::text[])", list(approval_ids), at)
 
-    async def revoke_approver(
-        self, approver_subject: str, at: datetime, tx: TransactionManager
+    async def retire_candidate(
+        self, subject: str, at: datetime, tx: TransactionManager
     ) -> list[Approval]:
-        """The same, for every approval this approver was designated to decide."""
-        return await self._revoke_live(tx, "approver_subject = $1", approver_subject, at)
+        """A retired approver stops being a candidate of every approval still
+        pending, and loses their link to it; the approvals they decided and
+        that are not yet dispatched are revoked. Returns those revoked."""
+        # Lock every approval this touches first, in a fixed order, so that a
+        # decision on any of them serialises with the retirement.
+        await tx.fetch_all(
+            "SELECT a.approval_id FROM {{tables.approvals}} a "
+            "WHERE a.decided_subject = $1 OR (a.state = 'pending' AND EXISTS ("
+            "SELECT 1 FROM {{tables.approval_candidates}} c "
+            "WHERE c.approval_id = a.approval_id AND c.subject = $1)) "
+            "ORDER BY a.approval_id FOR UPDATE",
+            subject,
+        )
+        retired = await tx.fetch_all(
+            "UPDATE {{tables.approval_candidates}} c SET retired_at = $2 "
+            "FROM {{tables.approvals}} a "
+            "WHERE c.subject = $1 AND c.retired_at IS NULL AND a.approval_id = c.approval_id "
+            "AND a.state = 'pending' AND a.revoked_at IS NULL RETURNING c.approval_id",
+            subject,
+            at,
+        )
+        await tx.execute(
+            "UPDATE {{tables.approval_links}} SET revoked_at = $3 "
+            "WHERE approval_id = ANY($1::text[]) AND candidate_subject = $2 AND revoked_at IS NULL",
+            [row["approval_id"] for row in retired],
+            subject,
+            at,
+        )
+        return await self._revoke_live(tx, "decided_subject = $1", subject, at)
 
     async def _revoke_live(
         self, tx: TransactionManager, selection: str, argument: Any, at: datetime
@@ -435,6 +514,6 @@ class PgApprovalStore:
             argument,
             at,
         )
-        revoked = [a for a in (_approval(row) for row in rows) if a is not None]
+        revoked = [a for a in [await _with_candidates(tx, row) for row in rows] if a is not None]
         await _revoke_links(tx, [a.approval_id for a in revoked], at)
         return revoked
