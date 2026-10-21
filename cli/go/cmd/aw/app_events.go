@@ -1,10 +1,14 @@
 package main
 
 import (
-	"encoding/base64"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 
+	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/appmanifest"
 	"github.com/spf13/cobra"
 )
@@ -13,22 +17,41 @@ import (
 // local resident approval. A receipt is saved only after every requested write
 // succeeds. Failed registration can be retried with update; a partial initial
 // subscription failure is retried by repeating install.
-func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string, fetchedBytes []byte, previous, next *pluginProvenance, update bool) error {
+func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string, previous, next *pluginProvenance, update bool) error {
 	manifest := resolved.Manifest
 	client, selection, err := resolveClientSelection()
 	if err != nil {
 		return fmt.Errorf("app events require a resident connected to a team: %w", err)
 	}
-	if update && previous != nil && previous.RegisteredDigest == fetchedDigest && previous.RegisteredTeam == selection.TeamID && previous.RegisteredServer == selection.BaseURL {
-		next.RegisteredDigest, next.RegisteredTeam, next.RegisteredServer = previous.RegisteredDigest, previous.RegisteredTeam, previous.RegisteredServer
-		return nil
-	}
-	events := installRegistrationEvents(manifest)
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
-	body := installRegistrationBody(resolved, fetchedDigest, fetchedBytes)
-	if err := client.Post(ctx, "/v1/apps/install", body, nil); err != nil {
-		return fmt.Errorf("register app events (local approval retained; retry install/update): %w", err)
+	var current appInstallationReceipt
+	var expected *int64
+	err = client.Get(ctx, "/v1/apps/"+url.PathEscape(manifest.App.ID)+"/installation?team_id="+url.QueryEscape(selection.TeamID), &current)
+	if err != nil {
+		var apiErr *awid.APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+			return fmt.Errorf("read current app installation: %w", err)
+		}
+	} else {
+		if current.InstallationID == "" || current.Generation <= 0 {
+			return fmt.Errorf("installation_identity_required: the team server returned no installation identity")
+		}
+		expected = &current.Generation
+	}
+	if update && previous != nil && current.State == "active" && current.OriginVerified && current.Digest == fetchedDigest && slices.Equal(current.GrantedScopes, resolved.InstallScopes) && previous.RegisteredTeam == selection.TeamID && previous.RegisteredServer == selection.BaseURL {
+		saveInstallationReceipt(next, current, fetchedDigest, selection.TeamID, selection.BaseURL)
+		return nil
+	}
+
+	events := installRegistrationEvents(manifest)
+	body := installRegistrationBody(resolved, fetchedDigest, expected)
+	var installed appInstallationReceipt
+	if err := client.Post(ctx, "/v1/apps/install?team_id="+url.QueryEscape(selection.TeamID), body, &installed); err != nil {
+		return fmt.Errorf("register app installation (existing local installation retained; ask an admin if refused): %w", err)
+	}
+	if installed.InstallationID == "" || installed.Generation <= 0 || installed.State != "active" || !installed.OriginVerified || installed.Digest != fetchedDigest {
+		return fmt.Errorf("installation_identity_required: the team server returned an invalid confirmation")
 	}
 	// Updates replace declarations and keys, but never reset the subscriber's
 	// chosen intent. Only an explicit install creates the default subscriptions.
@@ -42,7 +65,7 @@ func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string
 			}
 		}
 	}
-	next.RegisteredDigest, next.RegisteredTeam, next.RegisteredServer = fetchedDigest, selection.TeamID, selection.BaseURL
+	saveInstallationReceipt(next, installed, fetchedDigest, selection.TeamID, selection.BaseURL)
 	return nil
 }
 
@@ -55,49 +78,29 @@ func installRegistrationEvents(manifest appmanifest.Manifest) []appmanifest.Even
 	return events
 }
 
-// installRegistrationBody is the team install request for a resolved
-// manifest. It grants the scopes of the agent and surface tools install
-// activates; a hook-only tool's scopes wait for owner activation. Its event
-// emitters are the manifest's app-event keys, from event_emitters in version 1
-// and app_keys in version 2. fetchedBytes, when present, are the exact bytes
-// that hash to fetchedDigest; the server then takes declarations and keys from
-// them and refuses fields that disagree.
-func installRegistrationBody(resolved *appmanifest.Resolved, fetchedDigest string, fetchedBytes []byte) map[string]any {
-	manifest := resolved.Manifest
-	emitters := []appmanifest.EventEmitter{}
-	for _, key := range resolved.AppKeysFor("app-event") {
-		emitters = append(emitters, appmanifest.EventEmitter{KID: key.KID, DIDKey: key.DIDKey})
-	}
-	body := map[string]any{
-		"app_id": manifest.App.ID, "origin": manifest.App.Origin,
-		"app_version": manifest.App.Version, "manifest_version": manifest.ManifestVersion,
-		"digest": fetchedDigest, "granted_scopes": append([]string{}, resolved.InstallScopes...),
-		"events": installRegistrationEvents(manifest), "event_emitters": emitters,
-	}
-	if fetchedBytes != nil {
-		body["manifest"] = base64.StdEncoding.EncodeToString(fetchedBytes)
-	}
-	return body
+type appInstallationReceipt struct {
+	InstallationID string   `json:"installation_id"`
+	Generation     int64    `json:"generation"`
+	State          string   `json:"state"`
+	Digest         string   `json:"digest"`
+	OriginVerified bool     `json:"origin_verified"`
+	GrantedScopes  []string `json:"granted_scopes"`
 }
 
-// registrationManifestBytesFor returns the fetched bytes when the server reads
-// that manifest version and the bytes name the origin being registered. It
-// returns nil for a version the server does not read from bytes yet, and when a
-// dev-origin override registers the app at an origin its bytes do not declare;
-// the install then registers its supplied fields as before.
-func registrationManifestBytesFor(fetchedBytes []byte, manifestVersion int, declaredOrigin, registeredOrigin string) []byte {
-	if manifestVersion != 1 {
-		return nil
+func saveInstallationReceipt(next *pluginProvenance, receipt appInstallationReceipt, digest, team, server string) {
+	next.RegisteredDigest, next.RegisteredTeam, next.RegisteredServer = digest, team, server
+	next.RegisteredInstallationID, next.RegisteredGeneration = receipt.InstallationID, receipt.Generation
+}
+
+// installRegistrationBody confirms the fetched pin and explicitly chosen scopes.
+// The server fetches its own bytes and derives versions, keys and events there.
+// An expected generation comes from the authenticated current-installation read.
+func installRegistrationBody(resolved *appmanifest.Resolved, fetchedDigest string, expectedGeneration *int64) map[string]any {
+	return map[string]any{
+		"app_id": resolved.Manifest.App.ID, "origin": resolved.Manifest.App.Origin,
+		"digest": fetchedDigest, "granted_scopes": append([]string{}, resolved.InstallScopes...),
+		"expected_generation": expectedGeneration,
 	}
-	declared, err := canonicalAppOrigin(declaredOrigin)
-	if err != nil {
-		return nil
-	}
-	registered, err := canonicalAppOrigin(registeredOrigin)
-	if err != nil || declared != registered {
-		return nil
-	}
-	return fetchedBytes
 }
 
 func init() {

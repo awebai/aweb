@@ -90,20 +90,22 @@ type pluginListItem struct {
 }
 
 type pluginProvenance struct {
-	RegisteredDigest string `json:"registered_digest,omitempty"`
-	RegisteredTeam   string `json:"registered_team,omitempty"`
-	RegisteredServer string `json:"registered_server,omitempty"`
-	DevOrigin        string `json:"dev_origin,omitempty"`
-	AppName          string `json:"app_name"`
-	AppID            string `json:"app_id,omitempty"`
-	ManifestVersion  string `json:"manifest_version,omitempty"`
-	AppVersion       string `json:"app_version,omitempty"`
-	Origin           string `json:"origin,omitempty"`
-	Source           string `json:"source,omitempty"`
-	ManifestURL      string `json:"manifest_url,omitempty"`
-	Digest           string `json:"digest,omitempty"`
-	InstalledAt      string `json:"installed_at,omitempty"`
-	UpdatedAt        string `json:"updated_at,omitempty"`
+	RegisteredInstallationID string `json:"registered_installation_id,omitempty"`
+	RegisteredGeneration     int64  `json:"registered_generation,omitempty"`
+	RegisteredDigest         string `json:"registered_digest,omitempty"`
+	RegisteredTeam           string `json:"registered_team,omitempty"`
+	RegisteredServer         string `json:"registered_server,omitempty"`
+	DevOrigin                string `json:"dev_origin,omitempty"`
+	AppName                  string `json:"app_name"`
+	AppID                    string `json:"app_id,omitempty"`
+	ManifestVersion          string `json:"manifest_version,omitempty"`
+	AppVersion               string `json:"app_version,omitempty"`
+	Origin                   string `json:"origin,omitempty"`
+	Source                   string `json:"source,omitempty"`
+	ManifestURL              string `json:"manifest_url,omitempty"`
+	Digest                   string `json:"digest,omitempty"`
+	InstalledAt              string `json:"installed_at,omitempty"`
+	UpdatedAt                string `json:"updated_at,omitempty"`
 }
 
 type pluginInstallOutput struct {
@@ -543,7 +545,6 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 	if err != nil {
 		return nil, manifestError(err)
 	}
-	fetchedBytes := manifestBytes
 	manifest := resolved.Manifest
 	declaredOrigin := manifest.App.Origin
 	if devOrigin != "" {
@@ -634,8 +635,16 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		InstalledAt:     installedAt,
 		UpdatedAt:       now,
 	}
-	if policy.registerEvents && policy.residentHome != "" && (len(manifest.Events) > 0 || (update && previous != nil && previous.RegisteredDigest != "")) {
-		if err := registerManifestEvents(resolved, fetchedDigest, registrationManifestBytesFor(fetchedBytes, manifest.ManifestVersion, declaredOrigin, manifest.App.Origin), previous, &provenance, update); err != nil {
+	if policy.registerEvents && policy.residentHome != "" {
+		declared, err := canonicalAppOrigin(declaredOrigin)
+		if err != nil {
+			return nil, err
+		}
+		registered, err := canonicalAppOrigin(manifest.App.Origin)
+		if err != nil || declared != registered {
+			return nil, usageError("origin_verification_required: install from the app's served origin without a --dev-origin rewrite")
+		}
+		if err := registerManifestEvents(resolved, fetchedDigest, previous, &provenance, update); err != nil {
 			return nil, err
 		}
 	}

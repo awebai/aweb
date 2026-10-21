@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from aweb.app_manifests import FetchedManifest
+from aweb.app_manifests import FetchedManifest, ManifestFetcher
 from aweb.app_registry import (
     _write_team_registrations,
     get_installation_on,
@@ -107,9 +107,91 @@ async def install_verified_manifest_on(
         registration.manifest_version, scopes, installed_by_agent_id,
         installation_id, generation, fetched.data,
     )
+    await _write_verified_registrations(tx, team_id=team_id, app_id=app_id, fetched=fetched, registration=registration)
+    return await get_installation_on(tx, team_id=team_id, app_id=app_id)
+
+
+async def _write_verified_registrations(tx, *, team_id, app_id, fetched, registration):
+    # Pre-F6 rows may have declarations supplied independently of these bytes.
+    # Keep key history/revocations, but never activate an undeclared key.
+    for table, keys in (("team_app_emit_keys", registration.emit_keys), ("team_app_keys", registration.app_keys)):
+        await tx.execute(
+            "UPDATE {{tables." + table + "}} SET revoked_at=COALESCE(revoked_at,clock_timestamp()) "
+            "WHERE team_id=$1 AND app_id=$2 AND origin=$3 AND digest=$4 AND NOT (key_id=ANY($5::TEXT[]))",
+            team_id, app_id, fetched.origin, fetched.digest, [key.kid for key in keys],
+        )
+    await tx.execute(
+        "DELETE FROM {{tables.team_app_event_types}} WHERE team_id=$1 AND app_id=$2 AND origin=$3 AND digest=$4 AND NOT (event_type=ANY($5::TEXT[]))",
+        team_id, app_id, fetched.origin, fetched.digest, [event.type for event in registration.event_types],
+    )
     await _write_team_registrations(
         tx, team_id=team_id, app_id=app_id, origin=fetched.origin, digest=fetched.digest,
-        event_types=registration.event_types, emit_keys=registration.emit_keys,
-        app_keys=registration.app_keys,
+        event_types=registration.event_types, emit_keys=registration.emit_keys, app_keys=registration.app_keys,
     )
-    return await get_installation_on(tx, team_id=team_id, app_id=app_id)
+    for key in registration.app_keys:
+        await tx.execute(
+            "UPDATE {{tables.team_app_keys}} SET purposes=$7::TEXT[] WHERE team_id=$1 AND app_id=$2 AND origin=$3 AND digest=$4 AND key_id=$5 AND did_key=$6",
+            team_id, app_id, fetched.origin, fetched.digest, key.kid, key.did_key, list(key.purposes),
+        )
+
+
+def _same_pending(current, expected):
+    return current is not None and current["state"] == "pending_origin_verification" and all(
+        current[key] == expected[key] for key in ("installation_id", "generation", "origin", "digest")
+    )
+
+
+async def verify_pending_installations(db, *, fetcher: ManifestFetcher | None = None, team_id: str | None = None) -> list[dict]:
+    """Operator/job verification, never a migration or request-path fetch.
+
+    The network read holds no installation lock. The same pinned pending row
+    must still exist when we lock it to activate, or record a failure reason.
+    """
+    if team_id is not None:
+        team_id = validate_team_id(team_id)
+    rows = await db.fetch_all(
+        "SELECT team_id,app_id,installation_id,generation,origin,digest,manifest_version "
+        "FROM {{tables.team_app_installs}} WHERE state='pending_origin_verification' "
+        "AND ($1::TEXT IS NULL OR team_id=$1) ORDER BY team_id,app_id", team_id,
+    )
+    fetcher = fetcher or ManifestFetcher()
+    reports = []
+    for expected in rows:
+        report = {key: expected[key] for key in ("team_id", "app_id", "installation_id", "generation")}
+        try:
+            fetched = await fetcher.fetch(
+                expected["origin"], expected_digest=expected["digest"], manifest_version=expected["manifest_version"],
+            )
+            registration = manifest_registration(
+                fetched.data, app_id=expected["app_id"], origin=expected["origin"], digest=expected["digest"],
+            )
+            async with db.transaction() as tx:
+                current = await get_installation_on(tx, team_id=expected["team_id"], app_id=expected["app_id"], for_update=True)
+                if not _same_pending(current, expected):
+                    reports.append(dict(report, outcome="superseded"))
+                    continue
+                if not set(current["granted_scopes"]) <= set(registration.requested_scopes):
+                    raise InstallationError("scope_not_requested", "Stored scopes are not requested by the pinned manifest")
+                await _write_verified_registrations(
+                    tx, team_id=expected["team_id"], app_id=expected["app_id"], fetched=fetched, registration=registration,
+                )
+                await tx.execute(
+                    "UPDATE {{tables.team_app_installs}} SET state='active', origin_verified=TRUE, "
+                    "origin_verification_error=NULL, manifest_bytes=$3, app_version=$4, manifest_version=$5, "
+                    "registered_from_manifest_bytes=TRUE, updated_at=NOW() WHERE team_id=$1 AND app_id=$2",
+                    expected["team_id"], expected["app_id"], fetched.data, registration.app_version, registration.manifest_version,
+                )
+            reports.append(dict(report, outcome="verified"))
+        except ServiceError as exc:
+            code = str(getattr(exc, "code", "origin_verification_failed"))[:128]
+            async with db.transaction() as tx:
+                current = await get_installation_on(tx, team_id=expected["team_id"], app_id=expected["app_id"], for_update=True)
+                if not _same_pending(current, expected):
+                    reports.append(dict(report, outcome="superseded"))
+                    continue
+                await tx.execute(
+                    "UPDATE {{tables.team_app_installs}} SET origin_verification_error=$3 WHERE team_id=$1 AND app_id=$2",
+                    expected["team_id"], expected["app_id"], code,
+                )
+            reports.append(dict(report, outcome="pending", error=code))
+    return reports

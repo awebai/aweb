@@ -6,8 +6,9 @@ import httpx
 import typer
 import uvicorn
 
-from .app_manifests import fetch_app_manifest
+from .app_manifests import ManifestFetcher, fetch_app_manifest
 from .app_registry import reseed_app_registrations
+from .installations import verify_pending_installations
 from .config import get_settings
 from .db import DatabaseInfra
 from .service_errors import ServiceError
@@ -191,6 +192,35 @@ def reseed_app_registrations_command(
 
     typer.echo(json.dumps(report.__dict__, indent=2))
     if report.digest_mismatch or report.key_conflict:
+        raise typer.Exit(1)
+
+
+@app.command("verify-pending-app-installations")
+def verify_pending_app_installations_command(
+    team_id: str | None = typer.Option(None, "--team-id", help="Verify only this team's pending installations"),
+) -> None:
+    """Verify all pending origin pins after the installation migration.
+
+    Deploy operators run this immediately after migration. Failures remain
+    pending, keep their scopes and pins, and carry a reason for admin retry.
+    """
+    async def run():
+        infra = DatabaseInfra()
+        await infra.initialize(run_migrations=False)
+        try:
+            return await verify_pending_installations(
+                infra.get_manager(), fetcher=ManifestFetcher(), team_id=team_id,
+            )
+        finally:
+            await infra.close()
+
+    try:
+        reports = asyncio.run(run())
+    except ServiceError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1)
+    typer.echo(json.dumps({"installations": reports}, indent=2))
+    if any(report["outcome"] == "pending" for report in reports):
         raise typer.Exit(1)
 
 

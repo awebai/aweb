@@ -36,7 +36,7 @@ def headers():
 async def client(db, origin, monkeypatch):
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SECRET)
-    await db.execute("CREATE TABLE test_install_admins (team_id TEXT, subject_id TEXT)")
+    await db.execute("CREATE TABLE aweb.test_install_admins (team_id TEXT, subject_id TEXT)")
 
     class Managers:
         def get_manager(self, name="aweb"):
@@ -44,7 +44,7 @@ async def client(db, origin, monkeypatch):
 
     async def policy(tx, subject, *, action, app_id):
         return bool(await tx.fetch_value(
-            "SELECT EXISTS(SELECT 1 FROM test_install_admins WHERE team_id=$1 AND subject_id=$2)",
+            "SELECT EXISTS(SELECT 1 FROM aweb.test_install_admins WHERE team_id=$1 AND subject_id=$2)",
             subject.team_id, subject.principal_id,
         ))
 
@@ -60,7 +60,7 @@ async def client(db, origin, monkeypatch):
 
 
 async def admin(db):
-    await db.execute("INSERT INTO test_install_admins VALUES ($1,$2)", TEAM, PRINCIPAL)
+    await db.execute("INSERT INTO aweb.test_install_admins VALUES ($1,$2)", TEAM, PRINCIPAL)
 
 
 def confirmation(origin):
@@ -110,7 +110,7 @@ async def test_admin_policy_is_rechecked_after_the_origin_fetch(client, db, orig
     respond = origin.tls.respond
 
     async def revoke_during_fetch(seen):
-        await db.execute("DELETE FROM test_install_admins")
+        await db.execute("DELETE FROM aweb.test_install_admins")
         return await respond(seen)
 
     origin.tls.respond = revoke_during_fetch

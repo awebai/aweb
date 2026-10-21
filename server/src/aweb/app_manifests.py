@@ -78,13 +78,18 @@ class ManifestFetcher:
         self.timeout = timeout
         self.max_bytes = max_bytes
 
-    async def fetch(self, origin: str, *, expected_digest: str | None = None) -> FetchedManifest:
+    async def fetch(
+        self, origin: str, *, expected_digest: str | None = None, manifest_version: int | None = None,
+    ) -> FetchedManifest:
         try:
             origin = normalize_origin(origin)
             canonical = canonical_url(origin + "/")
             origin = "https://" + canonical.authority
         except (ServiceError, EgressRefused, ValueError) as exc:
             raise ManifestFetchError("origin_invalid", "A valid HTTPS app origin is required") from exc
+        if manifest_version is not None and manifest_version not in SUPPORTED_MANIFEST_VERSIONS:
+            raise ManifestFetchError("manifest_version_unsupported", "Pinned manifest version is not supported")
+        supported = SUPPORTED_MANIFEST_VERSIONS if manifest_version is None else (manifest_version,)
         expected = normalize_digest(expected_digest) if expected_digest is not None else None
         parsed = urlsplit(origin)
         loop = asyncio.get_running_loop()
@@ -112,7 +117,7 @@ class ManifestFetcher:
             return asyncio.run_coroutine_threadsafe(send(path, limit), loop).result(self.timeout + 1)
 
         try:
-            selected = await asyncio.to_thread(select_variant, origin, SUPPORTED_MANIFEST_VERSIONS, fetch)
+            selected = await asyncio.to_thread(select_variant, origin, supported, fetch)
             manifest = load_manifest(selected.data, reserved_names=reserved_app_ids())
         except ManifestError as exc:
             status = 502 if exc.code.endswith("_unavailable") else 422
