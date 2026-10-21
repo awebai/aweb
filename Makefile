@@ -260,7 +260,7 @@ test-server:
 # their suites against its Postgres. A package joins by being added here.
 # UV_FROZEN keeps the gate on each committed lock, a lock the run changed fails
 # it, and the suites run offline.
-NAAPP_PACKAGES := naapp-lib naapp/folio naapp/library
+NAAPP_PACKAGES := naapp-lib naapp/folio naapp/library naapp/secrets naapp/logs
 
 # Installs each package's locked dependencies, for a runner that then goes offline.
 naapp-sync:
@@ -279,7 +279,8 @@ test-naapp:
 	set -e; for package in $(NAAPP_PACKAGES); do \
 		echo "=== test $$package ==="; \
 		UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --project $$package; \
-		UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) $(MAKE) -C $$package test; \
+		UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache \
+			NAAPP_REQUIRE_TEST_DATABASE=1 LIBRARY_REQUIRE_TEST_DATABASE=1 $(TEST_EGRESS_RUNNER) $(MAKE) -C $$package test; \
 		git diff --exit-code -- $$package/uv.lock; \
 	done
 
