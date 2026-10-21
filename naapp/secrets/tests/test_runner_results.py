@@ -84,6 +84,52 @@ def test_missing_original_release_context_withholds_even_a_new_live_item_value()
     assert result.withheld_reason == "release_context_unavailable"
 
 
+@pytest.mark.parametrize("known", [None, KnownValues()])
+@pytest.mark.parametrize("local_withheld", [False, True])
+def test_local_observations_survive_server_withholding(known, local_withheld):
+    result = process_runner_result(
+        report(
+            exit_code=23,
+            stdout="",
+            result_withheld=local_withheld,
+            truncated=True,
+            redaction_count=7,
+        ),
+        job=job(projection=["/stdout"]),
+        known=known,
+    )
+    assert result.exit_code == 23
+    assert result.runner_result_withheld is local_withheld
+    assert result.runner_truncated is True
+    assert result.runner_redaction_count == 7
+    if known is None or local_withheld:
+        assert result.body is None and result.result_withheld
+    else:
+        assert json.loads(result.body) == {"/stdout": ""}
+        assert not result.result_withheld
+
+
+@pytest.mark.parametrize("exit_code", [-(2**53 - 1), 2**53 - 1])
+def test_exit_status_is_metadata_even_when_projection_omits_it(exit_code):
+    result = process_runner_result(
+        report(exit_code=exit_code), job=job(projection=["/stdout"]), known=KnownValues()
+    )
+    assert result.exit_code == exit_code
+    assert json.loads(result.body) == {"/stdout": "done"}
+    assert not result.runner_truncated and not result.runner_result_withheld
+
+
+def test_server_shape_withhold_does_not_claim_runner_withheld_output():
+    result = process_runner_result(
+        report(exit_code=-9, stdout=json.dumps({"access_token": secrets.token_urlsafe(32)})),
+        job=job(),
+        known=KnownValues(),
+    )
+    assert result.result_withheld and result.body is None
+    assert result.exit_code == -9
+    assert not result.runner_result_withheld and not result.runner_truncated
+
+
 def test_truncated_stream_tail_is_redacted_and_complete_exit_projection_survives():
     value = secrets.token_urlsafe(32)
     known = KnownValues()

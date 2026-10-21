@@ -31,7 +31,8 @@ class RunnerOutput:
 
     Runner-reported redactions are informational and kept separately from the
     server's count, so a safe maximum runner count cannot overflow a wire sum.
-    Local truncation/withholding remain visible independently of projection.
+    Exit status and local observations remain visible independently of output
+    projection or server withholding, including loss of the release context.
     """
 
     body: bytes | None
@@ -41,6 +42,9 @@ class RunnerOutput:
     redaction_count: int
     runner_redaction_count: int
     output_bytes: int
+    exit_code: int
+    runner_result_withheld: bool
+    runner_truncated: bool
 
 
 def process_runner_result(
@@ -82,7 +86,16 @@ def process_runner_result(
 
     def withheld(reason: str, count: int = 0) -> RunnerOutput:
         return RunnerOutput(
-            None, True, reason, report["truncated"], count, report["redaction_count"], size
+            body=None,
+            result_withheld=True,
+            withheld_reason=reason,
+            truncated=report["truncated"],
+            redaction_count=count,
+            runner_redaction_count=report["redaction_count"],
+            output_bytes=size,
+            exit_code=report["exit_code"],
+            runner_result_withheld=report["result_withheld"],
+            runner_truncated=report["truncated"],
         )
 
     if known is None:
@@ -116,11 +129,14 @@ def process_runner_result(
     if report["result_withheld"]:
         return withheld("runner_withheld", redactions)
     return RunnerOutput(
-        handled.body,
-        handled.disposition == "withheld",
-        handled.withheld_reason,
-        report["truncated"] or handled.truncated,
-        redactions,
-        report["redaction_count"],
-        size,
+        body=handled.body,
+        result_withheld=handled.disposition == "withheld",
+        withheld_reason=handled.withheld_reason,
+        truncated=report["truncated"] or handled.truncated,
+        redaction_count=redactions,
+        runner_redaction_count=report["redaction_count"],
+        output_bytes=size,
+        exit_code=report["exit_code"],
+        runner_result_withheld=report["result_withheld"],
+        runner_truncated=report["truncated"],
     )
