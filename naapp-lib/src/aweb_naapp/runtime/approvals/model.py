@@ -368,6 +368,11 @@ class Authenticator(Protocol):
     non-individual principals, such as a shared dashboard account: a
     member_session adapter needs a per-member principal from the identity layer
     or a custody attestation.
+
+    A retaining adapter may additionally expose with_frozen_request(canonical),
+    returning a fresh adapter for this ceremony. B2 supplies its exact stored
+    covered-request bytes; no shared mutable request cache is used. Adapters
+    without this optional extension keep the interface below unchanged.
     """
 
     assurance: Assurance

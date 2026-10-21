@@ -400,5 +400,41 @@ the approval, decision, policy and the app's own origin.
   contact, evidence_ref)`. What a login opens (a console or reader session) is
   the caller's. Roles are named scopes, such as `secrets.owner`, each designated
   through a team owner act.
+- **Retained proof (decision 84).** Configure `Passkeys(proof_context=resolver)`.
+  Its async `resolver(scope, *, tx)` returns `PasskeyInstallationContext(app_id,
+  team_id, installation_id, generation)` from the authoritative persisted scope
+  binding. B3 supplies its challenge-write transaction. The resolver reads only:
+  application refresh, installation/role authority and locks precede B3. It must
+  refuse unknown, ambiguous, retired or stale bindings with
+  `ProofContextUnavailable` (`proof_context_unavailable`). Missing configuration
+  refuses assertion challenges; no context is fabricated from browser fields.
+- B3 freezes that context, its RP/scope and the exact existing challenge preimage
+  at issuance. Successful verification retains decoded authenticator data, client
+  data, signature, exact COSE key/credential ID, original context, counters and
+  times atomically with the counter CAS and evidence row. B2 passes the exact
+  immutable `StoredRequest.canonical` sidecar to a fresh per-ceremony passkey
+  adapter; other authenticator adapters are unchanged. Existing challenge and
+  signed-request bytes are unchanged. New storage is migration003.
+- `await passkeys.evidence_commitment(evidence_ref, context=admitted_context,
+  scope=scope, subject=subject, purpose="login", tx=action_tx)` validates the
+  retained original proof and exact expected bindings, then returns the one
+  canonical unkeyed SHA-256 commitment. Its fixed code on missing/legacy/deleted
+  proof or mismatched bindings is `passkey_proof_unavailable`, through
+  `PasskeyProofUnavailable`, an `AuthenticationFailed`. No summary fallback or
+  current-context relabeling occurs. The caller separately enforces session
+  expiry, exact-credential liveness and action authority before mutation.
+- `retained_proof(evidence_ref, tx=...)` is restricted historical export, never
+  a model projection or a new HTTP route. `RetainedPasskeyProof.export()` includes
+  raw proof and possibly a credential-bearing request sidecar: authorize its
+  disclosure and never log it. The public hook receives only the commitment.
+  The standalone `passkey_evidence_commitment(proof)` reproduces that encoding;
+  independent reviewers additionally need their trusted approver key and expected
+  context. Retired credentials and signing-key rotation do not rewrite history.
+- App lifecycle deletion quiesces that installation's ceremonies first, then
+  calls `delete_proofs_in(tx, context=...)` to remove its proof and challenge
+  sidecars across all generations, in the caller's transaction. Summary/audit
+  records may remain but cannot recreate proof. Backup erasure and disclosure
+  remain application lifecycle responsibilities. After deletion later proof
+  retrieval is unavailable.
 - A passkey proves that an app-local human holds the enrolled authenticator. It
   is not AWID membership, team identity or key custody.
