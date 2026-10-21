@@ -135,7 +135,7 @@ the external call is sent. `op_kind` is `broker` or `run_job`.
   test that a request whose concrete path holds a credential-shaped segment
   emits only its configured template. A runner job names `runner_id`, `job_id` and
   `job_digest` instead, and the two sets exclude each other.
-- `refused` requires `refusal_code`, from the catalog's 32 codes; no other
+- `refused` requires `refusal_code`, from the catalog's 33 codes; no other
   action carries one.
 - `completed` requires `disposition` (`returned`, `withheld` or
   `stored_as_secret`) and `undeclared_credential`. A returned result carries
@@ -227,7 +227,7 @@ direction, and a consumer refuses an event whose `direction` differs:
 
 | Widening | Narrowing |
 | --- | --- |
-| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `runner.deregistered`, `installation.disabled` |
+| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled` |
 
 `grant.changed` is widening whatever the change, so a change that only narrows
 a grant is still gated. A producer that must contain without waiting uses
@@ -241,7 +241,103 @@ strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
 - `passkey_session` requires `approval_evidence_sha256`, the independently
   verifiable proof commitment defined below;
 - `team_cert` is allowed only for a narrowing act, and never for
-  `resource.replaced`.
+  `resource.replaced` or `resource.version_observed`;
+- `backend_observation` is allowed exactly for `resource.version_observed`,
+  which requires that authority. It records the producer's validated backend
+  observation under the already-authorized immutable reference, without a new
+  owner act or passkey confirmation.
+
+### Observed backend versions (decision 92)
+
+**Catalog freeze pending.** Decision 92 fixes activation and its non-widening
+classification. This draft stages the additive act/code in catalog v1; its
+in-place re-freeze still needs an explicit ruling against the normal
+new-version rule. No producer emits the new entries until that ruling and
+the shared contract's R+A are complete.
+
+For a 1Password-backed secret, the grant authorizes the immutable vault, item
+and field reference. The vault is the owner's value-ingress and rotation path.
+A newly observed value under that same reference may become the next monotonic
+local version for **later fresh admissions**, without a new owner passkey,
+provided it validates against the secret's immutable kind and placement
+parameters (decision 65). It changes neither who may use the reference, where
+the value may go, nor the permitted operation. Decision 92 therefore assigns
+`resource.version_observed` to the catalog's non-widening `narrowing` class.
+This is a value-version change, not an authority widening. The original attempt
+and every approval bound to the old version refuse; a later use follows the
+existing policy, including a fresh approval for `approve_only` or any per-use
+approval requirement.
+
+The payload is exactly this field set:
+
+```json
+{
+  "act": "resource.version_observed",
+  "direction": "narrowing",
+  "authority": "backend_observation",
+  "resource_type": "secret",
+  "resource_ref": "sec_19ab42",
+  "before_ref": "sv_38b8149372e841309188c09c50e46104",
+  "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+  "reason_code": "external_version_changed"
+}
+```
+
+`resource_ref` is the existing opaque minted secret ID. `before_ref` and
+`after_ref` are distinct, randomly allocated `sv_<UUID-hex>` handles, persisted
+for the old and new local versions in the installation/team/secret scope.
+They are never display references, provider vault/item/field identifiers,
+provider versions, value-derived identifiers or fingerprints. No value material
+or hash of a value enters the event. The catalog requires these refs and the
+fixed resource type/reason; it forbids `role`, `subject_ref`, owner/passkey
+evidence, `approval_id` and `policy_digest` on this act. The producer is
+responsible for the refs' authoritative scope, allocation and correspondence to
+the committed versions. The envelope actor is exactly
+`{"authority_mode":"system","attestations":[]}`: the signed app producer
+attests its own observation, without attributing a new owner/member ceremony.
+Ordinary production activation, signature and installation/generation checks
+still apply.
+
+The SDK observation and immutable-shape validation happen outside authority
+locks. A separate transaction before the S3 dispatch fence takes the complete
+installation, forest, grant and B2 prelocks (decision 78), then checks a CAS over
+installation/team/secret, current local version, immutable reference identity
+and active credential version. It advances the monotonic local version and
+applies the replacement consequences, including voiding old-version approvals
+and token-cache authority. Cache eviction after commit is cleanup; stale cache
+entries cannot bypass the version/authority fence. No SDK I/O, late B2 lock or
+reconciliation consequence write belongs in the final dispatch checker.
+
+The local transition, invalidations and required shared-outbox insert commit
+in **one transaction**. A stale CAS changes nothing and emits nothing; a replay
+does not emit a second transition event. Outbox-storage failure rolls back that
+transaction and the use still fails closed without releasing the value.
+Target or delivery unavailability never gates the invalidation/transition;
+the non-widening classification does not waive durable recording. This
+governance effect and the attempted use's refusal are distinct effects, each
+with its own required hook, and neither also emits a manifest-command event.
+
+An invalid value, deleted item or unresolved reference **never activates** a
+version and emits no successful `resource.version_observed` event or invented
+`after_ref`. On the pre-S3 path, its required `post-secret-use-hook` event has
+`action: refused`: invalid immutable shape uses `secret_value_invalid`, while
+a deleted or unresolved backend reference uses `custody_unavailable`. The
+producer exposes a safe cause to the owner through the audit event and console,
+without provider errors, references or value material. A final SDK reread that
+fails **after `dispatching` commits but before any upstream byte or runner
+release** instead produces the existing phase-correct `not_sent` event; it
+must not add `refusal_code` (forbidden there) or fabricate a pre-S3 refusal.
+The exact late failure cause stays in safe console/operational state. Neither
+failure path emits a successful version transition.
+
+This additive catalog delta preserves all existing accepted payloads. Producers
+must use the reviewed shared codec and update the receiving catalog support
+before emitting the new act/code; an older consumer refuses unknown entries.
+It does not authorize producer-local hook actions. M1/M2/S13 implementation
+still needs its own reviewed activation, lock, CAS, rollback, cache and delivery
+proofs. The ruling is recorded in secrets mail
+`80c8580f-66ab-4f68-b9cf-7c20ff6dd9f7` (decision 92, 2026-10-21; custody's
+receipt `2f7026a2-6a1b-4f98-b19e-fc834dea13d8`).
 
 ### Passkey evidence commitments and console actors
 
