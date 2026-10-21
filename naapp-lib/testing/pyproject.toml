@@ -1,14 +1,16 @@
 [project]
 name = "aweb-naapp-testing"
-version = "0.1.0"
+version = "0.2.0"
 description = "Test support for naapps on aweb-naapp: real AWID routes on PostgreSQL, a team-auth v2 signer, a software WebAuthn authenticator, a team owner-act signer and a real local SMTP server. Dev-only; never a production dependency."
 license = { text = "MIT" }
 authors = [{ name = "aweb.ai", email = "hello@aweb.ai" }]
 requires-python = ">=3.12"
 dependencies = [
   "aiosmtpd>=1.4.6",
-  "aweb-naapp[hooks,runtime]",
-  "awid-service",
+  # Released in lockstep with aweb-naapp, from the same tag and at the same version.
+  "aweb-naapp[hooks,runtime]==0.2.0",
+  # The first awid release with the principal-attestation records the runtime reads.
+  "awid-service>=0.5.30",
   "cbor2>=5.6.0",
   "cryptography>=46.0.0",
   "dnspython>=2.7.0",

@@ -27,15 +27,17 @@ compose or prerequisites for using it.
 
 ## Versioned inputs
 
-The harness builds Library from `naapp/library` and seeds its committed
-`naapp/library/test-vectors/blueprints/team` aweb.team fixture. All inputs are
-therefore in the same checkout as awid and aweb (`context: .`), and the local
-release gate records one clean exact source SHA for the complete journey.
+The harness builds Library from `naapp/library/Dockerfile` with the repository
+root as its context (`context: .`), like awid and aweb, because Library depends
+on the in-repo awid and naapp-lib. It seeds the committed
+`naapp/library/test-vectors/blueprints/team` aweb.team fixture. The local
+release gate therefore records one clean exact source SHA for the complete
+journey.
 
-`LIBRARY_E2E_LIBRARY_CONTEXT` and `LIBRARY_E2E_BLUEPRINT_SRC` remain explicit
-maintainer overrides for testing another checked-out source. A release gate
-requires either override to remain inside a clean Git checkout; it does not
-accept an archive or an unversioned working directory.
+`LIBRARY_E2E_BLUEPRINT_SRC` remains an explicit maintainer override for testing
+another checked-out blueprint. A release gate requires it to remain inside a
+clean Git checkout; it does not accept an archive or an unversioned working
+directory.
 
 ## Run it
 
@@ -151,7 +153,6 @@ deleted and the suite installs the manifest the real way.
 | `LIBRARY_E2E_AWEB_PORT` | 18000 | aweb host port |
 | `LIBRARY_E2E_LIBRARY_PORT` | 18765 | library host port |
 | `LIBRARY_E2E_POSTGRES_PORT` | 55432 | postgres host port |
-| `LIBRARY_E2E_LIBRARY_CONTEXT` | `../library` | Library build context |
 | `LIBRARY_E2E_BLUEPRINT_SRC` | `../blueprints/team` | catalog blueprint source |
 | `LIBRARY_E2E_LIBRARY_URL` | `http://127.0.0.1:18765` | Library base URL the Go e2e suite drives |
 | `AW_BIN` | `aw` | exact aw binary used to drive the seed / Go suite; `cli/scripts/e2e.sh` builds only when it is unset |

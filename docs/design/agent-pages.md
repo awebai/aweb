@@ -371,9 +371,14 @@ Cloud owns backup operation; OSS defines the receipts and export/deletion hooks.
 The three action kinds are `edit`, `intent`, `answer`. Definitions contain an ID,
 label, input schema, server policy reference and a target agent/role where
 applicable. Layout is a view of these definitions, never the policy authority.
-A role target resolves against the current app/team role map to one stable
-identity at acceptance, then is frozen and audited. Ambiguous/missing role is
-`422 target_unresolved`; no silent reassignment. Default is the page owner's
+A role target resolves against the current app/team role map at acceptance,
+then is frozen and audited: for an intent, to one stable identity; for a
+decision a person answers, to the role's current designated holders, at most
+16 individually designated people, frozen as the task's eligible answerers so
+that one absence does not stop the agent (amended 2026-10-20, decisions 53 and
+53b, [page-actions.md](../page-actions.md) §2). A missing role, an ambiguous
+intent target or more than 16 holders is `422 target_unresolved`; no silent
+reassignment. Default is the page owner's
 agent identity. An authorized retarget is a separate audited operation.
 
 `edit` performs only declared local data/state changes, immediately without an
