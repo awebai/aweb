@@ -4,6 +4,16 @@
 
 ## Release preparations
 
+### Release preparation: aweb-naapp 0.2.0
+
+- The `aweb-naapp-vX.Y.Z` tag also publishes PyPI `aweb-naapp-testing` from
+  `naapp-lib/testing/`, at the same version: dev-only test support (real AWID
+  routes on PostgreSQL, a team-auth v2 signer, a software WebAuthn
+  authenticator and a team owner-act signer). It requires exactly the
+  `aweb-naapp` it is released with and `awid-service>=0.5.30`. The release
+  candidate and the publisher refuse a tag when the two versions differ, and
+  `make check-naapp-lib-package` builds, installs and imports both.
+
 ### Release preparation: aweb-naapp 0.1.0
 
 The first release of `aweb-naapp`, the shared naapp toolkit in `naapp-lib/`.
