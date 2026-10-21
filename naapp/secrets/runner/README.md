@@ -50,6 +50,14 @@ no group or other permissions. The database is created with mode 0600; symbolic
 links, hard links and public files are refused. Deployment must also keep this
 directory outside agent write authority. SQLite failures refuse work.
 
+The journal also stores exact sanitized report bytes before their first send.
+Pending reports survive reopening and assignment expiry; retries reuse those
+bytes with a fresh signed nonce. Acknowledgment clears the body while retaining
+its private digest/completion marker, so a later retry cannot revive or replace
+it. Only accepted dispatches can record a result. The journal grants no server
+authority. Incompatible pre-release layouts refuse without resetting records;
+no automatic migration or reset runs.
+
 Local job preparation uses a runner-owned JSON configuration with exactly three
 keys: `v: 1`, `agent_uids` (the actual agent OS UIDs), and `jobs`. Each `jobs`
 entry is keyed by job ID and contains `digest` and `definition`: the owner-approved
@@ -101,7 +109,8 @@ uv run aweb-secrets-runner doctor --config /absolute/runner-config.json \
 ```
 
 `doctor` checks the actual UID, protected configuration, runner membership,
-executable and declared-file hashes, working directories and private journal. It
+executable and declared-file hashes, working directories and private journal. On
+first run it creates `journal.sqlite3` if absent. It
 does not contact the service, request an enrolment code, open credentials or
 execute a job. Success prints only the runner ID and checked job IDs. Refusals
 print a fixed code. A pending unregistered identity and an unavailable OCI runtime
@@ -112,7 +121,7 @@ Run the focused checks from this directory:
 
 ```sh
 uv sync --locked
-uv run pytest tests/test_protocol.py tests/test_journal.py
+uv run pytest tests/test_protocol.py tests/test_journal.py tests/test_result_journal.py
 uv run pytest tests/test_registration.py
 uv run pytest tests/test_filesystem.py tests/test_jobs.py tests/test_execution.py
 uv run pytest tests/test_credential_opening.py tests/test_doctor.py
