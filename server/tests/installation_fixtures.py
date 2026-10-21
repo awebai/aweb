@@ -80,3 +80,31 @@ async def seed_pending_installation(
             tx, team_id=team_id, app_id=app_id, origin=origin, digest=digest,
             event_types=normalize_event_types(list(event_types)), emit_keys=list(emit_keys), app_keys=[],
         )
+
+
+async def seed_hook_installation(db, app, *, team_id, installation_id):
+    """Model a historical verified pin for hook-reader tests, including origin moves.
+
+    These fixtures exercise existing binding/key history, not confirmation or
+    origin verification. Pins always match actual parsed bytes. Keys and owner
+    activation are provisioned separately by the hook tests themselves.
+    """
+    manifest = json.dumps({
+        "manifest_version": 2,
+        "app": {"id": app["app_id"], "origin": app["origin"], "version": "1.0.0"},
+        "tools": [{"name": "fixture", "method": "GET", "path": "/fixture", "scopes": [],
+                   "description": app["digest"]}],
+        "app_keys": [],
+    }).encode()
+    load_manifest(manifest, reserved_names=reserved_app_ids())
+    app["digest"] = "sha256:" + hashlib.sha256(manifest).hexdigest()
+    await seed_pending_installation(
+        db, team_id=team_id, app_id=app["app_id"], origin=app["origin"], app_version="1.0.0",
+        manifest_version=2, digest=app["digest"], granted_scopes=[],
+    )
+    await db.execute(
+        "UPDATE {{tables.team_app_installs}} SET state='active', origin_verified=TRUE, "
+        "manifest_bytes=$3, registered_from_manifest_bytes=TRUE, installation_id=$4 "
+        "WHERE team_id=$1 AND app_id=$2",
+        team_id, app["app_id"], manifest, installation_id,
+    )

@@ -29,7 +29,12 @@ from aweb.app_registry import (
     reserved_app_ids,
 )
 from aweb.service_errors import ConflictError, ValidationError
-from aweb_naapp.manifest import ManifestError, load_manifest, read_manifest_bytes
+from aweb_naapp.manifest import (
+    ManifestError,
+    fill_manifest,
+    load_manifest,
+    template_kids,
+)
 from awid.signing import canonical_json_bytes, sign_message
 from tests.installation_fixtures import install_fixture_app as install_app
 from tests.test_app_credentials import _app as _probe_app
@@ -526,7 +531,11 @@ def test_install_reads_bytes_exactly_as_the_shared_reader_does(name, data, expec
     [("folio", "https://folio.aweb.ai"), ("library", "https://library.aweb.ai")],
 )
 async def test_every_live_apps_committed_manifest_installs_through_the_reader(db, app_id, origin):
-    manifest = read_manifest_bytes(ROOT / "naapp" / app_id / "src" / app_id / "aweb-app.json", origin)
+    template = json.loads((ROOT / "naapp" / app_id / "src" / app_id / "aweb-app.json").read_bytes())
+    manifest = fill_manifest(
+        template, app_id=app_id, origin=origin,
+        did_keys={kid: _make_app_keypair()[1] for kid in template_kids(template)},
+    )
     document = json.loads(manifest)
 
     installed = await install_app(

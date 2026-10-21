@@ -131,6 +131,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "aweb-naapp" },
     { name = "aweb-naapp-testing" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -160,6 +161,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aweb-naapp", editable = "../naapp-lib" },
     { name = "aweb-naapp-testing", editable = "../naapp-lib/testing" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
