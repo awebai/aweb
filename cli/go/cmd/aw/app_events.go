@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/base64"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/awebai/aw/internal/appmanifest"
@@ -14,7 +13,8 @@ import (
 // local resident approval. A receipt is saved only after every requested write
 // succeeds. Failed registration can be retried with update; a partial initial
 // subscription failure is retried by repeating install.
-func registerManifestEvents(manifest appmanifest.Manifest, fetchedDigest string, fetchedBytes []byte, previous, next *pluginProvenance, update bool) error {
+func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string, fetchedBytes []byte, previous, next *pluginProvenance, update bool) error {
+	manifest := resolved.Manifest
 	client, selection, err := resolveClientSelection()
 	if err != nil {
 		return fmt.Errorf("app events require a resident connected to a team: %w", err)
@@ -26,7 +26,7 @@ func registerManifestEvents(manifest appmanifest.Manifest, fetchedDigest string,
 	events := installRegistrationEvents(manifest)
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
-	body := installRegistrationBody(manifest, fetchedDigest, fetchedBytes)
+	body := installRegistrationBody(resolved, fetchedDigest, fetchedBytes)
 	if err := client.Post(ctx, "/v1/apps/install", body, nil); err != nil {
 		return fmt.Errorf("register app events (local approval retained; retry install/update): %w", err)
 	}
@@ -55,26 +55,24 @@ func installRegistrationEvents(manifest appmanifest.Manifest) []appmanifest.Even
 	return events
 }
 
-// installRegistrationBody is the team install request. fetchedBytes, when
-// present, are the exact bytes that hash to fetchedDigest; the server then
-// takes declarations and keys from them and refuses fields that disagree.
-func installRegistrationBody(manifest appmanifest.Manifest, fetchedDigest string, fetchedBytes []byte) map[string]any {
-	scopes := []string{}
-	seen := map[string]bool{}
-	for _, tool := range manifest.Tools {
-		for _, scope := range tool.Scopes {
-			if !seen[scope] {
-				seen[scope] = true
-				scopes = append(scopes, scope)
-			}
-		}
+// installRegistrationBody is the team install request for a resolved
+// manifest. It grants the scopes of the agent and surface tools install
+// activates; a hook-only tool's scopes wait for owner activation. Its event
+// emitters are the manifest's app-event keys, from event_emitters in version 1
+// and app_keys in version 2. fetchedBytes, when present, are the exact bytes
+// that hash to fetchedDigest; the server then takes declarations and keys from
+// them and refuses fields that disagree.
+func installRegistrationBody(resolved *appmanifest.Resolved, fetchedDigest string, fetchedBytes []byte) map[string]any {
+	manifest := resolved.Manifest
+	emitters := []appmanifest.EventEmitter{}
+	for _, key := range resolved.AppKeysFor("app-event") {
+		emitters = append(emitters, appmanifest.EventEmitter{KID: key.KID, DIDKey: key.DIDKey})
 	}
-	sort.Strings(scopes)
 	body := map[string]any{
 		"app_id": manifest.App.ID, "origin": manifest.App.Origin,
 		"app_version": manifest.App.Version, "manifest_version": manifest.ManifestVersion,
-		"digest": fetchedDigest, "granted_scopes": scopes,
-		"events": installRegistrationEvents(manifest), "event_emitters": append([]appmanifest.EventEmitter{}, manifest.EventEmitters...),
+		"digest": fetchedDigest, "granted_scopes": append([]string{}, resolved.InstallScopes...),
+		"events": installRegistrationEvents(manifest), "event_emitters": emitters,
 	}
 	if fetchedBytes != nil {
 		body["manifest"] = base64.StdEncoding.EncodeToString(fetchedBytes)

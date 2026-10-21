@@ -156,7 +156,7 @@ Bound widgets also have `bind`; containers also have `children`.
 | `chart` | **`kind`** (`bar`, `line`, `pie`), **`x`**, **`series`**, **`alternative`** (the text or table alternative). Requires `bind`. |
 | `form` | **`fields`**, **`submit_action`**. A field has `id`, `kind` (`text`, `number`, `date`, `select`, `checkbox`, `file`), `label`, `required` and `description`. A `select` requires `options`; a `file` requires `accept` (MIME types) and `max_bytes`. There are no password fields. |
 | `button` | **`label`**, **`action`**, `confirmation`. |
-| `decision_card` | See §5. |
+| `decision_card` | See §5. Its status area is host chrome: `widget_state` `message`, `progress` and `busy` are ignored on a decision card. |
 | `file_drop` | **`label`**, **`action`**, **`accept`** (MIME types), **`max_bytes`** (at most 10 MiB). |
 | `image`, `video` | **`asset_id`**, **`alt`**, `caption`. Assets load only from the app's asset origin, never inline in the host origin. |
 | `agent_presence` | **`subject`**: rendered from published health evidence and its age, never a guessed indicator. |
