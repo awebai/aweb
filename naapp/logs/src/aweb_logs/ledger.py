@@ -203,6 +203,42 @@ async def issue_checkpoint(
         return await _checkpoint(tx, signer, team_id, head, issued_at)
 
 
+async def checkpoint_moved_heads(
+    db: AsyncDatabaseManager, signer: LogsSigner, *, issued_at: datetime
+) -> list[str]:
+    """Sign a checkpoint of each team head that has moved since its epoch's
+    last checkpoint, and return those teams. An epoch with no events yet, or
+    one that belongs to another logs origin, is left alone. Each head is
+    decided under its lock, so a head another writer moves meanwhile is judged
+    as it is, and concurrent passes sign it once."""
+    candidates = await db.fetch_all(
+        "SELECT h.team_id FROM {{tables.chain_heads}} h"
+        " WHERE h.team_seq IS DISTINCT FROM ("
+        "   SELECT c.team_seq FROM {{tables.chain_checkpoints}} c"
+        "   WHERE c.team_id = h.team_id AND c.chain_epoch = h.chain_epoch"
+        "   ORDER BY c.position DESC LIMIT 1)"
+        " ORDER BY h.team_id"
+    )
+    checkpointed = []
+    for row in candidates:
+        team_id = row["team_id"]
+        async with db.transaction() as tx:
+            head = await _existing_head(tx, team_id)
+            if head is None or head.team_seq == 0 or head.logs_origin != signer.logs_origin:
+                continue
+            last = await tx.fetch_value(
+                "SELECT team_seq FROM {{tables.chain_checkpoints}}"
+                " WHERE team_id = $1 AND chain_epoch = $2 ORDER BY position DESC LIMIT 1",
+                team_id,
+                head.chain_epoch,
+            )
+            if last == head.team_seq:
+                continue
+            await _checkpoint(tx, signer, team_id, head, issued_at)
+            checkpointed.append(team_id)
+    return checkpointed
+
+
 async def open_next_epoch(
     db: AsyncDatabaseManager,
     signer: LogsSigner,

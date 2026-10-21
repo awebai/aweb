@@ -3,14 +3,18 @@ its health on real PostgreSQL, and its chain key loaded or the app refused."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
+from aweb_naapp.hooks import envelope as hook_envelope
 from aweb_naapp.manifest import canonical_bytes, load_manifest
 from aweb_naapp.runtime.app_keys import AppKeyError
 from awid.did import did_from_public_key
@@ -18,10 +22,12 @@ from fastapi import FastAPI
 from pgdbm import AsyncDatabaseManager
 
 from aweb_logs.app import chain_signer, create_app
-from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE
+from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE, open_checkpoint
 from aweb_logs.config import LogsSettings
+from aweb_logs.ledger import append
 
 from .deployment import did_key_of, filled_manifest, template, write_key_file, write_key_files
+from .fixtures import TEAM_ID, signed_event
 
 ORIGIN = "https://logs.example.test"
 
@@ -87,6 +93,35 @@ async def test_logs_is_ready_with_its_chain_tables(tmp_path: Path, database) -> 
         assert {"chain_epochs", "chain_heads", "chain_events", "chain_checkpoints"} <= {
             row["table_name"] for row in tables
         }
+
+
+async def test_a_running_logs_checkpoints_each_team_whose_chain_moved(tmp_path: Path, database) -> None:
+    settings, manifest_path = _deployment(tmp_path, database.config.get_dsn())
+    settings = settings.model_copy(update={"checkpoint_interval_seconds": 0.05})
+    signer = chain_signer(settings, load_manifest(manifest_path.read_bytes()))
+    signing, signature = signed_event("core", event_id=str(uuid.uuid4()), seq=1)
+    async with running(create_app(settings, manifest_path=manifest_path)):
+        await append(
+            database,
+            signer,
+            event=hook_envelope.verify(signing, signature, team_id=TEAM_ID),
+            signing_bytes=signing,
+            signature=signature,
+            key_evidence={},
+            received_at=datetime.now(UTC),
+        )
+        checkpoint = None
+        for _ in range(100):
+            checkpoint = await database.fetch_one(
+                "SELECT signing_bytes, signature FROM {{tables.chain_checkpoints}} WHERE team_id = $1",
+                TEAM_ID,
+            )
+            if checkpoint is not None:
+                break
+            await asyncio.sleep(0.05)
+    assert checkpoint is not None
+    opened = open_checkpoint(bytes(checkpoint["signing_bytes"]), checkpoint["signature"])
+    assert (opened.team_seq, opened.logs_origin, opened.kid) == (1, ORIGIN, _chain_kid())
 
 
 def test_logs_does_not_start_without_its_chain_key(tmp_path: Path) -> None:

@@ -20,6 +20,9 @@ object from each kid the manifest declares to the path of that kid's key file.
 The `logs-chain` key signs receipts and checkpoints; logs does not start
 without it, or with a key other than the one its served manifest declares.
 
+While logs runs, each team whose chain has new events gets a signed checkpoint
+every `LOGS_CHECKPOINT_INTERVAL_SECONDS` (default 300); an idle team gets none.
+
 ## Development
 
 ```bash
