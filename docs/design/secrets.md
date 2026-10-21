@@ -1527,6 +1527,25 @@ received ─┬─> refused (terminal)
   D1's semantics and a retention period set per app. secrets keeps keys for 30
   days. After that they return
   `410 idempotency_expired`; they never re-execute.
+- **Certificate renewal and no-send retrieval.** For an already-dispatched run,
+  a currently verified certificate for the same `(team_id, stable principal)`
+  may retrieve its existing status/projected result, subject to current read
+  permission, within the same installation ID and generation. The certificate
+  ID or signing key need not equal the original request's. The stable-principal
+  rule is §4.1: a reissued certificate with the same `member_did_aw` may carry a
+  new key; for a local identity, a new `did:key` is a different principal.
+  Authentication, current membership and installation-scope checks still fail
+  closed. Another principal or installation gets no result; a superseded
+  generation refuses with `generation_superseded`, including after reinstall.
+- This retrieval returns only the persisted no-send receipt/result. It cannot
+  dispatch, retry a `not_sent` attempt, reconcile upstream, mint, release or
+  reseal runner credentials, charge use rates, or consume/rearm an approval.
+  Those actions retain their existing fresh-send authority and frozen-plan
+  checks. In particular, a changed certificate is not permission to rewrite a
+  plan so that it can send. The original certificate/key, request, approval and
+  plan remain immutable approval/audit provenance; verify the retrieval call
+  separately under its current certificate. Re-submission still compares the
+  original logical request bytes; changes refuse `idempotency_conflict`.
 - **Upstream key.** Where the operation declares one, secrets sends
   `Idempotency-Key: secrets-<dispatch_id>` (the header name comes from the operation).
   A transport retry of a `not_sent` dispatch reuses it, so the upstream can
