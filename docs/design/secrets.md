@@ -393,6 +393,21 @@ How a value is handled once opened:
 - **Errors.** Backend errors map to `custody_unavailable`, and the request is
   refused. There is no fallback to any other backend.
 
+**Runner preparation is a private read, not dispatch authority.** The sole
+custody opener may open exact contexts from an original **durably admitted**
+run/ordered-slot plan outside all database transactions and locks, before the
+runner's final release fence. Do not carry an old transaction-bound
+`PreparedRun` across that read. Rebuild/check the unchanged persisted plan and
+those exact versions/reference/token epochs in the sole final DB-only fence;
+then commit dispatching, alias, stored sealed/signed assignment, claim nonce and
+outbox before releasing bytes. Changed authority or failed commit discards the
+transient preparation. A persisted assignment is never reopened or resealed.
+An SDK/open failure while still admitted becomes `refused`, with atomic
+operational/outbox recording and no approval rearm. This runner-only ordering
+uses the same opener and S3 record; broker opening remains after dispatching,
+with a pre-send failure recorded as `not_sent`. See
+[runner protocol §4.2](../secrets-runner-protocol.md#42-one-dispatch-one-assignment).
+
 ### 5.2 Native KMS-sealed store
 
 - **Envelope encryption.** Each secret version gets a fresh data key from KMS
@@ -1505,7 +1520,9 @@ received ─┬─> refused (terminal)
 
 - **`admitted`.** The approval is consumed (if any), the rate counters are
   charged, and the intent row and outbox rows are committed together. This is the
-  durable intent.
+  durable intent. A runner preparation or final-fence failure may close it as
+  `refused` before dispatching; it does not undo approval consumption or turn
+  into a sent/unknown attempt. S13 owns cleanup if a crash leaves it admitted.
 - **`dispatching`.** It is committed **before** the first byte is sent, or before
   the job assignment is released to the runner.
 - **`completed`.** It records the upstream status (2xx through 5xx), the
@@ -1650,7 +1667,7 @@ action:
 
 | secrets transition (§11.1) | hook `action` |
 | --- | --- |
-| refusal at admission or at the fence | `refused`, with `refusal_code` |
+| refusal at admission, runner preparation before dispatching, or at the fence | `refused`, with `refusal_code` |
 | `awaiting_approval` | `approval_requested` |
 | approval decided (approve, deny, expire, revoke) | `approval_decided`, with `approval_evidence_sha256` when a passkey decided |
 | `cancelled`: the requester withdraws, or containment revokes the pending approval through B2 | `approval_decided`, with `approval_decision: revoked` |

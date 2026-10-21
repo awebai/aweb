@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from aweb_naapp.dispatch import TRANSITIONS, State
 from awid.did import did_from_public_key, public_key_from_did
 from awid.signing import canonical_json_bytes
 from cryptography.exceptions import InvalidTag
@@ -447,3 +448,10 @@ def test_http_claim_status_vectors(case):
     else:
         actual = {"status": 204}
     assert actual == case["expected"]
+
+
+@pytest.mark.parametrize(
+    "case", HTTP_VECTOR["preparation_transitions"], ids=lambda case: case["name"]
+)
+def test_http_preparation_vectors_match_the_real_shared_dispatch_graph(case):
+    assert (State(case["to"]) in TRANSITIONS[State(case["from"])]) is case["allowed"]

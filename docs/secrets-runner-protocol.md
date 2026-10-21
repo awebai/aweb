@@ -268,12 +268,47 @@ UUID-backed dispatch/run record, in the same installation and team. It is
 persisted before assignment. Assignment signatures, report paths and HPKE
 `info` use that alias. There is no second dispatch registry or state machine.
 
-The server selects only an admitted run, applies §11.3's final fence, and commits
-`dispatching`, the alias, exact sealed/signed assignment bytes and required
-outbox effects before any assignment byte leaves. The authenticated nonce and
-these effects commit together. Failure to commit releases nothing. Report state
-changes likewise use the shared dispatch transition path and commit atomically
-with their nonce and required outbox records.
+**Runner preparation and the final fence.** First select the original durably
+admitted run, with its persisted joint-approval/ordered-slot/plan association.
+Derive every exact custody context from that original record. The sole private
+custody opener reads those contexts **outside all held database transactions
+and locks**, before the final release fence. Its read capability does not grant
+send authority. Keep plaintext and original known values only in transient
+memory for that run/slot/version/reference/token epoch. This is runner
+preparation; broker opening still follows its committed `dispatching` transition.
+
+A `PreparedRun` is transaction-bound. Never carry its former transaction's
+authority across the SDK wait. In the new release transaction, rebuild and
+check the original persisted plan without rewriting it or consuming B2 again.
+The sole S13 fence takes the complete existing authority locks, then compares
+the exact prepared contexts/versions/reference/token epochs, current runner keys,
+installation generation/containment, approvals and live expiry. Its checker is
+DB-only; it performs no SDK/KMS I/O or late authority locking. Only then commit
+`dispatching`, the immutable alias, exact sealed/signed assignment bytes, nonce
+and required outbox effects together, before any assignment byte leaves.
+Changed authority or a failed commit discards all transient preparation and
+releases nothing; a failed commit leaves no committed `dispatching` transition.
+
+If another claim already published while preparation was outside the
+transaction, discard the losing preparation and use the winner's stored bytes
+only after the usual replay checks. Never replace or reseal its assignment.
+Check for that winner even when the losing SDK preparation failed: only a row
+still admitted may become refused. A losing worker cannot refuse an already
+published run or overwrite its receipt.
+There is no new durable preparation state, queue, resolver or custody opener.
+The original admitted-run authority and shared S3 record remain authoritative.
+
+An SDK/open failure before this final commit closes the original admitted
+attempt with the shared **`admitted → refused`** transition and a fixed,
+phase-appropriate refusal cause. Operational/refusal outbox recording and the
+claim nonce commit atomically. A failed recording transaction leaves the
+admitted row for S13's cleanup, with no release; it must not create `not_sent`
+or `outcome_unknown`, rearm approval, or transplant a replacement version.
+The claim returns `503 runner_unavailable` without an assignment; the owner
+sees the safe cause in the run receipt/activity. A broker SDK failure after its
+`dispatching` commit but before sending remains `not_sent`, as §11 requires.
+Report state changes use the same shared dispatch transition path and commit
+atomically with their nonce and required outbox records.
 
 There is at most one unresolved released assignment per runner. While it is
 `dispatching`, another claim returns the stored assignment bytes; it never opens
@@ -419,6 +454,8 @@ not the private report hash or raw output.
 Activation requires reviewed server routes, nonce/CAS/outbox integration, job
 env validation/confirmation, shared-codec packaging and runner consumption.
 Focused runtime proofs must cover lost claim responses/concurrent claims,
+SDK preparation outside transactions, preparation failure and losing concurrent
+preparation, changed authority/commit failure before publication,
 containment/key changes before replay, identical/conflicting results, late
 reports after sweeping/reconciliation, atomic rollback, exact original-value
 redaction (including changed 1Password items and unavailable context), multipart
