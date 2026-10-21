@@ -24,3 +24,19 @@ def test_folio_settings_are_the_shared_naapp_settings_under_its_prefix(
     assert isinstance(settings, NaappSettings)
     assert settings.did_aw_profile is DidAwProfile.REQUIRE
     assert settings.app_events_origin == "https://core.example"
+
+
+def test_documented_environment_starts_with_valid_shared_auth_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+    from pathlib import Path
+
+    for name in tuple(os.environ):
+        if name.startswith("FOLIO_"):
+            monkeypatch.delenv(name)
+    example = Path(__file__).resolve().parents[1] / ".env.example"
+    settings = Settings(_env_file=example)
+
+    assert 1 <= settings.auth_cache_ttl_seconds <= 60
+    assert 1 <= settings.timestamp_skew_seconds <= 300

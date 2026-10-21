@@ -2,6 +2,8 @@
 	prod-status prod-deploy prod-wait prod-verify prod-rollback
 
 API_PORT ?= 8765
+# The e2e stack's compose project; a gate passes its own with the NAAPP_E2E_* ports.
+export NAAPP_E2E_PROJECT ?= folio-e2e
 PROD_CONFIG ?= ops/render-production.json
 
 test:
@@ -16,16 +18,16 @@ lint:
 
 e2e:
 	set -e; \
-	trap 'docker compose -p folio-e2e -f docker-compose.e2e.yml down -v --remove-orphans' EXIT; \
-	docker compose -p folio-e2e -f docker-compose.e2e.yml down -v --remove-orphans >/dev/null 2>&1 || true; \
-	docker compose -p folio-e2e -f docker-compose.e2e.yml up --build -d; \
+	trap 'docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans' EXIT; \
+	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans >/dev/null 2>&1 || true; \
+	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d; \
 	FOLIO_E2E=1 uv run pytest -q -m e2e
 
 e2e-up:
-	docker compose -p folio-e2e -f docker-compose.e2e.yml up --build -d
+	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d
 
 e2e-down:
-	docker compose -p folio-e2e -f docker-compose.e2e.yml down -v --remove-orphans
+	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans
 
 compile:
 	uv run python -m compileall -q src tests

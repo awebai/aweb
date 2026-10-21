@@ -4,6 +4,19 @@ export function element(tag, text, className) {
   if (className) node.className = className;
   return node;
 }
+// Only renderer-authored words use English. Authored labels and record text
+// continue to inherit the page container's language.
+export function chrome(tag, text, className) {
+  const node = element(tag, text, className);
+  node.lang = "en";
+  return node;
+}
+export function formattedValue(value, format, ...options) {
+  const node = element("bdi", valueText(value, format, ...options));
+  if (["date", "date-time", "number", "money_minor"].includes(format))
+    node.lang = "en";
+  return node;
+}
 export function valueText(
   value,
   format = "text",
