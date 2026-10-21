@@ -786,3 +786,93 @@ async def test_initial_ingest_and_creation_serialize_their_shape_binding(
             if not task.done():
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_an_absent_parent_ingest_prevents_reshape_after_creation_pins_zero(
+    world: World,
+) -> None:
+    """An ingest that missed the parent can race past its later creation.
+
+    A real table lock pauses allocation after the missing-parent read. Creation
+    pins v0, ingest advances it without a parent lock, and reshape must wait on
+    the custody key and recheck its conditional shape binding after that wait.
+    """
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    creation = change_set(
+        drafter=by_member(CAROL), changes=[item("secret", "create", "payments-live", SECRET)]
+    )
+    await decide(world, await draft(world, creation), "alice@acme.com")
+    loop = asyncio.get_running_loop()
+    ingest_pid = loop.create_future()
+    allocated = asyncio.Event()
+    release = asyncio.Event()
+    reshape_pid = loop.create_future()
+
+    async def ingest():
+        async with world.db.transaction() as tx:
+            ingest_pid.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
+            version = await world.custody.sealer.ingest(
+                tx,
+                installation_id=INSTALLATION_ID,
+                team_id=TEAM,
+                secret_id=SECRET_ID,
+                initial=SecretRecord.from_after(SECRET),
+                value=encode_value("bearer", {"value": os.urandom(24).hex()}),
+            )
+            allocated.set()
+            await release.wait()
+            return version
+
+    async def reshape(change):
+        async with world.db.transaction() as tx:
+            reshape_pid.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
+            await world.change_sets.confirm(
+                tx,
+                change["change_id"],
+                operation_id="reshape-after-zero-pin",
+                fence=world.fence,
+                admitted=world.admitted,
+            )
+
+    ingest_task = reshape_task = None
+    try:
+        async with world.db.transaction() as tx:
+            holder = await tx.fetch_value("SELECT pg_backend_pid()")
+            await tx.execute("LOCK TABLE {{tables.custody_secrets}} IN SHARE MODE")
+            ingest_task = asyncio.create_task(ingest())
+            waiter = await asyncio.wait_for(ingest_pid, 5)
+            await wait_blocked(world, waiter, holder)
+            # Ingest is already past its parent SELECT and waiting to allocate.
+            assert not await tx.fetch_value("SELECT 1 FROM {{tables.secrets}}")
+            await world.change_sets.confirm(
+                tx,
+                creation["change_id"],
+                operation_id="create-zero-pin",
+                fence=world.fence,
+                admitted=world.admitted,
+            )
+            assert await tx.fetch_value("SELECT last_version FROM {{tables.custody_secrets}}") == 0
+        await asyncio.wait_for(allocated.wait(), 5)
+        change = change_set(
+            drafter=by_member(CAROL), changes=[updated(**RESHAPED[0])], base_revision=1
+        )
+        await decide(world, await draft(world, change), "alice@acme.com")
+        reshape_task = asyncio.create_task(reshape(change))
+        waiter = await asyncio.wait_for(reshape_pid, 5)
+        await wait_blocked(world, waiter, await ingest_pid)
+        release.set()
+        assert await asyncio.wait_for(ingest_task, 5) == 1
+        with pytest.raises(ChangeRefused) as refused:
+            await asyncio.wait_for(reshape_task, 5)
+        assert refused.value.code == "sealed_secret_fixed"
+        assert (await stored_secret(world)).record.kind == "bearer"
+        assert (
+            await world.db.fetch_value("SELECT last_version FROM {{tables.custody_secrets}}") == 1
+        )
+    finally:
+        release.set()
+        for task in (ingest_task, reshape_task):
+            if task is not None:
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
