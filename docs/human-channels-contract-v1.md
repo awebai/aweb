@@ -66,7 +66,12 @@ opaque nested native values are not a new key assertion grammar. P1 must preserv
 all admitted extensions and existing fixed inner-header projection. Mail/chat ×
 absent/telegram/msteams structural signature vectors accompany the new records;
 P1 adds real encrypt/decrypt and released-client journeys before emission.
-Unknown/malformed supplied `via` refuses; omission grants no extra authority.
+A supplied `via` uses ASCII `[a-z][a-z0-9_]{0,31}`. Unknown well-formed kinds
+are retained in verified/decrypted content and safely displayed as an unfamiliar
+channel kind, with no authority or routing behavior. Malformed values refuse;
+omission grants no extra authority. Known producer kinds and MS Teams display
+remain as in the decided proposal; producers never encode external identifiers
+as platform kinds.
 
 ## Capabilities and failure results
 
@@ -78,7 +83,8 @@ not invalidate known native neighbors; explicit selection of an unknown or
 deferred token returns unsupported (`require_capability` / `RequireCapability`).
 The registry contains `signed-via-v1`, `human-alias-v1`, `human-send-uow-v1`,
 `bridged-participants-v1`, `managed-chat-policy-v1`, `shared-control-history-v1`,
-`chat-export-checkpoints-v1`, `presence-intents-v1`, `native-chat-receipts-v1`.
+`chat-export-checkpoints-v1`, `presence-intents-v1`,
+`presence-binding-intents-v1`, `native-chat-receipts-v1`.
 
 `managed-chat-encrypted-v1`, `group-reshare-v1` and `group-federation-v1` are
 reserved **refused** boundaries, not frozen wire algorithms. X-E2/X-GF supply
@@ -145,7 +151,8 @@ P tasks must supply these ports. P0 adds no routes or bypass for Cloud.
 | checkpoint(SignedArtifact of CheckpointIntent) → signed CheckpointReceipt or NarrowStopAck | existing proposed `POST .../{id}/export-checkpoints`; P7 |
 | checkpoint_receipt(session,transition) → signed original CheckpointReceipt | `GET .../{id}/export-checkpoints/{transition}`; P7, explicit control-history grant |
 | message_acceptance(session,message) → signed MessageAcceptance | `GET .../{id}/messages/{message}/acceptance`; P7, message-interval grant |
-| verify_presence(SignedArtifact of PresenceIntent) → VerifiedPresence | public verifier library, no OSS registry/setting write; P8; Cloud owns its registration API |
+| verify_presence(SignedArtifact of PresenceIntent) → VerifiedPresence | public verifier library for native suppression only; P8; Cloud owns its registration API |
+| verify_presence_binding(SignedArtifact of PresenceBindingIntent) → VerifiedPresenceBinding | distinct public verifier for shared/dedicated bind/rebind/unbind; P8 public proof verification + C1/C2 private resource/CAS; native suppression approval never authorizes this call |
 | native_operation(SignedArtifact of NativeOperationRequest) → signed NativeOperation | `POST /v1/chat/sessions/{id}/native-operations`; N1 |
 | commit_native_reply(SignedArtifact of NativeReply) → AcceptedSend | `POST /v1/chat/sessions/{id}/native-replies`; N1 uses the same P2b/P7 acceptance, no unsigned guest echo |
 
@@ -159,11 +166,14 @@ insert path without supplying the public transaction/authorization semantics.
 
 ### Identity, custody and enumeration
 
-`ResolveRequest` names an explicit selected team plus an alias selector, or an
-exact typed participant in an already authorized session. If both forms are
-supplied they must identify the same principal; conflict refuses. Authenticated
-human+team → actor is the existing custody/access authority's job, not arbitrary
-roster-DID substitution. `AuthorityFacts` returns immutable native/guest principal,
+`ResolveRequest` has exactly one selector alternative: `{version,team_id,selector}`
+for a selected-team alias, or `{version,session_id,participant}` for an exact typed
+participant in an already authorized session. Mixed or partial alternatives
+refuse. Session-only lookup requires no invented team membership, filler team ID
+or alias; current session authorization and independent identity/bridge proof
+suffice, including for bridged guests. Result actor/team IDs are omitted where
+inapplicable. Authenticated human+team → actor in the alias lane is the existing
+custody/access authority's job, not arbitrary roster-DID substitution. `AuthorityFacts` returns immutable native/guest principal,
 current signing key, optional immutable actor/team IDs where applicable, pinned
 service/audience, active/access/inbound verdict,
 actual custody, confidentiality, authorization revision and capabilities. Key
@@ -359,6 +369,26 @@ Owner transfer/revocation invalidates future operations. Platform-wide suppressi
 wins overlapping scopes; scoped mixed native/dedicated operation remains disabled
 pending explicit Juan scope approval. Stale health never enables fallback;
 `native_unavailable` is visible delivery failure, not silent loss.
+
+Shared/dedicated bindings use **separate** `PresenceBindingIntent`,
+`BindingOwnershipProof` and `VerifiedPresenceBinding` families. The intent signs
+bind/rebind/unbind, exact subject, `mode=shared|dedicated`, platform/scope,
+blinded `binding_digest`, service audience, expected generation, request ID,
+subject/owner authorization lane, signer/key and freshness. The digest commits
+to the exact private binding/presence target without exposing a bot/account ID
+or credential. Both lanes recheck current rights; owner lane requires a signed
+BindingOwnershipProof from the independently pinned ownership authority for that
+subject/service, matching owner, mode, platform/scope, operation and freshness.
+Native OwnershipProof/PresenceIntent payloads have different signed versions and
+cannot authorize this verifier; the inverse conversion is equally refused.
+
+`verify_presence_binding` returns only the same purpose/mode/scope/digest and
+verified revision/request/hash/expiry. It grants no native suppression, message
+authority, key custody, audience expansion or team role. C1/C2 separately verify
+actual platform resource ownership/intake and commit the exact private binding
+at that expected generation; token possession never replaces subject/owner
+approval, nor does a valid public intent prove token/resource ownership.
+Rebinding cancels pending old routes and obeys existing consent/checkpoint rules.
 
 `NativeOperationRequest` signs claim/start/renew/complete/reconcile/resolve plus
 stable canonical **aweb** input message ID/hash, agent/session, owner generation

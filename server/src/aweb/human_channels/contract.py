@@ -109,6 +109,7 @@ def _match(rule: Any, value: Any, field: str) -> None:
     if type(value) is not str or not value:
         raise ContractError("invalid", field)
     patterns = {
+        "platform_kind": r"[a-z][a-z0-9_]{0,31}",
         "uuid": r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
         "hash": r"sha256:[0-9a-f]{64}",
         "commitment": r"commitment:[0-9a-f]{64}",
@@ -153,6 +154,10 @@ def _validate(schema: str, value: Any) -> None:
 
 def _relations(schema: str, v: dict[str, Any]) -> None:
     """Only local shape relations; no inference of custody or authorization."""
+    if schema == "ResolveRequest":
+        selector_fields = v.keys() - {"version"}
+        if selector_fields not in ({"team_id", "selector"}, {"session_id", "participant"}):
+            raise ContractError("invalid", "alternative selector")
     if schema == "CheckpointIntent":
         owner = {"expected_membership_epoch", "expected_membership_hash", "expected_export_generation", "generation", "policy_digest"}
         if v["authorization"] == "owner":
@@ -171,7 +176,7 @@ def _relations(schema: str, v: dict[str, Any]) -> None:
             raise ContractError("invalid", "legacy capture")
     if schema == "PresenceScope" and ((v["kind"] == "session") != ("session_id" in v)):
         raise ContractError("invalid", "presence scope")
-    if schema == "PresenceIntent" and ((v["authorization"] == "owner") != ("ownership_proof" in v)):
+    if schema in ("PresenceIntent", "PresenceBindingIntent") and ((v["authorization"] == "owner") != ("ownership_proof" in v)):
         raise ContractError("invalid", "presence authority proof")
     if schema == "PageResult" and (v["has_more"] != ("next_cursor" in v)):
         raise ContractError("invalid", "cursor")

@@ -83,11 +83,11 @@
           "enum": [
             "aweb-human-resolve-v1"
           ]
-        },
-        "team_id": "uuid",
-        "selector": "text"
+        }
       },
       "optional": {
+        "team_id": "uuid",
+        "selector": "text",
         "session_id": "uuid",
         "participant": {
           "one_of": [
@@ -944,15 +944,7 @@
         }
       },
       "optional": {
-        "via": {
-          "enum": [
-            "telegram",
-            "msteams",
-            "slack",
-            "whatsapp",
-            "discord"
-          ]
-        }
+        "via": "platform_kind"
       }
     },
     "Refusal": {
@@ -1189,15 +1181,7 @@
         "reply_to": "text",
         "sender_leaving": "bool",
         "hang_on": "bool",
-        "via": {
-          "enum": [
-            "telegram",
-            "msteams",
-            "slack",
-            "whatsapp",
-            "discord"
-          ]
-        }
+        "via": "platform_kind"
       }
     },
     "NativeV2Content": {
@@ -1226,15 +1210,7 @@
           "array": "json_object"
         },
         "reply_to_message_id": "uuid",
-        "via": {
-          "enum": [
-            "telegram",
-            "msteams",
-            "slack",
-            "whatsapp",
-            "discord"
-          ]
-        }
+        "via": "platform_kind"
       }
     },
     "ManagedPlaintext": {
@@ -1272,15 +1248,7 @@
         "created_at": "timestamp"
       },
       "optional": {
-        "via": {
-          "enum": [
-            "telegram",
-            "msteams",
-            "slack",
-            "whatsapp",
-            "discord"
-          ]
-        },
+        "via": "platform_kind",
         "reply_to_message_id": "uuid"
       }
     },
@@ -1331,6 +1299,174 @@
         "expires_at": "timestamp"
       },
       "optional": {}
+    },
+    "PresenceBindingIntent": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-presence-binding-intent-v1"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "bind",
+            "rebind",
+            "unbind"
+          ]
+        },
+        "subject": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        },
+        "platform": {
+          "enum": [
+            "telegram",
+            "msteams",
+            "slack",
+            "whatsapp",
+            "discord"
+          ]
+        },
+        "scope": {
+          "ref": "PresenceScope"
+        },
+        "mode": {
+          "enum": [
+            "shared",
+            "dedicated"
+          ]
+        },
+        "binding_digest": "commitment",
+        "audience": "text",
+        "expected_generation": "uint",
+        "request_id": "uuid",
+        "authorization": {
+          "enum": [
+            "subject",
+            "owner"
+          ]
+        },
+        "signer": "did",
+        "signing_key_id": "didkey",
+        "issued_at": "timestamp",
+        "expires_at": "timestamp"
+      },
+      "optional": {
+        "ownership_proof": {
+          "ref": "SignedArtifact"
+        }
+      }
+    },
+    "BindingOwnershipProof": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-presence-binding-owner-proof-v1"
+          ]
+        },
+        "subject": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        },
+        "owner": "did",
+        "platform": {
+          "enum": [
+            "telegram",
+            "msteams",
+            "slack",
+            "whatsapp",
+            "discord"
+          ]
+        },
+        "scope": {
+          "ref": "PresenceScope"
+        },
+        "mode": {
+          "enum": [
+            "shared",
+            "dedicated"
+          ]
+        },
+        "operations": {
+          "array": {
+            "enum": [
+              "bind",
+              "rebind",
+              "unbind"
+            ]
+          }
+        },
+        "audience": "text",
+        "authorization_revision": "opaque",
+        "signer": "did",
+        "signing_key_id": "didkey",
+        "issued_at": "timestamp",
+        "expires_at": "timestamp"
+      },
+      "optional": {}
+    },
+    "VerifiedPresenceBinding": {
+      "required": {
+        "version": {
+          "enum": [
+            "aweb-verified-presence-binding-v1"
+          ]
+        },
+        "subject": {
+          "one_of": [
+            {
+              "ref": "NativeParticipant"
+            },
+            {
+              "ref": "BridgedParticipant"
+            }
+          ]
+        },
+        "platform": {
+          "enum": [
+            "telegram",
+            "msteams",
+            "slack",
+            "whatsapp",
+            "discord"
+          ]
+        },
+        "scope": {
+          "ref": "PresenceScope"
+        },
+        "mode": {
+          "enum": [
+            "shared",
+            "dedicated"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "bind",
+            "rebind",
+            "unbind"
+          ]
+        },
+        "binding_digest": "commitment",
+        "expected_generation": "uint",
+        "request_id": "uuid",
+        "intent_hash": "hash",
+        "authorization_revision": "opaque",
+        "expires_at": "timestamp"
+      },
+      "optional": {}
     }
   },
   "capabilities": [
@@ -1342,6 +1478,7 @@
     "shared-control-history-v1",
     "chat-export-checkpoints-v1",
     "presence-intents-v1",
+    "presence-binding-intents-v1",
     "native-chat-receipts-v1"
   ],
   "deferred_capabilities": [

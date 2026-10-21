@@ -64,15 +64,16 @@ var hcProfile = func() hcProfileSpec {
 	return p
 }()
 var hcPatterns = map[string]*regexp.Regexp{
-	"uuid":       regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`),
-	"hash":       regexp.MustCompile(`^sha256:[0-9a-f]{64}$`),
-	"commitment": regexp.MustCompile(`^commitment:[0-9a-f]{64}$`),
-	"did":        regexp.MustCompile(`^did:(aw:[A-Za-z0-9._:-]+|key:z[1-9A-HJ-NP-Za-km-z]+)$`),
-	"didaw":      regexp.MustCompile(`^did:aw:[A-Za-z0-9._:-]+$`),
-	"didkey":     regexp.MustCompile(`^did:key:z[1-9A-HJ-NP-Za-km-z]+$`),
-	"timestamp":  regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$`),
-	"opaque":     regexp.MustCompile(`^[A-Za-z0-9._:-]{1,256}$`),
-	"signature":  regexp.MustCompile(`^[A-Za-z0-9+/]{86}$`),
+	"platform_kind": regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`),
+	"uuid":          regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`),
+	"hash":          regexp.MustCompile(`^sha256:[0-9a-f]{64}$`),
+	"commitment":    regexp.MustCompile(`^commitment:[0-9a-f]{64}$`),
+	"did":           regexp.MustCompile(`^did:(aw:[A-Za-z0-9._:-]+|key:z[1-9A-HJ-NP-Za-km-z]+)$`),
+	"didaw":         regexp.MustCompile(`^did:aw:[A-Za-z0-9._:-]+$`),
+	"didkey":        regexp.MustCompile(`^did:key:z[1-9A-HJ-NP-Za-km-z]+$`),
+	"timestamp":     regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$`),
+	"opaque":        regexp.MustCompile(`^[A-Za-z0-9._:-]{1,256}$`),
+	"signature":     regexp.MustCompile(`^[A-Za-z0-9+/]{86}$`),
 }
 
 func DecodeHumanChannelsRecord(schema string, raw []byte) (HumanChannelsRecord, error) {
@@ -357,6 +358,12 @@ func hcNumber(v any) int64                  { n, _ := hcInt(v); return n }
 func hcHas(v map[string]any, k string) bool { _, ok := v[k]; return ok }
 func hcRelations(schema string, v map[string]any) error {
 	switch schema {
+	case "ResolveRequest":
+		alias := hcHas(v, "team_id") && hcHas(v, "selector") && !hcHas(v, "session_id") && !hcHas(v, "participant")
+		session := hcHas(v, "session_id") && hcHas(v, "participant") && !hcHas(v, "team_id") && !hcHas(v, "selector")
+		if !alias && !session {
+			return hcError("invalid", "alternative selector")
+		}
 	case "CheckpointIntent":
 		fields := []string{"expected_membership_epoch", "expected_membership_hash", "expected_export_generation", "generation", "policy_digest"}
 		for _, k := range fields {
@@ -392,7 +399,7 @@ func hcRelations(schema string, v map[string]any) error {
 		if hcHas(v, "session_id") != (v["kind"] == "session") {
 			return hcError("invalid", "presence scope")
 		}
-	case "PresenceIntent":
+	case "PresenceIntent", "PresenceBindingIntent":
 		if hcHas(v, "ownership_proof") != (v["authorization"] == "owner") {
 			return hcError("invalid", "presence proof")
 		}

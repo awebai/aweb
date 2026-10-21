@@ -91,6 +91,14 @@ class HumanChannelsService(Protocol):
         """SignedArtifact of PresenceIntent -> VerifiedPresence; Cloud persists settings/generation."""
         ...
 
+    async def verify_presence_binding(self, auth: MessagingAuth, intent: ContractRecord) -> ContractRecord:
+        """SignedArtifact of PresenceBindingIntent -> VerifiedPresenceBinding; shared/dedicated only.
+
+        This verifier never treats native suppression approval as binding consent.
+        Cloud separately proves the exact private platform resource and applies CAS.
+        """
+        ...
+
     async def native_operation(self, auth: MessagingAuth, request: ContractRecord) -> ContractRecord:
         """SignedArtifact of NativeOperationRequest -> signed NativeOperation; durable owner/fence, no automatic restart."""
         ...
