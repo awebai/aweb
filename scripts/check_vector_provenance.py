@@ -58,6 +58,10 @@ ROOT_CONSUMERS = {
         "app-task-authorization-v1.json",
         '"../../../docs/vectors/app-task-authorization-v1.json"',
     ),
+    PurePosixPath("naapp-lib/tests/runtime/test_app_credential_signer.py"): _consumer(
+        "app-request-credential-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "app-request-credential-v1.json"',
+    ),
     PurePosixPath("cli/go/awid/page_proposal_test.go"): _consumer(
         "page-proposal-v1.json",
         '"../../../docs/vectors/page-proposal-v1.json"',

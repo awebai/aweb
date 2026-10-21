@@ -26,6 +26,18 @@
   where an intermediary decodes the path. Send such values in the query or
   body. The `path_param_percent_encoding` interpretation vector no longer
   sends a `/`, and new `reject_path_param_*` cases pin the refusal.
+- The shared app credential signer supports `app-request`, signing the required
+  installation id and positive generation. Its bytes match the C2 transport
+  vector; existing app-event, grant-read and hook-resolve credentials are unchanged.
+
+- `aweb_naapp.runtime.team_grants.TeamGrantSource` reads an app's own grant
+  through the shared AWID-backed team-server directory and an `app-grant-read`
+  signer. Grant and installation-status reads share one bounded cache, verify
+  the team and served-manifest identity, and fail closed on expired or
+  unavailable authority. `status_for` preserves installation state and
+  nullable id, generation and origin provenance for the installation fence.
+  Missing-key denials are cached for at most five seconds so a post-install
+  retry can discover the new grant promptly.
 
 ## Release preparations
 
