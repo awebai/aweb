@@ -201,7 +201,7 @@ REFUND_OPERATION = {
         },
     },
     "body": {"template": {"amount": {"$param": "amount_minor_units"}, "currency": "EUR"}},
-    "headers": {"fixed": {}, "allowed": ["idempotency-key"]},
+    "headers": {"fixed": {}, "allowed": ["x-request-id"]},
     "response": {
         "projection": ["/id", "/status"],
         "max_bytes": 65536,
@@ -218,7 +218,7 @@ REFUND_OPERATION = {
 REFUND_DIGEST = OperationTemplate.from_after(REFUND_OPERATION).digest
 REFUND_POLICY = {
     "approval": "per_use",
-    "approvers": ["finance-approver"],
+    "approvers": ["finance-approver", "owner:" + DID_AW_A],
     "approval_ttl_s": 900,
     "rate": [
         {"per": "principal_secret", "capacity": 30, "window_s": 3600},
@@ -446,6 +446,10 @@ refused_records = [
         mutated_records(setitem(["changes", 1, "after", "approval_ttl_s"], 600)),
     ),
     ("policy-update", mutated_records(setitem(["changes", 1, "op"], "update"))),
+    (
+        "policy-approver-untagged-principal",
+        mutated_records(setitem(["changes", 1, "after", "approvers"], [DID_AW_A])),
+    ),
     (
         "secret-kind-not-an-auth-scheme",
         mutated_records(setitem(["changes", 0, "after", "kind"], "api_key")),

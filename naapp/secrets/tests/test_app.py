@@ -16,6 +16,7 @@ from tempfile import TemporaryDirectory
 import httpx
 import pytest
 from aweb_naapp.manifest import canonical_bytes, fill_manifest, load_manifest
+from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.runtime.app_keys import AppKeyError
 from aweb_naapp.runtime.authorization import DeclaredTool, Grant
 from aweb_naapp.runtime.health import CheckResult, HealthCheck
@@ -24,8 +25,9 @@ from aweb_naapp_testing import REGISTRY_URL, Member, attested
 from awid.did import did_from_public_key
 from fastapi import Request
 from nacl.signing import SigningKey
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
-from aweb_secrets.app import SecretsService, create_app
+from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME, SecretsService, create_app
 from aweb_secrets.config import SecretsSettings
 from aweb_secrets.manifest import MANIFEST, MANIFEST_PATH
 
@@ -33,7 +35,12 @@ API = "https://api.secrets.test"
 CONSOLE = "https://console.secrets.test"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 TOOLS = MANIFEST["tools"]
-EXAMPLE_PATH_VALUES = {"secret": "stripe-test", "job": "deploy-staging", "ref": "req-1", "request_id": "req-1"}
+EXAMPLE_PATH_VALUES = {
+    "secret": "stripe-test",
+    "job": "deploy-staging",
+    "ref": "req-1",
+    "request_id": "req-1",
+}
 
 
 class InstalledTeams:
@@ -136,7 +143,9 @@ async def running(
         async with service.api_app.router.lifespan_context(service.api_app):
             async with (
                 httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=API) as api,
-                httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=CONSOLE) as console,
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=service), base_url=CONSOLE
+                ) as console,
             ):
                 yield Running(service, api, console)
 
@@ -154,6 +163,43 @@ async def test_the_database_holds_every_table_admission_reads(registry, database
             "config_revisions",
         ):
             assert await db.fetch_value(f"SELECT to_regclass('{table}') IS NOT NULL"), table
+
+
+async def test_records_migrations_leave_rate_buckets_to_the_shared_store(test_db_factory) -> None:
+    db = await test_db_factory.create_db(suffix="records_without_buckets")
+    await AsyncMigrationManager(
+        db, migrations_path=str(MIGRATIONS_PATH), module_name=MODULE_NAME
+    ).apply_pending_migrations()
+    assert not await db.fetch_value("SELECT to_regclass('rate_buckets') IS NOT NULL")
+
+
+async def _rate_bucket_shape(db: AsyncDatabaseManager) -> tuple[list[dict], list[dict]]:
+    columns = await db.fetch_all(
+        """
+        SELECT column_name, data_type, is_nullable, column_default
+        FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'rate_buckets'
+        ORDER BY ordinal_position
+        """
+    )
+    constraints = await db.fetch_all(
+        """
+        SELECT contype, pg_get_constraintdef(oid) AS definition FROM pg_constraint
+        WHERE conrelid = 'rate_buckets'::regclass ORDER BY contype, definition
+        """
+    )
+    return [dict(row) for row in columns], [dict(row) for row in constraints]
+
+
+async def test_startup_has_exactly_the_shared_rate_bucket_shape(
+    registry, database_url, test_db_factory
+) -> None:
+    reference = await test_db_factory.create_db(suffix="shared_rate_bucket_shape")
+    await apply_ratelimit_migrations(reference)
+    expected = await _rate_bucket_shape(reference)
+    assert expected[0]
+    async with running(registry, database_url, grants=InstalledTeams({})) as app:
+        assert await _rate_bucket_shape(app.service.runtime.db()) == expected
 
 
 def _path(tool: dict) -> str:
@@ -190,7 +236,17 @@ def test_every_tool_is_signed_with_team_auth_and_declares_its_scopes() -> None:
 
 def test_no_tool_handles_a_secret_value() -> None:
     names = {tool["name"] for tool in TOOLS}
-    assert names == {"list", "describe", "request", "run", "status", "cancel", "contain", "propose-change", "activity"}
+    assert names == {
+        "list",
+        "describe",
+        "request",
+        "run",
+        "status",
+        "cancel",
+        "contain",
+        "propose-change",
+        "activity",
+    }
 
 
 async def test_the_manifest_is_served_on_the_api_origin_only(registry, database_url) -> None:
@@ -208,11 +264,13 @@ async def test_the_manifest_is_served_on_the_api_origin_only(registry, database_
         assert catalog.json() == {
             "catalog_version": 1,
             "app_id": "secrets-test",
-            "variants": [{
-                "manifest_version": 2,
-                "url": "/manifests/v2.json",
-                "digest": "sha256:" + hashlib.sha256(manifest.content).hexdigest(),
-            }],
+            "variants": [
+                {
+                    "manifest_version": 2,
+                    "url": "/manifests/v2.json",
+                    "digest": "sha256:" + hashlib.sha256(manifest.content).hexdigest(),
+                }
+            ],
         }
         assert (await app.console.get("/.well-known/aweb-app-versions.json")).status_code == 404
 
@@ -348,11 +406,15 @@ async def test_a_failing_check_serves_no_error_detail(registry, database_url, tm
         assert set((await api.get("/ready")).json()["checks"]) == {"database", "outbox", "kms"}
 
 
-async def test_the_served_v2_bytes_come_from_the_template_and_configured_keys(registry, database_url) -> None:
+async def test_the_served_v2_bytes_come_from_the_template_and_configured_keys(
+    registry, database_url
+) -> None:
     async with running(registry, database_url, grants=InstalledTeams({})) as app:
         runtime = app.service.runtime
         keys = {
-            kid: did_from_public_key(bytes(SigningKey(bytes.fromhex(path.read_text().strip())).verify_key))
+            kid: did_from_public_key(
+                bytes(SigningKey(bytes.fromhex(path.read_text().strip())).verify_key)
+            )
             for kid, path in runtime.settings.app_key_files.items()
         }
         expected = fill_manifest(MANIFEST, app_id="secrets-test", origin=API, did_keys=keys)
@@ -364,14 +426,24 @@ async def test_the_served_v2_bytes_come_from_the_template_and_configured_keys(re
         assert {kid: did for kid, did, _ in resolved.app_keys} == keys
 
 
-async def test_a_verified_dashboard_member_reaches_every_declared_tool(registry, database_url, member) -> None:
+async def test_a_verified_dashboard_member_reaches_every_declared_tool(
+    registry, database_url, member
+) -> None:
     issuer = SigningKey.generate()
     custodian = "console.secrets.test"
     await registry.add_custody(member, custodian_id=custodian, issuer=issuer)
-    async with running(registry, database_url, grants=InstalledTeams({member.team_id: ALL_SCOPES})) as app:
+    async with running(
+        registry, database_url, grants=InstalledTeams({member.team_id: ALL_SCOPES})
+    ) as app:
         for tool in TOOLS:
             signed = _signed(member, tool)
-            signed["headers"] = attested(member, signed["headers"], issuer=issuer, custodian_id=custodian, channel="dashboard")
+            signed["headers"] = attested(
+                member,
+                signed["headers"],
+                issuer=issuer,
+                custodian_id=custodian,
+                channel="dashboard",
+            )
             response = await app.api.request(**signed)
             assert response.status_code == 501
             assert response.json()["detail"]["code"] == "not_implemented"
@@ -383,17 +455,26 @@ def test_the_template_declares_only_signed_tools_and_the_two_hook_productions() 
     assert all("did_key" not in key for key in MANIFEST["app_keys"])
     for tool in TOOLS:
         assert tool.get("auth", "") == ""
-        assert tool["invocation_contexts"] == (["surface"] if tool["name"] in {"propose-change", "activity"} else ["agent", "surface"])
+        assert tool["invocation_contexts"] == (
+            ["surface"] if tool["name"] in {"propose-change", "activity"} else ["agent", "surface"]
+        )
     hooks = MANIFEST["hooks"]
     assert hooks["registration_version"] == 1
     assert hooks.get("registrations", []) == []
-    assert {item["hook"] for item in hooks["productions"]} == {"post-secret-use-hook", "post-governance-hook"}
-    assert all(item["catalog"] == {"id": "aweb.hooks", "version": 1} for item in hooks["productions"])
+    assert {item["hook"] for item in hooks["productions"]} == {
+        "post-secret-use-hook",
+        "post-governance-hook",
+    }
+    assert all(
+        item["catalog"] == {"id": "aweb.hooks", "version": 1} for item in hooks["productions"]
+    )
 
 
 def test_app_key_configuration_is_taken_from_the_secrets_environment(tmp_path, monkeypatch) -> None:
     keys = _key_files(tmp_path)
-    monkeypatch.setenv("SECRETS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in keys.items()}))
+    monkeypatch.setenv(
+        "SECRETS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in keys.items()})
+    )
     assert SecretsSettings(_env_file=None).app_key_files == keys
 
 
