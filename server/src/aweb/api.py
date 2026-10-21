@@ -4,6 +4,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -208,12 +209,14 @@ async def _shutdown_awid_registry_client(app: FastAPI) -> None:
     app.state.awid_registry_client = None
 
 
-def _build_awid_registry_client(app: FastAPI, redis: Redis | None) -> RegistryClient:
+def _build_awid_registry_client(
+    app: FastAPI, redis: Redis | None, transport: httpx.AsyncBaseTransport | None = None
+) -> RegistryClient:
     settings = get_settings()
     registry_url = settings.awid_registry_url
     service_token = settings.awid_service_token
     client_class = CachedRegistryClient if redis is not None else RegistryClient
-    client_kwargs = {"registry_url": registry_url, "service_token": service_token}
+    client_kwargs = {"registry_url": registry_url, "service_token": service_token, "transport": transport}
     if redis is not None:
         return client_class(redis_client=redis, **client_kwargs)
     return client_class(**client_kwargs)
@@ -303,7 +306,9 @@ def _make_standalone_lifespan():
     return lifespan
 
 
-def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
+def _make_library_lifespan(
+    db_infra: DatabaseInfra, redis: Redis, awid_transport: httpx.AsyncBaseTransport | None
+):
     """Create lifespan for library mode (uses externally provided connections)."""
 
     @asynccontextmanager
@@ -318,7 +323,7 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
         app.state.db = db_infra
         app.state.rate_limiter = build_rate_limiter(redis=redis)
         app.state.on_mutation = create_mutation_handler(redis, db_infra)
-        app.state.awid_registry_client = _build_awid_registry_client(app, redis)
+        app.state.awid_registry_client = _build_awid_registry_client(app, redis, awid_transport)
         app.state.federation_authority = build_federation_authority_activation(
             db_infra,
             public_origin=app.state.public_origin,
@@ -354,6 +359,7 @@ def create_app(
     redis: Optional[Redis] = None,
     attachment_backend=None,
     public_origin: str | None = None,
+    awid_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     """Create the aweb coordination FastAPI application.
 
@@ -364,6 +370,9 @@ def create_app(
                If None, creates own connection (standalone mode).
         public_origin: Configured external origin for request signature checks.
                        Defaults to public-origin settings captured at construction.
+        awid_transport: The transport the AWID registry client uses (library
+                        mode only), such as a host's in-process AWID. The
+                        startup health check and every AWID call go through it.
 
     Library mode requires both db_infra and redis to be provided.
     Standalone mode requires neither (will create its own).
@@ -398,6 +407,8 @@ def create_app(
         )
 
     library_mode = db_infra is not None
+    if awid_transport is not None and not library_mode:
+        raise ValueError("awid_transport is available in library mode only")
 
     # Validate db_infra is initialized in library mode
     if library_mode:
@@ -408,7 +419,7 @@ def create_app(
                 "Call 'await db_infra.initialize()' before creating the app."
             )
         assert redis is not None  # Required when db_infra is provided
-        lifespan = _make_library_lifespan(db_infra, redis)
+        lifespan = _make_library_lifespan(db_infra, redis, awid_transport)
     else:
         lifespan = _make_standalone_lifespan()
 
