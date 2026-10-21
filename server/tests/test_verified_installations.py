@@ -7,10 +7,19 @@ import json
 
 import pytest
 import pytest_asyncio
-
-from aweb.app_registry import get_active_app_key, get_installation_on, get_installed_app_event_type, list_installed_apps
-from aweb.installations import InstallationError, install_verified_manifest_on, verify_pending_installations
 import test_app_manifest_fetch as manifest_fixture
+
+from aweb.app_registry import (
+    get_active_app_key,
+    get_installation_on,
+    get_installed_app_event_type,
+    list_installed_apps,
+)
+from aweb.installations import (
+    InstallationError,
+    install_verified_manifest_on,
+    verify_pending_installations,
+)
 
 origin = manifest_fixture.origin
 pytestmark = pytest.mark.asyncio

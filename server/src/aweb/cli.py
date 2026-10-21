@@ -8,9 +8,10 @@ import uvicorn
 
 from .app_manifests import ManifestFetcher, fetch_app_manifest
 from .app_registry import reseed_app_registrations
-from .installations import verify_pending_installations
 from .config import get_settings
 from .db import DatabaseInfra
+from .installation_requests import run_installation_verifications
+from .installations import verify_pending_installations
 from .service_errors import ServiceError
 from .workspace_config import get_workspace_id
 
@@ -220,6 +221,24 @@ def verify_pending_app_installations_command(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1)
     typer.echo(json.dumps({"installations": reports}, indent=2))
+    if any(report["outcome"] == "pending" for report in reports):
+        raise typer.Exit(1)
+
+
+@app.command("run-installation-verifications")
+def run_installation_verifications_command(
+    limit: int = typer.Option(25, min=1, max=1000, help="Maximum queued jobs to process"),
+) -> None:
+    """Process queued admin re-verifications; run periodically on a worker."""
+    async def run():
+        infra = DatabaseInfra()
+        await infra.initialize(run_migrations=False)
+        try:
+            return await run_installation_verifications(infra.get_manager(), limit=limit)
+        finally:
+            await infra.close()
+    reports = asyncio.run(run())
+    typer.echo(json.dumps({"jobs": reports}, indent=2))
     if any(report["outcome"] == "pending" for report in reports):
         raise typer.Exit(1)
 

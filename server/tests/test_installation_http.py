@@ -7,12 +7,12 @@ from uuid import uuid4
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
-
 import test_verified_installations as store_fixture
+from fastapi import FastAPI
+from test_app_manifest_fetch import digest
+
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.routes.apps import router
-from test_app_manifest_fetch import digest
 
 origin = store_fixture.origin
 db = store_fixture.db
@@ -146,9 +146,43 @@ async def test_member_preview_is_read_only_and_confirmation_is_digest_pinned(cli
     assert preview["resolved"]["manifest_version"] == 2
     assert preview["current"] is None
     assert await store_fixture.current(db) is None
+
     await admin(db)
     origin.publish(origin.manifest() + b" ")
     refused = await post(client, payload)
     assert refused.status_code == 409
     assert refused.json()["detail"]["code"] == "manifest_changed"
     assert await store_fixture.current(db) is None
+
+
+async def test_member_request_has_a_separate_current_admin_approval_path(client, db, origin):
+    payload = confirmation(origin)
+    payload["requested_scopes"] = payload.pop("granted_scopes")
+    created = await post(client, payload, "requests")
+    assert created.status_code == 201, created.text
+    request_id = created.json()["request_id"]
+    assert await store_fixture.current(db) is None
+    body = {"granted_scopes": ["fixture:read"]}
+    assert (await post(client, body, f"requests/{request_id}/approve")).status_code == 403
+    await admin(db)
+    approved = await post(client, body, f"requests/{request_id}/approve")
+    assert approved.status_code == 200, approved.text
+    mine = await client.get(f"/api/v1/apps/requests?team_id={TEAM}", headers=headers())
+    assert mine.status_code == 200, mine.text
+    assert mine.json()["requests"][0]["state"] == "approved"
+    assert mine.json()["requests"][0]["installation_id"] == approved.json()["installation_id"]
+
+
+async def test_admin_reverify_only_queues_and_management_exposes_pending_reason(client, db, origin):
+    await admin(db)
+    assert (await post(client, confirmation(origin))).status_code == 200
+    await store_fixture.make_pending(db)
+    origin.tls.seen.clear()
+    queued = await post(client, {"expected_generation":1}, "fixture/reverify")
+    assert queued.status_code == 202, queued.text
+    assert queued.json()["state"] == "queued"
+    assert not origin.tls.seen
+    read = await client.get(f"/api/v1/apps/fixture/installation?team_id={TEAM}", headers=headers())
+    assert read.status_code == 200, read.text
+    assert read.json()["state"] == "pending_origin_verification"
+    assert read.json()["lifecycle"]["report"] == {"available": False}

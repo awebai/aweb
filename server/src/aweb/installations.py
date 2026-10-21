@@ -17,6 +17,7 @@ from aweb.app_registry import (
     normalize_scopes,
     validate_team_id,
 )
+from aweb.installation_hooks import write_manifest_bindings_on
 from aweb.service_errors import ServiceError
 
 
@@ -108,6 +109,7 @@ async def install_verified_manifest_on(
         installation_id, generation, fetched.data,
     )
     await _write_verified_registrations(tx, team_id=team_id, app_id=app_id, fetched=fetched, registration=registration)
+    await write_manifest_bindings_on(tx, team_id=team_id, fetched=fetched, installation_id=installation_id, generation=generation)
     return await get_installation_on(tx, team_id=team_id, app_id=app_id)
 
 
@@ -141,7 +143,7 @@ def _same_pending(current, expected):
     )
 
 
-async def verify_pending_installations(db, *, fetcher: ManifestFetcher | None = None, team_id: str | None = None) -> list[dict]:
+async def verify_pending_installations(db, *, fetcher: ManifestFetcher | None = None, team_id: str | None = None, app_id: str | None = None, expected_identity: tuple[str, int, str] | None = None) -> list[dict]:
     """Operator/job verification, never a migration or request-path fetch.
 
     The network read holds no installation lock. The same pinned pending row
@@ -152,11 +154,13 @@ async def verify_pending_installations(db, *, fetcher: ManifestFetcher | None = 
     rows = await db.fetch_all(
         "SELECT team_id,app_id,installation_id,generation,origin,digest,manifest_version "
         "FROM {{tables.team_app_installs}} WHERE state='pending_origin_verification' "
-        "AND ($1::TEXT IS NULL OR team_id=$1) ORDER BY team_id,app_id", team_id,
+        "AND ($1::TEXT IS NULL OR team_id=$1) AND ($2::TEXT IS NULL OR app_id=$2) ORDER BY team_id,app_id", team_id, app_id,
     )
     fetcher = fetcher or ManifestFetcher()
     reports = []
     for expected in rows:
+        if expected_identity is not None and tuple(expected[key] for key in ("installation_id", "generation", "digest")) != expected_identity:
+            continue
         report = {key: expected[key] for key in ("team_id", "app_id", "installation_id", "generation")}
         try:
             fetched = await fetcher.fetch(
@@ -180,6 +184,10 @@ async def verify_pending_installations(db, *, fetcher: ManifestFetcher | None = 
                     "origin_verification_error=NULL, manifest_bytes=$3, app_version=$4, manifest_version=$5, "
                     "registered_from_manifest_bytes=TRUE, updated_at=NOW() WHERE team_id=$1 AND app_id=$2",
                     expected["team_id"], expected["app_id"], fetched.data, registration.app_version, registration.manifest_version,
+                )
+                await write_manifest_bindings_on(
+                    tx, team_id=expected["team_id"], fetched=fetched,
+                    installation_id=current["installation_id"], generation=current["generation"],
                 )
             reports.append(dict(report, outcome="verified"))
         except ServiceError as exc:
