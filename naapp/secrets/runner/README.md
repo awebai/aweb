@@ -113,6 +113,30 @@ or execute a returned assignment; the durable worker loop remains separate.
 Private state-directory backups include pending sanitized reports until they
 are acknowledged.
 
+Start the outbound worker with the same protected configuration and state:
+
+```sh
+uv run aweb-secrets-runner run --config /absolute/runner-config.json \
+  --state-dir /absolute/private/runner-state
+```
+
+An explicit operator CA can be supplied with `--ca-file /absolute/ca.pem`.
+Startup performs the local preflight and holds a private process lock; another
+worker using the same state refuses with `runner_busy`. Pending saved reports
+are sent before any claim, including after restart. Assignment verification and
+durable replay acceptance precede local checks, HPKE opening and execution.
+The execution library samples expiry again after local checks. A completed
+process's sanitized report is saved before its first send and cleared only
+after an empty 204 acknowledgment. Transient transport failures retry with
+bounded backoff and fresh signed nonces; saved report bytes never change.
+
+SIGTERM cancels in-flight work, cleans up the process group and exits 143;
+SIGINT exits 130. An interrupted or refused accepted assignment is never rerun
+and gets no fabricated process result. A replay or reconciliation refusal stops
+the worker with its fixed code. Reconcile the original attempt in the console
+and restart with the same journal; deleting replay state is not recovery. No
+credential, assignment or result body is printed by the worker.
+
 Check a registered identity and all local job pins before starting a worker:
 
 ```sh
@@ -136,6 +160,7 @@ uv sync --locked
 uv run pytest tests/test_protocol.py tests/test_journal.py tests/test_result_journal.py
 uv run pytest tests/test_registration.py
 uv run pytest tests/test_http.py
+uv run pytest tests/test_worker.py
 uv run pytest tests/test_filesystem.py tests/test_jobs.py tests/test_execution.py
 uv run pytest tests/test_credential_opening.py tests/test_doctor.py
 uv run ruff check src tests

@@ -74,14 +74,21 @@ def service(tmp_path):
                 )
             )
             body = state.get("raw", json.dumps(state["response"]).encode())
+            status = state["status"]
+            headers = state.get("headers", {})
+            if respond := state.get("respond"):
+                status, body, headers = respond(self.path, raw, dict(self.headers))
+            if state.pop("disconnect", False):
+                self.close_connection = True
+                return
             if event := state.get("received"):
                 event.set()
             if resume := state.get("resume"):
                 resume.wait(timeout=5)
-            self.send_response(state["status"])
+            self.send_response(status)
             if not state.get("omit_length"):
                 self.send_header("Content-Length", str(len(body)))
-            for name, value in state.get("headers", {}).items():
+            for name, value in headers.items():
                 self.send_header(name, value)
             self.end_headers()
             try:

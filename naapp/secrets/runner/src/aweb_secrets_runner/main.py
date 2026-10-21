@@ -1,6 +1,7 @@
 """Operator command. Never print private keys or response bodies."""
 
 import argparse
+import asyncio
 import getpass
 import json
 import sys
@@ -28,8 +29,16 @@ def main() -> int:
     preflight = commands.add_parser("doctor", help="check local identity, user and job pins")
     preflight.add_argument("--config", required=True, type=Path)
     preflight.add_argument("--state-dir", required=True, type=Path)
+    worker = commands.add_parser("run", help="claim and run pinned jobs over outbound TLS")
+    worker.add_argument("--config", required=True, type=Path)
+    worker.add_argument("--state-dir", required=True, type=Path)
+    worker.add_argument("--ca-file", type=Path)
     args = parser.parse_args()
     try:
+        if args.command == "run":
+            from .worker import run
+
+            return asyncio.run(run(args.config, args.state_dir, ca_file=args.ca_file))
         if args.command == "doctor":
             from .doctor import doctor
 

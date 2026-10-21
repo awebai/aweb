@@ -78,6 +78,23 @@ class IdentityStore:
         except OSError:
             raise Refused("state_permissions") from None
 
+    @contextmanager
+    def worker_lock(self) -> Iterator[None]:
+        """Hold the private runner state for one worker process's entire life."""
+        self._check_directory()
+        try:
+            fd = self._open("worker.lock", os.O_CREAT | os.O_RDWR)
+            try:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise Refused("runner_busy") from None
+                yield
+            finally:
+                os.close(fd)
+        except OSError:
+            raise Refused("state_permissions") from None
+
     def load(self) -> Identity:
         self._check_directory()
         try:
