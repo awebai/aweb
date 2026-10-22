@@ -94,7 +94,7 @@ async def test_history_facts_are_reused_for_at_most_a_minute(registry, team):
     assert 0 < cache._cache[TEAM_ID].expires_at - time.monotonic() <= 60
 
 
-async def test_history_page_bound_fails_closed_without_caching_partial_facts(registry, team):
+async def test_history_page_bound_fails_closed_without_caching_partial_facts(registry, team, history_clock):
     cache = history_cache(registry)
     await add_filler_certificates(registry, team, 201, 20000)
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
@@ -103,6 +103,9 @@ async def test_history_page_bound_fails_closed_without_caching_partial_facts(reg
         assert len(certificate_pages(registry)) == 100
         # The last permitted page is accepted when it completes the history.
         await registry.db.execute("DELETE FROM {{tables.team_certificates}} WHERE certificate_id = 'filler-1'")
+        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
+        assert len(certificate_pages(registry)) == 100
+        history_clock[0] += 5
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
     assert TEAM_ID in cache._cache
 
@@ -174,7 +177,7 @@ def later_page_fault(kind: str, first_cursor: dict):
     "missing_certificate_id", "oversized_page", "missing_cursor", "repeated_cursor", "blank_cursor",
     "invalid_cursor", "cycling_cursor", "http", "transport",
 ])
-async def test_history_later_page_fault_fails_closed_then_recovers(registry, team, kind, caplog):
+async def test_history_later_page_fault_fails_closed_then_recovers(registry, team, kind, caplog, history_clock):
     cache = history_cache(registry)
     first_cursor: dict = {}
     registry.transport.fault = later_page_fault(kind, first_cursor)
@@ -186,6 +189,9 @@ async def test_history_later_page_fault_fails_closed_then_recovers(registry, tea
         assert pages[1].url.params["cursor"] == first_cursor["value"]
         assert "AWID team facts refresh failed" in caplog.text
         registry.transport.fault = None
+        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
+        assert len(certificate_pages(registry)) == len(pages)
+        history_clock[0] += 5
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
     assert TEAM_ID in cache._cache
 
@@ -316,6 +322,51 @@ async def test_history_unknown_refresh_limit_is_per_team(registry, team, history
     await cache.get(other.team_id, "also-unknown")
     assert len(team_lookups(registry)) == 2
     assert len(team_lookups(registry, "other")) == 2
+
+
+@pytest.mark.parametrize("response_seconds", [0, 10])
+async def test_history_cold_outage_coalesces_failures_and_retries_after_window(
+    registry, team, history_clock, response_seconds
+):
+    cache = history_cache(registry)
+
+    def fault(request, response):
+        if request.url.path.endswith("/teams/backend"):
+            history_clock[0] += response_seconds
+            response.status_code = 503
+
+    registry.transport.fault = fault
+    async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
+        responses = await asyncio.gather(
+            *(client.get("/v1/items", headers=get_items(team)) for _ in range(16))
+        )
+        assert all(response.status_code == 503 for response in responses)
+        assert len(team_lookups(registry)) == 1
+        assert TEAM_ID not in cache._cache
+        history_clock[0] += 4
+        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
+        assert len(team_lookups(registry)) == 1
+        history_clock[0] += 1
+        registry.transport.fault = None
+        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
+        assert len(team_lookups(registry)) == 2
+
+
+async def test_history_nonexistent_team_flood_does_not_retain_refresh_state(registry, team):
+    cache = history_cache(registry)
+    await cache.get(TEAM_ID, team.certificate_id)
+    await cache.get(TEAM_ID, "unpublished")
+    locks_before = dict(cache._team_refresh_locks)
+    attempts_before = dict(cache._unknown_refresh_at)
+    ghosts = [Member(team_id=f"missing-{i}:example.com") for i in range(16)]
+    async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
+        responses = await asyncio.gather(
+            *(client.get("/v1/items", headers=get_items(member)) for member in ghosts)
+        )
+    assert all(response.status_code == 401 for response in responses)
+    assert cache._team_refresh_locks == locks_before
+    assert cache._unknown_refresh_at == attempts_before
+    assert not cache._team_refresh_errors
 
 
 async def test_history_unknown_refresh_failure_never_authorizes_or_renews_old_facts(registry, team, history_clock):
