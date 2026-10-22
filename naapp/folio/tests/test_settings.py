@@ -40,3 +40,21 @@ def test_documented_environment_starts_with_valid_shared_auth_limits(
 
     assert 1 <= settings.auth_cache_ttl_seconds <= 60
     assert 1 <= settings.timestamp_skew_seconds <= 300
+
+
+def test_present_defaults_allow_thirty_days_but_keep_one_day_as_default(monkeypatch):
+    monkeypatch.delenv("FOLIO_DEFAULT_PRESENT_TTL_SECONDS", raising=False)
+    monkeypatch.delenv("FOLIO_MAX_PRESENT_TTL_SECONDS", raising=False)
+    settings = Settings(_env_file=None)
+    assert settings.default_present_ttl_seconds == 86_400
+    assert settings.max_present_ttl_seconds == 2_592_000
+
+
+def test_present_operator_limit_can_narrow_but_not_exceed_thirty_days(monkeypatch):
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("FOLIO_MAX_PRESENT_TTL_SECONDS", "604800")
+    assert Settings(_env_file=None).max_present_ttl_seconds == 604_800
+    monkeypatch.setenv("FOLIO_MAX_PRESENT_TTL_SECONDS", "2592001")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
