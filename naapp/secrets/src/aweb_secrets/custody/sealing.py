@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -101,6 +101,18 @@ class Plaintext:
         return "Plaintext(<redacted>)"
 
     __str__ = __repr__
+
+
+@dataclass(frozen=True)
+class OpenedBackendCredential:
+    """A private token together with the exact context authenticated by unsealing.
+
+    Passed intact to the backend adapter so it cannot accidentally label an
+    observation with a different credential version. Never a console response.
+    """
+
+    context: SealContext
+    plaintext: Plaintext = field(repr=False)
 
 
 def additional_data(context: Mapping[str, str]) -> bytes:

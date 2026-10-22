@@ -20,7 +20,7 @@ from tests.test_records_store import db as db
 def _inputs():
     body = job_after()
     body["credentials"][0]["secret_ref"] = SECRET.ref
-    body["env"] = {"DB_ADMIN": {"$credential": SECRET.ref}}
+    body["env"] = {"DB_ADMIN": {"$credential": SECRET.ref, "field": "value"}}
     job = JobDefinition.from_after(body)
     grant = GrantRecord.from_after(
         {
@@ -431,12 +431,12 @@ def _derived_inputs(*, exact_child_label=False, ambiguous=False, narrow_ancestor
     body = inputs["job"].after
     if exact_child_label:
         body["credentials"][0]["secret_ref"] = child.record.ref
-        body["env"] = {"DB_ADMIN": {"$credential": child.record.ref}}
+        body["env"] = {"DB_ADMIN": {"$credential": child.record.ref, "field": "value"}}
     if ambiguous:
         body["credentials"].append(
             {"secret_ref": child.record.ref, "delivery": "durable", "mint": None}
         )
-        body["env"]["CHILD_ADMIN"] = {"$credential": child.record.ref}
+        body["env"]["CHILD_ADMIN"] = {"$credential": child.record.ref, "field": "value"}
     job = JobDefinition.from_after(body)
     grant = replace(
         original.parent_grant, secret_id=child.record.secret_id, jobs=((job.job_id, job.digest),)

@@ -28,6 +28,27 @@
       .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   }
 
+  // Both login and confirmation send the server's purpose-bound options
+  // through the same WebAuthn conversion. B3 verifies UV and purpose.
+  async function assertion(options) {
+    const publicKey = {...options, challenge: decode(options.challenge)};
+    if (options.allowCredentials) publicKey.allowCredentials = options.allowCredentials.map(
+      credential => ({...credential, id: decode(credential.id)}),
+    );
+    const credential = await navigator.credentials.get({publicKey});
+    if (!credential) throw new Error("Passkey unavailable");
+    return {
+      id: credential.id, rawId: encode(credential.rawId), type: credential.type,
+      response: {
+        clientDataJSON: encode(credential.response.clientDataJSON),
+        authenticatorData: encode(credential.response.authenticatorData),
+        signature: encode(credential.response.signature),
+        userHandle: credential.response.userHandle ? encode(credential.response.userHandle) : null,
+      },
+      clientExtensionResults: credential.getClientExtensionResults(),
+    };
+  }
+
   class SessionRequired extends Error {}
 
   function requireSignIn() {
@@ -62,7 +83,7 @@
 
   // Custody forms use this same helper so stale cookies/tokens recover in
   // exactly the same way as the shell's logout, without duplicated fetch code.
-  window.awebSecretsConsole = Object.freeze({post});
+  window.awebSecretsConsole = Object.freeze({post, assertion});
 
   const login = document.querySelector("#login");
   if (login) login.addEventListener("submit", async event => {
@@ -73,22 +94,7 @@
     try {
       const scope = login.dataset.scope;
       const options = await post("/login/options", {scope});
-      const publicKey = {...options, challenge: decode(options.challenge)};
-      if (options.allowCredentials) publicKey.allowCredentials = options.allowCredentials.map(
-        credential => ({...credential, id: decode(credential.id)}),
-      );
-      const credential = await navigator.credentials.get({publicKey});
-      if (!credential) throw new Error("Passkey unavailable");
-      const result = await post("/login", {scope, assertion: {
-        id: credential.id, rawId: encode(credential.rawId), type: credential.type,
-        response: {
-          clientDataJSON: encode(credential.response.clientDataJSON),
-          authenticatorData: encode(credential.response.authenticatorData),
-          signature: encode(credential.response.signature),
-          userHandle: credential.response.userHandle ? encode(credential.response.userHandle) : null,
-        },
-        clientExtensionResults: credential.getClientExtensionResults(),
-      }});
+      const result = await post("/login", {scope, assertion: await assertion(options)});
       if (typeof result.csrf_token !== "string" || !result.csrf_token) throw new Error("Sign-in incomplete");
       sessionStorage.setItem(csrfKey, result.csrf_token);
       window.location.replace("/");

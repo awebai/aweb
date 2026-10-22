@@ -424,6 +424,66 @@ async def test_a_console_draft_asks_only_its_owner(world: World) -> None:
     ] == ["alice@acme.com"]
 
 
+async def test_four_eyes_console_draft_requires_another_current_owner(world: World) -> None:
+    alice = await enrol_owner(world, ALICE, "alice@acme.com")
+    await enrol_owner(world, BOB, "bob@acme.com")
+    async with world.db.transaction() as tx:
+        await require_four_eyes(
+            tx, installation_id=INSTALLATION_ID, team_id=TEAM, directory=world.directory
+        )
+    change = change_set(
+        drafter=on_console(alice),
+        changes=[grant_role(CAROL)],
+        base_revision=await config_revision(world.db, INSTALLATION_ID),
+    )
+    approval_id = await draft(world, change)
+    assert {
+        contact
+        for contact, links in world.inbox.links.items()
+        if any(candidate == approval_id for candidate, _ in links)
+    } == {"bob@acme.com"}
+    assert not await has_role(world.db, CAROL, "secrets.role.deployers")
+    [token] = [t for candidate, t in world.inbox.links["bob@acme.com"] if candidate == approval_id]
+    options = await world.approvals.challenge(
+        approval_id, Decision.APPROVE, Assurance.PASSKEY, link_token=token
+    )
+    with pytest.raises(ApprovalRefused):
+        await world.approvals.decide(
+            approval_id,
+            Decision.APPROVE,
+            Assurance.PASSKEY,
+            world.devices["alice@acme.com"].get(dict(options)),
+            link_token=token,
+        )
+    assert (await world.approvals.get(approval_id)).state is ApprovalState.PENDING
+    await decide(world, approval_id, "bob@acme.com")
+    await confirm(world, change)
+    assert await has_role(world.db, CAROL, "secrets.role.deployers")
+    assert (await world.approvals.get(approval_id)).state is ApprovalState.CONSUMED
+
+
+async def test_four_eyes_console_draft_has_no_candidate_after_other_owner_revocation(
+    world: World,
+) -> None:
+    alice = await enrol_owner(world, ALICE, "alice@acme.com")
+    await enrol_owner(world, BOB, "bob@acme.com")
+    async with world.db.transaction() as tx:
+        await require_four_eyes(
+            tx, installation_id=INSTALLATION_ID, team_id=TEAM, directory=world.directory
+        )
+        await unassign(tx, BOB, OWNER_ROLE)
+    change = change_set(
+        drafter=on_console(alice),
+        changes=[grant_role(CAROL)],
+        base_revision=await config_revision(world.db, INSTALLATION_ID),
+    )
+    with pytest.raises(ChangeRefused) as refused:
+        await draft(world, change)
+    assert refused.value.code == "no_owner_to_confirm"
+    assert not await has_role(world.db, CAROL, "secrets.role.deployers")
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.change_sets}}") == 0
+
+
 async def test_a_confirmed_change_set_applies_and_moves_the_revision_on(world: World) -> None:
     await enrol_owner(world, ALICE, "alice@acme.com")
     change = change_set(drafter=by_member(CAROL), changes=[grant_role(CAROL)])

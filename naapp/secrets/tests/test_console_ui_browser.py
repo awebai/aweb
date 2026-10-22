@@ -106,8 +106,8 @@ async def test_browser_login_and_bodiless_csrf_logout(
         )
         assert response.status == 200
         await page.goto(service + "/login?" + urlencode({"scope": scope}))
-        # Only registration is test-driven here. The sign-in/logout actions
-        # below click the production UI and run its actual script under CSP.
+        # Registration and the direct helper consumer are test-driven. The
+        # sign-in/logout buttons run the production UI under its actual CSP.
         status = await page.evaluate(
             """async token => {
               const options = await fetch('/enrolment/options', {
@@ -126,6 +126,32 @@ async def test_browser_login_and_bodiless_csrf_logout(
             world.inbox.enrolments[contact][-1],
         )
         assert status == 200
+        # A second consumer can use the exported helper with the real server
+        # options and submit its result to B3 without copying assertion packing.
+        options = await context.request.post(service + "/login/options", data={"scope": scope})
+        assert options.status == 200
+        packed = await page.evaluate(
+            """async options => {
+              const before = JSON.stringify(options);
+              const packed = await window.awebSecretsConsole.assertion(options);
+              if (JSON.stringify(options) !== before) throw new Error("Server options mutated");
+              return packed;
+            }""",
+            await options.json(),
+        )
+        assert set(packed) == {"id", "rawId", "type", "response", "clientExtensionResults"}
+        assert set(packed["response"]) == {
+            "clientDataJSON",
+            "authenticatorData",
+            "signature",
+            "userHandle",
+        }
+        verified = await context.request.post(
+            service + "/login", data={"scope": scope, "assertion": packed}
+        )
+        assert verified.status == 200
+        # Start the original UI/UV checks with no session or CSRF authority.
+        await context.clear_cookies()
         await cdp.send(
             "WebAuthn.setUserVerified",
             {"authenticatorId": result["authenticatorId"], "isUserVerified": user_verified},

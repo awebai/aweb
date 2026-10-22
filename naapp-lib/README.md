@@ -86,6 +86,91 @@ owed it. The drain resolves deliveries with `hook_targets(registrations)`, and
 `HookTransport` re-checks each binding, signs a `hook-delivery` request and sends
 it through the egress guard to the binding's endpoint only.
 
+Producing runtimes install `aweb-naapp[runtime,egress]`. A manifest with
+an implemented app production in `aweb.hooks` v1 must declare and configure a
+`hook-event` key and a `hook-resolve` key in `app_key_files`; the runtime loads
+them at construction.
+A manifest-command production also requires `manifest_request_key_file`, the
+independent random 32-byte commitment key in the shared key-file format.
+No-hook runtimes need none of this configuration.
+Unknown catalogs, versions and hook names remain in the served manifest but
+configure no producer, drain or commitment. Core-only and client-only hooks
+likewise configure no app producer. A supported production in the same manifest
+still requires its own purpose keys.
+
+`runtime.hook_registrations()` returns one `TeamServerRegistrations` source on
+that exact `runtime.hook_resolver()`. Fetch its view outside authority locks.
+`runtime.hook_producer(installation_id=..., generation=...) -> HookProducer`
+uses the installation resolved by the grant/fence, the served app identity and
+the loaded hook-event key. Call its `enqueue(tx, ...)` in the actual effect or
+operational-record transaction; an `Authorization` and a completed HTTP
+response do not provide that transaction. Required enqueue failure rolls back
+the local effect. The runtime starts and joins a separate hooks-channel drain
+in its lifespan, using `HookTransport` with that same registration source/key.
+App-event delivery stays on its own channel. The default egress rejects
+private destinations; a self-hosted operator may explicitly supply
+`hook_egress` and `hook_internal_cidr` under the shared guard's existing rules.
+`hook_events_stalled_after_seconds` and `hook_delivery_timeout_seconds` bound
+retry reporting and each drain call.
+
+For a generic manifest command, `runtime.authorized()` reads the bounded
+original body and prepares the commitment after authenticating, matching the
+tool and resolving its fresh installation grant. It does this before policy or
+credential injection. The effect owner then calls:
+
+```python
+await runtime.record_manifest_command(
+    tx, request=request, authorization=auth, http_status=201,
+    resource_refs=("thing:opaque",), result_ref="result:opaque",
+)
+```
+
+The call enqueues in `tx`; let any enqueue failure roll back the effect. Call
+once for the logical effect, preserving its stored event on replay. No response
+wrapper can supply that transaction. An attributable scope/policy refusal is
+recorded by the guard in its own refusal transaction; successful enqueue
+preserves its HTTP status. Storage failure still fails closed. A handler's own refused outcome uses the same method with
+`refused=True` and no `result_ref`. Refusals without complete bounded bytes,
+verified authentication, a matched tool and installation emit no generic event;
+an over-bound body returns 413 without draining the rest. The bound is
+`manifest_hook_max_request_bytes` (default 1 MiB, maximum 16 MiB).
+
+Mutations fire; reads fire only when listed by that production. Configure
+`hook_tool_effects={"tool": "post-secret-use-hook"}` (or
+`post-governance-hook`) for tools owned by a specific declared production;
+these never also fire the generic hook, including on refusal. The generic
+payload carries only the matched tool, request HMAC and safe outcome/opaque
+refs; concrete paths, query/header/body values never enter it. HMAC context
+comes from the served app and resolved installation. The raw external target
+(including mount prefix), counted Content-Types and exact JSON/raw body bytes
+are bound before injection. Only verified signed trace IDs are propagated.
+Rotate by replacing the configured HMAC key, restarting producer replicas and
+destroying the old key; the key is loaded once per runtime. New runtimes use
+the new key, while existing outbox signing bytes/signatures remain unchanged
+across retries and restarts.
+Hook production still requires owner activation and updated receiver support
+before deployment; none is inferred from a manifest declaration alone.
+
+For admission, call `HookProducer.require_admission(tx, *, team_id, hook,
+occurred_at, view, max_backlog_age)` with a fresh view obtained outside
+authority locks. It reads that team's/hook's eligible target backlog directly
+from the shared outbox, including unmaterialized events. No target refuses
+with `audit_target_unavailable`; all eligible targets beyond the age bound
+refuse with `audit_delivery_stalled`. A healthy target next to a stalled
+secondary admits. View freshness and backlog age are checked again using the
+live clock after the DB query returns, including after a lock wait. Apply the
+outbox's new ordered admission-index migration.
+The helper grants no use authority and replaces no dispatch fence.
+
+`HookProducer.enqueue_refusal(tx, *, team_id, payload, actor, occurred_at,
+signed_trace_id=None)` accepts only secret-use `action=refused` and fixes
+`result_status=denied`. Target availability/backlog cannot block the refusal's
+local record; validation, signing and transactional storage still apply.
+Record the operational/console refusal in that same transaction. With no target
+owed at the event time, zero deliveries are owed: a future target is never sent
+old refusals retroactively. Existing targets receive their backlog after
+recovery. Neither method authorizes an external effect (decision 94).
+
 Operators: a hook target is sent to as a public destination. A self-hosted
 operator who also wants hooks to reach targets inside its own network allows
 internal destinations on the egress and passes that network as
