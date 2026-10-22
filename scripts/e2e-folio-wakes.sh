@@ -47,7 +47,7 @@ docker buildx create --name "$BUILDER" --driver docker-container \
 docker run --rm --user 0 --entrypoint /app/.venv/bin/python \
   -v "$FOLIO_WAKES_TLS:/tls" -v "$ROOT/naapp-lib/testing/src:/test-support:ro" \
   -e PYTHONPATH=/test-support -e FOLIO_WAKES_ADDRESS \
-  abrm-folio-aweb -c 'import os; from pathlib import Path; from aweb_naapp_testing.network import make_certificates; make_certificates(Path("/tls"), [], [os.environ["FOLIO_WAKES_ADDRESS"]])'
+  abrm-folio-aweb -c 'import os; from pathlib import Path; from aweb_naapp_testing.network import make_certificates; make_certificates(Path("/tls"), ["folio-wakes.test"], [os.environ["FOLIO_WAKES_ADDRESS"]])'
 export SSL_CERT_FILE="$FOLIO_WAKES_TLS/ca.pem"
 # Go's compatibility default on macOS otherwise ignores SSL_CERT_FILE.
 export GODEBUG="${GODEBUG:+$GODEBUG,}x509sslcertoverrideplatform=1"
