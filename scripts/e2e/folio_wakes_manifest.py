@@ -5,7 +5,7 @@ disposable deployment's origin and version, declaring the harness's test
 emit kid. The runtime derives its public key from the configured seed. Version 2
 declares that key as an app-event app key and adds a hook-only tool, whose scope
 install must not grant.
-Usage: folio_wakes_manifest.py <version> <events: true|false> <manifest version: 1|2> [extra-kid extra-did]
+Usage: folio_wakes_manifest.py <version> <events: true|false> <manifest version: 1|2> [extra-kid]
 """
 
 import json
@@ -22,8 +22,8 @@ manifest["app"]["version"] = version
 if not events:
     manifest["events"] = []
 manifest["event_emitters"] = [{"kid": "folio:emit-test"}]
-if len(sys.argv) == 6:
-    manifest["event_emitters"].append({"kid": sys.argv[4], "did_key": sys.argv[5]})
+if len(sys.argv) == 5:
+    manifest["event_emitters"].append({"kid": sys.argv[4]})
 if manifest_version == 2:
     manifest["manifest_version"] = 2
     # Keep records' separate grant-read purpose; the emit seed signs events only.

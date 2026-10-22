@@ -34,7 +34,7 @@ def configure_manifest(version, events=True, manifest_version=1, extra_emitter=N
     # install must not grant.
     arguments = ['docker', 'run', '--rm', '--entrypoint', '/app/.venv/bin/python', '-v', 'abrm-folio-fixture:/fixture:ro', '-e', 'FOLIO_WAKES_ORIGIN', 'abrm-folio-folio', '/fixture/e2e/folio_wakes_manifest.py', version, 'true' if events else 'false', str(manifest_version)]
     if extra_emitter:
-        arguments.extend(extra_emitter)
+        arguments.append(extra_emitter)
     manifest = run(arguments)
     with open(os.environ['FOLIO_WAKES_MANIFEST'], 'w', encoding='utf-8') as handle:
         handle.write(manifest.strip())
@@ -46,6 +46,11 @@ def configure_manifest(version, events=True, manifest_version=1, extra_emitter=N
     run(COMPOSE + ['up', '--no-build', '--no-deps', '-d', '--force-recreate', 'folio'])
     deadline = time.monotonic() + 60
     while True:
+        container = run(COMPOSE + ['ps', '--all', '--quiet', 'folio']).strip()
+        state = json.loads(run(['docker', 'inspect', '--format', '{{json .State}}', container]))
+        if state['Status'] in ('exited', 'dead'):
+            logs = run(COMPOSE + ['logs', '--no-color', '--tail', '80', 'folio'])
+            raise AssertionError(f'folio exited after the manifest change: {state}\n{logs}')
         try:
             with urllib.request.urlopen(FOLIO + '/health', timeout=5) as response:
                 if response.status == 200:
@@ -53,7 +58,8 @@ def configure_manifest(version, events=True, manifest_version=1, extra_emitter=N
         except (urllib.error.URLError, ConnectionError, TimeoutError):
             pass
         if time.monotonic() > deadline:
-            raise AssertionError('folio did not come back after the manifest change')
+            logs = run(COMPOSE + ['logs', '--no-color', '--tail', '80', 'folio'])
+            raise AssertionError(f'folio did not come back after the manifest change\n{logs}')
         time.sleep(0.5)
 
 def served_manifest():
@@ -279,7 +285,8 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
     aw('carol', 'id', 'team', 'set-server', '--team', 'ops', '--namespace', other_namespace, '--url', SERVER, '--registry', REGISTRY)
     pinned = get('alice', '/v1/apps/installed?team_id=' + team)['apps'][0]
     grant_admin('carol', other_team)
-    other_seed = '02' * 32
+    other_seed = run(COMPOSE + ['exec', '-T', 'folio', '/app/.venv/bin/python', '-c',
+                                'from pathlib import Path; print(Path("/fixture/tls/emit-other.key").read_text().strip())']).strip()
     other_did = run(COMPOSE + ['exec', '-T', 'folio', '/app/.venv/bin/python', '-c',
                                'from awid.did import did_from_public_key; from nacl.signing import SigningKey; '
                                'print(did_from_public_key(bytes(SigningKey(bytes.fromhex(' + repr(other_seed) + ')).verify_key)))']).strip()
@@ -299,7 +306,10 @@ except urllib.error.HTTPError as exc:
         return int(run(COMPOSE + ['exec', '-T', 'folio', '/app/.venv/bin/python', '-c', code]).strip())
     # Carol pins distinct origin-served bytes declaring the extra public key.
     # Alice keeps her earlier pin: no caller-supplied key metadata is trusted.
-    configure_manifest('0.1.2', extra_emitter=('folio:emit-other', other_did))
+    configure_manifest('0.1.2', extra_emitter='folio:emit-other')
+    deployed = json.loads(served_manifest())
+    declared = deployed.get('app_keys', deployed.get('event_emitters', []))
+    assert next(key for key in declared if key['kid'] == 'folio:emit-other')['did_key'] == other_did
     aw('carol', 'plugin', 'install', FOLIO)
     assert emit_with_other_key(team, 'folio:emit-test') == 403
     assert emit_with_other_key(team, 'folio:emit-other') == 403
