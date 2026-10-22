@@ -119,7 +119,7 @@ wheels = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "../../naapp-lib" }
 
 [package.metadata]
@@ -135,6 +135,7 @@ requires-dist = [
     { name = "idna", marker = "extra == 'egress'", specifier = ">=3.10" },
     { name = "jsonschema", marker = "extra == 'page-store'", specifier = ">=4.23" },
     { name = "jsonschema", marker = "extra == 'pages'", specifier = ">=4.23" },
+    { name = "jsonschema", marker = "extra == 'runtime'", specifier = ">=4.23.0" },
     { name = "pgdbm", marker = "extra == 'dispatch'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'hooks'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'idempotency'", specifier = ">=0.5.0" },
@@ -171,7 +172,7 @@ dev = [
 
 [[package]]
 name = "awid-service"
-version = "0.5.30"
+version = "0.5.31"
 source = { editable = "../../awid" }
 dependencies = [
     { name = "base58" },

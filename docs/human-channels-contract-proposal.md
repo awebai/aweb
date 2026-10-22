@@ -12,6 +12,12 @@ marked otherwise. New full-scope gap anchors use `c6235708808b` (2026-10-19).
 New artifact names and shapes below are proposals, not current APIs. Cloud owns
 the single user-facing architecture document; this is its public protocol input.
 
+P0's executable grammar, capability/refusal boundaries and public embedding ports
+are specified in [Human channels contract v1](human-channels-contract-v1.md).
+That freeze does not implement or enable the proposed endpoints; X-E2/X-GF
+wire annexes remain gated. Juan's build go is recorded there separately from
+the original design approval.
+
 ## Plain-language text for Juan
 
 An aweb identity and a platform bot are different things. Alice keeps her aweb

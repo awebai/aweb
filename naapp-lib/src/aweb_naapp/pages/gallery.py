@@ -14,6 +14,12 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from aweb_naapp.pages import validate_page
+from aweb_naapp.pages.gallery_decisions import (
+    additions as decision_additions,
+)
+from aweb_naapp.pages.gallery_decisions import (
+    evidence as decision_evidence,
+)
 from aweb_naapp.pages.gallery_host import (
     additions,
     asset_server,
@@ -40,7 +46,7 @@ def gallery_page() -> dict:
             {
                 "id": "heading",
                 "type": "heading",
-                "props": {"level": 2, "text": "Property overview"},
+                "props": {"level": 1, "text": "Property overview"},
             },
             {
                 "id": "intro",
@@ -242,6 +248,22 @@ def fixture(query: dict) -> dict:
         page["widget_state"]["occupancy"] = {"message": "Projection updated", "busy": False}
     if "vector" not in query:
         additions(page)
+        decision_additions(page, query.get("case", [""])[0])
+    if query.get("case") == ["table-urls"]:
+        collection = page["collections"][0]
+        collection["schema"]["properties"]["source_url"] = {"type": "string", "maxLength": 4096}
+        urls = [
+            "https://source.example.test/" + "a" * 3000 + "?q=a%3Fb",
+            "http://inert.example.test/" + "b" * 3000,
+            "https://references.example.test/a%2Fb#notes",
+        ]
+        for record, url in zip(collection["records"], urls, strict=True):
+            record["value"]["source_url"] = url
+        table = next(w for w in page["layout"] if w["id"] == "property-table")
+        table["props"]["columns"] = [
+            {"field": "source_url", "label": "Source URL", "format": "url"}
+        ]
+        table["bind"]["limit"] = 1 if query.get("paged") == ["1"] else 3
     if query.get("case") == ["dense-table"]:
         collection = page["collections"][0]
         collection["schema"]["properties"].update(
@@ -264,7 +286,24 @@ def fixture(query: dict) -> dict:
         )
     if query.get("case") == ["empty"]:
         for collection in page["collections"]:
-            collection["records"] = []
+            # Decision/bundle snapshots require their exact proposal records;
+            # independent collection widgets still exercise the empty state.
+            if collection["id"] not in {"review-proposals", "review-bundles"}:
+                collection["records"] = []
+    if query.get("case") == ["authored-language"]:
+        # A synthetic authored-content fixture, never translated product chrome.
+        page["locale"] = "ca"
+        page["title"] = "Resum de les propietats"
+        page["layout"][0]["props"]["text"] = "Visió general"
+        page["layout"][1]["props"]["markdown"] = (
+            "Revisa les propietats i les propostes de l’agent. "
+            "[Més informació](https://example.com/about)."
+        )
+        form = next(w for w in page["layout"] if w["id"] == "note-form")
+        form["props"]["fields"][0].update(
+            label="Observacions sobre l’estat de la propietat i les reparacions pendents",
+            description="Escriu una observació per a la pròxima visita.",
+        )
     validation = validate_page(page)
     if not validation.valid:
         raise ValueError(validation.errors)
@@ -308,7 +347,8 @@ class Handler(BaseHTTPRequestHandler):
     asset_origin = "https://127.0.0.1:8735"
 
     def do_POST(self) -> None:
-        post(self, urlsplit(self.path).path, fixture({}))
+        url = urlsplit(self.path)
+        post(self, url.path, fixture(parse_qs(url.query)))
 
     def do_GET(self) -> None:
         url = urlsplit(self.path)
@@ -326,6 +366,14 @@ class Handler(BaseHTTPRequestHandler):
             shell = page_shell(script_path="/assets/gallery.js", asset_origin=self.asset_origin)
             body, content_type = shell.html.encode(), "text/html; charset=utf-8"
             headers.update(shell.headers)
+        elif url.path == "/api/decision":
+            page = fixture(query)
+            _, state = session(self)
+            json_response(
+                self,
+                decision_evidence(page, query["task_id"][0], state, query.get("case", [""])[0]),
+            )
+            return
         elif url.path in ("/api/page", "/api/widget"):
             page = fixture(query)
             _, state = session(self)
@@ -343,7 +391,8 @@ class Handler(BaseHTTPRequestHandler):
             elif "vector" not in query:
                 # Independent projections: the bootstrap has definitions only.
                 for collection in page["collections"]:
-                    collection["records"] = []
+                    if collection["id"] not in {"review-proposals", "review-bundles"}:
+                        collection["records"] = []
             if url.path == "/api/page" and query.get("case") == ["unsupported"]:
                 page["page_format"] = "aweb.page/2"
             body, content_type = json.dumps(page, ensure_ascii=False).encode(), "application/json"

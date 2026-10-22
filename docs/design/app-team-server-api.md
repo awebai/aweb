@@ -368,12 +368,15 @@ parameter, so an app can read only its own grant.
 | timeout, `5xx`, TLS failure, cache past `max_age` with refresh failing | unavailable | `503 authority_unavailable` |
 
 - A positive answer is reused for at most `min(max_age_seconds, 60)`, counted
-  from the client's own receipt time. There is no stale fallback.
+  from when the client asked: the start of the refresh that fetched it. There
+  is no stale fallback.
 - An expired entry is never served, including while a refresh is in flight.
   Each refresh has a request timeout (configuration, default 5 s). A caller
   waiting on it receives unavailable when it fires, so the staleness bound is
   `max_age_seconds` itself, with no unbounded refresh on top.
-- A definitive "not granted" may be cached for the same window.
+- A definitive "not granted" may be cached for the same window, except
+  `403 app_key_not_registered`, which is cached for at most five seconds so
+  an immediate post-install retry does not retain a minute-long denial.
 - Concurrent misses for one `(team, app)` share one refresh.
 
 ### Revocation bound, stated honestly
@@ -477,7 +480,7 @@ and `httpx` (`naapp-lib/pyproject.toml` on `agents/aweb-protocol-expert-naapp-ve
   `async grant_for(team_id) -> Grant | None`:
   - an active installation of this app returns
     `Grant(team_id, scopes, fresh_until, installation_id, generation)`, where
-    `fresh_until` is the client's monotonic receipt time plus
+    `fresh_until` is the client's monotonic time when it asked plus
     `min(max_age_seconds, 60)`;
   - an inactive state or `app_key_not_registered` returns `None`, which B1
     maps to `403`;
