@@ -121,7 +121,13 @@ make lint
 make e2e
 ```
 
-`make e2e` starts local Postgres + AWID via Docker Compose, runs real `aw id request --team-auth` tests, and tears the stack down.
+`make e2e` starts disposable Postgres, Redis and AWID via Docker Compose and
+runs Folio with the checkout's built `aw`. The install-after-mint journey also
+starts the real aweb server from its locked source environment and a real custody
+process, then uses a replacement grant for create/append/show. Prepare that
+source environment with `uv sync --frozen --project ../../server`, build `aw`
+from `../../cli/go`, and put that directory on `PATH` before running e2e.
+All child processes and the disposable stack are stopped on exit.
 
 Folio uses the in-repo `naapp-lib/` and `awid/` through its locked path sources.
 Run it from an aweb checkout; separate sibling clones are unnecessary. Shared

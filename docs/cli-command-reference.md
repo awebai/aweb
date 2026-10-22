@@ -26,7 +26,7 @@ to refresh it.
 
 - `--debug Log background errors to stderr`
 - `-h, --help help for aw`
-- `--identity-home string Use identity authority from this absolute credential root`
+- `--identity-home string Use this absolute credential directory (contains signing.key or grant.yaml; usually <workspace>/.aw, not its parent)`
 - `--json Output as JSON`
 - `--server-name string Override the server host or name for this command`
 - `--trace Trace redacted HTTP requests and responses to stderr`

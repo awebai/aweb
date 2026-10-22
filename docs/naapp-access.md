@@ -1,7 +1,7 @@
 # CLI naapp access
 
 A naapp is a declarative HTTP app described by a v1 app manifest. Install it
-once from the identity's own home:
+once for the acting resident identity. From a resident workspace:
 
 ```sh
 aw plugin install https://notes.example/.well-known/aweb-app.json
@@ -13,6 +13,40 @@ app requests. An attached resident may use `--identity-home` or
 `AWEB_IDENTITY_HOME`; commands never fall back to the instance directory.
 Installing from that resident home also approves the app for future grants.
 Installing an already installed app records approval for this resident too.
+
+For an attached/grant deployment, the resident owner runs one install command:
+
+```sh
+aw --identity-home /absolute/resident-root/.aw plugin install https://folio.aweb.ai/.well-known/aweb-app.json
+```
+
+`--identity-home` names the **credential directory itself**, containing
+`signing.key` and `identity.yaml` or `teams.yaml`. In a workspace layout that is
+`<resident-root>/.aw`, not `<resident-root>`. It must belong to the same resident
+the session represents. The CLI never guesses a stronger credential or copies a
+resident key into a grant home. Grant seats ask their resident owner to perform
+this approval; their session credential cannot approve apps.
+
+A new grant minted after this install includes the approved tools. **An already
+running grant session keeps its original snapshot**. Install output includes
+`identity_home`, `existing_grants_unchanged` and `grant_refresh_command` in JSON,
+and prints the replacement action in text:
+
+```sh
+aw --identity-home /absolute/resident-root/.aw id grant mint --bundle normal-agent --out /absolute/new-grant-home
+```
+
+The resident owner selects the intended scopes and TTL (the example uses the
+normal-agent bundle), supplies a new empty output directory, and restarts the
+session using that replacement grant. Do not overwrite the live grant home or
+change resident identities. In an OATS deployment with `renew: launch`, the host
+operator can instead use `oats session restart --home /absolute/instance-home`;
+the launch renewal mints a fresh snapshot for the same resident. A readiness pass
+or `aw folio help` only proves discovery, not that a live grant has these tools.
+
+App verbs accept the global boolean `--json` before or after the verb, including
+`--json=true` and `--json=false`. They return the app's response body unchanged;
+the flag is never sent as an app parameter.
 
 ## Discovery and resident approval
 
@@ -51,7 +85,9 @@ Custody signs from that snapshot, not from a worker's manifest. Later worker
 edits cannot widen or redirect it. Removing local discovery may make a tool
 unavailable, but cannot add authority. Re-minting picks up newly approved apps;
 existing grants keep their original snapshots. An app missing from a grant is
-refused with `app_tool_denied` before an app HTTP request.
+refused with `app_tool_denied` before an app HTTP request. The CLI explains the
+missing delegation and the approve/re-mint/restart remedy; it never updates an
+existing snapshot. A deliberately narrowed tool selection remains refused too.
 
 Mint JSON includes `apps`, sorted by app ID, with the actual persisted inventory:
 

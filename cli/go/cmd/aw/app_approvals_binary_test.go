@@ -83,7 +83,18 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	}
 	for i, home := range homes {
 		cwd := []string{empty, decoy}[i]
-		invoke(cwd, home, "", "plugin", "install", server.URL)
+		installed := invoke(cwd, home, "", "plugin", "install", server.URL)
+		var receipt struct {
+			IdentityHome            string   `json:"identity_home"`
+			ExistingGrantsUnchanged bool     `json:"existing_grants_unchanged"`
+			GrantRefreshCommand     []string `json:"grant_refresh_command"`
+		}
+		if err := json.Unmarshal(installed, &receipt); err != nil || receipt.IdentityHome != home || !receipt.ExistingGrantsUnchanged {
+			t.Fatalf("install receipt: %s (%v)", installed, err)
+		}
+		if len(receipt.GrantRefreshCommand) < 7 || receipt.GrantRefreshCommand[1] != "--identity-home" || receipt.GrantRefreshCommand[2] != home {
+			t.Fatalf("replacement grant command: %v", receipt.GrantRefreshCommand)
+		}
 		cat, err := loadAppApprovals(home)
 		if err != nil || cat.Apps["testapp"] != server.URL {
 			t.Fatalf("approval selected home: %v", err)
