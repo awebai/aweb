@@ -56,14 +56,19 @@ this option produces a grant with no custody locator. The owner supplies a new
 empty output directory and restarts the session using that replacement grant.
 Do not overwrite the live grant home or change resident identities. Stop the
 old session, then relaunch its agent command with the new grant; replace
-`<agent-command>` with the command and arguments used by that session:
+the entire quoted `'<agent-command>'` token, **including its surrounding
+quotes**, with that session's original command line and arguments. Retain the
+original quoting of each argument:
 
 ```sh
 env AWEB_IDENTITY_HOME=/absolute/new-grant-home '<agent-command>'
 ```
 
 JSON exposes this template as `grant_restart_command`. The CLI cannot discover
-which process uses a grant, so it leaves the agent command explicit.
+which process uses a grant, so it leaves the agent command explicit. A JSON
+consumer replaces the placeholder element with the executable and each argument
+as separate array elements; it must not place a whole command line in one
+executable element.
 
 For an OATS deployment configured with `renew: launch`, use this **alternative**
 from the host instead of manually minting and assigning a new grant:

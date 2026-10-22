@@ -202,6 +202,39 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(empty, ".aw")); !os.IsNotExist(err) {
 		t.Fatal("empty instance gained principal state")
 	}
+	t.Run("stalled_resolution", func(t *testing.T) {
+		// A real TCP listener accepts discovery requests but never answers them.
+		// One advisory deadline must cover every candidate, not restart per probe.
+		var probes atomic.Int32
+		stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			probes.Add(1)
+			<-r.Context().Done()
+		}))
+		defer stalled.Close()
+		pub, key, err := awid.GenerateKeypair()
+		if err != nil {
+			t.Fatal(err)
+		}
+		parent := filepath.Join(root, "connected-resident")
+		writeSelectionFixtureForTest(t, parent, testSelectionFixture{
+			AwebURL: stalled.URL, TeamID: "backend:acme.com", Alias: "alice",
+			WorkspaceID: "advisory-budget", DID: awid.ComputeDIDKey(pub),
+			Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: key,
+		})
+		t.Setenv("AWEB_URL", stalled.URL)
+		var receipt struct {
+			Approved        bool   `json:"approved"`
+			ActiveGrants    *int   `json:"active_grants"`
+			GrantCheckError string `json:"grant_check_error"`
+		}
+		out := invoke(empty, filepath.Join(parent, ".aw"), "", "plugin", "install", server.URL)
+		if err := json.Unmarshal(out, &receipt); err != nil || !receipt.Approved || receipt.ActiveGrants != nil || receipt.GrantCheckError != "unavailable" {
+			t.Fatalf("stalled advisory must retain successful install with unknown count: %s (%v)", out, err)
+		}
+		if probes.Load() != 1 {
+			t.Fatalf("advisory restarted its budget across %d discovery probes; want one", probes.Load())
+		}
+	})
 	// JSON output distinguishes installed discovery from approval removal.
 	var removed pluginRemoveOutput
 	if err := os.Remove(executable); err != nil {
