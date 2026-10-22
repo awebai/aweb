@@ -135,6 +135,10 @@ class UsePolicies:
 
     async def current(self, policy_ref: str) -> ActionPolicy | None:
         async with self._db.transaction() as tx:
+            if policy_ref.startswith("secrets.run|"):
+                from aweb_secrets.run_approvals import current_run_policy
+
+                return await current_run_policy(tx, policy_ref)
             return await _action_policy(tx, policy_ref)
 
 
@@ -532,6 +536,54 @@ async def _refusal(
     return "approval_revoked"
 
 
+# Both association types bind their own source/version/grant. No historical
+# lookup or caller-supplied grant can broaden a revocation's scoped predicate.
+_ASSOCIATIONS = (
+    "SELECT u.installation_id,u.team_id,u.secret_id,u.secret_version,u.approval_id,i.grant_id "
+    "FROM {{tables.use_approvals}} u JOIN {{tables.intents}} i "
+    "ON i.intent_id=u.intent_id AND i.installation_id=u.installation_id AND i.team_id=u.team_id "
+    "UNION ALL SELECT installation_id,team_id,secret_id,secret_version,approval_id,grant_id "
+    "FROM {{tables.run_slot_approvals}} WHERE approval_id IS NOT NULL"
+)
+
+
+async def select_use_approval_ids(
+    tx: TransactionManager, *, installation_id: str, team_id: str, secret_ids: Sequence[str]
+) -> tuple[str, ...]:
+    """Read all versions/states across use/run slots, sorted and deduplicated.
+
+    Caller holds authority/ancestry/grant fences, unions confirming IDs, then
+    calls B2.lock_many before any batch or consumption. No locks or mutations.
+    """
+    rows = await tx.fetch_all(
+        f"SELECT DISTINCT approval_id FROM ({_ASSOCIATIONS}) a "
+        "WHERE installation_id=$1 AND team_id=$2 AND secret_id=ANY($3::text[]) "
+        "ORDER BY approval_id",
+        installation_id,
+        team_id,
+        list(secret_ids),
+    )
+    return tuple(row["approval_id"] for row in rows)
+
+
+async def use_approval_secret_ids(
+    tx: TransactionManager, *, installation_id: str, team_id: str, approval_id: str
+) -> tuple[str, ...]:
+    """Read the same-scope source IDs a use/run-slot approval acts on.
+
+    Full-plan rendering never grants action coverage over other slots. Unknown
+    or out-of-scope IDs return empty; the caller still authorizes every target.
+    """
+    rows = await tx.fetch_all(
+        f"SELECT DISTINCT secret_id FROM ({_ASSOCIATIONS}) a "
+        "WHERE installation_id=$1 AND team_id=$2 AND approval_id=$3 ORDER BY secret_id",
+        installation_id,
+        team_id,
+        approval_id,
+    )
+    return tuple(row["secret_id"] for row in rows)
+
+
 async def void_use_approvals(
     tx: TransactionManager,
     approvals: Approvals,
@@ -552,7 +604,7 @@ async def void_use_approvals(
     remain retrievable. With no descendants, only other root versions are voided.
     """
     rows = await tx.fetch_all(
-        "SELECT approval_id FROM {{tables.use_approvals}} WHERE installation_id = $1 "
+        f"SELECT DISTINCT approval_id FROM ({_ASSOCIATIONS}) a WHERE installation_id = $1 "
         "AND team_id = $2 AND ((secret_id = $3 AND secret_version <> $4) "
         "OR secret_id = ANY($5::text[])) ORDER BY approval_id",
         installation_id,
@@ -589,11 +641,9 @@ async def revoke_use_approvals(
     revocation writes. Without it, selection remains exact-secret/all-version.
     Consumed attempts stay retrievable; NOT_SENT transport retries stop."""
     rows = await tx.fetch_all(
-        "SELECT u.approval_id FROM {{tables.use_approvals}} u "
-        "JOIN {{tables.intents}} i ON i.intent_id=u.intent_id "
-        "AND i.installation_id=u.installation_id AND i.team_id=u.team_id "
-        "WHERE u.installation_id=$1 AND u.team_id=$2 "
-        "AND (u.secret_id=ANY($3::text[]) OR i.grant_id=$4::text) ORDER BY u.approval_id",
+        f"SELECT DISTINCT approval_id FROM ({_ASSOCIATIONS}) a "
+        "WHERE installation_id=$1 AND team_id=$2 "
+        "AND (secret_id=ANY($3::text[]) OR grant_id=$4::text) ORDER BY approval_id",
         installation_id,
         team_id,
         list(secret_ids),

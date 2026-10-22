@@ -35,6 +35,20 @@ landing_html = naapp.page(site, body_html, include_copy_llms=True)
 css_bytes = naapp.aweb_css()
 ```
 
+For numbered instructions under a section's `h2`, use the shared component:
+
+```python
+steps_html = naapp.render_numbered_steps([
+    naapp.NumberedStep("Choose a task", "Read the <code>reference</code>."),
+    naapp.NumberedStep("Run the command", "Use your team's identity.", "example --help"),
+])
+```
+
+Titles and commands are escaped plain text. `description_html` is trusted,
+developer-authored inline HTML; never put user content in it. Commands are
+optional and use the shared copy button. The component's responsive styles are
+part of the normal CSS bundle; no app-local stylesheet is needed.
+
 The docs surface is pure standard library. Request-time runtime code (the
 team-auth verifier, approvals, passkeys, and team-server discovery from the
 team's AWID `aweb.team-server/1` record) lives under `aweb_naapp.runtime` and

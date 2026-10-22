@@ -217,7 +217,6 @@ roles = [
 ]
 runtime = [
     { name = "awid-service" },
-    { name = "cbor2" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jsonschema" },

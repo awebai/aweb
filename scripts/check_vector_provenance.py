@@ -49,6 +49,10 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("naapp-lib/tests/runtime/approvals/test_passkey_proof.py"): _consumer(
+        "passkey-evidence-v1.json",
+        'Path(__file__).resolve().parents[4] / "docs/vectors/passkey-evidence-v1.json"',
+    ),
     PurePosixPath("server/tests/test_human_channels_participants.py"): _consumer(
         "human-channels-participants-v1.json", "ROOT / 'docs/vectors/human-channels-participants-v1.json'",
     ),
