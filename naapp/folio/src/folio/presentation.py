@@ -956,6 +956,10 @@ def render_editor_page(
     .tabs button[aria-selected="true"] {{ background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12); }}
     .actions {{ margin-left: auto; display: flex; align-items: center; gap: 12px; min-width: 0; }}
     .status {{ color: var(--muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 38vw; }}
+    .link-recovery {{ padding: 16px; border-bottom: 1px solid var(--border); background: var(--surface); overflow-wrap: anywhere; }}
+    .link-recovery p {{ margin: 0 0 12px; }}
+    .link-recovery p:last-child {{ margin-bottom: 0; }}
+    .link-recovery button {{ margin-bottom: 12px; }}
     .status.is-saving {{ color: var(--accent); }}
     .status.is-conflict {{ color: var(--warn); }}
     .ghost-input {{
@@ -1065,6 +1069,26 @@ def render_editor_page(
       <button id="save" class="save" type="button">Save new version</button>
     </div>
   </header>
+  <div id="link-recovery" class="link-recovery" role="alert" tabindex="-1" hidden>
+    <p>This edit link has expired or been revoked. Your unsaved text is still in the editor.</p>
+    <button id="copy-draft" class="ghost-button" type="button">Copy your text</button>
+    <p id="reopen-instructions">Return to your dashboard and reopen Edit, then paste your text.</p>
+    <p id="copy-status" role="status"></p>
+  </div>
+  <div id="new-version" class="link-recovery" hidden>
+    <p id="new-version-message" role="status"></p>
+    <button id="load-latest" class="ghost-button" type="button">Load latest version</button>
+  </div>
+  <dialog id="load-dialog" class="modal" aria-labelledby="load-title">
+    <div class="modal-card">
+      <h2 id="load-title" class="modal-title">Load the latest version?</h2>
+      <p class="modal-text">Your unsaved changes will be discarded.</p>
+      <div class="modal-actions">
+        <button id="load-cancel" class="ghost-button" type="button" autofocus>Keep editing</button>
+        <button id="load-confirm" class="btn-danger" type="button">Load latest version</button>
+      </div>
+    </div>
+  </dialog>
   <main class="workspace">
     <section id="pane-edit" class="pane pane-edit is-active">
       <textarea id="body" class="editor" spellcheck="false" autofocus placeholder="Start writing in Markdown…"></textarea>
@@ -1097,12 +1121,18 @@ def render_editor_page(
     const saveBtn = document.getElementById('save');
     const discardBtn = document.getElementById('discard');
     const discardDialog = document.getElementById('discard-dialog');
+    const recoveryEl = document.getElementById('link-recovery');
+    const copyStatusEl = document.getElementById('copy-status');
     const baseTitle = 'Edit · folio';
     let baseVersion = INITIAL.version_number;
     let savedBody = INITIAL.body;
     let dirty = false;
     let saving = false;
     let conflict = false;
+    let unavailable = false;
+    let pendingVersion = null;
+    const newVersionEl = document.getElementById('new-version');
+    const loadDialog = document.getElementById('load-dialog');
     bodyEl.value = INITIAL.body;
     nameEl.value = window.localStorage.getItem('folio.editorName') || '';
 
@@ -1122,6 +1152,7 @@ def render_editor_page(
       }}
     }}
     async function refreshPreview() {{
+      if (unavailable) return;
       const seq = ++previewSeq;
       let html = null;
       try {{
@@ -1138,6 +1169,7 @@ def render_editor_page(
       if (html !== null) applyPreview(html);
     }}
     function schedulePreview() {{
+      if (unavailable) return;
       previewCard.classList.add('is-updating');
       if (previewTimer) clearTimeout(previewTimer);
       previewTimer = setTimeout(refreshPreview, 350);
@@ -1145,7 +1177,8 @@ def render_editor_page(
 
     function updateButtons() {{
       saveBtn.classList.toggle('is-conflict', conflict);
-      if (saving) {{ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }}
+      if (unavailable) {{ saveBtn.disabled = true; saveBtn.textContent = 'Link unavailable'; }}
+      else if (saving) {{ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }}
       else if (conflict) {{ saveBtn.disabled = false; saveBtn.textContent = 'Overwrite?'; }}
       else if (dirty) {{ saveBtn.disabled = false; saveBtn.textContent = 'Save new version'; }}
       else {{ saveBtn.disabled = true; saveBtn.textContent = 'Saved'; }}
@@ -1158,8 +1191,10 @@ def render_editor_page(
     }}
 
     function markDirty() {{
-      if (!dirty) {{ dirty = true; document.title = '• ' + baseTitle; }}
-      eyebrowEl.textContent = 'Draft · unsaved';
+      dirty = bodyEl.value !== savedBody;
+      if (!dirty && pendingVersion) {{ applyCurrent(pendingVersion); return; }}
+      document.title = dirty ? '• ' + baseTitle : baseTitle;
+      eyebrowEl.textContent = dirty ? 'Draft · unsaved' : 'Version ' + baseVersion;
       updateButtons();
     }}
 
@@ -1167,7 +1202,7 @@ def render_editor_page(
     nameEl.addEventListener('input', () => window.localStorage.setItem('folio.editorName', nameEl.value));
 
     async function save() {{
-      if (saving || (!dirty && !conflict)) return;
+      if (unavailable || saving || (!dirty && !conflict)) return;
       saving = true; setStatus('Saving…', 'saving'); updateButtons();
       const sent = bodyEl.value;
       let response;
@@ -1182,10 +1217,16 @@ def render_editor_page(
       }}
       const payload = await response.json().catch(() => ({{}}));
       saving = false;
+      if (response.status === 404) {{
+        showUnavailable();
+        recoveryEl.focus();
+        return;
+      }}
       if (response.status === 409) {{
         const latest = payload.detail || payload;
         conflict = true;
         baseVersion = latest.version_number || baseVersion;
+        showNewVersion(latest);
         setStatus('Someone saved version ' + baseVersion + '. Overwrite to keep your text.', 'conflict');
         updateButtons();
         return;
@@ -1193,14 +1234,26 @@ def render_editor_page(
       if (!response.ok) {{ setStatus('Save failed — the link may be expired or revoked.', 'conflict'); updateButtons(); return; }}
       baseVersion = payload.version_number;
       savedBody = sent;
-      dirty = false; conflict = false;
-      document.title = baseTitle;
-      eyebrowEl.textContent = 'Version ' + baseVersion + ' · saved';
+      dirty = bodyEl.value !== sent; conflict = false;
+      pendingVersion = null; newVersionEl.hidden = true;
+      document.title = dirty ? '• ' + baseTitle : baseTitle;
+      eyebrowEl.textContent = dirty ? 'Draft · unsaved' : 'Version ' + baseVersion + ' · saved';
       setStatus('Saved version ' + baseVersion, null);
       updateButtons();
       refreshPreview();
     }}
 
+    document.getElementById('copy-draft').addEventListener('click', async () => {{
+      try {{
+        await navigator.clipboard.writeText(bodyEl.value);
+        copyStatusEl.textContent = 'Text copied. Reopen Edit from your dashboard and paste it.';
+      }} catch (err) {{
+        activate(true);
+        bodyEl.focus();
+        bodyEl.select();
+        copyStatusEl.textContent = 'Your text is selected. Copy it before reopening Edit from your dashboard.';
+      }}
+    }});
     saveBtn.addEventListener('click', save);
     document.addEventListener('keydown', (event) => {{
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {{
@@ -1210,6 +1263,7 @@ def render_editor_page(
     }});
 
     function discardChanges() {{
+      if (pendingVersion) {{ applyCurrent(pendingVersion); return; }}
       bodyEl.value = savedBody;
       dirty = false; conflict = false;
       document.title = baseTitle;
@@ -1239,20 +1293,96 @@ def render_editor_page(
     tabEdit.addEventListener('click', () => activate(true));
     tabPreview.addEventListener('click', () => activate(false));
 
+    function cancelPreview() {{
+      if (previewTimer) clearTimeout(previewTimer);
+      previewSeq++;
+      previewCard.classList.remove('is-updating');
+    }}
+    function showUnavailable() {{
+      unavailable = true;
+      cancelPreview();
+      newVersionEl.hidden = true;
+      recoveryEl.hidden = false;
+      setStatus('Not saved. Copy your text before reopening Edit.', 'conflict');
+      updateButtons();
+    }}
+    function applyCurrent(state) {{
+      cancelPreview();
+      const start = bodyEl.selectionStart, end = bodyEl.selectionEnd;
+      savedBody = state.body;
+      baseVersion = state.version_number;
+      bodyEl.value = savedBody;
+      bodyEl.setSelectionRange(Math.min(start, savedBody.length), Math.min(end, savedBody.length));
+      dirty = false; conflict = false; pendingVersion = null;
+      newVersionEl.hidden = true;
+      document.title = baseTitle;
+      eyebrowEl.textContent = 'Version ' + baseVersion;
+      if (typeof state.html === 'string') applyPreview(state.html);
+      else refreshPreview();
+      setStatus('Updated to version ' + baseVersion, null);
+      updateButtons();
+    }}
+    function showNewVersion(state) {{
+      pendingVersion = state;
+      newVersionEl.hidden = false;
+      document.getElementById('new-version-message').textContent =
+        'Version ' + state.version_number + ' is available. Your unsaved changes are kept.';
+    }}
+    document.getElementById('load-latest').addEventListener('click', () => {{
+      if (dirty) loadDialog.showModal();
+      else if (pendingVersion) applyCurrent(pendingVersion);
+    }});
+    document.getElementById('load-cancel').addEventListener('click', () => loadDialog.close());
+    document.getElementById('load-confirm').addEventListener('click', () => {{
+      loadDialog.close();
+      if (unavailable || !pendingVersion) return;
+      applyCurrent(pendingVersion);
+      activate(true); bodyEl.focus();
+    }});
+
+    let pollTimer = null;
+    let reading = false;
+    let readController = null;
     async function pollState() {{
+      if (pollTimer) clearTimeout(pollTimer);
+      if (unavailable || document.hidden || reading) return;
+      reading = true;
+      const controller = new AbortController();
+      readController = controller;
       try {{
-        const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/state');
+        if (saving) return;
+        const known = pendingVersion ? pendingVersion.version_number : baseVersion;
+        const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/state?after_version=' + known,
+          {{cache: 'no-store', referrerPolicy: 'no-referrer', signal: controller.signal}});
+        if (controller.signal.aborted || unavailable) return;
+        if (response.status === 404) {{ showUnavailable(); return; }}
         if (!response.ok) return;
         const state = await response.json();
-        if (state.version_number > baseVersion && !conflict && !saving) {{
-          setStatus(
-            dirty ? 'A newer version exists; saving will ask to overwrite.' : 'A newer version exists. Reload to load it.',
-            'conflict'
-          );
+        if (controller.signal.aborted || unavailable || saving) return;
+        if (typeof state.body === 'string' && state.version_number > baseVersion) {{
+          // Decide on the CURRENT buffer after the read, including typing that
+          // happened while it was in flight. Never overwrite a local draft.
+          if (dirty) showNewVersion(state);
+          else applyCurrent(state);
         }}
-      }} catch (err) {{ /* transient; keep polling */ }}
+      }} catch (err) {{ /* keep the current buffer and retry transient reads */ }}
+      finally {{
+        reading = false; readController = null;
+        if (!unavailable && !document.hidden) pollTimer = setTimeout(pollState, 4000);
+      }}
     }}
-    window.setInterval(pollState, 4000);
+    document.addEventListener('visibilitychange', () => {{
+      if (document.hidden) {{
+        if (pollTimer) clearTimeout(pollTimer);
+        if (readController) readController.abort();
+      }} else pollState();
+    }});
+    window.addEventListener('pagehide', () => {{
+      if (pollTimer) clearTimeout(pollTimer);
+      if (readController) readController.abort();
+    }});
+    window.addEventListener('pageshow', pollState);
+    pollTimer = setTimeout(pollState, 4000);
 
     updateButtons();
   </script>

@@ -9,6 +9,15 @@ from aweb_secrets.custody import ValueInvalid, decode_value, encode_value
 from aweb_secrets.operation import CAPTURE_FIELDS
 
 
+def test_app_imports_reexport_the_single_standalone_codec() -> None:
+    import aweb_secrets_values as shared
+
+    assert CAPTURE_FIELDS is shared.CAPTURE_FIELDS
+    assert ValueInvalid is shared.ValueInvalid
+    assert encode_value is shared.encode_value
+    assert decode_value is shared.decode_value
+
+
 @pytest.mark.parametrize("kind", CAPTURE_FIELDS)
 async def test_values_round_trip_with_the_kinds_fields(kind: str) -> None:
     required, optional = CAPTURE_FIELDS[kind]
