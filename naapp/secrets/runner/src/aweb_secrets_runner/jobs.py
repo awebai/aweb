@@ -4,6 +4,7 @@ import hashlib
 import json
 import posixpath
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from .errors import Refused
 from .filesystem import FileGuard, require_separate_users
+from .job_inputs import JobInputs
 from .protocol import HASH, ID, canonical, decrypt_credential, parse_json
 
 FIELDS = {
@@ -338,15 +340,16 @@ class RunnerConfig:
             _checked_executable(job)
         return tuple(sorted(config["jobs"]))
 
-    def prepare(
+    def inputs(
         self,
         *,
         job_id: str,
         digest: str,
         runner_id: str,
         params: dict[str, Any],
-        credentials: list[CredentialInput],
-    ) -> PreparedJob:
+        credential_refs: Sequence[str],
+    ) -> JobInputs:
+        """Re-read the local pin, validate public parameters/labels, and freeze them."""
         config = self._current()
         pin = config["jobs"].get(job_id)
         if (
@@ -357,7 +360,8 @@ class RunnerConfig:
             raise Refused("job_not_allowed")
         job = pin["definition"]
         try:
-            canonical(params)
+            params_raw = canonical(params)
+            params = json.loads(params_raw)
             if not isinstance(params, dict) or set(params) != set(job["params"]):
                 raise ValueError("params")
             positional = {
@@ -379,20 +383,49 @@ class RunnerConfig:
                     raise ValueError("charset")
         except (ValueError, TypeError, RecursionError):
             raise Refused("params_invalid") from None
+        if tuple(credential_refs) != tuple(slot["secret_ref"] for slot in job["credentials"]):
+            # Current fixed-selector guard, not a permanent ban on accepted
+            # signed-ordinal child substitutions when those paths un-park.
+            raise Refused("credential_invalid")
+        argv = [
+            arg if isinstance(arg, str) else _scalar(params[arg["$param"]]) for arg in job["argv"]
+        ]
+        if job["kind"] == "exec":
+            argv.insert(0, job["exec"]["path"])
+        environment: dict[str, str | None] = {}
+        for name, binding in job["env"].items():
+            if isinstance(binding, str):
+                environment[name] = binding
+            elif "$param" in binding:
+                environment[name] = _scalar(params[binding["$param"]])
+            else:
+                environment[name] = None
+        return JobInputs(canonical(job), params_raw, canonical(environment), tuple(argv))
+
+    def prepare(
+        self,
+        *,
+        job_id: str,
+        digest: str,
+        runner_id: str,
+        params: dict[str, Any],
+        credentials: list[CredentialInput],
+    ) -> PreparedJob:
+        if any(not isinstance(item, CredentialInput) for item in credentials):
+            raise Refused("credential_invalid")
+        selected = self.inputs(
+            job_id=job_id,
+            digest=digest,
+            runner_id=runner_id,
+            params=params,
+            credential_refs=tuple(item.secret_ref for item in credentials),
+        )
+        job = selected.definition
         # No credential is opened until every local pin, parameter and file
         # check is complete. OCI stays closed until its image runtime exists.
         executable = _checked_executable(job)
         known = KnownValues()
         opened: dict[str, tuple[str, dict[str, str]]] = {}
-        if len(credentials) != len(job["credentials"]) or any(
-            not isinstance(credential, CredentialInput)
-            or credential.secret_ref != job["credentials"][index]["secret_ref"]
-            for index, credential in enumerate(credentials)
-        ):
-            # First-release FIXED-selector release only. Accepted substituted
-            # child paths remain guarded; enabling them needs the reviewed
-            # signed-ordinal rules, never a global ref==parent-label rule.
-            raise Refused("credential_invalid")
         try:
             for index, slot in enumerate(job["credentials"]):
                 credential = credentials[index]
@@ -414,18 +447,15 @@ class RunnerConfig:
                     known.add_basic(ref, value["username"], value["password"])
         except (ValueInvalid, ValueError):
             raise Refused("credential_invalid") from None
-        argv = [
-            arg if isinstance(arg, str) else _scalar(params[arg["$param"]]) for arg in job["argv"]
-        ]
+        argv = list(selected.argv)
+        argv[0] = str(executable)
         env = {}
-        for name, binding in job["env"].items():
-            if isinstance(binding, str):
-                env[name] = binding
-            elif "$param" in binding:
-                env[name] = _scalar(params[binding["$param"]])
+        for name, public in selected.environment.items():
+            if public is not None:
+                env[name] = public
             else:
+                binding = job["env"][name]
                 env[name] = opened[binding["$credential"]][1][binding["field"]]
-        argv.insert(0, str(executable))
         return PreparedJob(
             kind=job["kind"],
             argv=tuple(argv),

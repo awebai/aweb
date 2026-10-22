@@ -4,6 +4,7 @@ import ctypes
 import os
 import stat
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 from .errors import Refused
@@ -44,3 +45,15 @@ def require_memory_directory(path: Path) -> Path:
             os.close(fd)
     except (OSError, ValueError, AttributeError, Refused):
         raise Refused("oci_state_invalid") from None
+
+
+def require_runc_environment(environment: Mapping[str, str | None]) -> None:
+    """Check runc's known HOME capability without opening unknown credentials.
+
+    The selected runtime must independently be pinned and qualified. This is
+    runtime-specific, not a universal job/1 HOME requirement. Other declared
+    credentials stay unknown until every runtime/file check has completed.
+    """
+    home = environment.get("HOME")
+    if not isinstance(home, str) or not home or "\0" in home:
+        raise Refused("oci_environment_unsupported")

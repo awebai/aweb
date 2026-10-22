@@ -9,7 +9,9 @@ Linux proof must run before any OCI integration is called complete.
 From the runner package directory:
 
 ```sh
-docker build -t aweb-secrets-runner-oci-proof tests/oci
+docker build --build-context runner=. --build-context values=../values \
+  --build-context naapp=../../../naapp-lib \
+  -t aweb-secrets-runner-oci-proof tests/oci
 docker run --rm --init --network none --cap-drop ALL \
   --security-opt no-new-privileges --security-opt seccomp=unconfined \
   --security-opt systempaths=unconfined --user 10000:10000 \
@@ -19,6 +21,10 @@ docker run --rm --init --network none --cap-drop ALL \
   aweb-secrets-runner-oci-proof \
   python3 -m unittest discover -s /runner/tests/oci
 ```
+
+The image installs Python 3.12 and the runner’s locked dependencies from the
+three explicit package contexts. Only those package sources enter the build;
+instance state and repository metadata are not copied.
 
 The disposable outer container has no capabilities or network, and the runner
 source is mounted read-only. Its syscall/proc restrictions are relaxed solely to
@@ -45,10 +51,12 @@ check capability. No default is injected into a job definition and no shim or
 image modification replaces the pinned executable.
 
 Tests also check explicit cwd and runtime-state cleanup after normal exit and
-startup failure. They do not yet prove M7 runtime composition, pre-HPKE capability
-checks, timeout/cancellation/restart cleanup, frozen parameter expansion, image
-pin verification, declared mounts or the separate-user worker journey. Those
-remain required integration proofs. The Dockerfile pins its Debian base digest;
+startup failure. The preparation tests also consume real frozen RunnerConfig parameters, qualify
+HOME before any credential input exists, check runtime/unpacker hashes, remove
+implicit host binds and execute declared read-only mounts. They exercise tool
+cancellation and private cleanup, including mode-000 image directories and
+symlinks. Worker credential injection, job timeout/cancellation/restart cleanup
+and the separate-user journey remain required integration proofs. The Dockerfile pins its Debian base digest;
 tooling packages can receive distro updates, so the capability checks must be
 repeated on the exact operator-pinned runtime before activation.
 
@@ -83,3 +91,27 @@ cache changes after staging and agent-writeable content. Actual worker runtime
 composition, runtime-binary pins, mounts, HOME capability before HPKE and lifecycle
 cleanup remain separate requirements. This staging module has no production
 caller yet and does not lift the OCI execution guard.
+
+## Public bundle preparation
+
+`RuncPreparation.prepare(JobInputs)` checks the pinned runtime and unpacker,
+requires a verified private tmpfs workspace, and validates explicit host mount
+sources before unpacking the verified image snapshot with umoci. It preserves
+the image user only when that identity fits the rootless UID/GID mappings.
+Implicit host bind mounts are removed; explicit sources must be protected by
+the shared FileGuard and cannot expose the workspace or contain nested mounts.
+The effective args, cwd and known environment come from the frozen job inputs;
+credential-backed values remain unknown and are omitted from the public
+template. Runtime/file checks are repeated after unpacking.
+
+Both bundle and runtime-internal state live below the private memory-backed
+workspace. The transient public config is 0600. Cleanup traverses only its own
+FD-anchored tree, handles mode-000 directories, and never follows image symlinks.
+Cancellation joins an in-progress OS spawn, kills the unpacker process group
+and reaps before deletion. If internal runtime state remains, preparation
+refuses cleanup and retains it for the execution owner to stop and reconcile.
+The eventual execution owner must stop/reap before releasing this context.
+
+The production worker still refuses OCI. This component does not inject a
+credential, launch a job, clean stale restart state or grant execution authority.
+Those lifecycle and separate-user integration checks remain required.

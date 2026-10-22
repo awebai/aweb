@@ -47,7 +47,7 @@ class FileGuard:
             if index < len(nodes) - 1 and not stat.S_ISDIR(info.st_mode):
                 raise Refused("path_permissions")
 
-    def _resolve(self, path: Path | str, *, directory: bool = False) -> Path:
+    def _resolve(self, path: Path | str, *, directory: bool | None = False) -> Path:
         try:
             path = Path(path)
             if not path.is_absolute() or ".." in path.parts or "\0" in str(path):
@@ -56,7 +56,14 @@ class FileGuard:
             resolved = path.resolve(strict=True)
             self._chain(resolved)
             mode = resolved.stat().st_mode
-            if not (stat.S_ISDIR(mode) if directory else stat.S_ISREG(mode)):
+            valid = (
+                stat.S_ISDIR(mode)
+                if directory is True
+                else stat.S_ISREG(mode)
+                if directory is False
+                else stat.S_ISDIR(mode) or stat.S_ISREG(mode)
+            )
+            if not valid:
                 raise Refused("path_permissions")
             return resolved
         except (OSError, ValueError, RuntimeError):
@@ -64,6 +71,10 @@ class FileGuard:
 
     def directory(self, path: Path | str) -> Path:
         return self._resolve(path, directory=True)
+
+    def entry(self, path: Path | str) -> Path:
+        """A protected regular file or directory, for an explicit read-only mount."""
+        return self._resolve(path, directory=None)
 
     def _open(self, path: Path, *, config: bool = False, executable: bool = False) -> int:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)

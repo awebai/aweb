@@ -6,10 +6,10 @@ uses its own signing and encryption keys; it is not an AWID team member.
 The implementation provides the client side of the published
 [S0 protocol](../../../docs/secrets-runner-protocol.md): signed requests,
 assignment verification, HPKE opening and a durable SQLite replay journal.
-Registration and `doctor` are available as commands. The local execution library
-checks job pins and runs host executables with bounded, sanitized output. The
-claim/report loop, OCI runtime and separate-user end-to-end acceptance remain subsequent
-slices of S15b; this package does not yet execute service assignments.
+The `register`, `doctor` and `run` commands support the fixed-selector exec path.
+The worker verifies service assignments, journals them before execution, and
+returns bounded sanitized reports. OCI runtime composition and separate-user
+end-to-end acceptance remain unfinished slices of S15b.
 
 Run registration as the dedicated runner OS user:
 
@@ -170,3 +170,18 @@ uv run mypy src
 The tests consume the public protocol vectors independently of the server and
 exercise real SQLite connections and child processes. Cryptographic operations
 use `cryptography`, including its RFC 9180 HPKE implementation.
+
+OCI preparation separates frozen public inputs from credential opening.
+`RunnerConfig.inputs` rechecks the local config/job/runner pin, validates supplied
+parameters and exact ordered credential labels, then freezes the complete argv,
+known environment values and unknown credential-backed slots. It receives no key
+or plaintext and confers no execution or opening authority. Exec preparation uses
+this same parameter expansion before its existing executable/file checks and
+shared credential decoding; there is no second parameter validator.
+
+For a qualified pinned runc runtime, an absent, empty or credential-derived HOME
+cannot establish exact environment capability before opening and refuses.
+A nonempty HOME supplied by the fixed job literal or a validated frozen parameter
+is preserved, including env-only strings beginning with `-`. This runtime-specific
+capability does not add a universal job/1 HOME requirement or rewrite a pin.
+Actual OCI runtime/mount/lifecycle composition remains guarded.
