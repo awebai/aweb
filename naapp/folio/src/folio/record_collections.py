@@ -39,9 +39,11 @@ def build_collection_page(
     columns = []
     for name, definition in schema.get("properties", {}).items():
         kind = "text"
-        if definition.get("format") == "date":
+        if name == "source_url":
+            kind = "url"
+        elif definition.get("format") == "date":
             kind = "date"
-        elif definition.get("type") == "integer":
+        elif definition.get("type") in {"integer", "number"}:
             kind = "number"
         columns.append({"field": name, "label": definition.get("title", name), "format": kind})
     return {
@@ -49,7 +51,6 @@ def build_collection_page(
         "title": title, "rev": 1, "layout_version": 1,
         "owner": owner, "policy_ref": "folio-team-records",
         "layout": [
-            {"id": "title", "type": "heading", "props": {"level": 1, "text": title}},
             {"id": TABLE_WIDGET_ID, "type": "table", "props": {"columns": columns},
              "bind": {"collection": collection_id, "limit": 50}},
         ],

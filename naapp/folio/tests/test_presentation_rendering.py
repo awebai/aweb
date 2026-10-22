@@ -676,12 +676,6 @@ def test_raw_figure_cannot_inject_non_folio_class() -> None:
     assert "evil-class" not in html
 
 
-def test_repo_has_single_initial_migration() -> None:
-    migrations = sorted((Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations").glob("*.sql"))
-
-    assert [migration.name for migration in migrations] == ["001_initial.sql"]
-
-
 def test_initial_migration_contains_team_scoped_assets_and_themes() -> None:
     migration = (Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations" / "001_initial.sql").read_text()
 

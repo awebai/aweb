@@ -31,6 +31,7 @@ _EXPECTED_TOOLS = {
     "asset-video",
     "asset-get",
     "billing",
+    "collection-define", "record-add", "record-update", "record-delete", "record-query",
 }
 
 # Mutation flag per SoT §9: true iff a successful call is a hosted state change.
@@ -49,6 +50,8 @@ _MUTATIONS = {
     "asset-video": True,
     "asset-get": False,
     "billing": False,
+    "collection-define": True, "record-add": True, "record-update": True,
+    "record-delete": True, "record-query": False,
 }
 
 
@@ -60,8 +63,8 @@ def _manifest_errors(m: dict) -> list[str]:
     """Encode the frozen m1.1 schema rules (app-manifest-schema.md) as checks."""
     errors: list[str] = []
 
-    if m.get("manifest_version") != 1:
-        errors.append("manifest_version must be 1")
+    if m.get("manifest_version") != 2:
+        errors.append("manifest_version must be 2")
 
     app = m.get("app")
     if not isinstance(app, dict):
@@ -222,11 +225,11 @@ def test_committed_manifest_is_canonical_and_matches_source() -> None:
     assert committed == canonical_bytes(json.loads(committed))
 
 
-def test_manifest_conforms_to_m1_1_schema() -> None:
+def test_manifest_conforms_to_v2_schema() -> None:
     assert _manifest_errors(MANIFEST) == []
     assert _manifest_errors(json.loads(MANIFEST_PATH.read_bytes())) == []
 
-    assert MANIFEST["manifest_version"] == 1
+    assert MANIFEST["manifest_version"] == 2
     assert MANIFEST["app"]["id"] == "folio"
     assert MANIFEST["app"]["origin"] == "https://folio.aweb.ai"
 
@@ -250,7 +253,10 @@ def test_manifest_declares_doc_changed_event_and_emit_key() -> None:
     assert doc_changed["default_delivery_intent"] == "wake"
     assert doc_changed["description"]
     # The template declares the kid; deployment configuration supplies its key.
-    assert MANIFEST["event_emitters"] == [{"kid": "folio:emit-1"}]
+    assert MANIFEST["app_keys"] == [
+        {"kid": "folio:emit-1", "purposes": ["app-event"]},
+        {"kid": "folio:grant-read-1", "purposes": ["app-grant-read"]},
+    ]
 
 
 def test_conformance_validator_rejects_host_injecting_paths() -> None:
@@ -301,11 +307,11 @@ def test_interpreted_spec_append_present_asset_image() -> None:
     assert theme_set["mutation"] is True
 
 
-def test_well_known_route_serves_canonical_filled_bytes() -> None:
+def test_v2_discovery_route_serves_canonical_filled_bytes() -> None:
     expected = canonical_bytes(served_manifest("https://folio.aweb.ai"))
 
     # Public discovery doc: no certificate presented, still 200.
-    response = _client().get("/.well-known/aweb-app.json")
+    response = _client().get("/aweb-app.json")
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")

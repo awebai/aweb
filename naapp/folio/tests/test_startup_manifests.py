@@ -1,61 +1,47 @@
-"""Folio starts on the manifest it is deployed with, v1 or v2, and emits with
-the key that manifest declares for app events."""
+"""Records starts on its configured v2 template, using purpose-specific keys."""
 
-from __future__ import annotations
-
+import copy
 import json
-import subprocess
-import sys
-from pathlib import Path
 
+import httpx
 import pytest
-from fastapi.testclient import TestClient
-from manifest_config import TEST_EMIT_DID_KEY
+from aweb_naapp.manifest import canonical_bytes
+from manifest_config import TEST_EMIT_DID_KEY, TEST_EMIT_SEED_HEX, TEST_GRANT_DID_KEY
+from pydantic import SecretStr
+from test_record_runtime import configured
 
 import folio.api as folio_api
-from folio.config import Settings
-
-_GENERATOR = Path(__file__).resolve().parents[3] / "scripts" / "e2e" / "folio_wakes_manifest.py"
-_SEED_HEX = "01" * 32
+from folio.aweb_manifest import MANIFEST
 
 
-def _deployment_manifest(tmp_path: Path, manifest_version: int) -> Path:
-    # The wakes harness's own deployment manifest, generated the way it generates it.
-    out = subprocess.run(
-        [sys.executable, str(_GENERATOR), "0.2.0", "true", str(manifest_version)],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    path = tmp_path / f"aweb-app-v{manifest_version}.json"
-    path.write_text(out.strip(), encoding="utf-8")
-    return path
-
-
-@pytest.mark.parametrize("manifest_version", [1, 2])
-def test_folio_starts_and_serves_a_v1_or_v2_manifest_declaring_its_emit_key(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, manifest_version: int
-) -> None:
-    manifest_path = _deployment_manifest(tmp_path, manifest_version)
-    monkeypatch.setattr(folio_api, "MANIFEST_PATH", manifest_path)
-    monkeypatch.setenv("FOLIO_APP_KEY_FILES", "{}")
-    settings = Settings(
-        _env_file=None,
-        public_origin="http://127.0.0.1:38765",
-        app_events_origin="http://127.0.0.1:38000",
-        app_key_files={},
-        app_emit_kid="folio:emit-test",
-        app_emit_key_seed_hex=_SEED_HEX,
-    )
-
-    response = TestClient(folio_api.create_app(settings)).get("/aweb-app.json")
-
-    assert response.status_code == 200
-    served = json.loads(response.content)
-    assert served["manifest_version"] == manifest_version
-    field = "app_keys" if manifest_version == 2 else "event_emitters"
-    entry = {"kid": "folio:emit-test", "did_key": TEST_EMIT_DID_KEY}
-    if manifest_version == 2:
-        entry["purposes"] = ["app-event"]
-    assert served[field] == [entry]
-    assert served["events"][0]["type"] == "doc.changed"
+@pytest.mark.parametrize("emit_from_seed", [True, False])
+async def test_folio_starts_with_separate_grant_key_and_existing_emit_seed_or_file(
+    monkeypatch, tmp_path, test_db_factory, emit_from_seed,
+):
+    db = await test_db_factory.create_db(suffix="folio_manifest_startup")
+    template = copy.deepcopy(MANIFEST)
+    template["app_keys"][0]["kid"] = "folio:emit-test"
+    path = tmp_path / "aweb-app.json"
+    path.write_bytes(canonical_bytes(template))
+    monkeypatch.setattr(folio_api, "MANIFEST_PATH", path)
+    settings = configured(tmp_path, database_url=db.config.get_dsn(), db_schema=db.config.get_schema(),
+                          public_origin="http://127.0.0.1:38765", app_events_origin="http://127.0.0.1:38000")
+    emit_path = settings.app_key_files.pop("folio:emit-1")
+    if emit_from_seed:
+        settings.app_emit_kid = "folio:emit-test"
+        settings.app_emit_key_seed_hex = SecretStr(TEST_EMIT_SEED_HEX)
+    else:
+        settings.app_key_files["folio:emit-test"] = emit_path
+    app = folio_api.create_app(settings)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=settings.public_origin) as client:
+            response = await client.get("/aweb-app.json")
+            assert response.status_code == 200
+            served = json.loads(response.content)
+            assert served["manifest_version"] == 2
+            assert served["app_keys"] == [
+                {"kid": "folio:emit-test", "did_key": TEST_EMIT_DID_KEY, "purposes": ["app-event"]},
+                {"kid": "folio:grant-read-1", "did_key": TEST_GRANT_DID_KEY, "purposes": ["app-grant-read"]},
+            ]
+            assert served["events"][0]["type"] == "doc.changed"
+            assert (await client.get("/health")).json()["checks"]["database"]["ok"]

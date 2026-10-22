@@ -41,13 +41,15 @@ async def test_store_starts_on_separate_database_and_enforces_real_folio_record_
                                          title=DISCOVERY_TITLE, schema=DISCOVERY_SCHEMA, owner=ACTOR.did_key)
         document["collections"][0]["records"] = [{"id": "row-1", "rev": 1, "value": VALUE}]
         await store.create(SCOPE, ACTOR, document, access=Access(owner=ACTOR.did_key), key="define-1")
-        assert (await store.read(SCOPE, ACTOR))["collections"][0]["records"][0]["value"] == VALUE
+        assert (await store.query_widget(SCOPE, ACTOR, widget_id="records",
+                                        bind={"collection": "discovery"}))["records"][0]["value"] == VALUE
         with pytest.raises(StoreError, match="schema_invalid"):
             await store.patch_record(SCOPE, ACTOR, collection="discovery", record_id="row-1",
                                      expected_rev=1, patch={"date": "2026-02-29"}, key="invalid-date")
         result = await store.read(SCOPE, ACTOR)
         assert result["rev"] == 1
-        assert result["collections"][0]["records"][0]["value"] == VALUE
+        assert (await store.query_widget(SCOPE, ACTOR, widget_id="records",
+                                        bind={"collection": "discovery"}))["records"][0]["value"] == VALUE
     finally:
         await storage.disconnect()
     with pytest.raises(StoreError, match="records_unavailable"):

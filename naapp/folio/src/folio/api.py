@@ -1,9 +1,14 @@
 import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
+from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.runtime.app import NOINDEX_ROBOTS_HEADER, NaappRuntime, mount_naapp_routes
+from aweb_naapp.runtime.authorization import Authorization
+from aweb_naapp.runtime.capability_links import apply_capability_link_migrations
+from aweb_naapp.runtime.installation import apply_installation_migrations
 from aweb_naapp.runtime.team_auth import Principal, record_observed_principal
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
@@ -41,6 +46,8 @@ from folio.presentation import (
     sanitize_layout_tokens,
     theme_contrast_error,
 )
+from folio.record_host import RecordHost
+from folio.record_storage import RecordStorage
 from folio.repository import (
     append_version,
     create_document,
@@ -77,15 +84,32 @@ _MIGRATIONS_DIR = _PACKAGE_DIR / "migrations"
 _USER_CONTENT_PATHS = ("/present/", "/assets/")
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, awid_transport=None, team_server_transport=None) -> FastAPI:
     resolved = settings or get_settings()
+    record_storage = RecordStorage(resolved)
     runtime = NaappRuntime(
         resolved,
         module_name="folio",
         migrations_path=_MIGRATIONS_DIR,
         manifest_path=MANIFEST_PATH,
+        awid_transport=awid_transport,
+        team_server_transport=team_server_transport,
+        stores=(apply_installation_migrations, apply_ratelimit_migrations,
+                apply_capability_link_migrations, record_storage.connect),
     )
-    app = FastAPI(title="folio", version="0.1.0", lifespan=runtime.lifespan)
+    records = RecordHost(runtime, record_storage, team_server_transport=team_server_transport)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        try:
+            async with runtime.lifespan(app):
+                yield
+        finally:
+            await record_storage.disconnect()
+
+    app = FastAPI(title="folio", version="0.1.0", lifespan=lifespan)
+    app.state.folio_runtime = runtime
+    app.state.folio_records = records
 
     def db() -> AsyncDatabaseManager:
         return runtime.db()
@@ -112,6 +136,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         robots_disallow=_USER_CONTENT_PATHS,
         noindex_paths=_USER_CONTENT_PATHS,
     )
+    records.mount(app)
 
     @app.post("/v1/documents", response_model=DocumentResponse)
     async def create_document_route(
@@ -144,10 +169,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/documents", response_model=list[DocumentSummary])
     async def list_documents_route(
-        actor: Annotated[Principal, Depends(principal)],
+        authorization: Annotated[Authorization, Depends(records.guard)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> list[dict]:
-        return await list_documents(database, principal=actor)
+        return (await list_documents(database, principal=authorization.principal)
+                + await records.documents(authorization))
 
     @app.get("/v1/documents/{slug}", response_model=DocumentResponse)
     async def get_document_route(
@@ -201,13 +227,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/v1/present", response_model=PresentationResponse)
     async def create_presentation_route(
         request: Request,
-        actor: Annotated[Principal, Depends(principal)],
+        authorization: Annotated[Authorization, Depends(records.guard)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         payload = CreatePresentationRequest.model_validate(await request.json())
+        structured = await records.present(authorization, payload)
+        if structured is not None:
+            return structured
         return await mint_presentation_link(
             database,
-            principal=actor,
+            principal=authorization.principal,
             settings=resolved,
             slug=payload.slug,
             version=payload.version,
@@ -218,10 +247,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/v1/present/{token}/revoke")
     async def revoke_presentation_route(
         token: str,
-        actor: Annotated[Principal, Depends(principal)],
+        authorization: Annotated[Authorization, Depends(records.guard)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict[str, bool]:
-        await revoke_presentation_link(database, principal=actor, token=token)
+        if token.startswith("lnk_"):
+            await records.revoke(authorization, token)
+        else:
+            await revoke_presentation_link(database, principal=authorization.principal, token=token)
         return {"revoked": True}
 
     def presentation_asset_embeds(allowed_assets: object) -> dict[UUID, dict[str, str]]:

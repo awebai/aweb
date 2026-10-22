@@ -8,13 +8,15 @@ Open source, MIT-licensed — [github.com/awebai/aweb (naapp/folio)](https://git
 
 - AWID team-certificate authentication via `aw id request --team-auth`.
 - Team-scoped append-only documents and versions.
+- Typed collections with revision-conditional record writes, filtering and pagination.
+- Read-only live collection tables in the dashboard Documents view; [tools and examples](docs/records.md).
 - Document-bound, version-pinned presentation links.
 - Server-rendered public presentation pages with sanitized Markdown.
 - Team-scoped safe raster image uploads (`png`, `jpeg`, `gif`, `webp`) embedded with standard Markdown image syntax.
 - Cloudflare Stream-backed video direct uploads and signed playback embeds.
 - Team themes with validated color/font tokens and safe raster logos.
 - Human and agent surfaces: `/`, `/llms.txt`, `/skills/`, `/robots.txt`.
-- A single fresh-DB migration for the schema.
+- Ordered migrations for document and collection discovery metadata.
 
 Planned work adds layout/presentation modes and declarative templates.
 
@@ -29,7 +31,9 @@ The API defaults to `http://127.0.0.1:8765`.
 
 ## Configuration
 
-All runtime env vars use the `FOLIO_` prefix; they are the shared naapp settings (`aweb_naapp.runtime.settings`) plus Folio's own:
+Most runtime env vars use the `FOLIO_` prefix; records also uses the shared
+`AWEB_PAGE_DELETION_DATABASE_URL` and `AWEB_PAGE_RETENTION_POLICY` settings
+([operations](docs/production-operations.md#records-and-live-collection-tables)); they are the shared naapp settings (`aweb_naapp.runtime.settings`) plus Folio's own:
 
 - `FOLIO_DATABASE_URL` — PostgreSQL connection string.
 - `FOLIO_AWID_REGISTRY_URL` — AWID registry URL, default `https://api.awid.ai`.
@@ -42,7 +46,7 @@ All runtime env vars use the `FOLIO_` prefix; they are the shared naapp settings
 - `FOLIO_TIMESTAMP_SKEW_SECONDS` — signed request skew window, default and maximum `300`.
 - `FOLIO_DID_AW_PROFILE` — how a certificate's did:aw is checked against its current registry key, default `observe` (admit and log); `require` refuses a mismatch.
 - `FOLIO_APP_EVENTS_ORIGIN`, `FOLIO_APP_EMIT_KID`, `FOLIO_APP_EMIT_KEY_SEED_HEX` — where and with which declared key Folio emits `folio/doc.changed`. The released seed settings remain supported.
-- `FOLIO_APP_KEY_FILES` — alternative JSON map from declared kids to signing-key files. The template declares `folio:emit-1`; every declared kid needs its key configured, even when outbound event delivery is disabled.
+- `FOLIO_APP_KEY_FILES` — alternative JSON map from declared kids to signing-key files. The v2 template declares `folio:emit-1` (app-event) and the separate `folio:grant-read-1` (app-grant-read); every declared kid needs its key configured, even when outbound event delivery is disabled.
 - `FOLIO_APP_ID` — stable deployment app id, default `folio`. See [production operations](docs/production-operations.md) for manifest filling and install re-pinning.
 - `FOLIO_GIT_SHA` — the build commit `/health` reports when Render does not inject `RENDER_GIT_COMMIT`.
 - `FOLIO_DEFAULT_PRESENT_TTL_SECONDS` — default present-link TTL, default `86400`.

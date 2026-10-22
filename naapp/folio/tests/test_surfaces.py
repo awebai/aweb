@@ -231,7 +231,7 @@ def test_landing_getting_started_is_the_verified_folio_spine() -> None:
         "npm install -g @awebai/aw",
         "aw team admin create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi",
         "aw team admin up",
-        "aw plugin install https://folio.aweb.ai/.well-known/aweb-app.json",
+        "aw plugin install https://folio.aweb.ai",
         'aw folio create --slug pitch --title "Pitch" --body "# Pitch"',
         "aw folio append --slug pitch",
         "aw folio present --slug pitch --ttl_seconds 86400",
@@ -271,9 +271,10 @@ def test_linked_manifest_paths_serve_filled_bytes() -> None:
     client = _client()
     expected = canonical_bytes(served_manifest("https://folio.aweb.ai"))
     # The docs surface links the canonical manifest at /aweb-app.json; the
-    # dispatcher fetches /.well-known/aweb-app.json. Both must serve the exact
-    # filled deployment bytes — nothing the surface links may 404.
-    for path in ("/aweb-app.json", "/.well-known/aweb-app.json"):
+    # v2 catalog advertises the variant; both routes serve exact filled bytes.
+    catalog = client.get("/.well-known/aweb-app-versions.json").json()
+    assert catalog["variants"][0]["manifest_version"] == 2
+    for path in ("/aweb-app.json", catalog["variants"][0]["url"]):
         response = client.get(path)
         assert response.status_code == 200, path
         assert "application/json" in response.headers["content-type"], path

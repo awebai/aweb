@@ -378,7 +378,7 @@ def render_landing_page(*, public_origin: str) -> str:
             <div class="gs-step__body">
               <h3 class="gs-step__title">Install folio</h3>
               <p class="gs-step__what">Adds the folio naapp — its operations become native <code>aw folio</code> verbs.</p>
-              <div class="cmd"><pre>aw plugin install {origin}/.well-known/aweb-app.json</pre>{copy}</div>
+              <div class="cmd"><pre>aw plugin install {origin}</pre>{copy}</div>
             </div>
           </li>
           <li class="gs-step">
@@ -471,7 +471,7 @@ land on the same append-only document before you mint the link.
 1. npm install -g @awebai/aw
 2. aw team admin create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi
 3. aw team admin up
-4. aw plugin install {origin}/.well-known/aweb-app.json
+4. aw plugin install {origin}
 5. aw folio create --slug pitch --title "Pitch" --body "# Pitch"
 6. aw folio append --slug pitch --body "# Pitch — now with traction and the ask"
 7. aw folio present --slug pitch --ttl_seconds 86400
@@ -480,7 +480,7 @@ land on the same append-only document before you mint the link.
 ## How to call it
 
 The canonical form is the native plugin verbs: after
-aw plugin install {origin}/.well-known/aweb-app.json, every operation below is
+aw plugin install {origin}, every operation below is
 aw folio <verb> (e.g. aw folio create, aw folio append, aw folio present). The
 HTTP endpoints below are the same surface; call them directly with
 aw id request --team-auth (the low-level escape hatch) if you are not using the

@@ -130,3 +130,43 @@ hosted MCP offers no Folio tools for that team. Key rotation likewise adds a
 new declared kid beside the old one, yields a new digest, and needs a re-pin.
 These are separately authorized operator actions; a code landing performs none
 of them.
+
+## Records and live collection tables
+
+Before deploying the records build, provision a **separate database** for the
+shared deletion ledger. It must not be the content database under another schema.
+Configure these exact environment names:
+
+- `AWEB_PAGE_DELETION_DATABASE_URL`: the deletion-ledger PostgreSQL DSN.
+- `AWEB_PAGE_RETENTION_POLICY`: JSON with the approved policy below, including
+  its explicit version and legal-exceptions list.
+- `FOLIO_APP_KEY_FILES`: JSON mapping `folio:grant-read-1` to a mounted,
+  owner-readable signing-key file. This key has purpose `app-grant-read` only.
+  It is separate from `folio:emit-1` and its existing emit seed. A missing grant
+  key refuses startup; the emit seed cannot substitute for it.
+
+Juan's approved 2026-10-20 retention values are:
+
+```json
+{"version":"2026-10-20","content_purge_days":7,"audit_content_days":90,"backup_expiry_days":30,"backup_interval_hours":24,"restore_rpo_hours":24,"retry_horizon_days":30,"encrypted_backups":true,"legal_exceptions":[]}
+```
+
+The runtime applies the shared stores' migrations before serving requests, starts
+restore fencing and runs retention maintenance. Missing ledger configuration
+leaves record operations unavailable; a missing retention policy prevents content
+writes. Backups must satisfy the configured encrypted-backup, expiry and RPO
+requirements; the policy declaration alone does not provision them.
+
+Records uses manifest v2. Install by the app origin so discovery follows
+`/.well-known/aweb-app-versions.json` to `/manifests/v2.json`; `/aweb-app.json`
+serves the same filled bytes. There is no v1 document at the legacy well-known
+path. The records tools and grant key change the manifest digest, so coordinate
+an immediate pin update for every existing install after the separately approved
+deploy. Existing agent identities remain unchanged.
+
+The coordination server must supply a real installation ID and generation (F6).
+Folio refuses a missing identity; it never allocates either value. The shared
+TeamGrantSource uses Folio's filled manifest digest and the runtime's one
+TeamServerDirectory. Records traffic must not be enabled ahead of that server
+cutover. No deploy, key provisioning or install update is performed by landing
+this code.
