@@ -202,6 +202,15 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(empty, ".aw")); !os.IsNotExist(err) {
 		t.Fatal("empty instance gained principal state")
 	}
+
+	// JSON output distinguishes installed discovery from approval removal.
+	var removed pluginRemoveOutput
+	if err := os.Remove(executable); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(invoke(empty, homes[0], "", "plugin", "remove", "testapp"), &removed); err != nil || !removed.ApprovalRemoved {
+		t.Fatalf("remove receipt: %v", err)
+	}
 	t.Run("stalled_resolution", func(t *testing.T) {
 		// A real TCP listener accepts discovery requests but never answers them.
 		// One advisory deadline must cover every candidate, not restart per probe.
@@ -227,7 +236,13 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 			ActiveGrants    *int   `json:"active_grants"`
 			GrantCheckError string `json:"grant_check_error"`
 		}
-		out := invoke(empty, filepath.Join(parent, ".aw"), "", "plugin", "install", server.URL)
+		command := exec.CommandContext(ctx, bin, "--identity-home", filepath.Join(parent, ".aw"), "--json", "plugin", "install", server.URL)
+		command.Dir = empty
+		command.Env = append(os.Environ(), "AW_NO_UPDATE_CHECK=1")
+		out, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("install during stalled discovery: %v %s", err, out)
+		}
 		if err := json.Unmarshal(out, &receipt); err != nil || !receipt.Approved || receipt.ActiveGrants != nil || receipt.GrantCheckError != "unavailable" {
 			t.Fatalf("stalled advisory must retain successful install with unknown count: %s (%v)", out, err)
 		}
@@ -235,12 +250,4 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 			t.Fatalf("advisory restarted its budget across %d discovery probes; want one", probes.Load())
 		}
 	})
-	// JSON output distinguishes installed discovery from approval removal.
-	var removed pluginRemoveOutput
-	if err := os.Remove(executable); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(invoke(empty, homes[0], "", "plugin", "remove", "testapp"), &removed); err != nil || !removed.ApprovalRemoved {
-		t.Fatalf("remove receipt: %v", err)
-	}
 }
