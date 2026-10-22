@@ -111,6 +111,8 @@ class ApprovalStore(Protocol):
         self, approval_id: str, tx: TransactionManager | None
     ) -> AbstractAsyncContextManager[LockedApproval]: ...
 
+    async def lock_many(self, approval_ids: Sequence[str], tx: TransactionManager) -> None: ...
+
     async def revoke_many(
         self, approval_ids: Sequence[str], at: datetime, tx: TransactionManager
     ) -> list[Approval]: ...
@@ -461,11 +463,20 @@ class PgApprovalStore:
                 )
             yield _PgLockedApproval(t, approval)
 
+    async def lock_many(self, approval_ids: Sequence[str], tx: TransactionManager) -> None:
+        """Hold existing approval rows in ID order until the caller's transaction ends."""
+        await tx.fetch_all(
+            "SELECT approval_id FROM {{tables.approvals}} "
+            "WHERE approval_id = ANY($1::text[]) ORDER BY approval_id FOR UPDATE",
+            list(approval_ids),
+        )
+
     async def revoke_many(
         self, approval_ids: Sequence[str], at: datetime, tx: TransactionManager
     ) -> list[Approval]:
         """Revoke those of the given approvals that are still pending or approved,
         and stop the transport retry of those consumed but never sent."""
+        await self.lock_many(approval_ids, tx)
         return await self._revoke_live(tx, "approval_id = ANY($1::text[])", list(approval_ids), at)
 
     async def retire_candidate(

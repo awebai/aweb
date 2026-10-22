@@ -169,6 +169,11 @@ actor and page. Conflicts retain drafts and display an explicit recovery choice;
 no silent retry overwrites another revision. `clear` discards drafts and content.
 No browser storage is used to share drafts across actors.
 
+Capability-link hosts use the separate shared
+[browser link client](page-link-client.md) for exchange and signed HTTP
+transport. Compose it into `host.read`/`host.invoke`; keep its closure outside
+page JSON and clear it together with the renderer on authority changes.
+
 ## Local fixture gallery and browser tests
 
 From the repository's `naapp-lib` directory:
@@ -203,6 +208,15 @@ currency, and `decision-options`, `decision-missing-field` and
 `decision-missing-currency` expose refusal states. Full application authorization
 and decision persistence are tested by their owners through the real Folio
 stack, rather than simulated by this gallery.
+
+`?case=table-urls` shows table `url` columns with a normalized HTTPS host,
+long accepted and refused URLs, and the ordinary host-owned confirmation.
+`?case=table-urls&paged=1` exercises independent projection paging; `Alt+u`
+refreshes the page revision. A URL cell uses the same `safeLink` and private
+`pageLink` handler as Markdown and `link_out`: its full destination is accessible
+text, with no native navigation attribute under the page. Refused strings remain
+inert original text. Producers must upgrade both validator and renderer before
+emitting the additive `url` format; use `text` for older consumers.
 
 `?case=authored-language` is a synthetic Catalan authored-content fixture:
 the page title, paragraph and long form label/description use the page language,
