@@ -6,9 +6,11 @@ one, alters a response only after the real handler produced it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from dataclasses import replace
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -229,6 +231,117 @@ async def test_history_team_lookup_refusals_map_to_distinct_outcomes(registry, t
         await cache.get(TEAM_ID, "target")
     assert caught.value.status_code == expected
     assert not cache._cache
+
+
+@pytest.fixture
+def history_clock(monkeypatch):
+    clock = [time.monotonic()]
+    # Replace this module's clock reference, leaving asyncio/AWID clocks alone.
+    monkeypatch.setattr(
+        "aweb_naapp.runtime.team_auth.time", SimpleNamespace(monotonic=lambda: clock[0])
+    )
+    return clock
+
+
+def team_lookups(registry, team_name="backend"):
+    return [r for r in registry.transport.calls if r.url.path.endswith("/teams/" + team_name)]
+
+
+async def test_history_new_member_refreshes_before_the_cached_team_expires(registry, team, history_clock):
+    cache = history_cache(registry)
+    newcomer = Member(
+        team_id=TEAM_ID, team_key=team.team_key, certificate_id="new-member", alias="new-member"
+    )
+    async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
+        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
+        old_facts = cache._cache[TEAM_ID]
+        await registry.add_certificate(newcomer.certificate())
+        history_clock[0] += 1
+        responses = await asyncio.gather(
+            *(client.get("/v1/items", headers=get_items(newcomer)) for _ in range(8))
+        )
+        assert all(response.status_code == 200 for response in responses), [
+            response.text for response in responses
+        ]
+        assert all(response.json()["certificate_id"] == newcomer.certificate_id for response in responses)
+    facts = cache._cache[TEAM_ID]
+    assert facts is not old_facts and newcomer.certificate_id in facts.published_certificate_ids
+    assert len(team_lookups(registry)) == 2
+    proof = await cache.check_current_member(
+        TEAM_ID, certificate_id=newcomer.certificate_id, team_did_key=newcomer.team_did_key
+    )
+    assert proof.checked_at == facts.fetched_at == history_clock[0]
+    assert proof.fresh_until == facts.expires_at == history_clock[0] + 60
+    assert proof.fresh_until != old_facts.expires_at
+    assert len(team_lookups(registry)) == 2
+
+
+@pytest.mark.parametrize("warm", [False, True])
+async def test_history_unknown_id_flood_coalesces_one_refresh_per_window(registry, team, history_clock, warm):
+    cache = history_cache(registry)
+    ghosts = [
+        Member(team_id=TEAM_ID, team_key=team.team_key, certificate_id=f"unknown-{i}", alias=f"unknown-{i}")
+        for i in range(16)
+    ]
+    async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
+        if warm:
+            assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
+        initial_loads = int(warm)
+        responses = await asyncio.gather(
+            *(client.get("/v1/items", headers=get_items(member)) for member in ghosts)
+        )
+        assert all(response.status_code == 401 for response in responses)
+        assert len(team_lookups(registry)) == initial_loads + 1  # At most one lookup for the unknown wave.
+        history_clock[0] += 4
+        assert (await client.get("/v1/items", headers=get_items(ghosts[0]))).status_code == 401
+        assert len(team_lookups(registry)) == initial_loads + 1
+        history_clock[0] += 1
+        responses = await asyncio.gather(
+            *(client.get("/v1/items", headers=get_items(member)) for member in ghosts)
+        )
+        assert all(response.status_code == 401 for response in responses)
+        assert len(team_lookups(registry)) == initial_loads + 2
+        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
+        assert len(team_lookups(registry)) == initial_loads + 2
+
+
+async def test_history_unknown_refresh_limit_is_per_team(registry, team, history_clock):
+    cache = history_cache(registry)
+    other = Member(team_id="other:example.com", certificate_id="other-target", alias="other")
+    await registry.add_team(other.team_id, other.team_did_key)
+    await registry.add_certificate(other.certificate())
+    await cache.get(TEAM_ID, team.certificate_id)
+    await cache.get(other.team_id, other.certificate_id)
+    await cache.get(TEAM_ID, "unknown")
+    await cache.get(other.team_id, "also-unknown")
+    assert len(team_lookups(registry)) == 2
+    assert len(team_lookups(registry, "other")) == 2
+
+
+async def test_history_unknown_refresh_failure_never_authorizes_or_renews_old_facts(registry, team, history_clock):
+    cache = history_cache(registry)
+    old_facts = await cache.get(TEAM_ID, team.certificate_id)
+    history_clock[0] += 1
+
+    def fault(request, response):
+        if request.url.path.endswith("/teams/backend"):
+            response.status_code = 503
+
+    registry.transport.fault = fault
+    with pytest.raises(HTTPException) as refused:
+        await cache.check_current_member(
+            TEAM_ID, certificate_id="unknown", team_did_key=team.team_did_key
+        )
+    assert refused.value.status_code == 503
+    assert cache._cache[TEAM_ID] is old_facts
+    assert old_facts.expires_at == old_facts.fetched_at + 60
+    # Previously known members keep only the original accepted TTL.
+    assert await cache.get(TEAM_ID, team.certificate_id) is old_facts
+    history_clock[0] = old_facts.expires_at + 1
+    with pytest.raises(HTTPException) as refused:
+        await cache.get(TEAM_ID, team.certificate_id)
+    assert refused.value.status_code == 503
+    assert cache._cache[TEAM_ID] is old_facts
 
 
 # --- Anonymous certificate-status path ---------------------------------------------
