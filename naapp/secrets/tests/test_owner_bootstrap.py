@@ -43,6 +43,7 @@ from nacl.signing import SigningKey
 
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_policy import apply_change_policy_migrations, require_four_eyes
+from aweb_secrets.change_sets import apply_change_set_migrations
 from aweb_secrets.console import OwnerConsole
 from aweb_secrets.owners import (
     OWNER_ROLE,
@@ -52,6 +53,7 @@ from aweb_secrets.owners import (
     is_owner_scope,
     owner_scope,
 )
+from aweb_secrets.passkey_context import PasskeyContexts
 from aweb_secrets.revisions import apply_revision_migrations
 from tests.test_change_sets import Installations
 from tests.test_owner_directory import ORIGIN, Audit, Contacts
@@ -107,11 +109,13 @@ async def world(test_db_factory) -> AsyncIterator[World]:
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
         owner_scopes=is_owner_scope,
+        proof_context=PasskeyContexts(app_id=APP_ID),
     )
     await passkeys.migrate()
     await apply_roles_migrations(db)
     await apply_owner_act_migrations(db)
     await apply_owner_migrations(db)
+    await apply_change_set_migrations(db)
     await apply_installation_migrations(db)
     await apply_change_policy_migrations(db)
     await apply_revision_migrations(db)
