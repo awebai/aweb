@@ -266,8 +266,9 @@ ROOT_CONSUMERS = {
         'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',
     ),
     PurePosixPath("naapp/secrets/tests/test_runner_protocol_vectors.py"): _consumer(
-        "secrets-runner-protocol-v1.json",
+        {"secrets-runner-protocol-v1.json", "secrets-runner-http-v1.json"},
         '(Path(__file__).parents[3] / "docs" / "vectors" / "secrets-runner-protocol-v1.json")',
+        '(Path(__file__).parents[3] / "docs" / "vectors" / "secrets-runner-http-v1.json")',
     ),
     PurePosixPath("naapp/secrets/tests/test_runner_server_protocol.py"): _consumer(
         "secrets-runner-protocol-v1.json",
