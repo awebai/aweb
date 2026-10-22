@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 46
+`docs/vectors/*.json` is the only public protocol-vector authority for the
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the two classified
 package copies below. An unclassified hand-maintained copy is forbidden even when
@@ -383,13 +383,28 @@ Ingress separation is the required `type` at every route. Athena and the
 protocol reviewer ACKed these bytes at `4502edac0` before either side
 implemented them; changing them needs a new version.
 
+### `passkey-evidence-v1.json`
+
+Decision 84's retained assertion, frozen context, exact framed SHA-256 input
+and commitment of [the public hook contract](../hook-events.md#passkey-evidence-commitments-and-console-actors).
+Real ES256 login/approval assertions have public COSE keys and independent
+fixture trust anchors; private keys existed only in generator memory and are
+not retained. Cases cover raw client-data bytes, B2 domain/wrapper hashing,
+null task-answer challenge fields, UTF-8 scope, UTC microseconds and the
+identity-free console actor with a different affected subject. Single-fault
+cases reject missing/substituted proof/key/context, changed request/policy,
+reserialization, counters and commitments. The independent Python reader is
+`naapp-lib/tests/hooks/test_passkey_evidence_vector.py`. Verification needs no
+live service or commitment secret. B3's real retention transaction, shared
+helper and lifecycle/deletion proofs remain implementation obligations.
+
 ### `hook-catalog-v1.json`
 
 The `aweb.hooks` catalog, version 1 (aweb-acgh.16.1; contract in
 [`hook-events.md`](../hook-events.md)). It names the five hooks with their
 firing class, producer kinds, audit-critical rule and precedence. It holds each
 hook's flat payload allowlist: value types with patterns and bounds, required
-fields, enums (including the 32 `post-secret-use-hook` refusal codes), the
+fields, enums (including the 33 `post-secret-use-hook` refusal codes), the
 conditional rules, each `post-governance-hook` act's fixed direction, every
 `post-mutation-hook` type with its own fields, and the `post-command-hook`
 command classes with their local effects. Positive cases validate. Each
@@ -399,9 +414,21 @@ reference, a rule violation, a direction that differs from the catalog's, and an
 effect outside its command class. A payload that this file may not hold, such
 as a float, is given as JSON text in `payload_json`. The strict reader in
 `aweb_naapp.hooks.catalog` refuses the whole file on any unknown key, duplicate
-key, float or unresolved reference. Any payload change, including an addition,
-is a new catalog version. secrets' `test_hook_actions_vector.py` checks its
-transition-to-action table against it.
+key, float or unresolved reference. Once a deployed hook producer or consumer
+exists, a payload change, including an addition, requires a new catalog version
+and explicit consumer updates. Until that first deployment, pre-release shapes
+are re-frozen in place (decisions 44, 73 and 93), without parallel compatibility
+versions. Published library code alone does not establish a deployed hook
+producer or consumer. The deployment condition must be verified before an
+in-place re-freeze. secrets' `test_hook_actions_vector.py` checks its
+transition-to-action table against the catalog.
+
+Decision 92 adds catalog cases for the exclusive non-widening
+`resource.version_observed` / `backend_observation` mapping, its required opaque
+refs and fixed reason, and rejection of invented owner/passkey evidence, other
+acts using observation authority, raw values and provider versions. Invalid
+observed shape and an unresolved reference have pre-S3 refusal examples;
+post-fence `not_sent` retains its existing prohibition on `refusal_code`.
 
 Decision 73 deliberately re-freezes the pre-deployment secret-use shape in
 place: `request_sha256` and `params_sha256` have HMAC-SHA-256 meaning, and
@@ -701,3 +728,35 @@ npm test
 
 A vector change is incomplete until every listed consumer for that fixture
 passes and the lifecycle label above still describes what the bytes prove.
+
+## Human-channel P0 freeze candidate
+
+- `human-channels-profile-v1.json` — exact new DTO grammar/capability registry;
+  not an advertised service feature. Python/Go compiled grammar is checked against
+  this authority.
+- `human-channels-v1.json` — shared structural canonical bytes, digest/signature
+  and refusal vectors with a public synthetic key. These do not establish actual
+  owner, recipient, membership or custody authority.
+
+The [P0 contract](../human-channels-contract-v1.md) fixes the public embedding
+ports and signature boundary. X-E2/X-GF encrypted re-share/federation annexes
+remain refused until exact-SHA Athena review; current native fixtures are unchanged.
+
+`human-channels-e2ee-spike.json` is an **unfrozen** X-E2 laboratory fixture, consumed by `server/tests/test_human_channels_e2ee_spike.py` and `cli/go/awid/human_channels_e2ee_spike_test.go`. It enables no profile.
+
+## Human-channel presence verification
+
+`human-channels-presence-v1.json` supplies P8's exact native/binding approval
+signatures, verified DTOs and refusal neighbors. Python and Go read the root
+bytes directly. The embedded contexts are **trusted test authority facts**, not
+a public request/context wire format; consumers must build those facts from
+independent authenticated current sources. No P0/native fixture is rewritten.
+
+## Human-channel participant identity readiness
+
+`human-channels-participants-v1.json` is shared by Python and Go participant
+helpers. Its synthetic **private** adapter inputs test session-pairwise HMAC
+derivation; they are never message/provenance fields. Author projections test
+exact session/subject/signer binding and external/untrusted guest assurance.
+They assume independently verified signer facts and do not authorize membership
+or activate managed chat. See [P3 readiness](../human-channels-participants.md).
