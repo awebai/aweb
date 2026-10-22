@@ -150,7 +150,7 @@ wheels = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "../../naapp-lib" }
 
 [package.optional-dependencies]
@@ -220,7 +220,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp-testing"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "../../naapp-lib/testing" }
 dependencies = [
     { name = "aiosmtpd" },
@@ -243,7 +243,7 @@ requires-dist = [
 
 [[package]]
 name = "awid-service"
-version = "0.5.30"
+version = "0.5.31"
 source = { editable = "../../awid" }
 dependencies = [
     { name = "base58" },
