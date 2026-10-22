@@ -10,6 +10,7 @@ from .execution import execute
 from .http import RunnerHTTP
 from .jobs import CredentialInput, RunnerConfig
 from .journal import Journal
+from .oci_recovery import recover
 from .protocol import canonical, timestamp, verify_assignment
 from .state import Identity, IdentityStore
 
@@ -121,6 +122,11 @@ async def run(config_file: Path, state_dir: Path, *, ca_file: Path | None = None
 
         loop.add_signal_handler(signal.SIGTERM, terminate)
         try:
+            runtime = config.runtime()
+            if runtime is not None:
+                # Reconcile only local leftovers, before any service contact or
+                # report/claim. Never rearm the independent acceptance journal.
+                await recover(runtime)
             async with RunnerHTTP(identity, ca_file=ca_file) as client:
                 await Worker(identity, config, journal, client).serve()
         except asyncio.CancelledError:

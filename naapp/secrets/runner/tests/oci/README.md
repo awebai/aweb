@@ -176,9 +176,13 @@ config.json on tmpfs; treat it as sensitive until reconciled. Locate retained
 job-* directories only under the configured private workspace, and do not print
 or copy their contents. Never delete journal state as a recovery step.
 
-This recovery library is not yet wired into startup. Operator configuration,
-worker composition and dedicated-user S19 acceptance remain activation
-requirements.
+The `run` command invokes recovery under its lifetime worker lock and signal
+handler, before constructing the outbound transport. The native startup cases
+observe the first real TCP connection, retained pending reports/replay protection,
+refusal without contact for uncertain/active state, and cleanup of a real crashed
+container. The observer does not complete TLS or provide assignment authority;
+existing worker TLS cases cover authenticated traffic. OCI assignment execution
+and dedicated-user S19 acceptance remain guarded.
 
 ## Independent job deadline
 
@@ -210,4 +214,4 @@ The parent's capture has 125 seconds of extra control/cleanup allowance for the
 existing two 60-second bounded runtime control commands. This is not an extra
 job budget: the independent watchdog receives and enforces the original timeout
 unchanged. A missing or changed interpreter pin refuses before HPKE. Production
-worker/operator wiring and separate-user S19 acceptance remain guarded.
+assignment execution and separate-user S19 acceptance remain guarded.

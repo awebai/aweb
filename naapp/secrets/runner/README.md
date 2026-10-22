@@ -123,8 +123,13 @@ uv run aweb-secrets-runner run --config /absolute/runner-config.json \
 
 An explicit operator CA can be supplied with `--ca-file /absolute/ca.pem`.
 Startup performs the local preflight and holds a private process lock; another
-worker using the same state refuses with `runner_busy`. Pending saved reports
-are sent before any claim, including after restart. Assignment verification and
+worker using the same state refuses with `runner_busy`. When an OCI runtime is
+configured, startup recovers its local workspace before constructing the outbound
+transport. It stops known containers and removes only safely stopped owned trees;
+uncertain work refuses startup and retains its sensitive transient state for
+operator reconciliation. Recovery never changes journal/identity records, acks a
+report or reruns an accepted assignment. Pending saved reports are sent before
+any claim, including after restart. Assignment verification and
 durable replay acceptance precede local checks, HPKE opening and execution.
 The execution library samples expiry again after local checks. A completed
 process's sanitized report is saved before its first send and cleared only
@@ -224,7 +229,7 @@ content, parameters and exact environment capability are checked during the
 per-assignment preparation. Configured paths and pins are re-read through the
 same protected configuration; changing them requires an explicit worker restart.
 
-This configuration/preflight slice keeps production OCI execution guarded.
-Adding `runtime` does not activate it. Startup recovery, worker composition and
-the real separate-user release journey remain required. Exec-only installations
-can omit `runtime` and keep their existing checks.
+Production OCI execution remains guarded. Adding `runtime` enables local
+preflight and startup recovery, without activating OCI assignment execution.
+Worker composition and the real separate-user release journey remain required.
+Exec-only installations can omit `runtime` and keep their existing checks.
