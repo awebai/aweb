@@ -41,16 +41,25 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	}))
 	defer server.Close()
 	body.Store([]byte(appTestManifest(server.URL, "/v1/things/{thing_id}")))
+	installation := installationWireFixture(t, func() []byte { return body.Load().([]byte) })
+	coordination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) || installation(w, r) {
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer coordination.Close()
 	writeResident := func(parent, scope string) string {
 		t.Helper()
 		pub, key, err := awid.GenerateKeypair()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(parent), key); err != nil {
-			t.Fatal(err)
-		}
-		writeIdentityForTest(t, parent, awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(pub), StableID: awid.ComputeStableID(pub), Custody: awid.CustodySelf, IdentityScope: scope})
+		writeSelectionFixtureForTest(t, parent, testSelectionFixture{
+			AwebURL: coordination.URL, TeamID: "approvals:example.test", Alias: "alice", WorkspaceID: "fixture",
+			DID: awid.ComputeDIDKey(pub), StableID: awid.ComputeStableID(pub), Custody: awid.CustodySelf,
+			IdentityScope: scope, SigningKey: key,
+		})
 		return filepath.Join(parent, ".aw")
 	}
 	homes := []string{}
@@ -146,10 +155,14 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	invoke(empty, homes[0], "", "plugin", "install", server.URL) // explicit reinstall reapproves
 	// A reinstall at another origin that fails to register leaves the
 	// approved origin as it was, so later updates still work.
-	withEvents := strings.TrimSuffix(appTestManifest(server.URL, "/v1/things/{thing_id}"), "}") +
-		`,"events":[{"type":"thing.changed","default_delivery_intent":"wake"}]}`
-	body.Store([]byte(withEvents))
-	invoke(empty, homes[0], "app events require a resident connected to a team", "plugin", "install", server.URL, "--dev-origin", "http://127.0.0.1:1")
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
+		_, _ = w.Write([]byte(appTestManifest(serverOriginForTest(r), "/v1/things/{thing_id}")))
+	}))
+	defer other.Close()
+	invoke(empty, homes[0], "app_origin_conflict", "plugin", "install", other.URL)
 	if cat, err := loadAppApprovals(homes[0]); err != nil || cat.Apps["testapp"] != server.URL {
 		t.Fatalf("refused install changed the approved origin: %v %v", cat.Apps, err)
 	}
