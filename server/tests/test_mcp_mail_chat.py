@@ -2859,6 +2859,8 @@ async def test_mcp_contacts_accept_equivalent_identity_owner_did(aweb_cloud_db, 
         # Open recipients return at messages.py:202 before any contact logic, so the
         # fix cannot reach them. Free to assert from this fixture, so asserted.
         ("global_open", "global", "did:aw:bob", "open", False, True),
+        ("strict_revoked", "global", "did:aw:bob", "contacts_only", False, False),
+        ("strict_contact", "global", "did:aw:bob", "contacts_only", True, True),
     ],
 )
 async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
@@ -3107,3 +3109,57 @@ async def test_mcp_chat_send_accepts_a_participant_row_keyed_by_the_callers_did_
         "the caller's own did:aw participant row was rejected on the trusted-proxy path"
     )
     assert result["delivered"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("mode,contact,allowed", [
+    ("contacts_only", False, False),
+    ("contacts_only", True, True),
+    ("team_and_contacts", False, True),
+])
+async def test_mcp_same_team_contacts_only(aweb_cloud_db, monkeypatch, kind, mode, contact, allowed):
+    manager = aweb_cloud_db.aweb_db
+    alice_id, bob_id = uuid4(), uuid4()
+    key, public = generate_keypair()
+    did = did_from_public_key(public)
+    await _insert_mcp_chat_agents(manager, team_id="ops:acme.com", alice_agent_id=alice_id, bob_agent_id=bob_id, alice_did=did)
+    await manager.execute("UPDATE {{tables.agents}} SET inbound_mode=$1 WHERE agent_id=$2", mode, bob_id)
+    if contact:
+        await manager.execute("""
+            INSERT INTO {{tables.contacts}} (
+                owner_did, contact_address, contact_did_aw, binding_controller_did, binding_accepted_at
+            ) VALUES ('did:aw:bob', 'acme.com/alice', 'did:aw:alice', 'did:key:z6MkTeam', clock_timestamp())
+        """)
+    auth = AuthContext(team_id="ops:acme.com", agent_id=str(alice_id), workspace_id=str(uuid4()),
+                       alias="alice", did_key=did, did_aw="did:aw:alice", address="acme.com/alice", trusted_proxy=True)
+    tools = mail_tools if kind == "mail" else chat_tools
+    monkeypatch.setattr(tools, "get_auth", lambda: auth)
+
+    async def signer(**kwargs):
+        payload = canonical_signed_payload(kwargs["payload"])
+        return HostedMessageSigningResult(from_did=did, signature=sign_message(key, payload.encode()),
+                                          signed_payload=payload, signing_key_id=did)
+
+    if kind == "mail":
+        raw = await mail_tools.send_mail(DBInfra(manager), registry_client=None, hosted_signer=signer,
+                                         plaintext=True, to="bob", body="contact policy")
+    else:
+        raw = await chat_tools.chat_send(DBInfra(manager), redis=None, registry_client=None, hosted_signer=signer,
+                                         plaintext=True, to_alias="bob", message="contact policy")
+    result = json.loads(raw)
+    if allowed:
+        assert "error" not in result, result
+    else:
+        assert result == {"error": "Recipient only accepts messages from exact active contacts"}
+
+    if allowed and kind == "chat" and mode == "contacts_only":
+        continuation_args = dict(redis=None, registry_client=None, hosted_signer=signer,
+                                 plaintext=True, session_id=result["session_id"], message="still a contact")
+        active = json.loads(await chat_tools.chat_send(DBInfra(manager), **continuation_args))
+        assert "error" not in active, active
+        before = await manager.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}")
+        await manager.execute("DELETE FROM {{tables.contacts}} WHERE owner_did='did:aw:bob'")
+        removed = json.loads(await chat_tools.chat_send(DBInfra(manager), **continuation_args))
+        assert removed == {"error": "Recipient only accepts messages from exact active contacts"}
+        assert await manager.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}") == before

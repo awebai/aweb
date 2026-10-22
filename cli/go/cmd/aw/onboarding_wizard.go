@@ -49,7 +49,7 @@ type guidedOnboardingRequest struct {
 	AgentType   string
 	Role        string
 	Global      bool
-	// InboundMode is the canonical wire form ("" | "open" | "team_and_contacts")
+	// InboundMode is the canonical wire form ("" | "open" | "team_and_contacts" | "contacts_only")
 	// chosen at the CLI by --inbound-mode. Only meaningful when
 	// Global is true. Forwarded to whichever creation endpoint
 	// the wizard ends up calling.

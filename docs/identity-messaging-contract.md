@@ -53,6 +53,10 @@ Global recipients expose an explicit delivery-time `inbound_mode`:
 - `team_and_contacts`: after the same route and identity validation, accept
   verified same-team members or an exact active identity contact for the
   verified sender address. User-facing label: **Team and contacts**.
+- `contacts_only`: after the same route and identity validation, accept only an
+  exact active identity contact bound to the recipient, verified sender address,
+  and sender `did:aw`. Verified team membership does not authorize delivery.
+  User-facing label: **Contacts only**.
 
 Rows without an explicit `inbound_mode` require migration and must fail with an
 explicit migration-required diagnostic rather than silently widening to open.
@@ -213,7 +217,8 @@ those effects back and permits retry. The transaction also commits one durable
 is at-least-once across a crash after Redis accepts but before PostgreSQL records
 `delivered_at`.
 
-For `team_and_contacts`, a non-team sender is authorized only by an exact active
+For `contacts_only`, every sender (including a verified teammate), and for
+`team_and_contacts`, every non-team sender, is authorized only by an exact active
 contact bound to the recipient identity, canonical sender address, and sender
 `did:aw`. Address-only legacy contacts are migration-required and inert for
 cross-registry authorization until their owner explicitly binds them by exact
@@ -264,7 +269,7 @@ and `correlation_id`; only rate limiting emits `Retry-After: 1`.
   AWID as private address-read authority.
 - Do not treat address reachability, `visible_to_team_id`, contact membership,
   or conversation ID as routing authority. Contacts authorize only the explicit
-  delivery-time `team_and_contacts`/local-contact gate and never create a
+  delivery-time `team_and_contacts`/`contacts_only`/local-contact gate and never create a
   route. Verified team membership also authorizes `team_and_contacts`, but does
   not create routes.
 - Do not use stale cache entries as evidence for a recipient binding.

@@ -18,6 +18,7 @@ from awid.federation_errors import FederationAuthorityError
 from pgdbm.errors import AsyncDBError
 from awid.signing import canonical_json_bytes
 
+from aweb.inbound_modes import INBOUND_MODES
 from aweb.e2ee_messages import encrypted_message_storage_metadata
 from aweb.federation.authority_state import AuthoritySecurityToken
 from aweb.federation.envelope import FederationEnvelope
@@ -334,13 +335,13 @@ async def _authorize_policy(
     recipient_global = _is_global_recipient(recipient)
     if recipient_global and mode == "open":
         return
-    if recipient_global and mode not in {"team_and_contacts", "contacts_only"}:
+    if recipient_global and mode not in INBOUND_MODES:
         raise FederationAuthorityError("recipient_policy_rejected")
     if not recipient_global and stored_route_continuation:
         return
 
     recipient_team = str(recipient.get("team_id") or "").strip()
-    if recipient_team:
+    if recipient_team and not (recipient_global and mode == "contacts_only"):
         same_team = await tx.fetch_one(
             """
             SELECT agent_id FROM {{tables.agents}}

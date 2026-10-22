@@ -8,6 +8,12 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
+from aweb.inbound_modes import (
+    INBOUND_MODE_CONTACTS_ONLY,
+    INBOUND_MODE_OPEN,
+    INBOUND_MODE_TEAM_AND_CONTACTS,
+    INBOUND_MODES,
+)
 from aweb.messaging.contacts import has_exact_active_identity_contact, normalize_owner_dids
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
 
@@ -115,12 +121,6 @@ async def policy_rows_for_participant(db, participant: dict) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-INBOUND_MODE_OPEN = "open"
-INBOUND_MODE_TEAM_AND_CONTACTS = "team_and_contacts"
-INBOUND_MODE_CONTACTS_ONLY_LEGACY = "contacts_only"
-INBOUND_MODES = {INBOUND_MODE_OPEN, INBOUND_MODE_TEAM_AND_CONTACTS}
-
-
 def _is_global_recipient(recipient_agent: dict) -> bool:
     return (
         recipient_agent.get("identity_scope") == "global"
@@ -131,8 +131,6 @@ def _is_global_recipient(recipient_agent: dict) -> bool:
 
 def _effective_inbound_mode(recipient_agent: dict) -> str:
     mode = str(recipient_agent.get("inbound_mode") or "").strip().lower()
-    if mode == INBOUND_MODE_CONTACTS_ONLY_LEGACY:
-        return INBOUND_MODE_TEAM_AND_CONTACTS
     if mode in INBOUND_MODES:
         return mode
 
@@ -241,7 +239,7 @@ async def authorize_message_delivery(
         mode = _effective_inbound_mode(recipient_agent)
         if mode == INBOUND_MODE_OPEN:
             return
-        if await _has_verified_same_team_membership(
+        if mode == INBOUND_MODE_TEAM_AND_CONTACTS and await _has_verified_same_team_membership(
             db,
             recipient_agent=recipient_agent,
             sender_verified_team_id=sender_verified_team_id,
@@ -255,6 +253,8 @@ async def authorize_message_delivery(
             sender_did=sender_stable_did,
         ):
             return
+        if mode == INBOUND_MODE_CONTACTS_ONLY:
+            raise ForbiddenError("Recipient only accepts messages from exact active contacts")
         raise ForbiddenError("Recipient only accepts messages from verified team members or exact active contacts")
 
     if stored_route_continuation:

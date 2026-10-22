@@ -871,3 +871,79 @@ async def test_concurrent_outbox_workers_deliver_a_committed_event_once(aweb_clo
     assert calls == 1
     release.set()
     assert sum(await asyncio.gather(first, second)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("same_team", [False, True])
+async def test_phase_b_contacts_only_requires_exact_active_contact(aweb_cloud_db, kind, same_team):
+    manager = aweb_cloud_db.aweb_db
+    envelope = _envelope(kind=kind)
+    recipient, token = await _seed_recipient_and_authority(manager, envelope)
+    await manager.execute(
+        "UPDATE {{tables.agents}} SET inbound_mode='contacts_only' WHERE agent_id=$1",
+        recipient["agent_id"],
+    )
+    if same_team:
+        await manager.execute("""
+            INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode)
+            VALUES ('backend:beta.example', 'alice', $1, $2, $3, 'global', 'open')
+        """, envelope.sender_current_did_key, envelope.sender_did_aw, envelope.sender_address)
+
+    async def deliver(current=envelope, **kwargs):
+        return await deliver_federated_phase_b(
+            _DB(manager), envelope=current, signature="signed-message",
+            recipient=recipient, authority_token=token, **kwargs,
+        )
+
+    async def refused():
+        with pytest.raises(FederationAuthorityError) as error:
+            await deliver()
+        assert error.value.reason == "recipient_policy_rejected"
+        for table in ("messages", "chat_messages", "message_ingress_receipts", "federation_mutation_outbox"):
+            assert await manager.fetch_value(f'SELECT COUNT(*) FROM "aweb".{table}') == 0
+
+    await refused()
+    # An address-only contact, a wrong identity at the right address, a wrong
+    # owner, and an inactive exact binding cannot authorize the strict mode.
+    await manager.execute("""
+        INSERT INTO {{tables.contacts}} (owner_did, contact_address)
+        VALUES ($1, $2)
+    """, envelope.target_did_aw, envelope.sender_address)
+    with pytest.raises(FederationAuthorityError) as legacy:
+        await deliver()
+    assert legacy.value.reason == "contact_identity_binding_required"
+    await manager.execute("""
+        UPDATE {{tables.contacts}} SET contact_did_aw='did:aw:wrong',
+            binding_controller_did='did:key:z6Mkcontroller', binding_accepted_at=clock_timestamp()
+    """)
+    await refused()
+    await manager.execute("UPDATE {{tables.contacts}} SET contact_did_aw=$1, status='pending'", envelope.sender_did_aw)
+    await refused()
+    await manager.execute("UPDATE {{tables.contacts}} SET status='active', owner_did='did:aw:wrong-owner'")
+    await refused()
+    await manager.execute("UPDATE {{tables.contacts}} SET owner_did=$1", envelope.target_did_aw)
+    accepted = await deliver()
+    assert accepted["message_id"] == envelope.message_id
+    # Both a new first-contact send and a stored-route continuation recheck
+    # policy after deletion. Exact receipt replay retains its established result.
+    await manager.execute("DELETE FROM {{tables.contacts}}")
+    assert await deliver() == accepted
+    fresh = envelope.model_copy(update={"message_id": str(uuid4()), "conversation_id": str(uuid4())})
+    with pytest.raises(FederationAuthorityError) as removed:
+        await deliver(fresh)
+    assert removed.value.reason == "recipient_policy_rejected"
+
+    participants = await manager.fetch_all(
+        "SELECT * FROM {{tables.conversation_participants}} WHERE conversation_id=$1", UUID(envelope.conversation_id),
+    )
+    snapshot = {"conversation": {row["did"]: dict(row) for row in participants}}
+    if kind == "chat":
+        participants = await manager.fetch_all(
+            "SELECT * FROM {{tables.chat_participants}} WHERE session_id=$1", UUID(envelope.conversation_id),
+        )
+        snapshot["chat"] = {row["did"]: dict(row) for row in participants}
+    continuation = envelope.model_copy(update={"message_id": str(uuid4())})
+    with pytest.raises(FederationAuthorityError) as continued:
+        await deliver(continuation, stored_route_continuation=True, stored_route_snapshot=snapshot)
+    assert continued.value.reason == "recipient_policy_rejected"

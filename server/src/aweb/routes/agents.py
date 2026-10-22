@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator, model_serializer, model_
 from awid.dns_auth import validate_did_key, verify_signed_json_request
 from awid.e2ee_keys import validate_encryption_key_assertion
 from awid.team_ids import parse_team_id
+from aweb.inbound_modes import INBOUND_MODES, normalize_inbound_mode
 from aweb.alias_allocator import candidate_name_prefixes, used_name_prefixes
 from aweb.coordination.roles import ROLE_MAX_LENGTH
 from aweb.coordination.routes.repos import canonicalize_git_url
@@ -112,12 +113,7 @@ class UpdateAgentInboundModeRequest(BaseModel):
     @field_validator("inbound_mode")
     @classmethod
     def validate_inbound_mode(cls, value: str) -> str:
-        value = (value or "").strip().lower()
-        if value == "contacts_only":
-            return "team_and_contacts"
-        if value not in {"open", "team_and_contacts"}:
-            raise ValueError("inbound_mode must be one of open, team_and_contacts")
-        return value
+        return normalize_inbound_mode(value, default="")
 
 
 class SuggestAliasPrefixRequest(BaseModel):
@@ -639,9 +635,7 @@ async def _load_current_agent_inbound_mode(
         raise HTTPException(status_code=404, detail="Agent not found")
     identity_scope = str(row.get("identity_scope") or "local")
     inbound_mode = str(row.get("inbound_mode") or "").strip().lower()
-    if inbound_mode == "contacts_only":
-        inbound_mode = "team_and_contacts"
-    if inbound_mode not in {"open", "team_and_contacts"}:
+    if inbound_mode not in INBOUND_MODES:
         raise HTTPException(status_code=409, detail="Agent inbound_mode migration required")
     return AgentInboundModeResponse(
         agent_id=str(row["agent_id"]),
