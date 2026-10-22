@@ -13,6 +13,7 @@ from aweb.api import create_app
 from aweb.app_manifests import ManifestFetcher
 from aweb_naapp.egress import (
     AddressPolicy,
+    DnsResolver,
     Egress,
     InternalDestinations,
     parse_destination,
@@ -26,6 +27,7 @@ destination = parse_destination({
 app = create_app()
 app.state.manifest_fetcher = ManifestFetcher(
     egress=Egress(addresses=AddressPolicy(internal_destinations=InternalDestinations.ALLOWED),
+                  resolver=DnsResolver(), user_agent="folio-wakes-test/1",
                   ca_file="/tls/ca.pem"),
     destination=destination,
 )
