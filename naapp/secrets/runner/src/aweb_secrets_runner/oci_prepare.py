@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import signal
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -194,6 +195,20 @@ class RuncPreparation:
     images: Path
     workspace: Path
     supervisor: BinaryPin | None = None
+
+    def preflight(self, read_only_paths: list[str]) -> None:
+        """Check provisioned public prerequisites, never unpack or start a job."""
+        if self.supervisor is None or self.supervisor.path != Path(sys.executable):
+            raise Refused("runner_runtime_unavailable")
+        self.engine.check()
+        self.unpacker.check()
+        self.supervisor.check()
+        workspace = require_memory_directory(self.workspace)
+        FileGuard().directory(self.images)
+        try:
+            _mounts(read_only_paths, workspace)
+        except OSError:
+            raise Refused("runner_runtime_unavailable") from None
 
     @asynccontextmanager
     async def prepare(self, inputs: JobInputs) -> AsyncIterator[PreparedBundle]:

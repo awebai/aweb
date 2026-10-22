@@ -58,8 +58,9 @@ it. Only accepted dispatches can record a result. The journal grants no server
 authority. Incompatible pre-release layouts refuse without resetting records;
 no automatic migration or reset runs.
 
-Local job preparation uses a runner-owned JSON configuration with exactly three
-keys: `v: 1`, `agent_uids` (the actual agent OS UIDs), and `jobs`. Each `jobs`
+Local job preparation uses a runner-owned JSON configuration with required
+keys `v: 1`, `agent_uids` (the actual agent OS UIDs), and `jobs`. An optional
+`runtime` key configures the daemonless OCI prerequisites described below. Each `jobs`
 entry is keyed by job ID and contains `digest` and `definition`: the owner-approved
 `job/1` record. Both the server assignment and this independent local pin must
 match. Keep the configuration and its parent directories outside the agents'
@@ -145,12 +146,13 @@ uv run aweb-secrets-runner doctor --config /absolute/runner-config.json \
 ```
 
 `doctor` checks the actual UID, protected configuration, runner membership,
-executable and declared-file hashes, working directories and private journal. On
+executable and declared-file hashes, working directories and private journal.
+For configured OCI jobs it checks runtime tool hashes, private memory storage,
+the protected image-store directory and declared read-only mount sources. On
 first run it creates `journal.sqlite3` if absent. It
 does not contact the service, request an enrolment code, open credentials or
 execute a job. Success prints only the runner ID and checked job IDs. Refusals
-print a fixed code. A pending unregistered identity and an unavailable OCI runtime
-refuse preflight. This local preflight does not establish current server authority;
+print a fixed code. A pending unregistered identity and missing OCI prerequisites refuse preflight. This local preflight does not establish current server authority;
 the service and worker still recheck each assignment.
 
 Run the focused checks from this directory:
@@ -185,3 +187,44 @@ A nonempty HOME supplied by the fixed job literal or a validated frozen paramete
 is preserved, including env-only strings beginning with `-`. This runtime-specific
 capability does not add a universal job/1 HOME requirement or rewrite a pin.
 Actual OCI runtime/mount/lifecycle composition remains guarded.
+
+
+### OCI operator configuration
+
+The optional `runtime` object has exactly these fields:
+
+```json
+{
+  "kind": "runc",
+  "engine": {"path": "/usr/bin/runc", "sha256": "<64 lowercase hex digits>"},
+  "unpacker": {"path": "/usr/bin/umoci", "sha256": "<64 lowercase hex digits>"},
+  "supervisor": {"path": "/opt/runner/bin/python", "sha256": "<64 lowercase hex digits>"},
+  "images": "/srv/runner/oci-layout",
+  "workspace": "/run/runner/private-workspace"
+}
+```
+
+Supply hashes of the actual qualified installed binaries. `supervisor.path`
+must be the exact `sys.executable` of the runner's installed Python environment;
+its isolated `-I` helper must import the same installed runner package. Paths are
+absolute, without traversal or NUL. Unknown fields, missing pins and other
+runtime kinds refuse with `runtime_config_invalid`. There is no automatic tool
+lookup, registry pull, daemon or disk-storage fallback.
+
+The image store is an operator-populated protected OCI layout. The workspace
+must already exist on Linux tmpfs, owned by the actual runner UID with mode
+0700 and protected ancestors. Reserve it for this runner's transient job trees;
+keep configuration, identity/journal state and image storage outside it. Runtime
+state and credential-bearing bundles are created privately beneath it. Operators
+provision these resources separately; loading configuration creates none of them.
+
+`doctor` hashes tools and checks storage/mount permissions without invoking any
+tool, unpacking an image, recovering stale work or opening credentials. Image
+content, parameters and exact environment capability are checked during the
+per-assignment preparation. Configured paths and pins are re-read through the
+same protected configuration; changing them requires an explicit worker restart.
+
+This configuration/preflight slice keeps production OCI execution guarded.
+Adding `runtime` does not activate it. Startup recovery, worker composition and
+the real separate-user release journey remain required. Exec-only installations
+can omit `runtime` and keep their existing checks.

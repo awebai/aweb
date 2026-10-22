@@ -17,6 +17,8 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from .errors import Refused
 from .filesystem import FileGuard, require_separate_users
 from .job_inputs import JobInputs
+from .oci_config import runtime_config
+from .oci_prepare import RuncPreparation
 from .protocol import HASH, ID, canonical, decrypt_credential, parse_json
 
 FIELDS = {
@@ -303,7 +305,13 @@ class RunnerConfig:
         try:
             raw = FileGuard().read_config(path)
             config = parse_json(raw)
-            _exact(config, {"v", "agent_uids", "jobs"})
+            _need(
+                isinstance(config, dict)
+                and set(config)
+                in ({"v", "agent_uids", "jobs"}, {"v", "agent_uids", "jobs", "runtime"})
+            )
+            if "runtime" in config:
+                runtime_config(config["runtime"])
             _need(type(config["v"]) is int and config["v"] == 1)
             _need(isinstance(config["agent_uids"], list))
             require_separate_users(config["agent_uids"])
@@ -331,13 +339,24 @@ class RunnerConfig:
         require_separate_users(config["agent_uids"])
         return dict(config)
 
+    def runtime(self) -> RuncPreparation | None:
+        """Re-read the same protected configuration before selecting local tools."""
+        config = self._current()
+        return runtime_config(config["runtime"]) if "runtime" in config else None
+
     def doctor(self, runner_id: str) -> tuple[str, ...]:
         config = self._current()
+        runtime = runtime_config(config["runtime"]) if "runtime" in config else None
         for pin in config["jobs"].values():
             job = pin["definition"]
             if runner_id not in job["runner_ids"]:
                 raise Refused("job_not_allowed")
-            _checked_executable(job)
+            if job["kind"] == "oci":
+                if runtime is None:
+                    raise Refused("runner_runtime_unavailable")
+                runtime.preflight(job["oci"]["read_only_paths"])
+            else:
+                _checked_executable(job)
         return tuple(sorted(config["jobs"]))
 
     def inputs(
