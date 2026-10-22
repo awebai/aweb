@@ -20,7 +20,7 @@ from typing import Any
 from aweb_naapp.pages import inline_schema_errors, inline_value_valid
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, TransactionManager
 
-from aweb_secrets.operation import CHARSETS, OperationTemplate, _schema_types
+from aweb_secrets.operation import CAPTURE_FIELDS, CHARSETS, OperationTemplate, _schema_types
 from aweb_secrets.policy import IDENTIFIER
 from aweb_secrets.runner_protocol import HEX64, RUNNER_ID, canonical
 
@@ -265,7 +265,11 @@ def _check(after: dict[str, Any]) -> None:
     _require(len(refs) == len(set(refs)), "distinct credential references")
     argv = after["argv"]
     _require(isinstance(argv, list), "argv array")
-    used_credentials: set[str] = set()
+    if after["kind"] == "oci":
+        _require(
+            bool(argv) and _absolute(argv[0]), "OCI argv starts with a fixed absolute executable"
+        )
+    used_credentials: dict[str, set[str]] = {}
     for i, arg in enumerate(argv):
         if isinstance(arg, str):
             _require("\0" not in arg, "literal argument has no NUL")
@@ -311,15 +315,24 @@ def _check(after: dict[str, Any]) -> None:
             used_params.add(value["$param"])
         elif (
             isinstance(value, dict)
-            and set(value) == {"$credential"}
+            and set(value) == {"$credential", "field"}
             and isinstance(value["$credential"], str)
             and value["$credential"] in refs
+            and isinstance(value["field"], str)
         ):
-            used_credentials.add(value["$credential"])
+            used_credentials.setdefault(value["$credential"], set()).add(value["field"])
         else:
             raise JobInvalid("env value is fixed text or one declared parameter/credential")
     _require(used_params == set(params), "each declared parameter has a slot")
-    _require(used_credentials == set(refs), "each credential has a declared env target")
+    _require(set(used_credentials) == set(refs), "each credential has a declared env field")
+    for fields in used_credentials.values():
+        # Use the codec's field table. The three value kinds share one family;
+        # every other family's fields are disjoint. Actual kind and selected
+        # field presence still require the authoritative release-time checks.
+        _require(
+            any(fields <= required | optional for required, optional in CAPTURE_FIELDS.values()),
+            "credential fields select one structured-value family",
+        )
 
 
 @dataclass(frozen=True)

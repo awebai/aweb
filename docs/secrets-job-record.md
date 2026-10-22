@@ -16,7 +16,7 @@ The change/1 item's `ref` is `job_id`. Its `after` has exactly these fields:
 | `exec` | `{path, sha256, files:[{path, sha256}]}`, or null for OCI |
 | `oci` | `{image, read_only_paths}`, or null for exec |
 | `argv` | Ordered strings or `{$param:name, slot:positional\|option_value}` |
-| `env` | Names to strings, `{$param:name}`, or `{$credential:secret_ref}` |
+| `env` | Names to strings, `{$param:name}`, or `{$credential:secret_ref, field:name}` |
 | `cwd` | Absolute path |
 | `timeout_s` | Integer 1 to 3600 seconds |
 | `output` | `{max_bytes, projection}`; 1 byte to 16 MiB, nonempty distinct JSON pointers |
@@ -45,6 +45,19 @@ environment. S13's runner dispatch sweep bound must exceed the exported
 `MAX_TIMEOUT_S` plus its sweep margin. Every parameter and credential has a
 declared use; a credential is placed only in a declared environment target.
 
+Every credential reference has exactly the keys `$credential` and `field`, even
+for a single-field value. Each slot selects at least one field, all from one
+structured-value family: `value`; `username`/`password`;
+`client_id`/`client_secret`; or `access_key_id`/`secret_access_key`/`session_token`.
+Subsets and repeated bindings are permitted. The shared codec's field table is
+the authority; no dictionary-order selection or empty fallback is inferred.
+The field binding is part of the immutable digest. The confirming/release path
+must additionally check the actual delivered kind, selected-field presence and
+NUL refusal under [runner protocol §4.4](secrets-runner-protocol.md#44-explicit-environment-fields).
+The runner validates the whole structured mapping with that sole codec before
+selecting env values. Old one-key bindings are invalid; stored pins are never
+silently rewritten.
+
 For `durable`, `mint` is null and `allow_durable` is true. For `short_lived`,
 `secret_ref` is the fixed parent/slot label and `mint` is exactly
 `{operation_id, digest, params}`. Each recipe parameter is exactly
@@ -60,6 +73,18 @@ The digest is SHA-256 of `aweb.secrets.job/1\n` followed by canonical JSON of
 `after` without `v`. It includes all recipe literals, mappings and ordered slots.
 A returned `after` is a fresh mapping; mutating it cannot change the stored snapshot
 or its digest. PostgreSQL refuses updates to immutable definition rows.
+
+For OCI, `argv` is the complete process argument vector: it is nonempty and
+starts with a fixed absolute executable inside the pinned image. For exec,
+`argv` remains arguments only and the runner prepends the pinned `exec.path`.
+Neither form supplies an executable override from a parameter. Confirmation must
+show the kind-specific effective command, pinned `cwd`, declared environment
+names and credential-field bindings. OCI uses exactly that command, environment
+and working directory, ignoring image/runtime defaults. Existing records and
+pins are not rewritten to inherit a default executable; a corrected definition
+requires normal owner confirmation and new digest/grant/local pins. Runtime
+state and cleanup follow [secrets §9.4](design/secrets.md#94-job-definitions);
+the definition check alone does not enable OCI execution.
 
 Server-managed run-bound child metadata and the paired child/grant receipt stay
 outside job/1. The stable slot label maps by signed array ordinal to the actual
