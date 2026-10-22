@@ -101,6 +101,7 @@ KEY_PURPOSES = {
     "secrets:hook-event-1": ["hook-event"],
     "secrets:hook-delivery-1": ["hook-delivery"],
     "secrets:grant-read-1": ["app-grant-read"],
+    "secrets:hook-resolve-1": ["hook-resolve"],
 }
 
 
@@ -425,6 +426,12 @@ async def test_the_served_v2_bytes_come_from_the_template_and_configured_keys(
         assert resolved.manifest_version == 2
         assert {kid: list(purposes) for kid, _, purposes in resolved.app_keys} == KEY_PURPOSES
         assert {kid: did for kid, did, _ in resolved.app_keys} == keys
+        # Producing secrets runtimes must have the purpose-specific resolver
+        # needed by K4, rather than substituting an event or delivery key.
+        assert resolved.app_keys_for("hook-resolve") == {
+            "secrets:hook-resolve-1": keys["secrets:hook-resolve-1"]
+        }
+        assert runtime.hook_resolver() is runtime.hook_resolver()
 
 
 async def test_a_verified_dashboard_member_reaches_every_declared_tool(
