@@ -9,13 +9,7 @@ services:
       POSTGRES_USER: aweb
       POSTGRES_PASSWORD: aweb
       POSTGRES_DB: aweb
-    ports:
-      - "127.0.0.1:57432:5432"
-    # Reuse the existing test-only database initializer; Folio owns this
-    # separate database (historically named library), not the aweb schema.
-    # With tmpfs every `up` is a fresh init, so this always runs.
-    volumes:
-      - ./scripts/e2e/initdb:/docker-entrypoint-initdb.d:ro
+    # The runner creates Folio's separate library database before starting it.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U aweb -d aweb"]
       interval: 2s
@@ -55,8 +49,6 @@ services:
       AWID_SKIP_DNS_VERIFY: "1"
       APP_ENV: test
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "true"
-    ports:
-      - "127.0.0.1:38010:8010"
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,7 +62,7 @@ services:
       retries: 30
 
   aweb:
-    command: ["/app/.venv/bin/python", "/e2e/folio_wakes_server.py"]
+    command: ["/app/.venv/bin/python", "/fixture/e2e/folio_wakes_server.py"]
     cpus: "1"
     mem_limit: "1g"
     pids_limit: 512
@@ -87,14 +79,12 @@ services:
       AWEB_LOG_JSON: "false"
       AWID_REGISTRY_URL: http://awid:8010
       AWID_SERVICE_TOKEN: library-e2e-service-token-with-at-least-32-bytes
-      AWID_PUBLIC_REGISTRY_URL: http://127.0.0.1:38010
-      FOLIO_WAKES_ADDRESS: ${FOLIO_WAKES_ADDRESS:?set by wakes runner}
+      AWID_PUBLIC_REGISTRY_URL: http://awid:8010
     volumes:
-      - ./scripts/e2e:/e2e:ro
-      - ${FOLIO_WAKES_TLS:?set by wakes runner}:/tls:ro
-    ports:
-      - "127.0.0.1:38000:38000"
-      - "${FOLIO_WAKES_ADDRESS}:38765:8765"
+      - fixture:/fixture:ro
+    networks:
+      default:
+        aliases: [folio-wakes.test]
     depends_on:
       postgres:
         condition: service_healthy
@@ -110,8 +100,8 @@ services:
       retries: 30
 
   folio:
-    command: ["/app/.venv/bin/uvicorn", "folio.api:app", "--host", "0.0.0.0", "--port", "8765", "--ssl-keyfile", "/tls/server.key", "--ssl-certfile", "/tls/server.pem"]
-    # Share loopback so the signed emit audience is identical inside/outside Docker.
+    command: ["/app/.venv/bin/uvicorn", "folio.api:app", "--host", "0.0.0.0", "--port", "8765", "--ssl-keyfile", "/fixture/tls/server.key", "--ssl-certfile", "/fixture/tls/server.pem"]
+    # The app and client share the server's signed loopback audience.
     network_mode: service:aweb
     cpus: "1"
     mem_limit: "1g"
@@ -132,8 +122,32 @@ services:
     # This deployment's manifest, declaring the test emit key above; the harness
     # writes it before Folio starts and rewrites it to change the manifest.
     volumes:
-      - ${FOLIO_WAKES_MANIFEST:?set by scripts/e2e-folio-wakes.sh}:/app/naapp/folio/src/folio/aweb-app.json:ro
-      - ${FOLIO_WAKES_TLS}:/tls:ro
+      - folio-source:/app/naapp/folio/src/folio
+      - fixture:/fixture:ro
     depends_on:
       aweb:
         condition: service_healthy
+
+  client:
+    cpus: "2"
+    mem_limit: "1g"
+    pids_limit: 512
+    build:
+      context: .
+      dockerfile: scripts/e2e/folio-wakes-client.Dockerfile
+    network_mode: service:aweb
+    environment:
+      AW_BIN: /usr/local/bin/aw
+      FOLIO_WAKES_ORIGIN: https://folio-wakes.test:8765
+      FOLIO_WAKES_MANIFEST: /folio-template/aweb-app.json
+      FOLIO_WAKES_APP_KEY_FILES: '{}'
+      SSL_CERT_FILE: /fixture/tls/ca.pem
+    volumes:
+      - fixture:/fixture:ro
+      - folio-source:/folio-template
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  fixture:
+    name: abrm-folio-fixture
+  folio-source:

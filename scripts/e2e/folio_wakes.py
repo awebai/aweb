@@ -16,7 +16,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 AW = Path(os.environ['AW_BIN']).resolve()
-REGISTRY = 'http://127.0.0.1:38010'
+REGISTRY = 'http://awid:8010'
 SERVER = 'http://127.0.0.1:38000'
 FOLIO = os.environ['FOLIO_WAKES_ORIGIN']
 COMPOSE = ['docker', 'compose', '-p', 'abrm-folio', '--project-directory', str(ROOT), '-f', str(ROOT / 'scripts/e2e/folio-wakes.compose.yml')]
@@ -32,7 +32,7 @@ def configure_manifest(version, events=True, manifest_version=1, extra_emitter=N
     # emitter. No substitute HTTP server or auth bypass. Version 2 declares the
     # emitter as an app-event app key and adds a hook-only tool, whose scope
     # install must not grant.
-    arguments = ['docker', 'run', '--rm', '--entrypoint', '/app/.venv/bin/python', '-v', str(ROOT / 'scripts/e2e') + ':/e2e:ro', '-e', 'FOLIO_WAKES_ORIGIN', 'abrm-folio-folio', '/e2e/folio_wakes_manifest.py', version, 'true' if events else 'false', str(manifest_version)]
+    arguments = ['docker', 'run', '--rm', '--entrypoint', '/app/.venv/bin/python', '-v', 'abrm-folio-fixture:/fixture:ro', '-e', 'FOLIO_WAKES_ORIGIN', 'abrm-folio-folio', '/fixture/e2e/folio_wakes_manifest.py', version, 'true' if events else 'false', str(manifest_version)]
     if extra_emitter:
         arguments.extend(extra_emitter)
     manifest = run(arguments)
@@ -40,7 +40,7 @@ def configure_manifest(version, events=True, manifest_version=1, extra_emitter=N
         handle.write(manifest.strip())
     document = json.loads(manifest)
     keys = document.get('app_keys', document.get('event_emitters', []))
-    paths = {'folio:grant-read-1': '/tls/grant-read.key', 'folio:emit-other': '/tls/emit-other.key'}
+    paths = {'folio:grant-read-1': '/fixture/tls/grant-read.key', 'folio:emit-other': '/fixture/tls/emit-other.key'}
     os.environ['FOLIO_WAKES_APP_KEY_FILES'] = json.dumps({key['kid']: paths[key['kid']] for key in keys if key['kid'] in paths})
     # Recreate applies both the changed bytes and purpose-specific key files.
     run(COMPOSE + ['up', '--no-build', '--no-deps', '-d', '--force-recreate', 'folio'])
@@ -256,7 +256,7 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
         run(COMPOSE + ['unpause', 'aweb'])
     aw('alice', 'plugin', 'update', 'folio')
     assert get('alice', '/v1/apps/installed?team_id=' + team)['apps'][0]['app_version'] == '0.1.2'
-    denied = aw('alice', 'plugin', 'install', FOLIO, '--dev-origin', 'http://localhost:38765', check=False)
+    denied = aw('alice', 'plugin', 'install', FOLIO, '--dev-origin', 'http://localhost:8765', check=False)
     assert denied.returncode != 0 and 'origin_verification_required' in denied.stderr, denied.stderr
     print('PASS failed registration preserves cache and retries; origin rewrite refuses', flush=True)
 
@@ -308,6 +308,7 @@ except urllib.error.HTTPError as exc:
                       'event_emitters': [{'kid': 'folio:emit-test', 'did_key': other_did}],
                   }), check=False)
     assert replaced.returncode != 0 and '422' in replaced.stderr, replaced.stderr
+    configure_manifest('0.1.2')
     a = stream('alice')
     aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'fourth')
     assert any(e['kind'] == 'app' and e['meta']['resource_ref'] == 'wake-proof' for e in events(a))
@@ -320,8 +321,7 @@ except urllib.error.HTTPError as exc:
         return run(COMPOSE + ['exec', '-T', 'postgres', 'psql', '-U', 'aweb', '-d', 'aweb', '-Atc', sql])
     psql("DELETE FROM aweb.team_app_emit_keys WHERE team_id='" + team + "'; DELETE FROM aweb.team_app_event_types WHERE team_id='" + team + "'")
     intents_before = get('bob', '/v1/events/subscriptions')['subscriptions']
-    # The origin's port is published only on the host, so the exact served
-    # bytes reach the operator command as a file.
+    # Give the repair command the exact bytes served by this deployment.
     configure_manifest('0.1.2')
     served = served_manifest()
     run(COMPOSE + ['exec', '-T', 'aweb', 'sh', '-c', 'cat > /tmp/folio-manifest.json'], input=served.decode())
