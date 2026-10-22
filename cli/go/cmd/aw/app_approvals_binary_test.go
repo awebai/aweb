@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
 
