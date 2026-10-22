@@ -101,6 +101,7 @@ KEY_PURPOSES = {
     "secrets:hook-event-1": ["hook-event"],
     "secrets:hook-delivery-1": ["hook-delivery"],
     "secrets:grant-read-1": ["app-grant-read"],
+    "secrets:hook-resolve-1": ["hook-resolve"],
 }
 
 
@@ -129,7 +130,7 @@ def _settings(database_url: str, directory: Path) -> SecretsSettings:
 
 @asynccontextmanager
 async def running(
-    registry, database_url: str, *, grants: InstalledTeams, kms_ok: bool = True
+    registry, database_url: str, *, grants: InstalledTeams, kms_ok: bool = True, tool_routers=()
 ) -> AsyncIterator[Running]:
     with TemporaryDirectory() as directory:
         settings = _settings(database_url, Path(directory))
@@ -139,6 +140,7 @@ async def running(
             policy=allow_all,
             kms=kms_check(kms_ok),
             awid_transport=registry.transport,
+            tool_routers=tool_routers,
         )
         async with service.api_app.router.lifespan_context(service.api_app):
             async with (
@@ -424,6 +426,18 @@ async def test_the_served_v2_bytes_come_from_the_template_and_configured_keys(
         assert resolved.manifest_version == 2
         assert {kid: list(purposes) for kid, _, purposes in resolved.app_keys} == KEY_PURPOSES
         assert {kid: did for kid, did, _ in resolved.app_keys} == keys
+        # Producing secrets runtimes must have the purpose-specific resolver
+        # needed by K4, rather than substituting an event or delivery key.
+        assert resolved.app_keys_for("hook-resolve") == {
+            "secrets:hook-resolve-1": keys["secrets:hook-resolve-1"]
+        }
+        assert runtime.hook_resolver() is runtime.hook_resolver()
+        assert runtime.hook_registrations() is runtime.hook_registrations()
+        producer = runtime.hook_producer(
+            installation_id="1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b", generation=1
+        )
+        assert producer.producer.did_key == keys["secrets:hook-event-1"]
+        assert producer.producer.did_key != keys["secrets:hook-resolve-1"]
 
 
 async def test_a_verified_dashboard_member_reaches_every_declared_tool(
@@ -498,3 +512,52 @@ def test_the_hosted_identity_is_refused_at_another_reachable_origin(tmp_path) ->
     settings.app_id = "secrets"
     with pytest.raises(ValueError):
         create_app(settings, grants=InstalledTeams({}), policy=allow_all, kms=kms_check(True))
+
+
+async def test_composed_tool_router_keeps_the_exact_runtime_guard_and_other_tools_unavailable(
+    registry, database_url, member
+):
+    from fastapi import APIRouter, Depends
+
+    def routes(runtime, authorized):
+        router = APIRouter()
+        dependency = Depends(authorized)
+
+        @router.get("/v1/secrets")
+        async def listed(auth=dependency):
+            assert runtime.db is not None
+            return {"state": "completed", "request_id": None, "tool": auth.tool.name}
+
+        return router
+
+    tool = next(t for t in TOOLS if t["name"] == "list")
+    unmounted = next(t for t in TOOLS if t["name"] == "describe")
+    grants = InstalledTeams({member.team_id: ALL_SCOPES})
+    async with running(registry, database_url, grants=grants, tool_routers=(routes,)) as app:
+        assert (await app.api.request(tool["method"], _path(tool))).status_code == 401
+        accepted = await app.api.request(**_signed(member, tool))
+        assert accepted.status_code == 200
+        assert accepted.json()["tool"] == "list"
+        assert (await app.api.request(**_signed(member, unmounted))).status_code == 501
+        assert (await app.console.request(**_signed(member, tool, aud=CONSOLE))).status_code == 403
+
+
+async def test_composition_guards_a_router_even_when_its_endpoint_omits_the_dependency(
+    registry, database_url, member
+):
+    from fastapi import APIRouter
+
+    def routes(runtime, authorized):
+        router = APIRouter()
+
+        @router.get("/v1/secrets")
+        async def listed():
+            return {"state": "completed", "request_id": None}
+
+        return router
+
+    tool = next(t for t in TOOLS if t["name"] == "list")
+    grants = InstalledTeams({member.team_id: ALL_SCOPES})
+    async with running(registry, database_url, grants=grants, tool_routers=(routes,)) as app:
+        assert (await app.api.request(tool["method"], _path(tool))).status_code == 401
+        assert (await app.api.request(**_signed(member, tool))).status_code == 200

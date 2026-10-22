@@ -26,6 +26,7 @@ The other tracked vector directories have disjoint, explicit purposes:
 |---|---|
 | `cli/go/internal/conformance/vectors/` | Consumer-local Go fixtures plus the byte-enforced `team-auth-envelope-v2.json` package copy linked by the currently pinned naapp reference generator. |
 | `naapp-lib/src/aweb_naapp/hooks/catalog-v1.json` | The byte-enforced package copy of `hook-catalog-v1.json`, shipped in the naapp-lib wheel so an installed app loads the catalog (`aweb_naapp.hooks.catalog.packaged_catalog`) with no repository checkout. |
+| `naapp-lib/tests/vectors/` | External cryptographic known-answer fixtures: `hpke-rfc9180-base-x25519.json` pins RFC 9180 upstream test-vector data for `test_crypto_hpke.py`; it is not an aweb public protocol vector. |
 | `naapp/folio/tests/vectors/` | App test snapshots; `app-emit-credential-v1.json` is byte-checked against its Go consumer authority. |
 | `naapp/library/tests/vectors/` | App snapshots plus Library blueprint input/output goldens; the app-emit snapshot is byte-checked. |
 | `naapp/secrets/vectors/` | secrets' app-internal contracts: the `aweb.secrets.use-approval/1` request object under B2's prefix, and the transition-to-hook-action table checked against `hook-catalog-v1.json`. Each file is consumed by a test in `naapp/secrets/tests/`. |
@@ -94,6 +95,17 @@ refusal case for every verification step on either side. Signing keys are
 fixed seeds; sealed values were generated once and are checked by opening them.
 Credential plaintexts are fixtures. secrets' `test_runner_protocol_vectors.py`
 consumes every case.
+
+### `secrets-runner-http-v1.json`
+
+[Runner protocol §4](../secrets-runner-protocol.md#4-http-bodies-reports-and-credential-fields)
+body bytes and their private request-binding hashes, six-field result refusals,
+combined UTF-8 bounds, declared env-field families and report-state expectations.
+No credential material is present. The contract reference reader in
+`test_runner_protocol_vectors.py` consumes every case. Mounted server/runner
+implementations still owe nonce, release, CAS, late-evidence and redaction-context
+proofs; these examples do not authorize a dispatch. The existing signed/sealed
+`secrets-runner-protocol-v1.json` bytes are unchanged.
 
 ### `message-signing-v1.json`
 
@@ -660,7 +672,8 @@ reference duplication are mutation-tested failures.
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
-| `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` |
+| `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` and production-server `test_runner_server_protocol.py` |
+| `secrets-runner-http-v1.json` | secrets `test_runner_protocol_vectors.py` |
 | `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |

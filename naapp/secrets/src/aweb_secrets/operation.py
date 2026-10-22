@@ -24,6 +24,7 @@ from typing import Any
 from aweb_naapp.egress import EgressRefused, InternalDestinations, parse_destination
 from aweb_naapp.egress.headers import ALWAYS_REJECTED, ALWAYS_REJECTED_PREFIXES, GUARD_SET
 from aweb_naapp.pages import inline_schema_errors, inline_value_valid
+from aweb_secrets_values import CAPTURE_FIELDS as CAPTURE_FIELDS
 from awid.signing import canonical_json_bytes
 
 from aweb_secrets.destination import DestinationInvalid, parse_destination_scope
@@ -70,15 +71,6 @@ CHARSETS: Mapping[str, re.Pattern[str]] = {
     "base64url": re.compile(r"[A-Za-z0-9_-]+"),
 }
 
-# The structured value fields of each kind, which a derived secret captures (§6.2).
-CAPTURE_FIELDS: Mapping[str, tuple[frozenset[str], frozenset[str]]] = {
-    "bearer": (frozenset({"value"}), frozenset()),
-    "header": (frozenset({"value"}), frozenset()),
-    "query": (frozenset({"value"}), frozenset()),
-    "basic": (frozenset({"username", "password"}), frozenset()),
-    "oauth2-client-credentials": (frozenset({"client_id", "client_secret"}), frozenset()),
-    "aws-sigv4": (frozenset({"access_key_id", "secret_access_key"}), frozenset({"session_token"})),
-}
 
 _PARAM_NAME = re.compile(r"[a-z_][a-z0-9_]{0,63}")
 _PATH_PARAM = re.compile(r"\{([a-z_][a-z0-9_]{0,63})\}")

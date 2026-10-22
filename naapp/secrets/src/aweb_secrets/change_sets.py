@@ -11,16 +11,26 @@ order every writer takes its locks:
 1. the installation fence (X9);
 2. a hold on the deciding owner's secrets.owner role, so a concurrent
    revocation either waits for the confirmation or makes it refuse;
-3. the change-set row, and the approval admitted once as owner evidence
+3. the change-set row, replacement/reenable ancestry root-first, the grant
+   union, and the complete forest/confirmation approval union in ID order;
+   then the approval admitted once as owner evidence
    (Passkeys.owner_approval);
 4. the four-eyes setting's row, read under its lock;
-5. the configuration revision, claimed atomically, the last lock taken;
-6. then each item applies.
+5. the configuration revision, claimed atomically;
+6. then each item applies, with parent secrets before custody rows. Existing
+   ingests hold parent KEY SHARE; reshapes take parent UPDATE before custody.
 The change set must still be for this installation, generation and team,
 unexpired, and confirmed by an owner the setting in force allows.
 A draft that expires or is cancelled revokes its approval and destroys its
-sealed values. Each sealed value is bound at draft time to the secret_value
-item that names it, and a confirmed value replaces the secret's last one,
+sealed values. Each staged value is bound at draft time to its native value, private token or
+reference item, and checked again at confirmation. Private token replacement
+prepares all dependent roots before B2; only explicitly rebound references can
+activate under the new token. Unlocked token-dependent discovery relies on
+all parent-locking record paths preparing their forests before the revision,
+and all active-version writers claiming that revision before writes, including
+automatic backend reconciliation. Required proof-bound audit shares
+the transaction.
+A confirmed value replaces the secret's last one,
 destroying it in the same transaction. A kind whose apply does not exist yet
 is refused at draft time, so no draft can be confirmed and then do nothing.
 """
@@ -29,12 +39,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from aweb_naapp.egress import InternalDestinations
+from aweb_naapp.hooks.producer import RegistrationView
+from aweb_naapp.hooks.strictjson import Refused as HookRefused
 from aweb_naapp.roles import PrincipalKey, assign, hold_role
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
@@ -54,13 +66,15 @@ from aweb_naapp.runtime.passkeys import (
     Designation,
     DesignationRefused,
     OwnerApproval,
+    PasskeyInstallationContext,
+    PasskeyProofUnavailable,
     Passkeys,
 )
 from awid.utc_timestamps import parse_utc_seconds
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
-from aweb_secrets import records
+from aweb_secrets import records, runners
 from aweb_secrets.approvers import approver_exists, record_approver
 from aweb_secrets.change import (
     MAX_LIFETIME,
@@ -70,13 +84,16 @@ from aweb_secrets.change import (
     validate_change,
 )
 from aweb_secrets.change_policy import four_eyes, lock_four_eyes, relax_four_eyes
+from aweb_secrets.containment import Containment, ContainmentRefused
 from aweb_secrets.custody import Custody, SealContext
+from aweb_secrets.custody.store import BACKEND_CREDENTIAL_ID
 from aweb_secrets.destination import DestinationInvalid, DestinationRecord
 from aweb_secrets.grant import GrantRecord, GrantTemplate
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, approver_scope, owner_scope
 from aweb_secrets.policy import Policy
 from aweb_secrets.revisions import claim_config_revision, config_revision
+from aweb_secrets.runner_protocol import RunnerRefused
 from aweb_secrets.secret import SecretRecord, sealed_shape_changed
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "change_set_migrations"
@@ -97,6 +114,10 @@ APPLICABLE_KINDS = frozenset(
         "approver",
         "approver_contact",
         "change_set_policy",
+        "runner",
+        "reenable",
+        "backend_credential",
+        "onepassword_binding",
     }
 )
 
@@ -116,18 +137,36 @@ class DraftLimit:
 
 
 @dataclass(frozen=True)
+class RunnerRegistration:
+    """One-time material for the confirming owner's console after commit."""
+
+    runner_id: str
+    registration_code: str = field(repr=False)
+    reenabled: bool
+    keys_replaced: bool
+
+
+@dataclass(frozen=True)
 class Confirmation:
     """A confirmed change set: the revision it moved to, and the approver
     designations and contact changes whose links and notices
-    :meth:`ChangeSets.deliver` sends after commit."""
+    :meth:`ChangeSets.deliver` sends after commit. Runner codes belong only
+    in the owner-console projection; never serialize this internal object."""
 
+    change_id: str
+    installation_id: str
+    team_id: str
+    confirmed_scope: str
+    confirmed_subject: str
     revision: int
     designations: tuple[Designation, ...]
     contact_changes: tuple[ContactChange, ...]
+    runner_registrations: tuple[RunnerRegistration, ...] = field(default=(), repr=False)
+    affected_secret_ids: tuple[str, ...] = ()
 
 
 def change_policy_ref(installation_id: str, team_id: str, scope: str | None = None) -> str:
-    """The B2 policy a change set mints under: every owner, or one console scope."""
+    """The B2 policy a change set mints under, optionally bound to a console drafter."""
     return "|".join([POLICY_PREFIX, installation_id, team_id, *([scope] if scope else [])])
 
 
@@ -144,9 +183,13 @@ class ChangeSetPolicies:
         if parts[0] != POLICY_PREFIX or len(parts) not in (3, 4):
             return None
         installation_id, team_id = parts[1], parts[2]
-        if len(parts) == 4:
+        allow_requester = await four_eyes(self._db, installation_id) == "not_required"
+        if len(parts) == 4 and allow_requester:
             scopes: tuple[str, ...] = (parts[3],)
         else:
+            # A console drafter normally confirms its own change. Four-eyes
+            # instead needs another owner; OwnerDirectory excludes the drafter
+            # from these current enrolled owners, as for a member draft.
             owners = await self._directory.enrolled_owners(
                 self._db, installation_id=installation_id, team_id=team_id
             )
@@ -159,13 +202,13 @@ class ChangeSetPolicies:
             min_assurance=Assurance.PASSKEY,
             ttl=MAX_LIFETIME,
             approver_scopes=scopes,
-            allow_requester_approval=await four_eyes(self._db, installation_id) == "not_required",
+            allow_requester_approval=allow_requester,
         )
 
 
 # The kinds stored as secrets' own records (S8).
 RECORD_KINDS = frozenset(
-    {"secret", "secret_value", "destination", "operation", "grant", "grant_template", "policy"}
+    {"secret", "destination", "operation", "grant", "grant_template", "policy"}
 )
 
 
@@ -216,6 +259,7 @@ class ChangeSets:
         passkeys: Passkeys,
         directory: OwnerDirectory,
         custody: Custody,
+        containment: Containment,
         draft_limit: DraftLimit,
         internal_destinations: InternalDestinations,
     ) -> None:
@@ -224,6 +268,7 @@ class ChangeSets:
         self._passkeys = passkeys
         self._directory = directory
         self._custody = custody
+        self._containment = containment
         self._draft_limit = draft_limit
         self._internal_destinations = internal_destinations
 
@@ -242,6 +287,13 @@ class ChangeSets:
                 raise ChangeRefused(
                     f"change.changes[{index}]: {item['kind']} cannot be applied yet",
                     code="change_kind_not_applicable",
+                )
+            if item["kind"] == "reenable" and item["after"]["target_kind"] not in {
+                "secret",
+                "installation",
+            }:
+                raise ChangeRefused(
+                    "unsupported reenable target", code="reenable_target_unsupported"
                 )
             if item["kind"] == "role" and item["after"]["role"] == OWNER_ROLE:
                 # Owners are designated only by the team owner act (§10.2).
@@ -331,9 +383,11 @@ class ChangeSets:
     async def _bind_sealed(
         self, tx: TransactionManager, change: Mapping[str, Any], sealed: Sequence[SealContext]
     ) -> None:
-        """Require the sealed values to be exactly those the change's secret_value
-        items name: each item's secret, by an earlier secret item of the change
-        or as stored, at the item's version."""
+        """Bind exactly the brought native/private/reference candidates to items.
+
+        Full staged-row equality and credential epochs are checked at both
+        draft and confirmation. This read phase takes no authority locks.
+        """
         installation_id, team_id = change["installation_id"], change["team_id"]
         named: set[tuple[str, int]] = set()
         drafted: dict[str, SecretRecord] = {}
@@ -342,11 +396,14 @@ class ChangeSets:
             after = item["after"]
             if item["kind"] == "secret":
                 drafted[after["ref"]] = SecretRecord.from_after(after)
+            elif item["kind"] in {"backend_credential", "onepassword_binding"}:
+                context = await self._bind_backend(tx, change, item, drafted)
+                named.add((context.secret_id, context.version))
             elif item["kind"] == "secret_value":
                 record = drafted.get(after["secret_ref"])
                 if record is None:
                     stored = await records.secret_by_ref(
-                        tx, installation_id, team_id, after["secret_ref"]
+                        tx, installation_id, team_id, after["secret_ref"], lock=False
                     )
                     if stored is None:
                         raise ChangeRefused(
@@ -379,6 +436,245 @@ class ChangeSets:
                 raise ChangeRefused(
                     "the sealed value does not match its secret record", code="sealed_secret_fixed"
                 )
+
+    @staticmethod
+    def _backend_token_version(change: Mapping[str, Any]) -> int | None:
+        return next(
+            (
+                item["after"]["version"]
+                for item in change["changes"]
+                if item["kind"] == "backend_credential"
+            ),
+            None,
+        )
+
+    async def _active_backend_token(
+        self, tx: TransactionManager, change: Mapping[str, Any]
+    ) -> int | None:
+        return await tx.fetch_value(
+            "SELECT active_version FROM {{tables.onepassword_credentials}}"
+            " WHERE installation_id=$1 AND team_id=$2",
+            change["installation_id"],
+            change["team_id"],
+        )
+
+    async def _bind_backend(
+        self,
+        tx: TransactionManager,
+        change: Mapping[str, Any],
+        item: Mapping[str, Any],
+        drafted: Mapping[str, SecretRecord],
+    ) -> SealContext:
+        """Compare the full server-staged candidate, without taking authority locks."""
+        installation_id, team_id = change["installation_id"], change["team_id"]
+        after = item["after"]
+        secret_id = (
+            after["credential_id"] if item["kind"] == "backend_credential" else after["secret_id"]
+        )
+        context = SealContext(installation_id, team_id, secret_id, after["version"])
+        active_token = await self._active_backend_token(tx, change)
+        if item["kind"] == "backend_credential":
+            if not await self._custody.backend_credential_matches(
+                tx, context
+            ) or context.version <= (active_token or 0):
+                raise ChangeRefused(
+                    "backend credential candidate unavailable", code="backend_credential_invalid"
+                )
+            return context
+        record = next((r for r in drafted.values() if r.secret_id == secret_id), None)
+        row = await tx.fetch_one(
+            "SELECT record, active_version FROM {{tables.secrets}}"
+            " WHERE installation_id=$1 AND team_id=$2 AND secret_id=$3",
+            installation_id,
+            team_id,
+            secret_id,
+        )
+        if record is None and row is not None:
+            record = SecretRecord.from_after(_request(row["record"]))
+        expected_token = self._backend_token_version(change) or active_token
+        if (
+            record is None
+            or after["credential_version"] != expected_token
+            or context.version <= ((row["active_version"] if row is not None else None) or 0)
+            or not await self._custody.onepassword_binding_matches(tx, context, record, after)
+        ):
+            raise ChangeRefused(
+                "backend reference candidate unavailable", code="onepassword_binding_invalid"
+            )
+        return context
+
+    async def _backend_dependents(
+        self,
+        tx: TransactionManager,
+        change: Mapping[str, Any],
+        new_version: int,
+    ) -> list:
+        # Discovery only: prepare_replacements locks the complete forest before B2.
+        return await tx.fetch_all(
+            "SELECT s.secret_id, s.active_version FROM {{tables.secrets}} s"
+            " JOIN {{tables.onepassword_versions}} v USING (installation_id,team_id,secret_id)"
+            " WHERE s.installation_id=$1 AND s.team_id=$2 AND s.active_version=v.version"
+            " AND v.credential_version<>$3 ORDER BY s.secret_id",
+            change["installation_id"],
+            change["team_id"],
+            new_version,
+        )
+
+    async def _apply_backend_credential(
+        self,
+        tx: TransactionManager,
+        change: Mapping[str, Any],
+        after: Mapping[str, Any],
+        confirmed_by: str,
+    ) -> tuple[str, ...]:
+        installation_id, team_id = change["installation_id"], change["team_id"]
+        row = await tx.fetch_one(
+            "SELECT active_version FROM {{tables.onepassword_credentials}}"
+            " WHERE installation_id=$1 AND team_id=$2 FOR UPDATE",
+            installation_id,
+            team_id,
+        )
+        old = row["active_version"] if row is not None else None
+        context = SealContext(installation_id, team_id, BACKEND_CREDENTIAL_ID, after["version"])
+        if (
+            row is None
+            or context.version <= (old or 0)
+            or not await self._custody.backend_credential_matches(tx, context)
+        ):
+            raise ChangeRefused(
+                "backend credential candidate unavailable", code="backend_credential_invalid"
+            )
+        affected: set[str] = set()
+        for dependent in await self._backend_dependents(tx, change, context.version):
+            try:
+                affected.update(
+                    await self._containment.invalidate_value_consequences(
+                        tx,
+                        installation_id=installation_id,
+                        team_id=team_id,
+                        secret_id=dependent["secret_id"],
+                        revoked_by=confirmed_by,
+                    )
+                )
+            except ContainmentRefused as refused:
+                raise ChangeRefused("backend replacement refused", code=refused.code) from None
+            await tx.execute(
+                "UPDATE {{tables.secrets}} SET active_version=NULL, updated_at=NOW()"
+                " WHERE installation_id=$1 AND team_id=$2 AND secret_id=$3",
+                installation_id,
+                team_id,
+                dependent["secret_id"],
+            )
+            await self._custody.destroy(
+                tx,
+                SealContext(
+                    installation_id, team_id, dependent["secret_id"], dependent["active_version"]
+                ),
+            )
+        await tx.execute(
+            "UPDATE {{tables.onepassword_credentials}} SET active_version=$3"
+            " WHERE installation_id=$1 AND team_id=$2",
+            installation_id,
+            team_id,
+            context.version,
+        )
+        if old is not None:
+            await self._custody.destroy(
+                tx, SealContext(installation_id, team_id, BACKEND_CREDENTIAL_ID, old)
+            )
+        return tuple(sorted(affected))
+
+    async def _apply_onepassword_binding(
+        self,
+        tx: TransactionManager,
+        change: Mapping[str, Any],
+        after: Mapping[str, Any],
+        confirmed_by: str,
+    ) -> tuple[str, ...]:
+        installation_id, team_id = change["installation_id"], change["team_id"]
+        context = SealContext(installation_id, team_id, after["secret_id"], after["version"])
+        row = await tx.fetch_one(
+            "SELECT record, active_version FROM {{tables.secrets}}"
+            " WHERE installation_id=$1 AND team_id=$2 AND secret_id=$3 FOR UPDATE",
+            installation_id,
+            team_id,
+            context.secret_id,
+        )
+        if row is None:
+            raise ChangeRefused("secret unavailable", code="secret_unknown")
+        record = SecretRecord.from_after(_request(row["record"]))
+        if (
+            after["credential_version"] != await self._active_backend_token(tx, change)
+            or context.version <= (row["active_version"] or 0)
+            or not await self._custody.onepassword_binding_matches(tx, context, record, after)
+        ):
+            raise ChangeRefused(
+                "backend reference candidate unavailable", code="onepassword_binding_invalid"
+            )
+        affected = {context.secret_id}
+        if row["active_version"] is not None:
+            old = SealContext(installation_id, team_id, context.secret_id, row["active_version"])
+            try:
+                affected.update(
+                    await self._containment.replacement_consequences(
+                        tx,
+                        old=old,
+                        new=context,
+                        revoked_by=confirmed_by,
+                    )
+                )
+            except ContainmentRefused as refused:
+                raise ChangeRefused("replacement refused", code=refused.code) from None
+            await self._custody.destroy(tx, old)
+        await records.set_active_version(
+            tx, installation_id, team_id, context.secret_id, context.version
+        )
+        return tuple(sorted(affected))
+
+    async def _backend_audit(
+        self,
+        tx: TransactionManager,
+        change: Mapping[str, Any],
+        item: Mapping[str, Any],
+        evidence: OwnerApproval,
+        commitment: str,
+        view: RegistrationView | None,
+    ) -> None:
+        # Explicit owner-confirmed versions may rebind the reference/credential;
+        # they use the existing widening act, not automatic observation authority.
+        after = item["after"]
+        payload = {
+            "act": "resource.version_added",
+            "direction": "widening",
+            "authority": "passkey_session",
+            "resource_type": item["kind"],
+            "resource_ref": after.get("secret_id", BACKEND_CREDENTIAL_ID),
+            "approval_id": evidence.approval_id,
+            "approval_evidence_sha256": commitment,
+        }
+        if item["kind"] == "onepassword_binding":
+            payload["after_ref"] = await tx.fetch_value(
+                "SELECT version_ref FROM {{tables.onepassword_versions}}"
+                " WHERE installation_id=$1 AND team_id=$2 AND secret_id=$3 AND version=$4",
+                change["installation_id"],
+                change["team_id"],
+                after["secret_id"],
+                after["version"],
+            )
+        try:
+            await self._containment.governance(
+                tx,
+                team_id=change["team_id"],
+                payload=payload,
+                actor={"authority_mode": "system", "attestations": []},
+                occurred_at=datetime.now(UTC),
+                result_status="success",
+                view=view,
+            )
+        except HookRefused as refused:
+            raise ChangeRefused(
+                "required governance recording unavailable", code=refused.code
+            ) from None
 
     def _destination(self, after: Mapping[str, Any], where: str) -> DestinationRecord:
         try:
@@ -416,10 +712,14 @@ class ChangeSets:
         operation_id: str,
         fence: InstallationFence,
         admitted: AdmittedInstallation,
+        governance_view: RegistrationView | None = None,
     ) -> Confirmation:
         """Apply a decided change set in ``tx``, for the installation the
         caller admitted from its installation record. Deliver the returned
-        confirmation after the commit."""
+        confirmation after the commit. ``governance_view`` is trusted shared-resolver
+        data read before this transaction, never request JSON. New backend
+        effects require its fresh audit target and the retained APPROVE proof.
+        """
         try:
             await fence.check(tx, admitted)
         except InstallationRefused as refused:
@@ -442,6 +742,7 @@ class ChangeSets:
         if row is None or row["state"] != "pending":
             raise ChangeRefused("the change set is not pending", code="change_not_pending")
         change = _request(row["request"])
+        await self._prepare_containment(tx, row, change, admitted)
         try:
             evidence = await self._passkeys.owner_approval(
                 tx,
@@ -476,25 +777,176 @@ class ChangeSets:
             confirmer=confirmer.principal_did,
             drafter_principal=drafting_owner.principal_did if drafting_owner else None,
         )
+        bound = await tx.fetch_all(
+            "SELECT installation_id, team_id, secret_id, version"
+            " FROM {{tables.change_set_sealed}} WHERE change_id=$1",
+            change_id,
+        )
+        await self._bind_sealed(tx, change, [SealContext(**dict(value)) for value in bound])
+        backend_items = [
+            i
+            for i in change["changes"]
+            if i["kind"] in {"backend_credential", "onepassword_binding"}
+        ]
+        commitment = None
+        if backend_items:
+            if (
+                decided is None
+                or decided_by is None
+                or (decided.approval_id, decided_by.scope, decided_by.subject)
+                != (evidence.approval_id, evidence.approver_scope, evidence.approver_subject)
+            ):
+                raise ChangeRefused("the approved decision changed", code="change_not_approved")
+            try:
+                commitment = await self._passkeys.evidence_commitment(
+                    decided_by.evidence_ref,
+                    context=PasskeyInstallationContext(
+                        admitted.app_id,
+                        admitted.team_id,
+                        admitted.installation_id,
+                        admitted.generation,
+                    ),
+                    scope=evidence.approver_scope,
+                    subject=evidence.approver_subject,
+                    purpose="approve",
+                    tx=tx,
+                )
+            except PasskeyProofUnavailable:
+                raise ChangeRefused(
+                    "approval proof unavailable", code="passkey_proof_unavailable"
+                ) from None
         revision = await claim_config_revision(tx, installation_id, change["base_revision"])
         designations: list[Designation] = []
         contact_changes: list[ContactChange] = []
+        runner_registrations: list[RunnerRegistration] = []
+        affected: set[str] = set()
+        # Activate a proposed credential before binding items regardless of their
+        # presentation order. All dependencies were prepared before B2 admission.
+        for item in backend_items:
+            if item["kind"] == "backend_credential":
+                affected.update(
+                    await self._apply_backend_credential(
+                        tx, change, item["after"], confirmer.principal_did
+                    )
+                )
         for item in change["changes"]:
-            applied = await self._apply(tx, change, item, evidence)
-            if isinstance(applied, ContactChange):
+            if item["kind"] == "backend_credential":
+                continue
+            applied = await self._apply(tx, change, item, evidence, confirmer.principal_did)
+            if isinstance(applied, RunnerRegistration):
+                runner_registrations.append(applied)
+            elif isinstance(applied, tuple):
+                affected.update(applied)
+            elif isinstance(applied, ContactChange):
                 contact_changes.append(applied)
             else:
                 designations.extend(applied)
+        if commitment is not None:
+            for item in backend_items:
+                await self._backend_audit(tx, change, item, evidence, commitment, governance_view)
         await tx.execute(
             "UPDATE {{tables.change_sets}} SET state = 'applied', closed_at = NOW()"
             " WHERE change_id = $1",
             change_id,
         )
         return Confirmation(
+            change_id=change_id,
+            installation_id=admitted.installation_id,
+            team_id=admitted.team_id,
+            confirmed_scope=evidence.approver_scope,
+            confirmed_subject=evidence.approver_subject,
             revision=revision,
             designations=tuple(designations),
             contact_changes=tuple(contact_changes),
+            runner_registrations=tuple(runner_registrations),
+            affected_secret_ids=tuple(sorted(affected)),
         )
+
+    async def _prepare_containment(
+        self,
+        tx: TransactionManager,
+        row: Mapping[str, Any],
+        change: Mapping[str, Any],
+        admitted: AdmittedInstallation,
+    ) -> None:
+        if (change["installation_id"], change["install_generation"], change["team_id"]) != (
+            admitted.installation_id,
+            admitted.generation,
+            admitted.team_id,
+        ):
+            raise ChangeRefused(
+                "change is for another installation", code="change_wrong_installation"
+            )
+        # Canonical sealed bindings survive ref edits. Absent first-create parents
+        # stay inert and need no existing ancestry; discovery takes no child lock.
+        rows = await tx.fetch_all(
+            "SELECT DISTINCT b.secret_id FROM {{tables.change_set_sealed}} b"
+            " JOIN {{tables.secrets}} s USING (installation_id, team_id, secret_id)"
+            " WHERE b.change_id=$1 AND b.installation_id=$2 AND b.team_id=$3",
+            row["change_id"],
+            admitted.installation_id,
+            admitted.team_id,
+        )
+        roots = {record["secret_id"] for record in rows}
+        # Metadata-only edits lock the parent in _check_sealed_shape; operation
+        # creation reads it FOR SHARE, and destination/grant inserts acquire FK
+        # KEY SHARE. Prepare these existing parents before B2/revision too.
+        # First-create parents remain absent/inert until the record-write phase.
+        parent_ids = {
+            item["after"]["secret_id"]
+            for item in change["changes"]
+            if item["kind"] in {"secret", "destination", "operation", "grant"}
+        }
+        if parent_ids:
+            existing = await tx.fetch_all(
+                "SELECT secret_id FROM {{tables.secrets}}"
+                " WHERE installation_id=$1 AND team_id=$2 AND secret_id=ANY($3::text[])",
+                admitted.installation_id,
+                admitted.team_id,
+                sorted(parent_ids),
+            )
+            roots.update(record["secret_id"] for record in existing)
+        token_version = self._backend_token_version(change)
+        if token_version is not None:
+            roots.update(
+                row["secret_id"]
+                for row in await self._backend_dependents(tx, change, token_version)
+            )
+        for item in change["changes"]:
+            if item["kind"] == "reenable" and item["after"]["target_kind"] == "secret":
+                roots.add(
+                    await self._reenable_id(
+                        tx, admitted.installation_id, admitted.team_id, item["after"]["target_ref"]
+                    )
+                )
+        try:
+            await self._containment.prepare_replacements(
+                tx,
+                installation_id=admitted.installation_id,
+                team_id=admitted.team_id,
+                secret_ids=tuple(sorted(roots)),
+                approval_ids=(row["approval_id"],),
+            )
+        except ContainmentRefused as refused:
+            raise ChangeRefused("containment preparation refused", code=refused.code) from None
+
+    async def _reenable_id(
+        self,
+        tx: TransactionManager,
+        installation_id: str,
+        team_id: str,
+        ref: str,
+    ) -> str:
+        secret_id = await tx.fetch_value(
+            "SELECT secret_id FROM {{tables.secrets}}"
+            " WHERE installation_id=$1 AND team_id=$2 AND ref=$3",
+            installation_id,
+            team_id,
+            ref,
+        )
+        if secret_id is None:
+            raise ChangeRefused("no secret with this ref", code="secret_unknown")
+        return str(secret_id)
 
     async def _apply(
         self,
@@ -502,9 +954,33 @@ class ChangeSets:
         change: Mapping[str, Any],
         item: Mapping[str, Any],
         evidence: OwnerApproval,
-    ) -> list[Designation] | ContactChange:
+        confirmed_by: str,
+    ) -> list[Designation] | ContactChange | RunnerRegistration | tuple[str, ...]:
         installation_id, team_id = change["installation_id"], change["team_id"]
         after = item["after"]
+        if item["kind"] == "onepassword_binding":
+            return await self._apply_onepassword_binding(tx, change, after, confirmed_by)
+        if item["kind"] == "runner":
+            return await self._apply_runner(tx, change, item)
+        if item["kind"] == "secret_value":
+            try:
+                return await self._replace_value(tx, change, after, confirmed_by)
+            except records.RecordMissing as missing:
+                raise ChangeRefused(str(missing), code="record_missing") from None
+        if item["kind"] == "reenable":
+            try:
+                await self._containment.reenable(
+                    tx,
+                    installation_id=installation_id,
+                    team_id=team_id,
+                    target_kind=after["target_kind"],
+                    target_ref=after["target_ref"],
+                )
+            except ContainmentRefused as refused:
+                raise ChangeRefused("reenable refused", code=refused.code) from None
+            if after["target_kind"] == "secret":
+                return (await self._reenable_id(tx, installation_id, team_id, after["target_ref"]),)
+            return ()
         if item["kind"] == "role":
             await assign(
                 tx, PrincipalKey(team_id=team_id, principal_did=after["principal"]), after["role"]
@@ -565,6 +1041,39 @@ class ChangeSets:
             return []
         raise ChangeRefused(f"{item['kind']} cannot be applied", code="change_kind_not_applicable")
 
+    async def _apply_runner(
+        self, tx: TransactionManager, change: Mapping[str, Any], item: Mapping[str, Any]
+    ) -> RunnerRegistration:
+        installation_id, team_id = change["installation_id"], change["team_id"]
+        try:
+            record = runners.RunnerRecord.from_after(item["after"])
+            if item["op"] == "create":
+                if await tx.fetch_value(
+                    "SELECT 1 FROM {{tables.runners}} WHERE runner_id = $1", record.runner_id
+                ):
+                    raise _exists("runner", record.runner_id)
+                code = await runners.create_runner(
+                    tx, installation_id, team_id, record, now=datetime.now(UTC)
+                )
+                return RunnerRegistration(record.runner_id, code, False, False)
+            current = await tx.fetch_one(
+                "SELECT deregistered_at FROM {{tables.runners}}"
+                " WHERE runner_id = $1 AND installation_id = $2 AND team_id = $3 FOR UPDATE",
+                record.runner_id,
+                installation_id,
+                team_id,
+            )
+            if current is None:
+                raise ChangeRefused("no runner in this installation", code="runner_unknown")
+            code = await runners.replace_runner(
+                tx, installation_id, team_id, record, now=datetime.now(UTC)
+            )
+            return RunnerRegistration(
+                record.runner_id, code, current["deregistered_at"] is not None, True
+            )
+        except RunnerRefused as refused:
+            raise ChangeRefused("runner change refused", code=refused.code) from None
+
     async def _apply_record(
         self, tx: TransactionManager, change: Mapping[str, Any], item: Mapping[str, Any]
     ) -> None:
@@ -594,8 +1103,6 @@ class ChangeSets:
                         raise _exists(kind, record.ref)
                     await self._check_sealed_shape(tx, installation_id, team_id, record, lock=True)
                     await records.update_secret(tx, installation_id, team_id, record)
-            elif kind == "secret_value":
-                await self._replace_value(tx, change, after)
             elif kind == "destination":
                 destination = self._destination(after, "destination")
                 await _require_secret(tx, installation_id, team_id, destination.secret_id)
@@ -678,8 +1185,12 @@ class ChangeSets:
             raise ChangeRefused("a sealed secret's shape is fixed", code="sealed_secret_fixed")
 
     async def _replace_value(
-        self, tx: TransactionManager, change: Mapping[str, Any], after: Mapping[str, Any]
-    ) -> None:
+        self,
+        tx: TransactionManager,
+        change: Mapping[str, Any],
+        after: Mapping[str, Any],
+        confirmed_by: str,
+    ) -> tuple[str, ...]:
         """Make the item's sealed version, bound to it at draft time, the secret's
         active one, and destroy the version it replaces."""
         installation_id, team_id = change["installation_id"], change["team_id"]
@@ -697,6 +1208,17 @@ class ChangeSets:
             raise ChangeRefused(
                 "the sealed value does not match its secret record", code="sealed_secret_fixed"
             )
+        affected: tuple[str, ...] = ()
+        if stored.active_version is not None and stored.active_version != after["version"]:
+            try:
+                affected = await self._containment.replacement_consequences(
+                    tx,
+                    old=SealContext(installation_id, team_id, secret_id, stored.active_version),
+                    new=context,
+                    revoked_by=confirmed_by,
+                )
+            except ContainmentRefused as refused:
+                raise ChangeRefused("replacement refused", code=refused.code) from None
         await records.set_active_version(tx, installation_id, team_id, secret_id, after["version"])
         if stored.active_version is not None and stored.active_version != after["version"]:
             await self._custody.destroy(
@@ -708,6 +1230,7 @@ class ChangeSets:
                     version=stored.active_version,
                 ),
             )
+        return affected
 
     async def deliver(self, confirmation: Confirmation) -> None:
         for designation in confirmation.designations:

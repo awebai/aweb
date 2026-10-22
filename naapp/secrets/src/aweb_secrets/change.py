@@ -27,7 +27,7 @@ from aweb_naapp.runtime.approvals import RequestNotCanonical, canonical_request
 from aweb_naapp.runtime.approvals.request import parse_request_json
 from awid.utc_timestamps import parse_utc_seconds
 
-from aweb_secrets import destination, grant, operation, policy, secret
+from aweb_secrets import destination, grant, jobs, operation, policy, runners, secret
 from aweb_secrets.principal import is_did_aw, is_did_key
 
 TYPE = "aweb.secrets.change"
@@ -44,6 +44,8 @@ MAX_LIFETIME = timedelta(days=7)
 KINDS: Mapping[str, frozenset[str]] = {
     "secret": frozenset({"create", "update"}),
     "secret_value": frozenset({"create"}),
+    "backend_credential": frozenset({"create"}),
+    "onepassword_binding": frozenset({"create"}),
     "destination": frozenset({"create"}),
     "operation": frozenset({"create"}),
     "job": frozenset({"create", "update"}),
@@ -233,6 +235,22 @@ def _policy(after: Mapping[str, Any]) -> policy.Policy:
     return policy.Policy.from_body({k: v for k, v in after.items() if k != "v"})
 
 
+def _onepassword_fields(value: Any, where: str) -> None:
+    # Syntax can establish a whole codec family. The actual secret kind and
+    # immutable shape must additionally match the server-staged binding at
+    # draft and confirmation; family selection never supplies authority.
+    if not isinstance(value, Mapping) or not any(
+        required <= value.keys() <= required | optional
+        for required, optional in operation.CAPTURE_FIELDS.values()
+    ):
+        raise ChangeRefused(f"{where} must name one complete credential field family")
+    if any(
+        not isinstance(selector, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", selector)
+        for selector in value.values()
+    ):
+        raise ChangeRefused(f"{where} must contain exact field IDs")
+
+
 # A shape is found by its kind and v, so v is already the shape's own version here.
 _V1: Check = _positive_int(1)
 
@@ -254,6 +272,18 @@ AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
         ref_field="operation_id",
         identity=("operation_id", "digest"),
         derived=_record(operation.OperationTemplate.from_after, lambda record: record.digest),
+    ),
+    ("job", 1): AfterShape(
+        fields=_record_fields(jobs.FIELDS),
+        ref_field="job_id",
+        identity=("job_id", "digest"),
+        derived=_record(jobs.JobDefinition.from_after, lambda record: record.digest),
+    ),
+    ("runner", 1): AfterShape(
+        fields=_record_fields(runners.FIELDS),
+        ref_field="runner_id",
+        identity=("runner_id",),
+        derived=_record(runners.RunnerRecord.from_after),
     ),
     ("grant", 1): AfterShape(
         fields=_record_fields(grant.FIELDS),
@@ -277,6 +307,30 @@ AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
         fields={"v": _V1, "secret_ref": _text(), "version": _positive_int(1)},
         ref_field="secret_ref",
         identity=("secret_ref",),
+    ),
+    ("backend_credential", 1): AfterShape(
+        fields={
+            "v": _V1,
+            "backend": _matching(re.compile("onepassword")),
+            "credential_id": _matching(re.compile("bkc_onepassword")),
+            "version": _positive_int(1),
+        },
+        ref_field="backend",
+        identity=("backend",),
+    ),
+    ("onepassword_binding", 1): AfterShape(
+        fields={
+            "v": _V1,
+            "secret_id": _matching(secret.SECRET_ID),
+            "version": _positive_int(1),
+            "credential_version": _positive_int(1),
+            "vault_id": _matching(re.compile(r"[a-z0-9]{26}")),
+            "item_id": _matching(re.compile(r"[a-z0-9]{26}")),
+            "fields": _onepassword_fields,
+            "item_version": _positive_int(1),
+        },
+        ref_field="secret_id",
+        identity=("secret_id",),
     ),
     ("approver", 1): AfterShape(
         fields={
@@ -409,6 +463,11 @@ def validate_change(change: Mapping[str, Any]) -> None:
     if change["v"] != VERSION:
         raise ChangeRefused(f"change.v must be {VERSION}")
     for index, item in enumerate(change["changes"]):
+        if (
+            item["kind"] in {"backend_credential", "onepassword_binding"}
+            and change["drafter"]["via"] != "console"
+        ):
+            raise ChangeRefused("backend bindings require the console", code="console_required")
         shape = AFTER_SHAPES[(item["kind"], item["after"]["v"])]
         if shape.envelope_ref is not None and item["ref"] != change[shape.envelope_ref]:
             raise ChangeRefused(
