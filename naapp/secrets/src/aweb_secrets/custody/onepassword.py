@@ -1,7 +1,7 @@
 """Read-only 1Password SDK access for one dispatch (§5.3).
 
 The caller opens the installation's owner-entered, natively sealed service
-account token for this use. This adapter accepts only that redacting Plaintext;
+account token for this use. This adapter accepts its paired plaintext/context;
 it has no environment/file token loader, write operations, or client/value cache.
 Every call authenticates and retrieves the exact referenced item afresh. It
 projects selected field IDs through custody's shared value codec. SDK messages,
@@ -20,8 +20,13 @@ from typing import Any
 
 from onepassword import Client, Item
 
-from aweb_secrets.custody.sealing import CustodyUnavailable, Plaintext
-from aweb_secrets.custody.values import decode_value, encode_value
+from aweb_secrets.custody.sealing import (
+    CustodyUnavailable,
+    OpenedBackendCredential,
+    Plaintext,
+    SealContext,
+)
+from aweb_secrets.custody.values import ValueInvalid, decode_value, encode_value
 from aweb_secrets.operation import CAPTURE_FIELDS
 
 _ID = re.compile(r"[a-z0-9]{26}")
@@ -85,6 +90,15 @@ class SecretVersionChanged(CustodyUnavailable):
         self.observed_item_version = observed_item_version
 
 
+class SecretValueInvalid(CustodyUnavailable):
+    """A resolved item value violates the reference's immutable codec shape."""
+
+    code = "secret_value_invalid"
+
+    def __init__(self) -> None:
+        super().__init__("the secret value does not match its immutable shape")
+
+
 @dataclass(frozen=True)
 class OnePasswordRead:
     """One transient read; the metadata is safe to describe, the value is not."""
@@ -92,6 +106,8 @@ class OnePasswordRead:
     item_version: int
     updated_at: datetime
     value: Plaintext = field(repr=False)
+    reference: OnePasswordReference
+    credential_context: SealContext | None = None
 
 
 def project_item(
@@ -99,6 +115,7 @@ def project_item(
     item: Item,
     *,
     expected_item_version: int | None = None,
+    credential_context: SealContext | None = None,
 ) -> OnePasswordRead:
     """Check exact item/version/field identity and encode through the shared codec."""
     try:
@@ -128,9 +145,13 @@ def project_item(
             item.version,
             updated_at.astimezone(UTC),
             Plaintext(encode_value(reference.kind, values)),
+            reference,
+            credential_context,
         )
     except SecretVersionChanged:
         raise
+    except ValueInvalid:
+        raise SecretValueInvalid() from None
     except Exception:
         raise CustodyUnavailable("unusable 1Password item") from None
 
@@ -151,12 +172,12 @@ class OnePasswordSDK:
         self,
         reference: OnePasswordReference,
         *,
-        token: Plaintext,
+        credential: OpenedBackendCredential,
         expected_item_version: int | None = None,
     ) -> OnePasswordRead:
         try:
             reference = OnePasswordReference.from_config(reference.kind, reference.as_config())
-            account_token = decode_value("bearer", token.reveal())["value"]
+            account_token = decode_value("bearer", credential.plaintext.reveal())["value"]
             async with asyncio.timeout(self._timeout):
                 client = await Client.authenticate(
                     auth=account_token,
@@ -164,7 +185,12 @@ class OnePasswordSDK:
                     integration_version="0.1.0",
                 )
                 item = await client.items.get(reference.vault_id, reference.item_id)
-            return project_item(reference, item, expected_item_version=expected_item_version)
+            return project_item(
+                reference,
+                item,
+                expected_item_version=expected_item_version,
+                credential_context=credential.context,
+            )
         except CustodyUnavailable:
             raise
         except Exception:

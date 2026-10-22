@@ -106,6 +106,27 @@ versions are destroyed. OAuth scope and descriptions remain editable. Both draft
 and confirmation refuse a reshape; confirmation serializes with ingest under the
 parent-then-custody lock order documented in `custody.store`.
 
+The human app can mount owner value ingress alongside the shared console:
+
+```python
+from aweb_secrets.console_values import ConsoleValues, console_values_router
+
+human_app.include_router(
+    console_values_router(ConsoleValues(console=owner_console, custody=custody))
+)
+```
+
+`POST /installations/{installation_id}/backend-credentials/onepassword/versions`
+accepts a JSON object with one `value` string and the current tab's
+`X-CSRF-Token`. It uses the authoritative installation lookup, current owner
+role and exact live login evidence, then seals the token through native custody.
+The no-store response is the inert `backend_credential/1` after record
+(`v`, `backend`, `credential_id`, `version`). Activation belongs to the existing
+fresh passkey-approved `ChangeSets.confirm` flow. Keep this router on the human
+origin; entered bytes and response bodies must never be logged or stored in
+browser storage. Customers enter their own team's token; composition provides
+no operator token loader.
+
 `aweb_secrets.approval_email.ApprovalEmailDelivery` implements B2 delivery for
 both use and change approvals. Composition supplies a shared
 `aweb_naapp.email.Mailer` and the trusted absolute console endpoint:
@@ -146,6 +167,89 @@ under that exact source grant in the same sorted B2 revocation union. It joins
 the intent in the same installation/team; direct approvals under other grants
 remain untouched. Omit it for the existing exact-secret, all-version selection.
 `void_use_approvals` remains the version-replacement operation.
+
+The first fresh-confirmation HTTP slice supports `backend_credential` items.
+Mount it only on the human application, sharing the same services:
+
+```python
+from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
+
+console_changes = ConsoleChanges(
+    console=owner_console,
+    changes=change_sets,
+    approvals=approvals,
+    registrations=hook_registrations,
+    after_commit=containment.evict,
+)
+human_app.include_router(console_changes_router(console_changes))
+```
+
+Authenticated POSTs require JSON, the S4 cookie and this tab's `X-CSRF-Token`. Browser
+forms call `window.awebSecretsConsole.post(path, body)`. Under
+`/installations/{installation_id}/change-sets`:
+
+- `POST` takes exactly `{changes, sealed, reason}`. `changes` uses existing
+  change/1 items; `sealed` contains `{secret_id, version}` locators from ingress.
+  The server supplies the installation/team/generation, authenticated drafter,
+  current revision, random change ID and ten-minute lifetime. The response is
+  `{change_id, approval_id, state: "pending"}`, with no approval link or value.
+  Registered-contact delivery runs after the draft commits.
+- `GET /{change_id}` returns the persisted frozen change to an owner of this
+  installation, for rendering; it does not rebuild it from current records.
+- `POST /{change_id}/approval-options` takes `{token}` from the registered
+  contact's locator link and returns B2/B3's fresh APPROVE options.
+- `POST /{change_id}/approve` takes `{token, assertion}` and records the fresh
+  passkey decision. The logged-in owner must be that link's candidate.
+- `POST /{change_id}/confirm` takes `{}`. Only the deciding owner's current
+  session can consume the retained approval through `ChangeSets.confirm`.
+  The trusted governance registration view is fetched before authority locks;
+  required outbox recording and activation share the confirmation transaction.
+
+The protected confirmation response uses `owner_confirmation_result`; serve
+it with no-store and never log its body. Eviction receives only the committed
+Confirmation's installation/team/affected IDs, after commit. A cleanup failure
+never repeats confirmation; active-version and custody checks remain the
+release controls. If the session is lost after commit, the response contains
+only `{change_id, revision, state: "applied", reauth_required: true}` and any
+clearing-cookie header; it carries no protected material and does not report a
+rolled-back mutation.
+
+The effect is authorized by the retained fresh APPROVE, with S4 checking the
+exact login on request entry. It takes no late LOGIN credential lock after the
+forest/B2 locks. Within a valid session, possession of that session and its CSRF
+token can apply the exact change its real owner has already approved; it cannot
+supply the fresh passkey proof needed to approve another change.
+
+Mount the browser forms with the same services, only on the human application:
+
+```python
+from aweb_secrets.console_forms import console_forms_router
+human_app.include_router(console_forms_router(changes=console_changes))
+```
+
+`GET /backend-credentials/onepassword/new` resolves the installation from the
+stored owner scope and renders token entry through the shared console shell.
+The field clears as soon as submitted, and no token enters a URL, template or
+browser storage. Saving stages an inert token and drafts its metadata. The
+page directs the owner to the registered-contact approval link.
+
+`GET /approvals#token=<locator>` accepts the personal email fragment. With no
+session, the public read-only `POST /approvals/sign-in` accepts exactly `{token}`
+and returns only that link candidate's opaque sign-in scope. This neither
+reveals the frozen change nor authorizes anything. The page calls the existing
+S4 login APIs with a real LOGIN assertion, stores only the tab CSRF, then loads
+the authenticated review. It still needs a separate fresh APPROVE assertion.
+`POST /approvals/locate` is authenticated and CSRF-protected; it resolves the
+same candidate's link to the scoped frozen change. Locators stay transient and
+are removed from the fragment immediately; they never enter browser storage.
+
+The review renders persisted frozen metadata with escaped untrusted reason
+text. `/installations/{installation_id}/change-sets/{change_id}/review` also
+lets a deciding owner resume an approved change after a page reload, without
+approving again. Browser actions use the sole shared `post` and `assertion`
+helpers; no automatic mutation retry occurs. New tabs without tab CSRF retain
+the shared scoped re-authentication guard. Other record kinds, reference
+staging and the root application mount remain separate integration work.
 
 Run-slot approvals use the same B2 service and `apply_use_approval_migrations`.
 `run_approvals.request_run_approvals(tx, approvals, prepared=..., principal=...,
