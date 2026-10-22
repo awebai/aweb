@@ -130,3 +130,39 @@ hosted MCP offers no Folio tools for that team. Key rotation likewise adds a
 new declared kid beside the old one, yields a new digest, and needs a re-pin.
 These are separately authorized operator actions; a code landing performs none
 of them.
+
+## Editable presentation privacy and expiry
+
+Editable presentation links default to 300 seconds. The server refuses an
+explicit editable TTL above 300 seconds; read-only TTL settings are unchanged.
+An editable row minted by an older build with an expiry more than 300 seconds
+after its creation is refused on the editor, state, preview and save paths.
+This requires no migration or inspection of production document rows.
+
+After an expired or revoked save, the editor keeps the unsaved textarea and
+provides a copy action with instructions to return to the dashboard, reopen
+Edit and paste the draft. It never retries a failed save automatically.
+
+Every `/present/` response, including expected refusals, carries
+`Cache-Control: no-store` and `Referrer-Policy: no-referrer`. Folio installs its
+access-log filter when constructing the app, including under the Dockerfile's
+standard Uvicorn command. The filter redacts legacy capability-token path
+segments and suppresses query strings on all access records, including records
+queries whose `bind` values may be private. It changes only log records, never
+the URL used for routing or signature verification. Upstream access logs must
+follow the same redaction policy; the Folio filter operates on Folio's own logs.
+
+Focused local proof (requires PostgreSQL, `uv sync` and the Chromium matching
+`uv run playwright install chromium`; run under the team's suite lock):
+
+```sh
+uv run pytest -q tests/test_present_privacy.py tests/test_editor_browser.py
+FOLIO_EDIT_REAL_EXPIRY=1 uv run pytest -q tests/test_editor_browser.py -k expired
+```
+
+The second command keeps a real editor open for more than 300 wall-clock
+seconds, then saves through the production route and SQL to assert refusal,
+copyable retained text and no appended version. The normal regression ages
+only disposable test rows for fast coverage of the same failure path. These
+checks seed a synthetic document in real PostgreSQL; they do not claim the
+separate dashboard mint/authentication flow or a deployed production pass.

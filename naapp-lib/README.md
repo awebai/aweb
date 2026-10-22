@@ -87,11 +87,16 @@ owed it. The drain resolves deliveries with `hook_targets(registrations)`, and
 it through the egress guard to the binding's endpoint only.
 
 Producing runtimes install `aweb-naapp[runtime,egress]`. A manifest with
-`hooks.productions` must declare and configure a `hook-event` key and a
-`hook-resolve` key in `app_key_files`; the runtime loads them at construction.
+an implemented app production in `aweb.hooks` v1 must declare and configure a
+`hook-event` key and a `hook-resolve` key in `app_key_files`; the runtime loads
+them at construction.
 A manifest-command production also requires `manifest_request_key_file`, the
 independent random 32-byte commitment key in the shared key-file format.
 No-hook runtimes need none of this configuration.
+Unknown catalogs, versions and hook names remain in the served manifest but
+configure no producer, drain or commitment. Core-only and client-only hooks
+likewise configure no app producer. A supported production in the same manifest
+still requires its own purpose keys.
 
 `runtime.hook_registrations()` returns one `TeamServerRegistrations` source on
 that exact `runtime.hook_resolver()`. Fetch its view outside authority locks.

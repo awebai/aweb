@@ -14,6 +14,7 @@ from ipaddress import IPv4Network, IPv6Network
 from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID
 
+from aweb_naapp.hooks.catalog import packaged_catalog
 from aweb_naapp.hooks.commitment import CommitmentKey, Purpose, load_commitment_key
 from aweb_naapp.hooks.producer import HOOKS_CHANNEL, HookProducer, ServerProducer, hook_targets
 from aweb_naapp.hooks.resolver import TeamServerRegistrations
@@ -31,6 +32,23 @@ if TYPE_CHECKING:
 
 HOOK_EVENT = "hook-event"
 MANIFEST_HOOK = "post-manifest-command-hook"
+
+
+def _app_productions(manifest: Manifest) -> tuple[dict[str, Any], ...]:
+    """Only implemented catalog entries can configure this app producer.
+
+    The manifest reader preserves unknown catalogs, versions and hook names.
+    They remain inert rather than requiring keys or configuring a drain.
+    """
+    catalog = packaged_catalog()
+    return tuple(
+        production
+        for production in (manifest.hooks or {}).get("productions", ())
+        if production["catalog_id"] == catalog.id
+        and production["catalog_version"] == catalog.version
+        and production["hook"] in catalog.hooks
+        and "app" in catalog.hooks[production["hook"]].producer_kinds
+    )
 
 
 class DrainOptions(TypedDict):
@@ -55,6 +73,7 @@ class RuntimeHooks:
         tool_effects: dict[str, str] | None = None,
     ) -> None:
         self.manifest = manifest
+        self.productions = _app_productions(manifest)
         self.key = key
         self.registrations = registrations
         self.transport = transport
@@ -62,7 +81,7 @@ class RuntimeHooks:
         self.manifest_request_key = manifest_request_key
         self.tool_effects = dict(tool_effects or {})
         tools = manifest.tools_by_name()
-        declared = {p["hook"] for p in (manifest.hooks or {}).get("productions", ())}
+        declared = {p["hook"] for p in self.productions}
         for tool, hook in self.tool_effects.items():
             if (
                 tool not in tools
@@ -83,7 +102,7 @@ class RuntimeHooks:
         egress: Egress | None,
         internal_cidr: IPv4Network | IPv6Network | None,
     ) -> RuntimeHooks:
-        productions = (manifest.hooks or {}).get("productions", ())
+        productions = _app_productions(manifest)
         policy = RetryPolicy(
             stalled_after=timedelta(seconds=settings.hook_events_stalled_after_seconds),
             call_timeout_seconds=settings.hook_delivery_timeout_seconds,
@@ -172,9 +191,7 @@ class RuntimeHooks:
             return None
         raw_tool = self.manifest.tools_by_name()[evidence.tool.name]
         mutation = raw_tool.get("mutation", False)
-        production = next(
-            p for p in (self.manifest.hooks or {})["productions"] if p["hook"] == MANIFEST_HOOK
-        )
+        production = next(p for p in self.productions if p["hook"] == MANIFEST_HOOK)
         if not refused and not mutation and evidence.tool.name not in production["reads"]:
             return None
         payload: dict[str, Any] = {
