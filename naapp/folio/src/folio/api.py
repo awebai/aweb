@@ -143,11 +143,10 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
 
     @app.post("/v1/documents", response_model=DocumentResponse)
     async def create_document_route(
-        request: Request,
+        payload: CreateDocumentRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        payload = CreateDocumentRequest.model_validate(await request.json())
         has_body = "body" in payload.model_fields_set
         has_template = "template" in payload.model_fields_set
         if has_body == has_template:
@@ -203,11 +202,10 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
     @app.post("/v1/documents/{slug}/versions/template", response_model=DocumentResponse)
     async def append_template_version_route(
         slug: str,
-        request: Request,
+        payload: AppendTemplateVersionRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        payload = AppendTemplateVersionRequest.model_validate(await request.json())
         body = render_declarative_template(payload.model_dump())
         result = await append_version(database, principal=actor, events=runtime.app_events, slug=slug, body=body)
         return result
@@ -229,11 +227,10 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
 
     @app.post("/v1/present", response_model=PresentationResponse)
     async def create_presentation_route(
-        request: Request,
+        payload: CreatePresentationRequest,
         authorization: Annotated[Authorization, Depends(records.guard)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        payload = CreatePresentationRequest.model_validate(await request.json())
         structured = await records.present(authorization, payload)
         if structured is not None:
             return structured
@@ -286,20 +283,18 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
 
     @app.post("/v1/assets", response_model=ImageAssetResponse)
     async def upload_asset_route(
-        request: Request,
+        payload: ImageAssetUploadRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        payload = ImageAssetUploadRequest.model_validate(await request.json())
         return await upload_image_asset(database, principal=actor, settings=resolved, image=payload)
 
     @app.post("/v1/assets/video/direct-upload", response_model=VideoDirectUploadResponse)
     async def create_video_direct_upload_route(
-        request: Request,
+        payload: VideoDirectUploadRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        payload = VideoDirectUploadRequest.model_validate(await request.json())
         return await create_video_direct_upload(database, principal=actor, settings=resolved, video=payload)
 
     @app.get("/v1/assets/{asset_id}", response_model=AssetMetadataResponse)
@@ -319,11 +314,10 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
 
     @app.put("/v1/theme", response_model=ThemeResponse)
     async def put_theme_route(
-        request: Request,
+        payload: ThemeRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        payload = ThemeRequest.model_validate(await request.json())
         if "preset" in payload.tokens:
             raise HTTPException(
                 status_code=422,
@@ -369,10 +363,9 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
     @app.post("/present/{token}/edit", response_model=PresentationEditResponse)
     async def presentation_edit_route(
         token: str,
-        request: Request,
+        payload: PresentationEditRequest,
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        payload = PresentationEditRequest.model_validate(await request.json())
         edited = await edit_presented_document(
             database,
             events=runtime.app_events,
@@ -386,10 +379,9 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
     @app.post("/present/{token}/preview", response_class=HTMLResponse)
     async def presentation_preview_route(
         token: str,
-        request: Request,
+        payload: PresentationPreviewRequest,
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> HTMLResponse:
-        payload = PresentationPreviewRequest.model_validate(await request.json())
         presented = await get_presented_document(database, token=token)
         if not bool(presented.get("editable")):
             raise HTTPException(status_code=404, detail="Presentation link not found")
