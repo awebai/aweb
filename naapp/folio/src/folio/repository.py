@@ -5,7 +5,6 @@ import binascii
 import json
 import re
 import secrets
-from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -276,30 +275,42 @@ async def mint_presentation_link(
     if exists is None:
         raise HTTPException(status_code=404, detail="Document version not found")
 
-    ttl = min(ttl_seconds or settings.default_present_ttl_seconds, settings.max_present_ttl_seconds)
-    expires_at = datetime.now(UTC) + timedelta(seconds=ttl)
+    if editable and ttl_seconds is not None and ttl_seconds > 300:
+        raise HTTPException(
+            status_code=422, detail="Editable links expire after at most 300 seconds"
+        )
+    requested_ttl = (
+        (300 if ttl_seconds is None else ttl_seconds)
+        if editable
+        else (ttl_seconds or settings.default_present_ttl_seconds)
+    )
+    ttl = min(requested_ttl, settings.max_present_ttl_seconds)
     token = secrets.token_urlsafe(32)
-    await db.execute(
+    # Use the same database clock for expiry and the row's default created_at.
+    # That makes the stored editable lifetime exactly bounded across hosts.
+    minted = await db.fetch_one(
         """
         INSERT INTO {{tables.presentation_links}}
           (token, document_id, version_number, expires_at, created_by_did_key,
            created_by_did_aw, created_by_alias, certificate_id, editable)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, NOW() + $4::integer * interval '1 second', $5, $6, $7, $8, $9)
+        RETURNING expires_at
         """,
         token,
         document_id,
         version_number,
-        expires_at,
+        ttl,
         principal.did_key,
         principal.did_aw,
         principal.alias,
         principal.certificate_id,
         editable,
     )
+    assert minted is not None
     return {
         "token": token,
         "url": f"{settings.public_origin.rstrip('/')}/present/{token}",
-        "expires_at": expires_at,
+        "expires_at": minted["expires_at"],
     }
 
 
@@ -346,6 +357,7 @@ async def get_presented_document(db: AsyncDatabaseManager, *, token: str) -> dic
         ) latest ON TRUE
         LEFT JOIN {{tables.themes}} t ON t.team_id = d.team_id
         WHERE p.token = $1 AND p.revoked_at IS NULL AND p.expires_at > NOW()
+          AND (p.editable IS FALSE OR p.expires_at <= p.created_at + interval '300 seconds')
         """,
         token,
     )
@@ -387,6 +399,7 @@ async def get_presentation_state(db: AsyncDatabaseManager, *, token: str) -> dic
           AND p.editable IS TRUE
           AND p.revoked_at IS NULL
           AND p.expires_at > NOW()
+          AND p.expires_at <= p.created_at + interval '300 seconds'
         """,
         token,
     )
@@ -416,6 +429,7 @@ async def edit_presented_document(
               AND p.editable IS TRUE
               AND p.revoked_at IS NULL
               AND p.expires_at > NOW()
+              AND p.expires_at <= p.created_at + interval '300 seconds'
             FOR UPDATE OF d
             """,
             token,

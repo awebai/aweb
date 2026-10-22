@@ -46,6 +46,7 @@ from folio.presentation import (
     sanitize_layout_tokens,
     theme_contrast_error,
 )
+from folio.privacy import PresentationPrivacy, install_access_filter
 from folio.record_host import RecordHost
 from folio.record_storage import RecordStorage
 from folio.repository import (
@@ -85,6 +86,7 @@ _USER_CONTENT_PATHS = ("/present/", "/assets/")
 
 
 def create_app(settings: Settings | None = None, *, awid_transport=None, team_server_transport=None) -> FastAPI:
+    install_access_filter()
     resolved = settings or get_settings()
     record_storage = RecordStorage(resolved)
     runtime = NaappRuntime(
@@ -110,6 +112,7 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
     app = FastAPI(title="folio", version="0.1.0", lifespan=lifespan)
     app.state.folio_runtime = runtime
     app.state.folio_records = records
+    app.add_middleware(PresentationPrivacy)
 
     def db() -> AsyncDatabaseManager:
         return runtime.db()
