@@ -84,7 +84,7 @@ wheels = [
 
 [[package]]
 name = "aweb"
-version = "1.27.31"
+version = "1.27.32"
 source = { editable = "." }
 dependencies = [
     { name = "aweb-naapp", extra = ["hooks"] },
@@ -145,7 +145,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "../naapp-lib" }
 
 [package.optional-dependencies]
