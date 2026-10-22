@@ -432,6 +432,12 @@ async def test_the_served_v2_bytes_come_from_the_template_and_configured_keys(
             "secrets:hook-resolve-1": keys["secrets:hook-resolve-1"]
         }
         assert runtime.hook_resolver() is runtime.hook_resolver()
+        assert runtime.hook_registrations() is runtime.hook_registrations()
+        producer = runtime.hook_producer(
+            installation_id="1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b", generation=1
+        )
+        assert producer.producer.did_key == keys["secrets:hook-event-1"]
+        assert producer.producer.did_key != keys["secrets:hook-resolve-1"]
 
 
 async def test_a_verified_dashboard_member_reaches_every_declared_tool(
