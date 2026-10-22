@@ -1776,10 +1776,11 @@ action:
 | `reconciled_*` | `reconciled` |
 
 `naapp/secrets/vectors/hook-actions-v1.json` freezes the transition and governance
-mapping as data, with catalog-validated examples read by S13's tests. M1/S13 must
-add the decision-92 observation row and its exclusive authority/refusal cases
-through the accepted shared catalog before emitting them; this documentation
-alignment does not assert that producer fixture or runtime work is complete.
+mapping as data, including the accepted decision-92 observation row and example.
+Both shared catalog copies already include its exclusive authority and refusal
+cases. M1/S13 consume those accepted fixtures and add their implementation, CAS,
+rollback, cache and delivery proofs. Updated receiver support and production
+activation still precede emission; the shared row/catalog re-freeze is complete.
 
 secrets fills every field of the §A2 allowlist that applies to the event. The
 list below highlights fields with secrets-specific rules and is not exhaustive:
