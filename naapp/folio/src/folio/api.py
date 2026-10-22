@@ -41,6 +41,7 @@ from folio.presentation import (
     sanitize_layout_tokens,
     theme_contrast_error,
 )
+from folio.privacy import PresentationPrivacy, install_access_filter
 from folio.repository import (
     append_version,
     create_document,
@@ -78,6 +79,7 @@ _USER_CONTENT_PATHS = ("/present/", "/assets/")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    install_access_filter()
     resolved = settings or get_settings()
     runtime = NaappRuntime(
         resolved,
@@ -86,6 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         manifest_path=MANIFEST_PATH,
     )
     app = FastAPI(title="folio", version="0.1.0", lifespan=runtime.lifespan)
+    app.add_middleware(PresentationPrivacy)
 
     def db() -> AsyncDatabaseManager:
         return runtime.db()
