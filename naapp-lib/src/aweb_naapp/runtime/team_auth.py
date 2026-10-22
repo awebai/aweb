@@ -17,6 +17,7 @@ signed the request, not that the signer may perform it; see
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -57,6 +58,8 @@ TEAM_AUTH_ENVELOPE_V2 = 2
 MAX_TIMESTAMP_SKEW_SECONDS = 300
 # AWID team facts are reused for at most a minute; a longer configured TTL is clamped.
 MAX_TEAM_FACTS_TTL_SECONDS = 60
+# Unknown certificates may force one full-history refresh per team in this window.
+UNKNOWN_CERTIFICATE_REFRESH_SECONDS = 5
 _B64URL_NO_PADDING = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -175,6 +178,9 @@ class AWIDTeamCache:
             else {}
         )
         self._cache: dict[str, CachedTeamFacts] = {}
+        self._team_refresh_locks: dict[str, asyncio.Lock] = {}
+        self._unknown_refresh_at: dict[str, float] = {}
+        self._team_refresh_errors: dict[str, tuple[int, Any]] = {}
         self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = {}
         self._did_keys: dict[tuple[str, str], CachedDidKey] = {}
         self._transport = transport
@@ -248,9 +254,53 @@ class AWIDTeamCache:
             return await self._get_certificate_status(team_id, certificate_id)
         now = time.monotonic()
         cached = self._cache.get(team_id)
-        if cached and cached.expires_at > now:
+        if cached and cached.expires_at > now and (
+            certificate_id is None or certificate_id in cached.published_certificate_ids
+        ):
             return cached
 
+        lock = self._team_refresh_locks.setdefault(team_id, asyncio.Lock())
+        async with lock:
+            now = time.monotonic()
+            cached = self._cache.get(team_id)
+            fresh = cached is not None and cached.expires_at > now
+            if cached is not None and fresh and (certificate_id is None or certificate_id in cached.published_certificate_ids):
+                return cached
+            last_refresh = self._unknown_refresh_at.get(team_id)
+            if last_refresh is not None and now - last_refresh < UNKNOWN_CERTIFICATE_REFRESH_SECONDS:
+                if cached is not None and fresh:
+                    return cached
+                failure = self._team_refresh_errors.get(team_id)
+                if failure is not None:
+                    raise HTTPException(status_code=failure[0], detail=failure[1])
+
+            # Count every attempt before I/O, so cold/expired-cache outages also
+            # coalesce. Cached failures never substitute for usable team facts.
+            self._unknown_refresh_at[team_id] = now
+            try:
+                facts = await self._refresh_team_facts(team_id, now)
+            except HTTPException as exc:
+                if exc.status_code == 401 and exc.detail == "Unknown AWID team":
+                    # Do not retain attacker-selected nonexistent teams. Check
+                    # identity because another waiter may still own this lock.
+                    if self._team_refresh_locks.get(team_id) is lock:
+                        self._team_refresh_locks.pop(team_id, None)
+                        self._unknown_refresh_at.pop(team_id, None)
+                        self._team_refresh_errors.pop(team_id, None)
+                else:
+                    self._team_refresh_errors[team_id] = (exc.status_code, exc.detail)
+                    # A slow failure must not consume its own retry window and
+                    # make every waiter repeat the same upstream timeout.
+                    self._unknown_refresh_at[team_id] = time.monotonic()
+                raise
+            self._team_refresh_errors.pop(team_id, None)
+            if not fresh and (certificate_id is None or certificate_id in facts.published_certificate_ids):
+                # An ordinary successful load does not consume the early-refresh
+                # allowance for a certificate published immediately afterwards.
+                self._unknown_refresh_at.pop(team_id, None)
+            return facts
+
+    async def _refresh_team_facts(self, team_id: str, now: float) -> CachedTeamFacts:
         domain, team_name = parse_team_id(team_id)
         try:
             async with self._client() as client:
