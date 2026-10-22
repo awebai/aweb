@@ -176,6 +176,7 @@ async def wait_for_review(page, review):
         (True, "signed_in", True),
         (True, "new_tab", False),
         (True, "stale_csrf", False),
+        (True, "stale_after_review", False),
     ],
 )
 async def test_customer_browser_token_draft_and_fresh_passkey_confirmation(
@@ -262,7 +263,7 @@ async def test_customer_browser_token_draft_and_fresh_passkey_confirmation(
             await page.get_by_role("button", name="Sign out").click()
             await page.wait_for_url(service + "/login")
         await page.goto(service + "/approvals#token=" + quote(token, safe=""))
-        if session_mode != "signed_in":
+        if session_mode not in {"signed_in", "stale_after_review"}:
             await expect(
                 page.get_by_role("button", name="Sign in with your passkey")
             ).to_be_enabled()
@@ -274,6 +275,76 @@ async def test_customer_browser_token_draft_and_fresh_passkey_confirmation(
         assert not await page.evaluate(
             "value => JSON.stringify({...sessionStorage,...localStorage}).includes(value)", token
         )
+        if session_mode == "stale_after_review":
+            # Rotate the shared cookie in an actual second tab AFTER frozen review.
+            second = await context.new_page()
+            second_cdp = await context.new_cdp_session(second)
+            await second_cdp.send("WebAuthn.enable")
+            second_auth = await second_cdp.send(
+                "WebAuthn.addVirtualAuthenticator",
+                {
+                    "options": {
+                        "protocol": "ctap2",
+                        "transport": "internal",
+                        "hasResidentKey": True,
+                        "hasUserVerification": True,
+                        "isUserVerified": True,
+                        "automaticPresenceSimulation": True,
+                    }
+                },
+            )
+            credentials = await cdp.send(
+                "WebAuthn.getCredentials", {"authenticatorId": authenticator}
+            )
+            for credential in credentials["credentials"]:
+                await second_cdp.send(
+                    "WebAuthn.addCredential",
+                    {"authenticatorId": second_auth["authenticatorId"], "credential": credential},
+                )
+            scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+            await second.goto(service + "/login?" + urlencode({"scope": scope}))
+            await second.get_by_role("button", name="Sign in with a passkey").click()
+            await second.wait_for_url(service + "/")
+            # Both virtual copies represent one device: carry its advanced counter.
+            latest = await second_cdp.send(
+                "WebAuthn.getCredentials", {"authenticatorId": second_auth["authenticatorId"]}
+            )
+            for credential in latest["credentials"]:
+                await cdp.send(
+                    "WebAuthn.removeCredential",
+                    {"authenticatorId": authenticator, "credentialId": credential["credentialId"]},
+                )
+                await cdp.send(
+                    "WebAuthn.addCredential",
+                    {"authenticatorId": authenticator, "credential": credential},
+                )
+            async with page.expect_response(
+                lambda r: r.url.endswith("/approval-options")
+            ) as refused:
+                await page.get_by_role("button", name="Confirm with your passkey").click()
+            assert (await refused.value).status == 403
+            await expect(page.locator("[data-console-scope]")).to_be_hidden()
+            await expect(page.locator("#approval-login button")).to_be_enabled(timeout=2000)
+            assert (await w.approvals.get(draft["approval_id"])).state is ApprovalState.PENDING
+            assert (
+                await w.db.fetch_value(
+                    "SELECT active_version FROM {{tables.onepassword_credentials}}"
+                )
+                is None
+            )
+            await page.locator("#approval-login button").click()
+            await wait_for_review(page, review)
+            await expect(
+                page.get_by_role("button", name="Confirm with your passkey")
+            ).to_be_enabled()
+            # Reauthentication reloads review; it must not retry approval or apply.
+            assert (await w.approvals.get(draft["approval_id"])).state is ApprovalState.PENDING
+            assert token not in page.url
+            assert not await page.evaluate(
+                "value => JSON.stringify({...sessionStorage,...localStorage}).includes(value)",
+                token,
+            )
+            await second.close()
         if resume_approved:
             await w.db.execute(
                 "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT reject_confirmation CHECK(kind <> 'post-governance-hook')"

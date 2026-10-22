@@ -172,6 +172,10 @@
         status.append(document.createTextNode(" "), link);
       }
     } catch {
+      if (token && actions && actions.hidden) {
+        offerSignIn(inlineLogin());
+        return;
+      }
       status.dataset.state = decided ? "needs-review" : "pending";
       status.textContent = decided
         ? "Your approval is recorded. Reload this draft to check its status before trying again."
