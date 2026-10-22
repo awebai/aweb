@@ -131,38 +131,47 @@ new declared kid beside the old one, yields a new digest, and needs a re-pin.
 These are separately authorized operator actions; a code landing performs none
 of them.
 
-## Editable presentation privacy and expiry
+## Editable opener and session deployment
 
-Editable presentation links default to 300 seconds. The server refuses an
-explicit editable TTL above 300 seconds; read-only TTL settings are unchanged.
-An editable row minted by an older build with an expiry more than 300 seconds
-after its creation is refused on the editor, state, preview and save paths.
-This requires no migration or inspection of production document rows.
+Apply forward Folio migration `002_edit_sessions.sql` during deployment. It adds
+hashed opener/consumption/minter-key evidence and a persistent hashed edit-session
+table. Initial migration 001 stays unchanged. No production document rows need
+inspection. Read-only links retain their existing TTL and URL behavior.
 
-After an expired or revoked save, the editor keeps the unsaved textarea and
-provides a copy action with instructions to return to the dashboard, reopen
-Edit and paste the draft. It never retries a failed save automatically.
+Editable URLs now use `/present/edit/<public-id>#k=<opener>`. Their opener is
+single-use and lasts at most 300 seconds; an already-open session never expires
+on time or inactivity. Cloud's exact fragment-URL validation change must deploy
+**before** this Folio build, or dashboard Edit will reject the new URL. Folio's
+manifest bytes/digest remain unchanged, so this change needs no install re-pin.
 
-Every `/present/` response, including expected refusals, carries
-`Cache-Control: no-store` and `Referrer-Policy: no-referrer`. Folio installs its
-access-log filter when constructing the app, including under the Dockerfile's
-standard Uvicorn command. The filter redacts legacy capability-token path
-segments and suppresses query strings on all access records, including records
-queries whose `bind` values may be private. It changes only log records, never
-the URL used for routing or signature verification. Upstream access logs must
-follow the same redaction policy; the Folio filter operates on Folio's own logs.
+Old editors still using token paths will enter draft-copy recovery on their next
+request after deployment. There is no compatibility authority path. The person
+copies their unsaved text and reopens Edit from the dashboard. A reload of a new
+session works through its per-link sessionStorage credential; the database keeps
+sessions across app restarts and instances.
 
-Focused local proof (requires PostgreSQL, `uv sync` and the Chromium matching
-`uv run playwright install chromium`; run under the team's suite lock):
+Revoke the public link id to end a consumed opener's session. Document deletion,
+minter removal, or replacement/revocation of the minter's certificate also ends
+it. Certificate rotation therefore requires reopening Edit even when the person
+remains a team member. AWID unavailability is a retryable 503, never authority.
+The shared team-facts cache bounds membership freshness at 60 seconds. There is
+no idle timeout or hard session lifetime under Juan's ruling.
+
+Every `/present/` response, including exchange and refusals, carries no-store and
+no-referrer. Neither the fragment opener nor session header reaches access paths.
+Only SHA-256 verifiers reach the database. Folio's access filter also suppresses
+all query strings and redacts old bearer path segments; errors must not log
+request bodies or session headers. Upstream logging must follow the same policy.
+
+Focused proof under the team suite lock:
 
 ```sh
-uv run pytest -q tests/test_present_privacy.py tests/test_editor_browser.py
-FOLIO_EDIT_REAL_EXPIRY=1 uv run pytest -q tests/test_editor_browser.py -k expired
+uv run pytest -q tests/test_edit_sessions.py tests/test_editor_browser.py tests/test_live_refresh.py
 ```
 
-The second command keeps a real editor open for more than 300 wall-clock
-seconds, then saves through the production route and SQL to assert refusal,
-copyable retained text and no appended version. The normal regression ages
-only disposable test rows for fast coverage of the same failure path. These
-checks seed a synthetic document in real PostgreSQL; they do not claim the
-separate dashboard mint/authentication flow or a deployed production pass.
+The session tests use real disposable PostgreSQL/HTTP/Chromium and age only the
+fixture opener to model a hidden tab returning beyond 300 seconds. The existing
+Docker CLI/AWID journey covers actual member signing. The paired Cloud test
+starts at Documents Edit and proves the fragment survives backend validation and
+popup navigation before the Folio shell scrubs it. Exact tested heads and results
+belong to the review and landing receipts, not a production claim.

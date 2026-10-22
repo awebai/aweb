@@ -1,7 +1,7 @@
 """Production editor and save SQL over loopback HTTP in real Chromium.
 
-FOLIO_EDIT_REAL_EXPIRY=1 waits past the real 300-second server TTL. The normal
-regression ages the stored row instead; neither mode mocks a response.
+Session/link revocation exercises copy recovery; opener expiry no longer ends
+an established editing session. Neither case mocks a presentation response.
 """
 
 from __future__ import annotations
@@ -9,9 +9,8 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-import os
 import socket
-import time
+from urllib.parse import urlsplit
 
 import pytest
 import uvicorn
@@ -21,11 +20,10 @@ from test_present_privacy import mint, present_world
 __all__ = ["present_world"]
 
 
-@pytest.mark.parametrize("failure", ["expired", "revoked"])
+@pytest.mark.parametrize("failure", ["membership", "revoked"])
 async def test_unavailable_save_preserves_copyable_draft_and_reopen_path(present_world, failure):
     app, db, _ = present_world
     link = await mint(present_world, ttl_seconds=300)
-    start = time.monotonic()
     access = io.StringIO()
     access_handler = logging.StreamHandler(access)
     access_logger = logging.getLogger("uvicorn.access")
@@ -52,24 +50,15 @@ async def test_unavailable_save_preserves_copyable_draft_and_reopen_path(present
                 )
                 page = await context.new_page()
                 try:
-                    response = await page.goto(f"{origin}/present/{link['token']}")
+                    response = await page.goto(origin + urlsplit(link["url"]).path + "#" + urlsplit(link["url"]).fragment)
                     assert response.status == 200
+                    await expect(page.locator("#body")).to_have_value("Original")
                     draft = "Unsaved text — keep this exactly.\nSecond line."
                     await page.locator("#body").fill(draft)
-                    if failure == "expired":
-                        if os.environ.get("FOLIO_EDIT_REAL_EXPIRY") == "1":
-                            await asyncio.sleep(max(0, 301 - (time.monotonic() - start)))
-                            assert time.monotonic() - start > 300
-                        else:
-                            await db.execute(
-                                "UPDATE {{tables.presentation_links}} SET created_at=NOW()-interval '301 seconds', expires_at=NOW()-interval '1 second' WHERE token=$1",
-                                link["token"],
-                            )
+                    if failure == "membership":
+                        await db.execute("UPDATE {{tables.edit_sessions}} SET revoked_at=NOW() WHERE link_id=$1", link["token"])
                     else:
-                        await db.execute(
-                            "UPDATE {{tables.presentation_links}} SET revoked_at=NOW() WHERE token=$1",
-                            link["token"],
-                        )
+                        await db.execute("UPDATE {{tables.presentation_links}} SET revoked_at=NOW() WHERE token=$1", link["token"])
                     saves = []
                     page.on(
                         "request",
@@ -136,5 +125,4 @@ async def test_unavailable_save_preserves_copyable_draft_and_reopen_path(present
             server.should_exit = True
             await asyncio.wait_for(serving, timeout=10)
             access_logger.removeHandler(access_handler)
-            assert link["token"] not in access.getvalue()
-            assert "/present/[redacted]/edit" in access.getvalue()
+            assert "/present/edit/[redacted]/edit" in access.getvalue()

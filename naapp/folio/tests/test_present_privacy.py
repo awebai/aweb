@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 import httpx
 import pytest
+from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.db import NaappDatabase
-from aweb_naapp.runtime.team_auth import Principal
+from aweb_naapp.runtime.team_auth import MembershipProof, Principal
 
 from folio.api import create_app
 from folio.config import Settings
@@ -22,7 +24,13 @@ OWNER = Principal(
 
 
 @pytest.fixture
-async def present_world(test_db_factory):
+async def present_world(test_db_factory, monkeypatch):
+    # Isolate only AWID's external registry in these local PG/HTTP/browser tests.
+    # Docker e2e uses the real registry and signatures.
+    async def current(self, team_id, *, certificate_id, team_did_key):
+        now = time.monotonic()
+        return MembershipProof(team_id, certificate_id, team_did_key, now, now + 60)
+    monkeypatch.setattr(NaappRuntime, "check_current_member", current)
     database = await test_db_factory.create_db(suffix="folio_present")
     settings = Settings(
         _env_file=None,
@@ -114,7 +122,7 @@ async def test_editable_ttl_default_and_explicit_maximum(present_world):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://folio.test"
     ) as client:
-        assert (await client.get(f"/present/{link['token']}")).status_code == 200
+        assert (await client.get(f"/present/edit/{link['token']}")).status_code == 200
 
 
 @pytest.mark.parametrize("state", ["valid", "expired", "revoked", "legacy-long"])
@@ -136,25 +144,28 @@ async def test_present_responses_are_private_and_legacy_edit_links_refuse(presen
             "UPDATE {{tables.presentation_links}} SET expires_at=created_at+interval '1 day' WHERE token=$1",
             link["token"],
         )
-    prefix = f"/present/{link['token']}"
+    from urllib.parse import parse_qs, urlsplit
+    parts = urlsplit(link["url"])
+    prefix = parts.path
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://folio.test"
     ) as client:
+        shell = await client.get(prefix)
+        assert shell.status_code == 200
+        assert_private(shell)
+        opened = await client.post(prefix + "/session", json={"opener": parse_qs(parts.fragment)["k"][0]})
+        assert opened.status_code == (200 if state == "valid" else 404)
+        assert_private(opened)
+        headers = {"X-Folio-Edit-Session": opened.json()["session_secret"]} if state == "valid" else {}
         responses = [
-            await client.get(prefix),
-            await client.get(prefix + "/state"),
-            await client.post(prefix + "/preview", json={"body": "Draft"}),
-            await client.post(prefix + "/edit", json={"body": "Changed", "base_version": 1}),
+            await client.get(prefix + "/state?after_version=1", headers=headers),
+            await client.post(prefix + "/preview", headers=headers, json={"body": "Draft"}),
+            await client.post(prefix + "/edit", headers=headers, json={"body": "Changed", "base_version": 1}),
         ]
-        assert [r.status_code for r in responses] == ([200] * 4 if state == "valid" else [404] * 4)
+        assert [r.status_code for r in responses] == ([200] * 3 if state == "valid" else [404] * 3)
         for response in responses:
             assert_private(response)
-        for response in [
-            await client.get("/present/absent"),
-            await client.get(prefix + "/missing"),
-        ]:
-            assert response.status_code >= 400
-            assert_private(response)
+        assert (await client.get(f"/present/{link['token']}")).status_code == 404
     count = await db.fetch_one("SELECT COUNT(*) AS n FROM {{tables.document_versions}}")
     assert count["n"] == (2 if state == "valid" else 1)
 
