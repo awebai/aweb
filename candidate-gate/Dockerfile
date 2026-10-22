@@ -33,3 +33,17 @@ RUN python3 --version \
     && docker --version \
     && uv --version \
     && tmux -V
+
+# Integration runs in this image too, with a different HOME and host UID.
+# Install the browser at build time through the same locked Playwright as the
+# naapp tests, in a shared path independent of the runner's home directory.
+WORKDIR /opt/candidate-browser
+COPY awid awid
+COPY naapp-lib naapp-lib
+RUN uv sync --frozen --project naapp-lib
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN uv run --frozen --no-sync --project naapp-lib \
+        playwright install --with-deps --only-shell chromium \
+    && rm -rf /var/lib/apt/lists/* \
+    && chmod -R a+rX /opt/ms-playwright
+WORKDIR /
