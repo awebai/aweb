@@ -5,9 +5,10 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from awid.registry import CachedRegistryClient, KeyResolution, RegistryError
+from awid.registry import CachedRegistryClient, KeyResolution, RegistryClient, RegistryError
 from aweb import identity_auth_deps
 from aweb.team_auth_deps import _get_revoked_certificates, _resolve_team_key
+from tests.awid_stall_support import stalled_registry_url
 
 
 class _FailingTeamRegistry:
@@ -190,3 +191,49 @@ async def test_identity_did_aw_resolution_upstream_failure_is_retryable_503_and_
 
     assert raised.value.status_code == 503
     assert "AWID did:aw resolution upstream unavailable (ReadTimeout): read timed out" == raised.value.detail
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_registry_team_key_read_is_retryable_503_and_still_denies():
+    async with stalled_registry_url() as url:
+        registry = RegistryClient(registry_url=url, timeout_seconds=0.3)
+        try:
+            with pytest.raises(HTTPException) as raised:
+                await _resolve_team_key(_request_with_registry(registry), "backend:acme.com")
+        finally:
+            await registry.aclose()
+
+    assert raised.value.status_code == 503
+    assert raised.value.detail == "AWID team key resolution upstream unavailable (TimeoutError)"
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_registry_revocation_check_is_retryable_503_and_still_denies():
+    async with stalled_registry_url() as url:
+        registry = RegistryClient(registry_url=url, timeout_seconds=0.3)
+        try:
+            with pytest.raises(HTTPException) as raised:
+                await _get_revoked_certificates(_request_with_registry(registry), "backend:acme.com")
+        finally:
+            await registry.aclose()
+
+    assert raised.value.status_code == 503
+    assert raised.value.detail == "AWID team revocation check upstream unavailable (TimeoutError)"
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_registry_did_aw_resolution_is_retryable_503_and_still_denies(monkeypatch):
+    monkeypatch.setattr(identity_auth_deps, "parse_didkey_auth", lambda header: ("did:key:alice", "sig"))
+    monkeypatch.setattr(identity_auth_deps, "require_timestamp", lambda request: "2026-06-22T00:00:00Z")
+    monkeypatch.setattr(identity_auth_deps, "enforce_timestamp_skew", lambda timestamp: None)
+    monkeypatch.setattr(identity_auth_deps, "verify_did_key_signature", lambda **kwargs: None)
+    async with stalled_registry_url() as url:
+        registry = RegistryClient(registry_url=url, timeout_seconds=0.3)
+        try:
+            with pytest.raises(HTTPException) as raised:
+                await identity_auth_deps.resolve_identity_auth(_request_with_registry(registry))
+        finally:
+            await registry.aclose()
+
+    assert raised.value.status_code == 503
+    assert raised.value.detail == "AWID did:aw resolution upstream unavailable (TimeoutError)"

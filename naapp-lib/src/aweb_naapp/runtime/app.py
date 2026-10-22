@@ -59,7 +59,8 @@ from aweb_naapp.manifest import (
 )
 from aweb_naapp.outbox import outbox_status, run_drain
 from aweb_naapp.robots import robots_txt
-from aweb_naapp.runtime.app_keys import declared_did_keys
+from aweb_naapp.runtime.app_credentials import HOOK_RESOLVE, AppCredentialSigner
+from aweb_naapp.runtime.app_keys import AppKeyError, declared_did_keys, load_app_key
 from aweb_naapp.runtime.attestation import (
     AttestationRefused,
     AWIDAttestationRecords,
@@ -79,13 +80,16 @@ from aweb_naapp.runtime.authorization import (
 from aweb_naapp.runtime.db import NaappDatabase, Store
 from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
+from aweb_naapp.runtime.hook_resolver import HookResolver
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
     AWIDTeamCache,
+    MembershipProof,
     Principal,
     authenticate_request,
     record_observed_principal,
 )
+from aweb_naapp.runtime.team_server import TeamServerDirectory
 from aweb_naapp.skills import Skills
 
 logger = logging.getLogger(__name__)
@@ -98,7 +102,7 @@ _NOSNIFF = {"X-Content-Type-Options": "nosniff"}
 
 
 class NaappRuntime:
-    """A naapp's database and AWID team cache, open for the app's lifespan.
+    """A naapp's database, identity cache and shared team-server clients.
 
     ``root_path`` is the external prefix the server serves the app under, if
     any. Declared tool paths are external paths, so it is part of them.
@@ -109,7 +113,10 @@ class NaappRuntime:
     ``declared_tools`` are parsed from them; a manifest the shared reader
     refuses raises :class:`~aweb_naapp.manifest.ManifestError`. The app-event key the manifest
     declares is loaded here too, so a missing or wrong key stops the app
-    before it serves anything, and ``app_events`` emits through it.
+    before it serves anything, and ``app_events`` emits through it. A declared
+    hook-resolve key is also loaded at construction for the shared
+    :meth:`hook_resolver`. Identity discovery objects are available without
+    I/O before the lifespan, so grant sources can register route guards first.
     """
 
     def __init__(
@@ -121,6 +128,7 @@ class NaappRuntime:
         manifest_path: Path,
         root_path: str = "",
         awid_transport: httpx.AsyncBaseTransport | None = None,
+        team_server_transport: httpx.AsyncBaseTransport | None = None,
         stores: Sequence[Store] = (),
     ) -> None:
         self.settings = settings
@@ -131,7 +139,6 @@ class NaappRuntime:
         self.stores = tuple(stores)
         self._awid_transport = awid_transport
         self._database: NaappDatabase | None = None
-        self._team_cache: AWIDTeamCache | None = None
         self._attestation_records: AWIDAttestationRecords | None = None
         template = json.loads(manifest_path.read_bytes())
         _refuse_the_hosted_app_id_elsewhere(settings, template)
@@ -149,6 +156,31 @@ class NaappRuntime:
         )
         self._declared_tools = DeclaredTools.from_manifest(self._manifest)
         self._app_events = AppEvents.from_settings(settings, self._manifest)
+        # Configuration only: these objects perform no I/O until a request.
+        # Grant sources and guards must be wired before lifespan validation.
+        self._team_cache = AWIDTeamCache(
+            registry_url=settings.awid_registry_url,
+            ttl_seconds=settings.auth_cache_ttl_seconds,
+            service_token=settings.awid_service_token,
+            transport=awid_transport,
+        )
+        self._team_server_directory = TeamServerDirectory(
+            team_cache=self._team_cache, transport=awid_transport,
+        )
+        hook_key = (
+            load_app_key(settings, self._manifest, HOOK_RESOLVE)
+            if self._manifest.app_keys_for(HOOK_RESOLVE) else None
+        )
+        self._hook_resolver = (
+            HookResolver(
+                directory=self._team_server_directory,
+                signer=AppCredentialSigner(
+                    app_id=self._manifest.app_id, key=hook_key, purpose=HOOK_RESOLVE,
+                ),
+                app_origin=self._manifest.document["app"]["origin"],
+                transport=team_server_transport,
+            ) if hook_key is not None else None
+        )
         # Each authorized() guard, with the action_kind it was given.
         self._guards: dict[Callable[..., object], ActionKind | None] = {}
 
@@ -190,12 +222,6 @@ class NaappRuntime:
         )
         await database.connect()
         self._database = database
-        self._team_cache = AWIDTeamCache(
-            registry_url=self.settings.awid_registry_url,
-            ttl_seconds=self.settings.auth_cache_ttl_seconds,
-            service_token=self.settings.awid_service_token,
-            transport=self._awid_transport,
-        )
         self._attestation_records = AWIDAttestationRecords(
             registry_url=self.settings.awid_registry_url, transport=self._awid_transport
         )
@@ -216,7 +242,6 @@ class NaappRuntime:
                 await app_events_drain
             await client.aclose()
             self._database = None
-            self._team_cache = None
             self._attestation_records = None
             await database.disconnect()
 
@@ -260,9 +285,51 @@ class NaappRuntime:
         return {"database": database, "outbox": outbox}
 
     def team_cache(self) -> AWIDTeamCache:
-        if self._team_cache is None:
-            raise RuntimeError("naapp auth cache is not initialized")
+        """The process's identity cache, available before startup without I/O."""
         return self._team_cache
+
+    def team_server_directory(self) -> TeamServerDirectory:
+        """The single directory on :meth:`team_cache`, also shared by hooks.
+
+        Pass this instance to grant sources when registering route guards,
+        before entering the lifespan. Discovery verifies controller-signed
+        records through the configured AWID transport.
+        """
+        return self._team_server_directory
+
+    def hook_resolver(self) -> HookResolver:
+        """The shared resolver, signing with the hook-resolve key loaded at startup.
+
+        A manifest without that purpose remains valid, but cannot obtain a
+        resolver by substituting a key declared for another purpose.
+        """
+        if self._hook_resolver is None:
+            raise AppKeyError("manifest declares no hook-resolve key")
+        return self._hook_resolver
+
+    async def require_current_member(
+        self, team_id: str, *, certificate_id: str, team_did_key: str
+    ) -> None:
+        """Check membership before a transaction without retaining a proof.
+
+        May perform network I/O. For creator-scoped link access, retain the
+        result of :meth:`check_current_member` for local checking under the lock.
+        """
+        await self.check_current_member(
+            team_id, certificate_id=certificate_id, team_did_key=team_did_key
+        )
+
+    async def check_current_member(
+        self, team_id: str, *, certificate_id: str, team_did_key: str
+    ) -> MembershipProof:
+        """Fetch/check mint evidence before opening any transaction or lock.
+
+        Retain the in-process proof for a local evidence/expiry check after the
+        link lock is acquired. Its deadline is the original AWID facts' expiry.
+        """
+        return await self.team_cache().check_current_member(
+            team_id, certificate_id=certificate_id, team_did_key=team_did_key
+        )
 
     async def principal(self, request: Request) -> Principal:
         """FastAPI dependency: the team member who signed this request.

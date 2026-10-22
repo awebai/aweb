@@ -400,3 +400,13 @@ The [CLI tutorial](cli-tutorial.md) includes the smallest proof:
 
 If that sequence fails, use [Troubleshoot a workspace](troubleshoot-workspace.md)
 to separate mailbox, event transport, and runtime presentation failures.
+
+## Human-channel definitions and commit boundary
+
+The [P0 public seam](human-channels-contract-v1.md) defines preserved author
+assurance, committed acceptance/capture and receipt-based reconciliation. Its
+embedded unit of work must commit message, ingress result and durable mutation
+outbox before SSE/wakes publish. Events remain at-least-once hints; neither read
+state nor a delivery receipt proves exactly-once tool execution. Typed guests
+remain external/untrusted in CLI/channel/pi/wake/Hermes context even when the
+bridge signer verifies. No new event emission or capability is enabled by P0.
