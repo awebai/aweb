@@ -164,12 +164,16 @@ The real SIGKILL tests retain an accepted SQLite dispatch and prove it still
 refuses replay after recovery.
 
 Unknown entries, nonempty unmarked directories, symbolic links, changed engine
-bindings and incomplete preparation return `oci_recovery_required` and retain
+bindings, incomplete preparation, and container-marked trees with absent or
+empty runtime state return `oci_recovery_required` and retain
 state. An empty directory from the initial mkdir can be removed safely. A
 SIGKILL during unpacking may leave a public-data tool alive; without proof that
 preparation completed, recovery does not guess a PID or delete under it. The
 operator must stop/reconcile that tool before removing its quarantined private
-workspace. Never delete journal state as a recovery step.
+workspace. A retained container-marked tree may still hold credential-bearing
+config.json on tmpfs; treat it as sensitive until reconciled. Locate retained
+job-* directories only under the configured private workspace, and do not print
+or copy their contents. Never delete journal state as a recovery step.
 
 This recovery library is not yet wired into startup. Operator configuration,
 worker composition, independent deadline enforcement after a worker hard crash,

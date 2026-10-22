@@ -33,9 +33,17 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         test_prepare.PreparationTests.setUp(self)
 
-    async def crashed_worker(self, *, preparation_only=False, blocked_unpack=False):
+    async def crashed_worker(
+        self, *, preparation_only=False, blocked_unpack=False, blocked_launch=False
+    ):
         config, body = self.config("/bin/busybox sleep 30 & wait", timeout=30)
-        ready = self.root / ("tool-ready" if blocked_unpack else "public-ready")
+        ready = self.root / (
+            "tool-ready"
+            if blocked_unpack
+            else "launcher-ready"
+            if blocked_launch
+            else "public-ready"
+        )
         script = self.root / "worker.py"
         script.write_text(
             "import asyncio, hashlib, json, time\nfrom pathlib import Path\n"
@@ -80,7 +88,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         )
         pids = []
         try:
-            if preparation_only:
+            if preparation_only or blocked_launch:
                 async with asyncio.timeout(5):
                     while not ready.exists():
                         if child.returncode is not None:
@@ -164,6 +172,41 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(Refused, "oci_recovery_required"):
             await recover(self.runtime)
         self.assertEqual((work / "keep").read_bytes(), b"public-marker")
+
+    async def test_a_live_launcher_before_state_creation_is_retained_after_worker_sigkill(self):
+        launcher = self.root / "delayed-runc"
+        ready, gate = self.root / "launcher-ready", self.root / "allow-launch"
+        executable = str(self.runtime.engine.path)
+        launcher.write_text(
+            "#!/usr/bin/python3\nimport os, sys, time\n"
+            "if 'run' in sys.argv[1:]:\n"
+            f" open({str(ready)!r},'w').write(str(os.getpid()))\n"
+            f" while not os.path.exists({str(gate)!r}): time.sleep(0.01)\n"
+            f"os.execv({executable!r},[{executable!r},*sys.argv[1:]])\n"
+        )
+        launcher.chmod(0o700)
+        self.runtime = replace(
+            self.runtime,
+            engine=BinaryPin(launcher, hashlib.sha256(launcher.read_bytes()).hexdigest()),
+        )
+        work, _ = await self.crashed_worker(blocked_launch=True)
+        pid = int(ready.read_text())
+        try:
+            self.assertTrue(Path(f"/proc/{pid}").exists())
+            self.assertEqual(list((work / "state").iterdir()), [])
+            self.assertIsNotNone(json.loads((work / "run.json").read_bytes())["container"])
+            for absent in (False, True):
+                with self.subTest(state_absent=absent):
+                    if absent:
+                        (work / "state").rmdir()
+                    with self.assertRaisesRegex(Refused, "oci_recovery_required"):
+                        await recover(self.runtime)
+                    self.assertTrue((work / "bundle/config.json").exists())
+                    self.assertTrue(Path(f"/proc/{pid}").exists())
+        finally:
+            # Only this fixture knows the paused, newly created process group.
+            os.killpg(pid, signal.SIGKILL)
+            await self.assert_reaped([pid])
 
     async def test_changed_engine_binding_retains_uncertain_state(self):
         work, pids = await self.crashed_worker()
