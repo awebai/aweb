@@ -288,8 +288,11 @@ and its `/state`/`/edit`/`/preview`, `/llms.txt`, `/skills/`, `/health`) are
 - **Relative-path only.** Reject any `tool.path` with a scheme/host at validation.
 - The dispatcher derives `aud`+`path` from the absolute target *it* constructs
   from the granted origin; a manifest cannot override host/scheme.
-- Reserved built-in command **names and aliases** cannot be an `app.id` or a verb
-  (install-time rejection).
+- Reserved root command **names and aliases** cannot be an `app.id`
+  (install-time rejection). Tools live inside that app namespace: root names
+  such as `run` or `introspect` are valid tool names. Only commands and aliases
+  owned by the app dispatcher are reserved there: currently `help`, `--help`
+  and `-h`. Version 2 also rejects duplicate tool names within an app.
 
 ### Parsing and size bounds (fail closed)
 
