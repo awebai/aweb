@@ -100,6 +100,37 @@ never create or alter a store's table: `CREATE TABLE IF NOT EXISTS` under the
 same name collides silently, and which shape wins depends on which migration
 applied first.
 
+### Current link-creator membership
+
+Before opening any transaction for a creator-scoped link use, call
+`proof = await runtime.check_current_member(team_id, certificate_id=..., team_did_key=...)`.
+The team scope must be verified, and the certificate id and team key must come
+from the authenticated mint-time `Principal`, retained as immutable link metadata.
+An observed-principal row or a bare creator DID is not membership evidence.
+
+This uses the request verifier's AWID cache, with the same maximum 60-second
+revocation window. Success returns the frozen `MembershipProof` from
+`aweb_naapp.runtime.team_auth`: `team_id`, `certificate_id`, `team_did_key`,
+`checked_at` and `fresh_until`. Both times use `time.monotonic()` from the
+original facts' fetch-start and expiry. A cache hit does not renew them. The
+proof stays in the same process: never serialize, persist or accept it from a
+request. Facts that expired during lookup raise retryable 503.
+
+After taking the link lock, check the proof's team against both the link scope
+and immutable mint evidence, and its certificate id and key against that
+evidence. Read the monotonic clock after acquiring the lock; refuse a missing,
+mismatched or expired proof (`now > fresh_until`) with 403
+`current_member_required`. There is no network call under the lock.
+`require_current_member(...)` remains a thin wrapper discarding the proof;
+it may do network I/O and must also run before any transaction.
+
+Incomplete evidence, an unknown or
+revoked certificate, or a changed team key raises `HTTPException` with status
+403 and `detail.code=current_member_required`. Unavailable or unreadable AWID
+facts raise 503 with `detail.code=current_membership_unavailable`; propagate
+that retryable failure rather than treating it as revoked authority. The host
+still checks the creator's page/installation permissions separately.
+
 ### App keys
 
 An app names its signing keys by kid, as key files:
@@ -163,6 +194,83 @@ human_origin=...)` is one ASGI app that dispatches on `Host`:
 
 A route exists on one origin because it is declared in one of the two apps. The
 lifespan is the agent app's.
+
+### Team grants
+
+`aweb_naapp.runtime.team_grants.TeamGrantSource` implements the runtime's
+`GrantSource`. Construct it with `AppIdentity(app_id=..., origin=...,
+digest=...)` for the exact manifest bytes the app serves, an
+`AppCredentialSigner` for `app-grant-read`, and the runtime's shared
+`TeamServerDirectory` as `discovery`. It reads only the team's controller-signed
+server URL; it creates no directory or resolver of its own.
+
+`runtime.team_cache()` and `runtime.team_server_directory()` return the same
+configuration-only objects before, during and after the lifespan; constructing
+them makes no network requests. This permits wiring the grant source and
+registering `runtime.authorized(grants=source, policy=...)` before startup's
+route validation. The database remains available only inside the lifespan.
+For example, before mounting the guarded routes:
+
+```python
+import hashlib
+
+from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, AppCredentialSigner
+from aweb_naapp.runtime.app_keys import load_app_key
+from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
+
+key = load_app_key(settings, runtime.manifest, APP_GRANT_READ)
+source = TeamGrantSource(
+    identity=AppIdentity(
+        app_id=runtime.manifest.app_id,
+        origin=runtime.manifest.document["app"]["origin"],
+        digest="sha256:" + hashlib.sha256(runtime.manifest_bytes).hexdigest(),
+    ),
+    signer=AppCredentialSigner(app_id=runtime.manifest.app_id, key=key, purpose=APP_GRANT_READ),
+    discovery=runtime.team_server_directory(),
+)
+guard = runtime.authorized(grants=source, policy=policy)
+```
+
+The runtime's cached `runtime.hook_resolver()` uses that same directory and the
+served app identity. If the manifest declares `hook-resolve`, its key is loaded
+at construction: missing or ambiguous configuration refuses startup. An app
+without that purpose can start but cannot obtain a resolver using another
+purpose's key. The keyword-only `team_server_transport` constructor seam is
+for requests to the coordination server; `awid_transport` remains the AWID
+registry seam. Both default to normal production networking.
+
+For event ingestion, use the same publication check as request authentication:
+`await team_auth.require_active_certificate(runtime.team_cache(), team_id=...,
+certificate_id=...)`. It returns current AWID facts only for a published,
+unrevoked certificate, preserving 401 for unknown/revoked membership and 503
+for unavailable authority. This helper does not verify a certificate or event
+signature; consumers still verify their signed artifacts.
+
+`grant_for(team_id)` returns an active `Grant` or `None` when no key is
+registered or the installation is not active. `status_for(team_id)` shares
+the same cache and returns a `GrantStatus` with the installation's state,
+identity, generation, scopes and origin provenance. Unknown states grant no
+use; `None` is never evidence of uninstall. Discovery failures, malformed or
+mismatched answers, and failed refreshes raise `GrantUnavailable`.
+Missing-key denials expire after five seconds to allow prompt post-install retries.
+
+Answers expire at most 60 seconds after the shared read starts; the server
+may specify less. Expired answers are never served. The default total timeout
+is 5 seconds, including discovery, and concurrent grant reads share a refresh.
+
+### Hook resolution
+
+`aweb_naapp.runtime.hook_resolver.HookResolver` asks a team's coordination
+server where to deliver its hook events (`registrations`), whom it accepts them
+from and with which keys (`productions`), its own bindings in every state
+(`own_bindings`), and the server's core producer keys (`core_producer_keys`).
+It signs with the app's `hook-resolve` key and reaches only the server the
+team's AWID `aweb.team-server/1` record names. Answers are reused for at most
+60 seconds and never past their freshness. Every failure raises
+`HookResolutionUnavailable`, except a missing complementary binding, which
+raises `HookBindingRequired`. A binding is listed while active, including
+before its `active_from`, which the caller compares with an event's
+`occurred_at`. The server's side is described in `docs/app-registry.md`.
 
 ## Approvals and passkeys
 

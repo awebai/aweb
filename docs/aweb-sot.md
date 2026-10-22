@@ -614,6 +614,16 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `app_hook_bindings`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
+The server also applies the hooks kit's own migration module, `aweb_naapp_hooks`
+(`naapp-lib/src/aweb_naapp/hooks/migrations/*.sql`), to the same `aweb` schema,
+after its own chain, at startup and so on every upgrade. It is one
+implementation shared with the naapps that verify owner acts, not a copy in
+core's chain, and pgdbm records it under its own module name. Its tables:
+
+<!-- BEGIN SOURCE INVENTORY: aweb-kit-tables -->
+- `owner_act_nonces`
+<!-- END SOURCE INVENTORY: aweb-kit-tables -->
+
 ---
 
 ## API routes
@@ -633,6 +643,8 @@ router entry.
 - `agent_status`
 - `agent_activity`
 - `apps`
+- `hook_bindings`
+- `app_hooks`
 - `connect`
 - `chat`
 - `dashboard`
@@ -1767,6 +1779,9 @@ AWEB_DATABASE_STATEMENT_CACHE_SIZE=
 
 # How long an app may reuse its grant answer (1-60 seconds)
 AWEB_APP_GRANT_MAX_AGE_SECONDS=60
+
+# The core hook producer's public keys, retired ones included (JSON list)
+AWEB_HOOK_PRODUCER_KEYS=
 ```
 
 `AWEB_REDIS_URL` falls back to `REDIS_URL`, `AWEB_DATABASE_USES_TRANSACTION_POOLER`

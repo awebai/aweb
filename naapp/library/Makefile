@@ -4,6 +4,7 @@
 	aatk-predicate-inventory aatk-spec-check aatk-validate-preplan aatk-validate-release
 
 API_PORT ?= 8765
+export NAAPP_E2E_PROJECT ?= library-e2e
 PROD_CONFIG ?= ops/render-production.json
 RENDER_ENV_FILE ?= $(HOME)/.aweb-render/env
 PROD_COMMIT ?=
@@ -51,16 +52,16 @@ run:
 
 e2e:
 	set -e; \
-	trap 'docker compose -p library-e2e -f docker-compose.e2e.yml down -v --remove-orphans' EXIT; \
-	docker compose -p library-e2e -f docker-compose.e2e.yml down -v --remove-orphans >/dev/null 2>&1 || true; \
-	docker compose -p library-e2e -f docker-compose.e2e.yml up --build -d; \
+	trap 'docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans' EXIT; \
+	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans >/dev/null 2>&1 || true; \
+	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d; \
 	LIBRARY_E2E=1 uv run pytest -q -m e2e
 
 e2e-up:
-	docker compose -p library-e2e -f docker-compose.e2e.yml up --build -d
+	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d
 
 e2e-down:
-	docker compose -p library-e2e -f docker-compose.e2e.yml down -v --remove-orphans
+	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans
 
 api-serve:
 	@[ ! -f .api.pid ] || { echo "api server already running (pid $$(cat .api.pid)); make api-stop first"; exit 1; }

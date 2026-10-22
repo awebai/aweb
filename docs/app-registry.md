@@ -94,7 +94,11 @@ Current rules:
   a team, a key id keeps the `did_key` it was first registered with: an install
   supplying a different `did_key` for a registered key id is refused with
   `409`, and the install is not applied. Rotate a key under a new key id.
-  Reinstalling never reactivates a revoked key.
+  Reinstalling never reactivates a revoked key. Key identity and revocation
+  history span both v1 `event_emitters` and v2 `app_keys`: changing manifest
+  version never resets either. Registration carries the earliest revocation
+  for the same team, app, key id and `did_key`; verification also checks that
+  shared history, including rows registered before the version switch.
 - Scopes are normalized and stored. Without `manifest` (below), the server
   cannot prove that the granted scopes are within the manifest's
   `tools[].scopes`.
@@ -119,8 +123,19 @@ present:
 
 - the bytes must hash to `digest` and name the request's `app_id`, `origin`,
   `app_version` and `manifest_version`;
-- `events` and `event_emitters` come from the bytes. If the request also
-  supplies them, they must equal the bytes' declarations;
+- the bytes must be a valid manifest of either version, read by the one
+  manifest reader that apps and clients share (`aweb_naapp.manifest`, held to
+  `test-vectors/app-manifests/app-manifest-v2-v1.json`). A manifest it refuses
+  is refused with `422`, and the detail carries its stable code;
+- `events` come from the bytes; version 1 `event_emitters` are the app's
+  app-event keys. If the request also supplies them, they must equal the
+  bytes' declarations;
+- version 2 `app_keys` register the app's keys with the purposes the bytes
+  declare for each. They come only from the bytes; there is no request field.
+  A key id keeps its first `did_key` in the team, so a later install naming a
+  different key for it is refused with `409` and nothing is written, and a
+  revoked key stays revoked. A purpose label the server does not know is
+  stored and grants nothing. A key that declares `app-event` signs app events;
 - `granted_scopes` must be a subset of the scopes the bytes' tools request; a
   team may grant less, never more.
 
@@ -170,6 +185,99 @@ Response:
 - `400` means invalid `team_id`; `401`/`403` means the caller cannot read that
   team; storage failures are server errors.
 
+## Hook bindings
+
+An installed app's declared hook registrations and productions are its hook
+bindings (`docs/design/audit-substrate.md` §A3; the catalog is
+`docs/hook-events.md`). Each install generation writes its bindings as
+`pending`. Only the team owner moves one to `active` or `revoked`, with an
+`aweb.owner-act/1` (`docs/owner-act.md`) whose subject names exactly the stored
+binding. A new generation supersedes every earlier binding (`superseded`), so an
+activation is never inherited, and uninstall revokes the live ones.
+
+```http
+GET /v1/apps/hook-bindings?team_id=<name:domain>&app_id=<app_id>
+```
+
+Authentication: team-certificate auth for the requested team, as for the
+installed-apps read. Every binding of the app in the team is returned, in every
+state:
+
+```json
+{
+  "team_id": "default:example.com",
+  "bindings": [
+    {
+      "binding_id": "6f1c4d2e-0b7a-4c55-9a51-2f6d0e8b1a90",
+      "kind": "registration",
+      "team_id": "default:example.com",
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "generation": 1,
+      "app_id": "logs",
+      "origin": "https://logs.example",
+      "digest": "sha256:4f3c000000000000000000000000000000000000000000000000000000000000",
+      "catalog_id": "aweb.hooks",
+      "catalog_version": 1,
+      "hook": "post-secret-use-hook",
+      "tool": "ingest",
+      "method": "POST",
+      "path": "/hooks/ingest",
+      "scopes": ["logs:append", "logs:write"],
+      "reads": [],
+      "state": "active",
+      "ended_by": null,
+      "activated_at": "2026-10-20T12:00:00.000Z",
+      "active_from": "2026-10-20T12:01:00.000Z",
+      "revoked_at": null
+    }
+  ]
+}
+```
+
+- A registration names its resolved `tool`, `method`, raw `path` and `scopes`;
+  a production has those null or empty and names its `reads`. Both lists are
+  sorted by code point and distinct, the order the owner act's subject uses.
+- Times are stored and returned to the millisecond. `active_from` is exactly
+  60 s after `activated_at`, so every producer has refreshed before the binding
+  receives an event, and no history is delivered to it.
+- `ended_by` is `owner_act`, `uninstall` or `generation` once a binding ends.
+
+```http
+POST /v1/apps/hook-bindings/{binding_id}/activate
+POST /v1/apps/hook-bindings/{binding_id}/revoke
+```
+
+Body: `{"act": "<standard base64 of the signed bytes>", "signature": "<standard
+base64, no padding>"}`, with no other field. The signed bytes are
+`aweb.owner-act/1\n` followed by the act's canonical JSON. Authentication:
+team-certificate auth; the caller's team scopes which bindings the request can
+name, and the owner act is the authority for the change.
+
+- The act's `act` is `hook-binding.activate` or `hook-binding.revoke` for the
+  matching route, its `aud` is the server's public origin, and its signature
+  verifies against the team's controller key read fresh from AWID. It is
+  single-use.
+- Its subject is the binding as listed, with `catalog_id` and `catalog_version`
+  flat. A registration's subject carries `tool`, `method`, `path` and `scopes`;
+  a production's carries `reads`.
+- Activation needs a `pending` binding whose install carries its installation
+  identity. A production activates only when its install registered, from its
+  pinned manifest bytes, a key declaring `hook-event`, the purpose consumers
+  verify its events with.
+  Revocation takes a `pending` or `active` binding.
+- The answer is the changed binding. Refusals:
+  - `404`: the binding is not the caller's team's.
+  - `403`, with the owner-act refusal code (`docs/owner-act.md`): any refusal
+    of the act itself, from malformed or non-canonical bytes to `owner_required`,
+    `team_mismatch`, `audience_mismatch`, `expired` or `act_not_allowed`.
+  - `409`: `subject_mismatch` or `nonce_reused`, or a binding that is
+    superseded, ended, not pending, without installation identity, or a
+    production without a `hook-event` key.
+  - `422`: a malformed request body, including an `act` that is not standard
+    base64.
+  - `503`: AWID cannot be reached for the team's key. Nothing is changed, and
+    the same act can be retried.
+
 ## An app reads its own grant
 
 ```http
@@ -218,7 +326,7 @@ Response:
   against the app's origin; bytes being present is not that.
 - `as_of` is the server's time of the answer, in UTC seconds.
 - `max_age_seconds` is how long the app may reuse the answer, counted from
-  when it received it. It is `AWEB_APP_GRANT_MAX_AGE_SECONDS`, from 1 to 60
+  when it asked for it. It is `AWEB_APP_GRANT_MAX_AGE_SECONDS`, from 1 to 60
   seconds, default 60; the server refuses to start with any other value.
 - A reinstall with new bytes is visible on the next read: keys belong to their
   digest, so the old digest's keys are refused and the new digest's keys read
@@ -229,6 +337,144 @@ Response:
   which is also the answer once the app has no installation.
 
 Conformance: `test-vectors/app-read-credential-v1.json`.
+
+### App-side grant source
+
+`aweb_naapp.runtime.team_grants.TeamGrantSource` consumes the runtime's shared
+`TeamServerDirectory`, an `app-grant-read` signer, and the app's own
+`AppIdentity` (app id, public origin and served-manifest digest). Every answer
+must name that exact identity and the requested team. A changed server record
+selects a separate cache entry, so an old server's answer cannot follow a move.
+The app signs the full external request path, including any server mount prefix,
+and follows no redirects.
+
+`grant_for(team_id)` returns B1's active `Grant` or `None` for a non-active
+installation or `403 app_key_not_registered`. `status_for(team_id)` uses the
+same read and cache to return `GrantStatus`, preserving non-active and unknown
+states and nullable installation identity, generation and origin provenance.
+`None` means the calling key has no grant; it does not prove an uninstall.
+Only a typed `uninstalled` status confirms that state to the installation fence.
+The explicit missing-key denial is cached for at most five seconds, so an app
+called before installation can become usable promptly after installation.
+
+The freshness deadline uses the client's monotonic clock, counting from the
+start of the shared read, with a ceiling of 60 seconds. A slow answer earns no
+extra time, and an answer already expired when received is unavailable.
+Concurrent misses share one refresh; a cancelled waiter does not cancel that
+refresh for other callers. The default total caller timeout is 5 seconds,
+including discovery. Discovery failures, refused credentials other than the
+explicit missing-key result, failed reads and malformed or mismatched answers
+raise `GrantUnavailable`. Expired positive answers never survive a failed refresh.
+
+## An app resolves its hooks
+
+```http
+GET /v1/apps/self/hooks/{catalog_id}/{catalog_version}/{hook}/registrations
+GET /v1/apps/self/hooks/{catalog_id}/{catalog_version}/{hook}/productions
+GET /v1/apps/self/hooks/bindings?binding_id=<uuid>
+GET /v1/apps/self/hooks/bindings?hook=<catalog_id>/<catalog_version>/<hook>
+Authorization: AWEB-App-Hook-Resolve DIDKey <did:key> <signature>
+```
+
+The app signs each read under the `hook-resolve` purpose, exactly as for the
+grant read (same headers, signed payload and one-encoding signature), with
+`auth` set to `hook-resolve`. The signed `path` is the request target with its
+query. The key must be registered for `hook-resolve` under the team's installed
+digest. The team and the app come from the credential.
+
+A binding is **active** by its state: activated by the team owner, not revoked,
+and of the installation's current generation. That includes a binding still
+inside its pad before `active_from`: the reader compares `active_from` with an
+event's `occurred_at`. Pending, revoked and superseded bindings are never
+listed and never authorize.
+
+- **Registrations** answer a producer: where to deliver. They are read only
+  while the caller holds an active production of that exact hook.
+- **Productions** answer a target: who may produce the hook, and with which
+  keys. They are read only while the caller holds an active registration of
+  it. Each production also carries `keys`: the producer's unrevoked keys, registered under
+  its own installed digest, that declare `hook-event` or `hook-delivery`, as
+  `{kid, did_key, purposes}`. A key with neither purpose is never listed.
+- Without the complementary binding the answer is `403 hook_binding_required`.
+  An unknown catalog, version or hook therefore also answers `403`.
+- A member's team-auth envelope is refused with `401`, like any credential
+  that is not `hook-resolve`.
+
+```json
+{
+  "team_id": "backend:acme.com",
+  "catalog": {"id": "aweb.hooks", "version": 1},
+  "hook": "post-secret-use-hook",
+  "bindings": [
+    {
+      "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+      "kind": "registration",
+      "app_id": "logs",
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "generation": 2,
+      "origin": "https://logs.example",
+      "method": "POST",
+      "path": "/hooks/ingest",
+      "digest": "sha256:4f3c000000000000000000000000000000000000000000000000000000000000",
+      "active_from": "2026-10-20T12:01:00.124Z"
+    }
+  ],
+  "as_of": "2026-10-20T12:00:00Z",
+  "max_age_seconds": 60
+}
+```
+
+**Own bindings** return the caller's own bindings in the team from its
+installed origin, in every state and across that origin's digests, so a
+superseded generation's bindings are included. Bindings an earlier origin left
+under the same app id are another publisher's and are never shown. They are
+selected by exactly one of `binding_id` or `hook`, each with its `catalog`,
+`hook`, `state` (`pending`, `active`, `revoked` or `superseded`), `ended_by`
+(`owner_act`, `uninstall` or `generation`) and `activated_at`, `active_from`
+and `revoked_at`, null when they do not apply. A target confirms a delivery's
+`binding_id` this way, and records each binding's interval. Another app's
+binding id reads as no binding. A missing, doubled or malformed selector is
+`400`.
+
+Binding times are UTC to the millisecond (`YYYY-MM-DDTHH:MM:SS.mmmZ`), the hook
+event spelling; `active_from` is rounded up, so a binding never reads as active
+earlier than it is. `as_of` and `max_age_seconds` are as for the grant read.
+
+Conformance: the `hook-resolve` cases of `test-vectors/app-read-credential-v1.json`.
+
+## The core hook producer's keys
+
+```http
+GET /v1/hooks/producer-keys
+```
+
+Anyone may read the public keys this server's core hook producer signs
+`post-mutation-hook` events with. A consumer reaches the server only through
+the team's anchored `aweb.team-server/1` record, never through an origin an
+event names.
+
+```json
+{
+  "keys": [
+    {"kid": "hook-2026-09", "did_key": "did:key:z6Mk...", "valid_from": "2026-09-01T00:00:00Z", "valid_until": "2026-10-01T00:00:00Z"},
+    {"kid": "hook-2026-10", "did_key": "did:key:z6Mk...", "valid_from": "2026-10-01T00:00:00Z", "valid_until": null}
+  ],
+  "as_of": "2026-10-20T12:00:00Z",
+  "max_age_seconds": 60
+}
+```
+
+- The keys are the operator's configuration, `AWEB_HOOK_PRODUCER_KEYS`: a JSON
+  list of `{kid, did_key, valid_from, valid_until}`, times in UTC seconds
+  (`YYYY-MM-DDTHH:MM:SSZ`, ASCII digits). They are never a team, controller or
+  agent key.
+- Retired keys stay listed, so events they signed keep verifying.
+  `valid_until` is `null` for a key with no end; it is never omitted, so a
+  missing end cannot be mistaken for a truncated answer.
+- The server refuses to start with a malformed list: an entry with other
+  fields, a repeated kid, an invalid Ed25519 `did:key`, a time in another
+  spelling or an impossible date, or a key that ends before it starts.
+- `as_of` and `max_age_seconds` are as for the grant read.
 
 ## Operator reseed from manifest bytes
 

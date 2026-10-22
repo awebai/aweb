@@ -4,7 +4,7 @@ Status: **specified experimental public contract, not yet shipped**. Owner: the
 aweb OSS hooks lane (aweb-acgh.16). This document is the source of truth for the
 `aweb.hooks` catalog, version 1, for owner-activated hook bindings, and for how
 a producer signs and delivers hook events. Its machine-readable authority is
-four vectors:
+four existing vectors and one proposed evidence vector:
 
 - `docs/vectors/hook-catalog-v1.json`: the hooks, their payload allowlists and
   rules, with positive and negative cases;
@@ -13,6 +13,8 @@ four vectors:
 - `docs/vectors/hook-event-envelope-v1.json`: the signed event envelope;
 - `docs/vectors/hook-delivery-credential-v1.json`: the request credential that
   carries an event to a target.
+- `docs/vectors/passkey-evidence-v1.json`: proposed evidence bytes, pending
+  decision-84 proof contract below; producer activation waits for R+A/helper.
 
 The strict catalog reader is `aweb_naapp.hooks.catalog`
 (`naapp-lib/src/aweb_naapp/hooks/catalog.py`). The envelope and credential
@@ -88,9 +90,16 @@ identifier such as `task:<uuid>`: at most 128 characters, with no spaces, `@`,
 `+` or `=`, so it cannot carry an email address or a padded base64 token.
 
 **Digest rule.** No payload digest is ever unsalted over bytes that contain, or
-may echo, a credential. `request_sha256` and `params_sha256` cover the request
-**before** credential injection. Response bytes are committed only through a
-producer-keyed HMAC (`upstream_response_hmac`, `returned_hmac`).
+may echo, a credential. For `post-secret-use-hook`, the historical names
+`request_sha256` and `params_sha256` mean separate producer-keyed HMAC-SHA-256
+commitments to the initial inbound request and typed parameters, as specified
+below (decision 73). Pre-injection bytes may already contain a credential. For
+`post-manifest-command-hook`, the historical field name `request_sha256`
+means a producer-keyed HMAC-SHA-256, as specified below: even an uninjected
+generic tool request may contain a credential. Response bytes are committed
+only through a producer-keyed HMAC (`upstream_response_hmac`, `returned_hmac`).
+See [audit-substrate §A2](design/audit-substrate.md#a2-the-catalog-v1),
+"Manifest request commitment".
 
 **Check order.** A consumer checks an event's payload in this order and reports
 the first fault:
@@ -126,17 +135,90 @@ the external call is sent. `op_kind` is `broker` or `run_job`.
   test that a request whose concrete path holds a credential-shaped segment
   emits only its configured template. A runner job names `runner_id`, `job_id` and
   `job_digest` instead, and the two sets exclude each other.
-- `refused` requires `refusal_code`, from the catalog's 32 codes; no other
+- `refused` requires `refusal_code`, from the catalog's 33 codes; no other
   action carries one.
 - `completed` requires `disposition` (`returned`, `withheld` or
   `stored_as_secret`) and `undeclared_credential`. A returned result carries
   `returned_hmac`, a withheld one never does, and a stored one names
-  `derived_secret_id`. An undeclared credential in the response forces
+  `derived_secret_id` and `derived_grant_id` together. Both fields are forbidden
+  on every other disposition or action. `grant_id` remains the authorizing
+  source grant; `derived_grant_id` is the child's actual newly minted grant,
+  never a grant template. The pair is emitted only in the transaction that
+  commits the child, custody value, new grant, result and outbox. A rollback or
+  lost recording fence emits no creation pair; replay preserves the committed
+  pair. An undeclared credential in the response forces
   `withheld`.
 - `approval_decided` requires `approval_id` and `approval_decision`.
 
 A withheld value and an undeclared credential are properties of the `completed`
 event, not separate events.
+
+**Request and parameter commitments (decision 73).** These two optional
+fields retain their historical names and 64-character lowercase hexadecimal
+shape, and are never plain SHA-256 values. The producer computes:
+
+```text
+request_sha256 = hex_lower(HMAC-SHA-256(K_request,
+    "aweb.post-secret-use.request/1\n" || canonical(context) || "\n" ||
+    canonical_request_bytes))
+params_sha256 = hex_lower(HMAC-SHA-256(K_params,
+    "aweb.post-secret-use.params/1\n" || canonical(context) || "\n" ||
+    frame(canonical_params_bytes)))
+```
+
+`context`, `frame` and `canonical_request_bytes` use the exact definitions
+under [the manifest-command hook](#post-manifest-command-hook). The context
+comes from authoritative installation and matched tool data. The request is
+the **initial authenticated inbound tool HTTP request**, with its original
+external raw target, received content-type values and exact body bytes. It
+is captured before injection and before rendering any upstream request. An
+upstream request may depend on a dispatch ID and need not exist at refusal.
+
+`canonical_params_bytes` is the canonical UTF-8 JSON of the validated typed
+operation/job input, using B2's integer-only canonical-JSON value rules but
+without B2's domain prefix or policy/request wrapper. Values have already
+been coerced to the operation/job's declared types. Open requests have no
+typed parameter object and omit `params_sha256`; they do not invent `{}`.
+Malformed or unavailable typed parameters on a refusal also omit that MAC.
+An otherwise attributable refusal with no complete input omits the
+corresponding optional commitment, never substitutes a plain digest or partial
+bytes, and still records its required audit event.
+
+`K_request` and `K_params` are separate independent random 32-byte secrets.
+Each is single-purpose and separate from the manifest-command K, signing
+seeds, team keys and the response/returned-value HMAC keys. They use the
+manifest-command key-file format, startup refusal and destruction-on-rotation
+rules. New commitments after rotation use the new key. All replicas of a
+producer share each configured purpose's key. A target verifies the signed
+producer statement and field shape; it cannot recompute the commitments or
+compare them across producers or key rotations.
+
+The producer computes and persists each available MAC and its context once
+with the initial logical use, before asynchronous approval or dispatch.
+Approval transitions, same-request re-submission, status and outbox retries
+reuse those stored commitments; they never recompute from later headers or a
+rotated key. The S8 local equality hash (`UseRequest.request_sha256`) and B2's
+approval request hash remain distinct from these audit MACs. Neither local
+hash is copied into these hook fields, and an audit MAC is never used as the
+idempotency comparator or passkey approval hash.
+
+An `idempotency_conflict` refusal describes the **attempted** request: it uses
+that attempt's MACs when the complete inputs exist and otherwise omits them.
+It neither borrows nor replaces the accepted use's persisted commitments.
+Refusals can roll back the inner admission savepoint, leaving no intent or
+claimed request key. Their required event is enqueued in the outer transaction
+without requiring an intent row. Existing configuration refusals
+`installation_identity_required` and `authority_unavailable` retain their
+no-use-event treatment; their installation/tool authority is not proven.
+
+**In-place re-freeze.** Decision 73 records that no deployed producer or
+consumer uses `post-secret-use-hook`, and there are no deployed pending uses.
+The catalog stays at version 1: its public file, package copy, transition
+fixtures and consumer expectations change together in this stack. S13 builds
+directly on this re-frozen shape; there is no parallel catalog or cutover.
+Kit, ingest and resolution support and owner activation are still prerequisites
+to emitting real events. Once a consumer is deployed, the normal versioning
+rule applies to subsequent payload changes.
 
 ### `post-governance-hook`
 
@@ -145,7 +227,7 @@ direction, and a consumer refuses an event whose `direction` differs:
 
 | Widening | Narrowing |
 | --- | --- |
-| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `runner.deregistered`, `installation.disabled` |
+| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled` |
 
 `grant.changed` is widening whatever the change, so a change that only narrows
 a grant is still gated. A producer that must contain without waiting uses
@@ -156,17 +238,396 @@ strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
 `authority` is how the act was authorized:
 
 - `owner_act` requires `owner_act_sha256`;
-- `passkey_session` requires `approval_evidence_sha256`;
+- `passkey_session` requires `approval_evidence_sha256`, the independently
+  verifiable proof commitment defined below;
 - `team_cert` is allowed only for a narrowing act, and never for
-  `resource.replaced`.
+  `resource.replaced` or `resource.version_observed`;
+- `backend_observation` is allowed exactly for `resource.version_observed`,
+  which requires that authority. It records the producer's validated backend
+  observation under the already-authorized immutable reference, without a new
+  owner act or passkey confirmation.
+
+### Observed backend versions (decision 92)
+
+Decision 93 re-freezes these pre-deployment entries in catalog v1, after
+verification that no deployed hook producer or consumer exists. The artifact
+and deployment findings are recorded in the freeze commit. Published parser
+or envelope libraries alone do not establish a deployed producer or consumer.
+Once such a deployment exists, a payload addition requires the next ordered
+catalog version with explicit consumer updates. The decision-93 receipt is
+`0c3beb68-15c7-49d2-9799-4d45ff95ed07` (2026-10-21). The shared contract's
+R+A and updated receiver support precede producer emission.
+
+For a 1Password-backed secret, the grant authorizes the immutable vault, item
+and field reference. The vault is the owner's value-ingress and rotation path.
+A newly observed value under that same reference may become the next monotonic
+local version for **later fresh admissions**, without a new owner passkey,
+provided it validates against the secret's immutable kind and placement
+parameters (decision 65). It changes neither who may use the reference, where
+the value may go, nor the permitted operation. Decision 92 therefore assigns
+`resource.version_observed` to the catalog's non-widening `narrowing` class.
+This is a value-version change, not an authority widening. The original attempt
+and every approval bound to the old version refuse; a later use follows the
+existing policy, including a fresh approval for `approve_only` or any per-use
+approval requirement.
+
+The payload is exactly this field set:
+
+```json
+{
+  "act": "resource.version_observed",
+  "direction": "narrowing",
+  "authority": "backend_observation",
+  "resource_type": "secret",
+  "resource_ref": "sec_19ab42",
+  "before_ref": "sv_38b8149372e841309188c09c50e46104",
+  "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+  "reason_code": "external_version_changed"
+}
+```
+
+`resource_ref` is the existing opaque minted secret ID. `before_ref` and
+`after_ref` are distinct, randomly allocated `sv_<UUID-hex>` handles, persisted
+for the old and new local versions in the installation/team/secret scope.
+They are never display references, provider vault/item/field identifiers,
+provider versions, value-derived identifiers or fingerprints. No value material
+or hash of a value enters the event. The catalog requires these refs and the
+fixed resource type/reason; it forbids `role`, `subject_ref`, owner/passkey
+evidence, `approval_id` and `policy_digest` on this act. The producer is
+responsible for the refs' authoritative scope, allocation and correspondence to
+the committed versions. The envelope actor is exactly
+`{"authority_mode":"system","attestations":[]}`: the signed app producer
+attests its own observation, without attributing a new owner/member ceremony.
+Ordinary production activation, signature and installation/generation checks
+still apply.
+
+The SDK observation and immutable-shape validation happen outside authority
+locks. A separate transaction before the S3 dispatch fence takes the complete
+installation, forest, grant and B2 prelocks (decision 78), then checks a CAS over
+installation/team/secret, current local version, immutable reference identity
+and active credential version. It advances the monotonic local version and
+applies the replacement consequences, including voiding old-version approvals
+and token-cache authority. Cache eviction after commit is cleanup; stale cache
+entries cannot bypass the version/authority fence. No SDK I/O, late B2 lock or
+reconciliation consequence write belongs in the final dispatch checker.
+
+The local transition, invalidations and required shared-outbox insert commit
+in **one transaction**. A stale CAS changes nothing and emits nothing; a replay
+does not emit a second transition event. Outbox-storage failure rolls back that
+transaction and the use still fails closed without releasing the value.
+Target or delivery unavailability never gates the invalidation/transition;
+the non-widening classification does not waive durable recording. This
+governance effect and the attempted use's refusal are distinct effects, each
+with its own required hook, and neither also emits a manifest-command event.
+
+An invalid value, deleted item or unresolved reference **never activates** a
+version and emits no successful `resource.version_observed` event or invented
+`after_ref`. On the pre-S3 path, its required `post-secret-use-hook` event has
+`action: refused`: invalid immutable shape uses `secret_value_invalid`, while
+a deleted or unresolved backend reference uses `custody_unavailable`. The
+producer exposes a safe cause to the owner through the audit event and console,
+without provider errors, references or value material. A final SDK reread that
+fails **after `dispatching` commits but before any upstream byte or runner
+release** instead produces the existing phase-correct `not_sent` event; it
+must not add `refusal_code` (forbidden there) or fabricate a pre-S3 refusal.
+The exact late failure cause stays in safe console/operational state. Neither
+failure path emits a successful version transition.
+
+This additive catalog delta preserves all existing accepted payloads. Producers
+must use the reviewed shared codec and update the receiving catalog support
+before emitting the new act/code; an older consumer refuses unknown entries.
+It does not authorize producer-local hook actions. M1/M2/S13 implementation
+still needs its own reviewed activation, lock, CAS, rollback, cache and delivery
+proofs. The ruling is recorded in secrets mail
+`80c8580f-66ab-4f68-b9cf-7c20ff6dd9f7` (decision 92, 2026-10-21; custody's
+receipt `2f7026a2-6a1b-4f98-b19e-fc834dea13d8`).
+
+### Passkey evidence commitments and console actors
+
+**Decision 84, aweb-acgh.39; proposed for R+A.** Juan ruled that the proof is
+kept: secrets §10.4's promise of later checking with the approver's public key
+stays intact. This replaces the held summary-HMAC proposal at `90a3443b3`.
+S13/S14 wait for the reviewed shared B3 helper; they build no local serializer.
+
+`approval_evidence_sha256`, in both governance and secret-use hooks, is
+**SHA-256 of the retained proof and frozen verification context**, encoded as
+64 lowercase hexadecimal characters. It is not a digest of an evidence ref,
+a verification summary or a reconstructed assertion, and it is not keyed.
+The target ordinarily receives only this commitment. An authorized reviewer
+who also receives the restricted evidence can recompute it and independently
+verify the assertion under the reviewer's trusted approver public key.
+
+**Restricted retention.** On successful verification B3 retains, atomically
+with the credential-counter CAS and evidence insertion:
+
+- the exact decoded `authenticatorData`, `clientDataJSON` and `signature`
+  bytes, credential ID, and exact COSE public-key bytes used by the verifier;
+- the exact domain-prefixed challenge preimage, its expected challenge bytes,
+  and the frozen context `C` and metadata `M` below;
+- for an approval, the exact `StoredRequest.canonical` covered-request bytes
+  used by B2, including the existing policy wrapper. These are a restricted
+  sidecar, transitively bound by the signed challenge's request hash;
+- the commitment and its immutable association to the evidence record and
+  authorization. A session or approval refers to that association, not a
+  caller's later headers, live policy, new key or recomputed request.
+
+These are new retained proof fields, not fields claimed to exist in today's
+summary-only `PasskeyEvidence`. Scope, original challenge state and B2 covered
+bytes must be threaded into B3's verification seam. Existing credential-ID
+lookup and summary data may remain restricted store columns. Neither is a
+substitute for the proof. No raw proof, subject, scope, key, credential ID,
+locator or counter is added to a hook payload. The raw authenticator data
+necessarily contains its signed counter: stripping or normalizing it would
+change the signature input. Contacts, session/CSRF tokens, private keys, device
+labels and request headers are not retained by this proof contract.
+
+**Context `C`.** Exactly these fields, resolved from authoritative state:
+
+| Fields | Frozen value |
+| --- | --- |
+| `app_id`, `team_id`, `installation_id`, `generation` | The producer's installation; generation is a positive safe-range integer. |
+| `scope` | The verified login or approval-candidate scope, not a browser body or the affected payload's `role`/`subject_ref`. |
+| `origin`, `rp_id` | The expected app WebAuthn origin and RP ID used in verification. |
+| `require_up`, `require_uv` | Both JSON `true`; user presence and verification are required. |
+| `binding_kind` | `approval`, `login`, `contact_change` or `contact_cancel`, selecting the existing challenge construction below. |
+
+**Metadata `M`.** Required fields are `evidence_ref`, `subject`, `purpose`,
+`verified_at`, `challenge_issued_at`, `challenge_expires_at`,
+`sign_count_before` and `sign_count_after`. Subject is the app-local
+authorizing principal. Purpose is B3's verified `approve`, `reject`, `view`,
+`login` or `contact_change`. Counters are integers from 0 through 2^32-1,
+never booleans; the after value must equal the counter in authenticator data.
+`sign_count_before` is the counter supplied to the verifier, not an independent
+proof of prior database history. Optional `approval_id`, `request_sha256`, `policy_ref`, `policy_version` and
+`task_answer_ref` are present exactly when non-null in the verified approval
+record; otherwise they are omitted. `policy_version` is a positive safe-range
+integer. Login/contact records have no approval fields. An approval requires
+its approval ID, request hash and policy ref/version; its task answer may be
+absent. Record, candidate/session subject, purpose, scope and approval bindings
+must agree before the helper produces a commitment.
+
+`C` and `M` use canonical UTF-8 JSON: keys sorted by Unicode code point, no
+insignificant whitespace, literal Unicode without normalization, no floats or
+nulls. Quote and backslash are escaped; backspace, tab, LF, form feed and CR
+use `\b`, `\t`, `\n`, `\f`, `\r`; other U+0000–U+001F characters use lowercase
+`\u00xx`; slash is not escaped. Identifier strings are nonempty valid UTF-8.
+Times are the original timezone-aware instants, converted to UTC and written
+`YYYY-MM-DDTHH:MM:SS.ffffffZ`, with exactly six fractional digits and no
+precision loss; naive times are refused. `verified_at` must be within the
+retained challenge lifetime. No extra fields enter either object.
+
+**Challenge and covered request.** Keep the existing constructions unchanged:
+
+- `approval`: `aweb.approval-challenge/1` plus LF, then B2's canonical JSON of
+  exactly `approval_id`, `candidate_subject`, `candidate_subject_type`, `nonce`,
+  `policy_ref`, `policy_version`, `purpose`, `request_sha256`, `task_answer_ref`.
+  The subject type is `app_local`; the fresh nonce is 32 bytes as lowercase hex.
+  **An absent task answer is JSON null here**, as the existing challenge
+  contract requires. Do not rebuild these bytes with `M`'s omission rules.
+- `login`: `aweb.passkey-login/1` plus LF, then canonical JSON of exactly
+  `nonce`, `scope`, `subject`.
+- `contact_change` and `contact_cancel`: the existing
+  `aweb.passkey-contact-change/1` or `aweb.passkey-contact-cancel/1` plus LF,
+  then canonical JSON of `nonce`, `subject`, and respectively
+  `contact_sha256` or `pending_contact_sha256`. Both have purpose
+  `contact_change` and retain their verified scope.
+
+The expected challenge is SHA-256 of these **exact preimage bytes**. It must
+match both retained expected-challenge bytes and the decoded challenge in the
+raw client data. The nonce is the one consumed by that successful ceremony,
+not a new nonce generated for audit. Preimage fields must agree with `C`/`M`.
+
+The approval sidecar is exactly `aweb.approval-request/1` plus LF and canonical
+`{"policy":{"ref":R,"version":V},"request":Q}`. Hash the entire sidecar,
+including domain and wrapper; compare it to `request_sha256` in the challenge
+and metadata, and compare the wrapper's policy pin. For secrets, also compare
+Q's team/installation/generation to `C` using the frozen secrets request
+contract. This neither changes B2 hashing nor serializes a live `ActionPolicy`.
+B2's rules allow null in its existing covered bytes; `C`/`M`'s no-null rule
+does not rewrite them. The sidecar itself may contain agent-entered credentials:
+it stays restricted and is **not appended directly** to the public-hash input.
+Its existing B2 hash in the verified challenge binds it transitively.
+
+**Commitment bytes.** Let `frame(B) = u64be(len(B)) || B`, using byte lengths.
+The fixed order is:
+
+```text
+approval_evidence_sha256 = lowerhex(SHA-256(
+  UTF8("aweb.passkey-evidence/1\n") ||
+  frame(canonical(C)) || frame(canonical(M)) ||
+  frame(challenge_preimage) || frame(credential_public_key_cose) ||
+  frame(credential_id) || frame(authenticator_data) ||
+  frame(client_data_json) || frame(signature)
+))
+```
+
+Binary fields are the exact retained bytes, never their transport base64,
+JSON, hex spelling, re-encoded COSE key or parsed/re-serialized client data.
+An export/vector uses strict lowercase hex for those bytes and verifies every
+length. Missing proof/sidecar, malformed encodings, inconsistent bindings and
+unverified assertions are refused, never replaced by a summary/hash fallback.
+B3 provides the sole canonical helper after R+A. The existing request/params
+HMAC helpers and their key rules are unchanged.
+
+**Why unkeyed (§A2).** Decision 84 treats the verified assertion and frozen
+verification context as non-secret proof artifacts. They contain no signing
+private key, session token, secret-use body or raw parameter value. The input
+commits the full signature and fresh challenge nonce, not an enumerable
+subject/device/counter tuple. A digest alone does not expose those bytes for
+public dictionary testing; installation and RP context prevent identical
+preimages across apps. Privacy still requires restricted proof disclosure;
+someone given the proof can of course recompute its commitment. Reusing one
+login's proof links its governance effects, and that is intentional. Raw B2
+request bytes remain outside this input. §A2 still requires producer-keyed
+HMAC for the manifest/secret-use request and params fields: this is no exception
+for arbitrary agent bytes.
+
+**Retention and rotation.** There is no commitment key to keep or destroy.
+Compute and persist the proof, context and commitment once; reuse the original
+association and signed outbox bytes. Hook signing-key rotation and credential
+replacement/revocation never rewrite them or substitute a current public key.
+The historical public key remains with the retained proof. A new installation
+or generation requires a new authorization, not relabeling old evidence.
+Retention, deletion, backup erasure and disclosure follow the app's data
+lifecycle. An ordered migration adds proof storage; no existing migration is
+edited. A legacy summary without proof cannot be upgraded into proof or used
+as a summary-HMAC fallback. After lifecycle deletion the hook/chain commitment
+may remain, but the deleted proof is unavailable and later proof retrieval is
+not promised. A retained/exported proof verifies without any live service or
+retired HMAC/signing secret.
+
+**Independent review.** Given a producer-signed hook, restricted proof export,
+the reviewer's independently trusted approver public key and expected app/RP
+context, a reviewer performs these checks without accepting B3's verdict:
+
+1. Verify the hook's producer provenance and extract its commitment; bind
+   `C`'s app/team/installation/generation to that event. Where present, match
+   the hook's approval ID/decision to `M`'s approval ID/purpose. Compare the retained
+   COSE key's algorithm and public values with the trusted approver key, and
+   the origin/RP/scope with the reviewer's expected authorization context.
+   A key or context supplied only by the evidence record is not its own anchor.
+2. Check the closed record, canonical encodings and bindings. For an approval,
+   recompute the exact B2 sidecar hash and policy pin; check Q against the
+   intended frozen operation and installation. Recompute the exact challenge
+   preimage hash; match it to the retained challenge and raw client data.
+3. Apply [WebAuthn assertion verification](https://www.w3.org/TR/2026/REC-webauthn-3-20260825/#sctn-verifying-assertion):
+   check client-data type, challenge and expected origin; RP ID hash, UP/UV and
+   other required authenticator checks; verify the signature over exact
+   `authenticator_data || SHA-256(client_data_json)` under that trusted key.
+   Check the signed counter against the frozen before/after values using B3's
+   existing rule (strict increase unless both are zero), not today's counter.
+4. Independently rebuild all framed commitment bytes, hash them and compare
+   to the signed hook field. A substituted assertion/context/key fails this
+   binding even if its signature happens to verify. Keep the exact original
+   signature bytes; never normalize a signature before hashing.
+5. Report separately what is proved: the trusted credential signed the
+   request-bound assertion; its exact retained proof matches the hook. Service
+   timestamps, prior-counter history, scope eligibility and one-time effect
+   consumption are service/audit-state claims, not extra authenticator-signed
+   facts. A login proves authentication to its scope, not a fresh signature
+   over every later console action. No named-human or custody claim is added.
+
+**Console actor.** For governance authorized solely by an app-local passkey
+session, actor is exactly `{"authority_mode":"system","attestations":[]}`.
+The app producer identifies the executor; payload `authority: passkey_session`
+and the commitment link its verified authorization. No team DID, alias,
+certificate, grant or invented principal attestation is added. The authorizing
+subject stays restricted; payload `subject_ref` identifies the affected
+subject and `role` the affected role, not the authorizing scope. They need not
+be equal. For secret-use the actor remains the requesting member, not the
+approver. Do not copy retained credential IDs into `approval_credential_id`,
+or the authorizing B3 subject into `approver_id`, as an evidence-disclosure
+shortcut. No envelope actor mode or field is added.
+
+Narrowing actions remain ungated on audit target/delivery availability. The
+new proof convention changes no containment authorization or audit gate.
+The conformance vector is [passkey evidence v1](vectors/passkey-evidence-v1.json).
 
 ### `post-manifest-command-hook`
 
 `app_id`, `tool`, `operation_kind` (`mutation`, `read` or `refusal`),
-`request_sha256` and `http_status` are required. `request_sha256` is the
-SHA-256 of the canonical request bytes of the manifest mapping. Parameter
-values are not copied; the digest commits to them. A refusal carries no
-`result_ref`.
+`request_sha256` and `http_status` are required. For this hook,
+`request_sha256` is a producer-keyed HMAC-SHA-256 commitment, encoded as 64
+lowercase hexadecimal characters. The historical name is retained; a plain
+SHA-256 is never emitted here. Surface-only secret ingress does not prove
+that a generic tool's parameters contain no credentials.
+
+The producer computes:
+
+```text
+request_sha256 = hex_lower(HMAC-SHA-256(K,
+    "aweb.post-manifest-command.request/1\n" || canonical(context) || "\n" ||
+    canonical_request_bytes))
+```
+
+`context` contains exactly `app_id`, `team_id`, `installation_id`, `generation`
+and `tool`, from the admitted installation and matched manifest tool, encoded
+with the envelope's canonical JSON rules.
+
+`canonical_request_bytes` is the following binary encoding of the request
+received by the producer, before any downstream credential injection:
+
+```text
+frame(method) || frame(raw_target) || u64be(content_type_count) ||
+    frame(content_type_1) || ... || frame(content_type_n) || frame(body)
+frame(bytes) = u64be(length_in_bytes(bytes)) || bytes
+```
+
+`u64be` is an unsigned 64-bit integer in big-endian byte order, with no textual
+separators. The fields are:
+
+- `method`: the uppercase ASCII HTTP method matched by tool admission.
+- `raw_target`: the ASCII external raw path plus raw query used by team-auth
+  verification, including any mount prefix. It uses the same request-target
+  reconstruction as admission; it is never percent-decoded, re-encoded or replaced
+  with the tool's path template. Query order and percent-encoding spelling
+  are preserved.
+- `content_type_1` through `content_type_n`: every received `Content-Type`
+  field value as bytes, in request header order, without parsing, case folding
+  or trimming by the producer. An absent header has count zero; one empty
+  value has count one and a zero-length frame. Header names match
+  case-insensitively. Normal manifest requests supply the mapping's explicit
+  content type (`application/json` or `body.content_type`).
+- `body`: the exact received pre-injection body bytes, including an empty
+  body. In JSON mode these are the bytes the manifest dispatcher serialized
+  and team-auth authenticated, without parsing and reserializing. In raw mode
+  they are the exact raw body, including binary bytes, without text decoding
+  or newline normalization.
+
+The framing binds field boundaries even when a value contains delimiters or
+binary bytes. K4 tests require identical inputs to yield the same MAC and
+independent changes to method, concrete path, raw query, content type or body
+to change it, with both JSON and raw-body cases. Only the commitment leaves
+the producer; parameter values and concrete paths or queries are never copied
+into event fields.
+
+`K` is an independent, randomly generated 32-byte producer-local secret,
+persisted in the producer's private configuration. K is used for no other
+purpose, including `returned_hmac` or `upstream_response_hmac`. It is never a signing seed,
+a public key, a team key or a manifest field, and is never sent to a target.
+The runtime loads it through the shared key-file reader as 64 hexadecimal
+characters, with one trailing newline allowed. A runtime configured to produce
+this hook fails startup if the key is absent or malformed. All
+replicas of that producer use the same key. Rotation changes subsequent
+commitments and destroys the old K; retries deliver the already-signed outbox
+bytes without recomputing them. Cross-key comparisons have no meaning.
+
+**Attributable refusals require a complete body.** The producer must have
+received the entire body within its configured request-size bound, verified
+the request's authentication, matched a declared tool and resolved its
+installation before a refusal can fire this hook. An oversized, interrupted
+or otherwise early refusal made before the body is fully read is not
+attributable for this hook and emits no manifest-command event. Its ordinary
+refusal status is preserved. The producer never drains an unbounded body to
+make a refusal attributable, and never substitutes a partial body, an empty
+body or a caller-supplied body digest for the complete bytes. K4 tests cover
+both an authenticated refusal with its complete body and an early refusal
+without one.
+
+The target verifies the event's signature and the commitment's shape. It
+cannot recompute this HMAC and does not obtain proof of the request's contents;
+the commitment is the authenticated producer's statement. A refusal carries
+no `result_ref`.
 
 ### `post-mutation-hook`
 
