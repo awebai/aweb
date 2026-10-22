@@ -93,6 +93,31 @@ async def test_unavailable_save_preserves_copyable_draft_and_reopen_path(present
                     await page.locator("#copy-draft").click()
                     assert await page.evaluate("navigator.clipboard.readText()") == draft
                     await expect(page.locator("#body")).to_have_value(draft)
+                    # A denied clipboard API must also work from phone Preview:
+                    # the fallback has to reveal and focus the real selection.
+                    await page.locator("#tab-preview").click()
+                    await expect(page.locator("#body")).not_to_be_visible()
+                    await page.evaluate("""async () => {
+                        await navigator.clipboard.writeText('clipboard sentinel');
+                        Object.defineProperty(navigator.clipboard, 'writeText', {
+                            configurable: true,
+                            value: () => Promise.reject(new DOMException('Denied', 'NotAllowedError')),
+                        });
+                    }""")
+                    await page.locator("#copy-draft").click()
+                    await expect(page.locator("#tab-edit")).to_have_attribute(
+                        "aria-selected", "true"
+                    )
+                    await expect(page.locator("#body")).to_be_visible()
+                    await expect(page.locator("#body")).to_be_focused()
+                    assert (
+                        await page.locator("#body").evaluate(
+                            "el => el.value.slice(el.selectionStart, el.selectionEnd)"
+                        )
+                        == draft
+                    )
+                    await page.keyboard.press("ControlOrMeta+c")
+                    assert await page.evaluate("navigator.clipboard.readText()") == draft
                     await expect(page.locator("#save")).to_be_disabled()
                     instructions = page.locator("#reopen-instructions")
                     await expect(instructions).to_be_visible()

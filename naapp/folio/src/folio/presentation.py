@@ -1069,12 +1069,12 @@ def render_editor_page(
       <button id="save" class="save" type="button">Save new version</button>
     </div>
   </header>
-  <aside id="link-recovery" class="link-recovery" role="alert" tabindex="-1" hidden>
+  <div id="link-recovery" class="link-recovery" role="alert" tabindex="-1" hidden>
     <p>This edit link has expired or been revoked. Your unsaved text is still in the editor.</p>
     <button id="copy-draft" class="ghost-button" type="button">Copy your text</button>
     <p id="reopen-instructions">Return to your dashboard and reopen Edit, then paste your text.</p>
     <p id="copy-status" role="status"></p>
-  </aside>
+  </div>
   <main class="workspace">
     <section id="pane-edit" class="pane pane-edit is-active">
       <textarea id="body" class="editor" spellcheck="false" autofocus placeholder="Start writing in Markdown…"></textarea>
@@ -1233,6 +1233,7 @@ def render_editor_page(
         await navigator.clipboard.writeText(bodyEl.value);
         copyStatusEl.textContent = 'Text copied. Reopen Edit from your dashboard and paste it.';
       }} catch (err) {{
+        activate(true);
         bodyEl.focus();
         bodyEl.select();
         copyStatusEl.textContent = 'Your text is selected. Copy it before reopening Edit from your dashboard.';
