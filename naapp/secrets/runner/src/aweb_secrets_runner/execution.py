@@ -52,6 +52,10 @@ class _Child(asyncio.SubprocessProtocol):
     def __init__(self, capture: _Capture) -> None:
         self.capture = capture
         self.done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self.exited: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+    def process_exited(self) -> None:
+        self.exited.set_result(None)
 
     def pipe_data_received(self, fd: int, data: bytes) -> None:
         self.capture.feed(fd - 1, data)
@@ -132,6 +136,17 @@ async def _started(callback: Callable[[int], Awaitable[None]], pid: int) -> None
         pass
 
 
+async def _stop(process: asyncio.SubprocessTransport, child: _Child) -> None:
+    try:
+        _kill_group(process.get_pid())
+    finally:
+        # Join the actual child watcher before closing transports. Pipe closure
+        # alone can complete connection_lost while the leader is still alive.
+        await asyncio.shield(child.exited)
+        process.close()
+        await asyncio.shield(child.done)
+
+
 async def execute(
     config: RunnerConfig,
     *,
@@ -152,13 +167,24 @@ async def execute(
     job = config.prepare(
         job_id=job_id, digest=digest, runner_id=runner_id, params=params, credentials=credentials
     )
+    return await _execute_prepared(job, expires_at=expires_at, started=started)
+
+
+async def _execute_prepared(
+    job: PreparedJob,
+    *,
+    expires_at: float,
+    started: Callable[[int], Awaitable[None]] | None = None,
+    umask: int = -1,
+) -> dict[str, Any]:
+    """Shared bounded capture/report path after local runtime checks and opening."""
     # Preparation includes disk reads/hash checks. Sample after that last wait.
     if time.time() >= expires_at:
         raise Refused("assignment_expired")
     capture = _Capture(job.output_max_bytes)
     child = _Child(capture)
-    try:
-        process, _ = await asyncio.get_running_loop().subprocess_exec(
+    creation = asyncio.create_task(
+        asyncio.get_running_loop().subprocess_exec(
             lambda: child,
             *job.argv,
             cwd=job.cwd,
@@ -167,7 +193,15 @@ async def execute(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            umask=umask,
         )
+    )
+    try:
+        process, _ = await asyncio.shield(creation)
+    except asyncio.CancelledError:
+        process, _ = await creation
+        await _stop(process, child)
+        raise
     except (OSError, ValueError):
         raise Refused("job_start_failed") from None
     observer = asyncio.create_task(_started(started, process.get_pid())) if started else None
@@ -180,14 +214,12 @@ async def execute(
     finally:
         try:
             # Descendants may have closed the pipes while continuing to run.
-            _kill_group(process.get_pid())
+            await _stop(process, child)
         finally:
             # Closing our pipe transports also bounds a descendant that escaped
             # the group and retained a writer. This is not a sandbox.
-            process.close()
             if observer:
                 observer.cancel()
-            await asyncio.shield(child.done)
             if observer:
                 await asyncio.gather(observer, return_exceptions=True)
     exit_code = process.get_returncode()

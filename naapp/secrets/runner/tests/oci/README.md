@@ -115,3 +115,31 @@ The eventual execution owner must stop/reap before releasing this context.
 The production worker still refuses OCI. This component does not inject a
 credential, launch a job, clean stale restart state or grant execution authority.
 Those lifecycle and separate-user integration checks remain required.
+
+## Credential-bearing execution library
+
+`execute_oci` composes preparation with the existing whole-mapping HPKE/value
+opening and bounded capture/redaction implementation. It rechecks the current
+local pin with the frozen original parameters after unpacking, and checks expiry
+both before opening and immediately before launching the runtime. Only the
+0600 transient config receives the declared credential environment; the runc
+command line and its environment contain no credential. The process has
+`noNewPrivileges=true` and empty capability sets.
+
+The qualified runtime's launch PID file distinguishes initial launch failures
+from a normal job exit (including exit code 1). See the pinned runc
+[launch handshake](https://github.com/opencontainers/runc/blob/v1.1.15/utils_linux.go#L268-L302).
+The library uses the existing combined stream bound, strict UTF-8 checks,
+known-value redaction and six-field report. Runtime logging is sent to /dev/null.
+A runtime-start failure returns a fixed refusal, without a fabricated job exit.
+
+On cancellation or timeout it joins the CLI child watcher, then explicitly kills
+all container processes and force-deletes runtime state before private bundle
+cleanup. Linux tests observe the actual init/child PIDs and prove they disappear,
+and inspect the private config plus the CLI's argv/environment. The cleanup
+commands use the same pinned engine. Failure to clear runtime state retains the
+private tree with `oci_cleanup_required` for reconciliation.
+
+This library is not yet called by the production worker. Operator runtime
+configuration, stale restart cleanup and the dedicated-user S19 acceptance must
+be integrated and reviewed before lifting that guard.

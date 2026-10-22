@@ -210,6 +210,12 @@ class PreparationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((state / "uncertain").read_bytes(), b"retain-until-stopped")
         self.assertTrue((state.parent / "bundle/config.json").exists())
 
+    async def test_consumer_failure_is_not_relabelled_as_a_preparation_failure(self):
+        with self.assertRaisesRegex(ValueError, "consumer-failure"):
+            async with self.runtime.prepare(self.inputs()):
+                raise ValueError("consumer-failure")
+        self.assertEqual(list(self.workspace.iterdir()), [])
+
     async def test_read_protected_image_directory_does_not_prevent_private_cleanup(self):
         outside = self.root / "outside"
         outside.mkdir(mode=0o700)

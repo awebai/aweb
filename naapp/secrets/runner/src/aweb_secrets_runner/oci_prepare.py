@@ -135,6 +135,10 @@ def _compose(
         cwd=job["cwd"],
         terminal=False,
         env=[f"{name}={value}" for name, value in inputs.environment.items() if value is not None],
+        noNewPrivileges=True,
+        capabilities={
+            key: [] for key in ("bounding", "effective", "inheritable", "permitted", "ambient")
+        },
     )
     # umoci defaults include bind mounts of host /sys and /etc/resolv.conf.
     # No host bind may enter implicitly, even though it is read-only.
@@ -171,7 +175,7 @@ def _remove_private_tree(parent_fd: int, name: str) -> None:
     os.rmdir(name, dir_fd=parent_fd)
 
 
-async def _tool(executable: Path, *args: str) -> None:
+async def _tool(executable: Path, *args: str, accept_failure: bool = False) -> int:
     creation = asyncio.create_task(
         asyncio.create_subprocess_exec(
             str(executable),
@@ -190,8 +194,10 @@ async def _tool(executable: Path, *args: str) -> None:
     try:
         process = await asyncio.shield(creation)
         async with asyncio.timeout(60):
-            if await process.wait() != 0:
+            code = await process.wait()
+            if code != 0 and not accept_failure:
                 raise Refused("oci_prepare_failed")
+            return code
     finally:
         if process is None:
             process = await creation
@@ -221,6 +227,7 @@ class RuncPreparation:
         parent_fd = os.open(workspace, flags)
         name = "job-" + secrets.token_hex(16)
         created = False
+        yielding = False
         state = workspace / name / "state"
         try:
             os.mkdir(name, mode=0o700, dir_fd=parent_fd)
@@ -264,10 +271,13 @@ class RuncPreparation:
                 # before this public-only preparation may precede any HPKE.
                 _require(self.engine.check() == engine and self.unpacker.check() == unpacker)
                 _require(_mounts(job["oci"]["read_only_paths"], workspace) == mounts)
+                yielding = True
                 yield PreparedBundle(bundle, state, engine, inputs)
             finally:
                 os.close(work_fd)
         except (OSError, ValueError, KeyError, TypeError, RecursionError):
+            if yielding:
+                raise
             raise Refused("oci_prepare_failed") from None
         finally:
             try:

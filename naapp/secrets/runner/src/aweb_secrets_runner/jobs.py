@@ -424,49 +424,62 @@ class RunnerConfig:
         # No credential is opened until every local pin, parameter and file
         # check is complete. OCI stays closed until its image runtime exists.
         executable = _checked_executable(job)
-        known = KnownValues()
-        opened: dict[str, tuple[str, dict[str, str]]] = {}
-        try:
-            for index, slot in enumerate(job["credentials"]):
-                credential = credentials[index]
-                ref = slot["secret_ref"]
-                fields = {
-                    binding["field"]
-                    for binding in job["env"].values()
-                    if isinstance(binding, dict) and binding.get("$credential") == ref
-                }
-                kind = _family(fields)
-                value = decode_value(kind, credential.open())
-                if any(name not in value or "\0" in value[name] for name in fields):
-                    raise ValueError("selected field")
-                opened[ref] = (credential.secret_ref, value)
-                for item in value.values():
-                    if item:
-                        known.add(ref, item)
-                if kind == "basic":
-                    known.add_basic(ref, value["username"], value["password"])
-        except (ValueInvalid, ValueError):
-            raise Refused("credential_invalid") from None
-        argv = list(selected.argv)
+        return _open_job(selected, credentials, executable=executable)
+
+
+def _open_job(
+    selected: JobInputs, credentials: list[CredentialInput], *, executable: Path | None = None
+) -> PreparedJob:
+    """Shared whole-mapping opening AFTER the caller's local runtime checks."""
+    job = selected.definition
+    if tuple(item.secret_ref for item in credentials) != tuple(
+        slot["secret_ref"] for slot in job["credentials"]
+    ):
+        raise Refused("credential_invalid")
+    known = KnownValues()
+    opened: dict[str, tuple[str, dict[str, str]]] = {}
+    try:
+        for index, slot in enumerate(job["credentials"]):
+            credential = credentials[index]
+            ref = slot["secret_ref"]
+            fields = {
+                binding["field"]
+                for binding in job["env"].values()
+                if isinstance(binding, dict) and binding.get("$credential") == ref
+            }
+            kind = _family(fields)
+            value = decode_value(kind, credential.open())
+            if any(name not in value or "\0" in value[name] for name in fields):
+                raise ValueError("selected field")
+            opened[ref] = (credential.secret_ref, value)
+            for item in value.values():
+                if item:
+                    known.add(ref, item)
+            if kind == "basic":
+                known.add_basic(ref, value["username"], value["password"])
+    except (ValueInvalid, ValueError):
+        raise Refused("credential_invalid") from None
+    argv = list(selected.argv)
+    if executable is not None:
         argv[0] = str(executable)
-        env = {}
-        for name, public in selected.environment.items():
-            if public is not None:
-                env[name] = public
-            else:
-                binding = job["env"][name]
-                env[name] = opened[binding["$credential"]][1][binding["field"]]
-        return PreparedJob(
-            kind=job["kind"],
-            argv=tuple(argv),
-            env=env,
-            cwd=job["cwd"],
-            timeout_s=job["timeout_s"],
-            output_max_bytes=job["output"]["max_bytes"],
-            known=known,
-            image=job["oci"]["image"] if job["kind"] == "oci" else None,
-            read_only_paths=tuple(job["oci"]["read_only_paths"]) if job["kind"] == "oci" else (),
-        )
+    env = {}
+    for name, public in selected.environment.items():
+        if public is not None:
+            env[name] = public
+        else:
+            binding = job["env"][name]
+            env[name] = opened[binding["$credential"]][1][binding["field"]]
+    return PreparedJob(
+        kind=job["kind"],
+        argv=tuple(argv),
+        env=env,
+        cwd=job["cwd"],
+        timeout_s=job["timeout_s"],
+        output_max_bytes=job["output"]["max_bytes"],
+        known=known,
+        image=job["oci"]["image"] if job["kind"] == "oci" else None,
+        read_only_paths=tuple(job["oci"]["read_only_paths"]) if job["kind"] == "oci" else (),
+    )
 
 
 def _scalar(value: Any) -> str:
