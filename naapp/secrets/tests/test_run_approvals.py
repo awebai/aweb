@@ -137,7 +137,10 @@ async def plan_for(
                     },
                 }
             )
-            job_body["env"][f"RUN_SLOT_{ordinal}"] = {"$credential": source.record.ref}
+            job_body["env"][f"RUN_SLOT_{ordinal}"] = {
+                "$credential": source.record.ref,
+                "field": "value",
+            }
         job = JobDefinition.from_after(job_body)
         slots = [
             replace(slot, parent_grant=replace(slot.parent_grant, jobs=((job.job_id, job.digest),)))

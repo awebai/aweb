@@ -13,7 +13,13 @@ import pytest
 from aweb_secrets.redaction import KnownValues
 
 # Generated for these tests; not a credential of any service.
-VALUE = "tok/en+with=chars\"and\\more"
+VALUE = 'tok/en+with=chars"and\\more'
+
+
+def test_known_values_is_the_standalone_shared_class() -> None:
+    from aweb_secrets_values.redaction import KnownValues as SharedKnownValues
+
+    assert KnownValues is SharedKnownValues
 
 
 def _encodings(value: str) -> dict[str, str]:
@@ -27,7 +33,9 @@ def _encodings(value: str) -> dict[str, str]:
         "hex": raw.hex(),
         "hex-upper": raw.hex().upper(),
         "percent": quote(value, safe=""),
-        "percent-lower": re.sub(r"%[0-9A-F]{2}", lambda m: m.group().lower(), quote(value, safe="")),
+        "percent-lower": re.sub(
+            r"%[0-9A-F]{2}", lambda m: m.group().lower(), quote(value, safe="")
+        ),
         "percent-plus": quote_plus(value),
         "json-escaped": json.dumps(value)[1:-1],
     }

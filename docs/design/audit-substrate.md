@@ -546,8 +546,20 @@ occurred_at`. A revoked binding's backlog is handled by the revocation rule
 of §A3. The event itself is target-independent, so every sink receives
 byte-identical signed bytes. The shared kit takes the caller's transaction for
 the enqueue, and exposes the age of the oldest undelivered event per binding.
-Secrets uses that age for its backlog bound: it refuses new admissions once a
-target is stalled beyond a threshold that Juan sets.
+Secrets uses that age for its backlog bound: it refuses new admissions when
+every eligible active target is beyond the threshold that Juan sets. A current
+target permits admission alongside a stalled secondary.
+
+Decision 94 supplies the shared admission predicate and durable refusal path.
+`HookProducer.require_admission` checks current eligible targets for this team
+and hook, counting unmaterialized events as well as outstanding deliveries.
+At least one current target suffices; a stalled secondary never blocks it.
+`enqueue_refusal` is exclusive to secret-use `action=refused` and bypasses only
+target/backlog gating, preserving validation, keys and atomic storage without
+authorizing an external effect. Zero-target refusals are recorded with zero
+deliveries owed; future targets receive no retroactive event. S13 also keeps
+its operational refusal record for console activity. See the complete
+[audit gate and admission rules](../hook-events.md#the-audit-critical-gate).
 
 **Transport.** Each delivery is `POST` to the binding's origin and path with
 `Authorization: AWEB-Hook DIDKey <did:key> <sig>`. The signed payload binds
@@ -574,7 +586,7 @@ infrastructure, not an audit store (hooks-spec §7).
 
 **Failure mode.**
 
-- *Audit-critical* (`post-secret-use-hook`, and widening
+- *Audit-critical effects* (secret uses, and widening
   `post-governance-hook` acts): the producer refuses the effect (secrets'
   `audit_target_unavailable`, the real error logged) unless both hold:
   - a registry view no older than 60 s holds an active registration with
