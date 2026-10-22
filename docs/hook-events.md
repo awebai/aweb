@@ -624,6 +624,17 @@ body or a caller-supplied body digest for the complete bytes. K4 tests cover
 both an authenticated refusal with its complete body and an early refusal
 without one.
 
+The shared runtime prepares this evidence through B1's exact declared-tool
+mapping after authentication and fresh installation resolution. The handler
+passes its actual effect/outcome transaction to
+`runtime.record_manifest_command`; `runtime.authorized()` and a completed
+HTTP response do not supply an effect transaction. A required enqueue failure
+rolls back the local effect. Attributable authorization refusals have no
+admitted effect and are recorded in the guard's separate refusal transaction.
+Tools assigned to a specific hook through the runtime's `hook_tool_effects`
+configuration never also emit this generic hook. This changes no hook payload,
+owner-activation prerequisite, authorization decision or dispatch fence.
+
 The target verifies the event's signature and the commitment's shape. It
 cannot recompute this HMAC and does not obtain proof of the request's contents;
 the commitment is the authenticated producer's statement. A refusal carries
@@ -772,14 +783,58 @@ Delivery is at least once. Consumers deduplicate on `(team_id, event_id)`.
 
 ## The audit-critical gate
 
-For an audit-critical event (every `post-secret-use-hook` event, and widening
-`post-governance-hook` acts), the producer refuses the effect, with
+For an audit-critical effect (secret uses and widening `post-governance-hook`
+acts), the producer refuses the effect, with
 `audit_target_unavailable` and the real error logged, unless:
 
 - a registration view no older than 60 seconds holds an `active` registration
   for the hook whose `active_from` is at or before the event's `occurred_at`;
   and
 - the event row commits before any external dispatch.
+
+**Refusal recording (decision 94).** A dedicated shared
+`HookProducer.enqueue_refusal(tx, ...)` path records only
+`post-secret-use-hook` with `action: refused` and envelope `result_status:
+denied`. It is exempt only from target-availability and backlog gating; the
+catalog, complete envelope, producer key, trace rules, sequence allocation and
+atomic outbox write still apply. It does not authorize any external effect.
+The caller records the refusal in its own operational record in the same
+transaction, for the console's activity view. A failed admission savepoint may
+leave no intent row; this recording path requires none.
+
+Delivery eligibility does not change. A refusal owed to an existing stalled
+target is delivered after that target recovers. With no target owed at
+`occurred_at`, the refusal is recorded with zero deliveries owed. A later
+target whose `active_from` is after that time receives nothing retroactively.
+The ordinary outbox lifecycle and fault reporting remain in force; the
+producer's operational record is not a claim that logs received the event.
+Ordinary `enqueue` retains its gate, so an effect cannot obtain this exception
+by passing a caller-selected bypass flag.
+
+**Admission backlog (decisions 11 and 94).** The shared
+`HookProducer.require_admission(tx, *, team_id, hook, occurred_at, view,
+max_backlog_age)` requires a fresh matching view with at least one eligible
+active target. Fetch that view outside authority locks. The check performs
+only local DB reads in the admission transaction and never substitutes for
+authorization, the dispatch fence or event validation. No eligible target
+gives `audit_target_unavailable`. If every eligible target has an owed event
+older than the configured positive backlog-age bound that it has not received,
+it gives `audit_delivery_stalled`. One current target suffices; a stalled
+secondary alone does not block admission. Equality at the bound is current.
+The query returns each target's oldest outstanding local enqueue timestamp;
+view freshness and backlog ages are rechecked against the live clock after
+that awaited read returns, with no further wait before the result. A query
+blocked beyond either deadline must refuse rather than use its starting clock.
+
+Age is measured from the producer outbox's local `created_at`. Eligibility
+still uses `active_from <= occurred_at` for each event. Both unmaterialized
+events and materialized deliveries count, scoped to the team, hook and hooks
+channel; successful `delivered` or `duplicate` acknowledgements remove a
+delivery from backlog. Cancelled, rejected or conflicting deliveries are not
+treated as received. Events that precede a target's activation are never owed
+to it. This reads the existing shared outbox, with ordered migration indexes,
+and maintains no second backlog tracker. A refusal of this check is recorded
+with the dedicated path above, preserving every other refusal constraint.
 
 A registration still inside its pad does not count. Narrowing acts are enqueued
 in their own transaction and never refused by this gate, because containment

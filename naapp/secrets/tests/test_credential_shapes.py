@@ -14,6 +14,20 @@ import pytest
 from aweb_secrets.credential_shapes import has_credential_shape, is_credential_shaped_value
 
 
+def test_app_shape_helpers_are_the_standalone_shared_objects() -> None:
+    import aweb_secrets_values.credential_shapes as shared
+
+    import aweb_secrets.credential_shapes as app
+
+    for name in (
+        "has_credential_shape",
+        "has_credential_value",
+        "is_credential_field",
+        "is_credential_shaped_value",
+    ):
+        assert getattr(app, name) is getattr(shared, name)
+
+
 def _filler(n: int, alphabet: str = "Ab3dEf7hJk") -> str:
     return (alphabet * (n // len(alphabet) + 1))[:n]
 

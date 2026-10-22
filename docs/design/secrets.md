@@ -390,8 +390,29 @@ How a value is handled once opened:
   uses bytes-like buffers, avoids string interning and drops references
   promptly. It does not claim zeroization.
 - **Crash dumps.** Core dumps are disabled in the deploy (§15).
-- **Errors.** Backend errors map to `custody_unavailable`, and the request is
-  refused. There is no fallback to any other backend.
+- **Errors and phase.** Before `dispatching`, unavailable/deleted/unresolved
+  backend references refuse with `custody_unavailable`; an invalid 1Password
+  value shape uses `secret_value_invalid`, and an observed version mismatch
+  uses `secret_version_changed` (§5.3). A broker's final reread failure after
+  `dispatching` but before sending bytes is `not_sent`, with a safe private
+  cause, never a fabricated `refused` transition or a `refusal_code` on that
+  hook action. Runner preparation follows its pre-publication rule below.
+  There is no fallback to another backend or a replacement version.
+
+**Runner preparation is a private read, not dispatch authority.** The sole
+custody opener may open exact contexts from an original **durably admitted**
+run/ordered-slot plan outside all database transactions and locks, before the
+runner's final release fence. Do not carry an old transaction-bound
+`PreparedRun` across that read. Rebuild/check the unchanged persisted plan and
+those exact versions/reference/token epochs in the sole final DB-only fence;
+then commit dispatching, alias, stored sealed/signed assignment, claim nonce and
+outbox before releasing bytes. Changed authority or failed commit discards the
+transient preparation. A persisted assignment is never reopened or resealed.
+An SDK/open failure while still admitted becomes `refused`, with atomic
+operational/outbox recording and no approval rearm. This runner-only ordering
+uses the same opener and S3 record; broker opening remains after dispatching,
+with a pre-send failure recorded as `not_sent`. See
+[runner protocol §4.2](../secrets-runner-protocol.md#42-one-dispatch-one-assignment).
 
 ### 5.2 Native KMS-sealed store
 
@@ -428,13 +449,45 @@ How a value is handled once opened:
   launch it does not cache values across dispatches. There is no read cache
   at launch (Q4, decided). 1Password's own activity
   log is a second, independent record of every read.
-- **Ingress and replacement.** Both happen in the vault. `open()` returns the
-  item version it read. secrets compares it at the dispatch fence (§11.3) with
-  the version bound to the intent, and with the approved version when there is
-  an approval. On a mismatch secrets refuses (`secret_version_changed`), voids
-  the approval and records a `secret.version_observed` event. An approval given
-  for one value therefore never dispatches with another. Disable and destroy act on secrets' reference only. Revoking the service
-  account is the owner's action in 1Password, and the console links to it.
+- **Ingress and replacement (decision 92).** Both happen in the vault. An
+  observation and immutable-kind/placement validation run outside all database
+  transactions and authority locks. A separate reconciliation transaction before
+  the S3 fence takes the complete installation/forest/grant/B2 prelocks and
+  compares the scoped current local version, immutable vault/item/field reference
+  and active sealed backend-credential version. A valid changed value under
+  that unchanged reference may become the next monotonic local CURRENT version
+  for **later fresh admissions**, without another owner passkey. It changes no
+  grant, policy, destination or permitted operation. The original attempt
+  refuses `secret_version_changed`; old-version approvals are voided, replacement
+  consequences contain descendants, and stale token-cache authority is invalid.
+  Later uses still need the existing policy's fresh approval when required.
+- **Recording and the fence.** The local version transition, invalidations and
+  required `resource.version_observed` outbox entry (§11.5) commit atomically.
+  A stale CAS changes and emits nothing; outbox-storage failure rolls back the
+  transition, and the use still refuses without releasing a value. Target or
+  delivery unavailability does not gate this non-widening invalidation. The
+  final dispatch checker only compares the observation against already-held
+  exact version/reference/token authority: no SDK I/O, late B2 locks or
+  reconciliation writes occur there. The final opener read checks the exact
+  context at §5.1's phase: after dispatching commits for the broker, before the
+  fresh final release fence for a runner. It never substitutes a newly observed
+  version into an old intent or approval.
+- **Unsuccessful reads.** Invalid immutable shape refuses `secret_value_invalid`;
+  deleted or unresolved references refuse `custody_unavailable`. Neither
+  activates a version or creates a successful observation event or an invented
+  `after_ref`. Pre-dispatching failures record a `refused` use event; a broker
+  reread failure after dispatching records `not_sent` without `refusal_code`.
+  The safe cause is available in console/operational state, never provider
+  exception text, provider references or value material. The attempted-use
+  event and a successful governance transition are separate required records.
+  Disable and destroy act on secrets' reference only. Revoking the service
+  account remains the owner's action in 1Password, linked by the console.
+
+The exact shared authority, payload and recording rules are in
+[observed backend versions](../hook-events.md#observed-backend-versions-decision-92).
+M1 emission waits for updated receiver catalog support and production activation;
+a landed catalog/library alone does not establish a deployed compatible receiver.
+Use the shared codec, never a producer-local event or serializer.
 
 ### 5.4 What the broker sees, when, and for how long
 
@@ -1020,8 +1073,11 @@ credentials: [{secret_ref, delivery: short_lived | durable, mint}]
 **Credential slots and mint recipes.** Each `secret_ref` is unique in the job's
 ordered credential list and names a fixed secret in the same installation and
 team. It is also the stable slot label used by `env` entries of the form
-`{"$credential": "<secret_ref>"}`. An environment reference must name a declared
-slot. It never names a future random child ref.
+`{"$credential": "<secret_ref>", "field": "<field name>"}`. An environment
+reference names a declared slot and an explicit structured-value field, even
+for a single-field kind. It never names a future random child ref. The field
+families, whole-mapping custody codec and missing-field/NUL refusals are fixed
+in [runner protocol §4.4](../secrets-runner-protocol.md#44-explicit-environment-fields).
 
 - For `short_lived`, `secret_ref` names the **parent** and `mint` is exactly
   `{operation_id, digest, params}`. The operation must resolve for that parent
@@ -1073,6 +1129,65 @@ defined and checked again by the runner before each run.
 - **Starting environment.** The runner starts each job from an empty
   environment plus the declared names. It does not inherit the runner's own
   environment.
+
+**OCI process composition.** For `kind: oci`, the expanded `job.argv` is
+exactly the process argument vector, including its executable at index zero.
+The array is nonempty; its first element is a fixed, nonempty absolute path
+inside the pinned image, never a parameter. Remaining elements follow the
+argument rules above. The runner neither prepends nor appends image
+`Entrypoint` or `Cmd`, and supplies no implicit shell. For `kind: exec`, the
+existing convention remains: prepend the pinned `exec.path` to the expanded
+argument template. Owner confirmation and the runner-local pin show this
+kind-dependent interpretation; neither form accepts an executable override.
+
+For OCI, `process.cwd` is the job's pinned `cwd`, and `process.env` contains
+exactly the declared job environment after validated expansion and explicit
+credential-field selection. Ignore image `Env` and `WorkingDir` defaults and
+runtime-added environment defaults, including `PATH` and `HOSTNAME`; these names
+are not implicitly added. Existing environment-name refusals still apply.
+A runtime that cannot enforce this exact process configuration refuses before
+credential opening. The pinned image remains the filesystem authority; this
+rule does not change the declared read-only mount boundary.
+
+**OCI credential lifetime.** Runtime configuration containing expanded
+credentials belongs to this one run's transient trusted runner context. It may
+be passed privately in memory or held in a verified runner-only memory-backed
+runtime bundle and runtime-internal state root (directories mode 0700,
+credential-bearing files mode 0600). Both locations must meet this rule; an
+ordinary disk-backed temporary directory is not a fallback. It must not enter
+persistent container/daemon metadata, an image layer,
+a durable bundle, command-line arguments, diagnostics or the runner journal.
+A standard daemon environment option is not sufficient if it retains values in
+persistent inspectable metadata; removing the container afterward does not
+make that earlier persistence conformant. The choice of runtime is local, not
+a new job or protocol field.
+
+The runner bounds this context by the original job deadline and disposes of it
+when the process tree terminates, on preparation/start failure, timeout, local
+cancellation/shutdown, or containment observed by the runner. The existing
+claim/started/result protocol has no asynchronous cancellation of an already
+running process: remote containment fences later releases, but cannot promise
+an immediate stop or removal of already delivered credentials. The runner still
+enforces the original job deadline; containment or loss of contact never extends
+it. Section 12's deregistration and outcome-unknown rules remain unchanged.
+It stops/reaps the process tree before removing the bundle and runtime-internal
+state; on restart it cleans stale private runtime state before accepting new
+work, without executing an uncertain assignment again. No runtime-state bundle
+is mounted into the job for credential transport. Credential values may remain in
+the job process's own memory/environment while it runs; runner-host operators
+remain trusted under T8, and no secure-memory-erasure guarantee is added.
+
+These rules select explicit OCI runtime `process.args`, `process.env` and
+`process.cwd` rather than composing image defaults. The upstream
+[OCI runtime process contract](https://github.com/opencontainers/runtime-spec/blob/main/config.md#process)
+and [OCI image defaults](https://github.com/opencontainers/image-spec/blob/main/config.md#properties)
+are distinct. This clarification adds no job/1 or runner-wire field. S15a/M7
+must enforce the OCI executable invariant at definition and local preparation,
+show the effective command/environment names at confirmation, and prove with a
+real runtime that conflicting image defaults do not run or appear, undeclared
+environment names are absent, declared values reach only their intended process,
+and success/failure/timeout cleanup leaves no credential-bearing persistent
+runtime state. Existing signed assignment, redaction and no-rerun rules apply.
 
 **Two-key pinning.** secrets checks the parameters and the digest. The runner's
 own local config independently lists the job digests it will execute. A job runs
@@ -1277,9 +1392,15 @@ job's process has the credential (secrets SOT §4).
 
 ### 9.6 Output
 
-The runner returns the exit code and bounded stdout and stderr. It applies
-known-value redaction locally (it knows what it was given) and credential-shape
-detection. secrets applies both again, then the job's output projection. Withheld
+The runner returns the exit code, bounded stdout/stderr and explicit local
+truncation, withhold and redaction metadata. The exact six-field report, combined
+UTF-8 bound, HTTP statuses and replay/late-result rules are fixed in
+[runner protocol §4](../secrets-runner-protocol.md#4-http-bodies-reports-and-credential-fields).
+It applies known-value redaction locally (it knows what it was given) and
+credential-shape detection. secrets applies both again, then the job's output
+projection. Its known-value context must be the original released values in
+dispatch-bound transient memory, never a later vault reread; missing context
+withholds returned streams while preserving exit status and metadata. Withheld
 output follows §7.6.
 
 ## 10. approve_only on the joint approval primitive
@@ -1496,7 +1617,9 @@ received ─┬─> refused (terminal)
 
 - **`admitted`.** The approval is consumed (if any), the rate counters are
   charged, and the intent row and outbox rows are committed together. This is the
-  durable intent.
+  durable intent. A runner preparation or final-fence failure may close it as
+  `refused` before dispatching; it does not undo approval consumption or turn
+  into a sent/unknown attempt. S13 owns cleanup if a crash leaves it admitted.
 - **`dispatching`.** It is committed **before** the first byte is sent, or before
   the job assignment is released to the runner.
 - **`completed`.** It records the upstream status (2xx through 5xx), the
@@ -1641,7 +1764,7 @@ action:
 
 | secrets transition (§11.1) | hook `action` |
 | --- | --- |
-| refusal at admission or at the fence | `refused`, with `refusal_code` |
+| refusal at admission, runner preparation before dispatching, or at the fence | `refused`, with `refusal_code` |
 | `awaiting_approval` | `approval_requested` |
 | approval decided (approve, deny, expire, revoke) | `approval_decided`, with `approval_evidence_sha256` when a passkey decided |
 | `cancelled`: the requester withdraws, or containment revokes the pending approval through B2 | `approval_decided`, with `approval_decision: revoked` |
@@ -1652,9 +1775,12 @@ action:
 | `outcome_unknown` | `outcome_unknown` |
 | `reconciled_*` | `reconciled` |
 
-`naapp/secrets/vectors/hook-actions-v1.json` freezes this table and the
-governance table below as data, with an example event per row that the catalog
-validates. S13's tests read it.
+`naapp/secrets/vectors/hook-actions-v1.json` freezes the transition and governance
+mapping as data, including the accepted decision-92 observation row and example.
+Both shared catalog copies already include its exclusive authority and refusal
+cases. M1/S13 consume those accepted fixtures and add their implementation, CAS,
+rollback, cache and delivery proofs. Updated receiver support and production
+activation still precede emission; the shared row/catalog re-freeze is complete.
 
 secrets fills every field of the §A2 allowlist that applies to the event. The
 list below highlights fields with secrets-specific rules and is not exhaustive:
@@ -1725,6 +1851,7 @@ The catalog fixes its act enum and fixes each act's direction:
 | passkey and contact enrolment, recovery and revocation | `credential.enrolled`, `credential.recovered`, `credential.revoked` |
 | grant lifecycle | `grant.created`, `grant.changed`, `grant.revoked` |
 | secret, destination, operation and job lifecycle | `resource.created`, `resource.version_added`, `resource.replaced`, `resource.disabled`, `resource.enabled` |
+| validated same-reference backend version observation (§5.3) | `resource.version_observed` |
 | policy changes | `policy.changed` |
 | runners | `runner.registered`, `runner.deregistered` |
 | kill switch | `installation.disabled`, `installation.enabled` |
@@ -1742,7 +1869,17 @@ secrets fills `authority` with one of:
 
 - `owner_act`, with `owner_act_sha256`;
 - `passkey_session`, with `approval_evidence_sha256`;
-- `team_cert`, for narrowing acts through the agent API.
+- `team_cert`, for narrowing acts through the agent API;
+- `backend_observation`, exclusively for `resource.version_observed` (§5.3).
+
+That observation act requires `direction: narrowing`, `resource_type: secret`
+and `reason_code: external_version_changed`. Its `resource_ref` is the minted
+secret ID; distinct `before_ref`/`after_ref` are persisted random
+`sv_<UUID-hex>` local-version handles, never provider identifiers, versions,
+value fingerprints or display refs. The envelope actor is the identity-free
+system actor. No owner/passkey evidence, human `subject_ref`, `role`,
+`approval_id` or `policy_digest` is attributed to the observation. The signed
+producer attests its scoped backend observation, not a new owner ceremony.
 
 For governance authorized solely by an app-local console passkey session, the
 envelope actor is exactly `{"authority_mode":"system","attestations":[]}`.

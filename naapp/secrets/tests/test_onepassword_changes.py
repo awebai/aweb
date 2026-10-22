@@ -37,7 +37,7 @@ BINDING = {
 
 def test_console_can_describe_the_exact_immutable_versions():
     validate_change(_change(changes=[TOKEN, BINDING]))
-    assert not {"backend_credential", "onepassword_binding"} & APPLICABLE_KINDS
+    assert {"backend_credential", "onepassword_binding"} <= APPLICABLE_KINDS
 
 
 @pytest.mark.parametrize("item", [TOKEN, BINDING])
@@ -132,9 +132,9 @@ def test_all_binding_selectors_and_versions_are_covered_by_the_approval(field, v
 
 
 @pytest.mark.parametrize("item", [TOKEN, BINDING])
-async def test_unimplemented_bindings_cannot_mint_or_persist_a_draft(world: World, item):
+async def test_unstaged_bindings_cannot_mint_or_persist_a_draft(world: World, item):
     async with world.db.transaction() as tx:
         with pytest.raises(ChangeRefused) as refused:
             await world.change_sets.draft(tx, _change(changes=[item]))
-        assert refused.value.code == "change_kind_not_applicable"
+        assert refused.value.code in {"backend_credential_invalid", "onepassword_binding_invalid"}
         assert await tx.fetch_value("SELECT count(*) FROM {{tables.change_sets}}") == 0

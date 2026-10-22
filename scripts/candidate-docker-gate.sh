@@ -218,7 +218,7 @@ docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$
 
 BUILDX_CONFIG="$buildx_config" docker buildx build --builder "$builder_name" --load --pull \
   --label "aweb.candidate-gate=$resource_label" \
-  -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout/candidate-gate" \
+  -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
 
 # Record the run's mutable inputs in the evidence (adoption compares them):
@@ -345,6 +345,7 @@ docker run --rm --init \
   --group-add "$socket_gid" \
   --add-host aweb-docker.test:host-gateway \
   -e HOME="$checkout/.candidate-home" \
+  -e PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
   -e PATH="$checkout/candidate-gate/bin:/usr/local/go/bin:/opt/uv:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   -e AWEB_CANDIDATE_REAL_DOCKER=/usr/bin/docker \
   -e AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" \
