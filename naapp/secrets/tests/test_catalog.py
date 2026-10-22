@@ -153,7 +153,7 @@ async def test_only_current_pinned_operations_are_described(catalog, db):  # noq
 async def test_only_current_pinned_jobs_are_described(catalog, db):  # noqa: F811
     body = job_after()
     body["credentials"][0]["secret_ref"] = SECRET["ref"]
-    body["env"]["DB_ADMIN"] = {"$credential": SECRET["ref"]}
+    body["env"]["DB_ADMIN"] = {"$credential": SECRET["ref"], "field": "value"}
     job = JobDefinition.from_after(body)
     await seed(db, capability="run", job=job)
     result = await catalog.describe(SECRET["ref"], grant=authority(), principal=ALICE)
@@ -206,7 +206,7 @@ async def test_reinstall_and_old_generation_never_reveal_the_previous_inventory(
 async def test_job_metadata_cannot_cross_a_team_even_with_a_matching_pin(catalog, db):  # noqa: F811
     body = job_after()
     body["credentials"][0]["secret_ref"] = SECRET["ref"]
-    body["env"]["DB_ADMIN"] = {"$credential": SECRET["ref"]}
+    body["env"]["DB_ADMIN"] = {"$credential": SECRET["ref"], "field": "value"}
     job = JobDefinition.from_after(body)
     # The reader still scopes the registry row if a corrupt import pointed at
     # another team's definition. A matching digest alone supplies no authority.
