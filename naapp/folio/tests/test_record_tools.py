@@ -1,7 +1,5 @@
 """The CLI/MCP manifest contract carries partial writes and explicit CAS."""
 
-import copy
-
 import pytest
 from aweb_naapp.manifest import canonical_bytes, load_manifest
 from jsonschema import Draft202012Validator
@@ -15,8 +13,7 @@ def _tool(name):
 
 
 def test_records_manifest_is_accepted_by_the_shared_reader_and_binds_every_body_argument():
-    manifest = copy.deepcopy(served_manifest("https://folio.aweb.ai"))
-    manifest["tools"].extend(RECORD_TOOLS)
+    manifest = served_manifest("https://folio.aweb.ai")
     parsed = load_manifest(canonical_bytes(manifest))
     assert set(parsed.tools_by_name()) >= {
         "collection-define", "record-add", "record-update", "record-delete", "record-query",

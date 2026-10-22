@@ -281,3 +281,28 @@ async def test_member_revoke_maps_unknown_link_and_ends_holder_reads(linked):
     assert response.status_code == 410, response.text
     assert response.json()["detail"]["code"] == "link_unavailable"
     assert response.headers["Cache-Control"] == "no-store"
+
+
+@pytest.mark.parametrize("property_schema", [
+    {"type": ["string", "null"], "maxLength": 160},
+    True,
+    False,
+])
+async def test_define_refuses_unsupported_field_schemas_without_partial_writes(linked, property_schema):
+    from aweb_naapp.pages import inline_schema_errors
+    from fastapi import HTTPException
+
+    schema = {"type": "object", "properties": {"status": property_schema}, "additionalProperties": False}
+    assert inline_schema_errors(schema) == []
+    db = linked.host.runtime.db()
+
+    async def counts():
+        return [await db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}")
+                for table in ("pages", "page_audit", "page_receipts", "documents", "collection_documents")]
+
+    before = await counts()
+    with pytest.raises(HTTPException) as refused:
+        await linked.host.member_operation(linked.authorization, "define_on", CollectionDefineRequest(
+            collection_id="unsupported", title="Unsupported", schema=schema, request_id="unsupported-define"))
+    assert (refused.value.status_code, refused.value.detail["code"]) == (422, "schema_invalid")
+    assert await counts() == before

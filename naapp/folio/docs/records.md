@@ -16,6 +16,14 @@ Every write takes a nonempty `request_id` (at most 128 characters). Collection
 and record IDs are opaque strings, at most 128 characters. Request bodies cannot
 supply a team, installation, principal or ACL.
 
+Collection schemas must be object schemas with a `properties` map. Folio table
+fields require schema objects; a `type` declaration, when present, must be a
+single type name. Boolean property schemas and list-valued type unions
+(including nullable unions) are refused with
+HTTP 422 code `schema_invalid`. Optional fields can be omitted; optional text
+can be cleared with `""`. This table constraint applies to definition and record
+validation, without changing the shared C1 schema contract.
+
 | Tool | Arguments | Result |
 | --- | --- | --- |
 | `collection-define` | `collection_id`, `title`, `schema`, `request_id` | `collection_id`, `schema_version`, `snapshot_rev`, `document_slug` |

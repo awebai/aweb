@@ -29,6 +29,18 @@ DISCOVERY_SCHEMA = {
 }
 
 
+def _field_definitions(schema: dict) -> dict[str, dict]:
+    """Folio tables require object field schemas with single-type declarations."""
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        raise StoreError("schema_invalid", details=[{"pointer": "/schema/properties"}])
+    for name, definition in properties.items():
+        if not isinstance(definition, dict) or isinstance(definition.get("type"), list):
+            escaped = name.replace("~", "~0").replace("/", "~1")
+            raise StoreError("schema_invalid", details=[{"pointer": f"/schema/properties/{escaped}"}])
+    return properties
+
+
 def build_collection_page(
     *, page_id: str, collection_id: str, title: str, schema: dict, owner: str,
 ) -> dict:
@@ -37,7 +49,7 @@ def build_collection_page(
             or not isinstance(schema.get("properties"), dict)):
         raise StoreError("schema_invalid", details=[{"pointer": "/schema"}])
     columns = []
-    for name, definition in schema.get("properties", {}).items():
+    for name, definition in _field_definitions(schema).items():
         kind = "text"
         if name == "source_url":
             kind = "url"
@@ -85,7 +97,7 @@ def validate_record(scope: Scope, collection: dict, complete_record: dict) -> No
     """
     value = complete_record["value"]
     errors = []
-    for name, definition in collection["schema"].get("properties", {}).items():
+    for name, definition in _field_definitions(collection["schema"]).items():
         if name not in value:
             continue
         invalid = None

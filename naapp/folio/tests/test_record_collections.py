@@ -105,3 +105,10 @@ def test_collection_definition_refuses_invalid_or_non_object_record_schemas(sche
         build_collection_page(page_id="table-1", collection_id="notes", title="Notes",
                               schema=schema, owner="did:key:creator")
     assert error.value.code == "schema_invalid"
+
+
+@pytest.mark.parametrize("definition", [True, False, {"type": ["string", "null"]}])
+def test_record_validator_refuses_the_same_unsupported_field_definitions(definition):
+    collection = {"id": "unsupported", "schema": {"type": "object", "properties": {"status": definition}}}
+    with pytest.raises(StoreError, match="schema_invalid"):
+        validate_record(SCOPE, collection, {"id": "row", "rev": 1, "value": {"status": "read"}})
