@@ -24,6 +24,7 @@ from aweb_naapp.runtime.approvals import (
     PgApprovalStore,
 )
 from aweb_naapp.runtime.audit import AuditEvent
+from aweb_naapp.runtime.installation import InstallationFence, apply_installation_migrations
 from aweb_naapp.runtime.passkeys import Notice, Passkeys, RelyingParty
 from aweb_naapp_testing import awid_registry
 from aweb_naapp_testing.owner_acts import (
@@ -36,6 +37,7 @@ from aweb_naapp_testing.webauthn import SoftAuthenticator
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
+from aweb_secrets.change_sets import apply_change_set_migrations
 from aweb_secrets.owners import (
     OWNER_ROLE,
     OwnerDirectory,
@@ -45,6 +47,7 @@ from aweb_secrets.owners import (
     owner_scope,
     record_owner,
 )
+from aweb_secrets.passkey_context import PasskeyContexts
 
 ORIGIN = "https://secrets.example.com"
 TEAM = "backend:acme.com"
@@ -113,11 +116,20 @@ async def world(test_db_factory) -> AsyncIterator[World]:
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
         owner_scopes=is_owner_scope,
+        proof_context=PasskeyContexts(app_id="secrets"),
     )
     await passkeys.migrate()
     await apply_roles_migrations(db)
     await apply_owner_act_migrations(db)
     await apply_owner_migrations(db)
+    await apply_change_set_migrations(db)
+    await apply_installation_migrations(db)
+    # Reuse the real F6 external-authority fixture after module initialization.
+    from tests.test_change_sets import Installations
+
+    installations = Installations()
+    fence = InstallationFence(db, app_id=installations.app_id, grants=installations)
+    await fence.refresh(TEAM)
     async with awid_registry(registry_db.config.get_dsn()) as registry:
         yield World(
             db=db,
