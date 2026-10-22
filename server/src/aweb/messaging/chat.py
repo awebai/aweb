@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from aweb.human_channels.contract import ContractError
+from aweb.human_channels.participants import require_native_participant_input
+from aweb.service_errors import ValidationError
+
 from aweb.attachment_service import attachment_transaction
 
 import logging
@@ -66,6 +70,10 @@ async def resolve_session_actor_did(db_infra, *, session_id: UUID, actor_dids: l
 
 
 def _participant_did(row: dict[str, Any]) -> str:
+    try:
+        require_native_participant_input(row)
+    except ContractError as error:
+        raise ValidationError(str(error)) from error
     return (row.get("did") or row.get("did_aw") or row.get("did_key") or "").strip()
 
 

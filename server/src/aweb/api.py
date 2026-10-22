@@ -35,6 +35,7 @@ from .routes.agent_status import router as agent_status_router
 from .routes.agents import router as agents_router
 from .routes.app_hooks import router as app_hooks_router
 from .routes.apps import router as apps_router
+from .routes.hook_bindings import router as hook_bindings_router
 from .routes.connect import router as connect_router
 from .routes.dashboard import router as dashboard_router
 from .routes.chat import router as chat_router
@@ -538,6 +539,7 @@ def create_app(
     app.include_router(agent_status_router)
     app.include_router(agent_activity_router)
     app.include_router(apps_router)
+    app.include_router(hook_bindings_router)
     app.include_router(app_hooks_router)
     app.include_router(connect_router)
     app.include_router(chat_router)

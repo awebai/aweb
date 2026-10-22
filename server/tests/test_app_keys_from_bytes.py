@@ -512,6 +512,15 @@ def test_install_reads_bytes_exactly_as_the_shared_reader_does(name, data, expec
     app_id, origin = identity
     try:
         registration = manifest_registration(data, app_id=app_id, origin=origin, digest=_digest(data))
+    except ConflictError as refused:
+        # The install API rejects a reserved root ID before parsing the bytes.
+        # Require the same refusal from the shared reader, not any conflict.
+        assert not expected["accepted"], (name, refused)
+        assert app_id in reserved_app_ids(), (name, refused)
+        with pytest.raises(ManifestError) as shared:
+            load_manifest(data, reserved_names=reserved_app_ids())
+        assert shared.value.code == expected["error"], name
+        return
     except ValidationError as refused:
         assert not expected["accepted"], (name, refused)
         cause = refused.__cause__

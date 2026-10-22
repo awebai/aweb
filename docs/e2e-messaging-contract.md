@@ -836,3 +836,15 @@ of this contract it touches. Minimum conformance and release controls include:
   than home-registry or wrapper hints,
 - source suppression is not mislabeled as a 60-second freshness guarantee, and
 - after E2E intent is selected, legacy plaintext is never chosen as fallback.
+
+## Human-channel P0 profile boundary
+
+The [human-channel P0 definitions](human-channels-contract-v1.md) preserve existing
+native-v2 AAD, inner fixed-header projection, key-wrap and explicit no-fallback
+semantics. Optional platform-only via is inner content under its existing outer
+ciphertext commitment, never a new outer field. Guest/group encrypted context
+and historical re-share remain explicitly unavailable until X-E2's separate
+annex is frozen after an independent security review of its exact commit;
+federation likewise awaits X-GF.
+A wire encrypted to a hosted/bridge key is not E2EE to the human. Custody and
+verified whole-session membership policy, never via, determine that disclosure.

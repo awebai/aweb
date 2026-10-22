@@ -207,3 +207,54 @@ async def test_expired_sessions_and_spent_nonces_are_deleted(
     assert await expire_sessions(db, now=NOW + timedelta(minutes=14)) == 2
     assert await db.fetch_value("SELECT count(*) FROM {{tables.link_sessions}}") == 0
     assert await db.fetch_value("SELECT count(*) FROM {{tables.link_nonces}}") == 0
+
+
+@pytest.mark.parametrize("failure", ["origin", "csrf", "action"])
+async def test_signed_attempts_commit_their_budget_even_when_the_operation_fails(
+    db, session, failure
+):
+    capacity = 240  # link-default-v1 signed attempts, per session per minute
+    for index in range(capacity):
+        request = _fresh(VALID["action-post"], f"{index:032x}")
+        if failure == "origin":
+            request["origin"] = "https://evil.example"
+        elif failure == "csrf":
+            request["csrf"] = "wrong"
+        if failure == "action":
+            await _authenticate(db, **request)
+            with pytest.raises(RuntimeError):
+                async with db.transaction():
+                    raise RuntimeError("later action rolled back")
+        else:
+            with pytest.raises(LinkRefused, match="action_denied"):
+                await _authenticate(db, **request)
+    request = _fresh(VALID["action-post"], f"{capacity:032x}")
+    with pytest.raises(LinkRefused) as refused:
+        await _authenticate(db, **request)
+    assert (refused.value.code, refused.value.status) == ("safety_rate_limited", 429)
+    assert refused.value.retry_after_s == 1
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.link_nonces}}") == capacity
+    # A later valid request can use the refilled token; refusal stored no nonce.
+    await _authenticate(db, **{**request, "now": NOW + timedelta(seconds=1)})
+
+
+async def test_invalid_signatures_never_consume_a_session_attempt(db, session):
+    with pytest.raises(LinkRefused, match="signature_invalid"):
+        await _authenticate(db, **_request(VALID["action-post"], body=b"tampered"))
+    assert (
+        await db.fetch_value(
+            "SELECT count(*) FROM {{tables.rate_buckets}} WHERE bucket='link.attempt'"
+        )
+        == 0
+    )
+
+
+async def test_duplicate_nonces_also_consume_the_committed_attempt_budget(db, session):
+    request = _request(VALID["action-post"])
+    await _authenticate(db, **request)
+    for _ in range(239):
+        with pytest.raises(LinkRefused, match="idempotency_conflict"):
+            await _authenticate(db, **request)
+    with pytest.raises(LinkRefused, match="safety_rate_limited"):
+        await _authenticate(db, **request)
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.link_nonces}}") == 1
