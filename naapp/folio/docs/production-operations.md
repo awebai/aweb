@@ -131,10 +131,28 @@ new declared kid beside the old one, yields a new digest, and needs a re-pin.
 These are separately authorized operator actions; a code landing performs none
 of them.
 
+## Read-only presentation lifetimes
+
+Read-only links accept up to 30 days (`2592000` seconds); the default lifetime
+remains one day (`86400` seconds). Operators may set a shorter ceiling. An
+explicit request above the configured ceiling returns `422` without minting a
+link. Editable links remain limited to 300 seconds.
+
+For the 30-day rollout, check the existing `FOLIO_MAX_PRESENT_TTL_SECONDS`
+environment setting. If it is `604800` (the former seven-day example), raise it
+to `2592000` or remove it to use the new default. Keeping that override preserves
+the seven-day ceiling even after the code deploys. `.env.example` now uses
+`2592000`. The committed app manifest and its tool schemas do not change, so
+this lifetime change alone needs no manifest re-pin.
+
+**Release hold:** land the reviewed change on main, then wait for Juan to lift
+the hold before deploying or changing the production environment. This document
+is a deployment handoff, not permission to deploy.
+
 ## Editable presentation privacy and expiry
 
 Editable presentation links default to 300 seconds. The server refuses an
-explicit editable TTL above 300 seconds; read-only TTL settings are unchanged.
+explicit editable TTL above 300 seconds; read-only lifetimes are described above.
 An editable row minted by an older build with an expiry more than 300 seconds
 after its creation is refused on the editor, state, preview and save paths.
 This requires no migration or inspection of production document rows.
