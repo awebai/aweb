@@ -151,16 +151,17 @@ Mount it only on the human application, sharing the same services:
 ```python
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 
-human_app.include_router(console_changes_router(ConsoleChanges(
+console_changes = ConsoleChanges(
     console=owner_console,
     changes=change_sets,
     approvals=approvals,
     registrations=hook_registrations,
     after_commit=containment.evict,
-)))
+)
+human_app.include_router(console_changes_router(console_changes))
 ```
 
-All POSTs require JSON, the S4 cookie and this tab's `X-CSRF-Token`. Browser
+Authenticated POSTs require JSON, the S4 cookie and this tab's `X-CSRF-Token`. Browser
 forms call `window.awebSecretsConsole.post(path, body)`. Under
 `/installations/{installation_id}/change-sets`:
 
@@ -185,5 +186,44 @@ The protected confirmation response uses `owner_confirmation_result`; serve
 it with no-store and never log its body. Eviction receives only the committed
 Confirmation's installation/team/affected IDs, after commit. A cleanup failure
 never repeats confirmation; active-version and custody checks remain the
-release controls. Other record kinds, browser forms, reference staging and the
-root application mount are separate integration work.
+release controls. If the session is lost after commit, the response contains
+only `{change_id, revision, state: "applied", reauth_required: true}` and any
+clearing-cookie header; it carries no protected material and does not report a
+rolled-back mutation.
+
+The effect is authorized by the retained fresh APPROVE, with S4 checking the
+exact login on request entry. It takes no late LOGIN credential lock after the
+forest/B2 locks. Within a valid session, possession of that session and its CSRF
+token can apply the exact change its real owner has already approved; it cannot
+supply the fresh passkey proof needed to approve another change.
+
+Mount the browser forms with the same services, only on the human application:
+
+```python
+from aweb_secrets.console_forms import console_forms_router
+human_app.include_router(console_forms_router(changes=console_changes))
+```
+
+`GET /backend-credentials/onepassword/new` resolves the installation from the
+stored owner scope and renders token entry through the shared console shell.
+The field clears as soon as submitted, and no token enters a URL, template or
+browser storage. Saving stages an inert token and drafts its metadata. The
+page directs the owner to the registered-contact approval link.
+
+`GET /approvals#token=<locator>` accepts the personal email fragment. With no
+session, the public read-only `POST /approvals/sign-in` accepts exactly `{token}`
+and returns only that link candidate's opaque sign-in scope. This neither
+reveals the frozen change nor authorizes anything. The page calls the existing
+S4 login APIs with a real LOGIN assertion, stores only the tab CSRF, then loads
+the authenticated review. It still needs a separate fresh APPROVE assertion.
+`POST /approvals/locate` is authenticated and CSRF-protected; it resolves the
+same candidate's link to the scoped frozen change. Locators stay transient and
+are removed from the fragment immediately; they never enter browser storage.
+
+The review renders persisted frozen metadata with escaped untrusted reason
+text. `/installations/{installation_id}/change-sets/{change_id}/review` also
+lets a deciding owner resume an approved change after a page reload, without
+approving again. Browser actions use the sole shared `post` and `assertion`
+helpers; no automatic mutation retry occurs. New tabs without tab CSRF retain
+the shared scoped re-authentication guard. Other record kinds, reference
+staging and the root application mount remain separate integration work.

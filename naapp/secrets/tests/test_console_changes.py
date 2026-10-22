@@ -31,8 +31,9 @@ class Registrations:
         return view()
 
 
-@asynccontextmanager
-async def clients(w, *, registrations=None, cleanup=None):
+async def application(
+    w, *, registrations=None, cleanup=None, forms=False, human_origin=ORIGIN, agent_origin=API
+):
     await apply_console_migrations(w.db)
 
     async def installation(installation_id):
@@ -50,21 +51,30 @@ async def clients(w, *, registrations=None, cleanup=None):
     )
     human_app = FastAPI()
     human_app.include_router(owner_console_router(console))
+    from aweb_secrets.console_ui import console_ui_router
+
+    human_app.include_router(console_ui_router(sessions=console.sessions))
     human_app.include_router(
         console_values_router(ConsoleValues(console=console, custody=w.custody))
     )
-    human_app.include_router(
-        console_changes_router(
-            ConsoleChanges(
-                console=console,
-                changes=w.change_sets,
-                approvals=w.approvals,
-                registrations=registrations or Registrations(),
-                after_commit=cleanup or w.containment.evict,
-            )
-        )
+    changes = ConsoleChanges(
+        console=console,
+        changes=w.change_sets,
+        approvals=w.approvals,
+        registrations=registrations or Registrations(),
+        after_commit=cleanup or w.containment.evict,
     )
-    app = split_origins(FastAPI(), human_app, agent_origin=API, human_origin=ORIGIN)
+    human_app.include_router(console_changes_router(changes))
+    if forms:
+        from aweb_secrets.console_forms import console_forms_router
+
+        human_app.include_router(console_forms_router(changes=changes))
+    return split_origins(FastAPI(), human_app, agent_origin=agent_origin, human_origin=human_origin)
+
+
+@asynccontextmanager
+async def clients(w, *, registrations=None, cleanup=None, forms=False):
+    app = await application(w, registrations=registrations, cleanup=cleanup, forms=forms)
     async with (
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as human,
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API) as agent,
@@ -491,3 +501,80 @@ async def test_unaudited_record_kinds_remain_outside_this_http_slice(world):
         assert response.status_code == 409
         assert response.json() == {"detail": "change_kind_not_applicable"}
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.change_sets}}") == 0
+
+
+async def test_personal_locator_resolves_only_the_current_candidates_frozen_change(world):
+    w = world
+    scope = await enrol_owner(w, ALICE, "alice@acme.com")
+    bob = await enrol_owner(w, BOB, "bob@acme.com")
+    async with clients(w) as (human, agent):
+        headers = await sign_in(w, human, scope)
+        drafted = await token_draft(w, human, headers)
+        [(_, token)] = w.inbox.links["alice@acme.com"]
+        located = await human.post("/approvals/locate", json={"token": token}, headers=headers)
+        assert located.status_code == 200
+        assert located.json()["change"]["change_id"] == drafted["change_id"]
+        assert located.json()["approval_state"] == "pending"
+        assert located.json()["can_confirm"] is False
+        assert token not in located.text
+        assert (await agent.post("/approvals/locate", json={"token": token})).status_code == 404
+        headers = await sign_in(w, human, bob, "bob@acme.com")
+        refused = await human.post("/approvals/locate", json={"token": token}, headers=headers)
+        assert refused.status_code == 403 and token not in refused.text
+        headers = await sign_in(w, human, scope)
+        path = await approve(w, human, headers, drafted)
+        approved = await human.get(path)
+        assert approved.json()["approval_state"] == "approved"
+        assert approved.json()["can_confirm"] is True
+
+
+async def test_lost_session_after_commit_returns_only_an_applied_receipt_and_reauth(world):
+    w = world
+    scope = await enrol_owner(w, ALICE, "alice@acme.com")
+    holder = await w.passkeys.designated_approver(scope)
+
+    async def cleanup(*args):
+        async with w.db.transaction() as tx:
+            await w.passkeys.retire_in(
+                tx, scope=scope, subject=holder.subject, authorized_by="owner"
+            )
+
+    async with clients(w, cleanup=cleanup) as (human, _):
+        headers = await sign_in(w, human, scope)
+        drafted = await token_draft(w, human, headers)
+        path = await approve(w, human, headers, drafted)
+        result = await human.post(path + "/confirm", json={}, headers=headers)
+        assert result.status_code == 200
+        assert result.json() == {
+            "change_id": drafted["change_id"],
+            "revision": 1,
+            "state": "applied",
+            "reauth_required": True,
+        }
+        assert "Max-Age=0" in result.headers["set-cookie"]
+        assert (
+            await w.db.fetch_value("SELECT active_version FROM {{tables.onepassword_credentials}}")
+            == 1
+        )
+        assert await w.db.fetch_value("SELECT state FROM {{tables.change_sets}}") == "applied"
+
+
+async def test_personal_locator_can_offer_only_its_signin_scope_before_authentication(world):
+    w = world
+    scope = await enrol_owner(w, ALICE, "alice@acme.com")
+    async with clients(w) as (human, agent):
+        headers = await sign_in(w, human, scope)
+        drafted = await token_draft(w, human, headers)
+        [(_, token)] = w.inbox.links["alice@acme.com"]
+        await human.post("/logout", headers=headers)
+        offered = await human.post("/approvals/sign-in", json={"token": token})
+        assert offered.status_code == 200 and offered.json() == {"scope": scope}
+        assert token not in offered.text and drafted["change_id"] not in offered.text
+        assert (await agent.post("/approvals/sign-in", json={"token": token})).status_code == 404
+        refused = await human.post("/approvals/sign-in", json={"token": "unusable-locator"})
+        assert refused.status_code == 409 and "unusable-locator" not in refused.text
+        assert (await w.approvals.get(drafted["approval_id"])).state is ApprovalState.PENDING
+        assert (
+            await w.db.fetch_value("SELECT active_version FROM {{tables.onepassword_credentials}}")
+            is None
+        )

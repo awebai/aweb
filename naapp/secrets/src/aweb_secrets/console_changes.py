@@ -26,15 +26,22 @@ from typing import Any
 from aweb_naapp.console import ConsoleRoute, ConsoleSession
 from aweb_naapp.hooks.producer import Registrations
 from aweb_naapp.roles import hold_role
-from aweb_naapp.runtime.approvals import ApprovalRefused, Approvals, Assurance, Decision
+from aweb_naapp.runtime.approvals import (
+    ApprovalRefused,
+    Approvals,
+    ApprovalState,
+    Assurance,
+    Decision,
+)
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationRefused
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from pgdbm import TransactionManager
 
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_sets import ChangeSets, Confirmation
 from aweb_secrets.console import OwnerConsole, _body, _require_json, _text
-from aweb_secrets.console_results import owner_confirmation_result
+from aweb_secrets.console_results import confirmation_receipt, owner_confirmation_result
 from aweb_secrets.custody import SealContext
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.revisions import config_revision
@@ -184,7 +191,69 @@ class ConsoleChanges:
         change = (
             json.loads(row["request"]) if isinstance(row["request"], str) else dict(row["request"])
         )
-        return {"change": change, "approval_id": row["approval_id"], "state": row["state"]}
+        approval = await self.approvals.get(row["approval_id"])
+        return {
+            "change": change,
+            "approval_id": row["approval_id"],
+            "state": row["state"],
+            "approval_state": approval.state_at(self.approvals.now()).value if approval else None,
+            "can_confirm": bool(
+                approval
+                and approval.state_at(self.approvals.now()) is ApprovalState.APPROVED
+                and row["state"] == "pending"
+                and approval.decided_by
+                and (approval.decided_by.scope, approval.decided_by.subject)
+                == (current.scope, current.subject)
+            ),
+        }
+
+    async def installation_for_session(self, current: ConsoleSession) -> str:
+        """Resolve an owner page from its stored scope; never parse an opaque locator."""
+        installation_id = await self.console.db.fetch_value(
+            "SELECT installation_id FROM {{tables.owner_principals}} WHERE scope=$1",
+            current.scope,
+        )
+        if installation_id is None:
+            raise HTTPException(403, "owner_required")
+        admitted = await self._installation(installation_id)
+        async with self.console.db.transaction() as tx:
+            await self._owner(tx, current, admitted)
+        return str(installation_id)
+
+    async def locate(self, current: ConsoleSession, token: str) -> dict[str, Any]:
+        """Resolve the personal email locator without returning it or another candidate."""
+        linked = await self.approvals.open_link(token)
+        candidate = linked.approval.candidate(current.subject)
+        if candidate is None or candidate.scope != current.scope:
+            raise HTTPException(403, "owner_required")
+        row = await self.console.db.fetch_one(
+            "SELECT change_id,installation_id FROM {{tables.change_sets}} WHERE approval_id=$1",
+            linked.approval.approval_id,
+        )
+        if row is None:
+            raise HTTPException(404, "change_unknown")
+        return await self.read(current, row["installation_id"], row["change_id"])
+
+    async def signin_scope(self, token: str) -> dict[str, str]:
+        """The locator offers its own candidate's scope, never the frozen request.
+
+        This is a read-only sign-in hint. S4/B3 still authenticate the candidate
+        and check its current role; possession alone authorizes no effect.
+        """
+        linked = await self.approvals.open_link(token)
+        row = await self.console.db.fetch_one(
+            "SELECT request FROM {{tables.change_sets}} WHERE approval_id=$1",
+            linked.approval.approval_id,
+        )
+        if row is None:
+            raise HTTPException(404, "change_unknown")
+        change = (
+            json.loads(row["request"]) if isinstance(row["request"], str) else dict(row["request"])
+        )
+        self._supported(change["changes"])
+        # B2.open_link returns only the link's single candidate, never peers.
+        [candidate] = linked.approval.candidates
+        return {"scope": candidate.scope}
 
     async def _candidate(
         self, current: ConsoleSession, installation_id: str, change_id: str, token: str
@@ -308,6 +377,21 @@ def console_changes_router(services: ConsoleChanges, *, prefix: str = "") -> API
     router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
     root = "/installations/{installation_id}/change-sets"
 
+    @router.post("/approvals/sign-in", dependencies=[Depends(_require_json)])
+    async def signin_scope(request: Request):
+        body = await _body(request, {"token"})
+        try:
+            return await services.signin_scope(_text(body, "token"))
+        except ApprovalRefused:
+            raise HTTPException(409, "approval_refused") from None
+
+    @router.post("/approvals/locate", dependencies=[Depends(_require_json)])
+    async def locate(request: Request):
+        current = await services.console.sessions.current(request)
+        body = await _body(request, {"token"})
+        async with _errors(services.console, current):
+            return await services.locate(current, _text(body, "token"))
+
     @router.post(root, status_code=201, dependencies=[Depends(_require_json)])
     async def draft(installation_id: str, request: Request):
         current = await services.console.sessions.current(request)
@@ -341,10 +425,31 @@ def console_changes_router(services: ConsoleChanges, *, prefix: str = "") -> API
         await _body(request, set())
         async with _errors(services.console, current):
             confirmation = await services.confirm(current, installation_id, change_id)
+            applied_receipt = {
+                **confirmation_receipt(confirmation),
+                "state": "applied",
+                "reauth_required": True,
+            }
             # Recheck S4 after commit before releasing one-time runner codes.
-            current = await services.console.sessions.current(request)
-            return await owner_confirmation_result(
-                services.console.db, services.console.directory, confirmation, current
-            )
+            try:
+                current = await services.console.sessions.current(request)
+            except HTTPException as refused:
+                if refused.status_code not in {401, 403}:
+                    raise
+                # The mutation committed. No protected material leaves, and the
+                # client must not mistake loss of its result session for rollback.
+                return JSONResponse(applied_receipt, headers=refused.headers)
+            try:
+                return await owner_confirmation_result(
+                    services.console.db, services.console.directory, confirmation, current
+                )
+            except ChangeRefused as refused:
+                if refused.code != "owner_required":
+                    raise
+                # The role can also disappear between S4 and result projection.
+                await services.console.sessions.close(current)
+                response = JSONResponse(applied_receipt)
+                services.console.sessions.clear_cookie(response)
+                return response
 
     return router
