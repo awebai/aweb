@@ -12,6 +12,7 @@ import pytest_asyncio
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from awid.db_config import build_database_config
+from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 
 pytest_plugins = ("pgdbm.fixtures.conftest", "tests.real_stack")
 
@@ -61,6 +62,7 @@ async def aweb_cloud_db(shared_test_pool):
         migrations_table="schema_migrations",
     )
     await aweb_migrations.apply_pending_migrations()
+    await apply_owner_act_migrations(aweb_db)
 
     class DatabaseManagers:
         def __init__(self, aweb_db):

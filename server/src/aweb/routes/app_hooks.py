@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -22,6 +22,7 @@ from aweb.hook_resolution import (
     holds_active_binding,
     own_bindings,
 )
+from aweb.hook_times import format_hook_time
 from aweb.service_errors import ServiceError
 
 router = APIRouter(tags=["hooks"])
@@ -50,21 +51,6 @@ _CATALOG_ID = re.compile(r"[a-z][a-z0-9.-]{0,63}")
 _HOOK = re.compile(r"[a-z][a-z0-9-]{0,63}")
 # Inside the binding table's integer range.
 _CATALOG_VERSION = re.compile(r"[1-9][0-9]{0,8}")
-
-
-def _milliseconds(moment: datetime | None, *, round_up: bool = False) -> str | None:
-    """A binding time in UTC to the millisecond, the hook event spelling.
-
-    ``active_from`` rounds up to the next millisecond, never down, so a binding
-    never reads as active earlier than it is; the other times truncate."""
-    if moment is None:
-        return None
-    utc = moment.astimezone(timezone.utc)
-    spare = utc.microsecond % 1000
-    utc = utc.replace(microsecond=utc.microsecond - spare)
-    if round_up and spare:
-        utc += timedelta(milliseconds=1)
-    return utc.strftime("%Y-%m-%dT%H:%M:%S.") + f"{utc.microsecond // 1000:03d}Z"
 
 
 class HookKeyResponse(BaseModel):
@@ -126,7 +112,7 @@ def _binding_fields(binding: HookBinding) -> dict:
         "method": binding.method,
         "path": binding.path,
         "digest": binding.digest,
-        "active_from": _milliseconds(binding.active_from, round_up=True),
+        "active_from": format_hook_time(binding.active_from, round_up=True),
     }
 
 
@@ -274,8 +260,8 @@ async def own_hook_bindings_route(
                 hook=binding.hook,
                 state=binding.state,
                 ended_by=binding.ended_by,
-                activated_at=_milliseconds(binding.activated_at),
-                revoked_at=_milliseconds(binding.revoked_at),
+                activated_at=format_hook_time(binding.activated_at),
+                revoked_at=format_hook_time(binding.revoked_at),
             )
             for binding in bindings
         ],

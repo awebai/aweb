@@ -249,6 +249,21 @@ def fixture(query: dict) -> dict:
     if "vector" not in query:
         additions(page)
         decision_additions(page, query.get("case", [""])[0])
+    if query.get("case") == ["table-urls"]:
+        collection = page["collections"][0]
+        collection["schema"]["properties"]["source_url"] = {"type": "string", "maxLength": 4096}
+        urls = [
+            "https://source.example.test/" + "a" * 3000 + "?q=a%3Fb",
+            "http://inert.example.test/" + "b" * 3000,
+            "https://references.example.test/a%2Fb#notes",
+        ]
+        for record, url in zip(collection["records"], urls, strict=True):
+            record["value"]["source_url"] = url
+        table = next(w for w in page["layout"] if w["id"] == "property-table")
+        table["props"]["columns"] = [
+            {"field": "source_url", "label": "Source URL", "format": "url"}
+        ]
+        table["bind"]["limit"] = 1 if query.get("paged") == ["1"] else 3
     if query.get("case") == ["dense-table"]:
         collection = page["collections"][0]
         collection["schema"]["properties"].update(

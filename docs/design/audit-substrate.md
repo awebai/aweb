@@ -176,10 +176,22 @@ Per-hook payloads, beyond the common envelope:
 | Hook | Payload fields |
 | --- | --- |
 | `post-secret-use-hook` | Defined here, and the secrets design cites it. See the flat allowlist below. |
-| `post-governance-hook` | `act` (catalog enum: `role.designated`, `role.revoked`, `credential.enrolled`, `credential.recovered`, `credential.revoked`, `grant.created`, `grant.changed`, `grant.revoked`, `resource.created`, `resource.version_added`, `resource.disabled`, `resource.enabled`, `resource.replaced`, `policy.changed`, `runner.registered`, `runner.deregistered`, `installation.disabled`, `installation.enabled`); `direction` (`widening` or `narrowing`, fixed per act by the catalog and checked at ingest); `role`, `resource_type` (bounded app-local tokens matching `^[a-z][a-z0-9_.-]{0,63}$`); `subject_ref`, `resource_ref`, optional `before_ref`/`after_ref` (opaque); `authority` (`owner_act`, `passkey_session`, `team_cert`); optional `owner_act_sha256` (owner-act-rooted acts), `approval_evidence_sha256` (passkey-confirmed acts), `approval_id`, `policy_digest`, `reason_code`. A governance act that cannot enqueue does not commit. |
+| `post-governance-hook` | `act` (catalog enum: `role.designated`, `role.revoked`, `credential.enrolled`, `credential.recovered`, `credential.revoked`, `grant.created`, `grant.changed`, `grant.revoked`, `resource.created`, `resource.version_added`, `resource.version_observed`, `resource.disabled`, `resource.enabled`, `resource.replaced`, `policy.changed`, `runner.registered`, `runner.deregistered`, `installation.disabled`, `installation.enabled`); `direction` (`widening` or `narrowing`, fixed per act by the catalog and checked at ingest); `role`, `resource_type` (bounded app-local tokens matching `^[a-z][a-z0-9_.-]{0,63}$`); `subject_ref`, `resource_ref`, optional `before_ref`/`after_ref` (opaque); `authority` (`owner_act`, `passkey_session`, `team_cert`, `backend_observation`); optional `owner_act_sha256` (owner-act-rooted acts), `approval_evidence_sha256` (passkey-confirmed acts), `approval_id`, `policy_digest`, `reason_code`. A governance act that cannot enqueue does not commit. |
 | `post-manifest-command-hook` | `app_id`, `tool`, `operation_kind` (`mutation`, `read`, `refusal`), `request_sha256` (historical name; producer-keyed HMAC-SHA-256 of the canonical request, as specified below), declared opaque `resource_refs`, `http_status`, optional `result_ref`. Parameter values are not copied; the HMAC commits to them. |
 | `post-mutation-hook` | `mutation_type` (§A10), `target_ref`, optional `before_ref`/`after_ref` (revision or state refs), and the per-type fields in the catalog (status values, assignee identities, `content_mode`). Never bodies, subjects, previews or titles. |
 | `post-command-hook` | `command` (canonical command path), `flags` (names only, plus values of catalog-declared enum flags), `local_effects` (enumerated, e.g. `identity_key_created`, `team_certificate_stored`, `app_approval_recorded`, `grant_minted`), `exit_status`. |
+
+Decision 92 fixes `resource.version_observed` as non-widening (`narrowing`),
+with `backend_observation` authority exclusive to that act. Only a value that
+validates the immutable shape under the unchanged backend reference may become
+CURRENT for later fresh admissions. The event carries scoped minted secret and
+random local-version refs, no value material or owner/passkey evidence, and a
+system actor. The transition, replacement consequences and outbox commit
+atomically. Invalid or unresolved input activates nothing. Pre-S3 failures use
+the required `refused` event (`secret_value_invalid` or `custody_unavailable`);
+a post-dispatch-fence reread failure uses `not_sent` without `refusal_code`.
+The complete contract is in
+[hook-events, observed backend versions](../hook-events.md#observed-backend-versions-decision-92).
 
 **`post-secret-use-hook` payload, v1** (one flat allowlist, with no nested
 objects and no free text). The hooks catalog vector records it.
@@ -200,7 +212,7 @@ objects and no free text). The hooks catalog vector records it.
 | `returned_hmac` | A producer-keyed HMAC of the bytes returned to the agent, after projection and redaction. It is absent when the result is `withheld`. It is an HMAC and not a plain hash, because returned bytes may still carry a credential that redaction missed. |
 | `disposition`, `derived_secret_id`, `derived_grant_id` | `returned`, `withheld` or `stored_as_secret`, on `completed`. Only `stored_as_secret` requires the child secret and its newly minted grant together; both are forbidden elsewhere. `grant_id` still names the authorizing source grant. |
 | `undeclared_credential` | Boolean, on `completed`: the response carried a credential that was not declared. |
-| `redaction_count`, `refusal_code` | `refusal_code` is a fixed enum, recorded in the catalog vector: `grant_missing`, `grant_revoked`, `operation_not_allowed`, `open_request_not_allowed`, `policy_rate_limited`, `policy_window_closed`, `destination_not_in_scope`, `destination_address_denied`, `internal_destinations_disabled`, `header_not_allowed`, `params_invalid`, `token_issuing_denied`, `secret_disabled`, `installation_disabled`, `generation_superseded`, `secret_version_changed`, `custody_unavailable`, `attestation_unavailable`, `approval_denied`, `approval_expired`, `approval_revoked`, `approval_consumed`, `approval_unrenderable`, `distinct_approver_required`, `no_eligible_approver`, `reconciliation_pending`, `dispatch_in_flight`, `idempotency_conflict`, `audit_target_unavailable`, `audit_delivery_stalled`, `runner_unavailable`, `job_not_allowed`. |
+| `redaction_count`, `refusal_code` | `refusal_code` is a fixed enum, recorded in the catalog vector: `grant_missing`, `grant_revoked`, `operation_not_allowed`, `open_request_not_allowed`, `policy_rate_limited`, `policy_window_closed`, `destination_not_in_scope`, `destination_address_denied`, `internal_destinations_disabled`, `header_not_allowed`, `params_invalid`, `token_issuing_denied`, `secret_disabled`, `installation_disabled`, `generation_superseded`, `secret_version_changed`, `secret_value_invalid`, `custody_unavailable`, `attestation_unavailable`, `approval_denied`, `approval_expired`, `approval_revoked`, `approval_consumed`, `approval_unrenderable`, `distinct_approver_required`, `no_eligible_approver`, `reconciliation_pending`, `dispatch_in_flight`, `idempotency_conflict`, `audit_target_unavailable`, `audit_delivery_stalled`, `runner_unavailable`, `job_not_allowed`. |
 
 A withheld value and an undeclared credential are properties of the
 `completed` event, not separate events: one effect, one event.
@@ -252,6 +264,31 @@ exists. The public catalog, packaged copy, transition examples and consumer
 expectations change together; there is no parallel version. S13 builds on this
 shape after kit/ingest/resolution support and owner activation. B2's frozen
 approval bytes remain unchanged.
+
+**Passkey proof and console actors (decision 84, aweb-acgh.39).** Juan
+preserves secrets §10.4: a reviewer holding the independently trusted approver
+public key can check the approval later without trusting B3's verdict. B3
+retains the exact assertion, COSE key, challenge preimage, frozen verification
+context and B2 covered-request sidecar in restricted storage. Both hooks'
+`approval_evidence_sha256` fields commit the exact proof and context through
+unkeyed SHA-256, with domain, fixed length framing and step-by-step independent
+verification in [the public contract](../hook-events.md#passkey-evidence-commitments-and-console-actors).
+This replaces the held summary HMAC, whose destroyed key could not support
+that verification. The verified assertion/context are non-secret proof
+artifacts; credential-bearing B2 request bytes stay outside the outer hash and
+are bound transitively through their existing hash in the signed challenge.
+The request/params audit HMACs and §A2 rules for agent bytes are unchanged.
+
+Only the proof commitment is published; raw bytes, authorizing subject,
+credential ID and counters remain restricted. Frozen proof verifies after key
+rotation, revocation or replacement without a live service or retired secret.
+App-lifecycle deletion ends proof retrieval; the surviving commitment alone
+cannot reconstruct it. Console governance uses the existing identity-free
+system actor; payload subject_ref stays the affected subject. Secret-use keeps
+the requesting-member actor. Authenticator-signed facts and service metadata
+are distinguished. No envelope mode, catalog field or containment gate is
+added. B3 implements the one shared helper after R+A; S13/S14 do not serialize
+it locally.
 
 ### A3. Registration and owner activation
 
