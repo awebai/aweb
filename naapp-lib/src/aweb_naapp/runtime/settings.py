@@ -61,6 +61,10 @@ class NaappSettings(BaseSettings):
     # Bounded by the outbox drain's own limit on one delivery.
     app_emit_timeout_seconds: float = Field(default=3.0, gt=0, le=MAX_CALL_TIMEOUT_SECONDS)
     app_events_stalled_after_seconds: int = Field(default=3600, ge=1)
+    hook_events_stalled_after_seconds: int = Field(default=3600, ge=1)
+    hook_delivery_timeout_seconds: float = Field(default=30.0, gt=0, le=MAX_CALL_TIMEOUT_SECONDS)
+    # Independent random single-purpose HMAC key, not a manifest/signing key.
+    manifest_request_key_file: Path | None = None
 
     @field_validator("awid_service_token")
     @classmethod

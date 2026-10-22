@@ -72,6 +72,28 @@ owed it. The drain resolves deliveries with `hook_targets(registrations)`, and
 `HookTransport` re-checks each binding, signs a `hook-delivery` request and sends
 it through the egress guard to the binding's endpoint only.
 
+Producing runtimes install `aweb-naapp[runtime,egress]`. A manifest with
+`hooks.productions` must declare and configure a `hook-event` key and a
+`hook-resolve` key in `app_key_files`; the runtime loads them at construction.
+A manifest-command production also requires `manifest_request_key_file`, the
+independent random 32-byte commitment key in the shared key-file format.
+No-hook runtimes need none of this configuration.
+
+`runtime.hook_registrations()` returns one `TeamServerRegistrations` source on
+that exact `runtime.hook_resolver()`. Fetch its view outside authority locks.
+`runtime.hook_producer(installation_id=..., generation=...) -> HookProducer`
+uses the installation resolved by the grant/fence, the served app identity and
+the loaded hook-event key. Call its `enqueue(tx, ...)` in the actual effect or
+operational-record transaction; an `Authorization` and a completed HTTP
+response do not provide that transaction. Required enqueue failure rolls back
+the local effect. The runtime starts and joins a separate hooks-channel drain
+in its lifespan, using `HookTransport` with that same registration source/key.
+App-event delivery stays on its own channel. The default egress rejects
+private destinations; a self-hosted operator may explicitly supply
+`hook_egress` and `hook_internal_cidr` under the shared guard's existing rules.
+`hook_events_stalled_after_seconds` and `hook_delivery_timeout_seconds` bound
+retry reporting and each drain call.
+
 For admission, call `HookProducer.require_admission(tx, *, team_id, hook,
 occurred_at, view, max_backlog_age)` with a fresh view obtained outside
 authority locks. It reads that team's/hook's eligible target backlog directly
