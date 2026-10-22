@@ -490,3 +490,34 @@ The credential plaintexts in the vector are fixtures, not secrets.
 combined stream bounds, safe metadata, declared env-field families and result
 status examples. The same contract reference reader consumes these cases;
 server/runner runtime integration proofs remain required by §4.5.
+
+## Server registration and runner records
+
+Before it has a registered key, a runner exchanges its one-use code with
+`POST /runner/v1/register`. This code exchange is the exception to signed
+runner requests. Its JSON body has exactly three string fields: `code`,
+`signing_key` (Ed25519 `did:key`) and `encryption_key` (32 raw X25519 public
+bytes, canonical unpadded base64url). Duplicate fields and invalid keys are
+refused without consuming a code. A code is 32 random bytes in base64url,
+stored only as SHA-256, expires ten minutes after creation, and is consumed
+atomically with binding the two keys. Concurrent exchanges have one winner.
+A used, unknown, expired or deregistered code returns
+`registration_code_invalid`; invalid public keys return `runner_keys_invalid`.
+The response is exactly `{runner_id, origin, service_kid}`, with `origin` and
+the service `did:key` taken from server configuration. Responses are not cached.
+
+The owner-confirmed runner change/1 `after` v1 is exactly
+`{v:1, runner_id, label, allowed_jobs}`. `label` is nonempty text of at most
+256 characters; `allowed_jobs` is a sorted, distinct list of job IDs (possibly
+empty). The item `ref` is the `runner_id`. Creation or replacement issues a
+new console-only code. Replacement clears the old keys and code immediately;
+deregistration also clears them. Neither codes nor private keys are part of
+this record. Public registration stores no private key.
+
+The server holds the active runner row while authenticating and consuming a
+request nonce in its effect transaction. Rotation or deregistration that
+commits first makes that request refuse. Empty claims consume a nonce too.
+The server's request-nonce pruner retains an extra 120 seconds of clock padding.
+Credential sealing re-reads the current registered X25519 key under this same
+row lock and fixes HPKE `info` to the dispatch ID; callers cannot choose a
+different recipient key or context.

@@ -35,6 +35,20 @@ landing_html = naapp.page(site, body_html, include_copy_llms=True)
 css_bytes = naapp.aweb_css()
 ```
 
+For numbered instructions under a section's `h2`, use the shared component:
+
+```python
+steps_html = naapp.render_numbered_steps([
+    naapp.NumberedStep("Choose a task", "Read the <code>reference</code>."),
+    naapp.NumberedStep("Run the command", "Use your team's identity.", "example --help"),
+])
+```
+
+Titles and commands are escaped plain text. `description_html` is trusted,
+developer-authored inline HTML; never put user content in it. Commands are
+optional and use the shared copy button. The component's responsive styles are
+part of the normal CSS bundle; no app-local stylesheet is needed.
+
 The docs surface is pure standard library. Request-time runtime code (the
 team-auth verifier, approvals, passkeys, and team-server discovery from the
 team's AWID `aweb.team-server/1` record) lives under `aweb_naapp.runtime` and
@@ -340,6 +354,13 @@ exactly one dispatch of that exact request.
   `PendingApproval`, which the app passes to `deliver` after the commit, so no
   link points at an approval that rolled back. Audit events go to the app's
   `AuditSink` inside the transaction of the change they record.
+- **Bulk locks.** `lock_many(tx, approval_ids)` holds existing approval rows in
+  ascending ID order until the supplied transaction ends, with no writes,
+  audit or request-digest advisory locks. Missing and duplicate IDs are harmless.
+  `revoke_many` takes these sorted locks itself. For several batches or a
+  confirmation plus containment, prelock the complete union before any individual
+  B2 call; take app authority and covering-record locks first. Sorting each
+  separate batch cannot order locks across the whole operation.
 - **Storage.** `ApprovalStore` is the interface; `PgApprovalStore(db)` keeps
   the records in the app's own pgdbm schema, and `migrate()` applies its
   migrations (module `aweb_naapp_approvals`).
@@ -397,6 +418,29 @@ the approval, decision, policy and the app's own origin.
   pending one, is retired with its passkeys, unused enrolment links and live
   approvals. The scope then has no approver: its next designation is a first
   one and enrols a new passkey, and the retired passkeys stay dead.
+- Apps with a separately authorized containment path can call
+  `retire_in(tx, scope=..., subject=..., authorized_by=..., protect=...)` to retire
+  the full designation, including a compromised contact. To revoke one lost
+  device, use `revoke_passkey_in` with the same arguments plus `credential_id`
+  (bytes). Other usable credentials preserve the designation; losing the last
+  credential retires it. Both paths void that holder's pending/live decisions.
+  B3 checks the subject under the scope lock, so a stale target never retires a
+  replacement. These methods confer no authority and require no owner act or
+  passkey ceremony: the app authenticates and authorizes the actor first.
+  The optional async `protect(tx, scope, subject)` hook runs under that lock
+  before writes. The app holds its installation/role/coverage fences first and
+  enforces its own enrolled-owner population, for example by raising
+  `RetirementRefused("last_owner_protected")`. A credential-specific hook can
+  close over the credential ID to check siblings. Audit, key and decision changes
+  commit or roll back in the caller transaction; nothing is sent externally.
+- Sessions recheck `login_evidence_is_current(scope, subject, evidence_ref)` on
+  each request, along with their own expiry. It requires login-purpose evidence
+  for that scope/subject and an unrevoked exact credential. Revoking one key ends
+  its sessions while a surviving key's sessions remain eligible. For an action,
+  pass `tx=...` after the app's authority fences to hold the approver then the
+  credential `FOR SHARE` through commit; retirement waits for that transaction.
+  Without `tx`, it uses a short read transaction. `can_log_in` alone only checks
+  whether the holder has some usable credential.
 - **Lock order when withdrawing an approver's authority.** An app that
   withdraws authority (a role, a membership, an owner) does it in one
   transaction, in this order: any installation fence; the authority's own
@@ -443,5 +487,41 @@ the approval, decision, policy and the app's own origin.
   contact, evidence_ref)`. What a login opens (a console or reader session) is
   the caller's. Roles are named scopes, such as `secrets.owner`, each designated
   through a team owner act.
+- **Retained proof (decision 84).** Configure `Passkeys(proof_context=resolver)`.
+  Its async `resolver(scope, *, tx)` returns `PasskeyInstallationContext(app_id,
+  team_id, installation_id, generation)` from the authoritative persisted scope
+  binding. B3 supplies its challenge-write transaction. The resolver reads only:
+  application refresh, installation/role authority and locks precede B3. It must
+  refuse unknown, ambiguous, retired or stale bindings with
+  `ProofContextUnavailable` (`proof_context_unavailable`). Missing configuration
+  refuses assertion challenges; no context is fabricated from browser fields.
+- B3 freezes that context, its RP/scope and the exact existing challenge preimage
+  at issuance. Successful verification retains decoded authenticator data, client
+  data, signature, exact COSE key/credential ID, original context, counters and
+  times atomically with the counter CAS and evidence row. B2 passes the exact
+  immutable `StoredRequest.canonical` sidecar to a fresh per-ceremony passkey
+  adapter; other authenticator adapters are unchanged. Existing challenge and
+  signed-request bytes are unchanged. New storage is migration003.
+- `await passkeys.evidence_commitment(evidence_ref, context=admitted_context,
+  scope=scope, subject=subject, purpose="login", tx=action_tx)` validates the
+  retained original proof and exact expected bindings, then returns the one
+  canonical unkeyed SHA-256 commitment. Its fixed code on missing/legacy/deleted
+  proof or mismatched bindings is `passkey_proof_unavailable`, through
+  `PasskeyProofUnavailable`, an `AuthenticationFailed`. No summary fallback or
+  current-context relabeling occurs. The caller separately enforces session
+  expiry, exact-credential liveness and action authority before mutation.
+- `retained_proof(evidence_ref, tx=...)` is restricted historical export, never
+  a model projection or a new HTTP route. `RetainedPasskeyProof.export()` includes
+  raw proof and possibly a credential-bearing request sidecar: authorize its
+  disclosure and never log it. The public hook receives only the commitment.
+  The standalone `passkey_evidence_commitment(proof)` reproduces that encoding;
+  independent reviewers additionally need their trusted approver key and expected
+  context. Retired credentials and signing-key rotation do not rewrite history.
+- App lifecycle deletion quiesces that installation's ceremonies first, then
+  calls `delete_proofs_in(tx, context=...)` to remove its proof and challenge
+  sidecars across all generations, in the caller's transaction. Summary/audit
+  records may remain but cannot recreate proof. Backup erasure and disclosure
+  remain application lifecycle responsibilities. After deletion later proof
+  retrieval is unavailable.
 - A passkey proves that an app-local human holds the enrolled authenticator. It
   is not AWID membership, team identity or key custody.
