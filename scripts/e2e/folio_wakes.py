@@ -145,7 +145,10 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
                    'app_id': 'folio', 'origin': FOLIO, 'digest': apps[0]['digest'],
                    'granted_scopes': apps[0]['granted_scopes'], 'expected_generation': apps[0]['generation'] + 1,
                }), check=False)
-    assert stale.returncode and 'generation_conflict' in stale.stderr, stale.stderr
+    assert stale.returncode != 0 and 'HTTP 409' in stale.stderr.splitlines(), stale.stderr
+    assert json.loads(stale.stdout)['detail']['code'] == 'generation_conflict', stale.stdout
+    after_conflict = get('alice', '/v1/apps/installed?team_id=' + team)['apps']
+    assert after_conflict[0]['generation'] == apps[0]['generation'], after_conflict
     from_bytes = run(COMPOSE + ['exec', '-T', 'postgres', 'psql', '-U', 'aweb', '-d', 'aweb', '-Atc', "SELECT registered_from_manifest_bytes FROM aweb.team_app_installs WHERE team_id='" + team + "'"]).strip()
     assert from_bytes == 't', f'aw install did not register from the fetched manifest bytes: {from_bytes!r}'
     subscriptions = get('alice', '/v1/events/subscriptions')['subscriptions']
@@ -307,7 +310,7 @@ except urllib.error.HTTPError as exc:
                       'granted_scopes': pinned['granted_scopes'], 'expected_generation': pinned['generation'],
                       'event_emitters': [{'kid': 'folio:emit-test', 'did_key': other_did}],
                   }), check=False)
-    assert replaced.returncode != 0 and '422' in replaced.stderr, replaced.stderr
+    assert replaced.returncode != 0 and 'HTTP 422' in replaced.stderr.splitlines(), replaced.stderr
     configure_manifest('0.1.2')
     a = stream('alice')
     aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'fourth')
