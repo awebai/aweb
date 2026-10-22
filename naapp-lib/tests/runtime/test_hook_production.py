@@ -40,6 +40,7 @@ def runtime(
     extra_productions=(),
     key_files=None,
     root_path="",
+    catalog=None,
     **settings,
 ):
     if keys is None:
@@ -60,7 +61,11 @@ def runtime(
         template["hooks"] = {
             "registration_version": 1,
             "productions": [
-                {"catalog": {"id": "aweb.hooks", "version": 1}, "hook": hook, "reads": list(reads)}
+                {
+                    "catalog": catalog or {"id": "aweb.hooks", "version": 1},
+                    "hook": hook,
+                    "reads": list(reads),
+                }
             ],
         }
         for extra in extra_productions:
@@ -97,6 +102,41 @@ def test_no_production_needs_no_hook_configuration(tmp_path):
         app.hook_producer(installation_id=INSTALLATION, generation=2)
     with pytest.raises(AppKeyError, match="no hook production"):
         app.hook_registrations()
+
+
+@pytest.mark.parametrize(
+    "catalog,hook",
+    [
+        ({"id": "example.hooks", "version": 1}, MANIFEST_HOOK),
+        ({"id": "aweb.hooks", "version": 2}, MANIFEST_HOOK),
+        ({"id": "aweb.hooks", "version": 1}, "example.after-command"),
+        ({"id": "aweb.hooks", "version": 1}, "post-command-hook"),
+        ({"id": "aweb.hooks", "version": 1}, "post-mutation-hook"),
+    ],
+)
+def test_unimplemented_app_productions_remain_inert(tmp_path, catalog, hook):
+    app = runtime(tmp_path, hook=hook, catalog=catalog, keys=())
+    assert app.manifest.document["hooks"]["productions"][0]["catalog"] == catalog
+    assert app.manifest.document["hooks"]["productions"][0]["hook"] == hook
+    assert app._hooks.key is None
+    assert app._hooks.transport is None
+    assert app._hooks.manifest_request_key is None
+    with pytest.raises(AppKeyError):
+        app.hook_producer(installation_id=INSTALLATION, generation=2)
+    with pytest.raises(AppKeyError):
+        app.hook_registrations()
+
+
+def test_foreign_manifest_hook_does_not_change_a_supported_productions_requirements(tmp_path):
+    app = runtime(
+        tmp_path,
+        hook=MANIFEST_HOOK,
+        catalog={"id": "example.hooks", "version": 1},
+        extra_productions=(SECRET_HOOK,),
+    )
+    assert app._hooks.key is not None
+    assert app._hooks.manifest_request_key is None
+    assert app.hook_producer(installation_id=INSTALLATION, generation=2)
 
 
 @pytest.mark.parametrize("missing", ["hook-event", "hook-resolve"])
