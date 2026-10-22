@@ -1,6 +1,7 @@
 """Disposable wakes server with the installation test's exact TLS destination.
 
-Only this test app's address/port and well-known GET paths are allowed. The
+Only GETs to this test app's address/port are allowed, including the catalog's
+advertised manifest variant paths. The
 normal shared egress guard still verifies TLS, pins the address, refuses
 redirects and applies response bounds. Production defaults are unchanged.
 """
@@ -19,7 +20,7 @@ from aweb_naapp.egress import (
 
 address = os.environ["FOLIO_WAKES_ADDRESS"]
 destination = parse_destination({
-    "host": address, "port": 38765, "path": "/.well-known/**", "methods": ["GET"],
+    "host": address, "port": 38765, "path": "/**", "methods": ["GET"],
     "network": "internal", "cidr": address + "/32",
 }, internal_destinations=InternalDestinations.ALLOWED)
 app = create_app()
