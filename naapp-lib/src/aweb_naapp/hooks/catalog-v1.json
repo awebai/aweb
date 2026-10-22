@@ -139,6 +139,10 @@
     "uuid": {
       "kind": "string",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "hmac_sha256_hex": {
+      "kind": "string",
+      "pattern": "^[0-9a-f]{64}$"
     }
   },
   "hooks": {
@@ -231,11 +235,11 @@
           "required": false
         },
         "request_sha256": {
-          "type": "sha256_hex",
+          "type": "hmac_sha256_hex",
           "required": false
         },
         "params_sha256": {
-          "type": "sha256_hex",
+          "type": "hmac_sha256_hex",
           "required": false
         },
         "grant_id": {
@@ -341,6 +345,7 @@
             "installation_disabled",
             "generation_superseded",
             "secret_version_changed",
+            "secret_value_invalid",
             "custody_unavailable",
             "attestation_unavailable",
             "approval_denied",
@@ -358,6 +363,10 @@
             "runner_unavailable",
             "job_not_allowed"
           ],
+          "required": false
+        },
+        "derived_grant_id": {
+          "type": "ref",
           "required": false
         }
       },
@@ -421,7 +430,8 @@
             "disposition",
             "derived_secret_id",
             "returned_hmac",
-            "undeclared_credential"
+            "undeclared_credential",
+            "derived_grant_id"
           ]
         },
         {
@@ -454,7 +464,8 @@
             ]
           },
           "require": [
-            "derived_secret_id"
+            "derived_secret_id",
+            "derived_grant_id"
           ]
         },
         {
@@ -466,7 +477,8 @@
             ]
           },
           "forbid": [
-            "derived_secret_id"
+            "derived_secret_id",
+            "derived_grant_id"
           ]
         },
         {
@@ -560,6 +572,7 @@
             "grant.revoked",
             "resource.created",
             "resource.version_added",
+            "resource.version_observed",
             "resource.disabled",
             "resource.enabled",
             "resource.replaced",
@@ -582,7 +595,8 @@
           "enum": [
             "owner_act",
             "passkey_session",
-            "team_cert"
+            "team_cert",
+            "backend_observation"
           ],
           "required": true
         },
@@ -632,6 +646,45 @@
         }
       },
       "rules": [
+        {
+          "when": {
+            "field": "act",
+            "in": [
+              "resource.version_observed"
+            ]
+          },
+          "require": [
+            "resource_type",
+            "resource_ref",
+            "before_ref",
+            "after_ref",
+            "reason_code"
+          ],
+          "forbid": [
+            "role",
+            "subject_ref",
+            "owner_act_sha256",
+            "approval_evidence_sha256",
+            "approval_id",
+            "policy_digest"
+          ],
+          "require_equals": {
+            "authority": "backend_observation",
+            "resource_type": "secret",
+            "reason_code": "external_version_changed"
+          }
+        },
+        {
+          "when": {
+            "field": "authority",
+            "in": [
+              "backend_observation"
+            ]
+          },
+          "require_equals": {
+            "act": "resource.version_observed"
+          }
+        },
         {
           "when": {
             "field": "authority",
@@ -711,7 +764,8 @@
         "runner.registered": "widening",
         "runner.deregistered": "narrowing",
         "installation.disabled": "narrowing",
-        "installation.enabled": "widening"
+        "installation.enabled": "widening",
+        "resource.version_observed": "narrowing"
       }
     },
     "post-manifest-command-hook": {
@@ -738,7 +792,7 @@
           "required": true
         },
         "request_sha256": {
-          "type": "sha256_hex",
+          "type": "hmac_sha256_hex",
           "required": true
         },
         "http_status": {
@@ -1773,6 +1827,69 @@
         ],
         "exit_status": 0
       }
+    },
+    {
+      "name": "secret_use_completed_stored_child_link",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "stored_as_secret",
+        "derived_secret_id": "secret:child-1",
+        "derived_grant_id": "grant:child-1",
+        "grant_id": "grant:issuer-1",
+        "undeclared_credential": false
+      }
+    },
+    {
+      "name": "governance_backend_version_observed",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed"
+      }
+    },
+    {
+      "name": "secret_use_invalid_observed_value",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "secret_id": "sec_19ab42",
+        "secret_version": 4,
+        "secret_backend": "onepassword",
+        "refusal_code": "secret_value_invalid"
+      }
+    },
+    {
+      "name": "secret_use_unresolved_backend_reference",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "secret_id": "sec_19ab42",
+        "secret_version": 4,
+        "secret_backend": "onepassword",
+        "refusal_code": "custody_unavailable"
+      }
+    },
+    {
+      "name": "secret_use_post_fence_backend_failure_not_sent",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "not_sent",
+        "op_kind": "broker",
+        "secret_id": "sec_19ab42",
+        "secret_version": 4,
+        "secret_backend": "onepassword",
+        "dispatch_id": "dsp_01"
+      }
     }
   ],
   "negative_cases": [
@@ -2165,6 +2282,458 @@
       },
       "error": "invalid_value",
       "field": "flags"
+    },
+    {
+      "name": "stored_child_missing_grant",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "stored_as_secret",
+        "derived_secret_id": "secret:child-1",
+        "grant_id": "grant:issuer-1",
+        "undeclared_credential": false
+      },
+      "error": "rule_violation",
+      "field": "derived_grant_id"
+    },
+    {
+      "name": "stored_child_missing_secret",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "stored_as_secret",
+        "derived_grant_id": "grant:child-1",
+        "grant_id": "grant:issuer-1",
+        "undeclared_credential": false
+      },
+      "error": "rule_violation",
+      "field": "derived_secret_id"
+    },
+    {
+      "name": "returned_with_child_grant",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "returned",
+        "derived_grant_id": "grant:child-1",
+        "grant_id": "grant:issuer-1",
+        "undeclared_credential": false,
+        "returned_hmac": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "error": "rule_violation",
+      "field": "derived_grant_id"
+    },
+    {
+      "name": "withheld_with_child_grant",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "disposition": "withheld",
+        "derived_grant_id": "grant:child-1",
+        "grant_id": "grant:issuer-1",
+        "undeclared_credential": false
+      },
+      "error": "rule_violation",
+      "field": "derived_grant_id"
+    },
+    {
+      "name": "refused_with_child_grant",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "derived_grant_id": "grant:child-1",
+        "grant_id": "grant:issuer-1",
+        "refusal_code": "params_invalid"
+      },
+      "error": "rule_violation",
+      "field": "derived_grant_id"
+    },
+    {
+      "name": "observation_missing_resource_type",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed"
+      },
+      "error": "rule_violation",
+      "field": "resource_type"
+    },
+    {
+      "name": "observation_missing_resource_ref",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed"
+      },
+      "error": "rule_violation",
+      "field": "resource_ref"
+    },
+    {
+      "name": "observation_missing_before_ref",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed"
+      },
+      "error": "rule_violation",
+      "field": "before_ref"
+    },
+    {
+      "name": "observation_missing_after_ref",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "reason_code": "external_version_changed"
+      },
+      "error": "rule_violation",
+      "field": "after_ref"
+    },
+    {
+      "name": "observation_missing_reason_code",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b"
+      },
+      "error": "rule_violation",
+      "field": "reason_code"
+    },
+    {
+      "name": "observation_wrong_authority_owner_act",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "owner_act",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed"
+      },
+      "error": "rule_violation",
+      "field": "authority"
+    },
+    {
+      "name": "observation_wrong_authority_passkey_session",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "passkey_session",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed"
+      },
+      "error": "rule_violation",
+      "field": "authority"
+    },
+    {
+      "name": "observation_wrong_authority_team_cert",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "team_cert",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed"
+      },
+      "error": "rule_violation",
+      "field": "authority"
+    },
+    {
+      "name": "observation_wrong_resource_type_destination",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "destination",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed"
+      },
+      "error": "rule_violation",
+      "field": "resource_type"
+    },
+    {
+      "name": "observation_wrong_reason_code_rotation_confirmed",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "rotation_confirmed"
+      },
+      "error": "rule_violation",
+      "field": "reason_code"
+    },
+    {
+      "name": "observation_forbids_role",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed",
+        "role": "secrets.owner"
+      },
+      "error": "rule_violation",
+      "field": "role"
+    },
+    {
+      "name": "observation_forbids_subject_ref",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed",
+        "subject_ref": "subject:alice"
+      },
+      "error": "rule_violation",
+      "field": "subject_ref"
+    },
+    {
+      "name": "observation_forbids_owner_act_sha256",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab"
+      },
+      "error": "rule_violation",
+      "field": "owner_act_sha256"
+    },
+    {
+      "name": "observation_forbids_approval_evidence_sha256",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed",
+        "approval_evidence_sha256": "abababababababababababababababababababababababababababababababab"
+      },
+      "error": "rule_violation",
+      "field": "approval_evidence_sha256"
+    },
+    {
+      "name": "observation_forbids_approval_id",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed",
+        "approval_id": "approval:1"
+      },
+      "error": "rule_violation",
+      "field": "approval_id"
+    },
+    {
+      "name": "observation_forbids_policy_digest",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed",
+        "policy_digest": "abababababababababababababababababababababababababababababababab"
+      },
+      "error": "rule_violation",
+      "field": "policy_digest"
+    },
+    {
+      "name": "observation_authority_cannot_resource_version_added",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_added",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed"
+      },
+      "error": "rule_violation",
+      "field": "act"
+    },
+    {
+      "name": "observation_authority_cannot_resource_replaced",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.replaced",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed"
+      },
+      "error": "rule_violation",
+      "field": "act"
+    },
+    {
+      "name": "observation_authority_cannot_grant_created",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "grant.created",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed"
+      },
+      "error": "rule_violation",
+      "field": "act"
+    },
+    {
+      "name": "observation_authority_cannot_resource_disabled",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.disabled",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed"
+      },
+      "error": "rule_violation",
+      "field": "act"
+    },
+    {
+      "name": "observation_cannot_claim_widening",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "widening",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed"
+      },
+      "error": "direction_mismatch",
+      "field": "direction"
+    },
+    {
+      "name": "observation_forbids_raw_value",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed",
+        "value": "not-a-value"
+      },
+      "error": "unknown_field",
+      "field": "value"
+    },
+    {
+      "name": "observation_forbids_raw_provider_version",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.version_observed",
+        "direction": "narrowing",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sv_38b8149372e841309188c09c50e46104",
+        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+        "reason_code": "external_version_changed",
+        "provider_version": "opaque-provider-version"
+      },
+      "error": "unknown_field",
+      "field": "provider_version"
+    },
+    {
+      "name": "secret_use_post_fence_cannot_carry_invalid_value_refusal",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "not_sent",
+        "op_kind": "broker",
+        "refusal_code": "secret_value_invalid"
+      },
+      "error": "rule_violation",
+      "field": "refusal_code"
     }
   ]
 }

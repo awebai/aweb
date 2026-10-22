@@ -104,6 +104,29 @@ help:
 	@echo "  release-publish TAG=<tag>             publish one local tag without GitHub Actions"
 	@echo "  clean        Remove all build artifacts and caches"
 
+.PHONY: e2e-naapp naapp-e2e-packages
+# A new package joins the integration gate by joining this list.
+NAAPP_E2E_PACKAGES := naapp/folio naapp/library
+
+naapp-e2e-packages:
+	@printf '%s\n' $(NAAPP_E2E_PACKAGES)
+
+e2e-naapp: export PATH := $(CURDIR)/cli/go:$(PATH)
+e2e-naapp:
+	bash scripts/check-naapp-e2e-aw.sh
+	@set -eu; for package in $(NAAPP_E2E_PACKAGES); do \
+		if [ -n "$${NAAPP_E2E_ALLOCATIONS:-}" ]; then \
+			allocation=$$(printf '%s\n' "$$NAAPP_E2E_ALLOCATIONS" | awk -v package="$$package" '$$1 == package { print $$2, $$3, $$4 }'); \
+			[ -n "$$allocation" ] || { echo "missing allocation for $$package" >&2; exit 1; }; \
+			set -- $$allocation; \
+			NAAPP_E2E_PROJECT="$$1" NAAPP_E2E_AWID_PORT="$$2" NAAPP_E2E_POSTGRES_PORT="$$3" \
+			NAAPP_E2E_HOST="$${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}" \
+			$(MAKE) -C "$$package" e2e; \
+		else \
+			$(MAKE) -C "$$package" e2e; \
+		fi; \
+	done
+
 build: sync-doc-copies
 	cd cli/go && $(MAKE) build
 
@@ -512,7 +535,12 @@ check-awid-locked-suite:
 # ── awid.ai static-site deployment ─────────────────────────────────
 
 # Infrastructure acceptance for changes to the entry point (real Docker).
-test-candidate-ledger:
+.PHONY: test-naapp-e2e
+test-naapp-e2e:
+	$(MAKE) -C cli/go build
+	uv run --no-project python scripts/test_naapp_e2e.py
+
+test-candidate-ledger: test-naapp-e2e
 	python3 scripts/test_candidate_gate_ledger.py
 
 _candidate-unit-suites:
