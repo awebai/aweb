@@ -34,9 +34,11 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         test_prepare.PreparationTests.setUp(self)
 
     async def crashed_worker(
-        self, *, preparation_only=False, blocked_unpack=False, blocked_launch=False
+        self, *, preparation_only=False, blocked_unpack=False, blocked_launch=False, timeout=30
     ):
-        config, body = self.config("/bin/busybox sleep 30 & wait", timeout=30)
+        config, body = self.config("/bin/busybox sleep 30 & wait", timeout=timeout)
+        supervisor = self.runtime.supervisor
+        self.assertIsNotNone(supervisor)
         ready = self.root / (
             "tool-ready"
             if blocked_unpack
@@ -56,7 +58,8 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
             "from aweb_secrets_runner.oci_execution import execute_oci\n"
             f"runtime=RuncPreparation(BinaryPin(Path({str(self.runtime.engine.path)!r}),"
             f"{self.runtime.engine.sha256!r}),BinaryPin(Path({str(self.runtime.unpacker.path)!r}),"
-            f"{self.runtime.unpacker.sha256!r}),Path({str(self.layout)!r}),Path({str(self.workspace)!r}))\n"
+            f"{self.runtime.unpacker.sha256!r}),Path({str(self.layout)!r}),Path({str(self.workspace)!r}),"
+            f"supervisor=BinaryPin(Path({str(supervisor.path)!r}),{supervisor.sha256!r}))\n"
             f"config=RunnerConfig.load(Path({str(self.root / 'runner.json')!r}))\n"
             f"body=json.loads({json.dumps(body)!r})\n"
             "async def main():\n"
@@ -162,7 +165,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         finally:
             # This fixture created and observed this exact external group. The
             # product does not guess a PID from incomplete preparation state.
-            os.killpg(pid, signal.SIGKILL)
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
             await self.assert_reaped([pid])
 
     async def test_nonempty_unmarked_job_tree_is_never_deleted_by_its_name_alone(self):
@@ -205,7 +208,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(Path(f"/proc/{pid}").exists())
         finally:
             # Only this fixture knows the paused, newly created process group.
-            os.killpg(pid, signal.SIGKILL)
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
             await self.assert_reaped([pid])
 
     async def test_changed_engine_binding_retains_uncertain_state(self):

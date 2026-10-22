@@ -154,7 +154,8 @@ No lock file or release authority is added.
 
 Each exclusive job directory has a 0600 atomic `run.json` cleanup marker. It
 contains only a format version, the originally checked engine path/hash, a
-completed-preparation flag, and the random local container name. It contains no
+completed-preparation and stopped flags, and the random local container name.
+It contains no
 credential, job/parameter body, assignment or dispatch state. The container name
 is bound before opening credentials or starting a runtime. Recovery checks that
 marker against the original pinned engine, stops the container namespace,
@@ -165,8 +166,8 @@ refuses replay after recovery.
 
 Unknown entries, nonempty unmarked directories, symbolic links, changed engine
 bindings, incomplete preparation, and container-marked trees with absent or
-empty runtime state return `oci_recovery_required` and retain
-state. An empty directory from the initial mkdir can be removed safely. A
+empty runtime state without a completed-stop receipt return
+`oci_recovery_required` and retain state. An empty directory from the initial mkdir can be removed safely. A
 SIGKILL during unpacking may leave a public-data tool alive; without proof that
 preparation completed, recovery does not guess a PID or delete under it. The
 operator must stop/reconcile that tool before removing its quarantined private
@@ -176,5 +177,37 @@ job-* directories only under the configured private workspace, and do not print
 or copy their contents. Never delete journal state as a recovery step.
 
 This recovery library is not yet wired into startup. Operator configuration,
-worker composition, independent deadline enforcement after a worker hard crash,
-and dedicated-user S19 acceptance remain activation requirements.
+worker composition and dedicated-user S19 acceptance remain activation
+requirements.
+
+## Independent job deadline
+
+Credential-bearing execution requires a hash-pinned copy of the same Python
+interpreter running the runner, preserving that installed environment. It starts
+the installed `oci_watchdog` module with isolated Python (`-I`), an empty env,
+and only the private work-directory path, original pinned timeout and signed
+assignment expiry as args. It rechecks that expiry after helper startup and
+engine hashing, immediately before runtime launch.
+The module reads only the public cleanup marker, checks its bound engine and
+starts runc with fixed arguments and inherited captured output pipes. It opens
+no value and makes no service call.
+
+The watchdog starts a monotonic deadline before hashing/spawning and survives
+worker SIGKILL. At expiry it kills/reaps its exact launcher, then uses the shared
+engine kill-all/delete path for the container namespace. A plain GNUtimeout
+process-group wrapper was rejected: its real hard-crash test killed the CLI but
+left container processes alive. The watchdog test observes those PIDs disappear
+without calling recovery. Normal exit status, including exit1, is preserved.
+
+Only after launcher reaping and cleared runtime state does the watchdog write
+an atomic completed-stop receipt. The parent requires that receipt before
+accepting a result. Recovery can therefore remove a container-marked empty tree
+with positive termination evidence; without it, the pre-state launch window
+still quarantines exactly as before. The private pre-release marker format is
+v2; older/unknown layouts refuse and are not relabelled or migrated.
+
+The parent's capture has 125 seconds of extra control/cleanup allowance for the
+existing two 60-second bounded runtime control commands. This is not an extra
+job budget: the independent watchdog receives and enforces the original timeout
+unchanged. A missing or changed interpreter pin refuses before HPKE. Production
+worker/operator wiring and separate-user S19 acceptance remain guarded.

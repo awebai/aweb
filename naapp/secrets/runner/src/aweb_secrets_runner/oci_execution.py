@@ -4,9 +4,11 @@ import asyncio
 import json
 import os
 import secrets
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from .errors import Refused
@@ -14,7 +16,7 @@ from .execution import _execute_prepared
 from .jobs import CredentialInput, RunnerConfig, _open_job
 from .oci_prepare import RuncPreparation
 from .oci_recovery import stop_container
-from .oci_workspace import mark_container
+from .oci_workspace import mark_container, read_marker
 
 
 async def execute_oci(
@@ -36,12 +38,16 @@ async def execute_oci(
     """
     if any(not isinstance(item, CredentialInput) for item in credentials):
         raise Refused("credential_invalid")
+    if runtime.supervisor is None or runtime.supervisor.path != Path(sys.executable):
+        raise Refused("runner_runtime_unavailable")
     try:
         refs = tuple(item.secret_ref for item in credentials)
         inputs = config.inputs(
             job_id=job_id, digest=digest, runner_id=runner_id, params=params, credential_refs=refs
         )
         async with runtime.prepare(inputs) as bundle:
+            runtime.supervisor.check()
+            supervisor = runtime.supervisor.path
             # Unpacking can wait. Recheck the current config using the frozen original
             # parameters, never mutable caller input, immediately before opening.
             current = config.inputs(
@@ -74,19 +80,23 @@ async def execute_oci(
             finally:
                 os.close(fd)
             pid_file = bundle.directory.parent / "init.pid"
-            root = ("--root", str(bundle.state), "--rootless=true", "--log", "/dev/null")
             process = replace(
                 job,
                 argv=(
-                    str(bundle.engine),
-                    *root,
-                    "run",
-                    "--pid-file",
-                    str(pid_file),
-                    "--bundle",
-                    str(bundle.directory),
-                    container,
+                    str(supervisor),
+                    "-I",
+                    "-m",
+                    "aweb_secrets_runner.oci_watchdog",
+                    "--work",
+                    str(bundle.directory.parent),
+                    "--timeout",
+                    str(job.timeout_s),
+                    "--expires-at",
+                    str(expires_at),
                 ),
+                # This is control/cleanup allowance, not the job execution
+                # budget. The independent helper enforces the original n.
+                timeout_s=job.timeout_s + 125,
                 cwd=str(bundle.directory),
                 env={},
             )
@@ -103,7 +113,11 @@ async def execute_oci(
                 )
                 # The qualified runc writes this only after its initial launch
                 # handshake succeeds. A failure before that is not a job exit.
+                if not read_marker(bundle.directory.parent)["stopped"]:
+                    raise Refused("oci_supervisor_failed")
                 if not pid_file.exists():
+                    if report["exit_code"] == 124:
+                        raise Refused("assignment_expired")
                     raise Refused("job_start_failed")
                 return report
             finally:

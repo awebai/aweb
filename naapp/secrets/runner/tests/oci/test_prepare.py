@@ -8,6 +8,7 @@ import os
 import pwd
 import shutil
 import subprocess
+import sys
 import tarfile
 import unittest
 from pathlib import Path
@@ -34,6 +35,10 @@ class PreparationTests(unittest.IsolatedAsyncioTestCase):
             BinaryPin(unpacker, hashlib.sha256(unpacker.read_bytes()).hexdigest()),
             self.layout,
             self.workspace,
+            supervisor=BinaryPin(
+                Path(sys.executable),
+                hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest(),
+            ),
         )
 
     def inputs(self, *, environment=None, argv=("/bin/env",), paths=()):

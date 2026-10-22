@@ -37,15 +37,22 @@ def workspace_lock(path: Path) -> Iterator[tuple[Path, int]]:
 
 
 def write_marker(
-    work_fd: int, *, engine: Path, sha256: str, container: str | None, prepared: bool = False
+    work_fd: int,
+    *,
+    engine: Path,
+    sha256: str,
+    container: str | None,
+    prepared: bool = False,
+    stopped: bool = False,
 ) -> None:
     """Atomically replace only public cleanup data before any launch or opening."""
     raw = canonical(
         {
-            "v": 1,
+            "v": 2,
             "engine": {"path": str(engine), "sha256": sha256},
             "container": container,
             "prepared": prepared,
+            "stopped": stopped,
         }
     )
     name = ".run-" + secrets.token_hex(16)
@@ -86,10 +93,11 @@ def read_marker(work: Path) -> dict[str, Any]:
         value = parse_json(raw)
         if (
             not isinstance(value, dict)
-            or set(value) != {"v", "engine", "container", "prepared"}
+            or set(value) != {"v", "engine", "container", "prepared", "stopped"}
             or type(value["v"]) is not int
-            or value["v"] != 1
+            or value["v"] != 2
             or type(value["prepared"]) is not bool
+            or type(value["stopped"]) is not bool
         ):
             raise ValueError("marker shape")
         engine, container = value["engine"], value["container"]
@@ -142,3 +150,21 @@ def remove_private_tree(parent_fd: int, name: str) -> None:
     finally:
         os.close(fd)
     os.rmdir(name, dir_fd=parent_fd)
+
+
+def mark_stopped(work: Path, *, engine: Path, sha256: str, container: str) -> None:
+    """Only after the exact launcher is reaped and runtime state is cleared."""
+    marker = read_marker(work)
+    if (
+        not marker["prepared"]
+        or marker["container"] != container
+        or marker["engine"] != {"path": str(engine), "sha256": sha256}
+    ):
+        raise Refused("oci_recovery_required")
+    fd = os.open(work, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        write_marker(
+            fd, engine=engine, sha256=sha256, container=container, prepared=True, stopped=True
+        )
+    finally:
+        os.close(fd)

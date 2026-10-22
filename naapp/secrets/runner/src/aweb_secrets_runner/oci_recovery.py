@@ -59,12 +59,13 @@ async def recover(runtime: RuncPreparation) -> tuple[str, ...]:
                     require_memory_directory(state)
                     has_state = any(state.iterdir())
                 if marker["container"] is not None:
-                    if not has_state:
+                    if not has_state and not marker["stopped"]:
                         # The launcher may still be between spawn and state
                         # creation after its worker died. Empty state is not
                         # proof that this container-marked launch terminated.
                         raise Refused("oci_recovery_required")
-                    await stop_container(runtime.engine, state, marker["container"])
+                    if has_state:
+                        await stop_container(runtime.engine, state, marker["container"])
                 elif has_state:
                     raise Refused("oci_recovery_required")
                 remove_private_tree(parent_fd, entry.name)

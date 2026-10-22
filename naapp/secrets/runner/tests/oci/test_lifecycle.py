@@ -220,7 +220,8 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         async def started(pid):
             await self.observe_container(ready, pids)
 
-        report = await self.run_job(config, body, started=started)
+        async with asyncio.timeout(3):
+            report = await self.run_job(config, body, started=started)
         self.assertEqual(report["exit_code"], -signal.SIGKILL)
         self.assertTrue(ready.is_set())
         await self.assert_reaped(pids)

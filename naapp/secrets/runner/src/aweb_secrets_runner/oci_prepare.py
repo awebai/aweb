@@ -193,6 +193,7 @@ class RuncPreparation:
     unpacker: BinaryPin
     images: Path
     workspace: Path
+    supervisor: BinaryPin | None = None
 
     @asynccontextmanager
     async def prepare(self, inputs: JobInputs) -> AsyncIterator[PreparedBundle]:
@@ -200,6 +201,7 @@ class RuncPreparation:
         _require(job["kind"] == "oci")
         require_runc_environment(inputs.environment)
         engine, unpacker = self.engine.check(), self.unpacker.check()
+        supervisor = self.supervisor.check() if self.supervisor else None
         with workspace_lock(self.workspace) as (workspace, parent_fd):
             mounts = _mounts(job["oci"]["read_only_paths"], workspace)
             flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -253,6 +255,8 @@ class RuncPreparation:
                     # Tool/filesystem work can wait; recheck pins and mount guards
                     # before this public-only preparation may precede any HPKE.
                     _require(self.engine.check() == engine and self.unpacker.check() == unpacker)
+                    if self.supervisor:
+                        _require(self.supervisor.check() == supervisor)
                     _require(_mounts(job["oci"]["read_only_paths"], workspace) == mounts)
                     write_marker(
                         work_fd,
