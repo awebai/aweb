@@ -986,6 +986,11 @@ def render_editor_page(
     }}
     .ghost-button:hover {{ color: var(--text); border-color: var(--muted); }}
     .ghost-button:disabled {{ opacity: 0.4; cursor: default; }}
+    .bootstrap-status {{
+      position: fixed; top: calc(var(--bar-h) + 16px); left: 16px; right: 16px; z-index: 4;
+      padding: 16px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); color: var(--text); overflow-wrap: break-word;
+    }}
     .workspace {{ display: grid; grid-template-columns: 1fr 1fr; height: calc(100vh - var(--bar-h)); }}
     .pane {{ height: 100%; overflow-y: auto; }}
     .pane-edit {{ border-right: 1px solid var(--border); background: var(--surface); }}
@@ -1091,8 +1096,9 @@ def render_editor_page(
     </div>
   </dialog>
   <main class="workspace">
+    <div id="bootstrap-status" class="bootstrap-status" role="status" aria-atomic="true" data-state="loading">Opening the editor…</div>
     <section id="pane-edit" class="pane pane-edit is-active">
-      <textarea id="body" class="editor" spellcheck="false" autofocus placeholder="Start writing in Markdown…"></textarea>
+      <textarea id="body" class="editor" spellcheck="false" autofocus disabled placeholder=""></textarea>
     </section>
     <section id="pane-preview" class="pane pane-preview">
       <article class="surface" id="preview-card">
@@ -1132,6 +1138,7 @@ def render_editor_page(
     const previewCard = document.getElementById('preview-card');
     const eyebrowEl = document.getElementById('preview-eyebrow');
     const statusEl = document.getElementById('status');
+    const bootstrapEl = document.getElementById('bootstrap-status');
     const nameEl = document.getElementById('editor-name');
     const saveBtn = document.getElementById('save');
     const discardBtn = document.getElementById('discard');
@@ -1329,6 +1336,8 @@ def render_editor_page(
     }}
     function showUnavailable() {{
       unavailable = true;
+      bootstrapEl.hidden = true;
+      bootstrapEl.textContent = '';
       sessionSecret = null;
       try {{ sessionStorage.removeItem(sessionKey); }} catch (err) {{}}
       bodyEl.disabled = false;
@@ -1447,11 +1456,17 @@ def render_editor_page(
         opener = '';
         ready = true;
         bodyEl.disabled = false;
+        bodyEl.placeholder = 'Start writing in Markdown…';
+        bootstrapEl.hidden = true;
+        bootstrapEl.textContent = '';
         applyCurrent(state);
+        activate(true);
         bodyEl.focus();
         pollState();
       }} catch (err) {{
-        setStatus('Network error — your text is not saved.', 'conflict');
+        bootstrapEl.dataset.state = 'retry';
+        const retryMessage = "Couldn't open the editor yet. Retrying…";
+        if (bootstrapEl.textContent !== retryMessage) bootstrapEl.textContent = retryMessage;
         if (!unavailable) setTimeout(startSession, 4000);
       }}
     }}

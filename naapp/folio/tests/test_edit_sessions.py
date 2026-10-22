@@ -255,3 +255,85 @@ async def test_session_bootstrap_retains_team_theme(present_world, session_http)
     assert "#123456" in theme["css"]
     assert theme["header"] == "Team header"
     assert theme["footer"] == "Team footer"
+
+
+@pytest.mark.parametrize("resume", [False, True], ids=["exchange", "resume"])
+async def test_phone_bootstrap_reports_wait_and_retry_before_enabling_editor(
+    live_world, live_browser, monkeypatch, resume
+):
+    from fastapi import HTTPException
+
+    origin, browser = live_browser
+    app, _, _ = live_world
+    link = await mint(live_world)
+    parts = urlsplit(link["url"])
+    held, release = asyncio.Event(), asyncio.Event()
+    armed = False
+    healthy = True
+    original = NaappRuntime.check_current_member
+
+    async def registry(self, *args, **kwargs):
+        if not healthy:
+            raise HTTPException(status_code=503, detail="Registry unavailable")
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(NaappRuntime, "check_current_member", registry)
+
+    def is_bootstrap(path, query=""):
+        if resume:
+            return path.endswith("/state") and not query
+        return path.endswith("/session")
+
+    @app.middleware("http")
+    async def hold_bootstrap(request, call_next):
+        nonlocal armed
+        if armed and is_bootstrap(request.url.path, request.url.query):
+            armed = False
+            held.set()
+            await release.wait()
+        return await call_next(request)
+
+    page = await browser.new_page(viewport={"width": 375, "height": 812})
+    if resume:
+        await page.goto(origin + parts.path + "#" + parts.fragment)
+        await expect(page.locator("#body")).to_have_value("Original")
+    armed = True
+    healthy = False
+    if resume:
+        await page.reload()
+    else:
+        await page.goto(origin + parts.path + "#" + parts.fragment)
+    notice = page.locator("#bootstrap-status")
+
+    async def assert_in_view():
+        await expect(notice).to_be_visible()
+        box = await notice.bounding_box()
+        assert box is not None
+        assert 0 <= box["x"] and 0 <= box["y"]
+        assert box["x"] + box["width"] <= 375
+        assert box["y"] + box["height"] <= 812
+        await expect(notice).to_have_attribute("role", "status")
+        await expect(page.locator("#body")).to_be_disabled()
+        assert not await page.locator("#body").get_attribute("placeholder")
+        assert await page.locator("#status").text_content() == ""
+
+    try:
+        await asyncio.wait_for(held.wait(), timeout=10)
+        await assert_in_view()
+        await expect(notice).to_have_attribute("data-state", "loading")
+        async with page.expect_response(
+            lambda r: is_bootstrap(urlsplit(r.url).path, urlsplit(r.url).query) and r.status == 503
+        ):
+            release.set()
+        await expect(notice).to_have_attribute("data-state", "retry")
+        await assert_in_view()
+        await page.locator("#tab-preview").click()
+        await assert_in_view()
+        healthy = True
+        await expect(page.locator("#body")).to_be_enabled(timeout=10000)
+        await expect(page.locator("#body")).to_have_value("Original")
+        await expect(page.locator("#body")).to_be_focused()
+        await expect(page.locator("#tab-edit")).to_have_attribute("aria-selected", "true")
+        await expect(notice).to_be_hidden()
+    finally:
+        release.set()
