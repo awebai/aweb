@@ -94,6 +94,44 @@ private destinations; a self-hosted operator may explicitly supply
 `hook_events_stalled_after_seconds` and `hook_delivery_timeout_seconds` bound
 retry reporting and each drain call.
 
+For a generic manifest command, `runtime.authorized()` reads the bounded
+original body and prepares the commitment after authenticating, matching the
+tool and resolving its fresh installation grant. It does this before policy or
+credential injection. The effect owner then calls:
+
+```python
+await runtime.record_manifest_command(
+    tx, request=request, authorization=auth, http_status=201,
+    resource_refs=("thing:opaque",), result_ref="result:opaque",
+)
+```
+
+The call enqueues in `tx`; let any enqueue failure roll back the effect. Call
+once for the logical effect, preserving its stored event on replay. No response
+wrapper can supply that transaction. An attributable scope/policy refusal is
+recorded by the guard in its own refusal transaction; successful enqueue
+preserves its HTTP status. Storage failure still fails closed. A handler's own refused outcome uses the same method with
+`refused=True` and no `result_ref`. Refusals without complete bounded bytes,
+verified authentication, a matched tool and installation emit no generic event;
+an over-bound body returns 413 without draining the rest. The bound is
+`manifest_hook_max_request_bytes` (default 1 MiB, maximum 16 MiB).
+
+Mutations fire; reads fire only when listed by that production. Configure
+`hook_tool_effects={"tool": "post-secret-use-hook"}` (or
+`post-governance-hook`) for tools owned by a specific declared production;
+these never also fire the generic hook, including on refusal. The generic
+payload carries only the matched tool, request HMAC and safe outcome/opaque
+refs; concrete paths, query/header/body values never enter it. HMAC context
+comes from the served app and resolved installation. The raw external target
+(including mount prefix), counted Content-Types and exact JSON/raw body bytes
+are bound before injection. Only verified signed trace IDs are propagated.
+Rotate by replacing the configured HMAC key, restarting producer replicas and
+destroying the old key; the key is loaded once per runtime. New runtimes use
+the new key, while existing outbox signing bytes/signatures remain unchanged
+across retries and restarts.
+Hook production still requires owner activation and updated receiver support
+before deployment; none is inferred from a manifest declaration alone.
+
 For admission, call `HookProducer.require_admission(tx, *, team_id, hook,
 occurred_at, view, max_backlog_age)` with a fresh view obtained outside
 authority locks. It reads that team's/hook's eligible target backlog directly

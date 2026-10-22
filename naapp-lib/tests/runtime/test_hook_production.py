@@ -27,18 +27,50 @@ MANIFEST_HOOK = "post-manifest-command-hook"
 INSTALLATION = "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b"
 
 
-def runtime(tmp_path, *, hook=SECRET_HOOK, keys=None, egress=None, internal=None, **settings):
+def runtime(
+    tmp_path,
+    *,
+    hook=SECRET_HOOK,
+    keys=None,
+    egress=None,
+    internal=None,
+    registry=None,
+    tools=None,
+    reads=(),
+    extra_productions=(),
+    key_files=None,
+    root_path="",
+    **settings,
+):
     if keys is None:
         keys = (("events", ["hook-event"]), ("resolve", ["hook-resolve"]))
-    files = {kid: _key_file(tmp_path, kid, bytes(SigningKey.generate()).hex()) for kid, _ in keys}
+    files = (
+        key_files
+        if key_files is not None
+        else {kid: _key_file(tmp_path, kid, bytes(SigningKey.generate()).hex()) for kid, _ in keys}
+    )
     template = _v2_template(*keys)
+    if tools is not None:
+        template["tools"] = tools
+    if registry is not None:
+        from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN
+
+        settings.update(awid_registry_url=REGISTRY_URL, awid_service_token=SERVICE_TOKEN)
     if hook is not None:
         template["hooks"] = {
             "registration_version": 1,
             "productions": [
-                {"catalog": {"id": "aweb.hooks", "version": 1}, "hook": hook, "reads": []}
+                {"catalog": {"id": "aweb.hooks", "version": 1}, "hook": hook, "reads": list(reads)}
             ],
         }
+        for extra in extra_productions:
+            template["hooks"]["productions"].append(
+                {
+                    "catalog": {"id": "aweb.hooks", "version": 1},
+                    "hook": extra,
+                    "reads": [],
+                }
+            )
     manifest = tmp_path / "manifest.json"
     manifest.write_bytes(canonical_bytes(template))
     migrations = tmp_path / "migrations"
@@ -53,6 +85,8 @@ def runtime(tmp_path, *, hook=SECRET_HOOK, keys=None, egress=None, internal=None
         manifest_path=manifest,
         hook_egress=egress,
         hook_internal_cidr=internal,
+        awid_transport=registry.transport if registry is not None else None,
+        root_path=root_path,
     )
 
 
@@ -255,3 +289,16 @@ async def test_enqueue_failure_rolls_back_the_callers_effect(tmp_path, test_db_f
                 )
         assert await app.db().fetch_value("SELECT count(*) FROM {{tables.fixture_effect}}") == 0
         assert await app.db().fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        {"unknown": "post-secret-use-hook"},
+        {"create": "post-command-hook"},
+        {"create": "post-governance-hook"},
+    ],
+)
+def test_specific_hook_mapping_must_name_a_declared_tool_and_specific_production(tmp_path, mapping):
+    with pytest.raises(AppKeyError, match="hook_tool_effects"):
+        runtime(tmp_path, hook_tool_effects=mapping)

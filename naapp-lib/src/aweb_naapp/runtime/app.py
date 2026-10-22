@@ -39,6 +39,7 @@ from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -75,7 +76,9 @@ from aweb_naapp.runtime.authorization import (
     ActionKind,
     ActionPolicy,
     Authorization,
+    DeclaredTool,
     DeclaredTools,
+    Grant,
     GrantSource,
     authorize_request,
     is_placeholder,
@@ -85,6 +88,7 @@ from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.hook_resolver import HookResolver
 from aweb_naapp.runtime.hooks import RuntimeHooks
+from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
     AWIDTeamCache,
@@ -97,6 +101,8 @@ from aweb_naapp.runtime.team_server import TeamServerDirectory
 from aweb_naapp.skills import Skills
 
 if TYPE_CHECKING:
+    from pgdbm.core import TransactionManager
+
     from aweb_naapp.egress import Egress
 
 logger = logging.getLogger(__name__)
@@ -395,27 +401,77 @@ class NaappRuntime:
         invoke tool admits nothing. An attestation that does
         not verify refuses the request with its code (``503`` when the registry
         cannot be read); the admitted :class:`Authorization` carries the
-        verified attestation for the app's policy. Only an admitted member is recorded as observed, so
-        refused requests never write to the app's database.
+        verified attestation for the app's policy. Only an admitted member is
+        recorded as observed. A configured manifest production separately
+        records complete attributable authorization refusals in its outbox.
         """
 
         async def authorized_request(request: Request) -> Authorization:
+            if self._hooks.manifest_request_key is not None:
+                await bounded_body(request, self.settings.manifest_hook_max_request_bytes)
             principal = await self.principal(request)
             attestation, caller = await self._attestation(request, principal)
-            authorization = await authorize_request(
-                request,
-                principal=principal,
-                caller=caller,
-                tools=self.declared_tools,
-                grants=grants,
-                policy=policy,
-                action_kind=action_kind,
-            )
+            evidence: ManifestEvidence | None = None
+
+            def resolved(tool: DeclaredTool, grant: Grant) -> None:
+                nonlocal evidence
+                if self._hooks.manifest_request_key is not None and tool.name not in self._hooks.tool_effects:
+                    evidence = prepare(
+                        request, key=self._hooks.manifest_request_key, app_id=self.manifest.app_id,
+                        principal=principal, tool=tool, grant=grant,
+                    )
+
+            try:
+                authorization = await authorize_request(
+                    request, principal=principal, caller=caller, tools=self.declared_tools,
+                    grants=grants, policy=policy, action_kind=action_kind,
+                    on_resolved=resolved,
+                )
+            except HTTPException as refusal:
+                if evidence is not None:
+                    async with self.db().transaction() as tx:
+                        await self._hooks.record_manifest(
+                            tx, evidence, http_status=refusal.status_code, refused=True,
+                        )
+                raise
+            request.state.aweb_manifest_evidence = evidence
             await record_observed_principal(self.db(), principal)
             return replace(authorization, attestation=attestation)
 
         self._guards[authorized_request] = action_kind
         return authorized_request
+
+    async def record_manifest_command(
+        self,
+        tx: TransactionManager,
+        *,
+        request: Request,
+        authorization: Authorization,
+        http_status: int,
+        refused: bool = False,
+        resource_refs: Sequence[str] = (),
+        result_ref: str | None = None,
+    ) -> UUID | None:
+        """Record the matched command in its actual effect/outcome transaction.
+
+        Admission prepared the bounded original request commitment once, before
+        policy or injection. Reads opt in through the production, and tools
+        mapped to a specific hook never fire this generic hook. Final live
+        authority/fence checks remain the effect owner's responsibility.
+        """
+        if self._hooks.manifest_request_key is None or authorization.tool.name in self._hooks.tool_effects:
+            return None
+        evidence = getattr(request.state, "aweb_manifest_evidence", None)
+        if evidence is None or (
+            evidence.principal is not authorization.principal
+            or evidence.tool is not authorization.tool
+            or evidence.grant is not authorization.grant
+        ):
+            raise RuntimeError("manifest recording needs this request's matched admission evidence")
+        return await self._hooks.record_manifest(
+            tx, evidence, http_status=http_status, refused=refused,
+            resource_refs=resource_refs, result_ref=result_ref,
+        )
 
     async def _attestation(self, request: Request, principal: Principal) -> tuple[VerifiedAttestation | None, str]:
         """The request's verified attestation and its caller context, or the refusal."""

@@ -65,6 +65,9 @@ class NaappSettings(BaseSettings):
     hook_delivery_timeout_seconds: float = Field(default=30.0, gt=0, le=MAX_CALL_TIMEOUT_SECONDS)
     # Independent random single-purpose HMAC key, not a manifest/signing key.
     manifest_request_key_file: Path | None = None
+    manifest_hook_max_request_bytes: int = Field(default=1 << 20, ge=1, le=16 << 20)
+    # Tools whose effects belong to a specific hook never emit the generic one.
+    hook_tool_effects: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("awid_service_token")
     @classmethod

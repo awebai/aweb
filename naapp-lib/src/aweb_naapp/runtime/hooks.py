@@ -8,9 +8,11 @@ and never emits from a completed HTTP response.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import timedelta
 from ipaddress import IPv4Network, IPv6Network
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
+from uuid import UUID
 
 from aweb_naapp.hooks.commitment import CommitmentKey, Purpose, load_commitment_key
 from aweb_naapp.hooks.producer import HOOKS_CHANNEL, HookProducer, ServerProducer, hook_targets
@@ -19,9 +21,12 @@ from aweb_naapp.manifest import Manifest
 from aweb_naapp.outbox import Resolver, RetryPolicy, Transport
 from aweb_naapp.runtime.app_keys import AppKey, AppKeyError, load_app_key
 from aweb_naapp.runtime.hook_resolver import HookResolver
+from aweb_naapp.runtime.manifest_hooks import ManifestEvidence
 from aweb_naapp.runtime.settings import NaappSettings
 
 if TYPE_CHECKING:
+    from pgdbm.core import TransactionManager
+
     from aweb_naapp.egress import Egress
 
 HOOK_EVENT = "hook-event"
@@ -47,6 +52,7 @@ class RuntimeHooks:
         transport: Transport | None,
         policy: RetryPolicy,
         manifest_request_key: CommitmentKey | None,
+        tool_effects: dict[str, str] | None = None,
     ) -> None:
         self.manifest = manifest
         self.key = key
@@ -54,6 +60,18 @@ class RuntimeHooks:
         self.transport = transport
         self.policy = policy
         self.manifest_request_key = manifest_request_key
+        self.tool_effects = dict(tool_effects or {})
+        tools = manifest.tools_by_name()
+        declared = {p["hook"] for p in (manifest.hooks or {}).get("productions", ())}
+        for tool, hook in self.tool_effects.items():
+            if (
+                tool not in tools
+                or hook not in {"post-secret-use-hook", "post-governance-hook"}
+                or hook not in declared
+            ):
+                raise AppKeyError(
+                    "hook_tool_effects must name a declared tool and specific production"
+                )
 
     @classmethod
     def from_settings(
@@ -78,6 +96,7 @@ class RuntimeHooks:
                 transport=None,
                 policy=policy,
                 manifest_request_key=None,
+                tool_effects=settings.hook_tool_effects,
             )
         key = load_app_key(settings, manifest, HOOK_EVENT)
         if resolver is None:
@@ -117,6 +136,7 @@ class RuntimeHooks:
             transport=transport,
             policy=policy,
             manifest_request_key=commitment,
+            tool_effects=settings.hook_tool_effects,
         )
 
     def producer(self, *, installation_id: str, generation: int) -> HookProducer:
@@ -136,6 +156,50 @@ class RuntimeHooks:
                 kid=self.key.kid,
                 seed=bytes(self.key.signing_key),
             )
+        )
+
+    async def record_manifest(
+        self,
+        tx: TransactionManager,
+        evidence: ManifestEvidence,
+        *,
+        http_status: int,
+        refused: bool = False,
+        resource_refs: Sequence[str] = (),
+        result_ref: str | None = None,
+    ) -> UUID | None:
+        if self.manifest_request_key is None or evidence.tool.name in self.tool_effects:
+            return None
+        raw_tool = self.manifest.tools_by_name()[evidence.tool.name]
+        mutation = raw_tool.get("mutation", False)
+        production = next(
+            p for p in (self.manifest.hooks or {})["productions"] if p["hook"] == MANIFEST_HOOK
+        )
+        if not refused and not mutation and evidence.tool.name not in production["reads"]:
+            return None
+        payload: dict[str, Any] = {
+            "app_id": self.manifest.app_id,
+            "tool": evidence.tool.name,
+            "operation_kind": "refusal" if refused else "mutation" if mutation else "read",
+            "request_sha256": evidence.commitment,
+            "http_status": http_status,
+        }
+        if resource_refs:
+            payload["resource_refs"] = list(resource_refs)
+        if result_ref is not None:
+            payload["result_ref"] = result_ref
+        return await self.producer(
+            installation_id=evidence.context.installation_id,
+            generation=evidence.context.generation,
+        ).enqueue(
+            tx,
+            hook=MANIFEST_HOOK,
+            team_id=evidence.context.team_id,
+            payload=payload,
+            actor=evidence.actor,
+            occurred_at=evidence.occurred_at,
+            result_status="denied" if refused else "success" if http_status < 400 else "failed",
+            signed_trace_id=evidence.trace_id,
         )
 
     def drain_options(self) -> DrainOptions:

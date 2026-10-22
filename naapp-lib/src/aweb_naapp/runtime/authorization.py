@@ -238,22 +238,25 @@ async def authorize_request(
     policy: ActionPolicy,
     action_kind: ActionKind | None = None,
     monotonic: Callable[[], float] = time.monotonic,
+    on_resolved: Callable[[DeclaredTool, Grant], None] | None = None,
 ) -> Authorization:
     """Admit one authenticated request, or raise the refusal.
 
     ``caller`` is the request's invocation context, from
     :func:`aweb_naapp.runtime.attestation.caller_context`. ``action_kind``
     resolves the page action a request performs; without it, a surface's
-    invoke tool admits nothing.
+    invoke tool admits nothing. ``on_resolved`` observes the matched tool and
+    fresh installation grant before scope/policy admission; it grants no
+    authority and must perform no effect or awaited work.
     """
     method = request.method.upper()
     raw_path = raw_request_target(request).split("?", 1)[0]
     if not _is_canonical_target(request, raw_path):
-        logger.warning("Refused non-canonical target %r for team %s", raw_path, principal.team_id)
+        logger.warning("Refused non-canonical target for team %s", principal.team_id)
         raise _refuse(400, "target_not_canonical", "The request path is not in canonical form")
     tool = tools.match(method, raw_path)
     if tool is None:
-        logger.warning("Refused undeclared operation %s %s for team %s", method, raw_path, principal.team_id)
+        logger.warning("Refused undeclared %s operation for team %s", method, principal.team_id)
         raise _refuse(403, "operation_undeclared", "This operation is not declared by the app manifest")
     if caller not in tool.contexts:
         logger.warning("Refused %s for team %s: not available to %s callers", tool.name, principal.team_id, caller)
@@ -273,6 +276,11 @@ async def authorize_request(
     if grant.fresh_until <= monotonic():
         logger.warning("Refused %s for team %s: installation grant is stale", tool.name, principal.team_id)
         raise _refuse(503, "authority_unavailable", "The app's installation grant is not fresh")
+    # Data-only admission observation: a complete, authenticated request can
+    # now be attributed to an installation even if scope/policy refuses it.
+    # This callback grants no authority and performs no effect or DB write.
+    if on_resolved is not None:
+        on_resolved(tool, grant)
     if not tool.scopes <= grant.scopes:
         logger.warning(
             "Refused %s for team %s: missing scopes %s",

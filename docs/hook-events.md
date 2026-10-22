@@ -624,6 +624,17 @@ body or a caller-supplied body digest for the complete bytes. K4 tests cover
 both an authenticated refusal with its complete body and an early refusal
 without one.
 
+The shared runtime prepares this evidence through B1's exact declared-tool
+mapping after authentication and fresh installation resolution. The handler
+passes its actual effect/outcome transaction to
+`runtime.record_manifest_command`; `runtime.authorized()` and a completed
+HTTP response do not supply an effect transaction. A required enqueue failure
+rolls back the local effect. Attributable authorization refusals have no
+admitted effect and are recorded in the guard's separate refusal transaction.
+Tools assigned to a specific hook through the runtime's `hook_tool_effects`
+configuration never also emit this generic hook. This changes no hook payload,
+owner-activation prerequisite, authorization decision or dispatch fence.
+
 The target verifies the event's signature and the commitment's shape. It
 cannot recompute this HMAC and does not obtain proof of the request's contents;
 the commitment is the authenticated producer's statement. A refusal carries
