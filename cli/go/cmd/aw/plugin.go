@@ -666,7 +666,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 	if out.Approved {
 		out.IdentityHome = policy.residentHome
 		out.ExistingGrantsUnchanged = true
-		out.GrantRefreshCommand = []string{"aw", "--identity-home", policy.residentHome, "id", "grant", "mint", "--bundle", "normal-agent", "--ttl", "<ttl>", "--out", "<new-grant-home>"}
+		out.GrantRefreshCommand = []string{"aw", "--identity-home", policy.residentHome, "id", "grant", "mint", "--bundle", "normal-agent", "--ttl", "<ttl>", "--custody-socket", "auto", "--out", "<new-grant-home>"}
 	}
 	return out, nil
 }

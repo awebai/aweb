@@ -639,7 +639,8 @@ def _running_coordination_server(tmp_path: Path) -> Iterator[str]:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=10)
-            if proc.returncode not in (0, -15, None):
+            # uv may report forwarded SIGTERM as 128 + SIGTERM.
+            if proc.returncode not in (0, -15, 143, None):
                 log.seek(0)
                 raise AssertionError(f"coordination server exit {proc.returncode}: {log.read()}")
 
@@ -673,8 +674,9 @@ def test_install_after_mint_uses_replacement_grant(
                     assert time.monotonic() < deadline, status.stderr
                     assert custody.poll() is None, "custody exited before readiness"
                     time.sleep(.05)
-                minted = _run_aw_json(aw_workspace, "id", "grant", "mint", "--bundle", "normal-agent", "--ttl", "30m", "--out", str(before_home))
+                minted = _run_aw_json(aw_workspace, "id", "grant", "mint", "--bundle", "normal-agent", "--ttl", "30m", "--custody-socket", "auto", "--out", str(before_home))
                 assert minted["apps"] == []
+                assert minted["custody_socket_path"] == json.loads(status.stdout)["socket_path"]
                 before_material = {
                     p.name: hashlib.sha256(p.read_bytes()).digest()
                     for p in before_home.iterdir() if p.is_file()
@@ -706,6 +708,7 @@ def test_install_after_mint_uses_replacement_grant(
                 action[ttl_index] = "15m"
                 replacement = _run_aw_json(aw_workspace, *action[1:])
                 assert replacement["grant_id"] != minted["grant_id"]
+                assert replacement["custody_socket_path"] == minted["custody_socket_path"]
                 expires = datetime.fromisoformat(replacement["expires_at"].replace("Z", "+00:00"))
                 assert timedelta(0) < expires - datetime.now(UTC) <= timedelta(minutes=15)
                 assert "folio" in {app["app_id"] for app in replacement["apps"]}

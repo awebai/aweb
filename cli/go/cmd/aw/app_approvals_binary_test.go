@@ -100,6 +100,10 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 		if ttl < 0 || ttl+1 >= len(receipt.GrantRefreshCommand) || receipt.GrantRefreshCommand[ttl+1] != "<ttl>" {
 			t.Fatalf("replacement must require a lifetime choice: %v", receipt.GrantRefreshCommand)
 		}
+		custody := slices.Index(receipt.GrantRefreshCommand, "--custody-socket")
+		if custody < 0 || custody+1 >= len(receipt.GrantRefreshCommand) || receipt.GrantRefreshCommand[custody+1] != "auto" {
+			t.Fatalf("replacement must select resident custody: %v", receipt.GrantRefreshCommand)
+		}
 		cat, err := loadAppApprovals(home)
 		if err != nil || cat.Apps["testapp"] != server.URL {
 			t.Fatalf("approval selected home: %v", err)

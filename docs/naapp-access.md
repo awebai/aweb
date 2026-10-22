@@ -33,16 +33,18 @@ running grant session keeps its original snapshot**. Install output includes
 and prints the replacement action in text:
 
 ```sh
-aw --identity-home /absolute/resident-root/.aw id grant mint --bundle normal-agent --ttl '<ttl>' --out /absolute/new-grant-home
+aw --identity-home /absolute/resident-root/.aw id grant mint --bundle normal-agent --ttl '<ttl>' --custody-socket auto --out /absolute/new-grant-home
 ```
 
 The resident owner selects the intended scopes (the example uses the
 normal-agent bundle) and replaces `<ttl>` with an explicit lifetime, for example
 `1h`. Choose `never` only deliberately: it makes the grant revocation-only,
 not time-limited. A replacement does not infer the previous session's limits.
-The owner supplies a new empty output directory and restarts the session using
-that replacement grant. Do not overwrite the live grant home or
-change resident identities. In an OATS deployment with `renew: launch`, the host
+`--custody-socket auto` records the selected resident's default custody locator;
+the resident's custody service must be running for signed app tools. Omitting
+this option produces a grant with no custody locator. The owner supplies a new
+empty output directory and restarts the session using that replacement grant.
+Do not overwrite the live grant home or change resident identities. In an OATS deployment with `renew: launch`, the host
 operator can instead use `oats session restart --home /absolute/instance-home`;
 the launch renewal mints a fresh snapshot for the same resident. A readiness pass
 or `aw folio help` only proves discovery, not that a live grant has these tools.
