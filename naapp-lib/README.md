@@ -35,6 +35,20 @@ landing_html = naapp.page(site, body_html, include_copy_llms=True)
 css_bytes = naapp.aweb_css()
 ```
 
+For numbered instructions under a section's `h2`, use the shared component:
+
+```python
+steps_html = naapp.render_numbered_steps([
+    naapp.NumberedStep("Choose a task", "Read the <code>reference</code>."),
+    naapp.NumberedStep("Run the command", "Use your team's identity.", "example --help"),
+])
+```
+
+Titles and commands are escaped plain text. `description_html` is trusted,
+developer-authored inline HTML; never put user content in it. Commands are
+optional and use the shared copy button. The component's responsive styles are
+part of the normal CSS bundle; no app-local stylesheet is needed.
+
 The docs surface is pure standard library. Request-time runtime code (the
 team-auth verifier, approvals, passkeys, and team-server discovery from the
 team's AWID `aweb.team-server/1` record) lives under `aweb_naapp.runtime` and
@@ -99,6 +113,37 @@ the app's schema, and its migrations apply before the app's own. An app's migrat
 never create or alter a store's table: `CREATE TABLE IF NOT EXISTS` under the
 same name collides silently, and which shape wins depends on which migration
 applied first.
+
+### Current link-creator membership
+
+Before opening any transaction for a creator-scoped link use, call
+`proof = await runtime.check_current_member(team_id, certificate_id=..., team_did_key=...)`.
+The team scope must be verified, and the certificate id and team key must come
+from the authenticated mint-time `Principal`, retained as immutable link metadata.
+An observed-principal row or a bare creator DID is not membership evidence.
+
+This uses the request verifier's AWID cache, with the same maximum 60-second
+revocation window. Success returns the frozen `MembershipProof` from
+`aweb_naapp.runtime.team_auth`: `team_id`, `certificate_id`, `team_did_key`,
+`checked_at` and `fresh_until`. Both times use `time.monotonic()` from the
+original facts' fetch-start and expiry. A cache hit does not renew them. The
+proof stays in the same process: never serialize, persist or accept it from a
+request. Facts that expired during lookup raise retryable 503.
+
+After taking the link lock, check the proof's team against both the link scope
+and immutable mint evidence, and its certificate id and key against that
+evidence. Read the monotonic clock after acquiring the lock; refuse a missing,
+mismatched or expired proof (`now > fresh_until`) with 403
+`current_member_required`. There is no network call under the lock.
+`require_current_member(...)` remains a thin wrapper discarding the proof;
+it may do network I/O and must also run before any transaction.
+
+Incomplete evidence, an unknown or
+revoked certificate, or a changed team key raises `HTTPException` with status
+403 and `detail.code=current_member_required`. Unavailable or unreadable AWID
+facts raise 503 with `detail.code=current_membership_unavailable`; propagate
+that retryable failure rather than treating it as revoked authority. The host
+still checks the creator's page/installation permissions separately.
 
 ### App keys
 
@@ -172,6 +217,48 @@ digest=...)` for the exact manifest bytes the app serves, an
 `AppCredentialSigner` for `app-grant-read`, and the runtime's shared
 `TeamServerDirectory` as `discovery`. It reads only the team's controller-signed
 server URL; it creates no directory or resolver of its own.
+
+`runtime.team_cache()` and `runtime.team_server_directory()` return the same
+configuration-only objects before, during and after the lifespan; constructing
+them makes no network requests. This permits wiring the grant source and
+registering `runtime.authorized(grants=source, policy=...)` before startup's
+route validation. The database remains available only inside the lifespan.
+For example, before mounting the guarded routes:
+
+```python
+import hashlib
+
+from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, AppCredentialSigner
+from aweb_naapp.runtime.app_keys import load_app_key
+from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
+
+key = load_app_key(settings, runtime.manifest, APP_GRANT_READ)
+source = TeamGrantSource(
+    identity=AppIdentity(
+        app_id=runtime.manifest.app_id,
+        origin=runtime.manifest.document["app"]["origin"],
+        digest="sha256:" + hashlib.sha256(runtime.manifest_bytes).hexdigest(),
+    ),
+    signer=AppCredentialSigner(app_id=runtime.manifest.app_id, key=key, purpose=APP_GRANT_READ),
+    discovery=runtime.team_server_directory(),
+)
+guard = runtime.authorized(grants=source, policy=policy)
+```
+
+The runtime's cached `runtime.hook_resolver()` uses that same directory and the
+served app identity. If the manifest declares `hook-resolve`, its key is loaded
+at construction: missing or ambiguous configuration refuses startup. An app
+without that purpose can start but cannot obtain a resolver using another
+purpose's key. The keyword-only `team_server_transport` constructor seam is
+for requests to the coordination server; `awid_transport` remains the AWID
+registry seam. Both default to normal production networking.
+
+For event ingestion, use the same publication check as request authentication:
+`await team_auth.require_active_certificate(runtime.team_cache(), team_id=...,
+certificate_id=...)`. It returns current AWID facts only for a published,
+unrevoked certificate, preserving 401 for unknown/revoked membership and 503
+for unavailable authority. This helper does not verify a certificate or event
+signature; consumers still verify their signed artifacts.
 
 `grant_for(team_id)` returns an active `Grant` or `None` when no key is
 registered or the installation is not active. `status_for(team_id)` shares
@@ -400,5 +487,41 @@ the approval, decision, policy and the app's own origin.
   contact, evidence_ref)`. What a login opens (a console or reader session) is
   the caller's. Roles are named scopes, such as `secrets.owner`, each designated
   through a team owner act.
+- **Retained proof (decision 84).** Configure `Passkeys(proof_context=resolver)`.
+  Its async `resolver(scope, *, tx)` returns `PasskeyInstallationContext(app_id,
+  team_id, installation_id, generation)` from the authoritative persisted scope
+  binding. B3 supplies its challenge-write transaction. The resolver reads only:
+  application refresh, installation/role authority and locks precede B3. It must
+  refuse unknown, ambiguous, retired or stale bindings with
+  `ProofContextUnavailable` (`proof_context_unavailable`). Missing configuration
+  refuses assertion challenges; no context is fabricated from browser fields.
+- B3 freezes that context, its RP/scope and the exact existing challenge preimage
+  at issuance. Successful verification retains decoded authenticator data, client
+  data, signature, exact COSE key/credential ID, original context, counters and
+  times atomically with the counter CAS and evidence row. B2 passes the exact
+  immutable `StoredRequest.canonical` sidecar to a fresh per-ceremony passkey
+  adapter; other authenticator adapters are unchanged. Existing challenge and
+  signed-request bytes are unchanged. New storage is migration003.
+- `await passkeys.evidence_commitment(evidence_ref, context=admitted_context,
+  scope=scope, subject=subject, purpose="login", tx=action_tx)` validates the
+  retained original proof and exact expected bindings, then returns the one
+  canonical unkeyed SHA-256 commitment. Its fixed code on missing/legacy/deleted
+  proof or mismatched bindings is `passkey_proof_unavailable`, through
+  `PasskeyProofUnavailable`, an `AuthenticationFailed`. No summary fallback or
+  current-context relabeling occurs. The caller separately enforces session
+  expiry, exact-credential liveness and action authority before mutation.
+- `retained_proof(evidence_ref, tx=...)` is restricted historical export, never
+  a model projection or a new HTTP route. `RetainedPasskeyProof.export()` includes
+  raw proof and possibly a credential-bearing request sidecar: authorize its
+  disclosure and never log it. The public hook receives only the commitment.
+  The standalone `passkey_evidence_commitment(proof)` reproduces that encoding;
+  independent reviewers additionally need their trusted approver key and expected
+  context. Retired credentials and signing-key rotation do not rewrite history.
+- App lifecycle deletion quiesces that installation's ceremonies first, then
+  calls `delete_proofs_in(tx, context=...)` to remove its proof and challenge
+  sidecars across all generations, in the caller's transaction. Summary/audit
+  records may remain but cannot recreate proof. Backup erasure and disclosure
+  remain application lifecycle responsibilities. After deletion later proof
+  retrieval is unavailable.
 - A passkey proves that an app-local human holds the enrolled authenticator. It
   is not AWID membership, team identity or key custody.

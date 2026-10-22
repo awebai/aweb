@@ -1,6 +1,6 @@
 [project]
 name = "aweb-naapp"
-version = "0.2.0"
+version = "0.3.0"
 description = "Reusable Native Agentic App (naapp) docs surface: shared chrome, the aweb design system, and manifest-driven llms.txt and reference generators."
 readme = "README.md"
 license = { text = "MIT" }
@@ -29,10 +29,12 @@ runtime = [
   "awid-service>=0.5.30",
   "fastapi>=0.116.1",
   "httpx>=0.28.1",
+  "jsonschema>=4.23.0",
   "pgdbm>=0.5.0",
   "pydantic-settings>=2.10.1",
   "pynacl>=1.6.2",
   "webauthn>=3.0.1",
+  "cbor2>=6.1.2",
 ]
 # The shared durable outbox, aweb_naapp.outbox: pgdbm only, so the core server
 # can use it without the naapp runtime.

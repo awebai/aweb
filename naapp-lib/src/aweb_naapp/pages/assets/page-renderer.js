@@ -8959,7 +8959,7 @@ function selectRecords(records, bind) {
     return 0;
   });
 }
-function dataTable(records, columns, label, locale, timeZone) {
+function dataTable(records, columns, label, locale, timeZone, pageLink) {
   const table2 = element("table");
   table2.append(element("caption", label, "sr-only"));
   const head = element("thead");
@@ -8981,15 +8981,26 @@ function dataTable(records, columns, label, locale, timeZone) {
         null,
         ["date", "number", "money_minor", "status"].includes(column.format) ? "cell-compact" : "cell-text"
       );
-      cell.append(
-        formattedValue(
-          record.value[column.field],
-          column.format,
-          locale,
-          timeZone,
-          record.value.currency
-        )
-      );
+      const value = record.value[column.field];
+      const url = column.format === "url" && typeof value === "string" ? safeLink(value) : null;
+      if (url && pageLink) {
+        const link2 = element("a");
+        const domain = element("bdi", url.host);
+        domain.setAttribute("aria-hidden", "true");
+        link2.append(domain, element("span", url.href, "sr-only"));
+        pageLink(link2, url);
+        cell.append(link2);
+      } else {
+        cell.append(
+          formattedValue(
+            value,
+            column.format,
+            locale,
+            timeZone,
+            record.value.currency
+          )
+        );
+      }
       row.append(cell);
     }
     body.append(row);
@@ -9099,6 +9110,7 @@ function renderCollection({
   query,
   onRead,
   actionButton,
+  pageLink,
   announce
 }) {
   const p = w.props;
@@ -9148,7 +9160,14 @@ function renderCollection({
     if (!visible.length)
       region.append(chrome("p", "Nothing here yet.", "field-description"));
     else if (w.type === "table") {
-      const table2 = dataTable(visible, p.columns, t.records, locale, timeZone);
+      const table2 = dataTable(
+        visible,
+        p.columns,
+        t.records,
+        locale,
+        timeZone,
+        pageLink
+      );
       table2.caption.lang = "en";
       table2.caption.id = `records-${w.id}`;
       [...table2.tHead.rows[0].cells].forEach((th, i) => {
@@ -9496,7 +9515,7 @@ function createPageRenderer({
   destinations.lang = "en";
   announcements.lang = "en";
   let current, epoch = 0;
-  const cache = /* @__PURE__ */ new Map(), queries = /* @__PURE__ */ new Map(), decisionAttempts = /* @__PURE__ */ new Map(), links = /* @__PURE__ */ new WeakMap();
+  const cache = /* @__PURE__ */ new Map(), queries = /* @__PURE__ */ new Map(), decisionAttempts = /* @__PURE__ */ new Map(), links = /* @__PURE__ */ new WeakMap(), domains = /* @__PURE__ */ new Set();
   const title = element("h1", null, "page-title");
   const actions = createActions({
     host,
@@ -9527,6 +9546,7 @@ function createPageRenderer({
       for (const query of queries.values()) delete query.cursor;
     }
     root.lang = page?.locale || "en";
+    domains.clear();
     destinations.replaceChildren(element("h2", t.destinations));
     destinations.hidden = true;
     if (page?.page_format !== "aweb.page/1" || !Array.isArray(page.layout)) {
@@ -9546,7 +9566,7 @@ function createPageRenderer({
       return;
     }
     title.textContent = page.title;
-    const domains = /* @__PURE__ */ new Set(), used = /* @__PURE__ */ new Set(), decisionWidgets = /* @__PURE__ */ new Set();
+    const used = /* @__PURE__ */ new Set(), decisionWidgets = /* @__PURE__ */ new Set();
     function rememberLink(url) {
       if (!domains.has(url.host)) {
         domains.add(url.host);
@@ -9721,6 +9741,7 @@ function createPageRenderer({
               t,
               query,
               actionButton,
+              pageLink,
               onRead: (bind) => read(bind),
               announce: (text3) => {
                 announcements.textContent = text3;
@@ -9850,6 +9871,7 @@ function createPageRenderer({
       current = null;
       cache.clear();
       queries.clear();
+      domains.clear();
       root.replaceChildren();
       destinations.replaceChildren();
       destinations.hidden = true;
