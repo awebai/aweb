@@ -20,6 +20,7 @@ from aweb_naapp.egress import (
     parse_destination,
 )
 
+
 class ManifestFetchDiagnostics(ManifestFetcher):
     """Keep the real fetch, with its exception chain in disposable service logs."""
 
