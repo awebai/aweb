@@ -133,3 +133,33 @@ async def test_typing_while_refresh_is_in_flight_keeps_text(live_world, live_bro
         release.set()
     await expect(page.locator("#load-latest")).to_be_visible(timeout=10000)
     await expect(page.locator("#body")).to_have_value("Typed during the read")
+
+
+@pytest.mark.parametrize("has_draft", [False, True])
+async def test_expired_recovery_copy_tracks_the_current_buffer(live_world, live_browser, has_draft):
+    origin, browser = live_browser
+    edit = await link(live_world, editable=True)
+    page = await browser.new_page(viewport={"width": 375, "height": 812})
+    await page.goto(f"{origin}/present/{edit['token']}")
+    original = await page.locator("#body").input_value()
+    draft = "Unsaved UTF-8 draft — keep it.\nAnother line."
+    if has_draft:
+        await page.locator("#body").fill(draft)
+    await page.locator("#tab-preview").click()
+    _, db, _ = live_world
+    await db.execute(
+        "UPDATE {{tables.presentation_links}} SET expires_at=NOW()-interval '1 second' WHERE token=$1",
+        edit["token"],
+    )
+    await expect(page.locator("#link-recovery")).to_be_visible(timeout=10000)
+    await expect(page.locator("#save")).to_be_disabled()
+    await expect(page.locator("#body")).to_have_value(draft if has_draft else original)
+    assert await page.locator("#copy-draft").is_visible() is has_draft
+    # The retained editor remains usable after refusal. Recovery must follow
+    # the current draft, including edits or a revert made after expiry.
+    await page.locator("#tab-edit").click()
+    await page.locator("#body").fill(draft)
+    await expect(page.locator("#copy-draft")).to_be_visible()
+    await page.locator("#body").fill(original)
+    await expect(page.locator("#copy-draft")).to_be_hidden()
+    assert (await db.fetch_one("SELECT COUNT(*) AS n FROM {{tables.document_versions}}"))["n"] == 1
