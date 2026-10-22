@@ -73,6 +73,44 @@
 
 ## Release preparations
 
+### Release preparation: awid-service 0.5.31
+
+`RegistryClient.get_team_fresh` (and its `CachedRegistryClient` override that
+invalidates the team-metadata cache before reading): read a team's current
+metadata, controller key included, without a stale cached result. The server's
+hook-binding owner acts require it. No AWID server change; the `awid` image is
+not re-released.
+
+### Release preparation: aweb-naapp 0.3.0
+
+`aweb-naapp` and `aweb-naapp-testing` 0.3.0 carry the naapp-lib changes since
+`aweb-naapp-v0.2.0` listed under Unreleased: the persistent page store with
+records, the runtime's shared team-server directory and hook resolver
+(`team_cache()`, `team_server_directory()`, `hook_resolver()`), the
+current-member membership proof, capability-link runtime and storage, the
+hooks commitment helper and proof/observation contracts, and the manifest
+reader's scoped reserved names (root reservations apply to `app.id` only;
+nested tools reserve only the dispatcher's help names).
+
+### Release preparation: server 1.27.32
+
+Server changes are since `server-v1.27.31`; see Unreleased.
+
+- Human channels P0, P3 and P8: the public seam, typed chat participant
+  identity with gated storage, and ownership verification for native and
+  binding presence intents.
+- Hook bindings (aweb-acgh.16.10): read, activate and revoke routes, owner
+  activation and revocation, and the hooks kit's owner-act migrations applied
+  after core's chain.
+- A timed-out AWID registry read is a classified 503 (aweb-acjk).
+- **Migration:** `033_typed_chat_participants.sql` (aweb schema).
+- **Dependency floors:** `aweb-naapp[hooks]>=0.3.0` (the install path's manifest
+  reader, including its reserved-name rule, comes from `aweb-naapp`) and
+  `awid-service>=0.5.31` (hook-binding owner acts call
+  `RegistryClient.get_team_fresh`).
+- **Deploy order:** publish `awid-service` 0.5.31, then `aweb-naapp` 0.3.0,
+  then this server.
+
 ### Release preparation: aweb-naapp 0.2.0
 
 - The `aweb-naapp-vX.Y.Z` tag also publishes PyPI `aweb-naapp-testing` from
