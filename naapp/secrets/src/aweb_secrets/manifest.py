@@ -134,7 +134,7 @@ MANIFEST: dict[str, Any] = {
             "scopes": ["secrets:run"],
             "mutation": True,
             "body": {"mode": "json"},
-            "params": _params("request_id", "runner", "params", "reason", path=("job",)),
+            "params": _params("request_id", "runner", "params", "reason", "secret", path=("job",)),
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -145,6 +145,10 @@ MANIFEST: dict[str, Any] = {
                     "reason": {
                         "type": "string",
                         "description": "Shown to the approver as untrusted text.",
+                    },
+                    "secret": {
+                        "type": "string",
+                        "description": "An ordinary derived child's ref for the unique durable slot; omit to use the job's fixed selectors.",
                     },
                 },
                 "required": ["job", "request_id", "runner"],
@@ -181,13 +185,13 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "contain",
-            "description": "Narrow authority at once: revoke a grant, approvals or an approver's passkey or contact, disable a secret or the installation, or deregister a runner. Owners only.",
+            "description": "Narrow authority at once: revoke a grant, approvals or an approver's passkey or contact, disable a secret or the installation, or deregister a runner. Owners; assigned approvers may revoke their own approvals.",
             "method": "POST",
             "path": "/v1/containment",
             "scopes": ["secrets:admin"],
             "mutation": True,
             "body": {"mode": "json"},
-            "params": _params("request_id", "action", "target"),
+            "params": _params("request_id", "action", "target", "credential_id"),
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -206,6 +210,10 @@ MANIFEST: dict[str, Any] = {
                     "target": {
                         "type": "string",
                         "description": "The grant, approval, secret, runner or approver id.",
+                    },
+                    "credential_id": {
+                        "type": "string",
+                        "description": "For revoke-approver, the lost passkey credential ID as unpadded base64url. Omit to revoke the contact and full designation.",
                     },
                 },
                 "required": ["request_id", "action"],
