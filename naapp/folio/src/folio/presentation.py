@@ -1075,6 +1075,20 @@ def render_editor_page(
     <p id="reopen-instructions">Return to your dashboard and reopen Edit, then paste your text.</p>
     <p id="copy-status" role="status"></p>
   </div>
+  <div id="new-version" class="link-recovery" hidden>
+    <p id="new-version-message" role="status"></p>
+    <button id="load-latest" class="ghost-button" type="button">Load latest version</button>
+  </div>
+  <dialog id="load-dialog" class="modal" aria-labelledby="load-title">
+    <div class="modal-card">
+      <h2 id="load-title" class="modal-title">Load the latest version?</h2>
+      <p class="modal-text">Your unsaved changes will be discarded.</p>
+      <div class="modal-actions">
+        <button id="load-cancel" class="ghost-button" type="button" autofocus>Keep editing</button>
+        <button id="load-confirm" class="btn-danger" type="button">Load latest version</button>
+      </div>
+    </div>
+  </dialog>
   <main class="workspace">
     <section id="pane-edit" class="pane pane-edit is-active">
       <textarea id="body" class="editor" spellcheck="false" autofocus placeholder="Start writing in Markdown…"></textarea>
@@ -1116,6 +1130,9 @@ def render_editor_page(
     let saving = false;
     let conflict = false;
     let unavailable = false;
+    let pendingVersion = null;
+    const newVersionEl = document.getElementById('new-version');
+    const loadDialog = document.getElementById('load-dialog');
     bodyEl.value = INITIAL.body;
     nameEl.value = window.localStorage.getItem('folio.editorName') || '';
 
@@ -1174,8 +1191,10 @@ def render_editor_page(
     }}
 
     function markDirty() {{
-      if (!dirty) {{ dirty = true; document.title = '• ' + baseTitle; }}
-      eyebrowEl.textContent = 'Draft · unsaved';
+      dirty = bodyEl.value !== savedBody;
+      if (!dirty && pendingVersion) {{ applyCurrent(pendingVersion); return; }}
+      document.title = dirty ? '• ' + baseTitle : baseTitle;
+      eyebrowEl.textContent = dirty ? 'Draft · unsaved' : 'Version ' + baseVersion;
       updateButtons();
     }}
 
@@ -1199,13 +1218,7 @@ def render_editor_page(
       const payload = await response.json().catch(() => ({{}}));
       saving = false;
       if (response.status === 404) {{
-        unavailable = true;
-        if (previewTimer) clearTimeout(previewTimer);
-        previewSeq++;
-        previewCard.classList.remove('is-updating');
-        recoveryEl.hidden = false;
-        setStatus('Not saved. Copy your text before reopening Edit.', 'conflict');
-        updateButtons();
+        showUnavailable();
         recoveryEl.focus();
         return;
       }}
@@ -1213,6 +1226,7 @@ def render_editor_page(
         const latest = payload.detail || payload;
         conflict = true;
         baseVersion = latest.version_number || baseVersion;
+        showNewVersion(latest);
         setStatus('Someone saved version ' + baseVersion + '. Overwrite to keep your text.', 'conflict');
         updateButtons();
         return;
@@ -1220,9 +1234,10 @@ def render_editor_page(
       if (!response.ok) {{ setStatus('Save failed — the link may be expired or revoked.', 'conflict'); updateButtons(); return; }}
       baseVersion = payload.version_number;
       savedBody = sent;
-      dirty = false; conflict = false;
-      document.title = baseTitle;
-      eyebrowEl.textContent = 'Version ' + baseVersion + ' · saved';
+      dirty = bodyEl.value !== sent; conflict = false;
+      pendingVersion = null; newVersionEl.hidden = true;
+      document.title = dirty ? '• ' + baseTitle : baseTitle;
+      eyebrowEl.textContent = dirty ? 'Draft · unsaved' : 'Version ' + baseVersion + ' · saved';
       setStatus('Saved version ' + baseVersion, null);
       updateButtons();
       refreshPreview();
@@ -1248,6 +1263,7 @@ def render_editor_page(
     }});
 
     function discardChanges() {{
+      if (pendingVersion) {{ applyCurrent(pendingVersion); return; }}
       bodyEl.value = savedBody;
       dirty = false; conflict = false;
       document.title = baseTitle;
@@ -1277,21 +1293,96 @@ def render_editor_page(
     tabEdit.addEventListener('click', () => activate(true));
     tabPreview.addEventListener('click', () => activate(false));
 
+    function cancelPreview() {{
+      if (previewTimer) clearTimeout(previewTimer);
+      previewSeq++;
+      previewCard.classList.remove('is-updating');
+    }}
+    function showUnavailable() {{
+      unavailable = true;
+      cancelPreview();
+      newVersionEl.hidden = true;
+      recoveryEl.hidden = false;
+      setStatus('Not saved. Copy your text before reopening Edit.', 'conflict');
+      updateButtons();
+    }}
+    function applyCurrent(state) {{
+      cancelPreview();
+      const start = bodyEl.selectionStart, end = bodyEl.selectionEnd;
+      savedBody = state.body;
+      baseVersion = state.version_number;
+      bodyEl.value = savedBody;
+      bodyEl.setSelectionRange(Math.min(start, savedBody.length), Math.min(end, savedBody.length));
+      dirty = false; conflict = false; pendingVersion = null;
+      newVersionEl.hidden = true;
+      document.title = baseTitle;
+      eyebrowEl.textContent = 'Version ' + baseVersion;
+      if (typeof state.html === 'string') applyPreview(state.html);
+      else refreshPreview();
+      setStatus('Updated to version ' + baseVersion, null);
+      updateButtons();
+    }}
+    function showNewVersion(state) {{
+      pendingVersion = state;
+      newVersionEl.hidden = false;
+      document.getElementById('new-version-message').textContent =
+        'Version ' + state.version_number + ' is available. Your unsaved changes are kept.';
+    }}
+    document.getElementById('load-latest').addEventListener('click', () => {{
+      if (dirty) loadDialog.showModal();
+      else if (pendingVersion) applyCurrent(pendingVersion);
+    }});
+    document.getElementById('load-cancel').addEventListener('click', () => loadDialog.close());
+    document.getElementById('load-confirm').addEventListener('click', () => {{
+      loadDialog.close();
+      if (unavailable || !pendingVersion) return;
+      applyCurrent(pendingVersion);
+      activate(true); bodyEl.focus();
+    }});
+
+    let pollTimer = null;
+    let reading = false;
+    let readController = null;
     async function pollState() {{
-      if (unavailable) return;
+      if (pollTimer) clearTimeout(pollTimer);
+      if (unavailable || document.hidden || reading) return;
+      reading = true;
+      const controller = new AbortController();
+      readController = controller;
       try {{
-        const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/state');
+        if (saving) return;
+        const known = pendingVersion ? pendingVersion.version_number : baseVersion;
+        const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/state?after_version=' + known,
+          {{cache: 'no-store', referrerPolicy: 'no-referrer', signal: controller.signal}});
+        if (controller.signal.aborted || unavailable) return;
+        if (response.status === 404) {{ showUnavailable(); return; }}
         if (!response.ok) return;
         const state = await response.json();
-        if (state.version_number > baseVersion && !conflict && !saving) {{
-          setStatus(
-            dirty ? 'A newer version exists; saving will ask to overwrite.' : 'A newer version exists. Reload to load it.',
-            'conflict'
-          );
+        if (controller.signal.aborted || unavailable || saving) return;
+        if (typeof state.body === 'string' && state.version_number > baseVersion) {{
+          // Decide on the CURRENT buffer after the read, including typing that
+          // happened while it was in flight. Never overwrite a local draft.
+          if (dirty) showNewVersion(state);
+          else applyCurrent(state);
         }}
-      }} catch (err) {{ /* transient; keep polling */ }}
+      }} catch (err) {{ /* keep the current buffer and retry transient reads */ }}
+      finally {{
+        reading = false; readController = null;
+        if (!unavailable && !document.hidden) pollTimer = setTimeout(pollState, 4000);
+      }}
     }}
-    window.setInterval(pollState, 4000);
+    document.addEventListener('visibilitychange', () => {{
+      if (document.hidden) {{
+        if (pollTimer) clearTimeout(pollTimer);
+        if (readController) readController.abort();
+      }} else pollState();
+    }});
+    window.addEventListener('pagehide', () => {{
+      if (pollTimer) clearTimeout(pollTimer);
+      if (readController) readController.abort();
+    }});
+    window.addEventListener('pageshow', pollState);
+    pollTimer = setTimeout(pollState, 4000);
 
     updateButtons();
   </script>

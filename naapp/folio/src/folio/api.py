@@ -5,7 +5,7 @@ from uuid import UUID
 
 from aweb_naapp.runtime.app import NOINDEX_ROBOTS_HEADER, NaappRuntime, mount_naapp_routes
 from aweb_naapp.runtime.team_auth import Principal, record_observed_principal
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from pgdbm import AsyncDatabaseManager
 
@@ -321,12 +321,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
-    @app.get("/present/{token}/state", response_model=PresentationStateResponse)
+    @app.get("/present/{token}/state", response_model=PresentationStateResponse, response_model_exclude_none=True)
     async def presentation_state_route(
         token: str,
         database: Annotated[AsyncDatabaseManager, Depends(db)],
+        after_version: Annotated[int | None, Query(ge=1)] = None,
     ) -> dict:
-        return await get_presentation_state(database, token=token)
+        state = await get_presentation_state(database, token=token)
+        if after_version is not None and state["version_number"] != after_version:
+            presented = await get_presented_document(database, token=token)
+            state = {
+                "version_number": presented["version_number"],
+                "body": presented["body"],
+                "html": render_presented_markdown(
+                    presented["body"], public_origin=resolved.public_origin,
+                    asset_embeds=presentation_asset_embeds(presented.get("allowed_assets")),
+                ),
+            }
+        return state
 
     @app.post("/present/{token}/edit", response_model=PresentationEditResponse)
     async def presentation_edit_route(
