@@ -403,7 +403,7 @@ func formatPluginInstall(v any) string {
 		}
 	}
 	if out.Approved {
-		return fmt.Sprintf("Installed app %s; approved for this resident and future grants.\nExisting grants keep their original tool snapshots. If this app is missing, ask the resident owner to mint a replacement:\n  %s\nReplace <new-grant-home> with a new empty directory; restart the session using the replacement grant before calling the app. Keep the same resident identity.\n", out.Name, formatShellCommand(out.GrantRefreshCommand))
+		return fmt.Sprintf("Installed app %s; approved for this resident and future grants.\nExisting grants keep their original tool snapshots. If the running session cannot use this app, ask the resident owner to mint a replacement:\n  %s\nChoose the intended scopes and replace <ttl> with the intended lifetime (for example 1h; choose never only deliberately). Replace <new-grant-home> with a new empty directory; restart the session using the replacement grant before calling the app. Keep the same resident identity.\n", out.Name, formatShellCommand(out.GrantRefreshCommand))
 	}
 	return fmt.Sprintf("Installed plugin %s -> %s\n", out.Name, out.Path)
 }
@@ -666,7 +666,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 	if out.Approved {
 		out.IdentityHome = policy.residentHome
 		out.ExistingGrantsUnchanged = true
-		out.GrantRefreshCommand = []string{"aw", "--identity-home", policy.residentHome, "id", "grant", "mint", "--bundle", "normal-agent", "--out", "<new-grant-home>"}
+		out.GrantRefreshCommand = []string{"aw", "--identity-home", policy.residentHome, "id", "grant", "mint", "--bundle", "normal-agent", "--ttl", "<ttl>", "--out", "<new-grant-home>"}
 	}
 	return out, nil
 }

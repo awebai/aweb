@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -94,6 +95,10 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 		}
 		if len(receipt.GrantRefreshCommand) < 7 || receipt.GrantRefreshCommand[1] != "--identity-home" || receipt.GrantRefreshCommand[2] != home {
 			t.Fatalf("replacement grant command: %v", receipt.GrantRefreshCommand)
+		}
+		ttl := slices.Index(receipt.GrantRefreshCommand, "--ttl")
+		if ttl < 0 || ttl+1 >= len(receipt.GrantRefreshCommand) || receipt.GrantRefreshCommand[ttl+1] != "<ttl>" {
+			t.Fatalf("replacement must require a lifetime choice: %v", receipt.GrantRefreshCommand)
 		}
 		cat, err := loadAppApprovals(home)
 		if err != nil || cat.Apps["testapp"] != server.URL {

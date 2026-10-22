@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -673,7 +673,7 @@ def test_install_after_mint_uses_replacement_grant(
                     assert time.monotonic() < deadline, status.stderr
                     assert custody.poll() is None, "custody exited before readiness"
                     time.sleep(.05)
-                minted = _run_aw_json(aw_workspace, "id", "grant", "mint", "--bundle", "normal-agent", "--out", str(before_home))
+                minted = _run_aw_json(aw_workspace, "id", "grant", "mint", "--bundle", "normal-agent", "--ttl", "30m", "--out", str(before_home))
                 assert minted["apps"] == []
                 before_material = {
                     p.name: hashlib.sha256(p.read_bytes()).digest()
@@ -701,8 +701,13 @@ def test_install_after_mint_uses_replacement_grant(
                 action = installed["grant_refresh_command"]
                 assert action[0] == "aw" and action[-1] == "<new-grant-home>"
                 action[-1] = str(replacement_home)
+                ttl_index = action.index("--ttl") + 1
+                assert action[ttl_index] == "<ttl>"
+                action[ttl_index] = "15m"
                 replacement = _run_aw_json(aw_workspace, *action[1:])
                 assert replacement["grant_id"] != minted["grant_id"]
+                expires = datetime.fromisoformat(replacement["expires_at"].replace("Z", "+00:00"))
+                assert timedelta(0) < expires - datetime.now(UTC) <= timedelta(minutes=15)
                 assert "folio" in {app["app_id"] for app in replacement["apps"]}
                 grant = AWWorkspace(path=instance, env=dict(grant.env, AWEB_IDENTITY_HOME=str(replacement_home)))
                 created = _run_aw_json(grant, "folio", "create", "--body-file", str(payload), "--json")
