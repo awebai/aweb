@@ -22,6 +22,7 @@ from .filesystem import FileGuard
 from .job_inputs import JobInputs
 from .oci_images import ImageStore
 from .oci_platform import require_memory_directory, require_runc_environment
+from .oci_workspace import remove_private_tree, workspace_lock, write_marker
 
 
 @dataclass(frozen=True)
@@ -153,28 +154,6 @@ def _compose(
     return configuration
 
 
-def _remove_private_tree(parent_fd: int, name: str) -> None:
-    """Remove our stopped private tree, including mode-000 image directories.
-
-    Every traversal and unlink is descriptor-relative. Directory modes are
-    restored only on non-followed children of that tree; image symlinks are
-    unlinked, never traversed or chmodded.
-    """
-    os.chmod(name, 0o700, dir_fd=parent_fd, follow_symlinks=False)
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-    fd = os.open(name, flags, dir_fd=parent_fd)
-    try:
-        with os.scandir(fd) as entries:
-            for entry in entries:
-                if entry.is_dir(follow_symlinks=False):
-                    _remove_private_tree(fd, entry.name)
-                else:
-                    os.unlink(entry.name, dir_fd=fd)
-    finally:
-        os.close(fd)
-    os.rmdir(name, dir_fd=parent_fd)
-
-
 async def _tool(executable: Path, *args: str, accept_failure: bool = False) -> int:
     creation = asyncio.create_task(
         asyncio.create_subprocess_exec(
@@ -221,73 +200,82 @@ class RuncPreparation:
         _require(job["kind"] == "oci")
         require_runc_environment(inputs.environment)
         engine, unpacker = self.engine.check(), self.unpacker.check()
-        workspace = require_memory_directory(self.workspace)
-        mounts = _mounts(job["oci"]["read_only_paths"], workspace)
-        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-        parent_fd = os.open(workspace, flags)
-        name = "job-" + secrets.token_hex(16)
-        created = False
-        yielding = False
-        state = workspace / name / "state"
-        try:
-            os.mkdir(name, mode=0o700, dir_fd=parent_fd)
-            created = True
-            work = workspace / name
-            work_fd = os.open(name, flags, dir_fd=parent_fd)
+        with workspace_lock(self.workspace) as (workspace, parent_fd):
+            mounts = _mounts(job["oci"]["read_only_paths"], workspace)
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+            name = "job-" + secrets.token_hex(16)
+            created = False
+            yielding = False
+            state = workspace / name / "state"
             try:
-                os.mkdir("state", mode=0o700, dir_fd=work_fd)
-                require_memory_directory(state)
-                staged = ImageStore(self.images).stage(job["oci"]["image"], work)
-                bundle = work / "bundle"
-                await _tool(
-                    unpacker,
-                    "unpack",
-                    "--rootless",
-                    "--image",
-                    str(staged.layout) + ":verified",
-                    str(bundle),
-                )
-                bundle.chmod(0o700)
-                require_memory_directory(bundle)
-                with FileGuard().open_file(bundle / "config.json") as stream:
-                    raw = stream.read(16 * 1024 * 1024 + 1)
-                _require(len(raw) <= 16 * 1024 * 1024)
-                configuration = json.loads(raw)
-                configuration = _compose(configuration, inputs, mounts)
-                bundle_fd = os.open("bundle", flags, dir_fd=work_fd)
+                os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+                created = True
+                work = workspace / name
+                work_fd = os.open(name, flags, dir_fd=parent_fd)
                 try:
-                    fd = os.open(
-                        "config.json", os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW, dir_fd=bundle_fd
+                    write_marker(work_fd, engine=engine, sha256=self.engine.sha256, container=None)
+                    os.mkdir("state", mode=0o700, dir_fd=work_fd)
+                    require_memory_directory(state)
+                    staged = ImageStore(self.images).stage(job["oci"]["image"], work)
+                    bundle = work / "bundle"
+                    await _tool(
+                        unpacker,
+                        "unpack",
+                        "--rootless",
+                        "--image",
+                        str(staged.layout) + ":verified",
+                        str(bundle),
                     )
+                    bundle.chmod(0o700)
+                    require_memory_directory(bundle)
+                    with FileGuard().open_file(bundle / "config.json") as stream:
+                        raw = stream.read(16 * 1024 * 1024 + 1)
+                    _require(len(raw) <= 16 * 1024 * 1024)
+                    configuration = json.loads(raw)
+                    configuration = _compose(configuration, inputs, mounts)
+                    bundle_fd = os.open("bundle", flags, dir_fd=work_fd)
                     try:
-                        os.fchmod(fd, 0o600)
-                        with os.fdopen(fd, "wb", closefd=False) as stream:
-                            stream.write(json.dumps(configuration, separators=(",", ":")).encode())
+                        fd = os.open(
+                            "config.json",
+                            os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW,
+                            dir_fd=bundle_fd,
+                        )
+                        try:
+                            os.fchmod(fd, 0o600)
+                            with os.fdopen(fd, "wb", closefd=False) as stream:
+                                stream.write(
+                                    json.dumps(configuration, separators=(",", ":")).encode()
+                                )
+                        finally:
+                            os.close(fd)
                     finally:
-                        os.close(fd)
+                        os.close(bundle_fd)
+                    # Tool/filesystem work can wait; recheck pins and mount guards
+                    # before this public-only preparation may precede any HPKE.
+                    _require(self.engine.check() == engine and self.unpacker.check() == unpacker)
+                    _require(_mounts(job["oci"]["read_only_paths"], workspace) == mounts)
+                    write_marker(
+                        work_fd,
+                        engine=engine,
+                        sha256=self.engine.sha256,
+                        container=None,
+                        prepared=True,
+                    )
+                    yielding = True
+                    yield PreparedBundle(bundle, state, engine, inputs)
                 finally:
-                    os.close(bundle_fd)
-                # Tool/filesystem work can wait; recheck pins and mount guards
-                # before this public-only preparation may precede any HPKE.
-                _require(self.engine.check() == engine and self.unpacker.check() == unpacker)
-                _require(_mounts(job["oci"]["read_only_paths"], workspace) == mounts)
-                yielding = True
-                yield PreparedBundle(bundle, state, engine, inputs)
+                    os.close(work_fd)
+            except (OSError, ValueError, KeyError, TypeError, RecursionError):
+                if yielding:
+                    raise
+                raise Refused("oci_prepare_failed") from None
             finally:
-                os.close(work_fd)
-        except (OSError, ValueError, KeyError, TypeError, RecursionError):
-            if yielding:
-                raise
-            raise Refused("oci_prepare_failed") from None
-        finally:
-            try:
-                if created:
-                    if state.exists() and any(state.iterdir()):
-                        # Later execution must stop/reap first. Preserve state
-                        # for its owner rather than unlink a live container.
-                        raise Refused("oci_cleanup_required")
-                    _remove_private_tree(parent_fd, name)
-            except (OSError, RecursionError):
-                raise Refused("oci_cleanup_required") from None
-            finally:
-                os.close(parent_fd)
+                try:
+                    if created:
+                        if state.exists() and any(state.iterdir()):
+                            # Later execution must stop/reap first. Preserve state
+                            # for its owner rather than unlink a live container.
+                            raise Refused("oci_cleanup_required")
+                        remove_private_tree(parent_fd, name)
+                except (OSError, RecursionError):
+                    raise Refused("oci_cleanup_required") from None

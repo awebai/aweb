@@ -12,7 +12,9 @@ from typing import Any
 from .errors import Refused
 from .execution import _execute_prepared
 from .jobs import CredentialInput, RunnerConfig, _open_job
-from .oci_prepare import RuncPreparation, _tool
+from .oci_prepare import RuncPreparation
+from .oci_recovery import stop_container
+from .oci_workspace import mark_container
 
 
 async def execute_oci(
@@ -53,6 +55,13 @@ async def execute_oci(
                 raise Refused("config_changed")
             if time.time() >= expires_at:
                 raise Refused("assignment_expired")
+            container = "job-" + secrets.token_hex(16)
+            mark_container(
+                bundle.directory.parent,
+                engine=bundle.engine,
+                sha256=runtime.engine.sha256,
+                container=container,
+            )
             job = _open_job(inputs, credentials)
             path = bundle.directory / "config.json"
             configuration = json.loads(path.read_bytes())
@@ -64,7 +73,6 @@ async def execute_oci(
                     stream.write(json.dumps(configuration, separators=(",", ":")).encode())
             finally:
                 os.close(fd)
-            container = "job-" + secrets.token_hex(16)
             pid_file = bundle.directory.parent / "init.pid"
             root = ("--root", str(bundle.state), "--rootless=true", "--log", "/dev/null")
             process = replace(
@@ -103,20 +111,6 @@ async def execute_oci(
                     # runc's container init has its own session; killing the CLI
                     # group alone cannot stop it. Kill the namespace's processes,
                     # then delete/reap runtime state before the bundle may disappear.
-                    runtime.engine.check()
-                    await _tool(
-                        bundle.engine,
-                        *root,
-                        "kill",
-                        "--all",
-                        container,
-                        "KILL",
-                        accept_failure=True,
-                    )
-                    await _tool(
-                        bundle.engine, *root, "delete", "--force", container, accept_failure=True
-                    )
-                    if any(bundle.state.iterdir()):
-                        raise Refused("oci_cleanup_required")
+                    await stop_container(runtime.engine, bundle.state, container)
     except (OSError, ValueError, KeyError, TypeError):
         raise Refused("oci_execution_failed") from None

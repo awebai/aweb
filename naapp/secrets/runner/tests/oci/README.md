@@ -143,3 +143,34 @@ private tree with `oci_cleanup_required` for reconciliation.
 This library is not yet called by the production worker. Operator runtime
 configuration, stale restart cleanup and the dedicated-user S19 acceptance must
 be integrated and reviewed before lifting that guard.
+
+## Restart recovery
+
+`recover(runtime)` takes an exclusive nonblocking lock on the checked tmpfs
+workspace directory inode. Preparation holds that same lock through the whole
+run and cleanup, so another worker or recovery attempt refuses with
+`runner_busy`. The descriptor is close-on-exec and releases on worker death.
+No lock file or release authority is added.
+
+Each exclusive job directory has a 0600 atomic `run.json` cleanup marker. It
+contains only a format version, the originally checked engine path/hash, a
+completed-preparation flag, and the random local container name. It contains no
+credential, job/parameter body, assignment or dispatch state. The container name
+is bound before opening credentials or starting a runtime. Recovery checks that
+marker against the original pinned engine, stops the container namespace,
+deletes runtime state, then removes the private tree. It never opens another
+value, runs a job again, fabricates a report or changes the identity/journal.
+The real SIGKILL tests retain an accepted SQLite dispatch and prove it still
+refuses replay after recovery.
+
+Unknown entries, nonempty unmarked directories, symbolic links, changed engine
+bindings and incomplete preparation return `oci_recovery_required` and retain
+state. An empty directory from the initial mkdir can be removed safely. A
+SIGKILL during unpacking may leave a public-data tool alive; without proof that
+preparation completed, recovery does not guess a PID or delete under it. The
+operator must stop/reconcile that tool before removing its quarantined private
+workspace. Never delete journal state as a recovery step.
+
+This recovery library is not yet wired into startup. Operator configuration,
+worker composition, independent deadline enforcement after a worker hard crash,
+and dedicated-user S19 acceptance remain activation requirements.
