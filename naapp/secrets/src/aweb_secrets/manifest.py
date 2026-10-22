@@ -37,6 +37,7 @@ MANIFEST: dict[str, Any] = {
         {"kid": "secrets:hook-event-1", "purposes": ["hook-event"]},
         {"kid": "secrets:hook-delivery-1", "purposes": ["hook-delivery"]},
         {"kid": "secrets:grant-read-1", "purposes": ["app-grant-read"]},
+        {"kid": "secrets:hook-resolve-1", "purposes": ["hook-resolve"]},
     ],
     "hooks": {
         "registration_version": 1,

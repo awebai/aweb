@@ -28,16 +28,18 @@ The manifest's authoring source is `src/aweb_secrets/manifest.py`. The committed
 `app.id` from `SECRETS_APP_ID`, the origin from `SECRETS_PUBLIC_ORIGIN`, and each
 `app_keys` entry's `did_key` from `SECRETS_APP_KEY_FILES`. The template fixes each
 kid and its purposes; it contains no signing key or deployment did:key. Configure
-all three keys with the shared K0 key-file format: a 32-byte Ed25519 seed as
+all four keys with the shared K0 key-file format: a 32-byte Ed25519 seed as
 64 hex characters with an optional trailing newline. Files must be regular
 files and must not be group- or world-writable; symlinks to regular files are
 supported. Read permissions are left to the deployment platform. For example:
 
 ```text
-SECRETS_APP_KEY_FILES={"secrets:hook-event-1":"/run/keys/hook-event","secrets:hook-delivery-1":"/run/keys/hook-delivery","secrets:grant-read-1":"/run/keys/grant-read"}
+SECRETS_APP_KEY_FILES={"secrets:hook-event-1":"/run/keys/hook-event","secrets:hook-delivery-1":"/run/keys/hook-delivery","secrets:grant-read-1":"/run/keys/grant-read","secrets:hook-resolve-1":"/run/keys/hook-resolve"}
 ```
 
-The keys sign hook content, hook delivery and team grant reads respectively.
+The keys sign hook content, hook delivery, team grant reads and hook resolution
+respectively. Hook resolution uses its dedicated purpose through the shared
+runtime resolver; an event or delivery key cannot substitute for it.
 A declared key without a file, an undeclared configured kid or an invalid key
 stops startup. Hook production still needs owner activation; declaring it grants
 no authority. Every tool requires team-auth. `propose-change` and `activity` are
