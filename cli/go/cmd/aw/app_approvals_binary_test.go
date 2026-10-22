@@ -89,6 +89,8 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 			IdentityHome            string   `json:"identity_home"`
 			ExistingGrantsUnchanged bool     `json:"existing_grants_unchanged"`
 			GrantRefreshCommand     []string `json:"grant_refresh_command"`
+			GrantCheckError         string   `json:"grant_check_error"`
+			GrantRestartCommand     []string `json:"grant_restart_command"`
 		}
 		if err := json.Unmarshal(installed, &receipt); err != nil || receipt.IdentityHome != home || !receipt.ExistingGrantsUnchanged {
 			t.Fatalf("install receipt: %s (%v)", installed, err)
@@ -103,6 +105,9 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 		custody := slices.Index(receipt.GrantRefreshCommand, "--custody-socket")
 		if custody < 0 || custody+1 >= len(receipt.GrantRefreshCommand) || receipt.GrantRefreshCommand[custody+1] != "auto" {
 			t.Fatalf("replacement must select resident custody: %v", receipt.GrantRefreshCommand)
+		}
+		if receipt.GrantCheckError != "unavailable" || len(receipt.GrantRestartCommand) == 0 {
+			t.Fatalf("offline install must report unknown grant status and retain recovery: %s", installed)
 		}
 		cat, err := loadAppApprovals(home)
 		if err != nil || cat.Apps["testapp"] != server.URL {
