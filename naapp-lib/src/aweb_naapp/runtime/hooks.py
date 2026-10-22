@@ -44,7 +44,8 @@ def _app_productions(manifest: Manifest) -> tuple[dict[str, Any], ...]:
     return tuple(
         production
         for production in (manifest.hooks or {}).get("productions", ())
-        if production["catalog"] == (catalog.id, catalog.version)
+        if production["catalog_id"] == catalog.id
+        and production["catalog_version"] == catalog.version
         and production["hook"] in catalog.hooks
         and "app" in catalog.hooks[production["hook"]].producer_kinds
     )
