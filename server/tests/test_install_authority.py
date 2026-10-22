@@ -56,16 +56,16 @@ class Policy:
                 return False
             subject_id = subject.principal_id
         return bool(await tx.fetch_value(
-            "SELECT EXISTS (SELECT 1 FROM test_install_admins WHERE team_id = $1 AND subject_id = $2)",
+            "SELECT EXISTS (SELECT 1 FROM aweb.test_install_admins WHERE team_id = $1 AND subject_id = $2)",
             subject.team_id, subject_id,
         ))
 
 
 @pytest_asyncio.fixture
 async def db(test_db_factory):
-    db = await test_db_factory.create_db(suffix="install_authority")
-    await db.execute("CREATE TABLE test_install_admins (team_id TEXT NOT NULL, subject_id TEXT NOT NULL)")
-    await db.execute("CREATE TABLE team_app_install_admins (team_id TEXT, principal_did TEXT, role TEXT, revoked_at TIMESTAMPTZ)")
+    db = await test_db_factory.create_db(suffix="install_authority", schema="aweb")
+    await db.execute("CREATE TABLE aweb.test_install_admins (team_id TEXT NOT NULL, subject_id TEXT NOT NULL)")
+    await db.execute("CREATE TABLE aweb.team_app_install_admins (team_id TEXT, principal_did TEXT, role TEXT, revoked_at TIMESTAMPTZ)")
     return db
 
 
@@ -86,14 +86,14 @@ async def test_absent_policy_and_role_claims_never_grant_admin(db):
 async def test_current_authoritative_policy_is_read_inside_each_transaction(db):
     policy = Policy()
     req = request(policy=policy)
-    await db.execute("INSERT INTO test_install_admins VALUES ($1, $2)", TEAM, "did:key:alice")
+    await db.execute("INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, "did:key:alice")
     await require(db, req, identity())
     subject, action, app_id = policy.seen[-1]
     assert subject == CertificateInstallAdminSubject(
         team_id=TEAM, agent_id=ACTOR, certificate_id="cert-1", did_key="did:key:alice",
     )
     assert (action, app_id) == ("apps.install", "fixture")
-    await db.execute("DELETE FROM test_install_admins")
+    await db.execute("DELETE FROM aweb.test_install_admins")
     with pytest.raises(HTTPException) as exc:
         await require(db, req, identity())
     assert (exc.value.status_code, exc.value.detail["code"]) == (403, "admin_required")
@@ -102,7 +102,7 @@ async def test_current_authoritative_policy_is_read_inside_each_transaction(db):
 
 async def test_another_team_cannot_borrow_a_policy_delegation(db):
     policy = Policy()
-    await db.execute("INSERT INTO test_install_admins VALUES ($1, $2)", TEAM, "did:key:alice")
+    await db.execute("INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, "did:key:alice")
     with pytest.raises(HTTPException) as exc:
         await require(db, request(policy=policy), identity(team_id="other:example.com"))
     assert exc.value.status_code == 404
@@ -111,7 +111,7 @@ async def test_another_team_cannot_borrow_a_policy_delegation(db):
 
 async def test_identity_grants_cannot_acquire_install_admin_authority(db):
     policy = Policy()
-    await db.execute("INSERT INTO test_install_admins VALUES ($1, $2)", TEAM, "did:key:alice")
+    await db.execute("INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, "did:key:alice")
     caller = identity(grant=GrantContext(
         grant_id=str(uuid4()), session_did_key="did:key:session", issuing_certificate_id="cert-1",
         scopes=("coord.write",), expires_at=datetime.now(UTC) + timedelta(hours=1),
@@ -138,7 +138,7 @@ async def test_verified_internal_subject_reaches_host_policy(db, monkeypatch, pr
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SECRET)
     policy = Policy()
-    await db.execute("INSERT INTO test_install_admins VALUES ($1, $2)", TEAM, PRINCIPAL)
+    await db.execute("INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, PRINCIPAL)
     req = request(headers=proxy_headers(principal_type), policy=policy)
     if principal_type == "u":
         await require(db, req)

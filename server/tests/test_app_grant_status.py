@@ -286,13 +286,17 @@ async def vector_installed(aweb_cloud_db, monkeypatch):
     await _register_app_key(
         db, did_key=VECTOR["did_key"], kid=case["payload"]["kid"], purposes=[APP_GRANT_READ, HOOK_RESOLVE]
     )
-    # The hook-resolve case reads registrations, which needs an active
-    # production of that hook; owner activation is not built, so the row is
-    # given the values a real activation must satisfy.
+    # Seed a production under the actual installation pin for the hook-resolve
+    # case. Owner-act activation is covered separately.
+    current = await db.fetch_one(
+        "SELECT digest, installation_id, generation FROM {{tables.team_app_installs}} "
+        "WHERE team_id = $1 AND app_id = 'folio'", TEAM_ID,
+    )
+    assert current is not None
     async with db.transaction() as tx:
         [production] = await write_pending_bindings(
-            tx, team_id=TEAM_ID, app_id="folio", origin="https://folio.aweb.ai", digest=DIGEST,
-            installation_id="inst-folio", generation=1,
+            tx, team_id=TEAM_ID, app_id="folio", origin="https://folio.aweb.ai", digest=current["digest"],
+            installation_id=current["installation_id"], generation=current["generation"],
             declarations=[
                 HookBindingDeclaration(
                     kind=PRODUCTION, catalog_id="aweb.hooks", catalog_version=1, hook="post-secret-use-hook"
