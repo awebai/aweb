@@ -16,6 +16,6 @@ COPY --from=values src/ /source/naapp/secrets/values/src/
 COPY --from=naapp pyproject.toml README.md /source/naapp-lib/
 COPY --from=naapp src/ /source/naapp-lib/src/
 WORKDIR /source/naapp/secrets/runner
-RUN /tools/bin/uv sync --locked --no-dev --python 3.12
+RUN /tools/bin/uv sync --locked --python 3.12
 ENV PATH=/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 USER 10000:10000

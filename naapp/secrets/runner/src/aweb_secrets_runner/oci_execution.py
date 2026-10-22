@@ -1,4 +1,4 @@
-"""Credential-bearing rootless OCI execution; not yet composed into the worker."""
+"""Credential-bearing rootless OCI execution with the shared bounded report path."""
 
 import asyncio
 import json
@@ -34,7 +34,7 @@ async def execute_oci(
     """Open only after public runtime checks, then stop/reap before private cleanup.
 
     The worker caller still owns service verification/durable journal acceptance.
-    This local function confers no authority, and the worker OCI guard stays closed.
+    This local function confers no service authority.
     """
     if any(not isinstance(item, CredentialInput) for item in credentials):
         raise Refused("credential_invalid")

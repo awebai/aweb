@@ -159,7 +159,7 @@ class OperatorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(Refused, "config_changed"):
             config.doctor(body["runner_ids"][0])
 
-    async def test_configured_runtime_preflight_does_not_lift_worker_oci_guard(self):
+    async def test_preflight_without_runtime_composition_still_refuses_execution(self):
         config, body = self.configured()
         config.doctor(body["runner_ids"][0])
         with self.assertRaisesRegex(Refused, "runner_runtime_unavailable"):

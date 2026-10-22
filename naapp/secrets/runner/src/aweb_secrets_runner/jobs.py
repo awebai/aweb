@@ -441,7 +441,7 @@ class RunnerConfig:
         )
         job = selected.definition
         # No credential is opened until every local pin, parameter and file
-        # check is complete. OCI stays closed until its image runtime exists.
+        # check is complete. This host-exec path never prepares an OCI job.
         executable = _checked_executable(job)
         return _open_job(selected, credentials, executable=executable)
 

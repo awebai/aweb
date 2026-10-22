@@ -10,6 +10,7 @@ from .execution import execute
 from .http import RunnerHTTP
 from .jobs import CredentialInput, RunnerConfig
 from .journal import Journal
+from .oci_prepare import RuncPreparation
 from .oci_recovery import recover
 from .protocol import canonical, timestamp, verify_assignment
 from .state import Identity, IdentityStore
@@ -19,7 +20,13 @@ class Worker:
     """One sequential worker under the operator command's private process lock."""
 
     def __init__(
-        self, identity: Identity, config: RunnerConfig, journal: Journal, client: RunnerHTTP
+        self,
+        identity: Identity,
+        config: RunnerConfig,
+        journal: Journal,
+        client: RunnerHTTP,
+        *,
+        runtime: RuncPreparation | None = None,
     ):
         if identity.runner_id is None or identity.service_kid is None:
             raise Refused("runner_unregistered")
@@ -29,6 +36,7 @@ class Worker:
         self._config = config
         self._journal = journal
         self._client = client
+        self._runtime = runtime
 
     async def _flush(self) -> None:
         for result in self._journal.pending_results():
@@ -77,6 +85,7 @@ class Worker:
             credentials=credentials,
             expires_at=timestamp(assignment["expires_at"]).timestamp(),
             started=started,
+            runtime=self._runtime,
         )
         # Only sanitized output is durable. Canonicalize exactly once, before
         # the first send; subsequent attempts use the saved bytes unchanged.
@@ -128,7 +137,7 @@ async def run(config_file: Path, state_dir: Path, *, ca_file: Path | None = None
                 # report/claim. Never rearm the independent acceptance journal.
                 await recover(runtime)
             async with RunnerHTTP(identity, ca_file=ca_file) as client:
-                await Worker(identity, config, journal, client).serve()
+                await Worker(identity, config, journal, client, runtime=runtime).serve()
         except asyncio.CancelledError:
             if terminated:
                 return 143

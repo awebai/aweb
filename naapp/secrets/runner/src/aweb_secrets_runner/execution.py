@@ -13,6 +13,7 @@ from aweb_secrets_values.credential_shapes import has_credential_shape
 
 from .errors import Refused
 from .jobs import CredentialInput, PreparedJob, RunnerConfig
+from .oci_prepare import RuncPreparation
 
 
 @dataclass(repr=False)
@@ -157,13 +158,37 @@ async def execute(
     credentials: list[CredentialInput],
     expires_at: float,
     started: Callable[[int], Awaitable[None]] | None = None,
+    runtime: RuncPreparation | None = None,
 ) -> dict[str, Any]:
     """Run once after the caller's durable replay acceptance, returning safe fields.
 
-    The caller owns assignment verification and the journal. OCI execution is
-    refused until its pinned-image runtime is composed; it never falls back to
-    a host executable.
+    The caller owns assignment verification and the journal. OCI requires an
+    explicitly composed local runtime; it never falls back to a host executable.
     """
+    if runtime is not None:
+        if any(not isinstance(item, CredentialInput) for item in credentials):
+            raise Refused("credential_invalid")
+        selected = config.inputs(
+            job_id=job_id,
+            digest=digest,
+            runner_id=runner_id,
+            params=params,
+            credential_refs=tuple(item.secret_ref for item in credentials),
+        )
+        if selected.definition["kind"] == "oci":
+            from .oci_execution import execute_oci
+
+            return await execute_oci(
+                runtime,
+                config,
+                job_id=job_id,
+                digest=digest,
+                runner_id=runner_id,
+                params=params,
+                credentials=credentials,
+                expires_at=expires_at,
+                started=started,
+            )
     job = config.prepare(
         job_id=job_id, digest=digest, runner_id=runner_id, params=params, credentials=credentials
     )

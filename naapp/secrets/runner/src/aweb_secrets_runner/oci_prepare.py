@@ -1,7 +1,6 @@
 """Daemonless OCI preparation before HPKE; no process execution authority.
 
-The worker still refuses OCI execution. This component owns only public-data
-unpacking and a transient template. Its consumer must stop/reap any later job
+This component owns only public-data unpacking and a transient template. Its consumer must stop/reap any later job
 and empty runtime state before releasing this context.
 """
 

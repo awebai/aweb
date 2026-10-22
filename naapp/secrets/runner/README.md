@@ -6,10 +6,11 @@ uses its own signing and encryption keys; it is not an AWID team member.
 The implementation provides the client side of the published
 [S0 protocol](../../../docs/secrets-runner-protocol.md): signed requests,
 assignment verification, HPKE opening and a durable SQLite replay journal.
-The `register`, `doctor` and `run` commands support the fixed-selector exec path.
-The worker verifies service assignments, journals them before execution, and
-returns bounded sanitized reports. OCI runtime composition and separate-user
-end-to-end acceptance remain unfinished slices of S15b.
+The `register`, `doctor` and `run` commands support fixed-selector exec jobs and
+explicitly configured daemonless OCI jobs. The worker verifies service assignments,
+journals them before execution, and returns bounded sanitized reports. Customer
+activation still requires the dedicated-user S19 journey and server release/report
+integration proof on the release candidate.
 
 Run registration as the dedicated runner OS user:
 
@@ -97,7 +98,8 @@ The deadline includes descendant-held pipes; timeout or cancellation kills the
 process group and closes the runner's pipes. A delayed `started` report cannot
 extend that deadline. A trusted job can escape a Unix process group, so this is
 not a process sandbox. Use the required dedicated user/container deployment
-boundary. OCI jobs currently refuse rather than falling back to host execution.
+boundary. OCI jobs require the explicit pinned runtime described below and never
+fall back to host execution.
 If the runner is PID 1 in a container, use an init process, such as Docker's
 `--init` or `tini`, to reap orphaned descendants after process-group cleanup.
 The runner is not a child subreaper.
@@ -191,7 +193,7 @@ cannot establish exact environment capability before opening and refuses.
 A nonempty HOME supplied by the fixed job literal or a validated frozen parameter
 is preserved, including env-only strings beginning with `-`. This runtime-specific
 capability does not add a universal job/1 HOME requirement or rewrite a pin.
-Actual OCI runtime/mount/lifecycle composition remains guarded.
+OCI dispatch uses the same local checks and reviewed private runtime lifecycle.
 
 
 ### OCI operator configuration
@@ -229,7 +231,39 @@ content, parameters and exact environment capability are checked during the
 per-assignment preparation. Configured paths and pins are re-read through the
 same protected configuration; changing them requires an explicit worker restart.
 
-Production OCI execution remains guarded. Adding `runtime` enables local
-preflight and startup recovery, without activating OCI assignment execution.
-Worker composition and the real separate-user release journey remain required.
-Exec-only installations can omit `runtime` and keep their existing checks.
+Adding `runtime` composes local preflight, startup recovery and OCI assignment
+execution through the pinned runtime. The common worker still verifies and
+journals the service assignment first. Without a configured runtime, OCI refuses;
+exec-only installations can omit it and retain their existing checks. Deployment
+still requires the separate-user release journey and server-side activation gates.
+
+
+### Operator exits and recovery
+
+The worker prints a fixed refusal code, never a response or job body. Use a
+supervisor restart delay of at least one minute (for example `RestartSec=60s`),
+and alert on repeated refusals. A restart never makes an uncertain assignment safe
+to run again. `runner_unavailable` is retried internally with bounded backoff;
+other refusals stop the worker.
+
+| Exit / code | Operator action |
+| --- | --- |
+| `0` | Registration or preflight completed successfully. |
+| `2` / `runner_arguments_invalid` | Fix the command arguments. Registration codes belong on private stdin or the hidden prompt. |
+| `130` / `143` | SIGINT / SIGTERM stopped the worker. Restart with the same protected config, identity and journal. |
+| `1` / `runner_reconciliation_required`, `assignment_replayed` | Reconcile the original dispatch in the console before restarting. Keep the acceptance journal. |
+| `1` / `oci_recovery_required`, `oci_cleanup_required` | Stop and reconcile the original local launcher/container before removing only its stopped transient tree. Retained `job-*` trees under the configured workspace may contain sensitive config. This blocks the whole runner, including exec jobs. |
+| `1` / `runner_busy` | Check the existing worker/workspace owner. Do not delete identity, lock or journal state. |
+| `1` / `runtime_config_invalid`, `config_changed`, `file_pin_mismatch`, `oci_state_invalid`, `oci_image_invalid`, `oci_environment_unsupported`, `runner_runtime_unavailable` | Repair the operator-provisioned paths, permissions, memory storage or approved pins, then rerun `doctor`. Never inject runtime defaults or silently rewrite a job pin. |
+| `1` / `runner_unknown`, `runner_unregistered` | Check owner-side runner status. Registration/rotation needs the owner-issued code and the documented identity procedure. |
+| `1` / `params_invalid`, `credential_invalid`, `assignment_expired`, `job_not_allowed` | Check the original attempted job and local pin; reconcile that attempt before retrying new work. No exit report was fabricated. |
+| `1` / `state_permissions`, `journal_unavailable`, `journal_version_unsupported`, `identity_unavailable` | Restore the same UID, private state access and compatible runner installation. Preserve the journal and identity; do not reset or relabel them. |
+| `1` / `assignment_invalid`, `assignment_binding_mismatch`, `assignment_wrong_runner`, `runner_response_invalid` | Check the pinned service and original request with the service operator. Do not weaken verification or log the body. |
+| `1` / `job_start_failed`, `job_cleanup_failed`, `oci_prepare_failed`, `oci_execution_failed`, `oci_supervisor_failed` | Establish that the original local processes stopped, repair the runtime and reconcile the original attempt before new work. |
+| `1` / `runner_dispatch_unknown`, `runner_result_conflict` while flushing | Preserve the pending bytes and original dispatch for service-side reconciliation. Reports flush before claims, so this refusal blocks new work. There is no discard command; do not hand-edit SQLite or mark an unacknowledged result as acknowledged. |
+| `1` / another fixed refusal | Investigate the printed code against the original command/dispatch; preserve state and avoid a rapid restart loop. |
+
+List retained directory names only inside the configured private workspace; do
+not print or copy their contents. Empty runtime state is not evidence that a
+launcher stopped. Unknown, incomplete or engine-mismatched leftovers require
+operator reconciliation; startup never guesses PIDs or reruns the assignment.

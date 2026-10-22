@@ -1,9 +1,9 @@
 # Linux OCI prerequisites
 
 These local installed-runtime capability checks are separate from the S19
-operator launcher and release journey. They grant no execution authority, open no
-service credential, and do not lift the runner's OCI refusal. Test values are
-synthetic public strings. Normal host tests skip these checks; the explicit
+operator launcher and release journey. They use only local synthetic credentials
+and grant no server release authority. The focused worker cases compose TLS,
+signed assignments and native OCI with those same fixtures. Normal host tests skip these checks; the explicit
 Linux proof must run before any OCI integration is called complete.
 
 From the runner package directory:
@@ -55,8 +55,9 @@ startup failure. The preparation tests also consume real frozen RunnerConfig par
 HOME before any credential input exists, check runtime/unpacker hashes, remove
 implicit host binds and execute declared read-only mounts. They exercise tool
 cancellation and private cleanup, including mode-000 image directories and
-symlinks. Worker credential injection, job timeout/cancellation/restart cleanup
-and the separate-user journey remain required integration proofs. The Dockerfile pins its Debian base digest;
+symlinks. The worker cases below cover local credential injection and
+job timeout/cancellation/restart cleanup; the dedicated-user journey remains a
+separate required integration proof. The Dockerfile pins its Debian base digest;
 tooling packages can receive distro updates, so the capability checks must be
 repeated on the exact operator-pinned runtime before activation.
 
@@ -87,10 +88,9 @@ This is the OCI [image layout](https://github.com/opencontainers/image-spec/blob
 and [index ordering](https://github.com/opencontainers/image-spec/blob/main/image-index.md)
 contract, with no job or wire format change. Tests cover corrupt content, invalid
 sizes, wrong platforms, pinned ordering, nested indexes, mutable-tag poisoning,
-cache changes after staging and agent-writeable content. Actual worker runtime
-composition, runtime-binary pins, mounts, HOME capability before HPKE and lifecycle
-cleanup remain separate requirements. This staging module has no production
-caller yet and does not lift the OCI execution guard.
+cache changes after staging and agent-writeable content. The configured worker
+calls staging through public preparation, with tool/mount/HOME checks completed
+before credential opening.
 
 ## Public bundle preparation
 
@@ -112,9 +112,9 @@ and reaps before deletion. If internal runtime state remains, preparation
 refuses cleanup and retains it for the execution owner to stop and reconcile.
 The eventual execution owner must stop/reap before releasing this context.
 
-The production worker still refuses OCI. This component does not inject a
-credential, launch a job, clean stale restart state or grant execution authority.
-Those lifecycle and separate-user integration checks remain required.
+Public preparation itself injects no credential and grants no execution authority.
+The configured worker composes it with the following execution and recovery paths;
+the dedicated-user release journey remains required.
 
 ## Credential-bearing execution library
 
@@ -140,9 +140,9 @@ and inspect the private config plus the CLI's argv/environment. The cleanup
 commands use the same pinned engine. Failure to clear runtime state retains the
 private tree with `oci_cleanup_required` for reconciliation.
 
-This library is not yet called by the production worker. Operator runtime
-configuration, stale restart cleanup and the dedicated-user S19 acceptance must
-be integrated and reviewed before lifting that guard.
+The configured worker now calls this library after service verification and durable
+journal acceptance. Dedicated-user S19 and server release/report acceptance remain
+separate release gates.
 
 ## Restart recovery
 
@@ -181,8 +181,8 @@ handler, before constructing the outbound transport. The native startup cases
 observe the first real TCP connection, retained pending reports/replay protection,
 refusal without contact for uncertain/active state, and cleanup of a real crashed
 container. The observer does not complete TLS or provide assignment authority;
-existing worker TLS cases cover authenticated traffic. OCI assignment execution
-and dedicated-user S19 acceptance remain guarded.
+the focused worker cases below cover authenticated traffic. Dedicated-user S19
+acceptance remains a release gate.
 
 ## Independent job deadline
 
@@ -213,5 +213,25 @@ v2; older/unknown layouts refuse and are not relabelled or migrated.
 The parent's capture has 125 seconds of extra control/cleanup allowance for the
 existing two 60-second bounded runtime control commands. This is not an extra
 job budget: the independent watchdog receives and enforces the original timeout
-unchanged. A missing or changed interpreter pin refuses before HPKE. Production
-assignment execution and separate-user S19 acceptance remain guarded.
+unchanged. A missing or changed interpreter pin refuses before HPKE. The configured
+worker uses this same helper; dedicated-user S19 acceptance remains required.
+
+
+## Focused worker composition
+
+The proof image includes the existing locked test dependencies so the native
+worker tests reuse `test_registration`'s real TLS peer and `test_worker`'s signed
+assignment/report fixture. They add no alternate launcher, codec or server state
+machine. Run the named file with `SUITE_LOCK_FOCUSED=1` and the container setup
+above, replacing its final command with:
+
+```sh
+python3 -m pytest -q -p no:cacheprovider /runner/tests/oci/test_worker_oci.py
+```
+
+Set container `PYTHONPATH=/runner/src:/runner/tests:/runner/tests/oci` and
+`SUITE_LOCK_FOCUSED=1`. Cases cover real S0/HPKE opening, redacted durable reports,
+exact-byte retry before claim, retained host-exec behavior, missing runtime/slot/
+expiry refusals, the actual `run` command, TERM cleanup, and independent deadline
+plus startup cleanup/replay refusal after worker SIGKILL. These run as the local
+non-root test UID; they are not the S19 operator-provisioned separate-user journey.
