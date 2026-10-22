@@ -74,7 +74,8 @@ export function createPageRenderer({
   const cache = new Map(),
     queries = new Map(),
     decisionAttempts = new Map(),
-    links = new WeakMap();
+    links = new WeakMap(),
+    domains = new Set();
   const title = element("h1", null, "page-title");
   const actions = createActions({
     host,
@@ -107,6 +108,7 @@ export function createPageRenderer({
       for (const query of queries.values()) delete query.cursor;
     }
     root.lang = page?.locale || "en";
+    domains.clear();
     destinations.replaceChildren(element("h2", t.destinations));
     destinations.hidden = true;
     if (page?.page_format !== "aweb.page/1" || !Array.isArray(page.layout)) {
@@ -126,8 +128,7 @@ export function createPageRenderer({
       return;
     }
     title.textContent = page.title;
-    const domains = new Set(),
-      used = new Set(),
+    const used = new Set(),
       decisionWidgets = new Set();
     function rememberLink(url) {
       if (!domains.has(url.host)) {
@@ -327,6 +328,7 @@ export function createPageRenderer({
               t,
               query,
               actionButton,
+              pageLink,
               onRead: (bind) => read(bind),
               announce: (text) => {
                 announcements.textContent = text;
@@ -467,6 +469,7 @@ export function createPageRenderer({
       current = null;
       cache.clear();
       queries.clear();
+      domains.clear();
       root.replaceChildren();
       destinations.replaceChildren();
       destinations.hidden = true;

@@ -373,3 +373,13 @@ authority. The read-time server field supplies membership authority and survives
 decryption separately. Old servers lacking that field cannot establish this
 cross-team local receive proof and report `verification_stale` when the protected
 sender reference establishes a cross-team sender.
+
+## Negotiated human-channel definitions (P0)
+
+[Human channels contract v1](human-channels-contract-v1.md) defines the new closed
+DTOs, exact signed bytes, capability/refusal boundaries and public prepared-send/
+unit-of-work port. It adds no accepted endpoint or identity path in P0. Existing
+native mail/chat identity, current-key, recipient, first-contact and receiver-wide
+replay rules above remain binding. A valid bridge signer never authenticates an
+external subject as a native author; typed participation requires the explicitly
+negotiated session profile. Owner/controller authority is not native key custody.

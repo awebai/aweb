@@ -850,7 +850,7 @@ img { max-width: 100%; display: block; }
 
 /* ============================================================
    naapp component layer
-   Components emitted by the aweb-naapp chrome/reference renderers.
+   Components emitted by the aweb-naapp public surface renderers.
 
    Layer 1 (aweb.css) is vendored byte-for-byte from the ac site SOT. Keep this
    layer grouped by emitted component so design-system owners can later
@@ -871,6 +871,23 @@ img { max-width: 100%; display: block; }
 .footer-oss { color: var(--muted); font-size: var(--step--1); }
 .footer-oss a { color: var(--accent); text-decoration: none; }
 .footer-oss a:hover { text-decoration: underline; }
+
+/* Public cards follow the shared sans heading voice; monospace is for identifiers. */
+.card h3 { font-family: var(--font-sans); }
+
+/* Numbered instructions: one sequence with optional copyable commands. */
+.gs-steps { list-style: none; margin: var(--s5) 0 0; padding: 0; display: grid; gap: var(--s5); }
+.gs-step { display: grid; grid-template-columns: auto 1fr; gap: var(--s3); align-items: start; }
+.gs-step__n { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent); font: 700 0.95rem/1 var(--font-mono); }
+.gs-step__body { min-width: 0; }
+.gs-step__title { font: 650 var(--step-1)/1.2 var(--font-sans); margin: 0.25rem 0 0; letter-spacing: -0.01em; }
+.gs-step__what { color: var(--muted); margin: var(--s1) 0 var(--s2); max-width: 70ch; }
+.gs-step__what a, .gs-step__what a code { color: var(--ink); font-weight: 550; text-decoration: underline; text-underline-offset: 2px; }
+.gs-step__what code { font: 500 0.88em/1.4 var(--font-mono); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 5px; padding: 0.08em 0.34em; }
+.gs-step .cmd { margin-top: var(--s2); }
+@media (max-width: 520px) { .gs-step { grid-template-columns: 1fr; gap: var(--s2); } }
 
 /* ---- reference page (engineering API reference) ---- */
 .ref-page-header { padding: var(--s5) 0 var(--s4); border-bottom: 1px solid var(--line-strong); }

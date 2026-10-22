@@ -14,11 +14,11 @@ from awid.did import did_from_public_key
 from nacl.signing import SigningKey
 from pydantic_settings import SettingsConfigDict
 
-from aweb_naapp.manifest import ManifestError, canonical_bytes, template_key_entries
+from aweb_naapp.manifest import ManifestError, canonical_bytes, load_manifest, template_key_entries
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.settings import NaappSettings
 
-from ..test_manifest_v2_vectors import V2, _manifest_bytes
+from ..test_manifest_v2_vectors import RESERVED, V2, _manifest_bytes
 
 # Valid manifests whose tool routes overlap: the runtime refuses them, because
 # each request must authorize as exactly one tool.
@@ -78,7 +78,7 @@ def _runtime(tmp_path: Path, document: dict[str, Any], files: dict[str, Path]) -
     manifest_path.write_bytes(canonical_bytes(document))
     migrations = tmp_path / "migrations"
     migrations.mkdir()
-    return NaappRuntime(
+    runtime = NaappRuntime(
         ExampleSettings(
             _env_file=None, app_id=document["app"]["id"], public_origin=document["app"]["origin"],
             app_key_files=files,
@@ -87,6 +87,10 @@ def _runtime(tmp_path: Path, document: dict[str, Any], files: dict[str, Path]) -
         migrations_path=migrations,
         manifest_path=manifest_path,
     )
+    # The vector supplies the installing consumer's root namespace; the runtime
+    # itself owns no CLI root commands. Apply that same input to the filled bytes.
+    load_manifest(runtime.manifest_bytes, reserved_names=RESERVED)
+    return runtime
 
 
 def _deployment_can_configure(data: bytes) -> bool:

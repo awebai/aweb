@@ -322,6 +322,101 @@ POSITIVE.append(
 )
 
 
+ONEPASSWORD_CHANGE = envelope(
+    "chg_7a06",
+    {"via": "console", "scope": "secrets.owner.p1", "subject": "apr_31c9"},
+    [
+        {
+            "kind": "backend_credential",
+            "op": "create",
+            "ref": "onepassword",
+            "after": {
+                "v": 1,
+                "backend": "onepassword",
+                "credential_id": "bkc_onepassword",
+                "version": 3,
+            },
+        },
+        {
+            "kind": "onepassword_binding",
+            "op": "create",
+            "ref": "sec_19ab42",
+            "after": {
+                "v": 1,
+                "secret_id": "sec_19ab42",
+                "version": 4,
+                "credential_version": 3,
+                "vault_id": "a" * 26,
+                "item_id": "b" * 26,
+                "fields": {"value": "credential"},
+                "item_version": 7,
+            },
+        },
+    ],
+    "Bind a read-only vault reference without copying its value",
+)
+POSITIVE.append(("console-onepassword-binding", ONEPASSWORD_CHANGE))
+
+POSITIVE.append(
+    (
+        "console-runner-record",
+        envelope(
+            "chg_7a07",
+            ONEPASSWORD_CHANGE["drafter"],
+            [
+                {
+                    "kind": "runner",
+                    "op": "create",
+                    "ref": "rnr_aaaaaaaaaaaaaaaaaaaaaa",
+                    "after": {
+                        "v": 1,
+                        "runner_id": "rnr_aaaaaaaaaaaaaaaaaaaaaa",
+                        "label": "Build runner",
+                        "allowed_jobs": ["nightly-backup"],
+                    },
+                }
+            ],
+            "Register the owner-managed runner",
+        ),
+    )
+)
+
+
+POSITIVE.append(
+    (
+        "console-job-record",
+        envelope(
+            "chg_7a08",
+            ONEPASSWORD_CHANGE["drafter"],
+            [
+                {
+                    "kind": "job",
+                    "op": "create",
+                    "ref": "nightly-backup",
+                    "after": {
+                        "v": 1,
+                        "job_id": "nightly-backup",
+                        "runner_ids": ["rnr_aaaaaaaaaaaaaaaaaaaaaa"],
+                        "kind": "exec",
+                        "exec": {"path": "/usr/local/bin/check", "sha256": "c" * 64, "files": []},
+                        "oci": None,
+                        "argv": ["--check"],
+                        "env": {},
+                        "cwd": "/srv/check",
+                        "timeout_s": 30,
+                        "output": {"max_bytes": 4096, "projection": ["/exit_code"]},
+                        "params": {},
+                        "credentials": [],
+                        "allow_durable": False,
+                    },
+                }
+            ],
+            "Draft the owner-managed job shape without enabling execution",
+        ),
+    )
+)
+
+
 def b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -511,6 +606,27 @@ refused_records = [
     ),
 ]
 
+
+refused_onepassword = []
+for name, mutate in [
+    ("onepassword-member-drafter", setitem(["drafter"], MEMBER)),
+    ("onepassword-credential-update", setitem(["changes", 0, "op"], "update")),
+    ("onepassword-binding-update", setitem(["changes", 1, "op"], "update")),
+    (
+        "onepassword-private-id-is-secret",
+        setitem(["changes", 0, "after", "credential_id"], "sec_19ab42"),
+    ),
+    ("onepassword-value-hash", setitem(["changes", 0, "after", "value_sha256"], "0" * 64)),
+    (
+        "onepassword-fields-mixed-families",
+        setitem(["changes", 1, "after", "fields"], {"value": "field", "password": "other"}),
+    ),
+    ("onepassword-item-version-zero", setitem(["changes", 1, "after", "item_version"], 0)),
+]:
+    altered = copy.deepcopy(ONEPASSWORD_CHANGE)
+    mutate(altered)
+    refused_onepassword.append((name, json.dumps(altered)))
+
 # Derived operation/1 schemas and pins are frozen before the broker's derived
 # paths are enabled. A well-formed issuer remains explicitly unavailable.
 grant_template = records["changes"][3]["after"]
@@ -655,6 +771,10 @@ negatives = (
         for name, raw in refused_records
     ]
     + [
+        {"name": name, "of": "console-onepassword-binding", "raw_json": raw, "expected": "refused"}
+        for name, raw in refused_onepassword
+    ]
+    + [
         {
             "name": "change-type-as-prefix",
             "of": "console-value-and-owner-role",
@@ -758,8 +878,10 @@ vector = {
         "strings. A secret, destination, operation, grant, grant template or policy after is that "
         'record v1, checked whole; a policy is referenced by the SHA-256 of "aweb.secrets.policy/1\\n" '
         "|| canonical_json(after without v), and an operation by operation_id and the SHA-256 of "
-        '"aweb.secrets.operation/1\\n" || canonical_json(after without v). The after shapes of job '
-        "and runner are added by S15; until then those kinds are refused. Identifiers are "
+        '"aweb.secrets.operation/1\\n" || canonical_json(after without v). Job and runner have '
+        "their own registered record shapes; shape acceptance does not enable job applicability. "
+        "Backend credential and 1Password binding versions are console-only projections; "
+        "syntax alone never activates either backend. Identifiers are "
         "fixtures; DIDs are "
         "derived from fixed seeds."
     ),

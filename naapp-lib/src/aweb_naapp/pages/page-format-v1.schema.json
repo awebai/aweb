@@ -706,7 +706,8 @@
                       "date",
                       "number",
                       "money_minor",
-                      "status"
+                      "status",
+                      "url"
                     ]
                   }
                 },

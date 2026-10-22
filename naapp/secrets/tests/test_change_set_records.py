@@ -230,6 +230,7 @@ async def test_an_internal_destination_drafted_while_allowed_is_refused_once_dis
             passkeys=world.passkeys,
             directory=world.directory,
             custody=world.custody,
+            containment=world.containment,
             draft_limit=DraftLimit(count=2, window=timedelta(hours=1)),
             internal_destinations=InternalDestinations.ALLOWED,
         ),

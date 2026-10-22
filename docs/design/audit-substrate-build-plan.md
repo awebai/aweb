@@ -95,7 +95,7 @@ which hooks use channel `hooks`.
 | K3a | Producer: enqueue, gate, transport, core resolver interface | `naapp-lib/src/aweb_naapp/hooks/producer.py`, `transport.py` | - **Enqueue** builds and signs the envelope inside the caller's transaction. It mints `event_id` once and assigns `producer.seq` through `next_sequence` scoped `(producer, team, hook)`.<br>- **Audit-critical gate:** an audit-critical enqueue refuses with `audit_target_unavailable` unless a view no older than 60 s holds a registration with `active_from <= occurred_at`. A narrowing governance act is never refused.<br>- **Resolver interface:** the drain takes a resolver that materializes one delivery per eligible registration and leaves the event pending when its view is stale. Core supplies its in-process resolver (S2); K3b supplies the app producers' one.<br>- **Transport** signs `hook-delivery` per request and sends to the stored endpoint (Target meta) after re-checking the binding (`Cancelled` if revoked).<br>- **Egress** follows the shared egress guard: HTTPS only and no redirects. A hosted deployment disables private and internal destinations at deploy level, whatever an owner configures (the same rule as secrets); allowing them is only a self-hosted operator's configuration.<br>- **Outcomes:** 2xx maps to delivered or duplicate with the receipt kept; 409 maps to conflict; authorization or schema rejection retries in bounded fashion and then ends rejected; network errors and 5xx are never dropped.<br>- **Faults:** an audit-critical event whose deliveries all end cancelled or rejected is reported as a fault.<br>- **Tests:** a drain crash on real Postgres, revocation between materialization and send, and a stale view keeping the event pending. | K1; aweb-acgh.6 `channel` addition; the shared egress guard (secrets lane, decision 12), which must also be importable without the runtime extra | aweb-expert | R+A |
 | K3b | App-producer resolver | `naapp-lib/src/aweb_naapp/hooks/resolver.py` | - **Resolution:** registrations come from acgh.7's `HookResolver`, with the ≤ 60 s fail-closed cache.<br>- **Gate input:** the audit-critical gate reads this resolver's view.<br>- **Test:** against a real core server with an activated registration, an expired view refuses and a revoked binding drops out within the bound. | K3a; acgh.7 G1-d (which depends on S1) | aweb-expert | R+A |
 | K5 | Owner-act evidence in the approval primitive | aweb-acgh.10 (already on the board) | - The `OwnerActEvidence` placeholder is replaced with K2's `VerifiedOwnerAct`, and secrets bootstrap uses it.<br>- **Call sites:** the designation calls `OwnerActVerifier.prepare` before its transaction and `consume_in` inside the transaction that records the designation, so the act is single-use and no registry read holds that transaction's locks. `role` is the approver scope, and `contact_sha256` is the enrolment contact's hash. | K2; aweb-acgh.4 | aweb-expert | R+A |
-| K4 | `post-manifest-command-hook` firing | `naapp-lib/src/aweb_naapp/runtime/` admission middleware, configured per app | - **What fires:** every admitted mutation tool call and every attributable refusal. Reads fire only for the production's `reads`.<br>- **Precedence:** a tool whose effect a specific hook covers (declared per tool) fires nothing here, so one effect never produces two events.<br>- **Payload (decision 70):** `request_sha256` is the producer-keyed HMAC-SHA-256 specified in docs/hook-events.md, with no parameter values or concrete path/query in event fields. Tests distinguish it from plain SHA-256, cover key and installation-context separation, missing/malformed key refusal, rotation with byte-identical outbox retry, and a credential-shaped parameter or path. The length-framed request binds method, external raw path+query, received content-type values and exact pre-injection body bytes; changing any component changes the MAC, including raw-body mode. An attributable refusal requires the complete bounded body; early/oversize refusals without it emit no manifest-command hook, with tests for both cases.<br>- **Runtime producer (decision 70):** K4 owns the hook-event key, `ServerProducer.app` per installation and the hooks drain with `HookTransport`, consuming `runtime.hook_resolver()` from decision 69.<br>- **Routing** uses B1's declared-tool route mapping, so firing and admission resolve the same tool.<br>- **Sequence:** code waits for aweb-acgh.23 and D1 C3 on main; the commitment design delta is reviewed first. | K3b; aweb-acgh.3 (B1); aweb-acgh.23; D1 C3 (aweb-acgg.9); decision-69 runtime resolver | aweb-expert | R+A |
+| K4 | `post-manifest-command-hook` firing | `naapp-lib/src/aweb_naapp/runtime/` admission middleware, configured per app | - **What fires:** every admitted mutation tool call and every attributable refusal. Reads fire only for the production's `reads`.<br>- **Precedence:** a tool whose effect a specific hook covers (declared per tool) fires nothing here, so one effect never produces two events.<br>- **Payload (decision 70):** `request_sha256` is the producer-keyed HMAC-SHA-256 specified in docs/hook-events.md, with no parameter values or concrete path/query in event fields. Tests distinguish it from plain SHA-256, cover key and installation-context separation, missing/malformed key refusal, rotation with byte-identical outbox retry, and a credential-shaped parameter or path. The length-framed request binds method, external raw path+query, received content-type values and exact pre-injection body bytes; changing any component changes the MAC, including raw-body mode. An attributable refusal requires the complete bounded body; early/oversize refusals without it emit no manifest-command hook, with tests for both cases.<br>- **Runtime producer (decision 70):** K4 owns the hook-event key, `ServerProducer.app` per installation and the hooks drain with `HookTransport`, consuming `runtime.hook_resolver()` from decision 69.<br>- **Routing** uses B1's declared-tool route mapping, so firing and admission resolve the same tool.<br>- **Sequence:** decision 76 splits the independent framing/HMAC/key-loader helper into aweb-acgh.16.8.1, built now. Runtime attachment waits for aweb-acgh.23, D1 C3 and the decision-69 resolver on main. | K3b; aweb-acgh.3 (B1); aweb-acgh.23; D1 C3 (aweb-acgg.9); decision-69 runtime resolver | aweb-expert | R+A |
 | P1 | Publish `aweb-naapp` as a release artifact | `naapp-lib/pyproject.toml` version policy; the release skill's artifact list | - `aweb-naapp` ships as a versioned package, so the core server can declare `aweb-naapp[hooks]>=<floor>` the way it declares `awid-service`.<br>- The release dry run builds and installs the server with that dependency from the published artifacts.<br>- **Who tags:** the coordinator sends the reviewed SHA to the release owner, who tags and publishes `aweb-naapp` through the build-once release lane. No implementation seat cuts the tag. | K0, K1, K3a | aweb-protocol-expert (package and release-list change) | R |
 
 ### Decision 73: secret-use contract re-freeze and S13 dependency
@@ -121,6 +121,51 @@ when the corresponding bytes are unavailable. Child/value/grant/result/outbox
 commit together; rollback and a lost recording fence emit no child pair.
 K4 supplies the generic framing/key helper once; S13 consumes it. No live
 producer is enabled before kit, ingest, resolution and owner activation.
+
+### Decision 84: retained passkey proof (aweb-acgh.39)
+
+The shared contract/vectors preserve secrets §10.4's independent public-key
+check. The held summary-HMAC draft is superseded: approval_evidence_sha256 is
+SHA-256 of length-framed exact proof, key, challenge preimage and frozen
+verification context, with the B2 covered request bound transitively by its
+existing hash. No rotating commitment key is needed. Vector authority is
+`docs/vectors/passkey-evidence-v1.json`. Review is R+A, with B3, secrets-design,
+S13 and S14 fit checks before implementation.
+
+Juan assigns B3 the retention and sole canonical helper after acceptance.
+Thread scope, consumed challenge/preimage and exact StoredRequest.canonical
+bytes into verification. Capture raw assertion/key/context atomically with
+successful counter CAS/evidence insertion; an ordered migration adds retention.
+S13/S14 consume the reviewed helper only. Tests must distinguish trusted-key
+verification from an evidence lookup, preserve client-data bytes and the
+challenge's null task-answer spelling, verify request/policy/installation
+bindings, reject substituted valid proof, and recompute after rotation without
+a retired secret. Counters/timestamps/authority history must not be overstated
+as signed facts. Lifecycle deletion limits proof retrieval. The byte-vector
+reader uses real assertions; real B3 transaction/persistence/helper proofs
+remain its implementation responsibility.
+
+No actor field/mode or catalog wire shape is added. Console governance uses
+the identity-free system actor, retaining distinct authorizing and affected
+subjects; secret-use keeps its requesting-member actor. Audit target/delivery
+availability still never gates narrowing.
+
+### Decision 76: independent K4 helper (aweb-acgh.16.8.1)
+
+The generic helper is `aweb_naapp.hooks.commitment`, shared by K4 and S13.
+It provides `CommitmentContext`, complete inbound `RequestBytes`, purpose-tagged
+`CommitmentKey.request`/`.params`, and `load_commitment_key` through the common
+key-file reader. It imports no runtime, reads no HTTP stream and performs no
+upstream rendering. The caller supplies authoritative context and complete
+bounded bytes. Parameter bytes come from the caller's existing validated typed
+canonical-JSON path under B2's value rules, with no B2 prefix/wrapper; the
+helper does not introduce a second parameter codec.
+
+This helper is built and reviewed independently (R+A) and can land through the
+naapp train without waiting for runtime attachment. Runtime key configuration,
+MAC/context persistence, rotation/destruction and authorization-path wiring
+remain K4/S13 obligations. K4's attachment still waits for acgh.23, C3 and the
+runtime resolver. The helper's exact ACKed SHA is handed to S13 for reuse.
 
 ## Phase 3: core server
 
@@ -175,6 +220,25 @@ item, that task is cited. X4 and X5 are operations tasks.
 | X4 | Run the hosted logs installation: its own origin and key custody, the decision-16 retention default, an evidenced backup-expiry deadline with tombstone reapplication on restore, and inbound reachability for producers. | aweb-acgh.12 | L1–L5 |
 | X5 | Core hook producer key configuration and rotation, with retired keys kept listed. Also the same-operator AWID read credential for the M3 observer, the drain worker in the deployed server, and the operator-disclosed delivery horizon. | aweb-acgh.13 | S2, S4, P1 |
 | X6 | Publish and backfill `aweb.team-server/1` records for every team whose controller key the deployment holds, before any naapp depends on discovery (decision 3). | D1 L6, aweb-acgg.31 | acgh.7 G1-a |
+
+## Decision 92: observed backend versions
+
+The shared catalog maps a successful validated backend observation to
+`post-governance-hook` / `resource.version_observed`, non-widening (`narrowing`)
+with exclusive `backend_observation` authority. Its refs name the scoped secret
+and old/new opaque local versions. Invalid shape or missing/deleted references
+activate nothing: pre-S3 use refusals carry `secret_value_invalid` or
+`custody_unavailable`; after `dispatching` commits, a final reread failure is
+`not_sent`, without a refusal code. See the normative
+[observed-version contract](../hook-events.md#observed-backend-versions-decision-92).
+
+M1/M2/S13 retain implementation ownership: prove immutable reference/shape,
+monotonic version/CAS and stale-no-event behavior, complete prelocks, old approval
+and token-cache invalidation, fresh next-use policy, system attribution and
+transition/outbox atomic rollback. Target/delivery unavailability never gates
+the non-widening transition; storage failure still refuses the use. Shared
+codec/ingest support must precede emission. Contract vectors and focused codec
+checks do not substitute for these producer and end-to-end release proofs.
 
 ## Cross-lane dependencies
 

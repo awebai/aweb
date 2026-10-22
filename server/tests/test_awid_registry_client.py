@@ -2350,3 +2350,41 @@ async def test_registry_client_reuses_pooled_http_client():
     await client.aclose()
 
     assert client._http_client.is_closed is True
+
+
+@pytest.mark.asyncio
+async def test_fresh_team_read_bypasses_and_refreshes_the_cached_team():
+    state = {"team_did_key": "did:key:z6MkOldTeam"}
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/namespaces/acme.com/teams/backend":
+            requests.append(request.url.path)
+            return httpx.Response(
+                200,
+                json={
+                    "team_id": "backend:acme.com",
+                    "domain": "acme.com",
+                    "name": "backend",
+                    "team_did_key": state["team_did_key"],
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+    assert (await client.get_team("acme.com", "backend")).team_did_key == "did:key:z6MkOldTeam"
+
+    state["team_did_key"] = "did:key:z6MkRotatedTeam"
+    stale = await client.get_team("acme.com", "backend")
+    fresh = await client.get_team_fresh("acme.com", "backend")
+    after = await client.get_team("acme.com", "backend")
+
+    assert stale.team_did_key == "did:key:z6MkOldTeam"
+    assert fresh.team_did_key == "did:key:z6MkRotatedTeam"
+    assert after.team_did_key == "did:key:z6MkRotatedTeam"
+    assert len(requests) == 2

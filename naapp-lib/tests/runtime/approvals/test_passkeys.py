@@ -50,7 +50,9 @@ from aweb_naapp.runtime.passkeys import (
     LockoutPolicy,
     Notice,
     NoticeKind,
+    PasskeyInstallationContext,
     Passkeys,
+    ProofContextUnavailable,
     RelyingParty,
 )
 from tests.runtime.approvals.support import SCOPE, AuditOutbox, Clock, Policies, TaskAnswers, policy
@@ -141,6 +143,15 @@ async def pw(test_db_factory, registry) -> PasskeyWorld:
     contacts = Contacts()
     store = PgApprovalStore(db)
     await store.migrate()
+    await db.execute("CREATE TABLE {{tables.proof_test_context}} (generation INTEGER NOT NULL)")
+    await db.execute("INSERT INTO {{tables.proof_test_context}} VALUES(1)")
+
+    async def resolve_context(scope, *, tx):
+        generation = await tx.fetch_value("SELECT generation FROM {{tables.proof_test_context}}")
+        if generation is None:
+            raise ProofContextUnavailable()
+        return PasskeyInstallationContext("fixture", "team", "installation", generation)
+
     passkeys = Passkeys(
         db,
         rp=RelyingParty(origin=ORIGIN, name="Example app"),
@@ -151,6 +162,7 @@ async def pw(test_db_factory, registry) -> PasskeyWorld:
         challenge_ttl=timedelta(minutes=5),
         clock=clock,
         owner_scopes=is_owner_scope,
+        proof_context=resolve_context,
     )
     await passkeys.migrate()
     approvers = MappedApprovers(passkeys)
@@ -844,6 +856,7 @@ def passkeys_with(pw, **lockout):
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
         clock=pw.clock,
+        proof_context=pw.passkeys._proof_context,
         **lockout,
     )
 

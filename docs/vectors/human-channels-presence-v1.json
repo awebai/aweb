@@ -1,0 +1,3529 @@
+{
+  "profile": "aweb-presence-verification-v1",
+  "context_status": "trusted host facts for tests only; never parse from a request",
+  "public_test_seeds": {
+    "subject": "3131313131313131313131313131313131313131313131313131313131313131",
+    "owner": "3232323232323232323232323232323232323232323232323232323232323232",
+    "issuer": "3333333333333333333333333333333333333333333333333333333333333333",
+    "other": "3434343434343434343434343434343434343434343434343434343434343434"
+  },
+  "valid": [
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "local_subject",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "expected": {
+        "subject": {
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "kind": "native"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "operation": "register",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-v1",
+        "intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da",
+        "authorization_revision": "policy-7",
+        "expires_at": "2026-10-21T17:05:00Z"
+      }
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:aw:presence-subject"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:aw:presence-subject",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:aw:presence-subject",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:6079797375fc353cf64608f4de033e2e8eca2c92c4e61f40159c671967fd3f9a"
+      },
+      "key": "subject",
+      "name": "global_subject",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:aw:presence-subject\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:aw:presence-subject\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "orrpyLG3qgkrCiZIhN1/oRZ5JBDE5dZoXbnUDa/Wo4lHtp2BshWPK5s/cVQ4Gb4QxwYCW3vm/4NnqlCU2eHrAA"
+      },
+      "expected": {
+        "subject": {
+          "did": "did:aw:presence-subject",
+          "kind": "native"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "operation": "register",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-v1",
+        "intent_hash": "sha256:6079797375fc353cf64608f4de033e2e8eca2c92c4e61f40159c671967fd3f9a",
+        "authorization_revision": "policy-7",
+        "expires_at": "2026-10-21T17:05:00Z"
+      }
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:7f0928c02366fcd14d5907c1072ddd71a45a1a5efc8b530d182ba09c9e6093ff"
+      },
+      "key": "owner",
+      "name": "native_owner",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"SaULjIIruFGK6YRtPi57RXdjlxWMUN4mklliNW9P2YeFYtYNHf8M48hlKCX5x3uNR1bGkkh5bCeZ8xVE7s+aBw\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "OjfNYnSssfuEHOm/tF6HiX1k8+ztmK6TQ76wGCJKk4JkaMbgjhUrvH663f5jnutc/TYDKUgET9NMPUP5YtToDg"
+      },
+      "expected": {
+        "subject": {
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "kind": "native"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "operation": "register",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-v1",
+        "intent_hash": "sha256:7f0928c02366fcd14d5907c1072ddd71a45a1a5efc8b530d182ba09c9e6093ff",
+        "authorization_revision": "policy-7",
+        "expires_at": "2026-10-21T17:04:00Z"
+      }
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "shared",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_intent_hash": "sha256:631689705ae21ec88b763296ac44b59782f8b928336e42793f9d02e70b92c1ae"
+      },
+      "key": "subject",
+      "name": "shared_subject",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"shared\",\"operation\":\"bind\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "m70uEVaM2Dg99jyTSTSGxJAGxTQdZHIIl6qozCaskmqJV6/6ngRQ6ItziQ7/PFPXXE5br/SELJl7Z8nBSI98CA"
+      },
+      "expected": {
+        "subject": {
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "kind": "native"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "shared",
+        "operation": "bind",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-binding-v1",
+        "intent_hash": "sha256:631689705ae21ec88b763296ac44b59782f8b928336e42793f9d02e70b92c1ae",
+        "authorization_revision": "policy-7",
+        "expires_at": "2026-10-21T17:05:00Z",
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "dedicated",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_intent_hash": "sha256:ace77cd6378233ac02d442a54196ef0a1bd482a76279df623f73077d0a6dcd9d"
+      },
+      "key": "owner",
+      "name": "dedicated_owner",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"dedicated\",\"operation\":\"bind\",\"ownership_proof\":{\"signature\":\"bHwtsTdJMyc/m6izhrnA+O+foE3nOJ4QMda+YT/3vmY0omXnRszmfPJG0aQQkQ1+PbGOF1C902ZTAhGwAk/NAQ\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"mode\\\":\\\"dedicated\\\",\\\"operations\\\":[\\\"bind\\\",\\\"rebind\\\",\\\"unbind\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-binding-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "7TJGHzx+ObjaVyijv75oIweOTx1iAUHm7kRljd6IFYzwe1pFflzg9XqImSsftA+v/2vjwqLkO51XafuTRmCaAw"
+      },
+      "expected": {
+        "subject": {
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "kind": "native"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "dedicated",
+        "operation": "bind",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-binding-v1",
+        "intent_hash": "sha256:ace77cd6378233ac02d442a54196ef0a1bd482a76279df623f73077d0a6dcd9d",
+        "authorization_revision": "policy-7",
+        "expires_at": "2026-10-21T17:04:00Z",
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "msteams",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:5a100d900a7481c52c1e1dca86e1109b6d5f885aa7253487cbe877fb0f68e058"
+      },
+      "key": "subject",
+      "name": "msteams_subject",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"msteams\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "/JCquK7F1ECHeNR3elMJvsxim5UxKtMUGmcF8UFSD3B5ev8rb5Bdebor1wLuDZRhVh8dn4H2iUEAQmyt3PBnBA"
+      },
+      "expected": {
+        "subject": {
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "kind": "native"
+        },
+        "platform": "msteams",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "operation": "register",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-v1",
+        "intent_hash": "sha256:5a100d900a7481c52c1e1dca86e1109b6d5f885aa7253487cbe877fb0f68e058",
+        "authorization_revision": "policy-7",
+        "expires_at": "2026-10-21T17:05:00Z"
+      }
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:e828708b20e585b526ef690619e93b658a79a6f87f478a32151159467199f845"
+      },
+      "key": "subject",
+      "name": "native_remove",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"remove\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "CvqII5PjPhdbazIr9iMrWoYU8DTqtpbni7YaKKOPj4zOeE50PJBuj2A2XU7uF/1Y9N+MjPts/JbgAp0xeHQrBw"
+      },
+      "expected": {
+        "subject": {
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "kind": "native"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "operation": "remove",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-v1",
+        "intent_hash": "sha256:e828708b20e585b526ef690619e93b658a79a6f87f478a32151159467199f845",
+        "authorization_revision": "policy-7",
+        "expires_at": "2026-10-21T17:05:00Z"
+      }
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "dedicated",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_intent_hash": "sha256:5513d6b7fac592c98979df066e4939ebf0b0c55d6cee087347611fd1a30a372a"
+      },
+      "key": "owner",
+      "name": "dedicated_unbind",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"dedicated\",\"operation\":\"unbind\",\"ownership_proof\":{\"signature\":\"bHwtsTdJMyc/m6izhrnA+O+foE3nOJ4QMda+YT/3vmY0omXnRszmfPJG0aQQkQ1+PbGOF1C902ZTAhGwAk/NAQ\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"mode\\\":\\\"dedicated\\\",\\\"operations\\\":[\\\"bind\\\",\\\"rebind\\\",\\\"unbind\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-binding-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "s4iFBNGGsOJHGO+CeBdbRcYzNtZFrJWur0r4ewgXE0fQ+brmYzkxCrUuC5rve0wVLrS4d4TY6KfEM4F+0f+TBQ"
+      },
+      "expected": {
+        "subject": {
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "kind": "native"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "dedicated",
+        "operation": "unbind",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-binding-v1",
+        "intent_hash": "sha256:5513d6b7fac592c98979df066e4939ebf0b0c55d6cee087347611fd1a30a372a",
+        "authorization_revision": "policy-7",
+        "expires_at": "2026-10-21T17:04:00Z",
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "session",
+          "session_id": "11111111-1111-4111-8111-111111111111"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": true,
+        "expected_intent_hash": "sha256:ebb19e27c667d1374ad2baf6bf3daf0f3f362a10fb9cf11782a46bbfb4734d11"
+      },
+      "key": "subject",
+      "name": "explicit_scoped_policy",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"session\",\"session_id\":\"11111111-1111-4111-8111-111111111111\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "2ZkxpU1Hi564ncgDdvi7EVIXPPw+NzQA+5JmZAozmpaWkiyet5qVwev29n7GZMfyZsgP3DQzvxhUvcqMVByTBg"
+      },
+      "expected": {
+        "subject": {
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "kind": "native"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "session",
+          "session_id": "11111111-1111-4111-8111-111111111111"
+        },
+        "mode": "native",
+        "operation": "register",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-v1",
+        "intent_hash": "sha256:ebb19e27c667d1374ad2baf6bf3daf0f3f362a10fb9cf11782a46bbfb4734d11",
+        "authorization_revision": "policy-7",
+        "expires_at": "2026-10-21T17:05:00Z"
+      }
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": {
+            "scopes": [
+              "presence.write"
+            ],
+            "expires_at": "2026-10-21T17:03:00Z",
+            "never_expires": false
+          }
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "presence_grant_with_root_intent",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "expected": {
+        "subject": {
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "kind": "native"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "operation": "register",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-v1",
+        "intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da",
+        "authorization_revision": "policy-7",
+        "expires_at": "2026-10-21T17:03:00Z"
+      }
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": {
+            "scopes": [
+              "presence.write"
+            ],
+            "expires_at": null,
+            "never_expires": true
+          }
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "never_expiring_grant_with_root_intent",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "expected": {
+        "subject": {
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "kind": "native"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "operation": "register",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-v1",
+        "intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da",
+        "authorization_revision": "policy-7",
+        "expires_at": "2026-10-21T17:05:00Z"
+      }
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "0001-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:fce1f61cd91f1666278144bb6e3163c4f94a2029c0f53dd9bf85cfc285c44dd0"
+      },
+      "key": "subject",
+      "name": "year_0001",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"0001-10-21T17:05:00Z\",\"issued_at\":\"0001-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "K4N0WvHqumRcvew3hLeUdeKnzMJTuTQ0ncIahdc4dXkcCIQb/9a2V72AJGwQfenaboHY44aRxTidnSqTuD5wBA"
+      },
+      "expected": {
+        "subject": {
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "kind": "native"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "operation": "register",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-v1",
+        "intent_hash": "sha256:fce1f61cd91f1666278144bb6e3163c4f94a2029c0f53dd9bf85cfc285c44dd0",
+        "authorization_revision": "policy-7",
+        "expires_at": "0001-10-21T17:05:00Z"
+      }
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "bridged",
+          "bridge": "did:aw:bridge",
+          "subject": "pairwise-subject"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": null,
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "bridged",
+            "bridge": "did:aw:bridge",
+            "subject": "pairwise-subject"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:529cc875aff43e74c7903f7081164e988ee257d2107085a5d05a3836d3faf1a1"
+      },
+      "key": "owner",
+      "name": "guest_owner_distinct_from_native_subject",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"8xNumkOQxwwouhClFGqM1zdAHtzLlrh5XiFbCVguqEHVmAbu3ASbFwOekwD/4UrEtZsIjcy99ZpfTydzaqZpCQ\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"bridge\\\":\\\"did:aw:bridge\\\",\\\"kind\\\":\\\"bridged\\\",\\\"subject\\\":\\\"pairwise-subject\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"bridge\":\"did:aw:bridge\",\"kind\":\"bridged\",\"subject\":\"pairwise-subject\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "id9XNgGqYz9QY3WCKX1q286Q2mIAC20SR9CNv5bac9U3XtErNMsyJ1bb7aka8Qpx0GmWG8wRSkxJz0bReHo3Bw"
+      },
+      "expected": {
+        "subject": {
+          "bridge": "did:aw:bridge",
+          "kind": "bridged",
+          "subject": "pairwise-subject"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "operation": "register",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-v1",
+        "intent_hash": "sha256:529cc875aff43e74c7903f7081164e988ee257d2107085a5d05a3836d3faf1a1",
+        "authorization_revision": "policy-7",
+        "expires_at": "2026-10-21T17:04:00Z"
+      }
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:aw:presence-subject"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:aw:presence-subject",
+          "signing_key_id": "did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:aw:presence-subject",
+            "signing_key_id": "did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:bcdf4ad43234a488021c7f2c421f25913007b61a84ead38e9775dcaf8e8dedec"
+      },
+      "key": "other",
+      "name": "rotated_global_current_key",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:aw:presence-subject\",\"signing_key_id\":\"did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU\",\"subject\":{\"did\":\"did:aw:presence-subject\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "CdKUjB7fPYm90jwFod9rjKOaeWVAZTg/4T2GiXGFrxJu0xLvmbUWOKXQ2425kT+/r7LydL31s6bJsMN+rxooDw"
+      },
+      "expected": {
+        "subject": {
+          "did": "did:aw:presence-subject",
+          "kind": "native"
+        },
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "operation": "register",
+        "expected_generation": 7,
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "version": "aweb-verified-presence-v1",
+        "intent_hash": "sha256:bcdf4ad43234a488021c7f2c421f25913007b61a84ead38e9775dcaf8e8dedec",
+        "authorization_revision": "policy-7",
+        "expires_at": "2026-10-21T17:05:00Z"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:33475b8972b19b3a9836c7fa59917ddc27837289562e2b62680e0f12e97895ce"
+      },
+      "key": "subject",
+      "name": "wrong_audience",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://other.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "3ZDUaCxgSMfmRCsfvhn/nCYZMN77bDaSXuUrI3xhKRMHM4B3p7ucyOPNIkUnSmCriQPayMkCETG64sms0rxjAg"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:4bce99f0572b32be718be9ecbb3349fcbaac9cfc6384bc434204b2be1cce89f1"
+      },
+      "key": "subject",
+      "name": "wrong_subject",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "1rOsVexAU0kDoSBopwEzEB1/rGyu3NWyFgDYP0UAcgwKxxVMUCfOxkx9gWitubdH/uzb9n+ViWp7zTcmlxK6DQ"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:e79e33c5fc90895761cb55a79c668caea02c0aa22b9249358af231b7cb13e6a9"
+      },
+      "key": "subject",
+      "name": "wrong_platform",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"slack\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "RREoErwaA0Z0igzI84AMw65xDbVvan+c6cGr8hlLVfaV2r9WOUhax0TS+536i+KRPFSqcnmyGa9DEpGzQQftCA"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:efca374d69b36299bbfbd6bf3182db2e1fd3141155b12f723169acc93df08594"
+      },
+      "key": "subject",
+      "name": "stale_generation",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":6,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "i8oa+gWuARAvJ3l5C3S9Nj1r4z/Bbpt6YaWwGbhIgEQJ8hCBMBN6SsN2VJ79PHIsYddvM+qhxuZzFozuPp/+Dg"
+      },
+      "error": "stale"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:45f68af0579ef8d3985f6e1dd921c03d467f2bce884d409557668ca75258f97d"
+      },
+      "key": "subject",
+      "name": "expired_intent",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:01:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "4biwcUEyMc8xA75j1YSCQNzo1c4b4fwy2R7D2zbyOi5G50LNqymV9wYYIzSvWJe1DxnRRHRsSAIP0xbQF6CMDQ"
+      },
+      "error": "stale"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:2d60c7305044ecff0b9c2a88ab83fc88c8848f190108ffafa3c335ca1fefb008"
+      },
+      "key": "subject",
+      "name": "future_intent",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:03:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "pxhhamsPbTmBCvzVnNM34SLBdlSeuJzx3Lrw/4UaENbjOc8VdKYaGgUCuKUe7FxxWGC7chjZwjUhal6Z4HF4Cw"
+      },
+      "error": "stale"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:8cb5ba2eda4b2d6dda970514e054572ea3aa8564d76393bc7491581e239c9b79"
+      },
+      "key": "subject",
+      "name": "excessive_ttl",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:10:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "U+hiVi+PbqyzZ8Z1C6xxm3YhZDT4KEiTF069jhG1cfwawW4Np64Cze1gIK+L0/XRYW7PgN7420zZp17oNHnmAw"
+      },
+      "error": "invalid"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU",
+            "signing_key_id": "did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "wrong_authenticated_identity",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": false,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "wrong_team_or_token_owner",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": false,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "inactive_subject",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": null,
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "no_subject_authority",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "error": "authority_unavailable"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "consumed_request_across_families",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "error": "replay_conflict"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 0,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "missing_freshness_policy",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "error": "authority_unavailable"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": {
+            "scopes": [
+              "mail.send"
+            ],
+            "expires_at": null,
+            "never_expires": true
+          }
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "mail_only_grant",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": {
+            "scopes": [
+              "presence.write"
+            ],
+            "expires_at": "2026-10-21T17:01:00Z",
+            "never_expires": false
+          }
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "expired_grant",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "session",
+          "session_id": "11111111-1111-4111-8111-111111111111"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:ebb19e27c667d1374ad2baf6bf3daf0f3f362a10fb9cf11782a46bbfb4734d11"
+      },
+      "key": "subject",
+      "name": "scoped_native_not_enabled",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"session\",\"session_id\":\"11111111-1111-4111-8111-111111111111\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "2ZkxpU1Hi564ncgDdvi7EVIXPPw+NzQA+5JmZAozmpaWkiyet5qVwev29n7GZMfyZsgP3DQzvxhUvcqMVByTBg"
+      },
+      "error": "unsupported"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "local_binding_inconsistent",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "error": "authority_unavailable"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:aw:presence-subject"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:aw:presence-subject",
+          "signing_key_id": "did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:aw:presence-subject",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:6079797375fc353cf64608f4de033e2e8eca2c92c4e61f40159c671967fd3f9a"
+      },
+      "key": "subject",
+      "name": "old_global_key",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:aw:presence-subject\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:aw:presence-subject\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "orrpyLG3qgkrCiZIhN1/oRZ5JBDE5dZoXbnUDa/Wo4lHtp2BshWPK5s/cVQ4Gb4QxwYCW3vm/4NnqlCU2eHrAA"
+      },
+      "error": "stale"
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "dedicated",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_intent_hash": "sha256:631689705ae21ec88b763296ac44b59782f8b928336e42793f9d02e70b92c1ae"
+      },
+      "key": "subject",
+      "name": "different_binding_mode",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"shared\",\"operation\":\"bind\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "m70uEVaM2Dg99jyTSTSGxJAGxTQdZHIIl6qozCaskmqJV6/6ngRQ6ItziQ7/PFPXXE5br/SELJl7Z8nBSI98CA"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "shared",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:2222222222222222222222222222222222222222222222222222222222222222",
+        "expected_intent_hash": "sha256:631689705ae21ec88b763296ac44b59782f8b928336e42793f9d02e70b92c1ae"
+      },
+      "key": "subject",
+      "name": "different_private_binding_digest",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"shared\",\"operation\":\"bind\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "m70uEVaM2Dg99jyTSTSGxJAGxTQdZHIIl6qozCaskmqJV6/6ngRQ6ItziQ7/PFPXXE5br/SELJl7Z8nBSI98CA"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:7f0928c02366fcd14d5907c1072ddd71a45a1a5efc8b530d182ba09c9e6093ff"
+      },
+      "key": "owner",
+      "name": "missing_owner_pin",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"SaULjIIruFGK6YRtPi57RXdjlxWMUN4mklliNW9P2YeFYtYNHf8M48hlKCX5x3uNR1bGkkh5bCeZ8xVE7s+aBw\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "OjfNYnSssfuEHOm/tF6HiX1k8+ztmK6TQ76wGCJKk4JkaMbgjhUrvH663f5jnutc/TYDKUgET9NMPUP5YtToDg"
+      },
+      "error": "authority_unavailable"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": null,
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:7f0928c02366fcd14d5907c1072ddd71a45a1a5efc8b530d182ba09c9e6093ff"
+      },
+      "key": "owner",
+      "name": "missing_issuer",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"SaULjIIruFGK6YRtPi57RXdjlxWMUN4mklliNW9P2YeFYtYNHf8M48hlKCX5x3uNR1bGkkh5bCeZ8xVE7s+aBw\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "OjfNYnSssfuEHOm/tF6HiX1k8+ztmK6TQ76wGCJKk4JkaMbgjhUrvH663f5jnutc/TYDKUgET9NMPUP5YtToDg"
+      },
+      "error": "authority_unavailable"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": ""
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:7f0928c02366fcd14d5907c1072ddd71a45a1a5efc8b530d182ba09c9e6093ff"
+      },
+      "key": "owner",
+      "name": "missing_owner_revision",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"SaULjIIruFGK6YRtPi57RXdjlxWMUN4mklliNW9P2YeFYtYNHf8M48hlKCX5x3uNR1bGkkh5bCeZ8xVE7s+aBw\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "OjfNYnSssfuEHOm/tF6HiX1k8+ztmK6TQ76wGCJKk4JkaMbgjhUrvH663f5jnutc/TYDKUgET9NMPUP5YtToDg"
+      },
+      "error": "authority_unavailable"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-5"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:7f0928c02366fcd14d5907c1072ddd71a45a1a5efc8b530d182ba09c9e6093ff"
+      },
+      "key": "owner",
+      "name": "old_owner_revision",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"SaULjIIruFGK6YRtPi57RXdjlxWMUN4mklliNW9P2YeFYtYNHf8M48hlKCX5x3uNR1bGkkh5bCeZ8xVE7s+aBw\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "OjfNYnSssfuEHOm/tF6HiX1k8+ztmK6TQ76wGCJKk4JkaMbgjhUrvH663f5jnutc/TYDKUgET9NMPUP5YtToDg"
+      },
+      "error": "stale"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU",
+            "signing_key_id": "did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:7f0928c02366fcd14d5907c1072ddd71a45a1a5efc8b530d182ba09c9e6093ff"
+      },
+      "key": "owner",
+      "name": "wrong_current_owner",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"SaULjIIruFGK6YRtPi57RXdjlxWMUN4mklliNW9P2YeFYtYNHf8M48hlKCX5x3uNR1bGkkh5bCeZ8xVE7s+aBw\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "OjfNYnSssfuEHOm/tF6HiX1k8+ztmK6TQ76wGCJKk4JkaMbgjhUrvH663f5jnutc/TYDKUgET9NMPUP5YtToDg"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:c38c9ed0e1149ac53c3c4c79a6f2bc0003a6f00bdb8f4816f6f561d034467491"
+      },
+      "key": "owner",
+      "name": "proof_wrong_audience",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"i2Eup0S88WpjnBojfljhPKGF44iPajFqjQ1dZnapwfGVNhlxeYn7a5LhxoIUYOOJB+QWTt1ErS0jyiNIIqVjAw\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://other.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "fmFuWK6OXofhOrCzPFAfyfH2bjTHx4AKVb5+C1h73oKuhZxrYXslQlYuzohGOjXhnnBKd+2kKqHaXHPr9OI+Dg"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:e736c436acbd9d56ac5f12236e8cf3d467b6e99b8c6668ab8742177c9ffa606a"
+      },
+      "key": "owner",
+      "name": "proof_wrong_subject",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"xBaVh19nDIsGqE/SSWyk7BPJHw6Lr0qK4DZOauWKBE+gFX1RiV8UmEoTX11/upQLTSqUKOfxuz9PkQaOkCxFCQ\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "w1AgSoy1JCLMp6tewUdwZrVYv2iCg44QINl0Sw/VP6OSqH/ZVLJ6aEVabNYuRjCNbNWEL0KCBFf++XKNhuxYAA"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:d1dbdb80b11a2f8e8e906c41db73cc0ebd6a22ce7a4cc8b0242439b19fbadd56"
+      },
+      "key": "owner",
+      "name": "proof_wrong_operations",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"eanDO4zri/efMuwklV9C0lIgCnNSBcTLJSdLncqh4Ev8BOJhmzMoz+MLNPJkvq+PpdIz/AME7nJ0EXzqi+4fDQ\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "4JBpR4++JuIRqpeglYNsUlbxViCrIN0vO387s99i+5cHedDGUGELMQAZ6S5DXrT2mM+ejmSyDbX10izHPlBVBw"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:1bf6acbaf539287654f513bd849b15b13a94ab0e8c9847482007fa1d6cc67063"
+      },
+      "key": "owner",
+      "name": "expired_proof",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"vBVwRqWfRRkOZ18dJzZ1RMpeRWKdhOCQGOHYwGLlgagHB3OCuuWrZkrrb1JbEcyhc+R5EG5nZPnEGr3xVo9dBA\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:01:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "ypXWnZRFA26DprjHN8MQEyNOAjrGYcLfgh69pbT2W8YS98atnnp8Spj8wP5V/0eMVLeFhDQ+4tI6+UjAtWh/Bg"
+      },
+      "error": "stale"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:7a26c00b5fff7163e5a8b4150f8ca0872401ad8f949e7717ad43a18dfce8f7fb"
+      },
+      "key": "owner",
+      "name": "self_pinned_proof_issuer",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"EuWpaR2MUB1/8R4DFQ8i1oZ69U6+25pAIoRKKA6+g8YsaraLn3lVfHgBRdx8q0k2c6VkuunBvkw9BMtrExqTDg\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU\\\",\\\"signing_key_id\\\":\\\"did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "4MUG1Eudn0gB4pULnN9XK9JmWVqln+soh+txeuovJokSSWtiYKQjEm4JtU+nDM9msE8X8YFxruldUXjUEOnTBQ"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "dedicated",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_intent_hash": "sha256:c9efbe0f10b6f46d37f7db6f3b6ede6d852f0fa4a26821cd2aaf62b112616239"
+      },
+      "key": "owner",
+      "name": "proof_different_binding_mode",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"dedicated\",\"operation\":\"bind\",\"ownership_proof\":{\"signature\":\"m54xdfG+A3f355CtQGovR0GAOoxHqnVwmUvku0DJ+BvPjsnM5W+BVXLkmR54hCTmqmwpooYUkkW/SQOCRoWODQ\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"mode\\\":\\\"shared\\\",\\\"operations\\\":[\\\"bind\\\",\\\"rebind\\\",\\\"unbind\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-binding-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "hW3WVB1KAF8Fbm6IgABKGgImdb87ZeWSuRJXIoRHU2QhkSfR9Bi+jVZioBXZOYCzXrJnod0yc8ZnOs7maFnaCA"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "dedicated",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_intent_hash": "sha256:2709e9401cb093af61b63298ebd519eace639d08b4326b7c36538d5f062610e0"
+      },
+      "key": "owner",
+      "name": "native_proof_cannot_approve_binding",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"dedicated\",\"operation\":\"bind\",\"ownership_proof\":{\"signature\":\"SaULjIIruFGK6YRtPi57RXdjlxWMUN4mklliNW9P2YeFYtYNHf8M48hlKCX5x3uNR1bGkkh5bCeZ8xVE7s+aBw\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"signing_key_id\\\":\\\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "5cRpjHmmE9zhjBLgP2O4ZxThxx6XVbZ4RwJdEDhoZpMOWvXvpirm49AoaXNZN/YsprqSMEwyXjDNs1DH2XOVCQ"
+      },
+      "error": "invalid"
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "native_approval_is_not_binding",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "error": "invalid"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "invalid_signature",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "error": "invalid"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:429a6dfec61499c7ad675061799cf3a4f51b275fb19772b04db15de22ab376da"
+      },
+      "key": "subject",
+      "name": "noncanonical_signed_intent",
+      "artifact": {
+        "signed_payload": "{\"audience\": \"https://presence.example.test\", \"authorization\": \"subject\", \"expected_generation\": 7, \"expires_at\": \"2026-10-21T17:05:00Z\", \"issued_at\": \"2026-10-21T17:00:00Z\", \"mode\": \"native\", \"operation\": \"register\", \"platform\": \"telegram\", \"request_id\": \"11111111-1111-4111-8111-111111111111\", \"scope\": {\"kind\": \"platform\"}, \"signer\": \"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\", \"signing_key_id\": \"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\", \"subject\": {\"did\": \"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\", \"kind\": \"native\"}, \"version\": \"aweb-presence-intent-v1\"}",
+        "signature": "u2dzKsYDB/pA5WbN4XBTBzdkaGxsys5KvSUtq7FrZpgXB8K9nbGJ9eF1B/VVMX42X2eUPx+UmGm5hlczXS0xBw"
+      },
+      "error": "invalid"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "key": "subject",
+      "name": "wrong_authorized_intent_bytes",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": ""
+      },
+      "key": "subject",
+      "name": "missing_authorized_intent_hash",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Af3y+4OO7OWftpztmMufEKjpY+nSqTEhXymHZcXDUMzQ4Djoizgl0dC3zFv3BY4MfiidVpwVOXEADcphYjqlDg"
+      },
+      "error": "authority_unavailable"
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "shared",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:631689705ae21ec88b763296ac44b59782f8b928336e42793f9d02e70b92c1ae"
+      },
+      "key": "subject",
+      "name": "missing_private_binding_target",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"shared\",\"operation\":\"bind\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "m70uEVaM2Dg99jyTSTSGxJAGxTQdZHIIl6qozCaskmqJV6/6ngRQ6ItziQ7/PFPXXE5br/SELJl7Z8nBSI98CA"
+      },
+      "error": "authority_unavailable"
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "shared",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_intent_hash": "sha256:631689705ae21ec88b763296ac44b59782f8b928336e42793f9d02e70b92c1ae"
+      },
+      "key": "subject",
+      "name": "binding_reuses_consumed_native_request",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"shared\",\"operation\":\"bind\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "m70uEVaM2Dg99jyTSTSGxJAGxTQdZHIIl6qozCaskmqJV6/6ngRQ6ItziQ7/PFPXXE5br/SELJl7Z8nBSI98CA"
+      },
+      "error": "replay_conflict"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU",
+            "signing_key_id": "did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:372c31baeb38196d11ef81755bce1d9e985e931f06527e0b1ae627aeaf3371fc"
+      },
+      "key": "other",
+      "name": "other_admin_has_no_subject_authority",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU\",\"signing_key_id\":\"did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "/W0/J4jfcOjwKpvk80MhxpSX+771BYxs8ehKlG9DIOl4V6u/ObQ6Dlr8EWwvkUe2Rk9X3woFGEjC99YLB5EDCA"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": {
+            "scopes": [
+              "presence.write"
+            ],
+            "expires_at": null,
+            "never_expires": true
+          }
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:06f1627abaea93c3ff33b60f9aa009f342f04a00d3f036d8ebfcf5ba1a5ad457"
+      },
+      "key": "other",
+      "name": "grant_key_cannot_sign_root_intent",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkvHHbrGisC4BxN9M8b95EdXTidoFjeRE3i7Qc355d6yqU\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "SHwg/s1tXXWEkSHOgv8mKptWUFliNJzEBSobr/yaL7jOK9arDVot96DLBd1Hb7ftK5TA1qiDg+EBDB/tyzFGBw"
+      },
+      "error": "stale"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "bridged",
+          "bridge": "did:aw:bridge",
+          "subject": "pairwise-subject"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": null,
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:627bf4a193b0c3c2cd62fa943982274f594963662d886d6050c3050cfb243b17"
+      },
+      "key": "subject",
+      "name": "guest_cannot_use_native_subject_signature",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"bridge\":\"did:aw:bridge\",\"kind\":\"bridged\",\"subject\":\"pairwise-subject\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "Qw1U7EwmwzhLrr57h7ESLg4/v3S3OZxJA0CznwPD9gOLUhFtwykYyN6w2G54DJTn3lLlIoYXlTFDJg6+viD7Ag"
+      },
+      "error": "forbidden"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:d0a45c2dafbdf3a8845309b853df58cf786bdb5a95d6c1412f4901de69477a2f"
+      },
+      "key": "owner",
+      "name": "native_owner_without_proof",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "2YYWPijcbI0BvqSKHvWRvbXUmWPxmWHN488LQouBSNAZJdaJDjrw8nKmFzRhNUa2uxI92FyHApDL7eaDg9CxDA"
+      },
+      "error": "invalid"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:3a94e7567a4c9fa6bbc5c171572f921bf1aa2f0c25dbcf11ca0cb95466db50a0"
+      },
+      "key": "owner",
+      "name": "native_owner_cannot_be_issuer",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"R1Bn+BHCiW6I2mUp8RWztb0biuUczusd9KuswtJixBSyA0D/W0w/nxpwAz6NrunEfumuvDSJgkVAGjBURq6PCQ\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"signing_key_id\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "3lg3n5lIfRk/9frmnFVO/Ib0kBmEweKvjgpbDXk4WFccSJsUkFO8O37TTB5W47Bvgb/YktNRCKqslG7WA4hXCg"
+      },
+      "error": "authority_unavailable"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:c2adeaf0ea9bdda35164bce757d89e81ffeed9765e99f11a92c3a60052031fe9"
+      },
+      "key": "subject",
+      "name": "native_unknown_intent_field",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"unexpected_presence_field\":true,\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "EsIRIzbwwHspSMJdGUGpwpKlQIFO1hmFjp+PYvc96tQJFbJ/rJwTTUjobPeYYr8VerTZ4bcJmJwUhmarzBaoCw"
+      },
+      "error": "invalid"
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "dedicated",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "signing_key_id": "did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_intent_hash": "sha256:7a741688bde4906c18c0407cfec0a019bc92642bda63a54c9b0039d72b104e86"
+      },
+      "key": "owner",
+      "name": "dedicated_owner_without_proof",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"dedicated\",\"operation\":\"bind\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "lOhFEdfeeMnvwHPw/ckD1lWFXSgFYsBNcOHAQvy3gqVBOFoEOrFTUc9Au/lGLPdK9tjYmT84oCRj0mv73rB5BQ"
+      },
+      "error": "invalid"
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "dedicated",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_intent_hash": "sha256:6e1118936bfc0c49c5af31823b1b9b50af87d830317a3e84db0b5cf26fcc544c"
+      },
+      "key": "owner",
+      "name": "dedicated_owner_cannot_be_issuer",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"dedicated\",\"operation\":\"bind\",\"ownership_proof\":{\"signature\":\"n0uW3/zTD948phzL9PokvnEy7KNYc2YEGBhGsNBFYW/vNXO9MP2GLB+r2KxPLa6RG+f4ChFx3GCfRGkmFmwYAg\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"mode\\\":\\\"dedicated\\\",\\\"operations\\\":[\\\"bind\\\",\\\"rebind\\\",\\\"unbind\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"signing_key_id\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-binding-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "odtJ8pgP0sPOD4zNNNK2dDQPtqDUSd4poa+rJMh6KYbYD1mpmfJG9q5VBfjb+VuwfP0jHInu8l9huIIfhALGBQ"
+      },
+      "error": "authority_unavailable"
+    },
+    {
+      "family": "binding",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "dedicated",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": null,
+        "allow_scoped_native": false,
+        "binding_digest": "commitment:1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_intent_hash": "sha256:397fb782a84382f5cd787cb68ec782b840b74d445e5abc2d821336ef06609e46"
+      },
+      "key": "subject",
+      "name": "dedicated_unknown_intent_field",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"subject\",\"binding_digest\":\"commitment:1111111111111111111111111111111111111111111111111111111111111111\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"dedicated\",\"operation\":\"bind\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"signing_key_id\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"unexpected_presence_field\":true,\"version\":\"aweb-presence-binding-intent-v1\"}",
+        "signature": "lg8YI88/LJpYQ0vg2ju+cSkDDIrAVG5DdqHWHCHkD4JioIA7XkIqUJtr+YxA/8L15nuC4AG0sHeAKrFrRYh8DA"
+      },
+      "error": "invalid"
+    },
+    {
+      "family": "native",
+      "context": {
+        "subject": {
+          "kind": "native",
+          "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+        },
+        "subject_active": true,
+        "platform": "telegram",
+        "scope": {
+          "kind": "platform"
+        },
+        "mode": "native",
+        "audience": "https://presence.example.test",
+        "authorization_revision": "policy-7",
+        "subject_identity": {
+          "principal": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "signing_key_id": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+          "active": true
+        },
+        "caller": {
+          "identity": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "action_authorized": true,
+          "grant": null
+        },
+        "expected_generation": 7,
+        "consumed_request_ids": [],
+        "now": "2026-10-21T17:02:00Z",
+        "max_ttl_seconds": 300,
+        "max_clock_skew_seconds": 30,
+        "ownership_pin": {
+          "subject": {
+            "kind": "native",
+            "did": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja"
+          },
+          "audience": "https://presence.example.test",
+          "owner": {
+            "principal": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "issuer": {
+            "principal": "did:aw:owner-alias",
+            "signing_key_id": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+            "active": true
+          },
+          "authorization_revision": "owner-4"
+        },
+        "allow_scoped_native": false,
+        "expected_intent_hash": "sha256:2c013310deaec67ec5d46e92dc8c16765949250d5ab88e798c77b8cdc0065b68"
+      },
+      "key": "owner",
+      "name": "owner_and_issuer_share_current_key",
+      "artifact": {
+        "signed_payload": "{\"audience\":\"https://presence.example.test\",\"authorization\":\"owner\",\"expected_generation\":7,\"expires_at\":\"2026-10-21T17:05:00Z\",\"issued_at\":\"2026-10-21T17:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"ownership_proof\":{\"signature\":\"J3QjDKJ69egccMU1v8giaSuzzixM/qYrzLai7bq1ngZ+1B9/vf24lSowFkSeHQ7wgtHC6hdmD5HmNE7i7MChCQ\",\"signed_payload\":\"{\\\"audience\\\":\\\"https://presence.example.test\\\",\\\"authorization_revision\\\":\\\"owner-4\\\",\\\"expires_at\\\":\\\"2026-10-21T17:04:00Z\\\",\\\"issued_at\\\":\\\"2026-10-21T17:00:00Z\\\",\\\"operations\\\":[\\\"register\\\",\\\"replace\\\",\\\"remove\\\"],\\\"owner\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"platform\\\":\\\"telegram\\\",\\\"scope\\\":{\\\"kind\\\":\\\"platform\\\"},\\\"signer\\\":\\\"did:aw:owner-alias\\\",\\\"signing_key_id\\\":\\\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\\\",\\\"subject\\\":{\\\"did\\\":\\\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\\\",\\\"kind\\\":\\\"native\\\"},\\\"version\\\":\\\"aweb-presence-owner-proof-v1\\\"}\"},\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"signing_key_id\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"subject\":{\"did\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
+        "signature": "i1CDYAz5QSeRY+YUqtp+vFwu7a97Sm8nrDLBfBpY2uPDygUFFv6z0ywzPNF3Vv4PihEEd2Qu3+0wnfnfH+t7BQ"
+      },
+      "error": "authority_unavailable"
+    }
+  ]
+}

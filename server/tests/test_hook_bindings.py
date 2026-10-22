@@ -398,3 +398,24 @@ async def test_end_times_are_stored_at_millisecond_precision(db):
         assert binding.revoked_at is not None and binding.revoked_at.microsecond % 1000 == 0
     created = await db.fetch_all("SELECT created_at FROM {{tables.app_hook_bindings}}")
     assert len(created) == 4 and all(row["created_at"].microsecond % 1000 == 0 for row in created)
+
+
+@pytest.mark.asyncio
+async def test_server_startup_applies_the_kit_owner_act_migrations(shared_test_pool):
+    from aweb.db import DatabaseInfra
+    from aweb_naapp.hooks.owner_act_nonces import MIGRATIONS_MODULE
+
+    infra = DatabaseInfra()
+    await infra.initialize(shared_pool=shared_test_pool)
+    db = infra.get_manager("aweb")
+
+    assert await db.fetch_value("SELECT to_regclass('aweb.owner_act_nonces') IS NOT NULL")
+    assert await db.fetch_value(
+        "SELECT COUNT(*) FROM aweb.schema_migrations WHERE module_name = $1", MIGRATIONS_MODULE
+    ) == 1
+
+    restarted = DatabaseInfra()
+    await restarted.initialize(shared_pool=shared_test_pool)
+    assert await db.fetch_value(
+        "SELECT COUNT(*) FROM aweb.schema_migrations WHERE module_name = $1", MIGRATIONS_MODULE
+    ) == 1

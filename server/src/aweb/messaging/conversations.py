@@ -7,6 +7,9 @@ from typing import Any, Literal
 from uuid import UUID
 
 from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
+from aweb.identity_metadata import native_participant_reference
+from aweb.human_channels.contract import ContractError
+from aweb.human_channels.participants import require_native_participant_input
 
 ConversationType = Literal["mail", "chat"]
 ConversationStatus = Literal["active", "closed", "expired"]
@@ -76,6 +79,10 @@ def _normalize_did(value: str, *, field_name: str = "did") -> str:
 def _participant_from(value: ConversationParticipant | dict[str, Any]) -> ConversationParticipant:
     if isinstance(value, ConversationParticipant):
         return value
+    try:
+        require_native_participant_input(value)
+    except ContractError as error:
+        raise ValidationError(str(error)) from error
     return ConversationParticipant(
         did=str(value.get("did") or value.get("did_aw") or value.get("did_key") or ""),
         agent_id=value.get("agent_id"),
@@ -138,6 +145,7 @@ def _conversation_dict(row: dict[str, Any]) -> dict[str, Any]:
 
 def _participant_dict(row: dict[str, Any]) -> dict[str, Any]:
     return {
+        "participant_ref": native_participant_reference(row["did"]),
         "conversation_id": str(row["conversation_id"]),
         "did": row["did"],
         "agent_id": str(row["agent_id"]) if row.get("agent_id") is not None else None,

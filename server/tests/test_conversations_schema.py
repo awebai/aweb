@@ -55,7 +55,9 @@ async def test_conversation_schema_tables_columns_and_indexes_exist(aweb_cloud_d
     assert columns[("conversations", "created_by_did")] == "NO"
     assert columns[("conversations", "expires_at")] == "YES"
     assert columns[("conversation_participants", "conversation_id")] == "NO"
-    assert columns[("conversation_participants", "did")] == "NO"
+    # Native NOT NULL is enforced by the tagged-reference CHECK after M-P3;
+    # the physical column is nullable for future bridged participants.
+    assert columns[("conversation_participants", "did")] == "YES"
     assert columns[("conversation_participants", "agent_id")] == "YES"
     assert columns[("conversation_participants", "transport_hint")] == "YES"
     assert columns[("conversation_participants", "role")] == "NO"

@@ -268,6 +268,14 @@ class Dispatches:
         """Record that nothing reached the upstream; False if the sweep got there first."""
         return await self._settle(tx, dispatch_id, State.NOT_SENT, result)
 
+    async def outcome_unknown(self, tx: TransactionManager, dispatch_id: UUID, result: Any) -> bool:
+        """Record an ambiguous transport outcome now; sweep remains crash recovery.
+
+        As with complete/not_sent, an already unknown or reconciled dispatch
+        retains this report as late evidence and returns False.
+        """
+        return await self._settle(tx, dispatch_id, State.OUTCOME_UNKNOWN, result)
+
     async def reconcile(
         self, tx: TransactionManager, dispatch_id: UUID, state: State, result: Any
     ) -> Dispatch:

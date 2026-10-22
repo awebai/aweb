@@ -603,12 +603,13 @@ def _schema_type(prop: Mapping[str, Any] | None) -> str:
     return _go_trim(value) if isinstance(value, str) else ""
 
 
-def _validate_tool(tool: _Tool, reserved: frozenset[str]) -> None:
+def _validate_tool(tool: _Tool) -> None:
     name = _go_trim(tool.name)
     if not name:
         raise _invalid("tool.name is required")
-    if name in reserved:
-        raise _invalid(f"tool name {name!r} is reserved")
+    # The supplied reserved_names set belongs only to the root app namespace.
+    if name in {"help", "--help", "-h"}:
+        raise _invalid(f"tool name {name!r} is reserved by the app dispatcher")
     if _go_trim(tool.method).upper() not in _METHODS:
         raise _invalid(f"tool {name!r} has an unsupported method")
     if tool.auth != "":
@@ -669,7 +670,7 @@ def _validate_common(d: dict[str, Any], reserved: frozenset[str]) -> str:
     if not _valid_origin(d["app"]["origin"]):
         raise _invalid("invalid app.origin")
     for tool in d["tools"]:
-        _validate_tool(tool, reserved)
+        _validate_tool(tool)
     for event in d["events"]:
         local = _go_trim(event.get("type", "")).removeprefix(app_id + "/")
         if not _LOCAL_EVENT_TYPE.fullmatch(local):

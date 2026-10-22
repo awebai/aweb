@@ -5,8 +5,9 @@ broker holds a :class:`SecretOpener`, which is the only way a stored value is
 unsealed. The app's composition hands each its own; :class:`Custody` holds
 both, with the operations that never reveal a value.
 
-Lock order (decisions 43, 59, 65c): installation fence, role hold, approval
-and candidates, four-eyes setting, revision, then record writes. Within record
+Lock order (decisions 43, 59, 65c, 78): installation fence, role hold,
+replacement/reenable ancestry and grants where applicable, the complete approval
+union and candidates, four-eyes setting, revision, then record writes. Within record
 writes, lock the parent secrets row before custody rows: KEY SHARE for ingest,
 UPDATE for reshaping. Existing ingest validates against the record re-read under
 that lock; only initial-create drafts may have no parent yet. All callers run
@@ -16,6 +17,8 @@ Initial drafts also pin their immutable shape in custody history. Confirmation
 pins a zero-version custody row after creating the parent, so a concurrent
 initial ingest and create serialize on the same key even before a parent is
 visible. A zero-version pin may be reshaped; a sealed history may not.
+Private backend-token staging locks its onepassword_credentials parent before
+the reserved custody key. It creates no ordinary secret or active credential.
 """
 
 from __future__ import annotations
@@ -46,6 +49,8 @@ from .values import decode_value
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_secrets_custody"
+BACKEND_CREDENTIAL_ID = "bkc_onepassword"
+_BACKEND_CREDENTIAL_SHAPE = {"v": 1, "purpose": "onepassword-service-account", "backend": "native"}
 
 
 async def apply_custody_migrations(db: AsyncDatabaseManager) -> None:
@@ -100,6 +105,26 @@ class SecretSealer:
         if record.backend != "native":
             raise CustodyUnavailable("the secret does not use native custody")
         decode_value(record.kind, value)
+        return await self._store_validated(
+            tx,
+            installation_id=installation_id,
+            team_id=team_id,
+            secret_id=secret_id,
+            value=value,
+            shape=sealed_shape(record),
+        )
+
+    async def _store_validated(
+        self,
+        tx: TransactionManager,
+        *,
+        installation_id: str,
+        team_id: str,
+        secret_id: str,
+        value: bytes,
+        shape: dict,
+    ) -> int:
+        """Caller has locked the parent and validated the value/immutable shape."""
         allocated = await tx.fetch_one(
             """
             INSERT INTO {{tables.custody_secrets}}
@@ -113,7 +138,7 @@ class SecretSealer:
             installation_id,
             team_id,
             secret_id,
-            json.dumps(sealed_shape(record)),
+            json.dumps(shape),
         )
         if allocated is None:
             raise CustodyUnavailable("the sealed secret's immutable shape differs")
@@ -150,6 +175,8 @@ class SecretOpener:
         self._db = db
 
     async def open(self, context: SealContext) -> Plaintext:
+        if context.secret_id == BACKEND_CREDENTIAL_ID:
+            raise CustodyUnavailable("backend credentials are not ordinary secret values")
         row = await self._db.fetch_one(
             """
             SELECT v.key_id, v.wrapped_key, v.nonce, v.ciphertext
@@ -197,6 +224,70 @@ class Custody:
         self._db = db
         self.sealer = SecretSealer(provider)
         self.opener = SecretOpener(provider, db)
+
+    async def stage_backend_credential(
+        self,
+        tx: TransactionManager,
+        *,
+        installation_id: str,
+        team_id: str,
+        value: bytes,
+    ) -> SealContext:
+        """Stage an inert native token for the caller's owner-console ceremony.
+
+        Authorization/fence/role checks belong to that caller, as for ordinary
+        ingest. This dedicated path accepts only the fixed private credential,
+        creates no secret record and never sets active_version. Confirmation
+        must bind the returned context to the exact scoped change before use.
+        """
+        decode_value("bearer", value)
+        await tx.execute(
+            "INSERT INTO {{tables.onepassword_credentials}}"
+            " (installation_id, team_id, credential_id) VALUES ($1, $2, $3)"
+            " ON CONFLICT (installation_id, team_id) DO UPDATE"
+            " SET credential_id = EXCLUDED.credential_id",
+            installation_id,
+            team_id,
+            BACKEND_CREDENTIAL_ID,
+        )
+        version = await self.sealer._store_validated(
+            tx,
+            installation_id=installation_id,
+            team_id=team_id,
+            secret_id=BACKEND_CREDENTIAL_ID,
+            value=value,
+            shape=_BACKEND_CREDENTIAL_SHAPE,
+        )
+        return SealContext(installation_id, team_id, BACKEND_CREDENTIAL_ID, version)
+
+    async def backend_credential_matches(
+        self, tx: TransactionManager, context: SealContext
+    ) -> bool:
+        """Whether this scoped private token version still exists for a draft.
+
+        This performs no activation and takes no authority lock. Confirmation
+        must recheck under its normal fence/role/preparation/write lock order.
+        """
+        if (
+            context.secret_id != BACKEND_CREDENTIAL_ID
+            or type(context.version) is not int
+            or context.version <= 0
+        ):
+            return False
+        return bool(
+            await tx.fetch_value(
+                "SELECT 1 FROM {{tables.onepassword_credentials}} p"
+                " JOIN {{tables.custody_secrets}} c USING (installation_id, team_id)"
+                " JOIN {{tables.sealed_versions}} v USING (installation_id, team_id, secret_id)"
+                " WHERE p.installation_id=$1 AND p.team_id=$2"
+                " AND c.secret_id=p.credential_id AND v.version=$3"
+                " AND c.disabled_at IS NULL AND c.immutable_shape=$4::jsonb",
+                context.installation_id,
+                context.team_id,
+                context.version,
+                json.dumps(_BACKEND_CREDENTIAL_SHAPE),
+            )
+        )
 
     async def describe(
         self, *, installation_id: str, team_id: str, secret_id: str
@@ -311,6 +402,24 @@ class Custody:
             "UPDATE {{tables.custody_secrets}} SET disabled_at = NOW()"
             " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3"
             " AND disabled_at IS NULL",
+            installation_id,
+            team_id,
+            secret_id,
+        )
+
+    async def enable(
+        self, tx: TransactionManager, *, installation_id: str, team_id: str, secret_id: str
+    ) -> None:
+        """Restore custody access as part of the caller's confirmed reenable.
+
+        This only clears the disabled marker. Destroyed versions stay destroyed,
+        and retained version/shape history stays intact. The caller authorizes
+        the widening act and updates the secret's record in this transaction.
+        """
+        await tx.execute(
+            "UPDATE {{tables.custody_secrets}} SET disabled_at = NULL"
+            " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3"
+            " AND disabled_at IS NOT NULL",
             installation_id,
             team_id,
             secret_id,

@@ -12,7 +12,7 @@ from pgdbm import AsyncDatabaseManager
 
 from aweb_naapp.runtime.capability_links import LinkRefused, exchange
 
-from .conftest import CAPABILITY, CREATOR, REQUESTS, T0, mint_link, request_from
+from .conftest import CAPABILITY, CREATOR, REQUESTS, T0, mint_link, proof_for_link, request_from
 
 SESSION_KEY = REQUESTS["keys"]["session"]["did_key"]
 
@@ -22,7 +22,19 @@ def body(secret: str, did_key: str = SESSION_KEY) -> bytes:
 
 
 async def _exchange(db, authority, link_id, payload: bytes, *, client="203.0.113.7", now=T0):
-    return await exchange(db, authority, link_id=link_id, body=payload, client=client, now=now)
+    try:
+        proof = await proof_for_link(db, link_id)
+    except LinkRefused:
+        proof = None  # The operation still owns schema/secret/lifecycle refusal ordering.
+    return await exchange(
+        db,
+        authority,
+        link_id=link_id,
+        body=payload,
+        client=client,
+        now=now,
+        proof=proof,
+    )
 
 
 async def test_the_right_secret_opens_a_key_bound_session(

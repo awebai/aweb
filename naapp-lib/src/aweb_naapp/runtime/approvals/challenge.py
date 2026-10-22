@@ -17,7 +17,7 @@ from aweb_naapp.runtime.approvals.model import Approval, Candidate, Purpose
 DOMAIN_PREFIX = b"aweb.approval-challenge/1\n"
 
 
-def challenge_binding(
+def challenge_preimage(
     approval: Approval,
     candidate: Candidate,
     purpose: Purpose,
@@ -35,4 +35,16 @@ def challenge_binding(
         "request_sha256": approval.request_sha256,
         "task_answer_ref": task_answer_ref,
     }
-    return hashlib.sha256(DOMAIN_PREFIX + canonical_json_bytes(fields)).digest()
+    return DOMAIN_PREFIX + canonical_json_bytes(fields)
+
+
+def challenge_binding(
+    approval: Approval,
+    candidate: Candidate,
+    purpose: Purpose,
+    nonce: bytes,
+    task_answer_ref: str | None = None,
+) -> bytes:
+    return hashlib.sha256(
+        challenge_preimage(approval, candidate, purpose, nonce, task_answer_ref)
+    ).digest()

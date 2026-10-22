@@ -10,6 +10,7 @@ eagerly (no postponed annotations) for FastAPI to see the session dependency.
 
 import asyncio
 import hashlib
+from dataclasses import dataclass
 from datetime import timedelta
 from http.cookies import SimpleCookie
 from typing import Annotated
@@ -24,18 +25,32 @@ from tests.console.support import HUMAN, OWNER_A, OWNER_B, Console
 ORIGIN = HUMAN
 
 
+@dataclass(frozen=True)
+class Owner:
+    subject: str
+    evidence_ref: str
+
+
 @pytest.fixture
-async def owners(console: Console) -> dict[str, str]:
-    """Each owner scope's enrolled approver subject."""
-    return {scope: (await console.enrol(scope))[0] for scope in (OWNER_A, OWNER_B)}
+async def owners(console: Console) -> dict[str, Owner]:
+    """Each owner's subject and evidence from a real software-passkey login."""
+    found = {}
+    for scope in (OWNER_A, OWNER_B):
+        subject, device = await console.enrol(scope)
+        options = await console.passkeys.login_options(scope)
+        login = await console.passkeys.verify_login(scope, device.get(dict(options)))
+        found[scope] = Owner(subject, login.evidence_ref)
+    return found
 
 
 def _app(sessions: ConsoleSessions) -> FastAPI:
     router = APIRouter(route_class=ConsoleRoute)
 
     @router.post("/test-login")
-    async def login(response: Response, scope: str, subject: str) -> dict[str, str]:
-        issued = await sessions.open(subject=subject, scope=scope, evidence_ref="ev-1")
+    async def login(
+        response: Response, scope: str, subject: str, evidence_ref: str
+    ) -> dict[str, str]:
+        issued = await sessions.open(subject=subject, scope=scope, evidence_ref=evidence_ref)
         sessions.set_cookie(response, issued)
         return {"csrf": issued.csrf_token}
 
@@ -69,9 +84,16 @@ async def _client(sessions: ConsoleSessions) -> httpx.AsyncClient:
 
 
 async def _login(
-    client: httpx.AsyncClient, owners: dict[str, str], scope: str = OWNER_A
+    client: httpx.AsyncClient, owners: dict[str, Owner], scope: str = OWNER_A
 ) -> tuple[str, str]:
-    response = await client.post("/test-login", params={"scope": scope, "subject": owners[scope]})
+    response = await client.post(
+        "/test-login",
+        params={
+            "scope": scope,
+            "subject": owners[scope].subject,
+            "evidence_ref": owners[scope].evidence_ref,
+        },
+    )
     # Each request carries exactly the cookie a test gives it.
     client.cookies.clear()
     cookie = SimpleCookie(response.headers["set-cookie"])
@@ -80,11 +102,16 @@ async def _login(
 
 
 async def test_the_session_cookie_is_host_only_strict_and_short(
-    console: Console, owners: dict[str, str]
+    console: Console, owners: dict[str, Owner]
 ) -> None:
     async with await _client(console.sessions()) as client:
         response = await client.post(
-            "/test-login", params={"scope": OWNER_A, "subject": owners[OWNER_A]}
+            "/test-login",
+            params={
+                "scope": OWNER_A,
+                "subject": owners[OWNER_A].subject,
+                "evidence_ref": owners[OWNER_A].evidence_ref,
+            },
         )
     header = response.headers["set-cookie"]
     attributes = [part.strip().lower() for part in header.split(";")]
@@ -98,19 +125,40 @@ async def test_the_session_cookie_is_host_only_strict_and_short(
     assert 0 < max_age <= 15 * 60
 
 
-async def test_a_session_identifies_its_subject(console: Console, owners: dict[str, str]) -> None:
+async def test_a_session_identifies_its_subject(console: Console, owners: dict[str, Owner]) -> None:
     async with await _client(console.sessions()) as client:
         cookie, _ = await _login(client, owners)
         response = await client.get("/whoami", headers={"Cookie": cookie})
         missing = await client.get("/whoami")
         forged = await client.get("/whoami", headers={"Cookie": cookie[:-4] + "AAAA"})
     assert response.status_code == 200
-    assert response.json() == {"subject": owners[OWNER_A], "scope": OWNER_A}
+    assert response.json() == {"subject": owners[OWNER_A].subject, "scope": OWNER_A}
     assert missing.status_code == 401
     assert forged.status_code == 401
 
 
-async def test_the_token_is_stored_only_as_a_hash(console: Console, owners: dict[str, str]) -> None:
+async def test_a_session_without_live_login_evidence_is_closed_and_its_cookie_cleared(
+    console: Console, owners: dict[str, Owner]
+) -> None:
+    async with await _client(console.sessions()) as client:
+        cookie, _ = await _login(client, owners)
+        await console.db.execute(
+            "UPDATE {{tables.console_sessions}} SET evidence_ref = $1", "missing-login"
+        )
+        response = await client.get("/whoami", headers={"Cookie": cookie})
+    assert response.status_code == 401
+    assert "max-age=0" in response.headers["set-cookie"].lower()
+    assert (
+        await console.db.fetch_value(
+            "SELECT count(*) FROM {{tables.console_sessions}} WHERE closed_at IS NOT NULL"
+        )
+        == 1
+    )
+
+
+async def test_the_token_is_stored_only_as_a_hash(
+    console: Console, owners: dict[str, Owner]
+) -> None:
     async with await _client(console.sessions()) as client:
         cookie, csrf = await _login(client, owners)
     token = cookie.split("=", 1)[1]
@@ -125,7 +173,7 @@ async def test_the_token_is_stored_only_as_a_hash(console: Console, owners: dict
     assert hashlib.sha256(token.encode()).digest() in stored
 
 
-async def test_an_expired_session_is_refused(console: Console, owners: dict[str, str]) -> None:
+async def test_an_expired_session_is_refused(console: Console, owners: dict[str, Owner]) -> None:
     async with await _client(console.sessions(ttl=timedelta(seconds=1))) as client:
         cookie, _ = await _login(client, owners)
         assert (await client.get("/whoami", headers={"Cookie": cookie})).status_code == 200
@@ -134,7 +182,7 @@ async def test_an_expired_session_is_refused(console: Console, owners: dict[str,
 
 
 async def test_a_session_lasts_at_most_fifteen_minutes(
-    console: Console, owners: dict[str, str]
+    console: Console, owners: dict[str, Owner]
 ) -> None:
     console.sessions(ttl=timedelta(minutes=15))
     for ttl in (timedelta(minutes=15, seconds=1), timedelta(0)):
@@ -143,7 +191,7 @@ async def test_a_session_lasts_at_most_fifteen_minutes(
 
 
 async def test_a_state_change_needs_the_sessions_csrf_token(
-    console: Console, owners: dict[str, str]
+    console: Console, owners: dict[str, Owner]
 ) -> None:
     async with await _client(console.sessions()) as client:
         cookie, csrf = await _login(client, owners)
@@ -158,7 +206,7 @@ async def test_a_state_change_needs_the_sessions_csrf_token(
     assert right.status_code == 200
 
 
-async def test_a_closed_session_is_refused(console: Console, owners: dict[str, str]) -> None:
+async def test_a_closed_session_is_refused(console: Console, owners: dict[str, Owner]) -> None:
     async with await _client(console.sessions()) as client:
         cookie, csrf = await _login(client, owners)
         response = await client.post("/logout", headers={"Cookie": cookie, "X-CSRF-Token": csrf})
@@ -169,7 +217,7 @@ async def test_a_closed_session_is_refused(console: Console, owners: dict[str, s
 
 
 async def test_console_responses_carry_the_console_headers(
-    console: Console, owners: dict[str, str]
+    console: Console, owners: dict[str, Owner]
 ) -> None:
     async with await _client(console.sessions()) as client:
         cookie, _ = await _login(client, owners)
@@ -191,7 +239,7 @@ async def test_console_responses_carry_the_console_headers(
 
 
 async def test_ended_sessions_are_dropped_as_new_ones_open(
-    console: Console, owners: dict[str, str]
+    console: Console, owners: dict[str, Owner]
 ) -> None:
     async with await _client(console.sessions(ttl=timedelta(seconds=1))) as client:
         expired, _ = await _login(client, owners)
@@ -205,7 +253,7 @@ async def test_ended_sessions_are_dropped_as_new_ones_open(
 
 
 async def test_opening_a_session_does_not_wait_on_a_locked_ended_one(
-    console: Console, owners: dict[str, str]
+    console: Console, owners: dict[str, Owner]
 ) -> None:
     async with await _client(console.sessions()) as client:
         cookie, csrf = await _login(client, owners)
@@ -221,7 +269,7 @@ async def test_opening_a_session_does_not_wait_on_a_locked_ended_one(
 
 
 async def test_a_failing_prune_does_not_fail_opening_a_session(
-    console: Console, owners: dict[str, str], caplog: pytest.LogCaptureFixture
+    console: Console, owners: dict[str, Owner], caplog: pytest.LogCaptureFixture
 ) -> None:
     await console.db.execute(
         "CREATE FUNCTION {{tables.refuse_delete}}() RETURNS trigger LANGUAGE plpgsql AS "

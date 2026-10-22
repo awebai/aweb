@@ -265,7 +265,7 @@
       }
     },
     {
-      "name": "star-records-frozen-at-mint",
+      "name": "star-records-follow-live-read",
       "creator": {
         "reads": {
           "bookings": {
@@ -299,12 +299,9 @@
       },
       "expect": {
         "minted": true,
-        "frozen_records": [
-          "b-17",
-          "b-18"
-        ]
+        "dynamic_records": "*"
       },
-      "note": "a record the creator gains later is not added to the link"
+      "note": "naapps 820ca40d / Athena ccfa36af supersede frozen IDs for this live read-only wildcard; current ACLs and minted fields still bound every page"
     },
     {
       "name": "expiry-over-30-days",
@@ -983,6 +980,196 @@
         }
       },
       "note": "failures count against the client address; only successful exchanges count per link"
+    }
+  ],
+  "live_projection_cases": [
+    {
+      "name": "live-empty-collection",
+      "mode": "live",
+      "records": "*",
+      "initial_records": [],
+      "steps": [
+        {
+          "records": [],
+          "projection_records": "*",
+          "fields": [
+            "arrival",
+            "status"
+          ],
+          "visible_rows": []
+        }
+      ]
+    },
+    {
+      "name": "pinned-empty-collection",
+      "mode": "pinned",
+      "records": "*",
+      "initial_records": [],
+      "steps": [
+        {
+          "records": [],
+          "projection_records": [],
+          "fields": [
+            "arrival",
+            "status"
+          ],
+          "visible_rows": []
+        }
+      ]
+    },
+    {
+      "name": "live-explicit-empty-is-zero",
+      "mode": "live",
+      "records": [],
+      "initial_records": [
+        "b-17"
+      ],
+      "steps": [
+        {
+          "records": [
+            "b-17",
+            "b-18"
+          ],
+          "projection_records": [],
+          "fields": [
+            "arrival",
+            "status"
+          ],
+          "visible_rows": []
+        }
+      ]
+    },
+    {
+      "name": "live-follows-current-rows",
+      "mode": "live",
+      "records": "*",
+      "initial_records": [
+        "b-17"
+      ],
+      "steps": [
+        {
+          "records": [
+            "b-17",
+            "b-18"
+          ],
+          "projection_records": "*",
+          "fields": [
+            "arrival",
+            "status"
+          ],
+          "visible_rows": [
+            "b-17",
+            "b-18"
+          ]
+        },
+        {
+          "records": [
+            "b-18"
+          ],
+          "projection_records": "*",
+          "fields": [
+            "arrival",
+            "status"
+          ],
+          "visible_rows": [
+            "b-18"
+          ]
+        },
+        {
+          "records": [
+            "b-18"
+          ],
+          "projection_records": "*",
+          "fields": [
+            "arrival"
+          ],
+          "visible_rows": [
+            "b-18"
+          ]
+        },
+        {
+          "collection_lost": true,
+          "records": [],
+          "fields": [],
+          "projection_collections": [],
+          "visible_rows": []
+        }
+      ]
+    },
+    {
+      "name": "live-revoked",
+      "mode": "live",
+      "records": "*",
+      "initial_records": [
+        "b-17"
+      ],
+      "steps": [
+        {
+          "revoke": true,
+          "refused": "link_unavailable",
+          "status": 410
+        }
+      ]
+    },
+    {
+      "name": "live-expired",
+      "mode": "live",
+      "records": "*",
+      "initial_records": [
+        "b-17"
+      ],
+      "steps": [
+        {
+          "expire": true,
+          "refused": "link_unavailable",
+          "status": 410
+        }
+      ]
+    },
+    {
+      "name": "live-new-row-action-refused",
+      "mode": "live",
+      "records": "*",
+      "initial_records": [
+        "b-17"
+      ],
+      "steps": [
+        {
+          "records": [
+            "b-17",
+            "b-18"
+          ],
+          "action_record": "b-18",
+          "refused": "action_denied",
+          "status": 403
+        }
+      ]
+    },
+    {
+      "name": "pinned-remains-frozen",
+      "mode": "pinned",
+      "records": "*",
+      "initial_records": [
+        "b-17"
+      ],
+      "steps": [
+        {
+          "records": [
+            "b-17",
+            "b-18"
+          ],
+          "projection_records": [
+            "b-17"
+          ],
+          "fields": [
+            "arrival",
+            "status"
+          ],
+          "visible_rows": [
+            "b-17"
+          ]
+        }
+      ]
     }
   ]
 }

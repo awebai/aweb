@@ -230,7 +230,7 @@ class LifecycleMixin:
         for collection in document["collections"]:
             collection["records"] = all_records.get(collection["id"], [])[:200]
             for record in all_records.get(collection["id"], []):
-                self._validate_record(document, collection, record)
+                self._validate_record(scope, document, collection, record)
         validated(document)
         # Validate all archived definitions too, before activation. They cannot
         # reinterpret imported values or create active effects.

@@ -98,6 +98,14 @@ def _resolve(document: Any, tokens: Sequence[str]) -> Any:
     return current
 
 
+def resolve_pointer(document: Any, pointer: str) -> Any:
+    """Resolve one validated JSON pointer, or raise LookupError for a missing value."""
+    value = _resolve(document, _pointer_tokens(pointer))
+    if value is _MISSING:
+        raise LookupError("the JSON pointer has no value")
+    return value
+
+
 def _project(body: bytes, projection: Sequence[str], *, complete: bool) -> tuple[bytes, bool]:
     """The values the pointers name, keyed by pointer, and whether one of them
     contains a non-empty string under a credential-named field, including

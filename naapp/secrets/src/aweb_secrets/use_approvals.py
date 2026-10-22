@@ -39,9 +39,10 @@ from aweb_naapp.runtime.team_auth import Principal
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
-from aweb_secrets import records
+from aweb_secrets import derived_lineage, records
 from aweb_secrets.admission import Admission as UseAdmitted
-from aweb_secrets.approvers import approvers_for_secret
+from aweb_secrets.approvers import approvers_for_secrets
+from aweb_secrets.derived_capture import DEFAULT_MAX_TTL_S
 from aweb_secrets.owners import OwnerDirectory, approver_scope, is_owner_scope, owner_scope
 from aweb_secrets.policy import Policy
 from aweb_secrets.use_approval import (
@@ -134,12 +135,16 @@ class UsePolicies:
 
     async def current(self, policy_ref: str) -> ActionPolicy | None:
         async with self._db.transaction() as tx:
+            if policy_ref.startswith("secrets.run|"):
+                from aweb_secrets.run_approvals import current_run_policy
+
+                return await current_run_policy(tx, policy_ref)
             return await _action_policy(tx, policy_ref)
 
 
 class UseApprovers:
     """B2's approver directory for use approvals: the approver records covering
-    the request's secret, and the owners. B2 keeps only those in the policy's
+    the request's secret or a recorded ancestor, and the owners. B2 keeps only those in the policy's
     scopes, so a candidate is both listed and covering (decision 63); an owner
     has no covers and counts whenever listed."""
 
@@ -154,11 +159,14 @@ class UseApprovers:
         if request.get("type") != REQUEST_TYPE:
             return []
         async with self._db.transaction() as tx:
-            covering = await approvers_for_secret(
+            ids = await derived_lineage.ancestry_ids(
+                tx, request["installation_id"], request["team_id"], request["secret"]["secret_id"]
+            )
+            covering = await approvers_for_secrets(
                 tx,
                 installation_id=request["installation_id"],
                 team_id=request["team_id"],
-                secret_id=request["secret"]["secret_id"],
+                secret_ids=ids,
             )
         found: list[Approver] = []
         for record in covering:
@@ -204,6 +212,61 @@ class UseApprovalStatus:
     next: str | None
 
 
+async def _locked_ancestry(
+    tx: TransactionManager,
+    approvals: Approvals,
+    *,
+    installation_id: str,
+    team_id: str,
+    secret_id: str,
+    grant_id: str,
+    max_ttl_s: int,
+) -> tuple[tuple[derived_lineage.LineageNode, ...], str | None]:
+    """Keep an authority refusal until stable retrieval has been classified.
+    All ancestry and grant locks precede covering-record and B2 locks."""
+    nodes: tuple[derived_lineage.LineageNode, ...] = ()
+    try:
+        nodes = await derived_lineage.lock_ancestry(tx, installation_id, team_id, secret_id)
+    except derived_lineage.LineageRefused as exc:
+        return nodes, exc.code
+    return nodes, await _ancestry_refusal(tx, approvals, nodes, grant_id, max_ttl_s)
+
+
+async def _ancestry_refusal(
+    tx: TransactionManager,
+    approvals: Approvals,
+    nodes: Sequence[derived_lineage.LineageNode],
+    grant_id: str,
+    max_ttl_s: int,
+) -> str | None:
+    try:
+        await derived_lineage.check_ancestry(
+            tx, nodes, clock=approvals.now, max_ttl_s=max_ttl_s, candidate_grant_ids=[grant_id]
+        )
+    except derived_lineage.LineageRefused as exc:
+        return exc.code
+    return None
+
+
+async def _covering_scopes(
+    tx: TransactionManager,
+    *,
+    installation_id: str,
+    team_id: str,
+    secret_ids: Sequence[str],
+    policy: ActionPolicy | None,
+) -> frozenset[str]:
+    covering = await approvers_for_secrets(
+        tx, installation_id=installation_id, team_id=team_id, secret_ids=secret_ids
+    )
+    if policy is None:
+        return frozenset()
+    # Owners have no covers; they count only while explicitly policy-listed.
+    scopes = {record.scope for record in covering}
+    scopes.update(scope for scope in policy.approver_scopes if is_owner_scope(scope))
+    return frozenset(scopes.intersection(policy.approver_scopes))
+
+
 async def request_use_approval(
     tx: TransactionManager,
     approvals: Approvals,
@@ -213,9 +276,13 @@ async def request_use_approval(
     principal: Principal,
     action: BrokerOperation | BrokerOpen | RunJob,
     reason: str,
+    max_ttl_s: int = DEFAULT_MAX_TTL_S,
 ) -> PendingUseApproval:
     """Put an admitted use to its approvers, in the caller's transaction.
 
+    Caller holds the installation fence (and any role hold) first. Ancestry,
+    source/candidate grants and covering approver records stay locked through
+    mint. Pass the deployment's derived-secret TTL cap as max_ttl_s.
     Asking again for the same intent returns its approval and mints nothing."""
     existing = await tx.fetch_one(
         "SELECT approval_id, approval_ref FROM {{tables.use_approvals}} WHERE intent_id = $1",
@@ -235,18 +302,20 @@ async def request_use_approval(
         "SELECT * FROM {{tables.intents}} WHERE intent_id = $1", admission.intent_id
     )
     assert intent is not None
-    secret = await tx.fetch_one(
-        "SELECT ref FROM {{tables.secrets}} WHERE secret_id = $1 AND installation_id = $2 "
-        "AND team_id = $3",
-        intent["secret_id"],
-        intent["installation_id"],
-        intent["team_id"],
+    nodes, refusal = await _locked_ancestry(
+        tx,
+        approvals,
+        installation_id=intent["installation_id"],
+        team_id=intent["team_id"],
+        secret_id=intent["secret_id"],
+        grant_id=intent["grant_id"],
+        max_ttl_s=max_ttl_s,
     )
-    assert secret is not None
-    stored = await records.secret_by_ref(
-        tx, intent["installation_id"], intent["team_id"], secret["ref"]
-    )
-    assert stored is not None
+    if refusal is not None:
+        raise UseApprovalRefused(refusal, "the secret's ancestry no longer permits this use")
+    stored = nodes[-1].secret
+    if stored.active_version != intent["secret_version"]:
+        raise UseApprovalRefused("secret_version_changed", "the value changed after admission")
     policy_ref = use_policy_ref(
         intent["installation_id"], intent["team_id"], intent["grant_id"], intent["policy_digest"]
     )
@@ -262,6 +331,15 @@ async def request_use_approval(
     policy = _b2_policy(policy_ref, intent["installation_id"], intent["team_id"], granted)
     if policy is None:
         raise UseApprovalRefused("no_eligible_approver", "the policy lists no approver")
+    scopes = await _covering_scopes(
+        tx,
+        installation_id=intent["installation_id"],
+        team_id=intent["team_id"],
+        secret_ids=[node.secret.record.secret_id for node in nodes],
+        policy=policy,
+    )
+    if not scopes:
+        raise UseApprovalRefused("no_eligible_approver", "no listed approver covers the ancestry")
     request = use_approval_request(
         installation_id=intent["installation_id"],
         install_generation=intent["install_generation"],
@@ -291,6 +369,13 @@ async def request_use_approval(
         if exc.reason is Refusal.POLICY_UNKNOWN:
             raise UseApprovalRefused("grant_revoked", "the grant or policy changed") from exc
         raise
+    if any(candidate.scope not in scopes for candidate in pending.approval.candidates):
+        raise UseApprovalRefused("no_eligible_approver", "coverage changed while minting")
+    # These grant locks are already held. Refresh expiry after any wait for
+    # coverage or B2's separate directory connection before committing a mint.
+    refusal = await _ancestry_refusal(tx, approvals, nodes, intent["grant_id"], max_ttl_s)
+    if refusal is not None:
+        raise UseApprovalRefused(refusal, "the secret expired while minting its approval")
     await tx.execute(
         "INSERT INTO {{tables.use_approvals}} (intent_id, dispatch_id, installation_id, team_id, "
         "secret_id, secret_version, approval_id, approval_ref, request) "
@@ -326,6 +411,7 @@ async def admit_approved_use(
     *,
     intent_id: str,
     dispatch_id: uuid.UUID,
+    max_ttl_s: int = DEFAULT_MAX_TTL_S,
 ) -> UseAdmission:
     """Admit the approved use's one dispatch, in the caller's transaction.
 
@@ -333,29 +419,94 @@ async def admit_approved_use(
     is refused as `approval_consumed`. A moved secret version refuses new
     admissions and not_sent transport retries, while preserving retrieval of
     an already admitted dispatch. A changed grant, policy or approver voids
-    any approval that has not yet been dispatched."""
+    any approval that has not yet been dispatched. Caller holds the installation
+    fence and any role hold first; ancestry, grants, covering records, then B2
+    are locked in that order. max_ttl_s is the deployment's current derived cap."""
     link = await tx.fetch_one(
         "SELECT * FROM {{tables.use_approvals}} WHERE intent_id = $1 FOR UPDATE", intent_id
     )
     if link is None:
         return UseAdmission(admission=None, refusal="approval_pending")
     approval_id = link["approval_id"]
-    active = await tx.fetch_value(
-        "SELECT active_version FROM {{tables.secrets}} WHERE secret_id = $1 FOR SHARE",
-        link["secret_id"],
+    request = json.loads(link["request"])
+    nodes, refusal = await _locked_ancestry(
+        tx,
+        approvals,
+        installation_id=link["installation_id"],
+        team_id=link["team_id"],
+        secret_id=link["secret_id"],
+        grant_id=request["grant_id"],
+        max_ttl_s=max_ttl_s,
     )
-    if active != link["secret_version"]:
-        retrieved = await approvals.retrieve(
-            approval_id, json.loads(link["request"]), str(dispatch_id), tx=tx
+    if refusal is None and nodes[-1].secret.active_version != link["secret_version"]:
+        refusal = "secret_version_changed"
+    granted = await _granted_policy(
+        tx, link["installation_id"], link["team_id"], request["grant_id"], request["policy_digest"]
+    )
+    policy = (
+        None
+        if granted is None
+        else _b2_policy(
+            use_policy_ref(
+                link["installation_id"],
+                link["team_id"],
+                request["grant_id"],
+                request["policy_digest"],
+            ),
+            link["installation_id"],
+            link["team_id"],
+            granted,
         )
+    )
+    if policy is None:
+        refusal = refusal or "grant_revoked"
+    scopes = await _covering_scopes(
+        tx,
+        installation_id=link["installation_id"],
+        team_id=link["team_id"],
+        secret_ids=[node.secret.record.secret_id for node in nodes],
+        policy=policy,
+    )
+    try:
+        # retrieve holds B2's row lock in tx even when it returns None. Only
+        # after this classification may an authority refusal void the attempt.
+        retrieved = await approvals.retrieve(approval_id, request, str(dispatch_id), tx=tx)
         if retrieved is not None:
             return UseAdmission(admission=retrieved, refusal=None)
-        await _void(tx, approvals, approval_id, "secret_version_changed")
-        return UseAdmission(admission=None, refusal="secret_version_changed")
-    try:
-        admitted = await approvals.admit(
-            approval_id, json.loads(link["request"]), str(dispatch_id), tx=tx
+        approval = await approvals.get(approval_id)
+        assert approval is not None
+        if approval.state in (
+            ApprovalState.PENDING,
+            ApprovalState.APPROVED,
+            ApprovalState.CONSUMED,
+        ):
+            if approval.decided_by is not None:
+                eligible = approval.decided_by.scope in scopes
+            else:
+                eligible = any(candidate.scope in scopes for candidate in approval.candidates)
+            if not eligible:
+                refusal = refusal or "approval_revoked"
+        # Ancestry/grants are held, so this takes no new locks. Time may have
+        # advanced while coverage, B2 or the read was blocked; recheck last.
+        refusal = refusal or await _ancestry_refusal(
+            tx, approvals, nodes, request["grant_id"], max_ttl_s
         )
+        if refusal is not None:
+            await _void(tx, approvals, approval_id, refusal)
+            return UseAdmission(admission=None, refusal=refusal)
+        # B2 awaits its own policy/decider/dispatch reads. Its consumption,
+        # outcome and audit writes remain tentative until ancestry is checked
+        # after that work; expiry rolls them back before the outer tx voids.
+        async with tx.transaction() as attempt:
+            admitted = await approvals.admit(approval_id, request, str(dispatch_id), tx=attempt)
+            refusal = await _ancestry_refusal(
+                attempt, approvals, nodes, request["grant_id"], max_ttl_s
+            )
+            if refusal is not None:
+                raise UseApprovalRefused(refusal, "the secret expired during dispatch admission")
+    except UseApprovalRefused as exc:
+        await _void(tx, approvals, approval_id, exc.code)
+        return UseAdmission(admission=None, refusal=exc.code)
     except ApprovalRefused as exc:
         return UseAdmission(
             admission=None, refusal=await _refusal(tx, approvals, approval_id, exc.reason)
@@ -385,6 +536,54 @@ async def _refusal(
     return "approval_revoked"
 
 
+# Both association types bind their own source/version/grant. No historical
+# lookup or caller-supplied grant can broaden a revocation's scoped predicate.
+_ASSOCIATIONS = (
+    "SELECT u.installation_id,u.team_id,u.secret_id,u.secret_version,u.approval_id,i.grant_id "
+    "FROM {{tables.use_approvals}} u JOIN {{tables.intents}} i "
+    "ON i.intent_id=u.intent_id AND i.installation_id=u.installation_id AND i.team_id=u.team_id "
+    "UNION ALL SELECT installation_id,team_id,secret_id,secret_version,approval_id,grant_id "
+    "FROM {{tables.run_slot_approvals}} WHERE approval_id IS NOT NULL"
+)
+
+
+async def select_use_approval_ids(
+    tx: TransactionManager, *, installation_id: str, team_id: str, secret_ids: Sequence[str]
+) -> tuple[str, ...]:
+    """Read all versions/states across use/run slots, sorted and deduplicated.
+
+    Caller holds authority/ancestry/grant fences, unions confirming IDs, then
+    calls B2.lock_many before any batch or consumption. No locks or mutations.
+    """
+    rows = await tx.fetch_all(
+        f"SELECT DISTINCT approval_id FROM ({_ASSOCIATIONS}) a "
+        "WHERE installation_id=$1 AND team_id=$2 AND secret_id=ANY($3::text[]) "
+        "ORDER BY approval_id",
+        installation_id,
+        team_id,
+        list(secret_ids),
+    )
+    return tuple(row["approval_id"] for row in rows)
+
+
+async def use_approval_secret_ids(
+    tx: TransactionManager, *, installation_id: str, team_id: str, approval_id: str
+) -> tuple[str, ...]:
+    """Read the same-scope source IDs a use/run-slot approval acts on.
+
+    Full-plan rendering never grants action coverage over other slots. Unknown
+    or out-of-scope IDs return empty; the caller still authorizes every target.
+    """
+    rows = await tx.fetch_all(
+        f"SELECT DISTINCT secret_id FROM ({_ASSOCIATIONS}) a "
+        "WHERE installation_id=$1 AND team_id=$2 AND approval_id=$3 ORDER BY secret_id",
+        installation_id,
+        team_id,
+        approval_id,
+    )
+    return tuple(row["secret_id"] for row in rows)
+
+
 async def void_use_approvals(
     tx: TransactionManager,
     approvals: Approvals,
@@ -394,23 +593,64 @@ async def void_use_approvals(
     secret_id: str,
     current_version: int,
     revoked_by: str,
+    descendant_secret_ids: Sequence[str] = (),
 ) -> Sequence[str]:
-    """Void the secret's use approvals made for any other version, pending or
-    approved and not yet dispatched, when its value is replaced or its
-    external item changes. Returns the approvals voided."""
+    """Void other root versions and all versions of the supplied descendants.
+
+    The caller holds installation/ancestry/coverage fences and selects the scoped
+    descendants, excluding the root. For a forest or confirmation, prelock the
+    complete B2 approval union with lock_many before any per-root call. One batch
+    revokes pending/approved decisions and NOT_SENT retries; dispatched attempts
+    remain retrievable. With no descendants, only other root versions are voided.
+    """
     rows = await tx.fetch_all(
-        "SELECT approval_id FROM {{tables.use_approvals}} WHERE installation_id = $1 "
-        "AND team_id = $2 AND secret_id = $3 AND secret_version <> $4",
+        f"SELECT DISTINCT approval_id FROM ({_ASSOCIATIONS}) a WHERE installation_id = $1 "
+        "AND team_id = $2 AND ((secret_id = $3 AND secret_version <> $4) "
+        "OR secret_id = ANY($5::text[])) ORDER BY approval_id",
         installation_id,
         team_id,
         secret_id,
         current_version,
+        list(descendant_secret_ids),
     )
     revoked = await approvals.revoke_many(
         [row["approval_id"] for row in rows],
         revoked_by=revoked_by,
         reason="secret_version_changed",
         tx=tx,
+    )
+    return [approval.approval_id for approval in revoked]
+
+
+async def revoke_use_approvals(
+    tx: TransactionManager,
+    approvals: Approvals,
+    *,
+    installation_id: str,
+    team_id: str,
+    secret_ids: Sequence[str],
+    revoked_by: str,
+    reason: str,
+    source_grant_id: str | None = None,
+) -> Sequence[str]:
+    """Revoke all versions for exactly these scoped secret IDs, in the
+    caller's containment transaction. The caller selects descendants through
+    stored lineage and holds the installation/ancestry/grant fences first.
+    source_grant_id also includes direct approvals admitted under that exact
+    grant. The scoped union goes to B2 once, in approval-ID order, before any
+    revocation writes. Without it, selection remains exact-secret/all-version.
+    Consumed attempts stay retrievable; NOT_SENT transport retries stop."""
+    rows = await tx.fetch_all(
+        f"SELECT DISTINCT approval_id FROM ({_ASSOCIATIONS}) a "
+        "WHERE installation_id=$1 AND team_id=$2 "
+        "AND (secret_id=ANY($3::text[]) OR grant_id=$4::text) ORDER BY approval_id",
+        installation_id,
+        team_id,
+        list(secret_ids),
+        source_grant_id,
+    )
+    revoked = await approvals.revoke_many(
+        [row["approval_id"] for row in rows], revoked_by=revoked_by, reason=reason, tx=tx
     )
     return [approval.approval_id for approval in revoked]
 
@@ -451,6 +691,7 @@ __all__ = [
     "admit_approved_use",
     "apply_use_approval_migrations",
     "request_use_approval",
+    "revoke_use_approvals",
     "use_approval_status",
     "use_policy_ref",
     "void_use_approvals",

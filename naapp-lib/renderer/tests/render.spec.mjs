@@ -126,6 +126,49 @@ for (const vector of vectors.cases.filter((c) => c.render)) {
         "isolate",
       );
     }
+    if (["table_url_link", "table_url_inert"].includes(vector.render)) {
+      const expected = vector.render_expected;
+      const snapshot = await page.request
+        .get(`/api/page?vector=${encodeURIComponent(vector.name)}`)
+        .then((r) => r.json());
+      const widget = snapshot.layout.find((w) => w.id === expected.widget_id);
+      const column = widget.props.columns.findIndex(
+        (c) => c.field === expected.field,
+      );
+      const cell = page
+        .locator(
+          `[data-widget="${expected.widget_id}"] [data-record="${expected.record_id}"] td`,
+        )
+        .nth(column);
+      if (vector.render === "table_url_link") {
+        const link = cell.getByRole("link", {
+          name: expected.href,
+          exact: true,
+        });
+        await expect(link.locator("bdi")).toHaveText(expected.text);
+        await expect(page.locator("#page [href]")).toHaveCount(0);
+        expect(
+          await link.evaluate((node) =>
+            [...node.attributes].some((attr) => attr.value.includes("://")),
+          ),
+        ).toBe(false);
+        await expect(page.locator("#destinations")).toContainText(
+          expected.host,
+        );
+        await link.press("Enter");
+        const dialog = page.getByRole("dialog");
+        await expect(dialog.getByRole("heading")).toHaveText(expected.host);
+        await expect(dialog).toContainText(expected.href);
+        await expect(
+          dialog.getByRole("button", { name: "Cancel", exact: true }),
+        ).toBeFocused();
+        await page.keyboard.press("Escape");
+      } else {
+        await expect(cell.locator("bdi")).toHaveText(expected.text);
+        await expect(cell.getByRole("link")).toHaveCount(0);
+        await expect(cell.locator("[href],button,script,img")).toHaveCount(0);
+      }
+    }
     expect(
       requests.every(
         (url) =>

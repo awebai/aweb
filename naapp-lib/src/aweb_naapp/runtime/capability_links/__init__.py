@@ -24,9 +24,11 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import re
 import secrets
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -37,6 +39,7 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired
+from aweb_naapp.pages import validate_page
 from aweb_naapp.ratelimit import Charge, Decision, take
 from aweb_naapp.runtime.link_requests import (
     LinkRequestRefused,
@@ -44,6 +47,7 @@ from aweb_naapp.runtime.link_requests import (
     secret_verifier,
     verify_link_request_bytes,
 )
+from aweb_naapp.runtime.team_auth import MAX_TEAM_FACTS_TTL_SECONDS, MembershipProof
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_naapp_capability_links"
@@ -56,6 +60,7 @@ CLOCK_WINDOW = timedelta(seconds=60)
 EXCHANGES_PER_LINK = (10, 60)
 EXCHANGES_PER_CLIENT = (30, 60)
 READS_PER_SESSION = (120, 60)
+ATTEMPTS_PER_SESSION = (240, 60)
 WRITES_PER_LINK = (20, 60)
 WRITES_PER_CLIENT = (60, 60)
 
@@ -65,7 +70,6 @@ MAX_FIELDS = 64
 MAX_ASSETS = 64
 MAX_ACTIONS = 16
 MAX_FIELD_NAME = 256
-MAX_SNAPSHOT_BYTES = 10 * 1024 * 1024
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
@@ -120,19 +124,64 @@ class LinkScope:
 
 
 @dataclass(frozen=True)
-class Readable:
-    """The records and fields of one collection a creator can read now."""
+class LinkCreator:
+    """Internal mint evidence, separate from the canonical page ACL identity.
 
-    records: tuple[str, ...]
+    The host obtains a runtime MembershipProof before opening its transaction.
+    N5 checks that proof locally under the link lock before creator-scoped store
+    calls. Never return this evidence to the link holder.
+    """
+
+    scope: LinkScope
+    principal_did: str
+    certificate_id: str
+    team_did_key: str
+
+
+@dataclass(frozen=True)
+class Readable:
+    """Current fields and rows; ``records=None`` explicitly means live/dynamic.
+
+    Dynamic rows are valid only for live read-only wildcard selections. Named
+    selections (including empty) and pinned/action grants need bounded tuples.
+    """
+
+    records: tuple[str, ...] | None
     fields: frozenset[str]
 
 
 class LinkAuthority(Protocol):
-    """A creator's current authority on a page, as the serving app knows it."""
+    """A creator's current authority on a page, as the serving app knows it.
+
+    The host calls runtime.check_current_member before opening the transaction.
+    N5 checks its in-process proof under the link lock. The required callback
+    ``require_current_creator`` then performs LOCAL checks only: no runtime
+    refresh or other network I/O under this transaction. It precedes creator
+    store callbacks and is not an action-policy substitute. Mint already
+    receives authenticated member context. Phase-1 403/503 stay distinct.
+    """
+
+    async def require_current_creator(
+        self, tx: TransactionManager, *, creator: LinkCreator, proof: MembershipProof
+    ) -> None: ...
 
     async def readable(
-        self, tx: TransactionManager, *, creator: str, page_id: str, collection: str
-    ) -> Readable | None: ...
+        self,
+        tx: TransactionManager,
+        *,
+        creator: str,
+        page_id: str,
+        collection: str,
+        link_mode: str,
+        record_ids: str | list[str],
+    ) -> Readable | None:
+        """Check current access for this link mode and literal/dynamic selection.
+
+        The host passes these keywords to collection_access_on. Live read-only
+        '*' may return dynamic rows without enumerating IDs. Action wildcard
+        mint uses link_mode='pinned' to request bounded expansion instead.
+        """
+        ...
 
     async def can_read_asset(
         self, tx: TransactionManager, *, creator: str, page_id: str, asset_id: str
@@ -191,6 +240,9 @@ class LinkRead:
     ``allowed_action_ids``. A pinned ``source_snapshot`` is internal app input,
     never a response before that narrowing. ``asset_versions`` stays outside
     the page; the asset adapter supplies only available captured-version URLs.
+    A live read-only collection may carry ``record_ids="*"``: only the app's
+    paginated query_widget_on may consume it, with the checked caller link ID.
+    Capture and bounded snapshot projection APIs never accept that marker.
     """
 
     scope: LinkScope
@@ -198,6 +250,7 @@ class LinkRead:
     mode: str
     page_rev: int | None
     projection: Mapping[str, Any]
+    created_by: LinkCreator
     source_snapshot: Mapping[str, Any] | None = None
     asset_versions: Mapping[str, str] | None = None
     allowed_action_ids: tuple[str, ...] = ()
@@ -230,9 +283,9 @@ class SnapshotSource(Protocol):
 class AssetVersions(Protocol):
     """Resolve captured asset IDs to immutable content versions on the mint tx.
 
-    The app holds its asset lifecycle lock while resolving versions and N5
-    records retention references on that same transaction. Ordinary GC takes
-    that lock and consults retained_asset_versions_on. Explicit owner deletion
+    The app holds its asset lifecycle lock from version resolution until the
+    mint transaction commits, including N5 retention-reference insertion.
+    Ordinary GC takes that lock and consults retained_asset_versions_on. Explicit owner deletion
     overrides retention; phase-3 grants check each version's availability.
     """
 
@@ -248,13 +301,16 @@ class LinkAction:
     The creator supplies delegated authority; ``caller`` is anonymous link
     provenance, never a member Principal. The app validates the action schema,
     expected revisions and field policy within ``projection``, and writes its
-    effect, audit, outbox and receipt on the supplied transaction. It must not
+    effect, audit, outbox and receipt on the supplied transaction. ``projection``
+    intersects the minted grant with current creator read access; the app must
+    enforce its current write policy as well. It must not
     open another transaction, commit this transaction, or dispatch external effects.
     """
 
     scope: LinkScope
     caller: LinkCaller
     creator: str
+    created_by: LinkCreator
     mode: str
     page_rev: int | None
     projection: Mapping[str, Any]
@@ -359,7 +415,7 @@ def _check_request(request: object, now: datetime) -> dict[str, Any]:
             raise _schema("collection")
         records = entry["record_ids"]
         if records != "*":
-            records = _identifiers(records, 1, MAX_RECORDS)
+            records = _identifiers(records, 0, MAX_RECORDS)
         checked.append(
             {
                 "collection": entry["collection"],
@@ -413,24 +469,31 @@ async def _freeze_projection(
     creator: str,
     page_id: str,
     projection: Mapping[str, Any],
+    link_mode: str,
+    follow_rows: bool = False,
 ) -> dict[str, Any] | None:
-    """The projection with "*" frozen to the creator's records, or None when the
-    creator cannot read all of it now."""
+    """Check mint authority; only live read-only queries retain the row marker."""
     frozen = []
     for entry in projection["collections"]:
+        records = entry["record_ids"]
         readable = await authority.readable(
-            tx, creator=creator, page_id=page_id, collection=entry["collection"]
+            tx,
+            creator=creator,
+            page_id=page_id,
+            collection=entry["collection"],
+            link_mode="pinned" if records == "*" and not follow_rows else link_mode,
+            record_ids=records,
         )
         if readable is None or not set(entry["fields"]) <= readable.fields:
             return None
-        records = entry["record_ids"]
-        if records == "*":
-            records = sorted(readable.records)
-            if not 1 <= len(records) <= MAX_RECORDS:
+        if not (follow_rows and link_mode == "live" and records == "*"):
+            if readable.records is None or len(readable.records) > MAX_RECORDS:
                 return None
-        elif not set(records) <= set(readable.records):
-            return None
-        frozen.append({**entry, "record_ids": list(records)})
+            if records == "*":
+                records = sorted(readable.records)
+            elif not set(records) <= set(readable.records):
+                return None
+        frozen.append({**entry, "record_ids": "*" if records == "*" else list(records)})
     for asset_id in projection["assets"]:
         if not await authority.can_read_asset(
             tx, creator=creator, page_id=page_id, asset_id=asset_id
@@ -446,6 +509,7 @@ async def mint(
     scope: LinkScope,
     creator: str,
     creator_certificate_id: str,
+    creator_team_did_key: str,
     request: object,
     now: datetime,
     snapshot_source: SnapshotSource | None = None,
@@ -461,6 +525,11 @@ async def mint(
     """
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
+    if any(
+        not isinstance(value, str) or not value.strip()
+        for value in (creator, creator_certificate_id, creator_team_did_key)
+    ):
+        raise ValueError("verified creator membership evidence required")
     checked = _check_request(request, now)
     kinds = [
         await authority.action_kind(tx, page_id=scope.page_id, action_id=action["action_id"])
@@ -470,7 +539,13 @@ async def mint(
     if has_intent != (checked["intent_sponsor_did"] is not None):
         raise _schema("intent_sponsor_did")
     projection = await _freeze_projection(
-        tx, authority, creator=creator, page_id=scope.page_id, projection=checked["projection"]
+        tx,
+        authority,
+        creator=creator,
+        page_id=scope.page_id,
+        projection=checked["projection"],
+        link_mode=checked["mode"],
+        follow_rows=checked["mode"] == "live" and not checked["actions"],
     )
     if projection is None:
         raise _denied()
@@ -529,7 +604,12 @@ async def mint(
         "actions": checked["actions"],
         "intent_sponsor_did": checked["intent_sponsor_did"],
         "one_use": checked["one_use"],
-        "created_by": {"principal_did": creator, "certificate_id": creator_certificate_id},
+        "created_by": {
+            "team_id": scope.team_id,
+            "principal_did": creator,
+            "certificate_id": creator_certificate_id,
+            "team_did_key": creator_team_did_key,
+        },
         "created_at": _timestamp(now),
         "expires_at": _timestamp(checked["expires_at"]),
         "rate_policy": RATE_POLICY,
@@ -595,18 +675,10 @@ def _record(value: Any) -> Mapping[str, Any]:
 
 
 def _snapshot_bytes(snapshot: Mapping[str, Any]) -> bytes:
-    """Bound the trusted projection result; ACL/redaction stay in the app source."""
-    if (
-        not isinstance(snapshot, Mapping)
-        or snapshot.get("page_format") != "aweb.page/1"
-        or type(snapshot.get("rev")) is not int
-        or snapshot["rev"] < 0
-        or not isinstance(snapshot["collections"], list)
-    ):
-        raise ValueError("invalid pinned snapshot shape")
+    # Reuse C1's schema, widget, depth, value and byte limits at storage too.
+    if not isinstance(snapshot, Mapping) or not validate_page(dict(snapshot)).valid:
+        raise ValueError("invalid pinned snapshot")
     raw = canonical_json_bytes(dict(snapshot))
-    if len(raw) > MAX_SNAPSHOT_BYTES:
-        raise ValueError("pinned snapshot exceeds the page snapshot byte bound")
     return raw
 
 
@@ -643,6 +715,10 @@ async def _pinned_source(
 async def _creator_still_reads(
     tx: TransactionManager, authority: LinkAuthority, record: Mapping[str, Any]
 ) -> bool:
+    # Read-only live views can narrow to nothing; the checked read and app query
+    # re-evaluate authority before exposing any content. Exchange grants no data.
+    if record["mode"] == "live" and not record["actions"]:
+        return True
     creator = record["created_by"]["principal_did"]
     frozen = await _freeze_projection(
         tx,
@@ -650,8 +726,38 @@ async def _creator_still_reads(
         creator=creator,
         page_id=record["page_id"],
         projection={"collections": record["projection"]["collections"], "assets": []},
+        link_mode=record["mode"],
     )
     return frozen is not None
+
+
+def _exchange_request(body: bytes) -> dict[str, Any]:
+    """Validate before creator preflight or any database/network lookup."""
+    request = _strict_object(body)
+    if not isinstance(request, dict) or set(request) != {"secret", "session_did_key"}:
+        raise _schema("exchange fields")
+    if not isinstance(request["secret"], str):
+        raise _schema("secret")
+    try:
+        check_session_did_key(request["session_did_key"])
+    except LinkRequestRefused as exc:
+        raise _schema("session_did_key") from exc
+
+    return request
+
+
+def _exchange_record(row: Mapping[str, Any] | None, request: Mapping[str, Any], now: datetime):
+    stored = row["verifier_sha256"] if row is not None else _ABSENT_VERIFIER
+    matches = hmac.compare_digest(secret_verifier(request["secret"]), stored)
+    if row is None or not matches:
+        raise _unavailable()
+    if (
+        row["revoked_at"] is not None
+        or now >= row["expires_at"]
+        or (row["one_use"] and row["used_at"] is not None)
+    ):
+        raise _unavailable()
+    return _record(row["record"])
 
 
 async def exchange(
@@ -662,6 +768,9 @@ async def exchange(
     body: bytes,
     client: str,
     now: datetime,
+    proof: MembershipProof | None = None,
+    check_current_member: Callable[[LinkCreator], Awaitable[MembershipProof]] | None = None,
+    proof_clock: Callable[[], float] = time.monotonic,
 ) -> LinkSession:
     """Exchange a link's secret for a session bound to a browser key (§2).
 
@@ -674,15 +783,7 @@ async def exchange(
     """
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
-    request = _strict_object(body)
-    if not isinstance(request, dict) or set(request) != {"secret", "session_did_key"}:
-        raise _schema("exchange fields")
-    if not isinstance(request["secret"], str):
-        raise _schema("secret")
-    try:
-        check_session_did_key(request["session_did_key"])
-    except LinkRequestRefused as exc:
-        raise _schema("session_did_key") from exc
+    request = _exchange_request(body)
 
     async with db.transaction() as tx:
         per_client = await take(
@@ -690,6 +791,17 @@ async def exchange(
         )
     if not per_client.allowed:
         raise _limited(per_client)
+
+    # Finish all preliminary SQL before remote membership checks. A wrong
+    # secret/unknown link spends its client admission but never reaches AWID.
+    row = await db.fetch_one(
+        "SELECT verifier_sha256, record, expires_at, one_use, revoked_at, used_at "
+        "FROM {{tables.capability_links}} WHERE link_id = $1",
+        link_id,
+    )
+    record = _exchange_record(row, request, now)
+    if check_current_member is not None:
+        proof = await check_current_member(_link_creator(record))
 
     async with db.transaction() as tx:
         row = await tx.fetch_one(
@@ -699,17 +811,10 @@ async def exchange(
             """,
             link_id,
         )
-        stored = row["verifier_sha256"] if row is not None else _ABSENT_VERIFIER
-        matches = hmac.compare_digest(secret_verifier(request["secret"]), stored)
-        if row is None or not matches:
-            raise _unavailable()
-        record = _record(row["record"])
-        usable = (
-            row["revoked_at"] is None
-            and now < row["expires_at"]
-            and not (row["one_use"] and row["used_at"] is not None)
-        )
-        if not usable or not await _creator_still_reads(tx, authority, record):
+        record = _exchange_record(row, request, now)
+        assert row is not None  # _exchange_record refuses an absent row.
+        await _require_current_creator(tx, authority, record, proof=proof, clock=proof_clock)
+        if not await _creator_still_reads(tx, authority, record):
             raise _unavailable()
         per_link = await take(tx, [Charge("link.exchange", link_id, *EXCHANGES_PER_LINK)], now=now)
         if not per_link.allowed:
@@ -764,7 +869,9 @@ async def authenticate(
     ``target`` is the raw request path with its query. The nonce is recorded
     in its own committed write as soon as the signature, binding and time
     hold, before the Origin and CSRF checks and before any action, so a signed
-    request is never accepted twice. The link's lifecycle (step 6) is checked
+    request is never accepted twice. A per-session signed-attempt charge commits
+    in that same transaction, even when Origin/CSRF or the later operation fails.
+    Rate refusal writes no nonce. The link's lifecycle (step 6) is checked
     under its row lock by the operation that follows.
     """
     if now.tzinfo is None:
@@ -804,17 +911,23 @@ async def authenticate(
         raise LinkRefused("link_unavailable", 410)
     issued_at = _parse_timestamp(payload["issued_at"])
     async with db.transaction() as tx:
-        recorded = await tx.fetch_value(
-            """
-            INSERT INTO {{tables.link_nonces}} (session_id, nonce, keep_until)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (session_id, nonce) DO NOTHING
-            RETURNING 1
-            """,
-            session_id,
-            payload["nonce"],
-            max(session["expires_at"], issued_at + CLOCK_WINDOW),
-        )
+        limit = await take(tx, [Charge("link.attempt", session_id, *ATTEMPTS_PER_SESSION)], now=now)
+        recorded = None
+        if limit.allowed:
+            recorded = await tx.fetch_value(
+                """
+                INSERT INTO {{tables.link_nonces}} (session_id, nonce, keep_until)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (session_id, nonce) DO NOTHING
+                RETURNING 1
+                """,
+                session_id,
+                payload["nonce"],
+                max(session["expires_at"], issued_at + CLOCK_WINDOW),
+            )
+    # Raise only after commit: downstream refusal must not refund the charge.
+    if not limit.allowed:
+        raise _limited(limit)
     if recorded is None:
         raise LinkRefused("idempotency_conflict", 409)
     if method not in _SAFE_METHODS:
@@ -828,6 +941,70 @@ async def authenticate(
 
 def _scope(record: Mapping[str, Any]) -> LinkScope:
     return LinkScope(record["team_id"], record["installation_id"], record["page_id"])
+
+
+def _link_creator(record: Mapping[str, Any]) -> LinkCreator:
+    evidence = record.get("created_by")
+    if (
+        not isinstance(evidence, Mapping)
+        or any(
+            not isinstance(evidence.get(name), str) or not evidence[name].strip()
+            for name in ("team_id", "principal_did", "certificate_id", "team_did_key")
+        )
+        or evidence["team_id"] != record["team_id"]
+    ):
+        raise LinkRefused(
+            "current_member_required", 403, reason="incomplete or mismatched creator evidence"
+        )
+    return LinkCreator(
+        scope=_scope(record),
+        principal_did=evidence["principal_did"],
+        certificate_id=evidence["certificate_id"],
+        team_did_key=evidence["team_did_key"],
+    )
+
+
+async def load_link_creator(db: AsyncDatabaseManager, *, link_id: str) -> LinkCreator:
+    """Load immutable INTERNAL mint evidence before the host's joined transaction.
+
+    No lifecycle lock or authority claim: the host performs phase-1 runtime
+    check_current_member with this evidence. Every holder operation reloads it
+    under the link lock and matches the proof before exposing any content. Never
+    mount this as a holder endpoint or return its evidence in page data.
+    """
+    row = await db.fetch_one(
+        "SELECT record FROM {{tables.capability_links}} WHERE link_id = $1", link_id
+    )
+    if row is None:
+        raise _unavailable()
+    return _link_creator(_record(row["record"]))
+
+
+async def _require_current_creator(
+    tx: TransactionManager,
+    authority: LinkAuthority,
+    record: Mapping[str, Any],
+    *,
+    proof: MembershipProof | None,
+    clock: Callable[[], float],
+) -> LinkCreator:
+    """Consume the original runtime proof locally AFTER the existing link lock."""
+    creator = _link_creator(record)
+    checked_now = clock()
+    if (
+        not isinstance(proof, MembershipProof)
+        or proof.team_id != creator.scope.team_id
+        or proof.certificate_id != creator.certificate_id
+        or proof.team_did_key != creator.team_did_key
+        or not all(math.isfinite(t) for t in (proof.checked_at, proof.fresh_until, checked_now))
+        or not 0 <= proof.fresh_until - proof.checked_at <= MAX_TEAM_FACTS_TTL_SECONDS
+        or not proof.checked_at <= checked_now <= proof.fresh_until
+    ):
+        raise LinkRefused(
+            "current_member_required", 403, reason="missing, mismatched or expired proof"
+        )
+    await authority.require_current_creator(tx, creator=creator, proof=proof)
+    return creator
 
 
 async def _locked_link(
@@ -879,12 +1056,17 @@ def _select_projection(
             raise _schema("collection")
         if not _identifier(entry["collection"]):
             raise _schema("collection")
-        records = _identifiers(entry["record_ids"], 1, MAX_RECORDS)
+        records = entry["record_ids"]
+        if records != "*":
+            records = _identifiers(records, 0, MAX_RECORDS)
         fields = _field_names(entry["fields"])
         grant = allowed.get(entry["collection"])
         if (
             grant is None
-            or not set(records) <= set(grant["record_ids"])
+            or (
+                grant["record_ids"] != "*"
+                and (records == "*" or not set(records) <= set(grant["record_ids"]))
+            )
             or not set(fields) <= set(grant["fields"])
         ):
             raise _denied()
@@ -905,6 +1087,8 @@ async def read(
     page_id: str,
     projection: Mapping[str, Any] | None = None,
     now: datetime,
+    proof: MembershipProof | None = None,
+    proof_clock: Callable[[], float] = time.monotonic,
 ) -> LinkRead:
     """Admit a projection read under FOR SHARE (§4–§6).
 
@@ -920,24 +1104,41 @@ async def read(
     record = _record(row["record"])
     if record["page_id"] != page_id:
         raise _denied()
+    created_by = await _require_current_creator(
+        tx, authority, record, proof=proof, clock=proof_clock
+    )
     selected = _select_projection(projection, record["projection"])
-    creator = record["created_by"]["principal_did"]
-    if (
-        await _freeze_projection(
+    creator = created_by.principal_did
+    if record["mode"] == "live" and not record["actions"]:
+        selected = await _current_projection(
             tx,
             authority,
             creator=creator,
             page_id=page_id,
-            projection={"collections": selected["collections"], "assets": []},
+            minted=selected,
+            link_mode=record["mode"],
+            keep_empty=True,
         )
-        is None
-    ):
-        raise _denied()
-    selected["assets"] = [
-        asset_id
-        for asset_id in selected["assets"]
-        if await authority.can_read_asset(tx, creator=creator, page_id=page_id, asset_id=asset_id)
-    ]
+    else:
+        if (
+            await _freeze_projection(
+                tx,
+                authority,
+                creator=creator,
+                page_id=page_id,
+                projection={"collections": selected["collections"], "assets": []},
+                link_mode=record["mode"],
+            )
+            is None
+        ):
+            raise _denied()
+        selected["assets"] = [
+            asset_id
+            for asset_id in selected["assets"]
+            if await authority.can_read_asset(
+                tx, creator=creator, page_id=page_id, asset_id=asset_id
+            )
+        ]
     allowed_actions = []
     for action in record["actions"]:
         if await authority.action_kind(
@@ -966,14 +1167,15 @@ async def read(
     if not limit.allowed:
         raise _limited(limit)
     return LinkRead(
-        _scope(record),
-        creator,
-        record["mode"],
-        record["page_rev"],
-        selected,
-        source,
-        versions,
-        tuple(allowed_actions),
+        scope=_scope(record),
+        creator=creator,
+        mode=record["mode"],
+        page_rev=record["page_rev"],
+        projection=selected,
+        created_by=created_by,
+        source_snapshot=source,
+        asset_versions=versions,
+        allowed_action_ids=tuple(allowed_actions),
     )
 
 
@@ -1004,6 +1206,50 @@ def _check_action_request(request: Mapping[str, Any]) -> None:
         raise _schema("action request")
 
 
+async def _current_projection(
+    tx: TransactionManager,
+    authority: LinkAuthority,
+    *,
+    creator: str,
+    page_id: str,
+    minted: Mapping[str, Any],
+    link_mode: str,
+    keep_empty: bool = False,
+) -> dict[str, Any]:
+    """Intersect the immutable row/field ceiling with current creator access."""
+    collections = []
+    for entry in minted["collections"]:
+        current = await authority.readable(
+            tx,
+            creator=creator,
+            page_id=page_id,
+            collection=entry["collection"],
+            link_mode=link_mode,
+            record_ids=entry["record_ids"],
+        )
+        if current is None:
+            continue
+        dynamic = keep_empty and link_mode == "live" and entry["record_ids"] == "*"
+        if not dynamic and (current.records is None or len(current.records) > MAX_RECORDS):
+            raise _denied()
+        if dynamic:
+            records: str | list[str] = "*"
+        else:
+            assert current.records is not None
+            records = [r for r in entry["record_ids"] if r in current.records]
+        fields = [f for f in entry["fields"] if f in current.fields]
+        if (records or keep_empty) and fields:
+            collections.append(
+                {"collection": entry["collection"], "record_ids": records, "fields": fields}
+            )
+    assets = [
+        asset_id
+        for asset_id in minted["assets"]
+        if await authority.can_read_asset(tx, creator=creator, page_id=page_id, asset_id=asset_id)
+    ]
+    return {"collections": collections, "assets": assets}
+
+
 async def admit(
     tx: TransactionManager,
     authority: LinkAuthority,
@@ -1014,14 +1260,18 @@ async def admit(
     body: bytes,
     client: str,
     now: datetime,
+    proof: MembershipProof | None = None,
+    proof_clock: Callable[[], float] = time.monotonic,
 ) -> ActionReceipt:
     """Admit an edit or anonymous intent (§4–§6), in the caller's transaction.
 
     The body is the same bytes :func:`authenticate` bound to the request.
-    Receipt lookup precedes lifecycle/authority under FOR UPDATE. An admitted
+    Current creator membership precedes receipt lookup under FOR UPDATE; the
+    lookup then precedes lifecycle/action policy. An admitted
     one-use operation and its receipt commit together; a failure rolls both
     back. Fresh nonces allow retries, whose result survives use or revocation
-    only while the session lives. ``client`` follows the trusted proxy rule.
+    only while the session lives and creator membership still holds.
+    ``client`` follows the trusted proxy rule.
     """
     request = _action_request(body)
     request_hash = hashlib.sha256(
@@ -1029,6 +1279,9 @@ async def admit(
     ).digest()
     row = await _locked_link(tx, caller=caller, write=True, now=now)
     record = _record(row["record"])
+    created_by = await _require_current_creator(
+        tx, authority, record, proof=proof, clock=proof_clock
+    )
     key = (
         record["installation_id"],
         record["team_id"],
@@ -1054,7 +1307,7 @@ async def admit(
                 request["input"][field]
             ) != canonical_json_bytes(value):
                 raise _denied()
-        creator = record["created_by"]["principal_did"]
+        creator = created_by.principal_did
         kind = await authority.action_kind(tx, page_id=page_id, action_id=request["action_id"])
         if kind not in _LINK_KINDS or not await authority.can_act(
             tx,
@@ -1079,15 +1332,24 @@ async def admit(
         )
         if not limit.allowed:
             raise _limited(limit)
+        projection = await _current_projection(
+            tx,
+            authority,
+            creator=creator,
+            page_id=page_id,
+            minted=record["projection"],
+            link_mode=record["mode"],
+        )
         receipt = await actions.apply(
             tx,
             action=LinkAction(
                 scope=_scope(record),
                 caller=caller,
                 creator=creator,
+                created_by=created_by,
                 mode=record["mode"],
                 page_rev=record["page_rev"],
-                projection=record["projection"],
+                projection=projection,
                 constraints=constraints,
                 kind=kind,
                 intent_sponsor_did=sponsor,

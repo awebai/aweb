@@ -163,6 +163,11 @@ def check_repository(root: Path) -> list[str]:
             extract_sql_tables(root / "server/src/aweb/migrations/aweb"),
         ),
         (
+            "aweb-kit-tables",
+            root / "docs/aweb-sot.md",
+            extract_sql_tables(root / "naapp-lib/src/aweb_naapp/hooks/migrations"),
+        ),
+        (
             "aweb-routers",
             root / "docs/aweb-sot.md",
             extract_fastapi_routers(root / "server/src/aweb/api.py"),
@@ -200,11 +205,13 @@ def main() -> int:
             print(f"FAIL: {error}", file=sys.stderr)
         return 1
     aweb_tables = extract_sql_tables(root / "server/src/aweb/migrations/aweb")
+    kit_tables = extract_sql_tables(root / "naapp-lib/src/aweb_naapp/hooks/migrations")
     routers = extract_fastapi_routers(root / "server/src/aweb/api.py")
     awid_tables = extract_sql_tables(root / "awid/src/awid_service/migrations")
     print(
         "canonical SOT inventories match source "
-        f"(aweb application tables={len(aweb_tables)}, routers={len(routers)}, "
+        f"(aweb application tables={len(aweb_tables)}, kit tables={len(kit_tables)}, "
+        f"routers={len(routers)}, "
         f"awid application tables={len(awid_tables)})"
     )
     return 0

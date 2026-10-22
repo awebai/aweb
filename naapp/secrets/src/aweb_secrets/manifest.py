@@ -95,16 +95,25 @@ MANIFEST: dict[str, Any] = {
                     "secret": _STRING,
                     "request_id": _REQUEST_ID,
                     "operation": {"type": "string", "description": "A named operation's id."},
-                    "params": {"type": "object", "description": "The named operation's parameters."},
+                    "params": {
+                        "type": "object",
+                        "description": "The named operation's parameters.",
+                    },
                     "method": {
                         "type": "string",
                         "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
                         "description": "An open request's HTTP method.",
                     },
                     "url": {"type": "string", "description": "An open request's URL."},
-                    "headers": {"type": "array", "description": "An open request's headers, as 'Name: value' strings."},
+                    "headers": {
+                        "type": "array",
+                        "description": "An open request's headers, as 'Name: value' strings.",
+                    },
                     "data": {"description": "An open request's body: a string, or a JSON object."},
-                    "reason": {"type": "string", "description": "Shown to the approver as untrusted text."},
+                    "reason": {
+                        "type": "string",
+                        "description": "Shown to the approver as untrusted text.",
+                    },
                 },
                 "required": ["secret", "request_id"],
             },
@@ -117,7 +126,7 @@ MANIFEST: dict[str, Any] = {
             "scopes": ["secrets:run"],
             "mutation": True,
             "body": {"mode": "json"},
-            "params": _params("request_id", "runner", "params", "reason", path=("job",)),
+            "params": _params("request_id", "runner", "params", "reason", "secret", path=("job",)),
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -126,6 +135,10 @@ MANIFEST: dict[str, Any] = {
                     "runner": {"type": "string", "description": "The runner to run the job on."},
                     "params": {"type": "object", "description": "The job's parameters."},
                     "reason": {"type": "string", "description": "Shown to the approver as untrusted text."},
+                    "secret": {
+                        "type": "string",
+                        "description": "An ordinary derived child's ref for the unique durable slot; omit to use the job's fixed selectors.",
+                    },
                 },
                 "required": ["job", "request_id", "runner"],
             },
@@ -161,13 +174,13 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "contain",
-            "description": "Narrow authority at once: revoke a grant, approvals or an approver's passkey or contact, disable a secret or the installation, or deregister a runner. Owners only.",
+            "description": "Narrow authority at once: revoke a grant, approvals or an approver's passkey or contact, disable a secret or the installation, or deregister a runner. Owners; assigned approvers may revoke their own approvals.",
             "method": "POST",
             "path": "/v1/containment",
             "scopes": ["secrets:admin"],
             "mutation": True,
             "body": {"mode": "json"},
-            "params": _params("request_id", "action", "target"),
+            "params": _params("request_id", "action", "target", "credential_id"),
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -183,7 +196,14 @@ MANIFEST: dict[str, Any] = {
                             "revoke-approver",
                         ],
                     },
-                    "target": {"type": "string", "description": "The grant, approval, secret, runner or approver id."},
+                    "target": {
+                        "type": "string",
+                        "description": "The grant, approval, secret, runner or approver id.",
+                    },
+                    "credential_id": {
+                        "type": "string",
+                        "description": "For revoke-approver, the lost passkey credential ID as unpadded base64url. Omit to revoke the contact and full designation.",
+                    },
                 },
                 "required": ["request_id", "action"],
             },

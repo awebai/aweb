@@ -79,15 +79,19 @@ async def update_secret(
 
 
 async def secret_by_ref(
-    tx: TransactionManager, installation_id: str, team_id: str, ref: str
+    tx: TransactionManager, installation_id: str, team_id: str, ref: str, *, lock: bool = True
 ) -> StoredSecret | None:
-    """The secret named ``ref``, locked against change until the transaction ends."""
+    """Read a secret by ref, normally locked until the transaction ends.
+
+    ``lock=False`` discovers the ID before ordered ancestry locks; that result
+    grants no authority and must be re-read under those locks.
+    """
     row = await tx.fetch_one(
         """
         SELECT record, state, active_version FROM {{tables.secrets}}
         WHERE installation_id = $1 AND team_id = $2 AND ref = $3
-        FOR SHARE
-        """,
+        """
+        + (" FOR SHARE" if lock else ""),
         installation_id,
         team_id,
         ref,
@@ -202,11 +206,14 @@ async def active_grants(
     *,
     principal_did: str,
     roles: Sequence[str],
+    lock: bool = True,
 ) -> list[GrantRecord]:
     """The unrevoked grants on a secret to this principal or to any of its roles.
 
     The grants are locked until the transaction ends, so a revocation that
-    commits first is seen and one that commits later waits.
+    commits first is seen and one that commits later waits. With ``lock=False``
+    this is only candidate discovery: the caller must lock the sorted union of
+    candidate/source grants and check revocation before relying on the result.
     """
     rows = await tx.fetch_all(
         """
@@ -214,8 +221,8 @@ async def active_grants(
         WHERE installation_id = $1 AND secret_id = $2 AND revoked_at IS NULL
           AND (subject_principal = $3 OR subject_role = ANY($4::text[]))
         ORDER BY grant_id
-        FOR SHARE
-        """,
+        """
+        + (" FOR SHARE" if lock else ""),
         installation_id,
         secret_id,
         principal_did,

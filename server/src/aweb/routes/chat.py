@@ -3,6 +3,7 @@ from __future__ import annotations
 from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
 
 from aweb.messaging.sender_membership import sender_memberships
+from aweb.identity_metadata import native_participant_reference
 
 import asyncio
 import json
@@ -1255,6 +1256,7 @@ class CreateSessionRequest(BaseModel):
 
 
 class CreateSessionParticipant(BaseModel):
+    participant_ref: dict[str, str] | None = None
     did: str
     alias: str
     agent_id: str | None = None
@@ -1303,6 +1305,7 @@ async def _create_session_response(db, redis, *, session_id: UUID, message_id: s
         message_id=message_id,
         participants=[
             {
+                "participant_ref": native_participant_reference(row["did"]),
                 "did": str(row["did"]),
                 "alias": row["alias"],
                 "address": participant_address_map.get((row.get("did") or "").strip())
