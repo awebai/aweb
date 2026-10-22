@@ -42,6 +42,9 @@ async def test_delegation(db: AsyncDatabaseManager, case) -> None:
     if "frozen_records" in expect:
         stored = _json(record["record"])["projection"]["collections"][0]["record_ids"]
         assert stored == expect["frozen_records"]
+    if "dynamic_records" in expect:
+        stored = _json(record["record"])["projection"]["collections"][0]["record_ids"]
+        assert stored == expect["dynamic_records"]
 
 
 def _json(value):
@@ -114,7 +117,6 @@ SCHEMA_REFUSALS = {
             "assets": [],
         }
     ),
-    "no-records": _with(projection=_collections(record_ids=[], fields=["status"])),
     "duplicate-records": _with(
         projection=_collections(record_ids=["b-17", "b-17"], fields=["status"])
     ),

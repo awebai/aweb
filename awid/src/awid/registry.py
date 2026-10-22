@@ -842,6 +842,11 @@ class RegistryClient:
             return None
         return _team_from_json(data)
 
+    async def get_team_fresh(self, domain: str, name: str) -> Team | None:
+        """Read the team's current metadata, its controller key included,
+        without a stale cache result."""
+        return await self.get_team(domain, name)
+
     async def get_team_revocations(self, domain: str, name: str) -> set[str]:
         """Fetch the complete set of revoked certificate IDs for a team.
 
@@ -1407,6 +1412,18 @@ class CachedRegistryClient(RegistryClient):
             encode=lambda value: None if value is None else _team_to_json(value),
             decode=lambda payload: None if payload is None else _team_from_json(payload),
         )
+
+    async def get_team_fresh(self, domain: str, name: str) -> Team | None:
+        cache_key = self._team_metadata_cache_key(domain, name)
+        await self._invalidate_keys(cache_key)
+        value = await super().get_team(domain, name)
+        await self._write_cache_entry(
+            cache_key,
+            value=value,
+            ttl_seconds=_TEAM_METADATA_CACHE_TTL_SECONDS,
+            encode=lambda payload: None if payload is None else _team_to_json(payload),
+        )
+        return value
 
     async def get_team_revocations(self, domain: str, name: str) -> set[str]:
         # Revocations get a dedicated read path rather than _cached_read: they
