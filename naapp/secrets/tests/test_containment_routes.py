@@ -18,7 +18,7 @@ from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME, STORES
 from aweb_secrets.containment_routes import containment_api_router
 from aweb_secrets.manifest import MANIFEST_PATH
 from aweb_secrets.owners import OWNER_ROLE
-from tests.test_app import _settings, allow_all
+from tests.test_app import API, CONSOLE, _settings, allow_all
 from tests.test_change_sets import TEAM, Installations, world  # noqa: F401
 from tests.test_containment_service import service
 from tests.test_use_approval_lineage import seed
@@ -26,8 +26,6 @@ from tests.test_use_approvals import SECRET_ID
 from tests.test_use_approvals import uses as _uses
 
 uses = _uses
-API = "https://api.secrets.test"
-CONSOLE = "https://console.secrets.test"
 PATH = "/v1/containment"
 
 

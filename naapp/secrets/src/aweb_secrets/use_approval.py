@@ -216,6 +216,11 @@ class JobShown:
     job_digest: str
     params: Mapping[str, Any]
     credential_delivery: str
+    slot_ordinal: int | None = None
+    plan_digest: str | None = None
+    frozen_plan: Mapping[str, Any] | None = None
+    mint_params: Mapping[str, Any] | None = None
+    child_grant_template: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
