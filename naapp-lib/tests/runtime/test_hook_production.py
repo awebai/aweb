@@ -194,10 +194,36 @@ def test_manifest_commitment_key_uses_the_shared_purpose_loader(tmp_path):
 
 
 async def test_effect_and_runtime_producer_event_share_commit_and_rollback(
-    tmp_path, test_db_factory
+    tmp_path, test_db_factory, monkeypatch
 ):
+    resolved = asyncio.Event()
+    dns_queries = []
+
+    async def deny_dns(qname, *args, **kwargs):
+        dns_queries.append(str(qname))
+        resolved.set()
+        raise RuntimeError("this unit test must not perform DNS")
+
+    monkeypatch.setattr("dns.asyncresolver.resolve", deny_dns)
     db = await test_db_factory.create_db(suffix="runtime_hook_effect")
     app = runtime(tmp_path, database_url=db.config.get_dsn(), db_schema=db.config.schema_name)
+    lookups = []
+
+    async def registrations(team_id, catalog_id, catalog_version, hook):
+        lookups.append((team_id, catalog_id, catalog_version, hook))
+        resolved.set()
+        return Resolution(
+            team_id=team_id,
+            server_url="https://coord.example",
+            items=(),
+            fresh_until=time.monotonic() + 60,
+            as_of=datetime.now(UTC),
+            max_age_seconds=60,
+        )
+
+    # This test owns atomic local storage, not team-server discovery. Keep the
+    # lifespan drain real but give it a local no-target registration response.
+    app.hook_resolver().registrations = registrations
     server = FastAPI(lifespan=app.lifespan)
     producer = app.hook_producer(installation_id=INSTALLATION, generation=2)
     async with server.router.lifespan_context(server):
@@ -228,7 +254,13 @@ async def test_effect_and_runtime_producer_event_share_commit_and_rollback(
         assert event.fields["producer"]["seq"] == 1
         assert event.fields["producer"]["installation_id"] == INSTALLATION
         assert await app.db().fetch_value("SELECT count(*) FROM {{tables.fixture_effect}}") == 1
+        # Force the committed event's background lookup before shutdown rather
+        # than letting the enqueue/drain race decide whether DNS is exercised.
+        async with asyncio.timeout(5):
+            await resolved.wait()
     assert app.connected_db() is None
+    assert lookups and all(call == (TEAM, "aweb.hooks", 1, SECRET_HOOK) for call in lookups)
+    assert dns_queries == []
 
 
 @pytest.mark.parametrize("allow_private", [False, True])
