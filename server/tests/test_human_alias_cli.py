@@ -16,10 +16,13 @@ from test_messages_http import _insert_agent_encryption_assertion
 
 @pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
-@pytest.mark.parametrize("global_human", [True, False])
+@pytest.mark.parametrize(
+    "global_human,inbound_mode",
+    [(True, "open"), (False, "open"), (True, "contacts_only")],
+)
 @pytest.mark.parametrize("kind", ["mail", "chat"])
 async def test_cli_first_contact_human_alias_with_signed_key(
-    privacy_app, tmp_path, global_human, kind  # noqa: F811
+    privacy_app, tmp_path, global_human, inbound_mode, kind  # noqa: F811
 ):
     env = privacy_app
     async with _local_sender_mail(
@@ -56,6 +59,25 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         )
         body_file = tmp_path / "first-contact.txt"
         body_file.write_text("First encrypted contact through team alias")
+
+        async def privacy_state():
+            return (
+                await env.db.fetch_all(
+                    "SELECT * FROM {{tables.contacts}} ORDER BY contact_id"
+                ),
+                await env.db.fetch_all(
+                    "SELECT agent_id,inbound_mode FROM {{tables.agents}} ORDER BY agent_id"
+                ),
+            )
+
+        async def assert_no_delivery():
+            for table in ("messages", "conversations", "chat_messages", "chat_sessions"):
+                assert (await env.db.fetch_one(
+                    "SELECT count(*) AS n FROM {{tables." + table + "}}"
+                ))["n"] == 0
+
+        before = await privacy_state()
+        assert not before[0]  # No saved contact supplies first-contact authority.
         # A stored roster identity alone is not an encryption assertion.
         refused = await asyncio.create_subprocess_exec(
             str(binary),
@@ -83,23 +105,44 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         )
         await asyncio.wait_for(refused_chat.communicate(), 30)
         assert refused_chat.returncode != 0
-        assert (
-            await env.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}")
-        )["n"] == 0
-        assert (
-            await env.db.fetch_one("SELECT count(*) AS n FROM {{tables.conversations}}")
-        )["n"] == 0
-        assert (await env.db.fetch_one("SELECT count(*) AS n FROM {{tables.chat_messages}}"))["n"] == 0
-        assert (await env.db.fetch_one("SELECT count(*) AS n FROM {{tables.chat_sessions}}"))["n"] == 0
+        await assert_no_delivery()
+        assert await privacy_state() == before
         await _insert_agent_encryption_assertion(
             env.db, agent_id=actor.id, team_id=TEAM, assertion=assertion
         )
-        if kind == "chat":
-            chat_sent = await _cli(
-                binary, cwd, child_env, "--team", TEAM, "--json", "chat",
-                "send-and-leave", "alice", "--start-conversation", "--e2ee",
-                "--body-file", str(body_file),
+        if inbound_mode == "contacts_only":
+            # A valid published key supplies encryption capability, not consent.
+            await env.db.execute(
+                "UPDATE {{tables.agents}} SET inbound_mode='contacts_only' WHERE agent_id=$1",
+                actor.id,
             )
+        before = await privacy_state()
+        assert not before[0]
+        if inbound_mode == "contacts_only":
+            command = (
+                ["mail", "send", "--to", "alice"] if kind == "mail" else
+                ["chat", "send-and-leave", "alice", "--start-conversation"]
+            )
+            denied = await asyncio.create_subprocess_exec(
+                str(binary), "--team", TEAM, *command, "--e2ee",
+                "--body-file", str(body_file), cwd=cwd, env=child_env,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(denied.communicate(), 30)
+            assert denied.returncode != 0
+            await assert_no_delivery()
+            assert await privacy_state() == before
+            return
+
+        if kind == "chat":
+            try:
+                chat_sent = await _cli(
+                    binary, cwd, child_env, "--team", TEAM, "--json", "chat",
+                    "send-and-leave", "alice", "--start-conversation", "--e2ee",
+                    "--body-file", str(body_file),
+                )
+            finally:
+                assert await privacy_state() == before
             chat_stored = await env.db.fetch_one(
                 "SELECT content_mode,encrypted_envelope FROM {{tables.chat_messages}} WHERE message_id=$1",
                 UUID(chat_sent["message_id"]),
@@ -119,21 +162,24 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             })["body"] == body_file.read_text()
             return
 
-        sent = await _cli(
-            binary,
-            cwd,
-            child_env,
-            "--team",
-            TEAM,
-            "--json",
-            "mail",
-            "send",
-            "--to",
-            "alice",
-            "--e2ee",
-            "--body-file",
-            str(body_file),
-        )
+        try:
+            sent = await _cli(
+                binary,
+                cwd,
+                child_env,
+                "--team",
+                TEAM,
+                "--json",
+                "mail",
+                "send",
+                "--to",
+                "alice",
+                "--e2ee",
+                "--body-file",
+                str(body_file),
+            )
+        finally:
+            assert await privacy_state() == before
         stored = await env.db.fetch_one(
             "SELECT * FROM {{tables.messages}} WHERE message_id=$1",
             UUID(sent["message_id"]),
