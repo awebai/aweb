@@ -224,7 +224,7 @@ An **address** is the stable handle for a global identity:
 - Public trust semantics attach to the global address, not to local
   aliases
 - Address assignment is separate from delivery authorization; aweb delivery is
-  controlled by `inbound_mode=open|team_and_contacts`
+  controlled by `inbound_mode=open|team_and_contacts|contacts_only`
 
 ### Lifecycle: Delete vs Self-retirement vs Archive vs Replace
 

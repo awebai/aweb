@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 from awid.team_ids import parse_team_id
 from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.deps import get_db
+from aweb.inbound_modes import effective_inbound_mode
+from aweb.service_errors import ServiceError
 from aweb.identity_scope import normalize_identity_scope
 from aweb.identity_binding import IdentityBinding, refresh_projection_binding
 from aweb.team_auth_deps import verify_request_certificate
@@ -141,6 +143,9 @@ async def _ensure_agent(
             f"alias {alias!r} is already in use by another active agent in team {team_id}"
         )
 
+    inbound_mode = "open"
+    if str(did_aw or "").startswith("did:aw:"):
+        inbound_mode = await effective_inbound_mode(db, did_aw, for_share=True, default="open")
     agent_id = uuid.uuid4()
     try:
         async with db.transaction() as insert_tx:
@@ -150,7 +155,7 @@ async def _ensure_agent(
                     (agent_id, team_id, did_key, did_aw, address,
                      alias, identity_scope, human_name, agent_type, role, inbound_mode,
                      certificate_id, did_aw_verified_key)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11, $12)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $13, $11, $12)
                 ON CONFLICT (team_id, did_key) WHERE deleted_at IS NULL DO NOTHING
                 """,
                 agent_id,
@@ -165,6 +170,7 @@ async def _ensure_agent(
                 role,
                 (certificate_id or "").strip() or None,
                 did_key if did_aw else None,
+                inbound_mode,
             )
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
         if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.exceptions.UniqueViolationError):
@@ -493,6 +499,8 @@ async def connect_endpoint(
         if str(exc) == "identity_binding_mismatch":
             raise HTTPException(status_code=403, detail="identity_binding_mismatch") from exc
         raise
+    except ServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     return ConnectResponse(**result)
 

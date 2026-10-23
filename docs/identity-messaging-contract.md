@@ -46,13 +46,30 @@ Team certificates remain valid for team membership, local ACLs, and certificate
 verification flows. They are not an address reachability or message routing
 oracle.
 
-Global recipients expose an explicit delivery-time `inbound_mode`:
+Global recipients expose an explicit delivery-time `inbound_mode`. It is an
+identity property across every non-deleted row for the exact `did:aw`, including
+retired or inactive memberships. The effective policy is the strictest valid
+mode present: `contacts_only`, then `team_and_contacts`, then `open`. Any missing
+or invalid row policy fails closed with the migration-required refusal. A mode
+change by the identity updates all those rows; a new membership inherits the
+current effective mode. Team ownership alone does not authorize a policy change.
+A global-scope row without a raw `did:aw` has no link to other memberships:
+its policy is its own explicit mode, with NULL or invalid still migration-required.
+This does not grant it authority to set an identity-wide policy.
+The identity-signed "my inbound mode" route uses the authenticated, AWID-bound
+`did:aw` for the change; a stored membership claim cannot select its write scope.
+
+The modes are:
 
 - `open`: accept valid senders after address route and identity binding
   validation. User-facing label: **All**.
 - `team_and_contacts`: after the same route and identity validation, accept
   verified same-team members or an exact active identity contact for the
   verified sender address. User-facing label: **Team and contacts**.
+- `contacts_only`: after the same route and identity validation, accept only an
+  exact active identity contact bound to the recipient, verified sender address,
+  and sender `did:aw`. Verified team membership does not authorize delivery.
+  User-facing label: **Contacts only**.
 
 Rows without an explicit `inbound_mode` require migration and must fail with an
 explicit migration-required diagnostic rather than silently widening to open.
@@ -213,7 +230,8 @@ those effects back and permits retry. The transaction also commits one durable
 is at-least-once across a crash after Redis accepts but before PostgreSQL records
 `delivered_at`.
 
-For `team_and_contacts`, a non-team sender is authorized only by an exact active
+For `contacts_only`, every sender (including a verified teammate), and for
+`team_and_contacts`, every non-team sender, is authorized only by an exact active
 contact bound to the recipient identity, canonical sender address, and sender
 `did:aw`. Address-only legacy contacts are migration-required and inert for
 cross-registry authorization until their owner explicitly binds them by exact
@@ -264,7 +282,7 @@ and `correlation_id`; only rate limiting emits `Retry-After: 1`.
   AWID as private address-read authority.
 - Do not treat address reachability, `visible_to_team_id`, contact membership,
   or conversation ID as routing authority. Contacts authorize only the explicit
-  delivery-time `team_and_contacts`/local-contact gate and never create a
+  delivery-time `team_and_contacts`/`contacts_only`/local-contact gate and never create a
   route. Verified team membership also authorizes `team_and_contacts`, but does
   not create routes.
 - Do not use stale cache entries as evidence for a recipient binding.

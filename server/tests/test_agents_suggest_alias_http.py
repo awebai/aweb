@@ -766,7 +766,8 @@ async def test_get_my_inbound_mode_returns_current_global_agent_policy(aweb_clou
 
 
 @pytest.mark.asyncio
-async def test_patch_my_inbound_mode_updates_global_agent_policy(aweb_cloud_db):
+@pytest.mark.parametrize("mode", ["team_and_contacts", "contacts_only", "open"])
+async def test_patch_my_inbound_mode_updates_global_agent_policy(aweb_cloud_db, mode):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
 
@@ -777,6 +778,7 @@ async def test_patch_my_inbound_mode_updates_global_agent_policy(aweb_cloud_db):
         team_id="backend:acme.com",
         alias="alice",
         identity_scope="global",
+        member_did_aw="did:aw:alice",
     )
     cert_header = _encode_certificate(cert)
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
@@ -785,8 +787,8 @@ async def test_patch_my_inbound_mode_updates_global_agent_policy(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
-        VALUES ($1, $2, $3, $4, 'global', 'active', 'open')
+            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode, did_aw)
+        VALUES ($1, $2, $3, $4, 'global', 'active', 'open', 'did:aw:alice')
         """,
         agent_id,
         "backend:acme.com",
@@ -794,11 +796,13 @@ async def test_patch_my_inbound_mode_updates_global_agent_policy(aweb_cloud_db):
         "alice",
     )
 
-    body_bytes = json.dumps({"inbound_mode": "team_and_contacts"}, separators=(",", ":")).encode()
+    body_bytes = json.dumps({"inbound_mode": mode}, separators=(",", ":")).encode()
     headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    from identity_binding_support import seed_verified_bindings
+    seed_verified_bindings(app, ("did:aw:alice", agent_did_key, ""))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.patch(
             "/v1/agents/me/inbound-mode",
@@ -807,12 +811,12 @@ async def test_patch_my_inbound_mode_updates_global_agent_policy(aweb_cloud_db):
         )
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["inbound_mode"] == "team_and_contacts"
+    assert resp.json()["inbound_mode"] == mode
     stored = await aweb_cloud_db.aweb_db.fetch_val(
         "SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id = $1",
         agent_id,
     )
-    assert stored == "team_and_contacts"
+    assert stored == mode
 
 
 @pytest.mark.asyncio

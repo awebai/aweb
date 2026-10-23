@@ -341,8 +341,7 @@ async def test_deliver_message_team_and_contacts_allows_exact_active_contact(awe
 
 @pytest.mark.asyncio
 async def test_agents_inbound_mode_check_rejects_stale_values(aweb_cloud_db):
-    """contacts_only and contacts_or_teammates are no longer canonical
-    schema values after aapq."""
+    """Withdrawn contacts_or_teammates remains invalid; contacts_only is strict."""
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
     agent_id = await _insert_agent(
         aweb_cloud_db.aweb_db,
@@ -353,12 +352,6 @@ async def test_agents_inbound_mode_check_rejects_stale_values(aweb_cloud_db):
         address="acme.com/bob-third-mode-reject",
         inbound_mode="team_and_contacts",
     )
-    with pytest.raises(QueryError) as stale_contacts_only:
-        await aweb_cloud_db.aweb_db.execute(
-            "UPDATE {{tables.agents}} SET inbound_mode = 'contacts_only' WHERE agent_id = $1",
-            agent_id,
-        )
-    assert "agents_inbound_mode_valid" in str(stale_contacts_only.value)
     with pytest.raises(QueryError) as withdrawn_mode:
         await aweb_cloud_db.aweb_db.execute(
             "UPDATE {{tables.agents}} SET inbound_mode = 'contacts_or_teammates' WHERE agent_id = $1",
@@ -587,4 +580,24 @@ async def test_deliver_message_recipient_not_found(aweb_cloud_db):
             subject="test",
             body="test",
             priority="normal",
+        )
+
+
+@pytest.mark.asyncio
+async def test_contacts_only_rejects_verified_teammate_before_contact(aweb_cloud_db):
+    from aweb.messaging.messages import authorize_message_delivery
+
+    manager = aweb_cloud_db.aweb_db
+    await _insert_team(manager, "backend:acme.com")
+    recipient_id = await _insert_agent(
+        manager, team_id="backend:acme.com", alias="strict", did_key=_make_did_key(),
+        did_aw="did:aw:strict", address="acme.com/strict", inbound_mode="contacts_only",
+    )
+    recipient = await get_agent_by_id(_DbShim(manager), agent_id=recipient_id)
+    with pytest.raises(ForbiddenError, match="Recipient only accepts messages from exact active contacts"):
+        await authorize_message_delivery(
+            _DbShim(manager), recipient_agent=recipient,
+            sender_did="did:aw:teammate", sender_address="acme.com/teammate",
+            sender_verified_team_id="backend:acme.com",
+            stored_route_continuation=True,
         )

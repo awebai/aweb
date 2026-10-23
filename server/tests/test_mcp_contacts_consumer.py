@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -469,15 +471,22 @@ async def test_consumer_mcp_contacts_add_normalizes_hosted_handle_address(
 ):
     _patch_auth(monkeypatch, _auth())
 
+    authority = SimpleNamespace(resolve_contact=AsyncMock(return_value=SimpleNamespace(
+        canonical_address="jane.aweb.ai/c3po", did_aw="did:aw:c3po", controller_did="did:key:z6Mkcontroller",
+    )))
     result = json.loads(
         await contacts_tools.contacts_add(
             DBInfra(aweb_cloud_db.aweb_db),
             contact_address="@jane/c3po",
-            label="C-3PO",
+            label="C-3PO", federation_authority=authority,
         )
     )
 
     assert result["contact_address"] == "jane.aweb.ai/c3po"
+    assert result["contact_did_aw"] == "did:aw:c3po"
+    assert result["binding_controller_did"] == "did:key:z6Mkcontroller"
+    assert result["binding_accepted_at"] is not None
+    authority.resolve_contact.assert_awaited_once_with("jane.aweb.ai/c3po", source_ip="mcp:did:key:alice")
 
 
 @pytest.mark.asyncio
@@ -1047,3 +1056,21 @@ async def test_consumer_mcp_read_messages_from_contact_returns_encrypted_mail_me
     assert message["body"] == ""
     assert "content_notice" in message
     assert "ciphertext-bytes" not in json.dumps(message)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["add_contact", "contacts_add"])
+@pytest.mark.parametrize("failure", ["missing", "sender_identity_not_found", "sender_registry_unavailable"])
+async def test_contact_creation_refuses_without_authority_evidence(aweb_cloud_db, monkeypatch, name, failure):
+    from awid.federation_errors import FederationAuthorityError
+    _patch_auth(monkeypatch, _auth())
+    collector = ToolCollector()
+    authority = None if failure == "missing" else SimpleNamespace(
+        resolve_contact=AsyncMock(side_effect=FederationAuthorityError(failure)))
+    register_tools(collector, db_infra=DBInfra(aweb_cloud_db.aweb_db), redis=None,
+                   registry_client=None, federation_authority=authority)
+    key = "address" if name == "add_contact" else "contact_address"
+    result = json.loads(await collector.funcs[name](**{key: "example.test/alice"}))
+    expected = "federation_authority_coordination_unavailable" if failure == "missing" else failure
+    assert result == {"error": expected}
+    assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.contacts}}") == 0
