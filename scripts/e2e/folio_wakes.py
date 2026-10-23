@@ -386,3 +386,8 @@ except urllib.error.HTTPError as exc:
     aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'sixth')
     assert any(e['kind'] == 'app' and e['meta']['resource_ref'] == 'wake-proof' for e in events(a))
     print('PASS v2 manifest registers from server-fetched bytes, grants only agent and surface scopes, emits through its app-event key, refuses its hook-only verb', flush=True)
+
+    if os.environ.get('FOLIO_UNINSTALL_PROOF') == '1':
+        from folio_uninstall import prove_uninstall
+        prove_uninstall(aw=aw, data=data, get=get, folio_request=folio_request, run=run,
+                        compose=COMPOSE, team=team, other_team=other_team, cache=cache, origin=FOLIO)

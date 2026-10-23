@@ -60,9 +60,11 @@ var pluginInstallCmd = &cobra.Command{
 
 var pluginRemoveCmd = &cobra.Command{
 	Use:   "remove <name>",
-	Short: "Remove an installed plugin",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runPluginRemove,
+	Short: "Remove a local plugin or this home's app approval; keep the team installation",
+	Long: "Remove a local plugin or this home's app approval only. The team's server installation is unchanged.\n" +
+		"Use aw plugin uninstall to remove the team's server installation.",
+	Args: cobra.ExactArgs(1),
+	RunE: runPluginRemove,
 }
 
 var pluginUpdateCmd = &cobra.Command{

@@ -152,9 +152,23 @@ installing anything. Both refuse an already resolved request with
 
 Uninstall is `POST /v1/apps/{app_id}/uninstall?team_id=...` with
 `{"expected_generation":1}`. It locks the same current installation row as
-app-task admission, checks admin authority and generation, marks it uninstalled,
-revokes normal authority and cancels all still-open app requests in that same
-transaction through the task service's cancellation hook. It retains the
+other installation writes, checks `InstallAdminPolicy` with action
+`apps.uninstall` (without an origin), and requires an exact current positive
+BIGINT generation. Non-admins receive `403 admin_required`, an absent
+installation `404 installation_not_found`, a stale generation
+`409 generation_conflict`, and missing or invalid generations `422`.
+
+The writing transaction calls
+`aweb.installations.cleanup_installation_on(tx, *, installation)` under the
+current installation row lock, before changing state. This single cleanup seam
+retires live hook bindings; a cleanup failure rolls back the entire uninstall.
+The app-request task service, when introduced, adds installation-scoped request
+cancellation and claim release here in the same transaction. Cleanups never
+commit, open another transaction or suppress failures.
+
+Uninstall sets `state: "uninstalled"` and allocates a higher generation, making
+older confirmations conflict. Repeating uninstall at the returned generation is
+idempotent. It fetches nothing from the app origin. It retains the
 installation and purpose-key history needed for authenticated status and scoped
 lifecycle reporting. It does not delete app content.
 
@@ -162,6 +176,18 @@ Before confirmation, management reads show the pinned lifecycle declarations
 and explicitly distinguish app-reported status from unavailable reporting.
 A missing report is not an empty dataset or zero outstanding work. The detailed
 lifecycle-report response shape remains to be finalized with its reporter.
+
+`aw plugin uninstall <app-id> [--expected-generation N]` acts on the selected
+team's server installation. Without the flag it reads the current generation
+then sends one conditional uninstall; conflicts are surfaced without retry.
+Local cached bytes and approvals remain available to other teams.
+`aw plugin remove <name>` removes local bytes or this resident's local approval;
+it does not uninstall the team's server installation.
+
+The disposable real-stack consumer proof is
+`FOLIO_UNINSTALL_PROOF=1 scripts/e2e-folio-wakes.sh`. It asserts refusal of an
+existing read-only presentation and open edit session after uninstall and after
+reinstall; a consumer that still serves them fails this acceptance.
 
 Normal use stops within the grant/fence freshness contract. Work already
 committed is reconciled, never reported as rolled back. A reinstall cannot
