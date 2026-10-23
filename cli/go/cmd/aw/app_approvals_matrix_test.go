@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
@@ -85,6 +86,10 @@ func TestAppApprovalBinaryMintAndDispatchMatrix(t *testing.T) {
 					json.NewEncoder(w).Encode(map[string]any{"grant_id": id, "team_id": team, "subject_did_aw": "did:aw:alice", "subject_alias": "alice", "grant_did_key": request.GrantDIDKey, "scopes": request.Scopes, "issued_at": time.Now().UTC().Format(time.RFC3339), "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
 				}))
 				defer coordination.Close()
+				f.svc.client, err = aweb.NewWithCertificate(coordination.URL, f.svc.signingKey, cert)
+				if err != nil {
+					t.Fatal(err)
+				}
 				f.svc.grantStatus = func(_ context.Context, id string) (custodyGrantStatus, error) {
 					mu.Lock()
 					key := keys[id]

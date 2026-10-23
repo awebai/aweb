@@ -38,6 +38,7 @@ type grantAppToolsSnapshot struct {
 }
 
 type grantAppSnapshot struct {
+	InstallationID  string             `json:"installation_id"`
 	ManifestVersion int                `json:"manifest_version"`
 	ManifestSHA256  string             `json:"manifest_sha256"`
 	App             appmanifest.App    `json:"app"`

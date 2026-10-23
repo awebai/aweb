@@ -30,11 +30,12 @@ def prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_t
     aw('bob', 'plugin', 'install', origin)
     custody = subprocess.Popen([str(aw_bin), 'custody', 'serve'], cwd=homes['bob'], env=env,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    minted = {}
     def mint(name):
         homes[name] = homes['bob'].parent / name
         homes[name].mkdir()
         target = homes[name] / '.aw'
-        data('bob', 'id', 'grant', 'mint', '--bundle', 'normal-agent', '--ttl', '1h',
+        minted[name] = data('bob', 'id', 'grant', 'mint', '--bundle', 'normal-agent', '--ttl', '1h',
              '--custody-socket', 'auto', '--out', str(target))
         return target
 
@@ -57,14 +58,14 @@ def prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_t
         _prove_uninstall(aw=aw, data=data, get=get, folio_request=folio_request, run=run,
                          compose=compose, team=team, other_team=other_team, cache=cache,
                          origin=origin, grant=grant, status=status, mint=mint, tool=tool,
-                         old_target=old_target)
+                         old_target=old_target, minted=minted)
     finally:
         custody.terminate()  # This harness owns this exact process.
         custody.wait(timeout=10)
 
 
 def _prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_team,
-                     cache, origin, grant, status, mint, tool, old_target):
+                     cache, origin, grant, status, mint, tool, old_target, minted):
     first = get('alice', '/v1/apps/folio/installation?team_id=' + team)
     peer = get('carol', '/v1/apps/folio/installation?team_id=' + other_team)
     active = grant()
@@ -104,8 +105,13 @@ def _prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_
     replacement = get('alice', '/v1/apps/folio/installation?team_id=' + team)
     assert replacement['installation_id'] != first['installation_id'] and replacement['generation'] > retired['generation']
     assert replacement['digest'] == first['digest'] and replacement['origin'] == first['origin']
-    old_reinstalled = tool('uninstall-old-grant', old_target).returncode
+    old_result = tool('uninstall-old-grant', old_target)
+    old_reinstalled = old_result.returncode
+    listed = data('bob', 'plugin', 'list')['plugins']
+    folio_status = next(app for app in listed if app['name'] == 'folio')
+    assert folio_status.get('approval_code') == 'app_installation_changed', folio_status
     default_target = mint('uninstall-default-grant')
+    assert any(app['code'] == 'app_installation_changed' for app in minted['uninstall-default-grant']['skipped_apps'])
     default_reinstalled = tool('uninstall-default-grant', default_target).returncode
     aw('bob', 'plugin', 'install', origin)  # Explicit replacement approval.
     fresh_target = mint('uninstall-fresh-grant')
@@ -117,6 +123,7 @@ def _prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_
     after_reinstall = {'readonly': status(readonly['url'])[0], 'edit_session': status(editor + '/state', session)[0]}
     print('UNINSTALL surfaces after reinstall: ' + json.dumps(after_reinstall), flush=True)
     assert time.monotonic() - link_started < 300, 'link expired during proof; refusal would be ambiguous'
+    assert 'app_installation_changed' in old_result.stderr, 'old grant did not return stable replacement refusal'
     assert old_reinstalled != 0 and default_reinstalled != 0 and fresh_reinstalled == 0, delegation
     assert denied.returncode != 0 and old_uninstalled != 0, delegation
     assert all(code in (401, 403, 404, 410) for code in before_reinstall.values()), before_reinstall

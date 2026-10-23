@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
@@ -139,12 +140,13 @@ func writeInstalledAppManifest(t *testing.T, awHome, manifest string) {
 }
 
 type appCustodyFixture struct {
-	grantHome    string
-	residentHome string
-	residentDID  string
-	app          *appVerifyingServer
-	svc          *custodyService
-	grant        *awconfig.GrantHome
+	grantHome       string
+	residentHome    string
+	residentDID     string
+	app             *appVerifyingServer
+	svc             *custodyService
+	grant           *awconfig.GrantHome
+	setInstallation func(string, appInstallationReceipt)
 }
 
 func setupAppCustodyFixture(t *testing.T, verbs []string) *appCustodyFixture {
@@ -194,6 +196,10 @@ func setupAppCustodyFixtureForTeam(t *testing.T, verbs []string, teamID, identit
 		if err != nil {
 			t.Fatal(err)
 		}
+		for name, app := range apps {
+			app.InstallationID = "fixture-" + name
+			apps[name] = app
+		}
 		if err := saveGrantAppToolsSnapshot(residentHome, &grantAppToolsSnapshot{Version: grantAppToolsSnapshotVersion, GrantID: appTestGrantID, TeamID: teamID, Apps: apps}); err != nil {
 			t.Fatal(err)
 		}
@@ -218,6 +224,34 @@ func setupAppCustodyFixtureForTeam(t *testing.T, verbs []string, teamID, identit
 			return custodyGrantStatus{Active: true, Status: "active", EffectiveStatus: "active", TeamID: teamID, GrantDIDKey: sessionDID, Scopes: grant.Scopes, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}, nil
 		},
 	}
+	// Wire fixture for the new current-installation check. The real server
+	// authority/uninstall path is exercised by the disposable Folio journey.
+	var installMu sync.Mutex
+	installations := map[string]appInstallationReceipt{}
+	setInstallation := func(name string, record appInstallationReceipt) {
+		installMu.Lock()
+		defer installMu.Unlock()
+		installations[name] = record
+	}
+	coordination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || !strings.HasSuffix(r.URL.Path, "/installation") || r.URL.Query().Get("team_id") != teamID {
+			http.NotFound(w, r)
+			return
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/apps/"), "/installation")
+		installMu.Lock()
+		record, ok := installations[name]
+		installMu.Unlock()
+		if !ok {
+			record = appInstallationReceipt{InstallationID: "fixture-" + name, Generation: 1, State: "active", OriginVerified: true}
+		}
+		json.NewEncoder(w).Encode(record)
+	}))
+	t.Cleanup(coordination.Close)
+	svc.client, err = aweb.NewWithCertificate(coordination.URL, residentKey, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	errc := make(chan error, 1)
@@ -233,7 +267,7 @@ func setupAppCustodyFixtureForTeam(t *testing.T, verbs []string, teamID, identit
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	return &appCustodyFixture{grantHome: grantHome, residentHome: residentHome, residentDID: residentDID, app: app, svc: svc, grant: grant}
+	return &appCustodyFixture{grantHome: grantHome, residentHome: residentHome, residentDID: residentDID, app: app, svc: svc, grant: grant, setInstallation: setInstallation}
 }
 
 func runAppTool(t *testing.T, args ...string) (*installedManifestToolResult, error) {
@@ -527,6 +561,10 @@ func TestRunGrantMintSnapshotsNamedAppToolsIntoResidentHome(t *testing.T) {
 
 	minted := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == "/v1/apps/testapp/installation" {
+			json.NewEncoder(w).Encode(appInstallationReceipt{InstallationID: "fixture-testapp", Generation: 1, State: "active", OriginVerified: true})
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/identity-grants" {
 			http.NotFound(w, r)
 			return

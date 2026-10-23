@@ -201,3 +201,44 @@ host's uninstall bound and proved by that gateway's integration tests. This
 server's grant-status lifetime does not establish the gateway's cache lifetime. Work already
 committed is reconciled, never reported as rolled back. A reinstall cannot
 revive the old ID's roles, links, approvals or app requests.
+
+
+## CLI upgrade and replacement approval
+
+Origin-only local consent and app-tool snapshots without `installation_id`
+are not adopted. Default mint still grants core communication, but omits each
+unbound or stale app with a named reason and the selected resident/team's
+explicit recovery command. `aw plugin list` identifies apps that need approval
+for this team's installation. Local cached bytes and another team's approvals
+remain intact.
+
+An upgraded custody service refuses app signing from an unbound snapshot
+(`app_installation_required`), an inactive installation
+(`app_installation_inactive`), or a replacement (`app_installation_changed`).
+Its diagnostic gives both recovery steps; it never includes grant material.
+An already-issued grant's ordinary coordination scopes continue working.
+A running old custody process retains its loaded behavior until restarted.
+
+For each affected selected resident and team:
+
+1. Restart that resident's custody service under its harness with the upgraded
+   binary: `aw --identity-home <resident-credential-dir> custody stop`, then
+   `aw --identity-home <resident-credential-dir> custody serve`.
+2. Explicitly approve the current installation:
+   `aw --identity-home <resident-credential-dir> --team <team-id> plugin install <existing-app-origin>`.
+   Joining an existing active pin needs no install-admin authority and does not
+   change that team's installation.
+3. Mint a fresh worker grant:
+   `aw --identity-home <resident-credential-dir> --team <team-id> id grant mint --bundle normal-agent --ttl 1h --custody-socket auto --out <new-empty-grant-home>`.
+   Relaunch the worker with `AWEB_IDENTITY_HOME` pointing to the new grant home.
+   The old snapshot is not repaired in place.
+
+Effective app approvals are scoped to exact team/app/installation ID. A re-pin
+keeps that ID, so existing consent and immutable tool snapshots keep working;
+it never adds new tools to an old snapshot. Uninstall/reinstall changes the ID,
+so old snapshots remain refused even at the same origin and digest. Explicit
+reapproval and a fresh grant are required for the replacement.
+
+The uninstall server/CLI change and Folio's tool, presentation and edit-session
+installation fence land in the same train and ship in the same release. The
+combined real-stack uninstall proof must pass before that train can land.
