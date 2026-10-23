@@ -18,11 +18,11 @@
 # Requirements:
 #   - Docker and Docker Compose
 #   - Go toolchain
-#   - Ports 8100, 8110, 6399, 5452 available (or override via env)
+#   - Service ports are allocated by the Docker daemon for each journey
 #
 # Environment overrides:
-#   AWEB_E2E_PORT    aweb port  (default: 8100)
-#   AWID_E2E_PORT    awid port  (default: 8110)
+#   AWEB_E2E_PORT    explicit aweb port (default: fresh Docker-assigned port)
+#   AWID_E2E_PORT    explicit awid port (default: fresh Docker-assigned port)
 #   AWEB_E2E_REDIS   redis port (default: 6399)
 #   AWEB_E2E_PG      postgres port (default: 5452)
 #   AWEB_E2E_PHASE   all (default), or 22 for the local quickstart phase only
@@ -74,8 +74,8 @@ E2E_ROOT_RAW="$E2E_ROOT"
 SERVER_DIR="$REPO_ROOT/server"
 CLI_DIR="$REPO_ROOT/cli/go"
 
-AWEB_PORT="${AWEB_E2E_PORT:-8100}"
-AWID_PORT="${AWID_E2E_PORT:-8110}"
+AWEB_PORT="${AWEB_E2E_PORT:-}"
+AWID_PORT="${AWID_E2E_PORT:-}"
 REDIS_PORT="${AWEB_E2E_REDIS:-6399}"
 PG_PORT="${AWEB_E2E_PG:-5452}"
 DOCKER_PUBLISHED_HOST="${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}"
@@ -83,10 +83,38 @@ case "$DOCKER_PUBLISHED_HOST" in
   127.0.0.1|aweb-docker.test) ;;
   *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
 esac
-AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
-AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
 AWID_E2E_SERVICE_TOKEN="${AWEB_E2E_SERVICE_TOKEN:-$(openssl rand -hex 32)}"
 PROJECT="${AWEB_E2E_PROJECT:-aweb-user-e2e-$RANDOM-$$}"
+PORT_ALLOCATOR=""
+
+allocate_service_ports() {
+  # Replacing a service behind the same published port can leave stale TCP
+  # forwarding tuples on Docker Desktop. Back-to-back journeys must not reuse
+  # fixed ports. Allocate on the daemon, not in the runner's network namespace.
+  if [[ -n "$AWEB_PORT" && -n "$AWID_PORT" ]]; then
+    return 0
+  fi
+  PORT_ALLOCATOR="$PROJECT-ports"
+  docker run -d --name "$PORT_ALLOCATOR" \
+    --label "aweb.e2e.project=$PROJECT" \
+    --cpus .1 --memory 32m --pids-limit 16 \
+    -p "${AWEB_PORT:-0}:8000" -p "${AWID_PORT:-0}:8010" \
+    --entrypoint /bin/sleep redis:7-alpine infinity >/dev/null
+  AWEB_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}' "$PORT_ALLOCATOR")"
+  AWID_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "8010/tcp") 0).HostPort}}' "$PORT_ALLOCATOR")"
+  [[ "$AWEB_PORT" =~ ^[0-9]+$ && "$AWID_PORT" =~ ^[0-9]+$ \
+    && "$AWEB_PORT" -gt 0 && "$AWEB_PORT" -le 65535 \
+    && "$AWID_PORT" -gt 0 && "$AWID_PORT" -le 65535 \
+    && "$AWEB_PORT" != "$AWID_PORT" ]]
+}
+
+release_service_ports() {
+  if [[ -n "$PORT_ALLOCATOR" ]]; then
+    docker rm -fv "$PORT_ALLOCATOR" >/dev/null || return
+    PORT_ALLOCATOR=""
+  fi
+}
+
 compose() {
   docker compose -p "$PROJECT" --env-file .env.e2e "$@"
 }
@@ -187,6 +215,7 @@ cleanup() {
   echo ""
   echo "--- Cleanup ---"
   stop_quickstart_bridges
+  release_service_ports || status=1
   if [[ -f "$SERVER_DIR/.env.e2e" ]]; then
     cd "$SERVER_DIR"
     compose down -v --rmi local --remove-orphans >/dev/null 2>&1 || status=1
@@ -353,7 +382,9 @@ capture_success() {
   local output_var="$1" label="$2"
   shift 2
   local output status
-  if output="$("$@" 2>&1)"; then
+  # Successful commands can emit retry/warning diagnostics on stderr. Keep
+  # those in the journey log, outside the machine-readable stdout we parse.
+  if output="$("$@")"; then
     status=0
   else
     status=$?
@@ -592,6 +623,11 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 1: Start awid + aweb in Docker ==="
 
+allocate_service_ports
+AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
+AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
+echo "  Service origins: $AWEB_URL, $AWID_URL"
+
 if grep -Fq 'echo "AWID_SERVICE_TOKEN=$(openssl rand -hex 32)" >> .env' \
   "$REPO_ROOT/docs/cli-tutorial.md"; then
   echo "  PASS: tutorial configures the required awid service token"
@@ -650,6 +686,8 @@ EOF
 cd "$SERVER_DIR"
 compose down -v --rmi local --remove-orphans 2>/dev/null || true
 compose build --no-cache
+# Release the reservation immediately before Compose binds the same ports.
+release_service_ports
 compose up -d
 
 echo "Waiting for awid health..."
@@ -897,7 +935,7 @@ run_success "fresh local mail lands after join without setup commands" run_aw_in
   --subject "Join default-connect e2e" \
   --body "invite join check mail works"
 capture_success alice_join_inbox "alice_join_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
-alice_join_message="$(echo "$alice_join_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Join default-connect e2e'), ''))" 2>/dev/null || echo "")"
+alice_join_message="$(printf '%s\n' "$alice_join_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin)['messages']; print(next((m['body'] for m in msgs if m.get('subject')=='Join default-connect e2e'), ''))")"
 assert_eq "joiner's mail lands in inviter inbox" "invite join check mail works" "$alice_join_message"
 
 # Create a local-only teammate and remove the service-local E2E key row to
