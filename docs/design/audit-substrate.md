@@ -139,7 +139,7 @@ Authority comes before mechanism:
 
 | Hook | Class | Producer | Audit-critical | Fires for |
 | --- | --- | --- | --- | --- |
-| `post-secret-use-hook` | server | an app with an active production (secrets) | **yes** | Every brokered use, refusal, approval request and decision, dispatch, result and outcome-unknown/reconciliation of a secret-mediated operation. |
+| `post-secret-use-hook` | server | an app with an active production (secrets) | **per action/decision** | Every brokered use, refusal, approval request and decision, dispatch, result and outcome-unknown/reconciliation of a secret-mediated operation. Approval request, approved decision, admission and fresh dispatch are gated; denied/expired/revoked decisions and post-dispatch consequences are recording paths. Refusal retains decision 94's dedicated path. |
 | `post-governance-hook` | server | any app with an active production | **widening acts yes; narrowing acts never gated** | App-side governance: role designation (approver, reader, owner-approver), passkey and contact enrolment and recovery, grant and resource lifecycle, policy changes, runner registration, and installation-wide disable. The catalog fixes each act as widening or narrowing; the producer does not choose. Narrowing acts are always enqueued in their own transaction, but they are never refused for audit availability, because containment must not wait. It is generic and shared by secrets, logs, pages and any naapp. |
 | `post-manifest-command-hook` | server | an app with an active production, serving its own tool | no | Every admitted mutation tool call and every attributable refusal. Reads fire only for tools the production lists (§A3). |
 | `post-mutation-hook` | server | core | no (see §A7) | The demo-critical core mutations listed in §A10. |
@@ -571,6 +571,17 @@ deliveries owed; future targets receive no retroactive event. S13 also keeps
 its operational refusal record for console activity. See the complete
 [audit gate and admission rules](../hook-events.md#the-audit-critical-gate).
 
+The shared `enqueue_lifecycle` method records only
+`approval_decided: denied|expired|revoked` and
+`completed|not_sent|outcome_unknown|reconciled`, without target/backlog
+gating. Catalog validation, signing and transaction atomicity are unchanged.
+It grants no child/grant creation, result/credential release, upstream
+reconciliation or retry authority; callers retain those independent checks.
+The catalog's complete action/decision classification also governs ordinary
+`enqueue`. Original requester/scope/trace remain frozen. See the same
+normative gate section for the deliberate decision-93 metadata re-freeze,
+deployment evidence limits and paired reader/catalog publication dependency.
+
 **Transport.** Each delivery is `POST` to the binding's origin and path with
 `Authorization: AWEB-Hook DIDKey <did:key> <sig>`. The signed payload binds
 `{v: 1, auth: "hook-delivery", aud, method, path, body_sha256, team_id,
@@ -599,7 +610,7 @@ infrastructure, not an audit store (hooks-spec §7).
 
 **Failure mode.**
 
-- *Audit-critical effects* (secret uses, and widening
+- *Audit-critical effects* (authorizing secret-use steps, and widening
   `post-governance-hook` acts): the producer refuses the effect (secrets'
   `audit_target_unavailable`, the real error logged) unless both hold:
   - a registry view no older than 60 s holds an active registration with
@@ -612,7 +623,11 @@ infrastructure, not an audit store (hooks-spec §7).
   intent record, dispatches, then commits `completed`, `not_sent` or
   `outcome_unknown`; reconciliation emits `reconciled`. A crash after dispatch
   leaves a committed intent with no result, which is exactly what
-  reconciliation finds (secrets-spec §14). Narrowing admin acts are enqueued
+  reconciliation finds (secrets-spec §14). Those post-dispatch consequence
+  records and denied/expired/revoked approval decisions have no availability
+  gate; their local outbox insert still commits with the transition or neither
+  commits. A new dispatch, including a `not_sent` retry, keeps its gate.
+  Narrowing admin acts are enqueued
   in their own transaction and are never refused by this gate. The gate still
   leaves one window: the only registration can be revoked between commit and
   drain. So an audit-critical event whose deliveries all end `cancelled` or

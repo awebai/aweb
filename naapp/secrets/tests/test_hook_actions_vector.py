@@ -69,6 +69,7 @@ def test_each_use_transition_example_is_a_valid_catalog_event(row):
         if "approval_decision" in row:
             assert example["approval_decision"] == row["approval_decision"]
         CATALOG.validate(USE, example)
+        assert CATALOG.is_audit_critical(USE, example) is row["audit_critical"]
 
 
 def test_the_examples_cover_every_disposition_and_both_op_kinds():

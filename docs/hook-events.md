@@ -53,7 +53,7 @@ agent-reported, never as mediated fact.
 
 | Hook | Class | Producer | Audit-critical | Fires for |
 | --- | --- | --- | --- | --- |
-| `post-secret-use-hook` | server | an app with an active production | always | Every brokered use of a secret: refusal, approval request and decision, admission, the durable dispatch intent, the result, and an unknown outcome and its reconciliation. |
+| `post-secret-use-hook` | server | an app with an active production | per action/decision (below) | Every brokered use of a secret: refusal, approval request and decision, admission, the durable dispatch intent, the result, and an unknown outcome and its reconciliation. |
 | `post-governance-hook` | server | an app with an active production | widening acts only | App-side governance: roles, credentials, grants, resources, policy, runners and the installation-wide switch. The catalog fixes each act as widening or narrowing. |
 | `post-manifest-command-hook` | server | an app with an active production, for its own tools | never | Every admitted mutation tool call and every attributable refusal. Reads fire only for tools the production lists in `reads`. |
 | `post-mutation-hook` | server | the core server | never | The core mutations listed under [`post-mutation-hook`](#post-mutation-hook). |
@@ -813,7 +813,7 @@ Delivery is at least once. Consumers deduplicate on `(team_id, event_id)`.
 
 ## The audit-critical gate
 
-For an audit-critical effect (secret uses and widening `post-governance-hook`
+For an audit-critical effect (authorizing secret-use steps and widening `post-governance-hook`
 acts), the producer refuses the effect, with
 `audit_target_unavailable` and the real error logged, unless:
 
@@ -840,6 +840,58 @@ The ordinary outbox lifecycle and fault reporting remain in force; the
 producer's operational record is not a claim that logs received the event.
 Ordinary `enqueue` retains its gate, so an effect cannot obtain this exception
 by passing a caller-selected bypass flag.
+
+**Secret-use lifecycle recording (aweb-acgh.18.41).** The catalog fixes the
+complete action/decision classification, through `audit_critical: action_rules`
+and `action_audit_critical`. Each action has a boolean, or a `field` naming
+an enum and `values` classifying every value of that enum. Missing/extra
+actions, missing/extra enum values, non-booleans and unknown metadata refuse
+the catalog; payload validation precedes classification and sequence allocation.
+
+| Action | Target/backlog availability |
+| --- | --- |
+| `approval_requested`, `approval_decided: approved`, `admitted`, `dispatching` | gated; fresh dispatch and every retry still require their admission/fence checks |
+| `approval_decided: denied`, `expired` or `revoked` | recorded without availability gating; requester withdrawal and containment cancellation map to `revoked` |
+| `completed`, `not_sent`, `outcome_unknown`, `reconciled` | recorded consequences, without availability gating |
+| `refused` | retains its existing critical classification and exclusive `enqueue_refusal` exception above |
+
+`HookProducer.enqueue_lifecycle(tx, ...)` fixes `post-secret-use-hook` and
+accepts only the two recording rows. It has no view or bypass input and calls
+the same internal enqueue/signing/outbox implementation. Ordinary `enqueue`
+also follows the catalog's per-action classification. Approved decisions and
+every other action refuse on the lifecycle method before any sequence/outbox
+write; catalog, full envelope, producer kind/key, timestamps, result status and
+atomic storage checks still apply. The actor remains the original requesting
+member, with the frozen use scope and signed trace; a deciding or revoking
+human does not replace that actor. Actual passkey decisions retain the sole
+B3 evidence commitment contract.
+
+This records an already decided or attempted effect. It cannot authorize
+child/grant creation (including a `completed: stored_as_secret` receipt),
+result or runner-credential release, a new upstream reconciliation call or a
+retry. Those effects keep their independent scope, lineage, policy and fence
+checks. No new availability gate is placed on storing an already observed
+result. A `not_sent` record does not authorize another send; the fresh
+`dispatching` transition is gated again. Local outbox failure rolls back the
+recorded transition; an already dispatched request remains available for
+reconciliation, never silently resent. No record is represented as delivered
+until it is acknowledged. These events still count in an eligible target's
+backlog, and eligibility never becomes retroactive.
+
+The v1 metadata/vector re-freeze is deliberate under decision 93:
+coordinator applicability ruling `e93f7f7f-c437-40ea-8d9a-8b360dbe5ed3`
+uses the dated, scoped first-party deployment evidence and third-party
+limitation in [the terminal contract](hook-terminal-delivery.md#deliberate-catalog-re-freeze-and-implementation-evidence)
+(`c00d8528-4b9d-457e-8c53-e2e3e8d2f0cb`,
+`e09dce11-f2dc-4baa-8a3b-3fdcbb9790ed`). This is not a fresh universal
+inventory of secret-use consumers. A discovered deployed v1 consumer stops
+this re-freeze and requires the next version and Juan's decision. No accepted
+payload, enum, envelope/signature format or existing signed vector changes.
+Both public/packaged catalogs and their strict reader change together; an
+older strict reader cannot load the new metadata. Producer and receiver
+package publication/deployment must include that reader/catalog pair before
+activation; a source merge alone establishes neither receiver support nor
+production activation.
 
 **Admission backlog (decisions 11 and 94).** The shared
 `HookProducer.require_admission(tx, *, team_id, hook, occurred_at, view,
