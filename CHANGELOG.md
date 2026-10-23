@@ -79,6 +79,42 @@
 
 ## Release preparations
 
+### Release preparation: aweb-naapp 0.4.0
+
+`aweb-naapp` and `aweb-naapp-testing` 0.4.0 carry the naapp-lib changes since
+`aweb-naapp-v0.3.0`: the durable hook-refusal record and shared admission
+backlog gate (outbox migration `003_admission_backlog.sql`), the runner
+signature protocol with its scoped replay store and HPKE helpers, retained
+verified passkey proofs (`003_retained_proof.sql`), session liveness bound to
+the exact login credential, app-authorized designation, the shared nonce store
+(`001_nonces.sql`), and runtime hook production composition. The lock now
+records the runtime extra's `cbor2` dependency.
+
+### Release preparation: server 1.27.33
+
+Server changes are since `server-v1.27.32`.
+
+- **Security:** a team certificate's member identity and address are claims.
+  The server attributes them only when they are verified against the key that
+  signed the request (AWID's current binding, or a did:aw derived from that key
+  that AWID records for no one else), at connect and in team authentication,
+  and resolves recipients only through verified bindings. Rows written before
+  this release are not attributed until an operator pass
+  (`aweb verify-identity-bindings`) verifies them.
+- Admin-only app installation with pending-install origin verification
+  (`aweb verify-pending-app-installations`, `aweb run-installation-verifications`).
+- Strict `contacts_only` inbound mode, evaluated identity-wide across an
+  identity's memberships; contacts created through MCP carry their verified
+  identity.
+- `aw mail --to <alias>` reaches addressless human team members.
+- **Migrations (aweb schema):** `034_agent_identity_binding.sql`,
+  `035_team_app_installation_identity.sql`,
+  `036_app_installation_management.sql`, `037_contacts_only.sql`.
+- **Dependency floor:** `aweb-naapp[egress,hooks]>=0.4.0`.
+- **Deploy order:** publish `aweb-naapp` 0.4.0, then this server. Right after
+  the migrations, run `aweb verify-identity-bindings` (dry run first) and
+  `aweb verify-pending-app-installations`.
+
 ### Release preparation: awid-service 0.5.31
 
 `RegistryClient.get_team_fresh` (and its `CachedRegistryClient` override that
