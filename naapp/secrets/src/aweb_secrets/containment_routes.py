@@ -1,14 +1,17 @@
-"""Value-free containment endpoint, mounted only on the team-auth API origin."""
+"""Value-free containment routers for their separate API and human origins."""
 
 import base64
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from typing import Annotated, Any
 
+import asyncpg
+from aweb_naapp.console import ConsoleRoute, ConsoleSession
 from aweb_naapp.runtime.authorization import Authorization
 from aweb_naapp.runtime.installation import InstallationRefused
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from aweb_secrets.console import OwnerConsole
 from aweb_secrets.containment import Containment, ContainmentRefused
 
 
@@ -71,5 +74,44 @@ def containment_api_router(
             )
         except (ContainmentRefused, InstallationRefused) as refused:
             raise HTTPException(status_code=refused.status, detail=refused.code) from None
+
+    return router
+
+
+def containment_console_router(
+    services: Containment, *, console: OwnerConsole, prefix: str = ""
+) -> APIRouter:
+    """Mount alongside this same OwnerConsole only on the human origin."""
+    router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
+
+    @router.post("/installations/{installation_id}/containment")
+    async def contain(
+        installation_id: str,
+        request: Request,
+        current: Annotated[ConsoleSession, Depends(console.sessions.current)],
+    ) -> dict[str, Any]:
+        body = await _request(request)
+        try:
+            admitted = await console.installation(installation_id)
+            if admitted.installation_id != installation_id:
+                raise HTTPException(403, "owner_required")
+            return asdict(await services.by_console(admitted=admitted, session=current, **body))
+        except (ContainmentRefused, InstallationRefused) as refused:
+            if refused.status == 401:
+                await console.sessions.close(current)
+                response = Response()
+                console.sessions.clear_cookie(response)
+                raise HTTPException(
+                    401,
+                    "console_session_required",
+                    headers={"Set-Cookie": response.headers["set-cookie"]},
+                ) from None
+            raise HTTPException(refused.status, refused.code) from None
+        except LookupError:
+            raise HTTPException(403, "owner_required") from None
+        except asyncpg.DeadlockDetectedError:
+            # A self-revocation can upgrade its own LOGIN credential lock.
+            # PostgreSQL rolls back the whole effect; a fresh request may retry.
+            raise HTTPException(409, "containment_retry", headers={"Retry-After": "0"}) from None
 
     return router
