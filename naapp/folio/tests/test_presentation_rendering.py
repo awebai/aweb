@@ -646,7 +646,9 @@ def test_raw_figure_cannot_inject_non_folio_class() -> None:
 def test_repo_keeps_initial_migration_and_adds_forward_session_migration() -> None:
     migrations = sorted((Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations").glob("*.sql"))
 
-    assert [migration.name for migration in migrations] == ["001_initial.sql", "002_edit_sessions.sql"]
+    assert [migration.name for migration in migrations] == [
+        "001_initial.sql", "002_edit_sessions.sql", "003_installation_capabilities.sql",
+    ]
 
 
 def test_initial_migration_contains_team_scoped_assets_and_themes() -> None:

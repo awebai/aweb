@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from uuid import UUID
 
@@ -270,15 +271,26 @@ def test_linked_manifest_paths_serve_filled_bytes() -> None:
 
     client = _client()
     expected = canonical_bytes(served_manifest("https://folio.aweb.ai"))
-    # The docs surface links the canonical manifest at /aweb-app.json; the
-    # dispatcher fetches /.well-known/aweb-app.json. Both must serve the exact
-    # filled deployment bytes — nothing the surface links may 404.
-    for path in ("/aweb-app.json", "/.well-known/aweb-app.json"):
+    # Docs link the bare manifest; catalog discovery selects the v2 variant.
+    # Both serve the exact filled deployment bytes.
+    for path in ("/aweb-app.json", "/manifests/v2.json"):
         response = client.get(path)
         assert response.status_code == 200, path
         assert "application/json" in response.headers["content-type"], path
         assert response.headers.get("X-Content-Type-Options") == "nosniff", path
         assert response.content == expected, path
+    catalog = client.get("/.well-known/aweb-app-versions.json")
+    assert catalog.status_code == 200
+    assert catalog.json() == {
+        "catalog_version": 1,
+        "app_id": "folio",
+        "variants": [{
+            "manifest_version": 2,
+            "url": "/manifests/v2.json",
+            "digest": "sha256:" + hashlib.sha256(expected).hexdigest(),
+        }],
+    }
+    assert client.get("/.well-known/aweb-app.json").status_code == 404
     # Guard against drift: the surfaces actually link /aweb-app.json.
     assert "/aweb-app.json" in client.get("/reference").text
     assert "/aweb-app.json" in client.get("/").text

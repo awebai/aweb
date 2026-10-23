@@ -68,6 +68,10 @@
 
 ### Folio
 
+- Folio now serves manifest v2 through `/.well-known/aweb-app-versions.json`
+  and `/manifests/v2.json`; `/aweb-app.json` serves the same filled bytes.
+  The legacy `/.well-known/aweb-app.json` endpoint is no longer served.
+  Install or update Folio with aw 1.36.46 or newer; older clients need an upgrade.
 - Folio runs on the shared `aweb-naapp` runtime: its settings, database,
   manifest serving, public surface (landing, reference, llms.txt, robots, skills,
   fonts) and health routes are naapp-lib's, and `/health` reports the deployed
