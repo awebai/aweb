@@ -68,7 +68,9 @@ catalog records this in `precedence`.
 **Versioning.** A binding names `(catalog id, catalog version, hook)`. Any change
 to a payload, an addition included, is a new catalog version. A binding that
 names an unknown catalog id, version or hook cannot be activated, and a consumer
-refuses its events. Blocking `pre-*` hooks do not exist in version 1.
+refuses its events. Decision 93 permits the explicitly reviewed pre-deployment
+re-freeze documented in [the terminal amendment](hook-terminal-delivery.md#deliberate-catalog-re-freeze-and-implementation-evidence); it is not a general versioning exception.
+Blocking `pre-*` hooks do not exist in version 1.
 
 ## Payloads
 
@@ -227,7 +229,7 @@ direction, and a consumer refuses an event whose `direction` differs:
 
 | Widening | Narrowing |
 | --- | --- |
-| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled` |
+| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled`, `hook_delivery.cancelled` |
 
 `grant.changed` is widening whatever the change, so a change that only narrows
 a grant is still gated. A producer that must contain without waiting uses
@@ -245,7 +247,12 @@ strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
 - `backend_observation` is allowed exactly for `resource.version_observed`,
   which requires that authority. It records the producer's validated backend
   observation under the already-authorized immutable reference, without a new
-  owner act or passkey confirmation.
+  owner act or passkey confirmation;
+- `outbox_state` is allowed exactly for `hook_delivery.cancelled`, which requires
+  it. The [cancellation evidence contract](hook-terminal-delivery.md#each-app-producers-cancellation-evidence)
+  fixes its source binding/hook/count/contiguous-sequence fields, system actor,
+  arithmetic and per-producer attribution. It is narrowing and never authorizes
+  delivery to the ended binding.
 
 ### Observed backend versions (decision 92)
 
@@ -733,15 +740,29 @@ installation and its generation.
 
 **Revocation** is the exfiltration remedy:
 
-1. the revoked target receives `hook_binding.revoked` as its final entry,
-   whatever hook it was registered for, so its record ends with an explanation;
-2. its other undelivered events are cancelled;
-3. every other `post-mutation-hook` registration owed that event receives it
-   with the cancelled count and `seq` range, so its `verify` explains the gap.
+1. A previously active registration is owed one final `hook_binding.revoked`,
+   whatever its original hook, through the separately authenticated
+   [terminal delivery](hook-terminal-delivery.md). This deliberately permits
+   only its own final record inside the `active_from` pad. Pending registrations
+   and productions receive no terminal delivery. The obligation survives
+   uninstall/supersession; an unavailable or unanchorable target remains
+   outstanding and surfaced for reconciliation, never silently complete.
+2. Its other undelivered events are cancelled, including explicit per-target
+   tombstones for unmaterialized owed events. Core records its own exact count
+   and source-sequence ranges, not a global atomic count.
+3. Other eligible `post-mutation-hook` registrations receive that unchanged
+   core event. Each other app producer cancels locally within the freshness
+   bound and emits its own `hook_delivery.cancelled` governance records to
+   remaining governance registrations. `verify` explains a gap only from its
+   own producer’s matching record; otherwise the gap is unexplained. The
+   amendment specifies the shared-kit fence, accounting and receiver seal.
 
 Producers stop delivering within the freshness bound, so the revoked target may
 receive redacted activity for up to 60 seconds after revocation. Owner-facing
-copy says so. Uninstall revokes every binding of the installation the same way.
+copy says so. A committed receiver seal refuses further ordinary delivery even
+from a still-fresh cached view. Uninstall and generation supersession apply the
+terminal rule to each previously active registration; new-generation activation
+is never inherited. Revocation never waits for a receiver acknowledgement.
 
 **Switching targets** follows a fixed order: activate the new target, wait for
 its `active_from`, then revoke the old one. Audit-critical effects then always
@@ -764,6 +785,9 @@ bytes.
 **Transport.** Each delivery is an HTTPS `POST` to the binding's origin and
 path, authenticated by the `hook-delivery` credential, which binds the request
 to that binding and event (see [The delivery credential](#the-delivery-credential)).
+Only the final lifecycle record uses the distinct `hook-terminal-delivery`
+credential and wrapper specified by [the terminal amendment](hook-terminal-delivery.md);
+ordinary v1 signer equality, body shape and active admission are unchanged.
 Egress takes
 the destination only from the activated binding. It uses HTTPS only and follows
 no redirects. Private and internal destinations are refused unless a
@@ -777,7 +801,7 @@ self-hosted operator allows them; a hosted deployment always refuses them.
 | `409 event_conflict` (same id, different bytes) | `conflict`: never retried, surfaced as a fault. |
 | A schema or authorization refusal | Retried with bounded backoff, in case a registry view is stale, then `rejected` and surfaced. |
 | A network error or 5xx | Retried with capped exponential backoff and never dropped. After the operator's disclosed delivery horizon it is `stalled` and surfaced to the owner. |
-| The binding is no longer active when the producer sends | `cancelled`, with its reason. |
+| The binding is no longer active when the producer sends | Ordinary delivery is `cancelled`, with its reason. The durably authorized terminal obligation retries independently; inactive state never cancels it. |
 
 Delivery is at least once. Consumers deduplicate on `(team_id, event_id)`.
 
@@ -1039,5 +1063,10 @@ without the team key. It checks, in this order:
     certificate id (`certificate_mismatch`), and is signed by the team's current
     key (`certificate_invalid`).
 
-The target then checks that the binding is its own active registration, and
-that the producer holds an active production for the hook (aweb-acgh.7).
+The ordinary target then checks that the binding is its own active registration,
+and that an app producer holds an active production for the hook (aweb-acgh.7).
+It also checks the durable per-binding seal in its append transaction. The
+[terminal credential](hook-terminal-delivery.md#separate-terminal-request-credential)
+has a separate exact verifier dispatch and permits only the capsule-bound core
+revocation event. It never weakens this v1 verifier. Until that amendment and
+its shared implementation are accepted, active-only admission remains in force.

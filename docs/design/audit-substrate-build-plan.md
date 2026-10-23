@@ -169,6 +169,53 @@ runtime resolver. The helper's exact ACKed SHA is handed to S13 for reuse.
 
 ## Phase 3: core server
 
+### Terminal revocation amendment (2026-10-23)
+
+The [terminal delivery contract](../hook-terminal-delivery.md) corrects the
+active-only/final-entry conflict. It is pending receiver/resolution/producer
+fit, independent review and Athena. S2 builds its other work first; no receiver
+or producer enables a terminal exception ahead of acceptance.
+
+- **Shared kit, used by S2 and every app producer:** one transactional
+  end-binding fence shared with enqueue/materialization, explicit cancellation
+  tombstones for unmaterialized owed events, protected terminal targets in the
+  existing hooks outbox, and cancellation summaries scoped to their producer.
+  Do not copy kit SQL or implement another sender/outbox in core. Apply new
+  ordered kit migrations through its migration module.
+- **Signing/verification:** Go-generated public terminal-authorization and
+  terminal-credential vectors, with a Python consumer in the shared hooks kit.
+  Proposed paths are `docs/vectors/hook-terminal-authorization-v1.json` and
+  `docs/vectors/hook-terminal-credential-v1.json`; create and register them with
+  their implementations, not as unconsumed placeholder bytes. Preserve all
+  existing ordinary event/delivery cases. A current core transport key can
+  retry a historically signed event/capsule; each uses its specified window.
+- **S2:** atomically commit lifecycle state, local backlog accounting,
+  immutable terminal event/capsule and fixed target; integrate owner revocation,
+  uninstall and generation supersession. Other sinks get the identical event
+  envelope. A target registered for another hook still receives its own final
+  record. A never-active target receives none. No ACK gates containment.
+- **L2:** cold verification without a current installed read credential;
+  exact terminal dispatcher and endpoint binding; per-binding seal and team
+  event dedup in one transaction. An event previously appended via another
+  binding must seal the addressed binding and return the original receipt,
+  with no second append. Ordinary admission serializes with sealing.
+- **Cancellation evidence:** both catalog copies and payload cases are a
+  deliberate v1 re-freeze under decision 93 and coordinator receipts recorded
+  in the terminal contract. New `hook_delivery.cancelled/outbox_state` records
+  require shared range-arithmetic, source-producer and system-actor checks in
+  addition to the existing data-driven catalog parser. Missing producer
+  evidence remains an unexplained gap; no implicit attribution is permitted.
+- **Acceptance:** real transactional rollback, unmaterialized backlog,
+  concurrent drain/ACK and seal/append races, pad exception, different hook,
+  cold uninstall, supersession, separate new generation, historical-key/current
+  retry-key rotation and failed current anchoring remaining an outstanding
+  reconciliation obligation. E1 revocation includes the actual shared
+  producer/receiver path; helper-only or a warm cache is insufficient.
+
+The three fit checks are logs, app-team-api and hooks-producer. They precede
+independent naapp review and Athena on the exact delta. The doc delta lands
+through secrets' train-naapp lane; S2 code lands through aweb's OSS train.
+
 | Id | Task | Repo and paths | Acceptance criteria | Depends | Seat | Review |
 | --- | --- | --- | --- | --- | --- | --- |
 | S1 | `app_hook_bindings` and owner activation | `server/src/aweb/migrations/aweb/<next>_app_hook_bindings.sql`; server/src/aweb/hook_bindings.py; activation and revocation routes | - **Rows:** install or update creates pending rows from the digest-pinned manifest bytes, read through `manifest_registration()` for the v2 `hooks` slot. A new generation supersedes, and uninstall revokes.<br>- **Owner acts:** activation and revocation require an owner act verified by K2 with core's closed vocabulary. The subject must equal the stored pending row. Core calls `OwnerActVerifier.prepare` before the activation transaction and `consume_in` inside it, so the nonce is consumed with the binding's state change and no registry read holds that transaction's locks.<br>- **Pad and refusals:** `active_from = activated_at + 60 s`. Activation refuses until F6 supplies `installation_id` and generation. Production activation refuses until keys come from pinned bytes (acgh.7 G1-b).<br>- **Tests:** an admin or member signature is refused, a stale subject is refused, and so is a replayed nonce. | H3, K2; D1 F6 (aweb-acgg.5), C3 (aweb-acgg.9); aweb-acgh.8 step 1; acgh.7 G1-b | aweb-protocol-expert | R+A |
