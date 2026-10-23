@@ -72,7 +72,9 @@ and AWID status (missing prefix, non-current key, team mismatch, far-future
 `issued_at`, `issued_at` with non-ASCII digits or an impossible date, not newer
 than the stored record, plain http outside loopback).
 Seeds are public test material. The AWID real-route tests consume these
-bytes. See [the team contract](../awid-sot.md#teams).
+bytes; `awid/tests/test_registry_team_server.py` also checks the Python record
+builder and signer against the frozen Go bytes and signatures.
+See [the team contract](../awid-sot.md#teams).
 
 ### `principal-attestation-v1.json`
 

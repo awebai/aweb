@@ -854,6 +854,25 @@ class RegistryClient:
         without a stale cache result."""
         return await self.get_team(domain, name)
 
+    async def get_team_server_record(self, domain: str, name: str) -> dict[str, Any] | None:
+        """Read the signed envelope, or None on 404; the caller verifies current team authority."""
+        return await self._request_optional_json(
+            "GET",
+            f"/v1/namespaces/{domain}/teams/{name}/server",
+            registry_url=await self._registry_url_for_domain(domain),
+        )
+
+    async def publish_team_server_record(
+        self, domain: str, name: str, record: dict[str, Any], signature: str,
+    ) -> dict[str, Any]:
+        """PUT a team-key-signed envelope; registry refusals raise RegistryError."""
+        return await self._request_json(
+            "PUT",
+            f"/v1/namespaces/{domain}/teams/{name}/server",
+            json={"record": record, "signature": signature},
+            registry_url=await self._registry_url_for_domain(domain),
+        )
+
     async def get_team_revocations(self, domain: str, name: str) -> set[str]:
         """Fetch the complete set of revoked certificate IDs for a team.
 

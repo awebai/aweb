@@ -155,8 +155,10 @@ remain. It also exempts the principal-attestation record publishes (PUT
 `/v1/namespaces/{domain}/teams/{name}/custodians/{custodian_id}` and
 `…/certificates/{certificate_id}/custody|person`) from both their buckets, so a
 custodial deployment's backfill is not throttled; the team-controller signature
-is still required. All other write buckets remain rate-limited even with a
-matching token.
+is still required. Signed team-server record publication (PUT
+`/v1/namespaces/{domain}/teams/{name}/server`) is also exempt from its
+`team_server_publish` bucket; the current team-key signature remains required.
+All other write buckets remain rate-limited even with a matching token.
 Public callers keep the existing 10/hour DID, namespace and team creation
 limits and 30/hour encryption-key, certificate and address registration limits.
 Visibility changes and team deletion allow 300/hour and certificate revocation
@@ -667,7 +669,8 @@ GET    /v1/namespaces/{domain}/teams/{name}/revocations
 PUT    /v1/namespaces/{domain}/teams/{name}/server
        Publish the team's aweb.team-server/1 record.
        Auth: the record's own signature by the CURRENT team key; no request
-       signature. Own team_server_publish public-IP bucket.
+       signature. Own team_server_publish public-IP bucket: 30 publishes per
+       hour; trusted service publishes are exempt.
        Body: { "record": { "v": 1, "type": "aweb.team-server",
                            "team_id": "backend:acme.com",
                            "team_did_key": "did:key:z6Mk...",
