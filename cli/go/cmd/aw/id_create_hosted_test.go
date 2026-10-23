@@ -67,7 +67,7 @@ func testHostedIdentityCreateWithSelector(t *testing.T, mode string, ownerMode b
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
-		if !ownerMode && strings.HasPrefix(r.URL.Path, "/api/v1/cli") && r.Header.Get("Authorization") != "Bearer test-access" {
+		if !ownerMode && (r.URL.Path == "/api/v1/cli-auth/status" || r.URL.Path == cliIdentityCreatePath) && r.Header.Get("Authorization") != "Bearer test-access" {
 			t.Error("hosted operation substituted another authority")
 		}
 		switch {

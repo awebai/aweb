@@ -212,7 +212,7 @@ func TestTeamEnsureLostFirstEnrollResponseRetriesSameKeyAndBinds(t *testing.T) {
 			if strings.Contains(body["workspace_key_sha256"].(string), "workspace") {
 				t.Fatalf("digest leaked raw workspace key: %#v", body)
 			}
-			_ = json.NewEncoder(w).Encode(workspaceTeamEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID, Label: "Demo", Owner: map[string]any{"org_id": "chosen-org-id", "slug": "chosen"}, Binding: map[string]any{"reused": true}})
+			_ = json.NewEncoder(w).Encode(workspaceTeamEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID, Label: "Demo", Owner: map[string]any{"slug": "chosen"}, Binding: map[string]any{"reused": true}})
 		case workspaceTeamEnrollPath:
 			enrollCount++
 			if got := r.Header.Get("Authorization"); got != "Bearer awcli_test" {
@@ -316,7 +316,7 @@ func TestTeamEnsureLostFirstEnrollResponseRetriesSameKeyAndBinds(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner, ok := public["owner"].(map[string]any)
-	if !ok || owner["org_id"] != "chosen-org-id" {
+	if !ok || owner["slug"] != "chosen" {
 		t.Error("CLI output lost ensured organization owner")
 	}
 	if decoded.Status != "bound" || !decoded.CanSpawn || decoded.TeamID != teamID || decoded.CanonicalTeamID != canonicalTeamID || decoded.Created || decoded.AccountID != "acct-test" || decoded.AccountHandle != "alice" {
