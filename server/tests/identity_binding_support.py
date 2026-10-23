@@ -24,6 +24,11 @@ async def register_global_identity(env, actor, address=""):
     if address:
         domain, name = address.split("/", 1)
         if await registry.get_namespace(domain) is None:
-            await registry.register_namespace(domain, env.team_did, env.team_sk)
+            # DNS ownership is fixture provisioning; DID registration, address
+            # mutation and all binding reads still use the real AWID service.
+            await env.registry_db.execute(
+                "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
+                "VALUES ($1, $2, 'verified')", domain, env.team_did,
+            )
         await registry.register_address(domain, name, identity.did_aw, env.team_sk)
     return identity.did_aw
