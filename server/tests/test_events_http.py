@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from identity_binding_support import seed_verified_bindings
+
 import base64
 import json
 from datetime import datetime, timedelta, timezone
@@ -130,6 +132,9 @@ async def _create_test_event_recipient(aweb_db):
         """,
         agent_id,
     )
+    await aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", agent_id,
+    )
     return agent_id
 
 
@@ -233,7 +238,11 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
         bob["agent_id"],
     )
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice["agent_id"],
+    )
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
     deadline = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
     headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
     headers["X-AWID-Team-Certificate"] = cert_header
@@ -289,6 +298,7 @@ async def test_events_stream_sends_idle_heartbeats(aweb_cloud_db, monkeypatch):
     monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.01)
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
     deadline = (datetime.now(timezone.utc) + timedelta(seconds=0.5)).isoformat()
     headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
     headers["X-AWID-Team-Certificate"] = cert_header
@@ -365,7 +375,11 @@ async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_d
         bob["agent_id"],
     )
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice["agent_id"],
+    )
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
     deadline = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
     headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
     headers["X-AWID-Team-Certificate"] = cert_header
@@ -410,6 +424,10 @@ async def test_current_actionable_mail_includes_from_stable_id_for_current_sende
         uuid4(),
     )
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE did_aw=ANY($1::text[])",
+        ["did:aw:alice", "did:aw:carol"],
+    )
     actionable = await events_module._current_actionable_mail(
         aweb_cloud_db.aweb_db,
         inbox_dids=["did:aw:bob", "did:key:z6MkBobCurrent"],
@@ -565,7 +583,11 @@ async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_
         "hello stable bob",
     )
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice["agent_id"],
+    )
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
     deadline = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
     headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
     headers["X-AWID-Team-Certificate"] = cert_header
@@ -646,6 +668,10 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
 
     monkeypatch.setattr(events_module, "get_waiting_agents", _fake_get_waiting_agents)
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE did_aw=ANY($1::text[])",
+        ["did:aw:alice", "did:aw:carol"],
+    )
     actionable = await events_module._current_actionable_chat(
         _DbShim(aweb_cloud_db.aweb_db),
         None,
@@ -725,6 +751,10 @@ async def test_current_actionable_chat_includes_from_stable_id_for_current_sende
 
     monkeypatch.setattr(events_module, "get_waiting_agents", _fake_get_waiting_agents)
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE did_aw=ANY($1::text[])",
+        ["did:aw:alice", "did:aw:carol"],
+    )
     actionable = await events_module._current_actionable_chat(
         _DbShim(aweb_cloud_db.aweb_db),
         None,

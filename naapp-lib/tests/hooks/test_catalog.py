@@ -82,13 +82,16 @@ def test_secret_use_dispositions_and_refusal_codes() -> None:
     fields = CATALOG.hooks["post-secret-use-hook"].fields
     assert fields["disposition"].enum == ("returned", "withheld", "stored_as_secret")
     refusal_codes = fields["refusal_code"].enum
-    assert len(refusal_codes) == 30
-    assert len(set(refusal_codes)) == 30
+    assert len(refusal_codes) == 33
+    assert len(set(refusal_codes)) == 33
     assert {
         "audit_target_unavailable",
         "audit_delivery_stalled",
         "dispatch_in_flight",
         "generation_superseded",
+        "no_eligible_approver",
+        "approval_consumed",
+        "secret_value_invalid",
     } <= set(refusal_codes)
 
 
@@ -104,6 +107,9 @@ def test_audit_critical_follows_the_catalog() -> None:
     assert not CATALOG.is_audit_critical("post-governance-hook", {"act": "grant.revoked"})
     assert not CATALOG.is_audit_critical("post-governance-hook", {"act": "installation.disabled"})
     assert not CATALOG.is_audit_critical("post-governance-hook", {"act": "resource.replaced"})
+    assert not CATALOG.is_audit_critical(
+        "post-governance-hook", {"act": "resource.version_observed"}
+    )
     assert not CATALOG.is_audit_critical("post-manifest-command-hook", {})
     assert not CATALOG.is_audit_critical("post-mutation-hook", {"mutation_type": "task.created"})
     assert not CATALOG.is_audit_critical("post-command-hook", {})

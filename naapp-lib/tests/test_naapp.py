@@ -70,6 +70,7 @@ def _site_with_source() -> naapp.SiteConfig:
 
 def _rendered_class_names() -> set[str]:
     html_pages = [
+        naapp.render_numbered_steps([naapp.NumberedStep("A step", "Details.", "example")]),
         naapp.page(_site(), "    <section>hi</section>"),
         naapp.page(_site_with_source(), "    <section>hi</section>"),
         naapp.render_reference(

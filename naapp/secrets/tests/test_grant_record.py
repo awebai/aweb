@@ -120,6 +120,31 @@ def test_a_grant_template_round_trips() -> None:
     assert GrantTemplate.from_after(TEMPLATE).after == TEMPLATE
 
 
+def test_the_template_digest_covers_its_complete_domain_separated_after() -> None:
+    template = GrantTemplate.from_after(TEMPLATE)
+    assert template.digest == "503d46a570cb606882524329bf91bd9e314f33967a1fe24a648aed7abe4b1bbf"
+    reordered = dict(reversed(list(copy.deepcopy(TEMPLATE).items())))
+    assert GrantTemplate.from_after(reordered).digest == template.digest
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"grant_template_id": "gtp_other01"},
+        {"subject": {"principal": DID_AW}},
+        {"operations": [{"operation_id": "refund", "digest": "d" * 64}]},
+        {"policy_digest": "e" * 64},
+        {"capability": "run", "operations": [], "jobs": [JOB]},
+        {"operations": [], "open_request": True},
+    ],
+)
+def test_editing_any_template_authority_changes_its_pin(change) -> None:
+    assert (
+        GrantTemplate.from_after({**TEMPLATE, **change}).digest
+        != GrantTemplate.from_after(TEMPLATE).digest
+    )
+
+
 @pytest.mark.parametrize(
     "change",
     [

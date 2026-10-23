@@ -335,7 +335,7 @@ async def publish_agent_status(
     aweb_db = db.get_manager("aweb")
     agent = await aweb_db.fetch_one(
         """
-        SELECT agent_id, alias, did_key, did_aw FROM {{tables.agents}}
+        SELECT agent_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
         """,
         identity.team_id,

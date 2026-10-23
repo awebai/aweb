@@ -3,8 +3,10 @@
 Configuration names key files by kid (``app_key_files``). Which purposes a kid
 may sign is the served manifest's declaration, so the key for a purpose is the
 configured kid the manifest declares for it, and the loaded key must be the
-public key declared there. A v1 manifest declares its app-event kids in
-``event_emitters``.
+public key declared there. The declaration is the manifest's resolved
+:meth:`~aweb_naapp.manifest.Manifest.app_keys_for`: a v2 manifest's
+``app_keys`` by purpose, or a v1 manifest's ``event_emitters`` as app-event
+keys.
 
 The app-event key may instead come from the released seed value
 (``app_emit_key_seed_hex``), named by ``app_emit_kid``; that value signs no
@@ -20,6 +22,7 @@ from typing import Any
 from awid.did import did_from_public_key
 from nacl.signing import SigningKey
 
+from aweb_naapp.manifest import Manifest, template_key_entries, template_kids
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.signing_key import SigningKeyError, parse_signing_key_hex, read_signing_key_file
 
@@ -38,14 +41,7 @@ class AppKey:
     signing_key: SigningKey = field(repr=False)
 
 
-def _declared(manifest: Mapping[str, Any], purpose: str) -> dict[str, str]:
-    """The kids the manifest declares for ``purpose``, with their did:keys."""
-    if purpose == APP_EVENT:
-        return {entry["kid"]: entry["did_key"] for entry in manifest.get("event_emitters", ())}
-    return {}
-
-
-def load_app_key(settings: NaappSettings, manifest: Mapping[str, Any], purpose: str) -> AppKey:
+def load_app_key(settings: NaappSettings, manifest: Manifest, purpose: str) -> AppKey:
     """The app's key for ``purpose``, or :class:`AppKeyError`."""
     prefix = settings.model_config.get("env_prefix", "")
     files = settings.app_key_files
@@ -57,7 +53,7 @@ def load_app_key(settings: NaappSettings, manifest: Mapping[str, Any], purpose: 
         if emit_kid in files:
             raise AppKeyError(f"app key {emit_kid} is given both a key file and a seed value")
 
-    declared = _declared(manifest, purpose)
+    declared = manifest.app_keys_for(purpose)
     configured = set(files)
     if purpose == APP_EVENT and seed_value is not None and emit_kid is not None:
         configured.add(emit_kid)
@@ -81,15 +77,53 @@ def load_app_key(settings: NaappSettings, manifest: Mapping[str, Any], purpose: 
             )
         kid = candidates[0]
 
-    try:
-        if kid in files:
-            signing_key = read_signing_key_file(files[kid])
-        else:
-            assert seed_value is not None
-            signing_key = parse_signing_key_hex(seed_value.get_secret_value())
-    except SigningKeyError as exc:
-        raise AppKeyError(f"app key {kid}: {exc}") from None
+    signing_key = _configured_key(settings, kid)
     did_key = did_from_public_key(bytes(signing_key.verify_key))
     if did_key != declared[kid]:
         raise AppKeyError(f"app key {kid} is not the public key the manifest declares for it")
     return AppKey(kid=kid, did_key=did_key, signing_key=signing_key)
+
+
+def _configured_key(settings: NaappSettings, kid: str) -> SigningKey:
+    """The configured key for ``kid``: its key file, or the released seed value
+    for the configured app-event kid."""
+    seed_value = settings.app_emit_key_seed_hex
+    try:
+        if kid in settings.app_key_files:
+            return read_signing_key_file(settings.app_key_files[kid])
+        if seed_value is not None and kid == settings.app_emit_kid:
+            return parse_signing_key_hex(seed_value.get_secret_value())
+    except SigningKeyError as exc:
+        raise AppKeyError(f"app key {kid}: {exc}") from None
+    raise AppKeyError(f"no key is configured for app key {kid}")
+
+
+def declared_did_keys(settings: NaappSettings, template: Mapping[str, Any]) -> dict[str, str]:
+    """The did:key of every kid a manifest template declares, derived from the
+    deployment's configured keys, for :func:`aweb_naapp.manifest.fill_manifest`.
+
+    Configuration supplies keys only for declared kids: a key file for any other
+    kid is refused, and the released seed value serves only a kid declared for
+    app-event alone.
+    """
+    prefix = settings.model_config.get("env_prefix", "")
+    kids = template_kids(template)
+    undeclared = sorted(set(settings.app_key_files) - set(kids))
+    if undeclared:
+        raise AppKeyError(f"key files are configured for kids the manifest does not declare: {', '.join(undeclared)}")
+    emit_kid = settings.app_emit_kid
+    if settings.app_emit_key_seed_hex is not None:
+        if emit_kid is None:
+            raise AppKeyError(f"{prefix}APP_EMIT_KEY_SEED_HEX needs {prefix}APP_EMIT_KID")
+        if emit_kid in settings.app_key_files:
+            raise AppKeyError(f"app key {emit_kid} is given both a key file and a seed value")
+        purposes: dict[str, tuple[str, ...]] = {}
+        for entry in template_key_entries(template):
+            declared = entry.get("purposes") if "purposes" in entry else [APP_EVENT]
+            purposes[entry["kid"]] = tuple(declared) if isinstance(declared, list) else ()
+        if purposes.get(emit_kid) != (APP_EVENT,):
+            raise AppKeyError(
+                f"{prefix}APP_EMIT_KID {emit_kid} must be declared by the manifest for {APP_EVENT} only; "
+                "the released seed value signs app events alone"
+            )
+    return {kid: did_from_public_key(bytes(_configured_key(settings, kid).verify_key)) for kid in kids}

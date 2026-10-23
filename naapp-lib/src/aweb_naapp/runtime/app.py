@@ -8,12 +8,15 @@ and :func:`aweb_naapp.runtime.health.mount_health` instead.
 The runtime reads the app's manifest once, at construction, for its configured
 public origin: :attr:`NaappRuntime.manifest_bytes` are the bytes served at the
 manifest routes, and the tools authorization checks against are parsed from
-those same bytes, never from the app's authoring dict or a later file.
+those same bytes, never from the app's authoring dict or a later file. The
+bytes are read with :func:`aweb_naapp.manifest.load_manifest`, the reader the
+aw CLI's conformance vectors pin, so a manifest it refuses stops the app.
 
 Member operations are guarded with ``Depends(runtime.authorized(grants=...,
 policy=...))``. It admits a request only when it is signed by a team member,
-declared by the served manifest, covered by the team's installed grant, and
-allowed by the app's policy. ``Depends(runtime.principal)`` only
+declared by the served manifest for the caller's invocation context (an agent,
+or a surface when a verified principal attestation names the dashboard),
+covered by the team's installed grant, and allowed by the app's policy. ``Depends(runtime.principal)`` only
 authenticates: it says who signed the request, never that they may act, so it
 is for routes that need nothing more than the signer's identity.
 
@@ -25,11 +28,18 @@ ship them.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import replace
+from datetime import UTC, datetime
+from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
+from uuid import UUID
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -40,35 +50,72 @@ from pgdbm import AsyncDatabaseManager
 from starlette.routing import BaseRoute, Host, Mount
 
 from aweb_naapp.css import FONT_NAMES, aweb_css
-from aweb_naapp.manifest import read_manifest_bytes
+from aweb_naapp.hooks.producer import HookProducer
+from aweb_naapp.hooks.resolver import TeamServerRegistrations
+from aweb_naapp.manifest import (
+    CATALOG_PATH,
+    LEGACY_MANIFEST_PATH,
+    Manifest,
+    ManifestError,
+    canonical_bytes,
+    fill_manifest,
+    load_manifest,
+)
 from aweb_naapp.outbox import outbox_status, run_drain
 from aweb_naapp.robots import robots_txt
+from aweb_naapp.runtime.app_credentials import HOOK_RESOLVE, AppCredentialSigner
+from aweb_naapp.runtime.app_keys import AppKeyError, declared_did_keys, load_app_key
+from aweb_naapp.runtime.attestation import (
+    AttestationRefused,
+    AWIDAttestationRecords,
+    VerifiedAttestation,
+    caller_context,
+    request_attestation,
+)
 from aweb_naapp.runtime.authorization import (
+    ActionKind,
     ActionPolicy,
     Authorization,
+    DeclaredTool,
     DeclaredTools,
+    Grant,
     GrantSource,
     authorize_request,
     is_placeholder,
 )
 from aweb_naapp.runtime.db import NaappDatabase, Store
-from aweb_naapp.runtime.event_emit import AppEvents
+from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
+from aweb_naapp.runtime.hook_resolver import HookResolver
+from aweb_naapp.runtime.hooks import RuntimeHooks
+from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
     AWIDTeamCache,
+    MembershipProof,
     Principal,
     authenticate_request,
     record_observed_principal,
 )
+from aweb_naapp.runtime.team_server import TeamServerDirectory
 from aweb_naapp.skills import Skills
+
+if TYPE_CHECKING:
+    from pgdbm.core import TransactionManager
+
+    from aweb_naapp.egress import Egress
+
+logger = logging.getLogger(__name__)
+
+# Where a version 2 manifest's bytes are served, as its catalog lists them.
+MANIFEST_V2_PATH = "/manifests/v2.json"
 
 NOINDEX_ROBOTS_HEADER = "noindex, nofollow, noarchive"
 _NOSNIFF = {"X-Content-Type-Options": "nosniff"}
 
 
 class NaappRuntime:
-    """A naapp's database and AWID team cache, open for the app's lifespan.
+    """A naapp's database, identity cache and shared team-server clients.
 
     ``root_path`` is the external prefix the server serves the app under, if
     any. Declared tool paths are external paths, so it is part of them.
@@ -76,9 +123,13 @@ class NaappRuntime:
     ``manifest_path`` is the app's committed manifest file. It is read here,
     once per process, for ``settings.public_origin`` (configuration, never a
     request): ``manifest_bytes`` are served verbatim, and ``manifest`` and
-    ``declared_tools`` are parsed from them. The app-event key the manifest
+    ``declared_tools`` are parsed from them; a manifest the shared reader
+    refuses raises :class:`~aweb_naapp.manifest.ManifestError`. The app-event key the manifest
     declares is loaded here too, so a missing or wrong key stops the app
-    before it serves anything, and ``app_events`` emits through it.
+    before it serves anything, and ``app_events`` emits through it. A declared
+    hook-resolve key is also loaded at construction for the shared
+    :meth:`hook_resolver`. Identity discovery objects are available without
+    I/O before the lifespan, so grant sources can register route guards first.
     """
 
     def __init__(
@@ -90,7 +141,10 @@ class NaappRuntime:
         manifest_path: Path,
         root_path: str = "",
         awid_transport: httpx.AsyncBaseTransport | None = None,
+        team_server_transport: httpx.AsyncBaseTransport | None = None,
         stores: Sequence[Store] = (),
+        hook_egress: Egress | None = None,
+        hook_internal_cidr: IPv4Network | IPv6Network | None = None,
     ) -> None:
         self.settings = settings
         # The external prefix the server serves the app under (its ASGI root path).
@@ -100,12 +154,54 @@ class NaappRuntime:
         self.stores = tuple(stores)
         self._awid_transport = awid_transport
         self._database: NaappDatabase | None = None
-        self._team_cache: AWIDTeamCache | None = None
-        self._manifest_bytes = read_manifest_bytes(manifest_path, settings.public_origin)
-        self._manifest: Mapping[str, Any] = json.loads(self._manifest_bytes)
+        self._attestation_records: AWIDAttestationRecords | None = None
+        template = json.loads(manifest_path.read_bytes())
+        _refuse_the_hosted_app_id_elsewhere(settings, template)
+        self._manifest_bytes = fill_manifest(
+            template,
+            app_id=settings.app_id,
+            origin=settings.public_origin,
+            did_keys=declared_did_keys(settings, template),
+        )
+        self._manifest = load_manifest(self._manifest_bytes)
+        self._catalog_bytes = (
+            _catalog_bytes(self._manifest, self._manifest_bytes)
+            if self._manifest.manifest_version == 2
+            else None
+        )
         self._declared_tools = DeclaredTools.from_manifest(self._manifest)
         self._app_events = AppEvents.from_settings(settings, self._manifest)
-        self._guards: set[Callable[..., object]] = set()
+        # Configuration only: these objects perform no I/O until a request.
+        # Grant sources and guards must be wired before lifespan validation.
+        self._team_cache = AWIDTeamCache(
+            registry_url=settings.awid_registry_url,
+            ttl_seconds=settings.auth_cache_ttl_seconds,
+            service_token=settings.awid_service_token,
+            transport=awid_transport,
+        )
+        self._team_server_directory = TeamServerDirectory(
+            team_cache=self._team_cache, transport=awid_transport,
+        )
+        hook_key = (
+            load_app_key(settings, self._manifest, HOOK_RESOLVE)
+            if self._manifest.app_keys_for(HOOK_RESOLVE) else None
+        )
+        self._hook_resolver = (
+            HookResolver(
+                directory=self._team_server_directory,
+                signer=AppCredentialSigner(
+                    app_id=self._manifest.app_id, key=hook_key, purpose=HOOK_RESOLVE,
+                ),
+                app_origin=self._manifest.document["app"]["origin"],
+                transport=team_server_transport,
+            ) if hook_key is not None else None
+        )
+        self._hooks = RuntimeHooks.from_settings(
+            settings, self._manifest, resolver=self._hook_resolver,
+            egress=hook_egress, internal_cidr=hook_internal_cidr,
+        )
+        # Each authorized() guard, with the action_kind it was given.
+        self._guards: dict[Callable[..., object], ActionKind | None] = {}
 
     @property
     def manifest_bytes(self) -> bytes:
@@ -113,8 +209,15 @@ class NaappRuntime:
         return self._manifest_bytes
 
     @property
-    def manifest(self) -> Mapping[str, Any]:
-        """The served manifest, parsed."""
+    def catalog_bytes(self) -> bytes | None:
+        """The manifest catalog served for a version 2 manifest, fixed at
+        construction; ``None`` for a version 1 manifest, which consumers
+        discover at the legacy path."""
+        return self._catalog_bytes
+
+    @property
+    def manifest(self) -> Manifest:
+        """The served manifest, validated and resolved."""
         return self._manifest
 
     @property
@@ -138,11 +241,8 @@ class NaappRuntime:
         )
         await database.connect()
         self._database = database
-        self._team_cache = AWIDTeamCache(
-            registry_url=self.settings.awid_registry_url,
-            ttl_seconds=self.settings.auth_cache_ttl_seconds,
-            service_token=self.settings.awid_service_token,
-            transport=self._awid_transport,
+        self._attestation_records = AWIDAttestationRecords(
+            registry_url=self.settings.awid_registry_url, transport=self._awid_transport
         )
         stop = asyncio.Event()
         client = httpx.AsyncClient(timeout=self.settings.app_emit_timeout_seconds)
@@ -153,15 +253,20 @@ class NaappRuntime:
             if self._app_events.key is not None
             else None
         )
+        hooks_drain = (
+            asyncio.create_task(run_drain(database.db, stop=stop, **self._hooks.drain_options()))
+            if self._hooks.key is not None else None
+        )
         try:
             yield
         finally:
             stop.set()
-            if app_events_drain is not None:
-                await app_events_drain
+            drains = [task for task in (app_events_drain, hooks_drain) if task is not None]
+            if drains:
+                await asyncio.gather(*drains)
             await client.aclose()
             self._database = None
-            self._team_cache = None
+            self._attestation_records = None
             await database.disconnect()
 
     def connected_db(self) -> AsyncDatabaseManager | None:
@@ -204,9 +309,69 @@ class NaappRuntime:
         return {"database": database, "outbox": outbox}
 
     def team_cache(self) -> AWIDTeamCache:
-        if self._team_cache is None:
-            raise RuntimeError("naapp auth cache is not initialized")
+        """The process's identity cache, available before startup without I/O."""
         return self._team_cache
+
+    def team_server_directory(self) -> TeamServerDirectory:
+        """The single directory on :meth:`team_cache`, also shared by hooks.
+
+        Pass this instance to grant sources when registering route guards,
+        before entering the lifespan. Discovery verifies controller-signed
+        records through the configured AWID transport.
+        """
+        return self._team_server_directory
+
+    def hook_resolver(self) -> HookResolver:
+        """The shared resolver, signing with the hook-resolve key loaded at startup.
+
+        A manifest without that purpose remains valid, but cannot obtain a
+        resolver by substituting a key declared for another purpose.
+        """
+        if self._hook_resolver is None:
+            raise AppKeyError("manifest declares no hook-resolve key")
+        return self._hook_resolver
+
+    def hook_registrations(self) -> TeamServerRegistrations:
+        """The producer/drain's one source on :meth:`hook_resolver`.
+
+        Fetch its view before authority locks, then pass that view to the
+        producer's caller-transaction enqueue or admission check.
+        """
+        if self._hooks.registrations is None:
+            raise AppKeyError("manifest declares no hook production")
+        return self._hooks.registrations
+
+    def hook_producer(self, *, installation_id: str, generation: int) -> HookProducer:
+        """A producer using the installation resolved by the app's grant/fence.
+
+        Pass the actual effect/operational-record transaction to its enqueue;
+        no transaction is supplied by an Authorization or a completed response.
+        """
+        return self._hooks.producer(installation_id=installation_id, generation=generation)
+
+    async def require_current_member(
+        self, team_id: str, *, certificate_id: str, team_did_key: str
+    ) -> None:
+        """Check membership before a transaction without retaining a proof.
+
+        May perform network I/O. For creator-scoped link access, retain the
+        result of :meth:`check_current_member` for local checking under the lock.
+        """
+        await self.check_current_member(
+            team_id, certificate_id=certificate_id, team_did_key=team_did_key
+        )
+
+    async def check_current_member(
+        self, team_id: str, *, certificate_id: str, team_did_key: str
+    ) -> MembershipProof:
+        """Fetch/check mint evidence before opening any transaction or lock.
+
+        Retain the in-process proof for a local evidence/expiry check after the
+        link lock is acquired. Its deadline is the original AWID facts' expiry.
+        """
+        return await self.team_cache().check_current_member(
+            team_id, certificate_id=certificate_id, team_did_key=team_did_key
+        )
 
     async def principal(self, request: Request) -> Principal:
         """FastAPI dependency: the team member who signed this request.
@@ -223,30 +388,107 @@ class NaappRuntime:
         )
 
     def authorized(
-        self, *, grants: GrantSource, policy: ActionPolicy
+        self, *, grants: GrantSource, policy: ActionPolicy, action_kind: ActionKind | None = None
     ) -> Callable[[Request], Awaitable[Authorization]]:
         """A FastAPI dependency admitting only authorized member requests.
 
-        It authenticates the request, then authorizes it against the tools of
-        the served manifest, the team's grant from ``grants`` and the app's
-        ``policy``. Only an admitted member is recorded as observed, so
-        refused requests never write to the app's database.
+        It authenticates the request, resolves the caller's invocation
+        context from its principal attestation (none means an agent), then
+        authorizes it against the tools of the served manifest, the team's
+        grant from ``grants`` and the app's ``policy``. ``action_kind``
+        resolves the page action a request performs, so that answers reach the
+        app only through a surface's answer tool; without it, a surface's
+        invoke tool admits nothing. An attestation that does
+        not verify refuses the request with its code (``503`` when the registry
+        cannot be read); the admitted :class:`Authorization` carries the
+        verified attestation for the app's policy. Only an admitted member is
+        recorded as observed. A configured manifest production separately
+        records complete attributable authorization refusals in its outbox.
         """
 
         async def authorized_request(request: Request) -> Authorization:
+            if self._hooks.manifest_request_key is not None:
+                await bounded_body(request, self.settings.manifest_hook_max_request_bytes)
             principal = await self.principal(request)
-            authorization = await authorize_request(
-                request,
-                principal=principal,
-                tools=self.declared_tools,
-                grants=grants,
-                policy=policy,
-            )
-            await record_observed_principal(self.db(), principal)
-            return authorization
+            attestation, caller = await self._attestation(request, principal)
+            evidence: ManifestEvidence | None = None
 
-        self._guards.add(authorized_request)
+            def resolved(tool: DeclaredTool, grant: Grant) -> None:
+                nonlocal evidence
+                if self._hooks.manifest_request_key is not None and tool.name not in self._hooks.tool_effects:
+                    evidence = prepare(
+                        request, key=self._hooks.manifest_request_key, app_id=self.manifest.app_id,
+                        principal=principal, tool=tool, grant=grant,
+                    )
+
+            try:
+                authorization = await authorize_request(
+                    request, principal=principal, caller=caller, tools=self.declared_tools,
+                    grants=grants, policy=policy, action_kind=action_kind,
+                    on_resolved=resolved,
+                )
+            except HTTPException as refusal:
+                if evidence is not None:
+                    async with self.db().transaction() as tx:
+                        await self._hooks.record_manifest(
+                            tx, evidence, http_status=refusal.status_code, refused=True,
+                        )
+                raise
+            request.state.aweb_manifest_evidence = evidence
+            await record_observed_principal(self.db(), principal)
+            return replace(authorization, attestation=attestation)
+
+        self._guards[authorized_request] = action_kind
         return authorized_request
+
+    async def record_manifest_command(
+        self,
+        tx: TransactionManager,
+        *,
+        request: Request,
+        authorization: Authorization,
+        http_status: int,
+        refused: bool = False,
+        resource_refs: Sequence[str] = (),
+        result_ref: str | None = None,
+    ) -> UUID | None:
+        """Record the matched command in its actual effect/outcome transaction.
+
+        Admission prepared the bounded original request commitment once, before
+        policy or injection. Reads opt in through the production, and tools
+        mapped to a specific hook never fire this generic hook. Final live
+        authority/fence checks remain the effect owner's responsibility.
+        """
+        if self._hooks.manifest_request_key is None or authorization.tool.name in self._hooks.tool_effects:
+            return None
+        evidence = getattr(request.state, "aweb_manifest_evidence", None)
+        if evidence is None or (
+            evidence.principal is not authorization.principal
+            or evidence.tool is not authorization.tool
+            or evidence.grant is not authorization.grant
+        ):
+            raise RuntimeError("manifest recording needs this request's matched admission evidence")
+        return await self._hooks.record_manifest(
+            tx, evidence, http_status=http_status, refused=refused,
+            resource_refs=resource_refs, result_ref=result_ref,
+        )
+
+    async def _attestation(self, request: Request, principal: Principal) -> tuple[VerifiedAttestation | None, str]:
+        """The request's verified attestation and its caller context, or the refusal."""
+        if self._attestation_records is None:
+            raise RuntimeError("naapp attestation records are not initialized")
+        try:
+            verified = await request_attestation(
+                request, principal, records=self._attestation_records, now=datetime.now(UTC)
+            )
+            return verified, caller_context(verified)
+        except AttestationRefused as refused:
+            logger.warning("Refused attestation for team %s: %s", principal.team_id, refused.code)
+            status = 503 if refused.code == "authority_unavailable" else 403
+            raise HTTPException(
+                status_code=status,
+                detail={"code": refused.code, "message": "The request's principal attestation is refused"},
+            ) from None
 
     def check_authorized_routes(self, app: FastAPI) -> None:
         """Refuse to start unless every route guarded by :meth:`authorized` is
@@ -259,7 +501,9 @@ class NaappRuntime:
         otherwise run its own handler while being authorized as the declared
         tool. Path converters are refused, because they change which requests a
         placeholder matches. Guarded routes must be declared on the runtime's
-        own app: one inside a mounted or host-routed application is refused.
+        own app: one inside a mounted or host-routed application is refused. A
+        route that is a surface's invoke tool must be guarded with an
+        ``action_kind``, since without one every invoke would be refused.
         The lifespan runs this check before anything else.
         """
         for route in app.routes:
@@ -280,12 +524,23 @@ class NaappRuntime:
                     )
                 template = _template(path.split("/"))
                 for method in sorted(route.methods or ()):
-                    if not any(
-                        tool.method == method and _template(tool.segments) == template
-                        for tool in self.declared_tools
-                    ):
+                    tool = next(
+                        (
+                            tool for tool in self.declared_tools
+                            if tool.method == method and _template(tool.segments) == template
+                        ),
+                        None,
+                    )
+                    if tool is None:
                         raise RuntimeError(
                             f"authorized route {method} {path} is not exactly a declared manifest tool"
+                        )
+                    if tool.invokes and any(
+                        self._guards[guard] is None for guard in self._route_guards(route.dependant)
+                    ):
+                        raise RuntimeError(
+                            f"authorized route {method} {path} is the invoke tool {tool.name!r}; "
+                            "guard it with an action_kind"
                         )
 
     def _contains_guards(self, routes: Sequence[BaseRoute]) -> bool:
@@ -296,11 +551,52 @@ class NaappRuntime:
                 return True
         return False
 
+    def _route_guards(self, dependant: Dependant) -> list[Callable[..., object]]:
+        guards = []
+        for dependency in dependant.dependencies:
+            if dependency.call in self._guards:
+                guards.append(dependency.call)
+            guards.extend(self._route_guards(dependency))
+        return guards
+
     def _is_guarded(self, dependant: Dependant) -> bool:
         return any(
             dependency.call in self._guards or self._is_guarded(dependency)
             for dependency in dependant.dependencies
         )
+
+
+def _refuse_the_hosted_app_id_elsewhere(settings: NaappSettings, template: Mapping[str, Any]) -> None:
+    """A deployment others can reach must configure its own app id: serving the
+    hosted one there would claim the hosted app's identity. Only the hosted
+    origin and a loopback origin, which no other team can reach, may serve it."""
+    hosted = template.get("app")
+    if not isinstance(hosted, dict):
+        return
+    if not isinstance(hosted.get("origin"), str):
+        raise ManifestError("manifest_template_invalid", "a manifest template names the hosted app.origin")
+    origin = settings.public_origin.rstrip("/")
+    if origin == hosted["origin"].rstrip("/") or is_loopback_host(urlsplit(origin).hostname or ""):
+        return
+    if settings.app_id == hosted.get("id"):
+        prefix = settings.model_config.get("env_prefix", "")
+        raise ValueError(
+            f"{prefix}APP_ID is the hosted app id {hosted['id']!r} but {prefix}PUBLIC_ORIGIN is not the "
+            "hosted origin; set the deployment's own app_id"
+        )
+
+
+def _catalog_bytes(manifest: Manifest, variant_bytes: bytes) -> bytes:
+    """The manifest catalog listing ``variant_bytes`` as the app's version 2 variant."""
+    return canonical_bytes({
+        "catalog_version": 1,
+        "app_id": manifest.app_id,
+        "variants": [{
+            "manifest_version": 2,
+            "url": MANIFEST_V2_PATH,
+            "digest": "sha256:" + hashlib.sha256(variant_bytes).hexdigest(),
+        }],
+    })
 
 
 def _template(segments: Sequence[str]) -> tuple[str, ...]:
@@ -309,8 +605,17 @@ def _template(segments: Sequence[str]) -> tuple[str, ...]:
 
 def mount_manifest_routes(app: FastAPI, *, runtime: NaappRuntime) -> None:
     """Serve the runtime's ``manifest_bytes`` verbatim, for an app with or
-    without the docs surface."""
+    without the docs surface.
+
+    A version 1 manifest is served at the RFC 8615 well-known path the
+    dispatcher and gateway fetch. A version 2 manifest is discovered through
+    its catalog (``catalog_bytes``), which lists the bytes served at the
+    variant path; no version 1 copy is served, so the legacy well-known path
+    is not found. Either way the bare path the docs surface links serves the
+    manifest itself.
+    """
     manifest_bytes = runtime.manifest_bytes
+    catalog_bytes = runtime.catalog_bytes
 
     async def _manifest_response() -> Response:
         return Response(
@@ -319,11 +624,18 @@ def mount_manifest_routes(app: FastAPI, *, runtime: NaappRuntime) -> None:
             headers=_NOSNIFF,
         )
 
-    # Served at the RFC 8615 well-known path the dispatcher and gateway fetch,
-    # plus the bare path the docs surface links. Both return the same bytes.
-    @app.get("/.well-known/aweb-app.json")
-    async def well_known_manifest_route() -> Response:
-        return await _manifest_response()
+    if catalog_bytes is None:
+        @app.get(LEGACY_MANIFEST_PATH)
+        async def well_known_manifest_route() -> Response:
+            return await _manifest_response()
+    else:
+        @app.get(CATALOG_PATH)
+        async def manifest_catalog_route() -> Response:
+            return Response(content=catalog_bytes, media_type="application/json", headers=_NOSNIFF)
+
+        @app.get(MANIFEST_V2_PATH)
+        async def manifest_v2_route() -> Response:
+            return await _manifest_response()
 
     @app.get("/aweb-app.json")
     async def aweb_app_manifest_route() -> Response:
@@ -354,8 +666,9 @@ def mount_naapp_routes(
     renders the front door on each request, ``robots_disallow`` lists the paths
     crawlers must skip, and every response under ``noindex_paths`` (found or
     not) carries ``X-Robots-Tag``. The manifest routes serve the runtime's
-    ``manifest_bytes`` verbatim. The health routes check the runtime's
-    dependencies plus the app's own ``health_checks``.
+    ``manifest_bytes`` verbatim, as :func:`mount_manifest_routes` does. The
+    health routes check the runtime's dependencies plus the app's own
+    ``health_checks``.
     """
     settings = runtime.settings
     noindex_prefixes = tuple(noindex_paths)

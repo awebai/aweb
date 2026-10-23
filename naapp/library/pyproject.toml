@@ -43,17 +43,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/library"]
 
-# awid-service is not on PyPI — it lives in the aweb repo's awid subdirectory, so
-# it is pinned by git commit for reproducible (and Docker-buildable) installs.
-# Tokenless certificate verification requires its status route (AWID >=0.5.22).
-# The exact pin below is the released awid-v0.5.28 commit.
-# aweb-naapp is the sibling toolkit repo, pinned the same way by git commit so the
-# Docker build fetches it without auth (the repo is public). pgdbm resolves from
-# PyPI. Local source overrides are explicit opt-ins through PYTHONPATH; tests use
-# the locked environment by default.
+# awid-service and aweb-naapp are not on PyPI. Library runs on the awid and naapp-lib
+# of the aweb checkout it lives in, so the Docker build must use the repository root
+# as its context (see Dockerfile). Tokenless certificate verification requires
+# awid's status route (AWID >=0.5.22). pgdbm resolves from PyPI.
 [tool.uv.sources]
-awid-service = { git = "https://github.com/awebai/aweb.git", subdirectory = "awid", rev = "40f220773cd4ab96e0f4bd227494decb1666851b" }
-aweb-naapp = { git = "https://github.com/awebai/aweb-naapp.git", rev = "4dbeb4bc08e941f44d91971bb8cbe7448e28a4ed" }
+awid-service = { path = "../../awid", editable = true }
+aweb-naapp = { path = "../../naapp-lib", editable = true }
 
 [dependency-groups]
 dev = [

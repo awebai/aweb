@@ -24,6 +24,11 @@ def copy_checkout(destination: Path) -> None:
         destination / "awid",
         ignore=shutil.ignore_patterns(".venv", ".pytest_cache", "__pycache__"),
     )
+    shutil.copytree(
+        ROOT / "naapp-lib",
+        destination / "naapp-lib",
+        ignore=shutil.ignore_patterns(".venv", ".pytest_cache", "__pycache__"),
+    )
     shutil.copytree(ROOT / "docs", destination / "docs")
     shutil.copytree(
         ROOT / "server",

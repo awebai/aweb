@@ -26,10 +26,11 @@ from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
 from redis.asyncio import Redis
 
+from awid.attestation_records import sign_record
 from awid.did import did_from_public_key
 from awid.ratelimit import NoOpRateLimiter
 from awid.registry import RegistryClient
-from awid.signing import sign_message
+from awid.signing import canonical_json_bytes, sign_message
 from awid.team_server_record import record_signing_bytes
 
 from .db import AwidDatabaseInfra
@@ -106,6 +107,32 @@ class Registry:
             "UPDATE {{tables.team_certificates}} SET revoked_at = now() WHERE certificate_id = $1",
             certificate_id,
         )
+
+    async def add_custody(self, member: Any, *, custodian_id: str, issuer: SigningKey) -> None:
+        """Publish team-signed records: ``custodian_id`` attests with ``issuer``,
+        and holds ``member``'s certificate."""
+        name, domain = member.team_id.split(":", 1)
+        issued_at = datetime.now(UTC).replace(microsecond=0)
+        common = {"v": 1, "team_id": member.team_id, "team_did_key": member.team_did_key,
+                  "custodian_id": custodian_id, "issued_at": issued_at.isoformat().replace("+00:00", "Z")}
+        custodian = {**common, "type": "aweb.team-custodian", "issuer_did_keys": [_did_key(issuer)]}
+        custody = {**common, "type": "aweb.member-custody", "certificate_id": member.certificate_id,
+                   "member_did_key": member.did_key}
+        for table, key_column, record, extra in (
+            ("team_custodians", "custodian_id", custodian, {}),
+            ("member_custody", "certificate_id", custody, {"custodian_id": custodian_id}),
+        ):
+            columns = "".join(f", {column}" for column in extra)
+            values = "".join(f", ${8 + i}" for i in range(len(extra)))
+            await self.db.execute(
+                f"INSERT INTO {{{{tables.{table}}}}} "
+                f"(team_uuid, {key_column}, record_json, signature, team_did_key, issued_at{columns}) "
+                f"SELECT team_uuid, $1, $2, $3, $4, $5::timestamptz{values} FROM {{{{tables.teams}}}} "
+                "WHERE domain = $6 AND name = $7",
+                record[key_column], canonical_json_bytes(record).decode(),
+                sign_record(bytes(member.team_key), record), member.team_did_key,
+                issued_at, domain, name, *extra.values(),
+            )
 
     def _client(self) -> RegistryClient:
         return RegistryClient(registry_url=REGISTRY_URL, transport=self.transport)

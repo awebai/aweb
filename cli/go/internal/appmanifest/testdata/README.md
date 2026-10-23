@@ -8,10 +8,10 @@ These JSON files are exact raw deployed manifest bytes, not reserialized models:
 The app owner independently matched both hashes to the live public manifest on
 2026-10-07. Folio declares events; the deployed Library manifest does not.
 `TestDeployedManifestContracts` checks the hashes before strict decoding.
-The binary installation fixture serves these bytes unchanged on loopback and
-uses the existing explicit `--dev-origin` option to route calls to the fixture.
-That option re-encodes the installed copy with a loopback origin; it must retain
-event metadata. All 37 declared verbs are exercised, with signed calls checked
+The binary compatibility fixture fills only the deployment origin with its
+loopback server URL before serving the manifest. Its discovery-only install
+runs from an empty instance and grants no team authority. It retains all tool,
+key and event declarations. All 37 declared verbs are exercised, with signed calls checked
 against the synthetic resident certificate and team-auth v2 request binding.
 These are client compatibility tests, not deployed application business tests.
 

@@ -8,13 +8,18 @@ from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
+from awid.signing import canonical_json_bytes, sign_message
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
-from awid.signing import canonical_json_bytes, sign_message
-from aweb.app_credentials import APP_EVENT, APP_GRANT_READ, HOOK_RESOLVE, PURPOSES, verify_app_credential
+from aweb.app_credentials import (
+    APP_EVENT,
+    APP_GRANT_READ,
+    HOOK_RESOLVE,
+    PURPOSES,
+    verify_app_credential,
+)
 from tests.test_app_events_http import (
-    DIGEST,
     OTHER_TEAM_ID,
     TEAM_ID,
     _build_events_app,
@@ -72,15 +77,16 @@ def _signed_for(purpose: str, **kwargs):
 
 
 async def _register_app_key(db, *, did_key: str, kid: str, purposes: list[str], team_id: str = TEAM_ID) -> None:
-    # Nothing writes team_app_keys in production until keys are derived from
-    # pinned manifest bytes; the test seeds the row the way that writer will.
+    # Credential-unit fixture: seed a purpose key under the actual installed
+    # byte pin. Origin derivation is covered by the network installation tests.
+    digest = await db.fetch_value("SELECT digest FROM {{tables.team_app_installs}} WHERE team_id=$1 AND app_id='folio'", team_id)
     await db.execute(
         """
         INSERT INTO {{tables.team_app_keys}} (team_id, app_id, origin, digest, key_id, did_key, purposes)
         VALUES ($1, 'folio', 'https://folio.aweb.ai', $2, $3, $4, $5::TEXT[])
         """,
         team_id,
-        DIGEST,
+        digest,
         kid,
         did_key,
         purposes,

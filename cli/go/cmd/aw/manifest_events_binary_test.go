@@ -48,6 +48,9 @@ func TestDeployedManifestBinaryInstallAndAllVerbs(t *testing.T) {
 	var publicPaths atomic.Value
 	publicPaths.Store(map[string]bool{})
 	f.app.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		if r.URL.Path == "/.well-known/aweb-app.json" {
 			_, _ = w.Write(served.Load().([]byte))
 			return
@@ -76,11 +79,12 @@ func TestDeployedManifestBinaryInstallAndAllVerbs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		raw = manifestAtTestOrigin(t, raw, f.app.server.URL)
 		served.Store(raw)
-		// Fetch the byte-identical deployed artifact. The existing explicit dev
-		// origin option routes only this offline fixture to loopback; no field is
-		// stripped and the installed events metadata must survive re-encoding.
-		invoke("", "plugin", "install", f.app.server.URL+"/.well-known/aweb-app.json", "--dev-origin", f.app.server.URL)
+		// Discovery-only install from an empty instance: no team authority is
+		// created. Only the fixture deployment origin differs from the pinned
+		// artifact; every tool and event declaration remains intact.
+		invoke("", "plugin", "install", f.app.server.URL+"/.well-known/aweb-app.json")
 		dir, _ := pluginDir()
 		installed, err := os.ReadFile(manifestPluginManifestPath(dir, name))
 		if err != nil {

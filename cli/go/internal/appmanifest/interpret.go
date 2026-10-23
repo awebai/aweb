@@ -50,14 +50,31 @@ func decodeSingleJSON(data []byte, v any, disallowUnknown bool) error {
 	return nil
 }
 
-const SupportedManifestVersion = 1
+// SupportedManifestVersions are the manifest contract versions this
+// interpreter accepts. Version 1 is tools-only; version 2 adds tool
+// invocation contexts, surfaces, usage, lifecycle, the hooks slot and
+// purpose-split app keys.
+var SupportedManifestVersions = []int{1, 2}
 
+// Manifest is one app manifest of either supported version. The fields after
+// Events exist only in version 2; Validate refuses them in version 1.
 type Manifest struct {
 	ManifestVersion int            `json:"manifest_version"`
 	App             App            `json:"app"`
 	Tools           []Tool         `json:"tools"`
 	EventEmitters   []EventEmitter `json:"event_emitters,omitempty"`
 	Events          Events         `json:"events,omitempty"`
+	AppKeys         AppKeys        `json:"app_keys,omitempty"`
+	Surfaces        Surfaces       `json:"surfaces,omitempty"`
+	Usage           *Usage         `json:"usage,omitempty"`
+	Lifecycle       *Lifecycle     `json:"lifecycle,omitempty"`
+	Hooks           *Hooks         `json:"hooks,omitempty"`
+	// Roles stays raw until validation, so every fault in it is reported
+	// as role_invalid.
+	Roles json.RawMessage `json:"roles,omitempty"`
+	// members are the top-level member names of decoded bytes, so a
+	// present member is told apart from an absent one.
+	members map[string]bool
 }
 
 type App struct {
@@ -79,6 +96,8 @@ type Tool struct {
 	Scopes      []string       `json:"scopes,omitempty"`
 	Auth        string         `json:"auth,omitempty"`
 	Mutation    bool           `json:"mutation"`
+	// InvocationContexts is version 2 only. Absent means agent and surface.
+	InvocationContexts Contexts `json:"invocation_contexts,omitempty"`
 }
 
 type Param struct {
@@ -192,10 +211,24 @@ type InterpretedRequest struct {
 	Mutation   bool              `json:"mutation"`
 }
 
+// Validate checks a manifest of either supported version. Its errors carry a
+// stable code (see ErrorCode); messages are for people.
 func Validate(manifest Manifest, reservedNames map[string]bool) error {
-	if manifest.ManifestVersion != SupportedManifestVersion {
-		return fmt.Errorf("unsupported manifest_version %d", manifest.ManifestVersion)
+	switch manifest.ManifestVersion {
+	case 1, 2:
+	default:
+		return codedError(CodeManifestVersionUnsupported, fmt.Errorf("unsupported manifest_version %d", manifest.ManifestVersion))
 	}
+	if err := validateCommon(manifest, reservedNames); err != nil {
+		return codedError(CodeManifestInvalid, err)
+	}
+	if manifest.ManifestVersion == 1 {
+		return validateV1Only(manifest)
+	}
+	return validateV2(manifest)
+}
+
+func validateCommon(manifest Manifest, reservedNames map[string]bool) error {
 	appID := strings.TrimSpace(manifest.App.ID)
 	if appID == "" {
 		return fmt.Errorf("app.id is required")
@@ -207,7 +240,7 @@ func Validate(manifest Manifest, reservedNames map[string]bool) error {
 		return err
 	}
 	for _, tool := range manifest.Tools {
-		if err := validateTool(tool, reservedNames); err != nil {
+		if err := validateTool(tool); err != nil {
 			return err
 		}
 	}
@@ -259,12 +292,15 @@ func validateEventEmitters(emitters []EventEmitter) error {
 	return nil
 }
 
-func validateTool(tool Tool, reservedNames map[string]bool) error {
+func validateTool(tool Tool) error {
 	if strings.TrimSpace(tool.Name) == "" {
 		return fmt.Errorf("tool.name is required")
 	}
-	if reservedNames != nil && reservedNames[strings.TrimSpace(tool.Name)] {
-		return fmt.Errorf("tool name %q is reserved built-in command or alias", tool.Name)
+	// Root commands belong to aw, not this app namespace. Only the local
+	// dispatcher's help command and aliases are unavailable as tool names.
+	switch strings.TrimSpace(tool.Name) {
+	case "help", "--help", "-h":
+		return fmt.Errorf("tool name %q is reserved by the app dispatcher", tool.Name)
 	}
 	method := strings.ToUpper(strings.TrimSpace(tool.Method))
 	if !validMethod(method) {
@@ -363,9 +399,6 @@ func Interpret(req InterpretRequest) (*InterpretedRequest, error) {
 	tool, err := findTool(manifest.Tools, req.Verb)
 	if err != nil {
 		return nil, err
-	}
-	if req.ReservedNames != nil && req.ReservedNames[strings.TrimSpace(tool.Name)] {
-		return nil, fmt.Errorf("tool name %q is reserved built-in command or alias", tool.Name)
 	}
 	method := strings.ToUpper(strings.TrimSpace(tool.Method))
 	if !validMethod(method) {
@@ -502,6 +535,26 @@ func pathPlaceholders(path string) map[string]bool {
 	}
 }
 
+// SafePathParamValue reports whether a tool path parameter value fills
+// exactly one path segment, as the app routes it. A blank value would leave
+// the segment empty, and "." or ".." would let the value remove a segment
+// wherever the URL is normalized. A value never holds "/", "\", "%", "?",
+// "#", ";" or an ASCII control character, so an intermediary that decodes the
+// path cannot split it into more segments, end the path early, or turn it
+// into a dot segment with a path parameter ("..;").
+func SafePathParamValue(value string) bool {
+	v := strings.TrimSpace(value)
+	if v == "" || v == "." || v == ".." || strings.ContainsAny(value, "/\\%?#;") {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < 0x20 || value[i] == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 func substitutePath(path string, params []Param, args map[string]any) (string, error) {
 	out := path
 	pathParams := map[string]bool{}
@@ -519,7 +572,11 @@ func substitutePath(path string, params []Param, args map[string]any) (string, e
 		if !ok || isEmpty(value) {
 			return "", fmt.Errorf("missing path param %q", name)
 		}
-		out = strings.ReplaceAll(out, placeholder, escapePathSegment(fmt.Sprint(value)))
+		segment := fmt.Sprint(value)
+		if !SafePathParamValue(segment) {
+			return "", fmt.Errorf("path param %q value %q is not a safe path segment", name, segment)
+		}
+		out = strings.ReplaceAll(out, placeholder, escapePathSegment(segment))
 	}
 	if strings.Contains(out, "{") || strings.Contains(out, "}") {
 		return "", fmt.Errorf("tool.path contains placeholder without matching path param")

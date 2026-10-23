@@ -14,6 +14,20 @@ import pytest
 from aweb_secrets.credential_shapes import has_credential_shape, is_credential_shaped_value
 
 
+def test_app_shape_helpers_are_the_standalone_shared_objects() -> None:
+    import aweb_secrets_values.credential_shapes as shared
+
+    import aweb_secrets.credential_shapes as app
+
+    for name in (
+        "has_credential_shape",
+        "has_credential_value",
+        "is_credential_field",
+        "is_credential_shaped_value",
+    ):
+        assert getattr(app, name) is getattr(shared, name)
+
+
 def _filler(n: int, alphabet: str = "Ab3dEf7hJk") -> str:
     return (alphabet * (n // len(alphabet) + 1))[:n]
 
@@ -35,6 +49,11 @@ VENDOR_TOKENS = [
     "npm_" + _filler(36),
 ]
 CREDENTIAL_KEYS = [
+    "token",
+    "client_token",
+    "authToken",
+    "bearer-token",
+    "secret_key",
     "access_token",
     "refresh_token",
     "id_token",
@@ -53,6 +72,11 @@ CREDENTIAL_KEYS = [
 @pytest.mark.parametrize("key", CREDENTIAL_KEYS)
 def test_a_credential_named_json_field_with_a_value_is_detected(key: str) -> None:
     assert has_credential_shape(json.dumps({"data": {key: "some-value"}}).encode())
+
+
+@pytest.mark.parametrize("value", [["issued"], [{"value": "issued"}], {"value": ["issued"]}])
+def test_a_credential_field_keeps_its_meaning_for_nested_string_values(value) -> None:
+    assert has_credential_shape(json.dumps({"SessionToken": value}).encode())
 
 
 @pytest.mark.parametrize("key", ["access_token", "SecretAccessKey"])

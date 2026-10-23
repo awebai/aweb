@@ -3,13 +3,13 @@ from __future__ import annotations
 import os
 import secrets
 from pathlib import Path
-from typing import Any
 
 import pytest
 from awid.did import did_from_public_key
 from nacl.signing import SigningKey
 from pydantic_settings import SettingsConfigDict
 
+from aweb_naapp.manifest import Manifest, canonical_bytes, load_manifest
 from aweb_naapp.runtime.app_keys import APP_EVENT, AppKeyError, load_app_key
 from aweb_naapp.runtime.settings import NaappSettings
 
@@ -35,13 +35,24 @@ def _did_key(seed_hex: str) -> str:
     return did_from_public_key(bytes(SigningKey(bytes.fromhex(seed_hex)).verify_key))
 
 
-def _manifest(**emitters: str) -> dict[str, Any]:
-    return {
+def _manifest(**emitters: str) -> Manifest:
+    """A v1 manifest whose event emitters are ``emitters`` (kid to did:key)."""
+    return load_manifest(canonical_bytes({
         "manifest_version": 1,
         "app": {"id": "example", "origin": "https://example.test"},
         "tools": [],
         "event_emitters": [{"kid": kid, "did_key": did} for kid, did in emitters.items()],
-    }
+    }))
+
+
+def _v2_manifest(*keys: tuple[str, str, list[str]]) -> Manifest:
+    """A v2 manifest declaring ``keys`` as (kid, did:key, purposes)."""
+    return load_manifest(canonical_bytes({
+        "manifest_version": 2,
+        "app": {"id": "example", "origin": "https://example.test"},
+        "tools": [],
+        "app_keys": [{"kid": kid, "did_key": did, "purposes": purposes} for kid, did, purposes in keys],
+    }))
 
 
 def _key_file(tmp_path: Path, seed_hex: str, *, name: str = "app.key", mode: int = 0o600) -> Path:
@@ -185,3 +196,43 @@ def test_key_material_appears_in_no_repr_or_settings_dump() -> None:
         assert seed.upper() not in rendered
         assert str(bytes.fromhex(seed)) not in rendered
     assert _KID in repr(key)
+
+
+def test_a_v2_key_declared_for_app_event_signs_app_events(tmp_path: Path) -> None:
+    seed = secrets.token_hex(32)
+    settings = _settings(app_key_files={_KID: _key_file(tmp_path, seed)})
+    key = load_app_key(settings, _v2_manifest((_KID, _did_key(seed), [APP_EVENT])), APP_EVENT)
+    assert (key.kid, key.did_key) == (_KID, _did_key(seed))
+
+
+def test_a_v2_key_declared_only_for_another_purpose_is_not_the_app_event_key(tmp_path: Path) -> None:
+    seed = secrets.token_hex(32)
+    settings = _settings(app_key_files={_KID: _key_file(tmp_path, seed)})
+    manifest = _v2_manifest((_KID, _did_key(seed), ["app-request"]))
+    with pytest.raises(AppKeyError, match=APP_EVENT):
+        load_app_key(settings, manifest, APP_EVENT)
+    assert load_app_key(settings, manifest, "app-request").did_key == _did_key(seed)
+
+
+def test_a_v2_key_is_chosen_by_the_purpose_each_kid_declares(tmp_path: Path) -> None:
+    events, requests = secrets.token_hex(32), secrets.token_hex(32)
+    settings = _settings(app_key_files={
+        "example:events": _key_file(tmp_path, events, name="events.key"),
+        "example:requests": _key_file(tmp_path, requests, name="requests.key"),
+    })
+    manifest = _v2_manifest(
+        ("example:events", _did_key(events), [APP_EVENT, "app-usage"]),
+        ("example:requests", _did_key(requests), ["app-request"]),
+    )
+    assert load_app_key(settings, manifest, APP_EVENT).kid == "example:events"
+    assert load_app_key(settings, manifest, "app-usage").kid == "example:events"
+    assert load_app_key(settings, manifest, "app-request").kid == "example:requests"
+
+
+def test_the_released_seed_value_signs_only_app_events_whatever_its_kid_declares() -> None:
+    seed = secrets.token_hex(32)
+    settings = _settings(app_emit_kid=_KID, app_emit_key_seed_hex=seed)
+    manifest = _v2_manifest((_KID, _did_key(seed), [APP_EVENT, "app-request"]))
+    assert load_app_key(settings, manifest, APP_EVENT).did_key == _did_key(seed)
+    with pytest.raises(AppKeyError, match="app-request"):
+        load_app_key(settings, manifest, "app-request")

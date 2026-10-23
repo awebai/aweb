@@ -5,7 +5,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 SOURCE_SHA="${CANDIDATE_SOURCE_SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
 refuse() { printf 'candidate gate refused: %s\n' "$*" >&2; exit 2; }
-LIBRARY_E2E_LIBRARY_CONTEXT="${LIBRARY_E2E_LIBRARY_CONTEXT:-$ROOT/naapp/library}"
+# Library builds from the candidate checkout, with its awid and naapp-lib.
+[[ -z "${LIBRARY_E2E_LIBRARY_CONTEXT:-}" ]] \
+  || refuse "LIBRARY_E2E_LIBRARY_CONTEXT is not an input: Library builds from the candidate checkout"
 LIBRARY_E2E_BLUEPRINT_SRC="${LIBRARY_E2E_BLUEPRINT_SRC:-$ROOT/naapp/library/test-vectors/blueprints/team}"
 canonical_git_input() {
   local name="$1" path="$2" top canonical
@@ -19,7 +21,6 @@ canonical_git_input() {
   esac
   printf '%s\n' "$canonical"
 }
-LIBRARY_E2E_LIBRARY_CONTEXT="$(canonical_git_input library "$LIBRARY_E2E_LIBRARY_CONTEXT")"
 LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC")"
 LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "CANDIDATE_SOURCE_SHA must be a full lowercase SHA"
@@ -36,7 +37,6 @@ if [[ -z "$STAGES" ]]; then
   git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
     || refuse "source SHA is not on the synchronized origin/main history"
 fi
-[[ -d "$LIBRARY_E2E_LIBRARY_CONTEXT" ]] || refuse "Library input is missing"
 [[ -d "$LIBRARY_E2E_BLUEPRINT_SRC" ]] || refuse "blueprint input is missing"
 CLI_VERSION="${CLI_VERSION:-$(python3 "$ROOT/scripts/next_tag_version.py" aw-v)}"
 A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-$(python3 "$ROOT/scripts/next_tag_version.py" a2a-gw-v)}"
@@ -61,7 +61,6 @@ input_identity() {
     external_inputs+="$name=source$relative"$'\n'
   fi
 }
-input_identity library "$LIBRARY_E2E_LIBRARY_CONTEXT" naapp/library
 input_identity blueprints "$LIBRARY_E2E_BLUEPRINT_SRC" naapp/library/test-vectors/blueprints/team
 gate_setting() {
   local name="$1" default="$2" value
@@ -199,12 +198,10 @@ record_input() {
   mkdir -p "$work/inputs/$name"
   git -C "$repo" archive "$tree" | tar -xf - -C "$work/inputs/$name"
 }
-record_input library "$LIBRARY_E2E_LIBRARY_CONTEXT"
 record_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC"
-LIBRARY_E2E_LIBRARY_CONTEXT="$work/inputs/library"
 LIBRARY_E2E_BLUEPRINT_SRC="$work/inputs/blueprints"
 printf '%s\n' "$SOURCE_SHA" > "$LOG_DIR/source-sha"
-printf 'NOT RELEVANT: OSS packages do not bundle Library; this input is used only by its activation journey.\n' \
+printf 'NOT RELEVANT: OSS packages do not bundle Library; it is built only for its activation journey.\n' \
   > "$LOG_DIR/compatibility.txt"
 
 python3 "$ROOT/scripts/candidate-host-pressure.py" capture "$LOG_DIR/host-before.json"
@@ -221,7 +218,7 @@ docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$
 
 BUILDX_CONFIG="$buildx_config" docker buildx build --builder "$builder_name" --load --pull \
   --label "aweb.candidate-gate=$resource_label" \
-  -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout/candidate-gate" \
+  -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
 
 # Record the run's mutable inputs in the evidence (adoption compares them):
@@ -298,21 +295,31 @@ socket_gid="$(docker run --rm \
   --cpus "$redis_cpus" --memory "$redis_memory" --pids-limit "$redis_pids" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   "$IMAGE" stat -c '%g' /var/run/docker.sock)"
-read -r a2a_aweb_port a2a_awid_port a2a_redis_port a2a_pg_port a2a_gateway_port fed_awid_port fed_alpha_port fed_beta_port < <(
-  python3 - <<'PY'
+naapp_packages_text="$(make -s --no-print-directory -C "$ROOT" naapp-e2e-packages)"
+read -r -a naapp_packages <<<"$(printf '%s\n' "$naapp_packages_text" | tr '\n' ' ')"
+port_allocations="$(
+  python3 - "$gate_run_id" "${naapp_packages[@]}" <<'PYPORTS'
 import socket
-sockets=[]
+import sys
+from pathlib import PurePosixPath
+sockets = []
+def allocate_port():
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sockets.append(sock)
+    return sock.getsockname()[1]
 try:
-    for _ in range(8):
-        sock=socket.socket()
-        sock.bind(("127.0.0.1", 0))
-        sockets.append(sock)
-    print(*(sock.getsockname()[1] for sock in sockets))
+    print(*(allocate_port() for _ in range(8)))
+    for package in sys.argv[2:]:
+        project = f"{sys.argv[1]}-naapp-{PurePosixPath(package).name}"
+        print(package, project, allocate_port(), allocate_port())
 finally:
     for sock in sockets:
         sock.close()
-PY
-)
+PYPORTS
+)"
+read -r a2a_aweb_port a2a_awid_port a2a_redis_port a2a_pg_port a2a_gateway_port fed_awid_port fed_alpha_port fed_beta_port <<<"$(printf '%s\n' "$port_allocations" | head -n 1)"
+naapp_e2e_allocations="$(printf '%s\n' "$port_allocations" | tail -n +2)"
 
 # Copy the exact checkout and inputs through the Docker API. The host checkout
 # is never mounted into a container; extracted dependency trees stay in Docker.
@@ -338,6 +345,7 @@ docker run --rm --init \
   --group-add "$socket_gid" \
   --add-host aweb-docker.test:host-gateway \
   -e HOME="$checkout/.candidate-home" \
+  -e PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
   -e PATH="$checkout/candidate-gate/bin:/usr/local/go/bin:/opt/uv:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   -e AWEB_CANDIDATE_REAL_DOCKER=/usr/bin/docker \
   -e AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" \
@@ -355,7 +363,6 @@ docker run --rm --init \
   -e GIT_CONFIG_VALUE_0="$checkout" \
   -e CLI_VERSION="${CLI_VERSION:-}" \
   -e A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-}" \
-  -e LIBRARY_E2E_LIBRARY_CONTEXT="$LIBRARY_E2E_LIBRARY_CONTEXT" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e CANDIDATE_LOG_DIR="$LOG_DIR" \
   -e CANDIDATE_RESOURCE_MANIFEST="$LOG_DIR/owned-resources.tsv" \
@@ -382,6 +389,7 @@ docker run --rm --init \
   -e AWEB_FED_AUTH_PROJECT="${suite_projects[2]}" \
   -e AWEB_FED_E2E_PROJECT="${suite_projects[3]}" \
   -e LIBRARY_E2E_PROJECT="${suite_projects[4]}" \
+  -e NAAPP_E2E_ALLOCATIONS="$naapp_e2e_allocations" \
   -e TEST_DB_HOST="$pg_name" \
   -e TEST_DB_PORT=5432 \
   -e TEST_DB_USER=postgres \

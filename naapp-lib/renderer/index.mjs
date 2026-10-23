@@ -1,9 +1,10 @@
 import { messages } from "./catalogs.mjs";
 import { renderMarkdown, inertLinks } from "./sanitize.mjs";
 import { createActions } from "./actions.mjs";
+import { createDecision } from "./decisions.mjs";
 import { renderMedia, renderPresence } from "./media.mjs";
 import { safeLink } from "./sanitize.mjs";
-import { element } from "./dom.mjs";
+import { element, chrome } from "./dom.mjs";
 import { renderCollection } from "./collections.mjs";
 export { inertLinks } from "./sanitize.mjs";
 export {
@@ -25,6 +26,7 @@ const known = new Set([
   "stack",
   "grid",
   "form",
+  "decision_card",
   "button",
   "file_drop",
   "image",
@@ -34,6 +36,16 @@ const known = new Set([
   ...collectionTypes,
 ]);
 const focusables = "a,button,input,select,textarea,[tabindex]";
+
+function contentHeading(level, text) {
+  const rank = level + 1;
+  const heading = element(rank <= 6 ? `h${rank}` : "div", text);
+  if (rank > 6) {
+    heading.setAttribute("role", "heading");
+    heading.setAttribute("aria-level", String(rank));
+  }
+  return heading;
+}
 
 function setChildren(parent, children) {
   children.forEach((node, index) => {
@@ -55,11 +67,15 @@ export function createPageRenderer({
 }) {
   if (root.contains(destinations) || root.contains(announcements))
     throw new TypeError("Host chrome must be outside the page");
+  destinations.lang = "en";
+  announcements.lang = "en";
   let current,
     epoch = 0;
   const cache = new Map(),
     queries = new Map(),
-    links = new WeakMap();
+    decisionAttempts = new Map(),
+    links = new WeakMap(),
+    domains = new Set();
   const title = element("h1", null, "page-title");
   const actions = createActions({
     host,
@@ -82,6 +98,7 @@ export function createPageRenderer({
     const scroll = [scrollX, scrollY];
     if (before?.page_id !== page?.page_id) {
       actions.clear();
+      decisionAttempts.clear();
       host.confirmLink?.clear?.();
       host.confirmAction?.clear?.();
       for (const entry of cache.values()) entry.cleanup?.();
@@ -91,10 +108,11 @@ export function createPageRenderer({
       for (const query of queries.values()) delete query.cursor;
     }
     root.lang = page?.locale || "en";
+    domains.clear();
     destinations.replaceChildren(element("h2", t.destinations));
     destinations.hidden = true;
     if (page?.page_format !== "aweb.page/1" || !Array.isArray(page.layout)) {
-      const panel = element("section", null, "page-unavailable");
+      const panel = chrome("section", null, "page-unavailable");
       panel.setAttribute("role", "alert");
       panel.append(
         element("h1", t.unsupported),
@@ -103,14 +121,15 @@ export function createPageRenderer({
       root.replaceChildren(panel);
       for (const entry of cache.values()) entry.cleanup?.();
       actions.clear();
+      decisionAttempts.clear();
       host.confirmLink?.clear?.();
       host.confirmAction?.clear?.();
       cache.clear();
       return;
     }
     title.textContent = page.title;
-    const domains = new Set(),
-      used = new Set();
+    const used = new Set(),
+      decisionWidgets = new Set();
     function rememberLink(url) {
       if (!domains.has(url.host)) {
         domains.add(url.host);
@@ -140,6 +159,7 @@ export function createPageRenderer({
       rememberLink(url);
     }
     function displayState(box, w, state) {
+      if (w.type === "decision_card") return;
       box.setAttribute("aria-busy", String(!!state.busy));
       let status = [...box.children].find((node) =>
         node.hasAttribute("data-widget-state"),
@@ -151,28 +171,29 @@ export function createPageRenderer({
       }
       status.replaceChildren();
       const message = state.message || (state.busy ? t.busy : "");
-      if (message || state.progress !== undefined)
-        status.append(
-          element(
-            "p",
-            `${message}${state.progress !== undefined ? `${message ? " · " : ""}${state.progress}%` : ""}`,
-            "state-message",
-          ),
-        );
+      if (message || state.progress !== undefined) {
+        const line = state.message
+          ? element("p", state.message, "state-message")
+          : chrome("p", message, "state-message");
+        if (state.progress !== undefined)
+          line.append(
+            chrome("span", `${message ? " · " : ""}${state.progress}%`),
+          );
+        status.append(line);
+      }
       if (state.progress !== undefined) {
         const progress = element("progress");
+        progress.lang = "en";
         progress.max = 100;
         progress.value = state.progress;
-        progress.setAttribute(
-          "aria-label",
-          `${(known.has(w.type) && w.props?.label) || w.id}: ${t.progress}`,
-        );
+        progress.setAttribute("aria-label", t.progress);
         status.append(progress);
       }
       status.hidden = !status.childNodes.length;
     }
     function widget(w) {
       used.add(w.id);
+      if (w.type === "decision_card") decisionWidgets.add(w.id);
       const supported = known.has(w.type),
         p = supported ? w.props : {},
         state = page.widget_state?.[w.id] || {};
@@ -200,7 +221,10 @@ export function createPageRenderer({
           if (value) rememberLink(new URL(value));
         }
         displayState(box, w, state);
-        if (w.bind && entry.pageRev !== page.rev) {
+        if (
+          (w.bind || w.type === "decision_card") &&
+          entry.pageRev !== page.rev
+        ) {
           entry.pageRev = page.rev;
           entry.refresh?.();
         }
@@ -216,19 +240,39 @@ export function createPageRenderer({
       box.dataset.widget = w.id;
       if (!supported)
         box.append(
-          element("p", t.unavailable, "widget-label"),
+          chrome("p", t.unavailable, "widget-label"),
           element("p", w.fallback),
         );
-      else if (w.type === "heading") box.append(element(`h${p.level}`, p.text));
-      else if (w.type === "text") {
+      else if (w.type === "heading") {
+        box.append(contentHeading(p.level, p.text));
+      } else if (w.type === "text") {
         const body = element("div", null, "markdown");
         renderMarkdown(body, p.markdown);
+        for (const original of body.querySelectorAll("h1,h2,h3,h4,h5,h6")) {
+          const heading = contentHeading(Number(original.tagName.slice(1)));
+          heading.append(...original.childNodes);
+          original.replaceWith(heading);
+        }
         for (const { node, url } of inertLinks(body)) pageLink(node, url);
         box.append(body);
       } else if (container) {
         box.classList.add(`gap-${p.gap || "medium"}`);
         if (w.type === "grid") box.classList.add(`columns-${p.columns}`);
         box.append(...w.children.map(widget));
+      } else if (w.type === "decision_card") {
+        const controller = createDecision({
+          box,
+          w,
+          host,
+          actions,
+          attempts: decisionAttempts,
+          getPage: () => current,
+          announce: (text) => {
+            announcements.textContent = text;
+          },
+        });
+        refresh = controller.refresh;
+        cleanup = controller.clear;
       } else if (w.type === "form") actions.form(box, w);
       else if (w.type === "button")
         box.append(actions.actionButton(w, p.action, null, p.label));
@@ -252,7 +296,7 @@ export function createPageRenderer({
           pageLink(link, url);
           box.append(link);
         } catch {
-          box.append(element("p", t.unavailable));
+          box.append(chrome("p", t.unavailable));
         }
       } else {
         const content = element("div", null, "bound-content");
@@ -284,6 +328,7 @@ export function createPageRenderer({
               t,
               query,
               actionButton,
+              pageLink,
               onRead: (bind) => read(bind),
               announce: (text) => {
                 announcements.textContent = text;
@@ -307,7 +352,9 @@ export function createPageRenderer({
               if (value === undefined || value === null) {
                 figure.setAttribute("role", "img");
                 figure.setAttribute("aria-label", "No value");
+                figure.lang = "en";
               }
+              if (typeof value === "number") figure.firstChild.lang = "en";
               if (p.unit && value !== undefined && value !== null)
                 figure.append(element("span", p.unit, "stat-unit"));
               content.append(figure);
@@ -340,7 +387,7 @@ export function createPageRenderer({
           refresh = async () => {
             const request = ++serial;
             if (controller) controller.beginRefresh();
-            else content.replaceChildren(element("p", t.loading));
+            else content.replaceChildren(chrome("p", t.loading));
             try {
               const result = await read(queries.get(w.id) || w.bind);
               if (request === serial && box.isConnected)
@@ -350,7 +397,7 @@ export function createPageRenderer({
               const message =
                 error.code === "revision_conflict" ? t.conflict : t.unavailable;
               if (controller) controller.showError(message);
-              else content.replaceChildren(element("p", message));
+              else content.replaceChildren(chrome("p", message));
             }
           };
           refresh();
@@ -390,14 +437,23 @@ export function createPageRenderer({
         ...Object.keys(before.widget_state || {}),
         ...Object.keys(page.widget_state || {}),
       ])) {
+        if (decisionWidgets.has(id)) continue;
         const state = page.widget_state?.[id] || {};
         if (
           JSON.stringify(state) !==
           JSON.stringify(before.widget_state?.[id] || {})
-        )
-          changes.push(state.message || (state.busy ? t.busy : t.updated));
+        ) {
+          const message = state.message
+            ? element("span", state.message)
+            : chrome("span", state.busy ? t.busy : t.updated);
+          if (state.message) message.lang = page.locale || "en";
+          changes.push(message);
+        }
       }
-      if (changes.length) announcements.textContent = changes.join(". ");
+      if (changes.length)
+        announcements.replaceChildren(
+          ...changes.flatMap((node, i) => (i ? [". ", node] : [node])),
+        );
       window.scrollTo(...scroll);
     }
   }
@@ -407,11 +463,13 @@ export function createPageRenderer({
       host.confirmLink?.clear?.();
       host.confirmAction?.clear?.();
       actions.clear();
+      decisionAttempts.clear();
       for (const entry of cache.values()) entry.cleanup?.();
       ++epoch;
       current = null;
       cache.clear();
       queries.clear();
+      domains.clear();
       root.replaceChildren();
       destinations.replaceChildren();
       destinations.hidden = true;

@@ -30,6 +30,7 @@ from aweb_naapp.css import (
     vendored_aweb_css_sha256,
 )
 from aweb_naapp.reference import VECTOR_URL, ReferenceCopy, render_reference
+from aweb_naapp.steps import NumberedStep, render_numbered_steps
 
 __all__ = [
     "llms",
@@ -53,4 +54,6 @@ __all__ = [
     "VECTOR_URL",
     "ReferenceCopy",
     "render_reference",
+    "NumberedStep",
+    "render_numbered_steps",
 ]

@@ -1,11 +1,14 @@
 package main
 
 import (
-	"encoding/base64"
+	"errors"
 	"fmt"
-	"sort"
+	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 
+	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/appmanifest"
 	"github.com/spf13/cobra"
 )
@@ -14,26 +17,48 @@ import (
 // local resident approval. A receipt is saved only after every requested write
 // succeeds. Failed registration can be retried with update; a partial initial
 // subscription failure is retried by repeating install.
-func registerManifestEvents(manifest appmanifest.Manifest, fetchedDigest string, fetchedBytes []byte, previous, next *pluginProvenance, update bool) error {
+func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string, previous, next *pluginProvenance, update bool, selectedScopes []string) error {
+	manifest := resolved.Manifest
 	client, selection, err := resolveClientSelection()
 	if err != nil {
 		return fmt.Errorf("app events require a resident connected to a team: %w", err)
 	}
-	if update && previous != nil && previous.RegisteredDigest == fetchedDigest && previous.RegisteredTeam == selection.TeamID && previous.RegisteredServer == selection.BaseURL {
-		next.RegisteredDigest, next.RegisteredTeam, next.RegisteredServer = previous.RegisteredDigest, previous.RegisteredTeam, previous.RegisteredServer
-		return nil
-	}
-	events := installRegistrationEvents(manifest)
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
-	body := installRegistrationBody(manifest, fetchedDigest, fetchedBytes)
-	if err := client.Post(ctx, "/v1/apps/install", body, nil); err != nil {
-		return fmt.Errorf("register app events (local approval retained; retry install/update): %w", err)
+	var current appInstallationReceipt
+	var expected *int64
+	err = client.Get(ctx, "/v1/apps/"+url.PathEscape(manifest.App.ID)+"/installation?team_id="+url.QueryEscape(selection.TeamID), &current)
+	if err != nil {
+		var apiErr *awid.APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+			return fmt.Errorf("read current app installation: %w", err)
+		}
+	} else {
+		if current.InstallationID == "" || current.Generation <= 0 {
+			return fmt.Errorf("installation_identity_required: the team server returned no installation identity")
+		}
+		expected = &current.Generation
+	}
+	grantedScopes, err := installationScopes(resolved.InstallScopes, current.GrantedScopes, expected != nil, selectedScopes)
+	if err != nil {
+		return err
+	}
+	reuse := current.State == "active" && current.OriginVerified && current.Digest == fetchedDigest &&
+		(selectedScopes == nil || (update && previous != nil && slices.Equal(current.GrantedScopes, grantedScopes) && previous.RegisteredTeam == selection.TeamID && previous.RegisteredServer == selection.BaseURL))
+	installed := current
+	if !reuse {
+		body := installRegistrationBody(resolved, fetchedDigest, expected, grantedScopes)
+		if err := client.Post(ctx, "/v1/apps/install?team_id="+url.QueryEscape(selection.TeamID), body, &installed); err != nil {
+			return fmt.Errorf("register app installation (existing local installation retained; request approval with aw plugin request %s): %w", manifest.App.Origin, err)
+		}
+	}
+	if installed.InstallationID == "" || installed.Generation <= 0 || installed.State != "active" || !installed.OriginVerified || installed.Digest != fetchedDigest {
+		return fmt.Errorf("installation_identity_required: the team server returned an invalid confirmation")
 	}
 	// Updates replace declarations and keys, but never reset the subscriber's
 	// chosen intent. Only an explicit install creates the default subscriptions.
 	if !update {
-		for _, event := range events {
+		for _, event := range installRegistrationEvents(manifest) {
 			if err := client.Post(ctx, "/v1/events/subscriptions", map[string]any{
 				"type":            manifest.App.ID + "/" + event.Type,
 				"delivery_intent": event.DefaultDeliveryIntent,
@@ -42,7 +67,7 @@ func registerManifestEvents(manifest appmanifest.Manifest, fetchedDigest string,
 			}
 		}
 	}
-	next.RegisteredDigest, next.RegisteredTeam, next.RegisteredServer = fetchedDigest, selection.TeamID, selection.BaseURL
+	saveInstallationReceipt(next, installed, fetchedDigest, selection.TeamID, selection.BaseURL)
 	return nil
 }
 
@@ -55,51 +80,56 @@ func installRegistrationEvents(manifest appmanifest.Manifest) []appmanifest.Even
 	return events
 }
 
-// installRegistrationBody is the team install request. fetchedBytes, when
-// present, are the exact bytes that hash to fetchedDigest; the server then
-// takes declarations and keys from them and refuses fields that disagree.
-func installRegistrationBody(manifest appmanifest.Manifest, fetchedDigest string, fetchedBytes []byte) map[string]any {
-	scopes := []string{}
-	seen := map[string]bool{}
-	for _, tool := range manifest.Tools {
-		for _, scope := range tool.Scopes {
-			if !seen[scope] {
-				seen[scope] = true
-				scopes = append(scopes, scope)
+type appInstallationReceipt struct {
+	InstallationID string   `json:"installation_id"`
+	Generation     int64    `json:"generation"`
+	State          string   `json:"state"`
+	Digest         string   `json:"digest"`
+	OriginVerified bool     `json:"origin_verified"`
+	GrantedScopes  []string `json:"granted_scopes"`
+}
+
+func saveInstallationReceipt(next *pluginProvenance, receipt appInstallationReceipt, digest, team, server string) {
+	next.RegisteredDigest, next.RegisteredTeam, next.RegisteredServer = digest, team, server
+	next.RegisteredInstallationID, next.RegisteredGeneration = receipt.InstallationID, receipt.Generation
+}
+
+// installRegistrationBody confirms the fetched pin and explicitly chosen scopes.
+// The server fetches its own bytes and derives versions, keys and events there.
+// An expected generation comes from the authenticated current-installation read.
+func installRegistrationBody(resolved *appmanifest.Resolved, fetchedDigest string, expectedGeneration *int64, grantedScopes []string) map[string]any {
+	return map[string]any{
+		"app_id": resolved.Manifest.App.ID, "origin": resolved.Manifest.App.Origin,
+		"digest": fetchedDigest, "granted_scopes": append([]string{}, grantedScopes...),
+		"expected_generation": expectedGeneration,
+	}
+}
+
+func installationScopes(requested, current []string, existing bool, selected []string) ([]string, error) {
+	chosen := selected
+	if chosen == nil {
+		chosen = requested
+		if existing {
+			chosen = nil
+			for _, scope := range current {
+				if slices.Contains(requested, scope) {
+					chosen = append(chosen, scope)
+				}
 			}
 		}
 	}
-	sort.Strings(scopes)
-	body := map[string]any{
-		"app_id": manifest.App.ID, "origin": manifest.App.Origin,
-		"app_version": manifest.App.Version, "manifest_version": manifest.ManifestVersion,
-		"digest": fetchedDigest, "granted_scopes": scopes,
-		"events": installRegistrationEvents(manifest), "event_emitters": append([]appmanifest.EventEmitter{}, manifest.EventEmitters...),
+	result := []string{}
+	for _, scope := range chosen {
+		scope = strings.TrimSpace(scope)
+		if !slices.Contains(requested, scope) {
+			return nil, usageError("scope_not_requested: %s is not requested by the manifest", scope)
+		}
+		if !slices.Contains(result, scope) {
+			result = append(result, scope)
+		}
 	}
-	if fetchedBytes != nil {
-		body["manifest"] = base64.StdEncoding.EncodeToString(fetchedBytes)
-	}
-	return body
-}
-
-// registrationManifestBytesFor returns the fetched bytes when the server reads
-// that manifest version and the bytes name the origin being registered. It
-// returns nil for a version the server does not read from bytes yet, and when a
-// dev-origin override registers the app at an origin its bytes do not declare;
-// the install then registers its supplied fields as before.
-func registrationManifestBytesFor(fetchedBytes []byte, manifestVersion int, declaredOrigin, registeredOrigin string) []byte {
-	if manifestVersion != 1 {
-		return nil
-	}
-	declared, err := canonicalAppOrigin(declaredOrigin)
-	if err != nil {
-		return nil
-	}
-	registered, err := canonicalAppOrigin(registeredOrigin)
-	if err != nil || declared != registered {
-		return nil
-	}
-	return fetchedBytes
+	slices.Sort(result)
+	return result, nil
 }
 
 func init() {

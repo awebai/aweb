@@ -5,6 +5,7 @@ import time
 from typing import Annotated
 
 import httpx
+import pytest
 from aweb_naapp_testing import Member
 from awid_service.testing import REGISTRY_URL
 from fastapi import Depends, FastAPI, Request
@@ -67,8 +68,9 @@ async def page_policy(request, principal, tool):
     return True
 
 
+@pytest.mark.parametrize("team_shared", [False, True])
 async def test_signed_member_operations_and_revoked_install_cannot_bypass_acl(
-    registry, test_db_factory, tmp_path
+    registry, test_db_factory, tmp_path, team_shared
 ):
     owner = Member(team_id="fixture:example.com")
     stranger = Member(
@@ -118,7 +120,12 @@ async def test_signed_member_operations_and_revoked_install_cannot_bypass_acl(
             scope,
             auth.principal,
             await request.json(),
-            access=Access(owner=owner.did_key),
+            access=Access(
+                owner=owner.did_key,
+                team_id=owner.team_id if team_shared else None,
+                team_read=team_shared,
+                team_write=team_shared,
+            ),
             key="create",
         )
 
@@ -152,7 +159,10 @@ async def test_signed_member_operations_and_revoked_install_cannot_bypass_acl(
             assert (await call(owner, "POST", "/fixture", page())).status_code == 200
             initial = await call(owner, "GET", "/fixture")
             assert initial.status_code == 200 and initial.json()["rev"] == 1
-            assert (await call(stranger, "GET", "/fixture")).status_code == 404
+            assert (await call(stranger, "GET", "/fixture")).status_code == (
+                200 if team_shared else 404
+            )
+            assert (await client.get("/fixture")).status_code == 401
             edit_body = {
                 "expected_rev": 1,
                 "key": "edit",
@@ -174,6 +184,16 @@ async def test_signed_member_operations_and_revoked_install_cannot_bypass_acl(
                 {"expected_page_rev": 2, "bind": {"collection": "items"}},
             )
             assert queried.json()["records"][0]["value"]["label"] == "Signed owner edit"
+            if team_shared:
+                edit_body.update(expected_rev=2, key="team-edit")
+                edit_body["records"][0].update(expected_rev=2)
+                assert (await call(stranger, "POST", "/fixture/edit", edit_body)).json()[
+                    "page_rev"
+                ] == 3
+                outsider = Member(team_id="other:example.com")
+                await registry.add_team(outsider.team_id, outsider.team_did_key)
+                await registry.add_certificate(outsider.certificate())
+                assert (await call(outsider, "GET", "/fixture")).status_code == 403
             # A valid signed request still needs the current installation grant.
             grants.active = False
             assert (await call(owner, "GET", "/fixture")).status_code == 403

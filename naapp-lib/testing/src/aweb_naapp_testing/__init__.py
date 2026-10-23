@@ -1,5 +1,8 @@
-"""Test support for naapps: team members and a signer for team-auth v2
-requests. AWID itself runs in-process through ``awid_service.testing``.
+"""Test support for naapps: real AWID routes on PostgreSQL, and a signer for
+team-auth v2 requests.
+
+AWID and its recording transport live in awid_service.testing. The names
+previously exported here remain aliases for released test consumers.
 
 This is a dev-only distribution: it mints throwaway team keys and
 certificates, and no production install depends on it.
@@ -11,13 +14,20 @@ import base64
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from awid.attestation_records import ATTESTATION_HEADER, encode_attestation_header
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from nacl.signing import SigningKey
 
+# Published compatibility names; AWID has one implementation in awid_service.testing.
+from awid_service.testing import REGISTRY_URL as REGISTRY_URL
+from awid_service.testing import SERVICE_TOKEN as SERVICE_TOKEN
+from awid_service.testing import Registry as Registry
+from awid_service.testing import ServiceTransport as RecordingTransport
+from awid_service.testing import running_registry as awid_registry
 
 def did_key(key: SigningKey) -> str:
     return did_from_public_key(bytes(key.verify_key))
@@ -95,6 +105,31 @@ class Member:
             signed_payload=canonical,
             cert=cert if cert is not None else self.certificate(),
         )
+
+
+def attested(
+    member: Member, headers: dict[str, str], *, issuer: SigningKey, custodian_id: str, channel: str
+) -> dict[str, str]:
+    """``headers`` plus a principal attestation by ``issuer``, bound to their signed payload."""
+    raw = headers["X-AWEB-Signed-Payload"]
+    signed_payload = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+    now = datetime.now(UTC).replace(microsecond=0)
+    payload = {
+        "v": 1,
+        "type": "aweb.principal-attestation",
+        "team_id": member.team_id,
+        "certificate_id": member.certificate_id,
+        "member_did_key": member.did_key,
+        "custody": "custodial",
+        "custodian_id": custodian_id,
+        "issuer_did_key": did_key(issuer),
+        "channel": channel,
+        "session_id": "session-1",
+        "iat": utc_timestamp(now),
+        "exp": utc_timestamp(now + timedelta(seconds=120)),
+        "request_binding": hashlib.sha256(signed_payload).hexdigest(),
+    }
+    return {**headers, ATTESTATION_HEADER: encode_attestation_header(bytes(issuer), payload)}
 
 
 def envelope_headers(

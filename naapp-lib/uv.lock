@@ -10,6 +10,19 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "aiosmtpd"
+version = "1.4.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "atpublic" },
+    { name = "attrs" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c4/ca/b2b7cc880403ef24be77383edaadfcf0098f5d7b9ddbf3e2c17ef0a6af0d/aiosmtpd-1.4.6.tar.gz", hash = "sha256:5a811826e1a5a06c25ebc3e6c4a704613eb9a1bcf6b78428fbe865f4f6c9a4b8", size = 152775, upload-time = "2024-05-18T11:37:50.029Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/39/d401756df60a8344848477d54fdf4ce0f50531f6149f3b8eaae9c06ae3dc/aiosmtpd-1.4.6-py3-none-any.whl", hash = "sha256:72c99179ba5aa9ae0abbda6994668239b64a5ce054471955fe75f581d2592475", size = 154263, upload-time = "2024-05-18T11:37:47.877Z" },
+]
+
+[[package]]
 name = "annotated-doc"
 version = "0.0.5"
 source = { registry = "https://pypi.org/simple" }
@@ -143,6 +156,15 @@ wheels = [
 ]
 
 [[package]]
+name = "atpublic"
+version = "9.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/08/3f/23b2643edfae61210baee60eec95873a4ad4fc6a7c096a725f240a0bf4db/atpublic-9.0.0.tar.gz", hash = "sha256:61ea62d8445d2aaa83b6dffaa3d90f99fcec10e16683ee9b13792cdcdafa0966", size = 27443, upload-time = "2026-10-13T01:49:05.987Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/d1/875c831006b60a9b93d8d5aba734fde33402d9136785d824fa0ba8765731/atpublic-9.0.0-py3-none-any.whl", hash = "sha256:449c3c4f0c74df79749d6fe225ba55e2a2fce34b303f0329211e4d6989ed6f6e", size = 11111, upload-time = "2026-10-13T01:49:05.07Z" },
+]
+
+[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -153,9 +175,10 @@ wheels = [
 
 [[package]]
 name = "aweb"
-version = "1.27.30"
+version = "1.27.33"
 source = { editable = "../server" }
 dependencies = [
+    { name = "aweb-naapp", extra = ["egress", "hooks"] },
     { name = "awid-service" },
     { name = "base58" },
     { name = "cryptography" },
@@ -177,6 +200,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aweb-naapp", extras = ["egress", "hooks"], editable = "." },
     { name = "awid-service", editable = "../awid" },
     { name = "base58", specifier = ">=2.1.1" },
     { name = "cryptography", specifier = ">=45.0.6" },
@@ -198,16 +222,21 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aweb-naapp", editable = "." },
+    { name = "aweb-naapp-testing", editable = "testing" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
 ]
 
 [[package]]
 name = "aweb-naapp"
-version = "0.1.0"
+version = "0.4.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
+crypto = [
+    { name = "cryptography" },
+]
 dispatch = [
     { name = "pgdbm" },
 ]
@@ -223,6 +252,9 @@ hooks = [
     { name = "pynacl" },
 ]
 idempotency = [
+    { name = "pgdbm" },
+]
+nonces = [
     { name = "pgdbm" },
 ]
 outbox = [
@@ -243,8 +275,10 @@ roles = [
 ]
 runtime = [
     { name = "awid-service" },
+    { name = "cbor2" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "pgdbm" },
     { name = "pydantic-settings" },
     { name = "pynacl" },
@@ -273,6 +307,8 @@ dev = [
 requires-dist = [
     { name = "awid-service", marker = "extra == 'hooks'", editable = "../awid" },
     { name = "awid-service", marker = "extra == 'runtime'", editable = "../awid" },
+    { name = "cbor2", marker = "extra == 'runtime'", specifier = ">=6.1.2" },
+    { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=50.0.0" },
     { name = "dnspython", marker = "extra == 'egress'", specifier = ">=2.7.0" },
     { name = "fastapi", marker = "extra == 'runtime'", specifier = ">=0.116.1" },
     { name = "httpcore", extras = ["asyncio"], marker = "extra == 'egress'", specifier = ">=1.0.9" },
@@ -280,9 +316,11 @@ requires-dist = [
     { name = "idna", marker = "extra == 'egress'", specifier = ">=3.10" },
     { name = "jsonschema", marker = "extra == 'page-store'", specifier = ">=4.23" },
     { name = "jsonschema", marker = "extra == 'pages'", specifier = ">=4.23" },
+    { name = "jsonschema", marker = "extra == 'runtime'", specifier = ">=4.23.0" },
     { name = "pgdbm", marker = "extra == 'dispatch'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'hooks'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'idempotency'", specifier = ">=0.5.0" },
+    { name = "pgdbm", marker = "extra == 'nonces'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'outbox'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'page-store'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'ratelimit'", specifier = ">=0.5.0" },
@@ -295,7 +333,7 @@ requires-dist = [
     { name = "pynacl", marker = "extra == 'signing-key'", specifier = ">=1.6.2" },
     { name = "webauthn", marker = "extra == 'runtime'", specifier = ">=3.0.1" },
 ]
-provides-extras = ["runtime", "outbox", "signing-key", "dispatch", "idempotency", "roles", "ratelimit", "pages", "egress", "hooks", "page-store"]
+provides-extras = ["crypto", "nonces", "runtime", "outbox", "signing-key", "dispatch", "idempotency", "roles", "ratelimit", "pages", "egress", "hooks", "page-store"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -315,9 +353,10 @@ dev = [
 
 [[package]]
 name = "aweb-naapp-testing"
-version = "0.1.0"
+version = "0.4.0"
 source = { editable = "testing" }
 dependencies = [
+    { name = "aiosmtpd" },
     { name = "aweb-naapp", extra = ["hooks", "runtime"] },
     { name = "awid-service" },
     { name = "cbor2" },
@@ -334,6 +373,7 @@ server = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiosmtpd", specifier = ">=1.4.6" },
     { name = "aweb", marker = "extra == 'server'", editable = "../server" },
     { name = "aweb-naapp", extras = ["hooks", "runtime"], editable = "." },
     { name = "awid-service", editable = "../awid" },
@@ -347,7 +387,7 @@ provides-extras = ["server"]
 
 [[package]]
 name = "awid-service"
-version = "0.5.30"
+version = "0.5.31"
 source = { editable = "../awid" }
 dependencies = [
     { name = "base58" },

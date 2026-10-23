@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
 from typing import cast
+from urllib.parse import parse_qs, urlsplit
 
 from jsonschema import Draft202012Validator
 
@@ -198,7 +199,13 @@ def host_get(handler: BaseHTTPRequestHandler, asset_origin: str, case: str = "")
         "csrf_token": state["csrf"] if case != "no-csrf" else "",
         "asset_origin": asset_origin,
         "app_origin": "https://app.example",
-        "allowed_actions": ["save-note", "request-visit", "upload-document"],
+        "allowed_actions": [
+            "save-note",
+            "request-visit",
+            "upload-document",
+            "answer-price",
+            "answer-bundle",
+        ],
         "health": health,
         "form_values": state.get("form_values", {}),
     }
@@ -233,6 +240,13 @@ def post(handler: BaseHTTPRequestHandler, path: str, page: dict) -> None:
         action = next((a for a in page["actions"] if a["id"] == request.get("action_id")), None)
         if not action or request.get("page_id") != page["page_id"]:
             json_response(handler, {"code": "action_denied"}, 403)
+            return
+        if path == "/api/answer":
+            from aweb_naapp.pages.gallery_decisions import answer
+
+            query = parse_qs(urlsplit(handler.path).query)
+            body, status = answer(page, request, state, query.get("case", [""])[0])
+            json_response(handler, body, status)
             return
         key = request.get("idempotency_key")
         if not isinstance(key, str) or not key:
