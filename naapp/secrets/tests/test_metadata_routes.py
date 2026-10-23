@@ -6,18 +6,15 @@ from dataclasses import replace
 import httpx
 import pytest
 from aweb_naapp.roles import PrincipalKey, assign, unassign
-from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.installation import InstallationFence
 from aweb_naapp_testing import Member
-from fastapi import FastAPI
 
-from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME, STORES
+from aweb_secrets.app import create_app
 from aweb_secrets.catalog import Catalog
 from aweb_secrets.jobs import apply_job_migrations
-from aweb_secrets.manifest import MANIFEST_PATH
 from aweb_secrets.metadata_routes import MetadataServices, metadata_router
 from tests.test_admission import TEAM, _grant_source_grant
-from tests.test_app import API, _settings, allow_all
+from tests.test_app import API, _settings, allow_all, kms_check
 from tests.test_catalog import ROLE, SECRET, seed
 
 
@@ -32,20 +29,10 @@ class Installed:
 
 @asynccontextmanager
 async def serving(registry, database_url, tmp_path):
-    runtime = NaappRuntime(
-        _settings(database_url, tmp_path),
-        module_name=MODULE_NAME,
-        migrations_path=MIGRATIONS_PATH,
-        manifest_path=MANIFEST_PATH,
-        awid_transport=registry.transport,
-        stores=(*STORES, apply_job_migrations),
-    )
     grants = Installed()
-    authorized = runtime.authorized(grants=grants, policy=allow_all)
-    # Exactly the supplied runtime guard is recorded in the app and routes.
-    api = FastAPI(lifespan=runtime.lifespan)
-    api.include_router(
-        metadata_router(
+
+    def routes(runtime, authorized):
+        return metadata_router(
             MetadataServices(
                 catalog=lambda: Catalog(
                     runtime.db(),
@@ -54,9 +41,19 @@ async def serving(registry, database_url, tmp_path):
             ),
             authorized=authorized,
         )
+
+    service = create_app(
+        _settings(database_url, tmp_path),
+        grants=grants,
+        policy=allow_all,
+        kms=kms_check(True),
+        awid_transport=registry.transport,
+        tool_routers=(routes,),
     )
-    async with api.router.lifespan_context(api):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(api), base_url=API) as client:
+    runtime = service.runtime
+    async with service.api_app.router.lifespan_context(service.api_app):
+        await apply_job_migrations(runtime.db())
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(service), base_url=API) as client:
             yield runtime, client
 
 
