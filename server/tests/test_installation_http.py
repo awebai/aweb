@@ -55,6 +55,7 @@ async def client(db, origin, monkeypatch):
     inner.state.db = Managers()
     inner.state.install_admin_policy = policy
     inner.state.manifest_fetcher = origin.fetcher
+    inner.state.public_origin = "https://core.example"
     inner.state.core_hooks = load_core_hooks("https://core.example")
     inner.include_router(router)
     outer = FastAPI()

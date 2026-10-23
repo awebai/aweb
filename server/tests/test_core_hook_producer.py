@@ -54,7 +54,7 @@ async def registration(db, *, state="active", pad=False, hook="post-mutation-hoo
 
 
 async def events(db):
-    rows = await db.fetch_all("SELECT payload,signature FROM {{tables.outbox_events}} ORDER BY position")
+    rows = await db.fetch_all("SELECT payload,signature FROM {{tables.outbox_events}} WHERE record_type='event' ORDER BY position")
     return [verify(bytes(r["payload"]), r["signature"], team_id=TEAM).fields for r in rows]
 
 
@@ -114,13 +114,22 @@ async def test_update_records_the_previous_digest_and_signed_trace(db, origin):
     assert [e["producer"]["seq"] for e in (installed, updated)] == [1, 2]
 
 
-async def test_missing_key_with_eligible_registration_rolls_back_effect(db, origin):
-    await registration(db)
+async def test_missing_key_commits_effect_with_local_reservation_and_no_wire_event(db, origin):
+    binding = await registration(db)
     evidence = await fetched(origin)
-    with pytest.raises(RuntimeError):
-        async with db.transaction() as tx:
-            await install_verified_manifest_on(tx, team_id=TEAM, fetched=evidence, granted_scopes=[])
-    assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.team_app_installs}} WHERE app_id='fixture'") == 0
+    async with db.transaction() as tx:
+        await install_verified_manifest_on(
+            tx, team_id=TEAM, fetched=evidence, granted_scopes=[],
+            hook_context=MutationHookContext(None, SYSTEM, origin="https://core.example"),
+        )
+    assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.team_app_installs}} WHERE app_id='fixture'") == 1
+    row = await db.fetch_one("SELECT * FROM {{tables.outbox_events}}")
+    assert row["record_type"] == "missing_production"
+    assert row["producer_origin"] == "https://core.example"
+    assert row["owed_binding_ids"] == [binding]
+    assert row["reservation_seq"] == 1 and row["missing_reason"] == "key_unconfigured"
+    assert row["payload"] is row["signature"] is None
+    assert await events(db) == []
 
 
 async def test_core_resolver_reads_current_state_without_cached_revocation(db):
@@ -145,3 +154,46 @@ async def test_unsigned_or_malformed_trace_is_minted_by_the_shared_producer(db, 
     recorded, = await events(db)
     assert recorded["trace"]["origin"] == "producer"
     assert len(recorded["trace"]["id"]) == 32 and int(recorded["trace"]["id"], 16) > 0
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+async def test_missing_production_sequence_and_effect_are_atomic(db, origin, rollback):
+    await registration(db)
+    evidence = await fetched(origin)
+    missing = MutationHookContext(None, SYSTEM, origin="https://core.example")
+    try:
+        async with db.transaction() as tx:
+            await install_verified_manifest_on(tx, team_id=TEAM, fetched=evidence, granted_scopes=[], hook_context=missing)
+            if rollback:
+                raise RuntimeError("abort caller")
+    except RuntimeError:
+        assert rollback
+    assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.team_app_installs}} WHERE app_id='fixture'") == int(not rollback)
+    assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.outbox_sequences}}") == int(not rollback)
+    assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.outbox_events}} WHERE record_type='missing_production'") == int(not rollback)
+
+
+async def test_restored_signer_does_not_backfill_the_missing_firing(db):
+    await registration(db)
+    payload = {"mutation_type": "app_key.revoked", "target_ref": "app:fixture", "app_id": "fixture", "kid": "old", "purposes": ["hook-event"]}
+    async with db.transaction() as tx:
+        await enqueue_mutation_hook(tx, team_id=TEAM, payload=payload, hook_context=MutationHookContext(None, SYSTEM, origin="https://core.example"))
+    async with db.transaction() as tx:
+        await enqueue_mutation_hook(tx, team_id=TEAM, payload=payload, hook_context=context())
+    recorded, = await events(db)
+    assert recorded["producer"]["seq"] == 2
+    assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.outbox_events}} WHERE record_type='missing_production' AND reservation_seq=1 AND payload IS NULL") == 1
+
+
+async def test_missing_production_local_write_failure_rolls_back_effect_and_sequence(db, origin):
+    import asyncpg
+
+    await registration(db)
+    evidence = await fetched(origin)
+    await db.execute("ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT refuse_local_loss CHECK (record_type <> 'missing_production') NOT VALID")
+    with pytest.raises(asyncpg.CheckViolationError):
+        async with db.transaction() as tx:
+            await install_verified_manifest_on(tx, team_id=TEAM, fetched=evidence, granted_scopes=[], hook_context=MutationHookContext(None, SYSTEM, origin="https://core.example"))
+    assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.team_app_installs}} WHERE app_id='fixture'") == 0
+    assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.outbox_sequences}}") == 0
+    assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.outbox_events}}") == 0

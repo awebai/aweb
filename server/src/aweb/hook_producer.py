@@ -7,29 +7,45 @@ reads S1 directly, so no registration cache can outlive a revocation here.
 from __future__ import annotations
 
 import asyncio
+import logging
+import math
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from ipaddress import IPv4Network, IPv6Network
+from pathlib import Path
 from typing import Any
 
 from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress, InternalDestinations
+from aweb_naapp.hooks.catalog import packaged_catalog
 from aweb_naapp.hooks.producer import (
-    HOOKS_CHANNEL, VIEW_MAX_AGE, HookProducer, Registration, RegistrationView,
-    ServerProducer, hook_targets,
+    HOOKS_CHANNEL,
+    VIEW_MAX_AGE,
+    HookProducer,
+    Registration,
+    RegistrationView,
+    ServerProducer,
+    hook_targets,
 )
 from aweb_naapp.hooks.transport import HookTransport
-from aweb_naapp.outbox import RetryPolicy, run_drain
+from aweb_naapp.outbox import RetryPolicy, reserve_missing_production, run_drain
 from aweb_naapp.signing_key import read_signing_key_file
 from awid.utc_timestamps import parse_utc_seconds
 
-from aweb.config import HookProducerKey, get_hook_producer_keys, get_hook_signing_key_file
+from aweb.config import (
+    HookProducerKey,
+    get_hook_producer_keys,
+    get_hook_signing_key_file,
+    get_public_origin,
+)
 from aweb.hook_bindings import REGISTRATION
 from aweb.hook_resolution import HookSelector, active_bindings
+from aweb.service_errors import ConflictError
 
 MUTATION_HOOK = "post-mutation-hook"
 SYSTEM_ACTOR = {"authority_mode": "system", "attestations": []}
+logger = logging.getLogger(__name__)
 
 
 class CoreRegistrations:
@@ -65,11 +81,90 @@ class CoreHooks:
             raise RuntimeError("core hook signing key is outside its validity window")
 
 
+def signer_unavailable_reason(hooks: CoreHooks | None, moment: datetime) -> str | None:
+    if hooks is None:
+        return "key_unconfigured"
+    try:
+        hooks.require_valid_key(moment)
+    except RuntimeError:
+        return "key_out_of_window"
+    return None
+
+
+def require_core_hook_signer(hooks: CoreHooks | None) -> None:
+    """Readiness for new mutation registrations, after owner verification."""
+    if signer_unavailable_reason(hooks, datetime.now(UTC)) is not None:
+        raise ConflictError("core_hook_producer_unconfigured")
+
+
+class CoreHookDiagnostics:
+    """Bounded local fault/warning state; never signed delivery evidence."""
+
+    def __init__(self, warning_lead: timedelta = timedelta(days=7)):
+        if warning_lead <= timedelta(0):
+            raise ValueError("core hook warning lead must be positive")
+        self.warning_lead = warning_lead
+        self._fault_state = None
+        self._warning_state = None
+
+    def observe(
+        self,
+        hooks: CoreHooks | None,
+        *,
+        now: datetime | None = None,
+        reason: str | None = None,
+    ) -> None:
+        now = now or datetime.now(UTC)
+        reason = reason or signer_unavailable_reason(hooks, now)
+        kid = hooks.producer.producer.kid if hooks else None
+        deadline = hooks.key.valid_until if hooks and hooks.key else None
+        state = (reason, kid, deadline) if reason else None
+        fields = {
+            "component": "core_hook_producer",
+            "reason": reason,
+            "kid": kid,
+            "valid_until": deadline,
+        }
+        if state is not None and state != self._fault_state:
+            logger.error(
+                "Core hook signer unavailable; losses remain in local outbox accounting",
+                extra=fields,
+            )
+        self._fault_state = state
+        warning = None
+        if (
+            reason is None
+            and deadline
+            and now >= parse_utc_seconds(deadline) - self.warning_lead
+        ):
+            warning = (kid, deadline)
+            if warning != self._warning_state:
+                logger.warning(
+                    "Core hook signing key approaches expiry",
+                    extra={**fields, "reason": "key_expiring"},
+                )
+        self._warning_state = warning
+
+
+_service_diagnostics = CoreHookDiagnostics()
+
+
+def _warning_lead() -> timedelta:
+    seconds = float(os.getenv("AWEB_HOOK_PRODUCER_WARNING_LEAD_SECONDS", "604800"))
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError(
+            "AWEB_HOOK_PRODUCER_WARNING_LEAD_SECONDS must be positive and finite"
+        )
+    return timedelta(seconds=seconds)
+
+
 @dataclass(frozen=True)
 class MutationHookContext:
     hooks: CoreHooks | None
     actor: Mapping[str, Any]
     signed_trace_id: str | None = None
+    origin: str | None = None
+    diagnostics: CoreHookDiagnostics | None = None
 
 
 def load_core_hooks(origin: str) -> CoreHooks | None:
@@ -107,30 +202,66 @@ def request_hook_context(request, identity=None) -> MutationHookContext:
         if identity.grant is not None:
             actor["authority_mode"] = "identity_grant"
             actor["grant_id"] = identity.grant.grant_id
+    diagnostics = getattr(request.app.state, "core_hook_diagnostics", None)
+    if diagnostics is None:
+        diagnostics = CoreHookDiagnostics(_warning_lead())
+        request.app.state.core_hook_diagnostics = diagnostics
     return MutationHookContext(
-        getattr(request.app.state, "core_hooks", None), actor,
+        getattr(request.app.state, "core_hooks", None),
+        actor,
         getattr(request.state, "verified_hook_trace_id", None),
+        getattr(request.app.state, "public_origin", None) or get_public_origin(),
+        diagnostics,
     )
 
 
 async def enqueue_mutation_hook(
-    tx, *, team_id: str, payload: Mapping[str, Any],
-    hook_context: MutationHookContext | None = None, occurred_at: datetime | None = None,
+    tx,
+    *,
+    team_id: str,
+    payload: Mapping[str, Any],
+    hook_context: MutationHookContext | None = None,
+    occurred_at: datetime | None = None,
 ):
     """Enqueue only for a fresh, eligible registration, in the effect's tx.
 
-    Ordinary core mutations are never audit-gated when no target is owed the
-    event. Once owed, failures writing the event roll back the effect as well.
+    With a signer, the event and effect commit together. With no usable signer,
+    reserve the owed firing's sequence and typed local loss in that same tx.
+    Signer availability never gates a mutation; local write failures still do.
     """
     occurred_at = occurred_at or datetime.now(UTC)
     view = await CoreRegistrations(tx).view(team_id, MUTATION_HOOK)
     if not view.is_fresh(datetime.now(UTC)) or not view.owed(occurred_at):
         return None
-    if hook_context is None or hook_context.hooks is None:
-        raise RuntimeError("an active mutation hook requires a configured core hook signing key")
-    hooks = hook_context.hooks
-    hooks.require_valid_key(datetime.now(UTC))
-    hooks.require_valid_key(occurred_at)
+    hooks = hook_context.hooks if hook_context else None
+    reason = signer_unavailable_reason(
+        hooks, datetime.now(UTC)
+    ) or signer_unavailable_reason(hooks, occurred_at)
+    diagnostics = (
+        hook_context.diagnostics
+        if hook_context and hook_context.diagnostics
+        else _service_diagnostics
+    )
+    diagnostics.observe(hooks, reason=reason)
+    if reason is not None:
+        # Keep catalog validation even without a signer. This is local
+        # accounting, never an unsigned OutboxEvent or recovery signature.
+        packaged_catalog().validate(MUTATION_HOOK, payload)
+        origin = (hook_context.origin if hook_context else None) or (
+            hooks.producer.producer.origin if hooks else get_public_origin()
+        )
+        await reserve_missing_production(
+            tx,
+            scope=f"core:{MUTATION_HOOK}",
+            team_id=team_id,
+            origin=origin,
+            kind=MUTATION_HOOK,
+            channel=HOOKS_CHANNEL,
+            occurred_at=occurred_at,
+            reason=reason,
+            binding_ids=[r.binding_id for r in view.owed(occurred_at)],
+        )
+        return None
     return await hooks.producer.enqueue(
         tx, hook=MUTATION_HOOK, team_id=team_id, payload=payload, actor=hook_context.actor,
         occurred_at=occurred_at, result_status="success", signed_trace_id=hook_context.signed_trace_id,
@@ -139,12 +270,18 @@ async def enqueue_mutation_hook(
 
 
 def start_core_hooks(
-    app, db, *, egress: Egress | None = None,
+    app,
+    db,
+    *,
+    egress: Egress | None = None,
     internal_cidr: IPv4Network | IPv6Network | None = None,
 ) -> None:
     """Start the shared hooks drain after DB initialization in either lifespan."""
     hooks = load_core_hooks(app.state.public_origin)
     app.state.core_hooks = hooks
+    diagnostics = CoreHookDiagnostics(_warning_lead())
+    app.state.core_hook_diagnostics = diagnostics
+    diagnostics.observe(hooks)
     if hooks is None:
         return
     registrations = CoreRegistrations(db)
@@ -156,11 +293,22 @@ def start_core_hooks(
     )
     stop = asyncio.Event()
     app.state.core_hooks_stop = stop
-    app.state.core_hooks_drain = asyncio.create_task(run_drain(
-        db, channel=HOOKS_CHANNEL, resolver=hook_targets(registrations),
-        transport=HookTransport(seed=hooks.producer.producer.seed, egress=egress, registrations=registrations, internal_cidr=internal_cidr),
-        policy=RetryPolicy(stalled_after=timedelta(days=1)), stop=stop,
-    ))
+    app.state.core_hooks_drain = asyncio.create_task(
+        run_drain(
+            db,
+            channel=HOOKS_CHANNEL,
+            resolver=hook_targets(registrations),
+            transport=HookTransport(
+                seed=hooks.producer.producer.seed,
+                egress=egress,
+                registrations=registrations,
+                internal_cidr=internal_cidr,
+            ),
+            policy=RetryPolicy(stalled_after=timedelta(days=1)),
+            stop=stop,
+            maintenance=lambda: diagnostics.observe(hooks),
+        )
+    )
 
 
 async def stop_core_hooks(app) -> None:

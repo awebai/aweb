@@ -134,9 +134,26 @@ its configured `egress` and `internal_cidr`; both are required to allow that
 internal network.
 
 Mutations with no eligible active registration enqueue nothing and require
-no signing key. With an eligible registration, the event and the effect share
-one transaction: a recording failure rolls both back. The existing
-`on_mutation` notification seam is independent.
+no signing key. With an eligible registration and a usable signer, the signed event and effect
+share one transaction. If the signer is absent or out of its validity window,
+the mutation still commits with one typed `missing_production` sequence
+reservation in the shared outbox. It is local loss accounting, never delivered
+or signed later. A local accounting write failure rolls back the transaction.
+Activation of a post-mutation registration requires a valid signer and otherwise
+returns `409 core_hook_producer_unconfigured` without consuming the owner nonce.
+Other registration kinds keep their existing activation rules. Revocation never
+waits on signing availability. The existing `on_mutation` seam is independent.
+
+The producer emits one structured fault per unavailable state and warns before
+key expiry. `AWEB_HOOK_PRODUCER_WARNING_LEAD_SECONDS` is positive and finite,
+defaulting to seven days (604800 seconds); it grants no validity grace. Inspect
+`outbox_events` rows with `record_type = 'missing_production'` in core's schema
+for counts, oldest `occurred_at`, `producer_origin`, `reservation_scope`,
+`reservation_seq`, `missing_reason` and `owed_binding_ids`. Ordinary drains keep
+these records. Later authenticated higher sequences may expose unexplained
+holes; trailing loss alone cannot be proved remotely. Terminal final-entry
+implementation remains dependent on the shared end fence and reviewed terminal
+path; this accounting is never a signed event, capsule or completion seal.
 
 ## Bootstrap Flow
 

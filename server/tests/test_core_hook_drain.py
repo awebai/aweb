@@ -56,3 +56,28 @@ async def test_no_key_configuration_starts_no_worker(db, monkeypatch):
     assert app.state.core_hooks is None
     assert not hasattr(app.state, "core_hooks_drain")
     await stop_core_hooks(app)
+
+
+async def test_unconfigured_restart_keeps_old_registration_and_accounts_for_new_effect(db, configured, monkeypatch):
+    from aweb_naapp.outbox import outbox_status
+
+    binding = await registration(db)
+    monkeypatch.delenv("AWEB_HOOK_PRODUCER_KID")
+    monkeypatch.delenv("AWEB_HOOK_PRODUCER_KEY_FILE")
+    app = FastAPI()
+    app.state.public_origin = "https://core.example"
+    start_core_hooks(app, db)
+    assert app.state.core_hooks is None
+    try:
+        async with db.transaction() as tx:
+            await enqueue_mutation_hook(tx, team_id=TEAM, hook_context=MutationHookContext(
+                None, SYSTEM, origin=app.state.public_origin, diagnostics=app.state.core_hook_diagnostics,
+            ), payload={"mutation_type": "app_key.revoked", "target_ref": "app:fixture", "app_id": "fixture", "kid": "old", "purposes": ["hook-event"]})
+    finally:
+        await stop_core_hooks(app)
+    row = await db.fetch_one("SELECT * FROM {{tables.outbox_events}}")
+    assert row["record_type"] == "missing_production"
+    assert row["producer_origin"] == app.state.public_origin
+    assert row["owed_binding_ids"] == [binding]
+    status = await outbox_status(db, "hooks")
+    assert not status.targets and not status.unmaterialized and not status.faults
