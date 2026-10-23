@@ -162,7 +162,7 @@ async def native_send(aweb_cloud_db):
         ),
     )
 
-    async def prepared(kind="mail", message_id=None, body="native send"):
+    async def prepared(kind="mail", message_id=None, body="native send", caller=None):
         cid, mid = str(uuid4()), message_id or str(uuid4())
         payload = dict(
             type=kind,
@@ -195,7 +195,7 @@ async def native_send(aweb_cloud_db):
                 "conversation_id": cid,
             },
         )
-        return await service.prepare(auth, request)
+        return await service.prepare(caller or auth, request)
 
     key = dto(
         "IngressKey",
@@ -855,7 +855,7 @@ async def test_native_accept_rechecks_identity_wide_contacts_only(native_send):
     )
     from dataclasses import replace
     env["auth"] = replace(env["auth"], address="example.test/agent")
-    await complete(env, await env["prepared"]())
+    await complete(env, await env["prepared"](caller=env["auth"]))
     assert (await env["db"].fetch_one("SELECT count(*) n FROM {{tables.messages}}"))["n"] == 1
 
 
