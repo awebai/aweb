@@ -74,12 +74,22 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         )
         await asyncio.wait_for(refused.communicate(), 30)
         assert refused.returncode != 0
+        refused_chat = await asyncio.create_subprocess_exec(
+            str(binary), "--team", TEAM, "chat", "send-and-leave", "alice",
+            "--start-conversation", "--e2ee", "--body-file", str(body_file),
+            cwd=cwd, env=child_env, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(refused_chat.communicate(), 30)
+        assert refused_chat.returncode != 0
         assert (
             await env.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}")
         )["n"] == 0
         assert (
             await env.db.fetch_one("SELECT count(*) AS n FROM {{tables.conversations}}")
         )["n"] == 0
+        assert (await env.db.fetch_one("SELECT count(*) AS n FROM {{tables.chat_messages}}"))["n"] == 0
+        assert (await env.db.fetch_one("SELECT count(*) AS n FROM {{tables.chat_sessions}}"))["n"] == 0
         await _insert_agent_encryption_assertion(
             env.db, agent_id=actor.id, team_id=TEAM, assertion=assertion
         )
@@ -119,6 +129,29 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             },
         )
         assert decrypted["body"] == body_file.read_text()
+
+        chat_sent = await _cli(
+            binary, cwd, child_env, "--team", TEAM, "--json", "chat",
+            "send-and-leave", "alice", "--start-conversation", "--e2ee",
+            "--body-file", str(body_file),
+        )
+        chat_stored = await env.db.fetch_one(
+            "SELECT content_mode,encrypted_envelope FROM {{tables.chat_messages}} WHERE message_id=$1",
+            UUID(chat_sent["message_id"]),
+        )
+        assert chat_stored["content_mode"] == "encrypted_v2"
+        participants = await env.db.fetch_all(
+            "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
+            UUID(chat_sent["session_id"]),
+        )
+        assert (row["did_aw"] or actor.did) in {p["did"] for p in participants}
+        chat_envelope = chat_stored["encrypted_envelope"]
+        if isinstance(chat_envelope, str):
+            chat_envelope = json.loads(chat_envelope)
+        assert decrypt_e2ee_message(chat_envelope, identity={
+            "did": actor.did, "stable_id": row["did_aw"], "private_key": private,
+            "encryption_key_id": assertion["encryption_key_id"],
+        })["body"] == body_file.read_text()
 
         # The same actual TCP server now accepts the protected native envelope
         # through the public stable-ID headers and survives loss of preparations.
