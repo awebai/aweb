@@ -97,6 +97,8 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 			IdentityHome            string   `json:"identity_home"`
 			ExistingGrantsUnchanged bool     `json:"existing_grants_unchanged"`
 			GrantRefreshCommand     []string `json:"grant_refresh_command"`
+			GrantCheckError         string   `json:"grant_check_error"`
+			GrantRestartCommand     []string `json:"grant_restart_command"`
 		}
 		if err := json.Unmarshal(installed, &receipt); err != nil || receipt.IdentityHome != home || !receipt.ExistingGrantsUnchanged {
 			t.Fatalf("install receipt: %s (%v)", installed, err)
@@ -111,6 +113,9 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 		custody := slices.Index(receipt.GrantRefreshCommand, "--custody-socket")
 		if custody < 0 || custody+1 >= len(receipt.GrantRefreshCommand) || receipt.GrantRefreshCommand[custody+1] != "auto" {
 			t.Fatalf("replacement must select resident custody: %v", receipt.GrantRefreshCommand)
+		}
+		if receipt.GrantCheckError != "unavailable" || len(receipt.GrantRestartCommand) == 0 {
+			t.Fatalf("offline install must report unknown grant status and retain recovery: %s", installed)
 		}
 		cat, err := loadAppApprovals(home)
 		if err != nil || cat.Apps["testapp"] != server.URL {
@@ -209,6 +214,7 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(empty, ".aw")); !os.IsNotExist(err) {
 		t.Fatal("empty instance gained principal state")
 	}
+
 	// JSON output distinguishes installed discovery from approval removal.
 	var removed pluginRemoveOutput
 	if err := os.Remove(executable); err != nil {
@@ -217,4 +223,43 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	if err := json.Unmarshal(invoke(empty, homes[0], "", "plugin", "remove", "testapp"), &removed); err != nil || !removed.ApprovalRemoved {
 		t.Fatalf("remove receipt: %v", err)
 	}
+	t.Run("stalled_resolution", func(t *testing.T) {
+		// A real TCP listener accepts discovery requests but never answers them.
+		// One advisory deadline must cover every candidate, not restart per probe.
+		var probes atomic.Int32
+		stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			probes.Add(1)
+			<-r.Context().Done()
+		}))
+		defer stalled.Close()
+		pub, key, err := awid.GenerateKeypair()
+		if err != nil {
+			t.Fatal(err)
+		}
+		parent := filepath.Join(root, "connected-resident")
+		writeSelectionFixtureForTest(t, parent, testSelectionFixture{
+			AwebURL: stalled.URL, TeamID: "backend:acme.com", Alias: "alice",
+			WorkspaceID: "advisory-budget", DID: awid.ComputeDIDKey(pub),
+			Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: key,
+		})
+		t.Setenv("AWEB_URL", stalled.URL)
+		var receipt struct {
+			Approved        bool   `json:"approved"`
+			ActiveGrants    *int   `json:"active_grants"`
+			GrantCheckError string `json:"grant_check_error"`
+		}
+		command := exec.CommandContext(ctx, bin, "--identity-home", filepath.Join(parent, ".aw"), "--json", "plugin", "install", server.URL)
+		command.Dir = empty
+		command.Env = append(os.Environ(), "AW_NO_UPDATE_CHECK=1")
+		out, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("install during stalled discovery: %v %s", err, out)
+		}
+		if err := json.Unmarshal(out, &receipt); err != nil || !receipt.Approved || receipt.ActiveGrants != nil || receipt.GrantCheckError != "unavailable" {
+			t.Fatalf("stalled advisory must retain successful install with unknown count: %s (%v)", out, err)
+		}
+		if probes.Load() != 1 {
+			t.Fatalf("advisory restarted its budget across %d discovery probes; want one", probes.Load())
+		}
+	})
 }

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import socket
 import ssl
 import subprocess
@@ -753,7 +754,20 @@ def test_install_after_mint_uses_replacement_grant(
                     installed = _run_aw_json(aw_workspace, "--identity-home", str(resident_home), "plugin", "install", manifest)
                     assert installed["approved"] and installed["existing_grants_unchanged"]
                     assert installed["identity_home"] == str(resident_home)
-                    payload = tmp_path / "document.json"
+                    assert installed["active_grants"] == 1
+                    assert installed["grant_restart_command"] == [
+                        "env", "AWEB_IDENTITY_HOME=<new-grant-home>", "<agent-command>",
+                    ]
+                    assert installed["oats_renew_restart_command"] == [
+                        "oats", "session", "restart", "--home", "<instance-home>",
+                    ]
+                    updated = _run_aw(aw_workspace, "--json=false", "plugin", "update", app_id)
+                    commands = [shlex.split(line.strip()) for line in updated.stdout.splitlines()
+                                if line.startswith("  ")]
+                    assert installed["grant_refresh_command"] in commands
+                    assert installed["grant_restart_command"] in commands
+                    assert installed["oats_renew_restart_command"] in commands
+                    payload = tmp_path / "document with space.json"
                     payload.write_text(json.dumps(dict(slug="grant-install", title="Grant install", body="first")))
                     denied = subprocess.run(
                         ["aw", app_id, "create", "--body-file", str(payload)], cwd=instance,
@@ -774,7 +788,35 @@ def test_install_after_mint_uses_replacement_grant(
                     assert timedelta(0) < expires - datetime.now(UTC) <= timedelta(minutes=15)
                     assert app_id in {app["app_id"] for app in replacement["apps"]}
                     grant = AWWorkspace(path=instance, env=dict(grant.env, AWEB_IDENTITY_HOME=str(replacement_home)))
-                    created = _run_aw_json(grant, app_id, "create", "--body-file", str(payload), "--json")
+                    # Follow the printed shell instructions, replacing the WHOLE
+                    # quoted placeholder and preserving the spaced path argument.
+                    restart_template = next(
+                        line.strip() for line in updated.stdout.splitlines()
+                        if line.startswith("  ") and shlex.split(line.strip()) == installed["grant_restart_command"]
+                    )
+                    restart_shell = restart_template.replace(
+                        shlex.quote("AWEB_IDENTITY_HOME=<new-grant-home>"),
+                        shlex.quote(f"AWEB_IDENTITY_HOME={replacement_home}"),
+                    ).replace(
+                        shlex.quote("<agent-command>"),
+                        shlex.join(["aw", "--json", app_id, "create", "--body-file", str(payload)]),
+                    )
+                    launched = subprocess.run(
+                        ["sh", "-c", restart_shell], cwd=instance, env=grant_env,
+                        text=True, capture_output=True, timeout=30,
+                    )
+                    assert launched.returncode == 0, launched.stderr
+                    created = json.loads(launched.stdout)
+                    # JSON uses argument elements, never a joined command string.
+                    restart_argv = [installed["grant_restart_command"][0],
+                                    f"AWEB_IDENTITY_HOME={replacement_home}",
+                                    "aw", "--json", app_id, "show", "--slug", "grant-install"]
+                    resumed = subprocess.run(
+                        restart_argv, cwd=instance, env=grant_env,
+                        text=True, capture_output=True, timeout=30,
+                    )
+                    assert resumed.returncode == 0, resumed.stderr
+                    assert json.loads(resumed.stdout)["body"] == "first"
                     assert created["slug"] == "grant-install" and created["body"] == "first"
                     body = tmp_path / "append.md"
                     body.write_text("second\n")
@@ -782,6 +824,12 @@ def test_install_after_mint_uses_replacement_grant(
                     assert appended["current_version"] == 2
                     shown = _run_aw_json(grant, app_id, "show", "--slug", "grant-install", "--json=false")
                     assert shown["body"] == "second\n" and shown["latest"]["created_by_did_key"] == team.did_key
+                    _run_aw(aw_workspace, "id", "grant", "revoke", minted["grant_id"])
+                    active = _run_aw_json(aw_workspace, "plugin", "update", app_id)
+                    assert active["active_grants"] == 1  # revoked grants are excluded
+                    _run_aw(aw_workspace, "id", "grant", "revoke", replacement["grant_id"])
+                    inactive = _run_aw_json(aw_workspace, "plugin", "update", app_id)
+                    assert inactive["active_grants"] == 0
                     assert not (instance / ".aw").exists()
                     assert not (replacement_home / "signing.key").exists()
                     assert before_material == {
