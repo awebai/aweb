@@ -6,6 +6,7 @@ contact removal execute the real application. No identity or transport mocks.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 from uuid import UUID
@@ -278,3 +279,122 @@ async def test_unverified_caller_cannot_change_another_identity_policy(privacy_a
         refused = await request(sender, TEAM, sender.certificate, "POST", path, payload)
         assert refused.status_code == 403, refused.text
         assert "exact active contacts" in refused.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.parametrize("creator", ["add_contact", "contacts_add", "rest", "cli"])
+@pytest.mark.parametrize("mode", ["contacts_only", "team_and_contacts"])
+async def test_contact_creation_paths_bind_identity_before_delivery(privacy_app, tmp_path, monkeypatch, creator, mode):
+    from aweb.federation.activation import build_federation_authority_activation
+    from aweb.internal_auth import build_internal_auth_header_value
+    from aweb.mcp.server import create_mcp_app
+    from uuid import uuid4
+
+    env = privacy_app
+    alice, bob = env.actors["alice"], env.actors["bob"]
+    outside = "contacts:example.test"
+    await env.db.execute("""
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'example.test', 'contacts', $2)
+    """, outside, env.team_did)
+    await env.registry_db.execute("""
+        INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility)
+        VALUES ('example.test', 'contacts', $1, 'public')
+    """, env.team_did)
+    await env.db.execute("UPDATE {{tables.agents}} SET team_id=$1 WHERE agent_id=$2", outside, alice.id)
+    await env.db.execute("UPDATE {{tables.workspaces}} SET team_id=$1 WHERE workspace_id=$2", outside, alice.workspace)
+    async with registry_listener(env) as (registry, registry_origin):
+        identities = {}
+        for name, actor, team in (("alice", alice, outside), ("bob", bob, TEAM)):
+            stable = await register_global_identity(env, actor, f"example.test/{name}")
+            identities[name] = stable
+            await env.db.execute("""
+                UPDATE {{tables.agents}} SET did_aw=$1, address=$2, identity_scope='global',
+                    did_aw_verified_key=did_key WHERE agent_id=$3
+            """, stable, f"example.test/{name}", actor.id)
+            actor.certificate = _encode_certificate(_make_certificate(
+                env.team_sk, env.team_did, actor.did, team_id=team, alias=name,
+                identity_scope="global", member_did_aw=stable, member_address=f"example.test/{name}",
+            ))
+        await env.db.execute("UPDATE {{tables.agents}} SET inbound_mode=$1 WHERE agent_id=$2", mode, bob.id)
+        await env.registry_db.execute("UPDATE {{tables.dns_namespaces}} SET default_delivery_origin=$1", str(env.client.base_url).rstrip("/"))
+        monkeypatch.setenv("APP_ENV", "development")
+        monkeypatch.setenv("AWEB_FEDERATION_TEST", "1")
+        monkeypatch.setenv("AWEB_FEDERATION_TEST_DEFAULT_REGISTRY", "1")
+        monkeypatch.setenv("AWID_REGISTRY_URL", registry_origin)
+        authority = build_federation_authority_activation(env.infra, public_origin=str(env.client.base_url).rstrip("/"))
+        env.app.state.federation_authority = authority
+
+        async def request(actor, team, path, payload):
+            body = json.dumps(payload).encode()
+            headers = _signed_team_headers(actor.sk, actor.did, team, actor.certificate, body)
+            return await env.client.post(path, content=body, headers={**headers, "Content-Type": "application/json"})
+
+        async def send_both(expected):
+            for path, payload in (
+                ("/v1/messages", {"to_did": bob.did, "subject": "bound contact", "body": "mail"}),
+                ("/v1/chat/sessions", {"to_dids": [bob.did], "message": "chat"}),
+            ):
+                response = await request(alice, outside, path, payload)
+                assert response.status_code == expected, response.text
+
+        await send_both(403)
+        mcp = None
+        try:
+            if creator in ("add_contact", "contacts_add"):
+                secret = "contacts-disposable-proxy-secret"
+                monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+                monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
+                mcp = create_mcp_app(db_infra=env.infra, redis=env.redis, registry_client=registry, federation_authority=authority)
+                env.app.mount("/contact-mcp", mcp)
+                await mcp.startup()
+                principal = str(uuid4())
+                headers = {
+                    "Accept": "application/json, text/event-stream", "X-Team-ID": TEAM,
+                    "X-User-ID": principal, "X-AWEB-Actor-ID": str(bob.id),
+                    "X-AWEB-Auth": build_internal_auth_header_value(secret=secret, team_id=TEAM,
+                        principal_type="u", principal_id=principal, actor_id=str(bob.id)),
+                }
+                arguments = {"address" if creator == "add_contact" else "contact_address": "example.test/alice"}
+                response = await env.client.post("/contact-mcp/", headers=headers, json={
+                    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                    "params": {"name": creator, "arguments": arguments},
+                })
+                assert response.status_code == 200, response.text
+                result = response.json()
+                assert "error" not in result, result
+                added = json.loads(result["result"]["content"][0]["text"])
+                assert "error" not in added, added
+            elif creator == "rest":
+                response = await request(bob, TEAM, "/v1/contacts", {"contact_address": "example.test/alice"})
+                assert response.status_code == 200, response.text
+            else:
+                home = tmp_path / ".aw"
+                home.mkdir(mode=0o700)
+                _pem(home / "signing.key", "ED25519 PRIVATE KEY", bob.sk)
+                (home / "identity.yaml").write_text(json.dumps(dict(did=bob.did, stable_id=identities["bob"],
+                    address="example.test/bob", custody="self", identity_scope="global")))
+                (home / "certificate.json").write_text(json.dumps(json.loads(base64.b64decode(bob.certificate))))
+                membership = dict(team_id=TEAM, alias="bob", cert_path="certificate.json")
+                (home / "teams.yaml").write_text(json.dumps(dict(active_team=TEAM, memberships=[membership])))
+                (home / "workspace.yaml").write_text(json.dumps(dict(aweb_url=str(env.client.base_url),
+                    memberships=[dict(membership, workspace_id=str(bob.workspace))])))
+                child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AW_", "AWEB_", "AWID_", "OATS_"))}
+                child_env.update(HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"), AWID_REGISTRY_URL=registry_origin,
+                                 AW_NO_UPDATE_CHECK="1")
+                command = await asyncio.create_subprocess_exec(os.environ["AW_TEST_CLI_BINARY"], "--identity-home", str(home),
+                    "contacts", "add", "example.test/alice", "--json", cwd=tmp_path, env=child_env,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                output, error = await asyncio.wait_for(command.communicate(), 30)
+                assert command.returncode == 0, (output.decode(), error.decode())
+            row = await env.db.fetch_one("SELECT * FROM {{tables.contacts}} WHERE owner_did=$1", identities["bob"])
+            assert row["contact_did_aw"] == identities["alice"]
+            assert row["binding_controller_did"] == env.team_did
+            assert row["binding_accepted_at"] is not None
+            assert row["status"] == "active"
+            await send_both(200)
+        finally:
+            if mcp is not None:
+                await mcp.shutdown()
+            await authority.resolver.aclose()

@@ -41,3 +41,16 @@ from an older server may contain a downgraded value. The B2 CLI compatibility
 change and the OATS steward's explicit post-create assertion are required parts
 of the combined acceptance; neither a 200 response nor an unpublished local
 source override establishes release qualification.
+
+New active identity contacts must carry the exact DID/controller binding from
+the shared authority resolver. REST contact creation (also used by the CLI),
+MCP `add_contact` and its `contacts_add` compatibility alias use that resolver;
+missing or unavailable authority refuses creation. Accepted-delivery contact
+learning writes only a complete binding. Pending handle contacts are not active
+identity contacts and do not admit delivery.
+
+Legacy address-only contacts already fail to admit non-team senders under
+`team_and_contacts` in server 1.27.32. This release leaves them inert; it does
+not infer identity continuity from an address creation timestamp or perform
+a backfill. The owner may explicitly bind the contact, or remove and re-add it
+through the current authority-resolved creation path.
