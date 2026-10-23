@@ -27,7 +27,8 @@ live rows; the caller must establish identity-level authority in that same
 transaction. The lock options are mutually exclusive. A provisioning default
 is used only if there are no existing rows, never for missing policies.
 
-A self-custodial or BYOD identity sets its own policy with a signed request;
+A self-custodial or BYOD identity sets its own policy with a signed request
+whose global identity binding authentication has verified;
 Cloud team owners cannot change it. For a custodial identity, only owner/admin
 of the organization owning its address namespace may act on its behalf, with
 custody and namespace ownership checked under lock. New identity provisioning

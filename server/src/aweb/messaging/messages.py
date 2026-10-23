@@ -130,7 +130,10 @@ def _is_global_recipient(recipient_agent: dict) -> bool:
 
 
 async def _effective_inbound_mode(db, recipient_agent: dict) -> str:
-    return await effective_inbound_mode(db.get_manager("aweb"), str(recipient_agent.get("did_aw") or ""))
+    # Raw identity facts select policy, never routing or mutation authority.
+    # Direct service fixtures may omit the separate policy projection.
+    policy_did_aw = recipient_agent.get("policy_did_aw", recipient_agent.get("did_aw"))
+    return await effective_inbound_mode(db.get_manager("aweb"), str(policy_did_aw or ""))
 
 
 def _identity_dids_from_agent(agent: dict) -> list[str]:

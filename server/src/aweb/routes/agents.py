@@ -674,14 +674,13 @@ async def update_my_inbound_mode(
     state = await _load_current_agent_inbound_mode(db, identity)
     if state.identity_scope != "global":
         raise HTTPException(status_code=409, detail="inbound_mode is only configurable for global identities")
+    # Only authentication's verified global identity may select an identity-wide
+    # write. A membership row's raw claim is not identity authority.
+    did_aw = str(identity.did_aw or "").strip()
+    if not did_aw.startswith("did:aw:"):
+        raise HTTPException(status_code=409, detail="Agent identity migration required")
     aweb_db = db.get_manager("aweb")
     async with aweb_db.transaction() as tx:
-        did_aw = await tx.fetch_value(
-            "SELECT did_aw FROM {{tables.agents}} WHERE team_id=$1 AND agent_id=$2::UUID AND deleted_at IS NULL",
-            identity.team_id, identity.agent_id,
-        )
-        if not str(did_aw or "").startswith("did:aw:"):
-            raise HTTPException(status_code=409, detail="Agent identity migration required")
         await set_identity_inbound_mode(tx, did_aw, payload.inbound_mode)
     return await _load_current_agent_inbound_mode(db, identity)
 

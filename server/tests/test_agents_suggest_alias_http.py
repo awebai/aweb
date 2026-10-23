@@ -778,6 +778,7 @@ async def test_patch_my_inbound_mode_updates_global_agent_policy(aweb_cloud_db, 
         team_id="backend:acme.com",
         alias="alice",
         identity_scope="global",
+        member_did_aw="did:aw:alice",
     )
     cert_header = _encode_certificate(cert)
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)

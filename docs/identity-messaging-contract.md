@@ -53,7 +53,8 @@ mode present: `contacts_only`, then `team_and_contacts`, then `open`. Any missin
 or invalid row policy fails closed with the migration-required refusal. A mode
 change by the identity updates all those rows; a new membership inherits the
 current effective mode. Team ownership alone does not authorize a policy change.
-The existing identity-signed "my inbound mode" route provides that authority.
+The identity-signed "my inbound mode" route uses the authenticated, AWID-bound
+`did:aw` for the change; a stored membership claim cannot select its write scope.
 
 The modes are:
 
