@@ -275,3 +275,37 @@ async def test_stored_result_identity_cannot_override_the_current_scoped_receipt
         ref=admission.intent_id, authorization=authorization()
     )
     assert reply.status == 503 and "must-not-return" not in json.dumps(reply.body)
+
+
+async def test_owner_inspection_does_not_disclose_another_members_projected_entity(db, fence):  # noqa: F811
+    _, admission, dispatch_id, _ = await prepared(db, fence)
+    sanitized = {
+        "state": "result_withheld",
+        "request_id": "broker-request",
+        "request_ref": admission.intent_id,
+        "code": "credential_shaped",
+        "result": {"status": 201, "body": None, "upstream_bytes": 40},
+    }
+    await db.execute(
+        "UPDATE {{tables.dispatches}} SET state='completed', result=$2::jsonb WHERE dispatch_id=$1",
+        dispatch_id,
+        json.dumps(sanitized),
+    )
+    async with db.transaction() as tx:
+        await assign(tx, principal_key(BOB), "secrets.owner")
+    service = UseStatus(db, fence=fence)
+    for state in ("result_withheld", "completed"):
+        if state == "completed":
+            sanitized = {**sanitized, "state": state, "result": {"body": "requester-only-entity"}}
+            sanitized.pop("code")
+            await db.execute(
+                "UPDATE {{tables.dispatches}} SET result=$2::jsonb WHERE dispatch_id=$1",
+                dispatch_id,
+                json.dumps(sanitized),
+            )
+        own = await service.get(ref=admission.intent_id, authorization=authorization())
+        assert own.body == sanitized
+        inspection = await service.get(ref=admission.intent_id, authorization=authorization(BOB))
+        assert inspection.status == 200 and inspection.body["state"] == state
+        assert "result" not in inspection.body
+        assert inspection.body.get("code") == sanitized.get("code")

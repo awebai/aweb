@@ -99,7 +99,9 @@ class UseStatus:
                             409, tool_results.refused("generation_superseded", request_id=None)
                         )
                     else:
-                        reply = await self._reply(tx, row, ref)
+                        reply = await self._reply(
+                            tx, row, ref, own=row["principal_did"] == key.principal_did
+                        )
                 # SQL/approval reads may wait: sample F6 after all of them.
                 await self._fence.check(tx, scope)
                 return reply
@@ -119,7 +121,9 @@ class UseStatus:
             grant.grant_id == row["grant_id"] and grant.capability == "use" for grant in grants
         )
 
-    async def _reply(self, tx: TransactionManager, row: Mapping[str, Any], ref: str) -> ToolReply:
+    async def _reply(
+        self, tx: TransactionManager, row: Mapping[str, Any], ref: str, *, own: bool
+    ) -> ToolReply:
         receipt = {"request_id": row["request_id"], "request_ref": row["intent_id"]}
         state = State(row["state"])
         link = await tx.fetch_one(
@@ -189,6 +193,10 @@ class UseStatus:
                 return self._unavailable(receipt)
             body = {**receipt, "state": stored["state"]}
             for field in ("result", "code"):
+                # Governance inspection exposes state/code, not another
+                # member's projected entity (secrets §11.2).
+                if field == "result" and not own:
+                    continue
                 if field in stored:
                     body[field] = copy.deepcopy(stored[field])
             return ToolReply(200, body)
