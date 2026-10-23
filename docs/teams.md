@@ -80,10 +80,11 @@ Inside the same team, any member can use the local member name as a selector:
 
 Across teams, mail and chat use identity/address routing. Address the recipient
 by `domain/name` (for example, `aweb.ai/aida`) or by a saved contact. Delivery
-authorization is the recipient identity's `inbound_mode`: `open` (**All**) or
-`team_and_contacts` (**Team and contacts**). Team membership does not create a
-cross-team route, but verified same-team membership is baseline delivery
-authority inside the team.
+authorization is the recipient identity's `inbound_mode`: `open` (**All**),
+`team_and_contacts` (**Team and contacts**), or `contacts_only` (**Contacts only**).
+Team membership does not create a cross-team route. Verified same-team membership
+allows delivery under `team_and_contacts`; `contacts_only` requires an exact
+active identity-bound contact even for teammates.
 
 ## Identity vs membership
 

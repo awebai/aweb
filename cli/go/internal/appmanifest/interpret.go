@@ -240,7 +240,7 @@ func validateCommon(manifest Manifest, reservedNames map[string]bool) error {
 		return err
 	}
 	for _, tool := range manifest.Tools {
-		if err := validateTool(tool, reservedNames); err != nil {
+		if err := validateTool(tool); err != nil {
 			return err
 		}
 	}
@@ -292,12 +292,15 @@ func validateEventEmitters(emitters []EventEmitter) error {
 	return nil
 }
 
-func validateTool(tool Tool, reservedNames map[string]bool) error {
+func validateTool(tool Tool) error {
 	if strings.TrimSpace(tool.Name) == "" {
 		return fmt.Errorf("tool.name is required")
 	}
-	if reservedNames != nil && reservedNames[strings.TrimSpace(tool.Name)] {
-		return fmt.Errorf("tool name %q is reserved built-in command or alias", tool.Name)
+	// Root commands belong to aw, not this app namespace. Only the local
+	// dispatcher's help command and aliases are unavailable as tool names.
+	switch strings.TrimSpace(tool.Name) {
+	case "help", "--help", "-h":
+		return fmt.Errorf("tool name %q is reserved by the app dispatcher", tool.Name)
 	}
 	method := strings.ToUpper(strings.TrimSpace(tool.Method))
 	if !validMethod(method) {
@@ -396,9 +399,6 @@ func Interpret(req InterpretRequest) (*InterpretedRequest, error) {
 	tool, err := findTool(manifest.Tools, req.Verb)
 	if err != nil {
 		return nil, err
-	}
-	if req.ReservedNames != nil && req.ReservedNames[strings.TrimSpace(tool.Name)] {
-		return nil, fmt.Errorf("tool name %q is reserved built-in command or alias", tool.Name)
 	}
 	method := strings.ToUpper(strings.TrimSpace(tool.Method))
 	if !validMethod(method) {

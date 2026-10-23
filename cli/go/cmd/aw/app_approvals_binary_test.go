@@ -9,12 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
 
@@ -40,16 +40,25 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	}))
 	defer server.Close()
 	body.Store([]byte(appTestManifest(server.URL, "/v1/things/{thing_id}")))
+	installation := installationWireFixture(t, func() []byte { return body.Load().([]byte) })
+	coordination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) || installation(w, r) {
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer coordination.Close()
 	writeResident := func(parent, scope string) string {
 		t.Helper()
 		pub, key, err := awid.GenerateKeypair()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(parent), key); err != nil {
-			t.Fatal(err)
-		}
-		writeIdentityForTest(t, parent, awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(pub), StableID: awid.ComputeStableID(pub), Custody: awid.CustodySelf, IdentityScope: scope})
+		writeSelectionFixtureForTest(t, parent, testSelectionFixture{
+			AwebURL: coordination.URL, TeamID: "approvals:example.test", Alias: "alice", WorkspaceID: "fixture",
+			DID: awid.ComputeDIDKey(pub), StableID: awid.ComputeStableID(pub), Custody: awid.CustodySelf,
+			IdentityScope: scope, SigningKey: key,
+		})
 		return filepath.Join(parent, ".aw")
 	}
 	homes := []string{}
@@ -83,7 +92,31 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	}
 	for i, home := range homes {
 		cwd := []string{empty, decoy}[i]
-		invoke(cwd, home, "", "plugin", "install", server.URL)
+		installed := invoke(cwd, home, "", "plugin", "install", server.URL)
+		var receipt struct {
+			IdentityHome            string   `json:"identity_home"`
+			ExistingGrantsUnchanged bool     `json:"existing_grants_unchanged"`
+			GrantRefreshCommand     []string `json:"grant_refresh_command"`
+			GrantCheckError         string   `json:"grant_check_error"`
+			GrantRestartCommand     []string `json:"grant_restart_command"`
+		}
+		if err := json.Unmarshal(installed, &receipt); err != nil || receipt.IdentityHome != home || !receipt.ExistingGrantsUnchanged {
+			t.Fatalf("install receipt: %s (%v)", installed, err)
+		}
+		if len(receipt.GrantRefreshCommand) < 7 || receipt.GrantRefreshCommand[1] != "--identity-home" || receipt.GrantRefreshCommand[2] != home {
+			t.Fatalf("replacement grant command: %v", receipt.GrantRefreshCommand)
+		}
+		ttl := slices.Index(receipt.GrantRefreshCommand, "--ttl")
+		if ttl < 0 || ttl+1 >= len(receipt.GrantRefreshCommand) || receipt.GrantRefreshCommand[ttl+1] != "<ttl>" {
+			t.Fatalf("replacement must require a lifetime choice: %v", receipt.GrantRefreshCommand)
+		}
+		custody := slices.Index(receipt.GrantRefreshCommand, "--custody-socket")
+		if custody < 0 || custody+1 >= len(receipt.GrantRefreshCommand) || receipt.GrantRefreshCommand[custody+1] != "auto" {
+			t.Fatalf("replacement must select resident custody: %v", receipt.GrantRefreshCommand)
+		}
+		if receipt.GrantCheckError != "unavailable" || len(receipt.GrantRestartCommand) == 0 {
+			t.Fatalf("offline install must report unknown grant status and retain recovery: %s", installed)
+		}
 		cat, err := loadAppApprovals(home)
 		if err != nil || cat.Apps["testapp"] != server.URL {
 			t.Fatalf("approval selected home: %v", err)
@@ -124,6 +157,21 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	}
 	invoke(empty, homes[0], "app_origin_mismatch", "plugin", "update", "testapp")
 	invoke(empty, homes[0], "", "plugin", "install", server.URL) // explicit reinstall reapproves
+	// A reinstall at another origin that fails to register leaves the
+	// approved origin as it was, so later updates still work.
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
+		_, _ = w.Write([]byte(appTestManifest(serverOriginForTest(r), "/v1/things/{thing_id}")))
+	}))
+	defer other.Close()
+	invoke(empty, homes[0], "app_origin_conflict", "plugin", "install", other.URL)
+	if cat, err := loadAppApprovals(homes[0]); err != nil || cat.Apps["testapp"] != server.URL {
+		t.Fatalf("refused install changed the approved origin: %v %v", cat.Apps, err)
+	}
+	body.Store([]byte(appTestManifest(server.URL, "/v1/things/{thing_id}")))
+	invoke(empty, homes[0], "", "plugin", "update", "testapp")
 	// Executable collisions are refused without invoking or overwriting anything.
 	executable := filepath.Join(dir, pluginExecutableName("testapp"))
 	marker := filepath.Join(root, "executed")
@@ -166,6 +214,7 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(empty, ".aw")); !os.IsNotExist(err) {
 		t.Fatal("empty instance gained principal state")
 	}
+
 	// JSON output distinguishes installed discovery from approval removal.
 	var removed pluginRemoveOutput
 	if err := os.Remove(executable); err != nil {
@@ -174,4 +223,57 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	if err := json.Unmarshal(invoke(empty, homes[0], "", "plugin", "remove", "testapp"), &removed); err != nil || !removed.ApprovalRemoved {
 		t.Fatalf("remove receipt: %v", err)
 	}
+	t.Run("stalled_resolution", func(t *testing.T) {
+		// Authoritative installation must finish first. Then a real TCP listener
+		// stalls advisory discovery; its deadline covers all candidates together.
+		var installed atomic.Bool
+		var probes atomic.Int32
+		stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if serveUnadvertisedHealth(w, r) {
+				return
+			}
+			if installation(w, r) {
+				if r.Method == http.MethodPost {
+					installed.Store(true)
+				}
+				return
+			}
+			if !installed.Load() && r.Method == http.MethodGet && r.URL.Path == "/v1/agents/heartbeat" {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			probes.Add(1)
+			<-r.Context().Done()
+		}))
+		defer stalled.Close()
+		pub, key, err := awid.GenerateKeypair()
+		if err != nil {
+			t.Fatal(err)
+		}
+		parent := filepath.Join(root, "connected-resident")
+		writeSelectionFixtureForTest(t, parent, testSelectionFixture{
+			AwebURL: stalled.URL, TeamID: "backend:acme.com", Alias: "alice",
+			WorkspaceID: "advisory-budget", DID: awid.ComputeDIDKey(pub),
+			Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: key,
+		})
+		t.Setenv("AWEB_URL", stalled.URL)
+		var receipt struct {
+			Approved        bool   `json:"approved"`
+			ActiveGrants    *int   `json:"active_grants"`
+			GrantCheckError string `json:"grant_check_error"`
+		}
+		command := exec.CommandContext(ctx, bin, "--identity-home", filepath.Join(parent, ".aw"), "--json", "plugin", "install", server.URL)
+		command.Dir = empty
+		command.Env = append(os.Environ(), "AW_NO_UPDATE_CHECK=1")
+		out, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("install during stalled discovery: %v %s", err, out)
+		}
+		if err := json.Unmarshal(out, &receipt); err != nil || !receipt.Approved || receipt.ActiveGrants != nil || receipt.GrantCheckError != "unavailable" {
+			t.Fatalf("stalled advisory must retain successful install with unknown count: %s (%v)", out, err)
+		}
+		if probes.Load() != 1 {
+			t.Fatalf("advisory restarted its budget across %d discovery probes; want one", probes.Load())
+		}
+	})
 }

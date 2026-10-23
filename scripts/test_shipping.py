@@ -52,6 +52,10 @@ class TagContractTest(unittest.TestCase):
         (root / "naapp-lib/pyproject.toml").write_text(
             '[project]\nname = "aweb-naapp"\nversion = "0.1.0"\n', encoding="utf-8"
         )
+        (root / "naapp-lib/testing").mkdir()
+        (root / "naapp-lib/testing/pyproject.toml").write_text(
+            '[project]\nname = "aweb-naapp-testing"\nversion = "0.1.0"\n', encoding="utf-8"
+        )
         for directory, version in (
             ("channel", "3.4.5"),
             ("pi-extension", "4.5.6"),
@@ -126,12 +130,15 @@ class PypiLaneContractTest(unittest.TestCase):
     def test_each_pypi_lane_publishes_the_package_its_manifest_names(self):
         import tomllib
 
-        for prefix, (package, directory, _needs_awid) in PUBLISH.PYPI_LANES.items():
+        for prefix, (_needs_awid, packages) in PUBLISH.PYPI_LANES.items():
             manifest = PUBLISH.MANIFESTS[prefix]
-            self.assertEqual(Path(manifest).parent.as_posix(), directory, prefix)
-            project = tomllib.loads((ROOT / manifest).read_text(encoding="utf-8"))["project"]
-            self.assertEqual(project["name"], package, prefix)
+            self.assertEqual(Path(manifest).parent.as_posix(), packages[0][1], prefix)
             self.assertEqual(CANDIDATE.MANIFESTS[prefix], manifest, prefix)
+            lockstep = [f"{directory}/pyproject.toml" for _, directory in packages[1:]]
+            self.assertEqual(CANDIDATE.LOCKSTEP.get(prefix, []), lockstep, prefix)
+            for package, directory in packages:
+                project = tomllib.loads((ROOT / directory / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+                self.assertEqual(project["name"], package, prefix)
 
     def test_the_aweb_naapp_lane_waits_for_awid_then_builds_naapp_lib(self):
         temporary, root = TagContractTest.repository(self)
@@ -167,6 +174,78 @@ class PypiLaneContractTest(unittest.TestCase):
         self.assertEqual(asked, ["https://pypi.org/pypi/awid-service/2.3.4/json"])
         self.assertEqual(built[0][:2], ("uv", "build"))
         self.assertEqual(built[0][-1], "naapp-lib")
+
+
+    def _recording_publisher(self):
+        originals = (PUBLISH.run, PUBLISH.request_json, os.environ.get("UV_PUBLISH_TOKEN"))
+
+        def restore():
+            PUBLISH.run, PUBLISH.request_json = originals[0], originals[1]
+            if originals[2] is None:
+                os.environ.pop("UV_PUBLISH_TOKEN", None)
+            else:
+                os.environ["UV_PUBLISH_TOKEN"] = originals[2]
+
+        self.addCleanup(restore)
+        os.environ["UV_PUBLISH_TOKEN"] = "test-token-not-a-secret"
+        commands: list[tuple[str, ...]] = []
+
+        def run(_root, *argv, **_kwargs):
+            commands.append(argv)
+            return ""
+
+        PUBLISH.run, PUBLISH.request_json = run, lambda _url: (200, {})
+        return commands
+
+    def test_the_aweb_naapp_lane_publishes_naapp_lib_then_its_testing_package(self):
+        temporary, root = TagContractTest.repository(self)
+        self.addCleanup(temporary.cleanup)
+        commands = self._recording_publisher()
+        PUBLISH.publish_pypi(root, "aweb-naapp-v", "0.1.0")
+        built = [argv[-1] for argv in commands if argv[:2] == ("uv", "build")]
+        inspected = [argv[argv.index("--package") + 1] for argv in commands if "inspect-staged" in argv]
+        self.assertEqual(built, ["naapp-lib", "naapp-lib/testing"])
+        self.assertEqual(inspected, ["aweb-naapp", "aweb-naapp-testing"])
+
+    def test_a_lane_package_at_another_version_refuses_the_tag(self):
+        temporary, root = TagContractTest.repository(self)
+        self.addCleanup(temporary.cleanup)
+        (root / "naapp-lib/testing/pyproject.toml").write_text(
+            '[project]\nname = "aweb-naapp-testing"\nversion = "0.0.9"\n', encoding="utf-8"
+        )
+        command(root, "git", "commit", "-qam", "drifted")
+        with self.assertRaisesRegex(CANDIDATE.CandidateRefusal, "naapp-lib/testing"):
+            CANDIDATE.validate_tags(root, ["aweb-naapp-v0.1.0"])
+        command(root, "git", "tag", "-a", "aweb-naapp-v0.1.0", "-m", "tested")
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "naapp-lib/testing"):
+            PUBLISH.tag_identity(root, "aweb-naapp-v0.1.0")
+
+
+class CandidateBrowserImageContractTest(unittest.TestCase):
+    def test_integration_image_installs_the_locked_headless_shell(self):
+        dockerfile = (ROOT / "candidate-gate/Dockerfile").read_text()
+        commands = " ".join(dockerfile.replace("\\\n", " ").split())
+        self.assertIn("ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright", dockerfile)
+        sync = "uv sync --frozen --project naapp-lib"
+        install = (
+            "uv run --frozen --no-sync --project naapp-lib "
+            "playwright install --with-deps --only-shell chromium"
+        )
+        self.assertIn(sync, commands)
+        self.assertIn(install, commands)
+        self.assertLess(commands.index(sync), commands.index(install))
+        self.assertIn("chmod -R a+rX /opt/ms-playwright", commands)
+        for project in ("awid", "naapp-lib"):
+            self.assertIn(f"COPY {project} {project}", dockerfile)
+        wrapper = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
+        self.assertIn('-f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout"', wrapper)
+
+    def test_integration_home_override_keeps_the_image_browser_path(self):
+        wrapper = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
+        runner = wrapper.split("set +e\ndocker run --rm --init", 1)[1]
+        runner = runner.split('bash scripts/candidate-suite.sh "$pending"', 1)[0]
+        self.assertIn('-e HOME="$checkout/.candidate-home"', runner)
+        self.assertIn("-e PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright", runner)
 
 
 class ReleaseStampContractTest(unittest.TestCase):

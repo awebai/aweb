@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 36
+`docs/vectors/*.json` is the only public protocol-vector authority for the
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the two classified
 package copies below. An unclassified hand-maintained copy is forbidden even when
@@ -26,6 +26,7 @@ The other tracked vector directories have disjoint, explicit purposes:
 |---|---|
 | `cli/go/internal/conformance/vectors/` | Consumer-local Go fixtures plus the byte-enforced `team-auth-envelope-v2.json` package copy linked by the currently pinned naapp reference generator. |
 | `naapp-lib/src/aweb_naapp/hooks/catalog-v1.json` | The byte-enforced package copy of `hook-catalog-v1.json`, shipped in the naapp-lib wheel so an installed app loads the catalog (`aweb_naapp.hooks.catalog.packaged_catalog`) with no repository checkout. |
+| `naapp-lib/tests/vectors/` | External cryptographic known-answer fixtures: `hpke-rfc9180-base-x25519.json` pins RFC 9180 upstream test-vector data for `test_crypto_hpke.py`; it is not an aweb public protocol vector. |
 | `naapp/folio/tests/vectors/` | App test snapshots; `app-emit-credential-v1.json` is byte-checked against its Go consumer authority. |
 | `naapp/library/tests/vectors/` | App snapshots plus Library blueprint input/output goldens; the app-emit snapshot is byte-checked. |
 | `naapp/secrets/vectors/` | secrets' app-internal contracts: the `aweb.secrets.use-approval/1` request object under B2's prefix, and the transition-to-hook-action table checked against `hook-catalog-v1.json`. Each file is consumed by a test in `naapp/secrets/tests/`. |
@@ -94,6 +95,17 @@ refusal case for every verification step on either side. Signing keys are
 fixed seeds; sealed values were generated once and are checked by opening them.
 Credential plaintexts are fixtures. secrets' `test_runner_protocol_vectors.py`
 consumes every case.
+
+### `secrets-runner-http-v1.json`
+
+[Runner protocol §4](../secrets-runner-protocol.md#4-http-bodies-reports-and-credential-fields)
+body bytes and their private request-binding hashes, six-field result refusals,
+combined UTF-8 bounds, declared env-field families and report-state expectations.
+No credential material is present. The contract reference reader in
+`test_runner_protocol_vectors.py` consumes every case. Mounted server/runner
+implementations still owe nonce, release, CAS, late-evidence and redaction-context
+proofs; these examples do not authorize a dispatch. The existing signed/sealed
+`secrets-runner-protocol-v1.json` bytes are unchanged.
 
 ### `message-signing-v1.json`
 
@@ -230,6 +242,61 @@ bundle decision-card digest across languages. The reference consumer is
 `aweb_naapp.pages` in `naapp-lib/tests/pages/`. See
 [the page format](../page-format.md).
 
+### `app-task-authorization-v1.json`
+
+The member-signed `aweb.app-task-authorization/1` (aweb-acgg.8): task body
+digests, domain-prefixed signing bytes and base64url signatures under fixed
+test keys, verification cases at a pinned clock with the bindings each is
+checked against and its expected refusal code, strict-JSON refusals, and task
+body bounds. The reference consumers are `aweb_naapp.runtime.task_requests` in
+`naapp-lib/tests/runtime/` and `aw`'s signer in `cli/go/awid/`. See [app task requests](../app-task-requests.md).
+
+### `app-request-credential-v1.json`
+
+The `app-request` purpose of the app credential family (aweb-acgg.8): one
+request's signed payload, canonical bytes, signature and headers, plus
+request-level refusals for the task service's verifier. The reference consumer
+is `aweb_naapp.runtime.task_requests`. See
+[app task requests](../app-task-requests.md) §2.
+
+### `task-answer-v1.json`
+
+Conditional task answers (aweb-acgg.8): answer text digests, the app's stage
+receipt with its refusals, and ordered steps for a decision task (eligible
+answerers, stage-gate refusals, replay, reopen and conflicts) and a plain
+task, with the expected result of each. The answer digests are checked by `aweb_naapp.runtime.task_requests`; the
+sequence is for the task service. See
+[app task requests](../app-task-requests.md) §4.
+
+### `page-action-prepare-v1.json`
+
+Intent preparation (aweb-acgg.8): prepare responses with their task digests and
+authorization bindings, the member's completed and signed payload, the
+signer's pre-signing checks with their refusals, and ordered prepare, submit,
+replay and renewal steps with the expected result of each. The responses and
+checks are checked by `aweb_naapp.runtime.task_requests`; the sequence is for a
+pages naapp. See [page actions](../page-actions.md) §3.
+
+### `link-request-v1.json`
+
+Capability-link requests (aweb-acgg.10): secret verifiers, and
+`aweb.link-request/1` payloads, signing bytes and Ed25519 signatures by a
+session key, with verification cases that give the request each payload must
+bind and the clock. The reference consumer is `aweb_naapp.runtime.link_requests`
+in `naapp-lib/tests/runtime/`. See [page links](../page-links.md) §2–§3.
+
+### `link-capability-v1.json`
+
+Capability-link semantics (aweb-acgg.10), for the app that serves links:
+delegation against the creator's authority, one link's ordered use steps
+(projection, constraints, nonce replay and idempotent retry, Origin and CSRF,
+narrowing when the creator loses authority, stream re-checks, revocation),
+receipt retries after use, revocation and expiry, asset grants for native
+media, revocation and one-use races under the link's row lock, and exchange
+rate limiting that a stranger cannot turn against a holder. The delegation and
+lockout cases are checked by `aweb_naapp.runtime.capability_links`. See
+[page links](../page-links.md) §1 and §4–§6.
+
 ### `page-proposal-v1.json`
 
 `proposal_sha256` for page proposals (aweb-acgg.8): canonical bytes and
@@ -237,6 +304,42 @@ digests over a record's collection, id and value, a bundle built from item
 digests, and value refusals. The reference consumers are `aweb_naapp.pages` in
 `naapp-lib/tests/pages/` and `cli/go/awid/`. See
 [the page format](../page-format.md) §5.
+
+### `decision-display-v1.json`
+
+What a decision card shows (aweb-acgg.8): the host's evidence carries the
+task's signed `options` and `fields`, and each case gives a card's options and
+a record value with the expected display, in bound order with bound labels and
+formats, or the reason the card is refused (options differ, a bound field is
+missing, a money field has no ISO 4217 currency). It is for the shared
+renderer and its host. See [page actions](../page-actions.md) §5.
+
+### `approval-request-v1.json`
+
+The approval primitive's `request_sha256` and challenge binding
+(aweb-acgg.8, aweb-acgh.4): the covered canonical bytes with the policy
+wrapper, digests for page decisions and a generic request, challenge bindings
+with and without a task answer and per candidate, the requester rule at mint
+and decide each way, and refusals. Its consumer is the approval primitive in
+`aweb_naapp`. See [page actions](../page-actions.md) §6.
+### `usage-report-v1.json`
+
+`aweb.usage/1` report batches (aweb-acgg.11): valid batches with canonical
+bytes and `report_sha256`, refused batches, one installation's ordered
+collector steps (retry, conflict, gap and fill, overlap, out-of-order
+snapshot, reporter epoch) with the expected ack and totals, and the lifecycle
+grant of a retired installation, each case marked as decidable from the batch
+or needing the collector's state. The reference consumer is
+`aweb_naapp.runtime.usage` in `naapp-lib/tests/runtime/`. See
+[app usage](../app-usage.md).
+
+### `app-usage-credential-v1.json`
+
+The `app-usage` purpose of the app credential family (aweb-acgg.11): one
+report's signed payload, canonical bytes, signature and headers, and
+collector refusals, including purpose separation in both directions and a
+key that does not declare `app-usage`. See [app usage](../app-usage.md) §4.
+
 
 ### `agent-status-v1.json`
 
@@ -281,13 +384,28 @@ Ingress separation is the required `type` at every route. Athena and the
 protocol reviewer ACKed these bytes at `4502edac0` before either side
 implemented them; changing them needs a new version.
 
+### `passkey-evidence-v1.json`
+
+Decision 84's retained assertion, frozen context, exact framed SHA-256 input
+and commitment of [the public hook contract](../hook-events.md#passkey-evidence-commitments-and-console-actors).
+Real ES256 login/approval assertions have public COSE keys and independent
+fixture trust anchors; private keys existed only in generator memory and are
+not retained. Cases cover raw client-data bytes, B2 domain/wrapper hashing,
+null task-answer challenge fields, UTF-8 scope, UTC microseconds and the
+identity-free console actor with a different affected subject. Single-fault
+cases reject missing/substituted proof/key/context, changed request/policy,
+reserialization, counters and commitments. The independent Python reader is
+`naapp-lib/tests/hooks/test_passkey_evidence_vector.py`. Verification needs no
+live service or commitment secret. B3's real retention transaction, shared
+helper and lifecycle/deletion proofs remain implementation obligations.
+
 ### `hook-catalog-v1.json`
 
 The `aweb.hooks` catalog, version 1 (aweb-acgh.16.1; contract in
 [`hook-events.md`](../hook-events.md)). It names the five hooks with their
 firing class, producer kinds, audit-critical rule and precedence. It holds each
 hook's flat payload allowlist: value types with patterns and bounds, required
-fields, enums (including the 28 `post-secret-use-hook` refusal codes), the
+fields, enums (including the 33 `post-secret-use-hook` refusal codes), the
 conditional rules, each `post-governance-hook` act's fixed direction, every
 `post-mutation-hook` type with its own fields, and the `post-command-hook`
 command classes with their local effects. Positive cases validate. Each
@@ -297,9 +415,31 @@ reference, a rule violation, a direction that differs from the catalog's, and an
 effect outside its command class. A payload that this file may not hold, such
 as a float, is given as JSON text in `payload_json`. The strict reader in
 `aweb_naapp.hooks.catalog` refuses the whole file on any unknown key, duplicate
-key, float or unresolved reference. Any payload change, including an addition,
-is a new catalog version. secrets' `test_hook_actions_vector.py` checks its
-transition-to-action table against it.
+key, float or unresolved reference. Once a deployed hook producer or consumer
+exists, a payload change, including an addition, requires a new catalog version
+and explicit consumer updates. Until that first deployment, pre-release shapes
+are re-frozen in place (decisions 44, 73 and 93), without parallel compatibility
+versions. Published library code alone does not establish a deployed hook
+producer or consumer. The deployment condition must be verified before an
+in-place re-freeze. secrets' `test_hook_actions_vector.py` checks its
+transition-to-action table against the catalog.
+
+Decision 92 adds catalog cases for the exclusive non-widening
+`resource.version_observed` / `backend_observation` mapping, its required opaque
+refs and fixed reason, and rejection of invented owner/passkey evidence, other
+acts using observation authority, raw values and provider versions. Invalid
+observed shape and an unresolved reference have pre-S3 refusal examples;
+post-fence `not_sent` retains its existing prohibition on `refusal_code`.
+
+Decision 73 deliberately re-freezes the pre-deployment secret-use shape in
+place: `request_sha256` and `params_sha256` have HMAC-SHA-256 meaning, and
+`completed`/`stored_as_secret` requires `derived_secret_id` and
+`derived_grant_id` together, forbidden elsewhere. The paired creation case and
+single-fault negatives are part of this vector. Its managed package copy and
+secrets' transition examples change in the same stack. The envelope vector's
+old plain-SHA demonstration is removed without changing signed cases;
+producer MAC input/lifecycle proofs belong to K4/S13. There is no parallel
+catalog version because no deployed producer or consumer uses this hook.
 
 ### `hook-binding-cases-v1.json`
 
@@ -532,8 +672,9 @@ reference duplication are mutation-tested failures.
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
-| `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` |
-| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; folio `test_auth_v2_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
+| `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` and production-server `test_runner_server_protocol.py` |
+| `secrets-runner-http-v1.json` | secrets `test_runner_protocol_vectors.py` |
+| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-authority-state-v1.json` | Python AWID `test_federation_authority_vectors.py`; Python aweb `test_federation_authority_core.py`, `test_federation_authority_schema.py`, and pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go`; generated `federation-error-reference.md` response-shape cross-check through `generate_federation_error_reference.py` (reason/status/retryability source is `awid/src/awid/federation_errors.py`); federation SOT/support coverage in `check-extension-docs.py` |
@@ -588,3 +729,35 @@ npm test
 
 A vector change is incomplete until every listed consumer for that fixture
 passes and the lifecycle label above still describes what the bytes prove.
+
+## Human-channel P0 freeze candidate
+
+- `human-channels-profile-v1.json` — exact new DTO grammar/capability registry;
+  not an advertised service feature. Python/Go compiled grammar is checked against
+  this authority.
+- `human-channels-v1.json` — shared structural canonical bytes, digest/signature
+  and refusal vectors with a public synthetic key. These do not establish actual
+  owner, recipient, membership or custody authority.
+
+The [P0 contract](../human-channels-contract-v1.md) fixes the public embedding
+ports and signature boundary. X-E2/X-GF encrypted re-share/federation annexes
+remain refused until exact-SHA Athena review; current native fixtures are unchanged.
+
+`human-channels-e2ee-spike.json` is an **unfrozen** X-E2 laboratory fixture, consumed by `server/tests/test_human_channels_e2ee_spike.py` and `cli/go/awid/human_channels_e2ee_spike_test.go`. It enables no profile.
+
+## Human-channel presence verification
+
+`human-channels-presence-v1.json` supplies P8's exact native/binding approval
+signatures, verified DTOs and refusal neighbors. Python and Go read the root
+bytes directly. The embedded contexts are **trusted test authority facts**, not
+a public request/context wire format; consumers must build those facts from
+independent authenticated current sources. No P0/native fixture is rewritten.
+
+## Human-channel participant identity readiness
+
+`human-channels-participants-v1.json` is shared by Python and Go participant
+helpers. Its synthetic **private** adapter inputs test session-pairwise HMAC
+derivation; they are never message/provenance fields. Author projections test
+exact session/subject/signer binding and external/untrusted guest assurance.
+They assume independently verified signer facts and do not authorize membership
+or activate managed chat. See [P3 readiness](../human-channels-participants.md).

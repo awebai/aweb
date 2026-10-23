@@ -174,6 +174,10 @@ second relying-party surface after team-auth, and the only public one.
   random `token`, the `document_id`, the pinned `version_number`, an
   `expires_at`, and the minting identity, and returns `{token, url,
   expires_at}`.
+- **Folio lifetimes**: read-only links default to one day and accept up to
+  30 days (`2592000` seconds), or a lower operator-configured maximum. Explicit
+  requests above that maximum return `422` instead of being clamped. Editable
+  links remain limited to 300 seconds.
 - **Pinned by default**: the link freezes the version at mint time, so the
   audience sees exactly what was sent. Following latest is a possible later
   option, never the default.
@@ -278,7 +282,7 @@ aw id request PUT https://<atext-host>/v1/theme \
 
 # present the current version to an outsider; hand the url to your human
 aw id request POST https://<atext-host>/v1/present \
-  --team-auth --body '{"slug":"pitch","ttl_seconds":604800}'
+  --team-auth --body '{"slug":"pitch","ttl_seconds":2592000}'
 #   -> {"token":"...","url":"https://<atext-host>/present/<token>","expires_at":"..."}
 
 # revoke the link when the round closes

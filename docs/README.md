@@ -187,6 +187,14 @@ presented as shipped.
   and 2, variant discovery, and the byte-identical CLI interpretation contract.
 - [App registry and team grants](app-registry.md) — current experimental install,
   digest-pin, and grants read surface.
+- [Page format](page-format.md) — the frozen `aweb.page/1` page snapshot
+  format, its validator and conformance vectors.
+- [Page actions, decisions and approvals](page-actions.md) — specified
+  experimental contract for page actions, proposal digests and approval
+  adapters, not yet shipped.
+- [App task requests and conditional answers](app-task-requests.md) — specified
+  experimental contract for member-authorized app task creation and conditional
+  task answers, not yet shipped.
 - [App-emitted events and subscriptions](app-events.md) — shipped experimental
   emit auth, subscription, SSE, and channel-core consumer contract.
 - [Support contract v1](support-contract-v1.md) — current registry-read envelope

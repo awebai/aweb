@@ -42,9 +42,8 @@ func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
 		"aw claim-human --email you@example.com",
 		"claude plugin marketplace add awebai/claude-plugins",
 		"claude plugin install aweb-channel@awebai-marketplace",
-		"claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace",
-		"channel messages are delivered to the session only in",
-		"bypass-permissions mode today",
+		"claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace",
+		"Channel delivery works in any permission mode, including auto and plan.",
 		"pi install npm:@awebai/pi@latest",
 		"https://aweb.ai/docs/cli-tutorial.md",
 	} {
@@ -52,7 +51,7 @@ func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
 			t.Fatalf("missing %q in next steps:\n%s", want, text)
 		}
 	}
-	for _, unwanted := range []string{"aw run codex", "aw run claude", "docs/agent-guide.md", "https://aweb.ai/agent-guide.md"} {
+	for _, unwanted := range []string{"--dangerously-skip-permissions", "aw run codex", "aw run claude", "docs/agent-guide.md", "https://aweb.ai/agent-guide.md"} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("unexpected %q in next steps:\n%s", unwanted, text)
 		}
@@ -66,11 +65,11 @@ func TestInitNextStepLinesLocalDirAllDoneStillShowsChannelLaunch(t *testing.T) {
 	}, t.TempDir(), true, true, true)
 	text := strings.Join(lines, "\n")
 
-	if !strings.Contains(text, "claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace") {
+	if !strings.Contains(text, "claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace") {
 		t.Fatalf("missing channel launch instruction:\n%s", text)
 	}
-	if !strings.Contains(text, "bypass-permissions mode today") {
-		t.Fatalf("missing the reason both launch flags are required:\n%s", text)
+	if !strings.Contains(text, "Channel delivery works in any permission mode, including auto and plan.") {
+		t.Fatalf("missing the permission-mode guidance:\n%s", text)
 	}
 	if !strings.Contains(text, "pi install npm:@awebai/pi@latest") {
 		t.Fatalf("missing the Pi wake-up path:\n%s", text)
@@ -78,7 +77,7 @@ func TestInitNextStepLinesLocalDirAllDoneStillShowsChannelLaunch(t *testing.T) {
 	if !strings.Contains(text, "https://aweb.ai/docs/cli-tutorial.md") {
 		t.Fatalf("missing CLI tutorial URL:\n%s", text)
 	}
-	for _, unwanted := range []string{"aw init --inject-docs", "aw init --setup-channel", "aw claim-human", "docs/agent-guide.md", "https://aweb.ai/agent-guide.md"} {
+	for _, unwanted := range []string{"--dangerously-skip-permissions", "aw init --inject-docs", "aw init --setup-channel", "aw claim-human", "docs/agent-guide.md", "https://aweb.ai/agent-guide.md"} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("unexpected %q in next steps:\n%s", unwanted, text)
 		}
@@ -93,10 +92,8 @@ func TestChannelLaunchInstructionsCarryInstallLaunchWhyAndPi(t *testing.T) {
 	for _, want := range []string{
 		"claude plugin marketplace add awebai/claude-plugins",
 		"claude plugin install aweb-channel@awebai-marketplace",
-		"claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace",
-		"channel messages are delivered to the session only in",
-		"bypass-permissions mode today",
-		"--dangerously-skip-permissions there are no wake-ups",
+		"claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace",
+		"Channel delivery works in any permission mode, including auto and plan.",
 		"confirm --dangerously-load-development-channels; that is expected",
 		"pi install npm:@awebai/pi@latest",
 		"sender's verification shown",
@@ -104,6 +101,9 @@ func TestChannelLaunchInstructionsCarryInstallLaunchWhyAndPi(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in channel launch instructions:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "--dangerously-skip-permissions") {
+		t.Fatalf("channel instructions prescribe a permission mode:\n%s", text)
 	}
 }
 

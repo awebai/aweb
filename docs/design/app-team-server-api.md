@@ -374,7 +374,9 @@ parameter, so an app can read only its own grant.
   Each refresh has a request timeout (configuration, default 5 s). A caller
   waiting on it receives unavailable when it fires, so the staleness bound is
   `max_age_seconds` itself, with no unbounded refresh on top.
-- A definitive "not granted" may be cached for the same window.
+- A definitive "not granted" may be cached for the same window, except
+  `403 app_key_not_registered`, which is cached for at most five seconds so
+  an immediate post-install retry does not retain a minute-long denial.
 - Concurrent misses for one `(team, app)` share one refresh.
 
 ### Revocation bound, stated honestly

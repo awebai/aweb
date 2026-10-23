@@ -1,27 +1,26 @@
 from __future__ import annotations
 
-from typing import Self
+from aweb_naapp.runtime.settings import NaappSettings
+from aweb_naapp.runtime.team_auth import DidAwProfile
+from pydantic import Field
+from pydantic_settings import SettingsConfigDict
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-class Settings(BaseSettings):
-    """Runtime configuration for folio."""
+class Settings(NaappSettings):
+    """Runtime configuration for folio: the shared naapp settings under FOLIO_."""
 
     model_config = SettingsConfigDict(env_prefix="FOLIO_", env_file=".env", extra="ignore")
 
     database_url: str = Field(default="postgresql://localhost/folio")
-    awid_registry_url: str = Field(default="https://api.awid.ai")
-    awid_service_token: str | None = Field(default=None, repr=False)
     public_origin: str = Field(default="http://127.0.0.1:8765")
-    auth_cache_ttl_seconds: int = Field(default=600, ge=1)
-    timestamp_skew_seconds: int = Field(default=300, ge=1)
+    app_id: str = Field(default="folio")
+    # Folio already serves released aw callers, so it observes the did:aw
+    # current-key check rather than requiring it. It moves to REQUIRE in its own
+    # change, once observe measurement shows no refused live callers and Juan
+    # approves (the aweb-acgh.11 rollout).
+    did_aw_profile: DidAwProfile = DidAwProfile.OBSERVE
     default_present_ttl_seconds: int = Field(default=86_400, ge=1)
-    max_present_ttl_seconds: int = Field(default=604_800, ge=1)
-    db_pool_min_connections: int = Field(default=1, ge=1)
-    db_pool_max_connections: int = Field(default=5, ge=1)
-    db_statement_cache_size: int = Field(default=0, ge=0)
+    max_present_ttl_seconds: int = Field(default=2_592_000, ge=1, le=2_592_000)
     cloudflare_api_base: str = Field(default="https://api.cloudflare.com/client/v4")
     cloudflare_account_id: str | None = None
     cloudflare_stream_api_token: str | None = None
@@ -31,17 +30,6 @@ class Settings(BaseSettings):
     cloudflare_stream_direct_upload_ttl_seconds: int = Field(default=3_600, ge=60)
     cloudflare_stream_signed_playback_ttl_seconds: int = Field(default=3_600, ge=60)
     cloudflare_stream_max_duration_seconds: int = Field(default=600, ge=1)
-    app_id: str = Field(default="folio")
-    app_events_origin: str | None = None
-    app_emit_kid: str | None = None
-    app_emit_key_seed_hex: str | None = None
-    app_emit_timeout_seconds: float = Field(default=3.0, gt=0)
-
-    @model_validator(mode="after")
-    def validate_db_pool(self) -> Self:
-        if self.db_pool_max_connections < self.db_pool_min_connections:
-            raise ValueError("db_pool_max_connections must be >= db_pool_min_connections")
-        return self
 
 
 def get_settings() -> Settings:

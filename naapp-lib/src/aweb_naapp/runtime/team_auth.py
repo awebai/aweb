@@ -17,6 +17,7 @@ signed the request, not that the signer may perform it; see
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -57,6 +58,8 @@ TEAM_AUTH_ENVELOPE_V2 = 2
 MAX_TIMESTAMP_SKEW_SECONDS = 300
 # AWID team facts are reused for at most a minute; a longer configured TTL is clamped.
 MAX_TEAM_FACTS_TTL_SECONDS = 60
+# Unknown certificates may force one full-history refresh per team in this window.
+UNKNOWN_CERTIFICATE_REFRESH_SECONDS = 5
 _B64URL_NO_PADDING = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -91,10 +94,30 @@ class Principal:
 
 
 @dataclass(frozen=True)
+class MembershipProof:
+    """Checked mint evidence and its original AWID facts' freshness window.
+
+    Both times use time.monotonic(): checked_at is the facts' fetch-start,
+    fresh_until their expiry, never renewed by issuing a proof on a cache hit.
+    This object is in-process only: never serialize, persist, accept it from a
+    request or compare it across processes. Under the link lock, the consumer
+    must match all three identity fields to immutable mint evidence and read
+    its monotonic clock again to reject an expired proof.
+    """
+
+    team_id: str
+    certificate_id: str
+    team_did_key: str
+    checked_at: float
+    fresh_until: float
+
+
+@dataclass(frozen=True)
 class CachedTeamFacts:
     team_did_key: str
     published_certificate_ids: frozenset[str]
     revoked_certificate_ids: frozenset[str]
+    fetched_at: float
     expires_at: float
 
 
@@ -103,6 +126,18 @@ class CachedDidKey:
     # None when the registry answered that it has no such DID.
     current_did_key: str | None
     expires_at: float
+
+
+def _require_active_certificate(facts: CachedTeamFacts, certificate_id: str) -> None:
+    if certificate_id not in facts.published_certificate_ids:
+        raise HTTPException(status_code=401, detail="Unknown AWID certificate")
+    if certificate_id in facts.revoked_certificate_ids:
+        raise HTTPException(status_code=401, detail="Team certificate has been revoked")
+
+
+def _current_member_refusal(status_code: int) -> HTTPException:
+    code = "current_member_required" if status_code == 403 else "current_membership_unavailable"
+    return HTTPException(status_code=status_code, detail={"code": code})
 
 
 def _raise_if_private_team_unreadable(response: httpx.Response) -> None:
@@ -143,6 +178,9 @@ class AWIDTeamCache:
             else {}
         )
         self._cache: dict[str, CachedTeamFacts] = {}
+        self._team_refresh_locks: dict[str, asyncio.Lock] = {}
+        self._unknown_refresh_at: dict[str, float] = {}
+        self._team_refresh_errors: dict[str, tuple[int, Any]] = {}
         self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = {}
         self._did_keys: dict[tuple[str, str], CachedDidKey] = {}
         self._transport = transport
@@ -152,6 +190,63 @@ class AWIDTeamCache:
             return httpx.AsyncClient(timeout=10.0)
         return httpx.AsyncClient(timeout=10.0, transport=self._transport)
 
+    async def require_current_member(
+        self, team_id: str, *, certificate_id: str, team_did_key: str
+    ) -> None:
+        """Check membership without retaining a proof. May perform network I/O;
+        call before opening any transaction. See :meth:`check_current_member`."""
+        await self.check_current_member(
+            team_id, certificate_id=certificate_id, team_did_key=team_did_key
+        )
+
+    async def check_current_member(
+        self, team_id: str, *, certificate_id: str, team_did_key: str
+    ) -> MembershipProof:
+        """Check mint-time Principal evidence before any transaction or lock.
+
+        The caller supplies its verified team scope and the recorded certificate
+        id and signing team key, never an observed-principal row. AWID must still
+        publish that certificate as active under the same current team key.
+        Facts share request authentication's cache, bounded to 60 seconds.
+
+        Incomplete evidence or authority loss raises 403/current_member_required;
+        unreadable or unavailable registry facts raise 503/current_membership_unavailable.
+        This checks membership only, not the creator's page or installation ACLs.
+        The returned proof retains the facts' original monotonic freshness
+        window; facts already past their expiry cannot issue a fresh proof.
+        """
+        if (
+            not isinstance(certificate_id, str) or not certificate_id.strip()
+            or not isinstance(team_did_key, str) or not team_did_key.strip()
+        ):
+            raise _current_member_refusal(403)
+        try:
+            parse_team_id(team_id)
+            public_key_from_did(team_did_key)
+        except ValueError as exc:
+            raise _current_member_refusal(403) from exc
+        try:
+            facts = await self.get(team_id, certificate_id)
+            public_key_from_did(facts.team_did_key)
+            _require_active_certificate(facts, certificate_id)
+        except HTTPException as exc:
+            # A private registry that we cannot read is unavailable evidence,
+            # not proof that the recorded member lost their authority.
+            raise _current_member_refusal(403 if exc.status_code == 401 else 503) from exc
+        except ValueError as exc:
+            raise _current_member_refusal(503) from exc
+        if team_did_key != facts.team_did_key:
+            raise _current_member_refusal(403)
+        if time.monotonic() > facts.expires_at:
+            raise _current_member_refusal(503)
+        return MembershipProof(
+            team_id=team_id,
+            certificate_id=certificate_id,
+            team_did_key=team_did_key,
+            checked_at=facts.fetched_at,
+            fresh_until=facts.expires_at,
+        )
+
     async def get(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
         if not self._headers:
             if not certificate_id:
@@ -159,9 +254,53 @@ class AWIDTeamCache:
             return await self._get_certificate_status(team_id, certificate_id)
         now = time.monotonic()
         cached = self._cache.get(team_id)
-        if cached and cached.expires_at > now:
+        if cached and cached.expires_at > now and (
+            certificate_id is None or certificate_id in cached.published_certificate_ids
+        ):
             return cached
 
+        lock = self._team_refresh_locks.setdefault(team_id, asyncio.Lock())
+        async with lock:
+            now = time.monotonic()
+            cached = self._cache.get(team_id)
+            fresh = cached is not None and cached.expires_at > now
+            if cached is not None and fresh and (certificate_id is None or certificate_id in cached.published_certificate_ids):
+                return cached
+            last_refresh = self._unknown_refresh_at.get(team_id)
+            if last_refresh is not None and now - last_refresh < UNKNOWN_CERTIFICATE_REFRESH_SECONDS:
+                if cached is not None and fresh:
+                    return cached
+                failure = self._team_refresh_errors.get(team_id)
+                if failure is not None:
+                    raise HTTPException(status_code=failure[0], detail=failure[1])
+
+            # Count every attempt before I/O, so cold/expired-cache outages also
+            # coalesce. Cached failures never substitute for usable team facts.
+            self._unknown_refresh_at[team_id] = now
+            try:
+                facts = await self._refresh_team_facts(team_id, now)
+            except HTTPException as exc:
+                if exc.status_code == 401 and exc.detail == "Unknown AWID team":
+                    # Do not retain attacker-selected nonexistent teams. Check
+                    # identity because another waiter may still own this lock.
+                    if self._team_refresh_locks.get(team_id) is lock:
+                        self._team_refresh_locks.pop(team_id, None)
+                        self._unknown_refresh_at.pop(team_id, None)
+                        self._team_refresh_errors.pop(team_id, None)
+                else:
+                    self._team_refresh_errors[team_id] = (exc.status_code, exc.detail)
+                    # A slow failure must not consume its own retry window and
+                    # make every waiter repeat the same upstream timeout.
+                    self._unknown_refresh_at[team_id] = time.monotonic()
+                raise
+            self._team_refresh_errors.pop(team_id, None)
+            if not fresh and (certificate_id is None or certificate_id in facts.published_certificate_ids):
+                # An ordinary successful load does not consume the early-refresh
+                # allowance for a certificate published immediately afterwards.
+                self._unknown_refresh_at.pop(team_id, None)
+            return facts
+
+    async def _refresh_team_facts(self, team_id: str, now: float) -> CachedTeamFacts:
         domain, team_name = parse_team_id(team_id)
         try:
             async with self._client() as client:
@@ -235,6 +374,7 @@ class AWIDTeamCache:
             team_did_key=team_did_key,
             published_certificate_ids=frozenset(published),
             revoked_certificate_ids=frozenset(revoked),
+            fetched_at=now,
             expires_at=now + self.ttl_seconds,
         )
         self._cache[team_id] = facts
@@ -291,6 +431,7 @@ class AWIDTeamCache:
             team_did_key=payload["team_did_key"],
             published_certificate_ids=frozenset({certificate_id}),
             revoked_certificate_ids=revoked,
+            fetched_at=now,
             expires_at=now + self.ttl_seconds,
         )
         self._certificate_cache[cache_key] = facts
@@ -516,6 +657,24 @@ def _verify_certificate_signature(cert: dict[str, Any], team_did_key: str) -> No
         raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
+async def require_active_certificate(
+    team_cache: AWIDTeamCache, *, team_id: str, certificate_id: str,
+) -> CachedTeamFacts:
+    """Require controller-published, unrevoked membership through the shared cache.
+
+    This checks current publication, not the certificate signature or the
+    caller's request signature. Consumers (including event ingestion) must
+    verify those signed artifacts as well. Unknown/revoked membership is 401;
+    unavailable authority retains the cache's 503 failure.
+    """
+    try:
+        facts = await team_cache.get(team_id, certificate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid AWID team id") from exc
+    _require_active_certificate(facts, certificate_id)
+    return facts
+
+
 async def authenticate_request(
     request: Request,
     *,
@@ -563,14 +722,9 @@ async def authenticate_request(
         body=body,
     )
 
-    try:
-        facts = await team_cache.get(team_id, certificate_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Invalid AWID team id") from exc
-    if certificate_id not in facts.published_certificate_ids:
-        raise HTTPException(status_code=401, detail="Unknown AWID certificate")
-    if certificate_id in facts.revoked_certificate_ids:
-        raise HTTPException(status_code=401, detail="Team certificate has been revoked")
+    facts = await require_active_certificate(
+        team_cache, team_id=team_id, certificate_id=certificate_id,
+    )
     _verify_certificate_signature(cert, facts.team_did_key)
 
     did_aw = str(cert.get("member_did_aw") or "").strip() or None

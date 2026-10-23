@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: library
       POSTGRES_DB: library
     ports:
-      - "${LIBRARY_E2E_POSTGRES_PORT:-55432}:5432"
+      - "${NAAPP_E2E_POSTGRES_PORT:-55432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U library -d library"]
       interval: 2s
@@ -39,7 +39,7 @@ services:
       AWID_SKIP_DNS_VERIFY: "1"
       AWID_SERVICE_TOKEN: ${LIBRARY_E2E_AWID_SERVICE_TOKEN:-library-e2e-awid-service-token-0123456789abcdef}
     ports:
-      - "${LIBRARY_E2E_AWID_PORT:-18010}:8010"
+      - "${NAAPP_E2E_AWID_PORT:-18010}:8010"
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,7 +70,7 @@ services:
       AWID_SKIP_DNS_VERIFY: "1"
       AWID_SERVICE_TOKEN: ${LIBRARY_E2E_AWID_SERVICE_TOKEN:-library-e2e-awid-service-token-0123456789abcdef}
     ports:
-      - "${LIBRARY_E2E_OLD_AWID_PORT:-18011}:8010"
+      - "8010"
     depends_on:
       postgres:
         condition: service_healthy

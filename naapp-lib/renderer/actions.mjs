@@ -1,4 +1,4 @@
-import { element } from "./dom.mjs";
+import { element, chrome } from "./dom.mjs";
 import {
   inputErrors,
   typedValue,
@@ -192,10 +192,10 @@ export function createActions({ host, getPage, update, announce }) {
     return receipt;
   }
   function feedback(box) {
-    const error = element("p", null, "field-error");
+    const error = chrome("p", null, "field-error");
     error.setAttribute("role", "alert");
     error.hidden = true;
-    const status = element("p", null, "action-status");
+    const status = chrome("p", null, "action-status");
     status.setAttribute("role", "status");
     const recovery = element("div", null, "conflict-recovery");
     box.append(error, status, recovery);
@@ -250,14 +250,17 @@ export function createActions({ host, getPage, update, announce }) {
       update(page);
       assertCurrent(context);
       recovery.updated?.(page.rev);
-      const save = element("button", "Save my changes");
+      const save = chrome("button", recovery.saveLabel || "Save my changes");
       save.type = "button";
       save.onclick = (event) => {
         if (!event.isTrusted) return;
         assertCurrent(context);
         recovery.save(page.rev);
       };
-      const discard = element("button", "Discard my changes");
+      const discard = chrome(
+        "button",
+        recovery.discardLabel || "Discard my changes",
+      );
       discard.type = "button";
       discard.onclick = (event) => {
         if (!event.isTrusted) return;
@@ -348,10 +351,8 @@ export function createActions({ host, getPage, update, announce }) {
       const group = element("div", null, "form-field");
       const isRequired =
         field.required || action.input_schema.required?.includes(field.id);
-      const label = element(
-        "label",
-        field.label + (isRequired ? " (required)" : ""),
-      );
+      const label = element("label", field.label);
+      if (isRequired) label.append(chrome("span", " (required)"));
       const id = `field-${w.id}-${field.id}`;
       label.htmlFor = id;
       let input;
@@ -376,6 +377,7 @@ export function createActions({ host, getPage, update, announce }) {
                   : "text";
       }
       input.id = id;
+      if (field.kind === "file" || field.kind === "date") input.lang = "en";
       input.name = field.id;
       input.dataset.focusKey = `field:${field.id}`;
       const required =
@@ -402,7 +404,7 @@ export function createActions({ host, getPage, update, announce }) {
       input.addEventListener("change", () => {
         baseRev ??= getPage()?.rev;
       });
-      const error = element("p", null, "field-error");
+      const error = chrome("p", null, "field-error");
       error.id = `${id}-error`;
       error.hidden = true;
       input.setAttribute("aria-describedby", `${id}-description ${error.id}`);
@@ -541,7 +543,18 @@ export function createActions({ host, getPage, update, announce }) {
                 ) {
                   control.error.hidden = false;
                   control.error.classList.add("conflict-message");
-                  control.error.textContent = `Changed while you were editing: now ${fieldValueText(control.field, latest[id])}`;
+                  const value = element(
+                    "bdi",
+                    fieldValueText(control.field, latest[id]),
+                  );
+                  value.lang =
+                    control.field.kind === "checkbox"
+                      ? "en"
+                      : getPage().locale || "en";
+                  control.error.replaceChildren(
+                    "Changed while you were editing: now ",
+                    value,
+                  );
                 }
               }
             },
@@ -596,19 +609,21 @@ export function createActions({ host, getPage, update, announce }) {
     const label = element("label", p.label);
     const input = element("input");
     input.type = "file";
+    input.lang = "en";
     input.id = `upload-${w.id}`;
     label.htmlFor = input.id;
     input.accept = p.accept.join(",");
-    const selected = element(
+    const selected = chrome(
       "p",
       `${fileTypes(p.accept)}, up to ${fileSize(p.max_bytes)}.`,
       "field-description",
     );
-    const submit = element("button", "Upload");
+    const submit = chrome("button", "Upload");
     submit.type = "submit";
     submit.disabled = !policy(p.action, { widget_id: w.id }).allowed;
     let file,
-      pending = false;
+      pending = false,
+      baseRev;
     input.onchange = () => {
       file = input.files[0];
       selectionChanged();
@@ -633,6 +648,7 @@ export function createActions({ host, getPage, update, announce }) {
       event.preventDefault();
       if (pending || !event.isTrusted) return;
       const selectedFile = file;
+      ui.status.textContent = "";
       const message = acceptableFile(selectedFile, p.accept, p.max_bytes);
       if (message) {
         ui.error.hidden = false;
@@ -646,12 +662,15 @@ export function createActions({ host, getPage, update, announce }) {
       }
       pending = true;
       submit.disabled = true;
+      submit.hidden = false;
+      ui.recovery.replaceChildren();
+      ui.error.classList.remove("conflict-message");
       node.setAttribute("aria-busy", "true");
       ui.status.textContent = "Uploading…";
       ui.error.hidden = true;
       let context;
       try {
-        context = capture(w, p.action);
+        context = capture(w, p.action, undefined, baseRev);
         const digest = await fileDigest(selectedFile);
         assertCurrent(context);
         const request = {
@@ -676,7 +695,33 @@ export function createActions({ host, getPage, update, announce }) {
         ui.status.textContent = `${selectedFile.name} uploaded.`;
         announce(ui.status.textContent);
       } catch (error) {
-        await showError(ui, error, undefined, context);
+        ui.status.textContent = "";
+        await showError(
+          ui,
+          error,
+          {
+            saveLabel: "Retry upload",
+            discardLabel: "Discard file",
+            updated() {
+              submit.hidden = true;
+              ui.error.classList.add("conflict-message");
+            },
+            save(revision) {
+              baseRev = revision;
+              node.requestSubmit(submit);
+            },
+            discard(revision) {
+              baseRev = revision;
+              file = undefined;
+              input.value = "";
+              submit.hidden = false;
+              ui.error.classList.remove("conflict-message");
+              restoreFocus(input, ui.status, context);
+              announce("File selection discarded.");
+            },
+          },
+          context,
+        );
       } finally {
         pending = false;
         node.setAttribute("aria-busy", "false");

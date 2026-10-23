@@ -1,0 +1,1294 @@
+{
+  "version": 1,
+  "description": "Conditional task answers (docs/app-task-requests.md §4). answer_sha256 is the bare hex SHA-256 of the UTF-8 bytes of body_md, which is the team-visible comment. `stage_receipt` pins the app's aweb.app-answer-stage/1. `sequence` is one decision task's ordered steps and `plain_sequence` a task without an app_request, each step with its expected result. expected_task_rev 'current' is the task's rev at that step, 'stale' an earlier one, 'missing' absent; 'proposal' 'task' sends the task's proposal fields, 'changed' a different proposal_sha256, 'none' no proposal; same_receipt_as names the step index (0-based) whose receipt is returned unchanged. 'as' is the answering member: 'assignee', 'colleague' and 'former_holder' are in the task's eligible_dids, and only 'former_holder' no longer holds its role; 'other_member' is not eligible. A step's stage_receipt is 'valid' unless stated: issued by the app for exactly that request's fields, signed with its app-request key, with a fresh nonce (or the named one). 'not_issued' and 'missing' send none, 'wrong_key' is signed with a key registered only for app-event, 'reused_nonce' carries a nonce already recorded, 'expired' is past its window. Every refused step commits nothing and records no nonce.",
+  "bodies": [
+    {
+      "name": "plain",
+      "body_md": "Approve. The new rate is 120 EUR per night.",
+      "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce"
+    },
+    {
+      "name": "non-ascii",
+      "body_md": "D'acord — café «terrace» 🙂",
+      "answer_sha256": "71eece9a2cdca7cbad85f58283476a26d01826bacc004ec59cd04ad7ef4b4aef"
+    },
+    {
+      "name": "newlines-kept",
+      "body_md": "Line one\r\nLine two\n",
+      "answer_sha256": "19f3005e7b8e839bb23668dada696eae7970dc2bd33ae4cd27c8da2b96ecb3b0"
+    },
+    {
+      "name": "markdown",
+      "body_md": "**Reject**: please keep the current price.\n\n- reason: occupancy",
+      "answer_sha256": "6d7687f3d0f6982ff6e7d496becadfbb2e7eb5668e110d2c1515d38096b0fe6c"
+    }
+  ],
+  "keys": {
+    "app": {
+      "seed_hex": "2121212121212121212121212121212121212121212121212121212121212121",
+      "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2"
+    }
+  },
+  "stage_receipt": {
+    "prefix": "aweb.app-answer-stage/1\n",
+    "max_lifetime_seconds": 300,
+    "max_issued_at_skew_seconds": 60,
+    "signer": "app",
+    "bindings": [
+      "team_id",
+      "app_id",
+      "installation_id",
+      "installation_generation",
+      "task_id",
+      "question_rev",
+      "answer_key",
+      "answer_sha256",
+      "choice",
+      "proposal_rev",
+      "proposal_sha256",
+      "answerer_did"
+    ],
+    "valid": {
+      "payload": {
+        "v": 1,
+        "type": "aweb.app-answer-stage",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "installation_generation": 3,
+        "kid": "pages-request-1",
+        "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+        "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+        "question_rev": 1,
+        "answer_key": "a1",
+        "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+        "choice": "approve",
+        "proposal_rev": 2,
+        "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+        "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+        "issued_at": "2026-10-20T12:05:00Z",
+        "expires_at": "2026-10-20T12:10:00Z",
+        "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+      },
+      "signing_bytes": "aweb.app-answer-stage/1\n{\"answer_key\":\"a1\",\"answer_sha256\":\"6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce\",\"answerer_did\":\"did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V\",\"app_id\":\"pages\",\"choice\":\"approve\",\"did_key\":\"did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2\",\"expires_at\":\"2026-10-20T12:10:00Z\",\"installation_generation\":3,\"installation_id\":\"inst_01JB7Q\",\"issued_at\":\"2026-10-20T12:05:00Z\",\"kid\":\"pages-request-1\",\"nonce\":\"c0ffee00c0ffee00c0ffee00c0ffee00\",\"proposal_rev\":2,\"proposal_sha256\":\"sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb\",\"question_rev\":1,\"task_id\":\"6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20\",\"team_id\":\"backend:acme.com\",\"type\":\"aweb.app-answer-stage\",\"v\":1}",
+      "signature": "3GiB3opAj6OhTjjcNyqicSWb_zAPeT0Oe70y_pmhjfOS_KvXPYJk3aY46MQ_Ls6uXpKY1LUNnvptcIfkGkL9Aw"
+    },
+    "verification_cases": [
+      {
+        "name": "valid",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "3GiB3opAj6OhTjjcNyqicSWb_zAPeT0Oe70y_pmhjfOS_KvXPYJk3aY46MQ_Ls6uXpKY1LUNnvptcIfkGkL9Aw",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": null
+      },
+      {
+        "name": "unknown-field",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00",
+          "role": "pages.price-approver"
+        },
+        "signature": "gP4Sudu0aogIwicClTB3UD0mxeb_DrLYu5NSijywM-xn9rwDJs9geP7he_F3JktwQMLv2-gh3qQCTK9AMG_TCg",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "signature_invalid"
+      },
+      {
+        "name": "wrong-type",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-task-authorization",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "suz5Rp_sVXpEZpgaviBGY8fwGqWVtPoh0v4y9AjX1IfeiUAGwyreL3SNGKJgu5ktPkKe5iKO0-KQyA_AyMmWCA",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "signature_invalid"
+      },
+      {
+        "name": "lifetime-over-300s",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:01Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "yYzfjznjD6hewt8lT5keaWGh1zU0BWZPoaqLJ9evHSnbx10_9nWNXv7uP7EFFsy0rhSrz8YZSwEpsExGQguMDA",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "signature_invalid"
+      },
+      {
+        "name": "question-rev-zero",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 0,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "4csShTxE4Vyb4ZFWqB-vTCpwVabAvxaLBllTTw3FOuW5Yd05IUhr5CzRme4rbFh8O8tzzrsH_ftpLAJUxSF-Aw",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "signature_invalid"
+      },
+      {
+        "name": "did-key-not-signer",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "h63pdSB6AygVyuXotoXUVriSk-zi4GyWAaB1S_o5JWAeTXAfqT0XcAX8skzUwoextMsFN2UpcxVMu1fUpIr9CA",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "signature_invalid"
+      },
+      {
+        "name": "signed-by-member-key",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "bdYO2J-wxRqDiw9_2lu3Mvfh0zM7oqw9MqiSCfXsaPIOZXCBkvh_c85rIWWDne33Ssid25zkgAINH8L6KD6bAg",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "signature_invalid"
+      },
+      {
+        "name": "authorization-prefix",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "Y_B5guxujujzrCxmxY6LySgSxr17l9MjDIe7Xsg1P946abV2fGoAEO7o_kUG5Z5aeiyvfjwljb9Hum988-aUBQ",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "signature_invalid",
+        "note": "signed under the task authorization prefix; the prefixes keep the artifacts apart"
+      },
+      {
+        "name": "expired",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "3GiB3opAj6OhTjjcNyqicSWb_zAPeT0Oe70y_pmhjfOS_KvXPYJk3aY46MQ_Ls6uXpKY1LUNnvptcIfkGkL9Aw",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:10:00Z",
+        "expect": "authorization_expired"
+      },
+      {
+        "name": "not-yet-valid",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "3GiB3opAj6OhTjjcNyqicSWb_zAPeT0Oe70y_pmhjfOS_KvXPYJk3aY46MQ_Ls6uXpKY1LUNnvptcIfkGkL9Aw",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:03:59Z",
+        "expect": "authorization_expired"
+      },
+      {
+        "name": "answerer-mismatch",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "3GiB3opAj6OhTjjcNyqicSWb_zAPeT0Oe70y_pmhjfOS_KvXPYJk3aY46MQ_Ls6uXpKY1LUNnvptcIfkGkL9Aw",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "target_mismatch"
+      },
+      {
+        "name": "answer-digest-mismatch",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "3GiB3opAj6OhTjjcNyqicSWb_zAPeT0Oe70y_pmhjfOS_KvXPYJk3aY46MQ_Ls6uXpKY1LUNnvptcIfkGkL9Aw",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "d9298a10d1b0735837dc4bd85dac641b0f3cef27a47e5d53a54f2f3f5b2fcffa",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "target_mismatch"
+      },
+      {
+        "name": "question-rev-mismatch",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "3GiB3opAj6OhTjjcNyqicSWb_zAPeT0Oe70y_pmhjfOS_KvXPYJk3aY46MQ_Ls6uXpKY1LUNnvptcIfkGkL9Aw",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 2,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "target_mismatch"
+      },
+      {
+        "name": "choice-mismatch",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "3GiB3opAj6OhTjjcNyqicSWb_zAPeT0Oe70y_pmhjfOS_KvXPYJk3aY46MQ_Ls6uXpKY1LUNnvptcIfkGkL9Aw",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "reject",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "target_mismatch",
+        "note": "staged one choice, committing another"
+      },
+      {
+        "name": "proposal-mismatch",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "3GiB3opAj6OhTjjcNyqicSWb_zAPeT0Oe70y_pmhjfOS_KvXPYJk3aY46MQ_Ls6uXpKY1LUNnvptcIfkGkL9Aw",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:d9298a10d1b0735837dc4bd85dac641b0f3cef27a47e5d53a54f2f3f5b2fcffa",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "target_mismatch"
+      },
+      {
+        "name": "proposal-rev-mismatch",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "3GiB3opAj6OhTjjcNyqicSWb_zAPeT0Oe70y_pmhjfOS_KvXPYJk3aY46MQ_Ls6uXpKY1LUNnvptcIfkGkL9Aw",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 3,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "target_mismatch"
+      },
+      {
+        "name": "choice-null-on-receipt",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": null,
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "7tvfFRHcJLEicIB1byOQM7GfjqwaGZBe_4GPXkMkC3HbY_Wf9H8mLwTEH4SMbAta3vGA7iPU2EQb2AXu2vBlBg",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "target_mismatch",
+        "note": "a receipt without the choice cannot serve an answer with one"
+      },
+      {
+        "name": "proposal-half-set",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": null,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "upi4wXq7pap-DiR30mXFAsQdXXGS8vu5A478Oea1zvsk2Qy7h3saMFwg6MUmGvZgS820vd2YuZ4jctMjM2wmCA",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "signature_invalid"
+      },
+      {
+        "name": "installation-mismatch",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "3GiB3opAj6OhTjjcNyqicSWb_zAPeT0Oe70y_pmhjfOS_KvXPYJk3aY46MQ_Ls6uXpKY1LUNnvptcIfkGkL9Aw",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_02",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "target_mismatch"
+      },
+      {
+        "name": "older-generation",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "3GiB3opAj6OhTjjcNyqicSWb_zAPeT0Oe70y_pmhjfOS_KvXPYJk3aY46MQ_Ls6uXpKY1LUNnvptcIfkGkL9Aw",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 4,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+        },
+        "now": "2026-10-20T12:05:30Z",
+        "expect": "target_mismatch",
+        "note": "a receipt signed under generation 3 after the installation moved to 4"
+      },
+      {
+        "name": "expired-and-mismatched",
+        "payload": {
+          "v": 1,
+          "type": "aweb.app-answer-stage",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "kid": "pages-request-1",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2",
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "issued_at": "2026-10-20T12:05:00Z",
+          "expires_at": "2026-10-20T12:10:00Z",
+          "nonce": "c0ffee00c0ffee00c0ffee00c0ffee00"
+        },
+        "signature": "3GiB3opAj6OhTjjcNyqicSWb_zAPeT0Oe70y_pmhjfOS_KvXPYJk3aY46MQ_Ls6uXpKY1LUNnvptcIfkGkL9Aw",
+        "expected": {
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+          "question_rev": 1,
+          "answer_key": "a1",
+          "answer_sha256": "6abbc472c30caf993fbf3be23b802735daed7c99d3cbdd3575afc0c17853f3ce",
+          "choice": "approve",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+          "answerer_did": "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+        },
+        "now": "2026-10-20T12:10:00Z",
+        "expect": "target_mismatch",
+        "note": "bindings are checked before time"
+      }
+    ]
+  },
+  "sequence": [
+    {
+      "step": "create",
+      "task": {
+        "choices": [
+          {
+            "value": "approve",
+            "label": "Approve"
+          },
+          {
+            "value": "reject",
+            "label": "Reject"
+          }
+        ],
+        "proposal_rev": 2,
+        "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+        "eligible": [
+          "assignee",
+          "colleague",
+          "former_holder"
+        ],
+        "role": "pages.price-approver"
+      },
+      "result": {
+        "status": 201,
+        "question_rev": 1
+      }
+    },
+    {
+      "step": "answer",
+      "as": "former_holder",
+      "expected_task_rev": "current",
+      "answer_key": "a0",
+      "choice": "approve",
+      "body": "plain",
+      "proposal": "task",
+      "stage_receipt": "not_issued",
+      "result": {
+        "status": 403,
+        "code": "target_mismatch"
+      },
+      "note": "still in the frozen eligible set but no longer holds the role, so the app issues no receipt; nothing commits"
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "a1",
+      "choice": "approve",
+      "body": "plain",
+      "proposal": "task",
+      "stage_receipt": "missing",
+      "result": {
+        "status": 403,
+        "code": "target_mismatch"
+      },
+      "note": "a decision answer without a stage receipt; nothing commits"
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "a1",
+      "choice": "approve",
+      "body": "plain",
+      "proposal": "task",
+      "stage_receipt": "wrong_key",
+      "nonce": "n1",
+      "result": {
+        "status": 403,
+        "code": "target_mismatch"
+      },
+      "note": "signed by an app key registered only for app-event, not app-request; nothing commits, and its nonce n1 is not recorded"
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "a1",
+      "choice": "approve",
+      "body": "plain",
+      "proposal": "task",
+      "stage_receipt": "valid",
+      "nonce": "n1",
+      "result": {
+        "status": 201,
+        "question_rev": 1,
+        "current": true,
+        "comment": "body"
+      },
+      "note": "the refused attempts above committed nothing; n1, carried by the refused wrong-key receipt, is accepted here, so it was not recorded"
+    },
+    {
+      "step": "answer",
+      "as": "colleague",
+      "expected_task_rev": "current",
+      "answer_key": "a3",
+      "choice": "reject",
+      "body": "markdown",
+      "proposal": "task",
+      "result": {
+        "status": 409,
+        "code": "revision_conflict"
+      },
+      "note": "an eligible colleague cannot answer an answered question; the first answer wins"
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "stale",
+      "answer_key": "a1",
+      "choice": "approve",
+      "body": "plain",
+      "proposal": "task",
+      "stage_receipt": "expired",
+      "result": {
+        "status": 200,
+        "same_receipt_as": 4
+      },
+      "note": "replay returns the original receipt; neither expected_task_rev nor the stage receipt is rechecked, even once the receipt has expired"
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "a1",
+      "choice": "reject",
+      "body": "markdown",
+      "proposal": "task",
+      "result": {
+        "status": 409,
+        "code": "idempotency_conflict"
+      }
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "a2",
+      "choice": "reject",
+      "body": "markdown",
+      "proposal": "task",
+      "result": {
+        "status": 409,
+        "code": "revision_conflict"
+      },
+      "note": "the task is closed and question 1 is answered"
+    },
+    {
+      "step": "reopen",
+      "result": {
+        "status": 200,
+        "question_rev": 2
+      }
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "a1",
+      "choice": "approve",
+      "body": "plain",
+      "proposal": "task",
+      "result": {
+        "status": 200,
+        "same_receipt_as": 4,
+        "current": false
+      }
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "stale",
+      "answer_key": "a2",
+      "choice": "reject",
+      "body": "markdown",
+      "proposal": "task",
+      "result": {
+        "status": 409,
+        "code": "revision_conflict"
+      }
+    },
+    {
+      "step": "answer",
+      "as": "other_member",
+      "expected_task_rev": "current",
+      "answer_key": "a2",
+      "choice": "reject",
+      "body": "markdown",
+      "proposal": "task",
+      "stage_receipt": "not_issued",
+      "result": {
+        "status": 403,
+        "code": "target_mismatch"
+      }
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "a2",
+      "choice": "reject",
+      "body": "markdown",
+      "proposal": "changed",
+      "result": {
+        "status": 409,
+        "code": "approval_changed"
+      }
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "a2",
+      "choice": "maybe",
+      "body": "markdown",
+      "proposal": "task",
+      "result": {
+        "status": 422,
+        "code": "schema_invalid"
+      }
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "a2",
+      "choice": "reject",
+      "body": "markdown",
+      "proposal": "task",
+      "answer_sha256": "mismatch",
+      "result": {
+        "status": 422,
+        "code": "schema_invalid"
+      }
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "missing",
+      "answer_key": "a2",
+      "choice": "reject",
+      "body": "markdown",
+      "proposal": "task",
+      "result": {
+        "status": 428,
+        "code": "precondition_required"
+      }
+    },
+    {
+      "step": "answer",
+      "as": "colleague",
+      "expected_task_rev": "current",
+      "answer_key": "a2",
+      "choice": "reject",
+      "body": "markdown",
+      "proposal": "task",
+      "stage_receipt": "reused_nonce",
+      "nonce": "n1",
+      "result": {
+        "status": 403,
+        "code": "target_mismatch"
+      },
+      "note": "a receipt valid for this request but carrying the nonce already recorded at step 4; nothing commits"
+    },
+    {
+      "step": "answer",
+      "as": "colleague",
+      "expected_task_rev": "current",
+      "answer_key": "a2",
+      "choice": "reject",
+      "body": "markdown",
+      "proposal": "task",
+      "stage_receipt": "valid",
+      "nonce": "n2",
+      "result": {
+        "status": 201,
+        "question_rev": 2,
+        "current": true,
+        "comment": "body",
+        "answered_by": "colleague"
+      },
+      "note": "any eligible holder may answer the reopened question"
+    },
+    {
+      "step": "read_receipt",
+      "answer_key": "a1",
+      "result": {
+        "status": 200,
+        "same_receipt_as": 4,
+        "current": false
+      }
+    },
+    {
+      "step": "read_receipt",
+      "answer_key": "a2",
+      "result": {
+        "status": 200,
+        "same_receipt_as": 18,
+        "current": true
+      }
+    }
+  ],
+  "plain_sequence": [
+    {
+      "step": "create",
+      "task": {
+        "plain": true,
+        "assignee": "assignee"
+      },
+      "result": {
+        "status": 200,
+        "question_rev": 1
+      },
+      "note": "a task without an app_request, created with the existing POST /v1/tasks, which returns 200 as released"
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "p1",
+      "choice": null,
+      "body": "plain",
+      "proposal": "none",
+      "stage_receipt": "valid",
+      "result": {
+        "status": 422,
+        "code": "schema_invalid"
+      },
+      "note": "a stage receipt is refused on a task that is not a decision; nothing commits"
+    },
+    {
+      "step": "answer",
+      "as": "assignee",
+      "expected_task_rev": "current",
+      "answer_key": "p1",
+      "choice": null,
+      "body": "plain",
+      "proposal": "none",
+      "stage_receipt": "missing",
+      "result": {
+        "status": 201,
+        "question_rev": 1,
+        "current": true,
+        "comment": "body"
+      }
+    }
+  ]
+}

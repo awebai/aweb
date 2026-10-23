@@ -164,23 +164,37 @@ async def _resolve_target_identity(
     if stored_route_continuation:
         return
     domain, name = _split_address(envelope.target_address)
-    try:
-        resolved = await registry_client.resolve_address(domain, name)
-    except AWID_DEPENDENCY_ERRORS as exc:
-        logger.warning(
-            "AWID registry dependency failed for federation target identity resolution",
-            exc_info=True,
-        )
-        raise FederationAuthorityError(
-            "federation_authority_coordination_unavailable"
-        ) from exc
-    except Exception as exc:
-        logger.exception(
-            "Unexpected AWID registry dependency error for federation target identity resolution"
-        )
-        raise FederationAuthorityError(
-            "federation_authority_coordination_unavailable"
-        ) from exc
+    # Admission can cache an address before its delivery origin is published.
+    # Refresh failed route facts once, retaining cached successful validation.
+    for fresh in (False, True):
+        try:
+            resolve = registry_client.resolve_address_fresh if fresh else registry_client.resolve_address
+            resolved = await resolve(domain, name)
+        except AWID_DEPENDENCY_ERRORS as exc:
+            logger.warning(
+                "AWID registry dependency failed for federation target identity resolution",
+                exc_info=True,
+            )
+            raise FederationAuthorityError(
+                "federation_authority_coordination_unavailable"
+            ) from exc
+        except Exception as exc:
+            logger.exception(
+                "Unexpected AWID registry dependency error for federation target identity resolution"
+            )
+            raise FederationAuthorityError(
+                "federation_authority_coordination_unavailable"
+            ) from exc
+        try:
+            _validate_target_identity(resolved, envelope)
+        except FederationAuthorityError:
+            if fresh:
+                raise
+        else:
+            return
+
+
+def _validate_target_identity(resolved, envelope: FederationEnvelope) -> None:
     if resolved is None:
         raise FederationAuthorityError("recipient_identity_not_found")
     if resolved.did_aw != envelope.target_did_aw:
