@@ -39,7 +39,7 @@ async def present_world(test_db_factory, monkeypatch):
         generation = 1
         installed_at = datetime.now(UTC) - timedelta(days=1)
         async def status_for(self, team_id):
-            return SimpleNamespace(team_id=team_id, app_id="folio", state=self.state,
+            return SimpleNamespace(team_id=team_id, app_id=settings.app_id, state=self.state,
                 installation_id=self.installation_id, generation=self.generation,
                 installed_at=self.installed_at, granted_scopes=frozenset({"folio:read", "folio:write"}),
                 fresh_until=time.monotonic()+60)
