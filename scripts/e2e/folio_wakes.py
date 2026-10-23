@@ -14,6 +14,8 @@ import urllib.error
 import urllib.request
 import uuid
 
+from folio_records import exercise_records
+
 ROOT = Path(__file__).resolve().parents[2]
 AW = Path(os.environ['AW_BIN']).resolve()
 REGISTRY = 'http://awid:8010'
@@ -375,3 +377,6 @@ except urllib.error.HTTPError as exc:
     aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'sixth')
     assert any(e['kind'] == 'app' and e['meta']['resource_ref'] == 'wake-proof' for e in events(a))
     print('PASS v2 manifest registers from server-fetched bytes, grants only agent and surface scopes, emits through its app-event key, refuses its hook-only verb', flush=True)
+    schema = json.loads(run(COMPOSE + ['exec', '-T', 'folio', '/app/.venv/bin/python', '-c',
+                                     'import json; from folio.record_collections import DISCOVERY_SCHEMA; print(json.dumps(DISCOVERY_SCHEMA))']))
+    exercise_records(aw, run, ROOT, schema)
