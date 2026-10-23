@@ -151,7 +151,8 @@ async def prepare_dispatches(
     await tx.execute("SELECT pg_advisory_xact_lock($1::bigint)", guard)
     xid = int(await tx.fetch_value("SELECT txid_current()"))
     # Warm the guard read's relation locks before the final no-new-lock phase.
-    assert await _guard_live(tx, xid, guard)
+    if not await _guard_live(tx, xid, guard):
+        raise ApprovalRefused(Refusal.DISPATCH_NOT_PREPARED)
     return tuple(
         PreparedDispatch(
             a.approval_id, b.operation_id, a.expires_at, a, service, tx, xid, guard, authority
