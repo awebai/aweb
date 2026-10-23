@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.messages import _is_global_recipient
+
 import hashlib
 import json
 import logging
@@ -244,8 +246,8 @@ async def _lock_current_recipient(
         raise FederationAuthorityError("recipient_identity_not_found")
     row = await tx.fetch_one(
         """
-        SELECT agent_id, team_id, did_key, did_aw, address, alias,
-               inbound_mode, identity_scope
+        SELECT agent_id, team_id, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, alias,
+               inbound_mode, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw
         FROM {{tables.agents}}
         WHERE agent_id = $1 AND deleted_at IS NULL
         FOR UPDATE
@@ -329,7 +331,7 @@ async def _authorize_policy(
     stored_route_continuation: bool,
 ) -> None:
     mode = str(recipient.get("inbound_mode") or "").strip().lower()
-    recipient_global = str(recipient.get("did_aw") or "").startswith("did:aw:")
+    recipient_global = _is_global_recipient(recipient)
     if recipient_global and mode == "open":
         return
     if recipient_global and mode not in {"team_and_contacts", "contacts_only"}:
@@ -343,7 +345,7 @@ async def _authorize_policy(
             """
             SELECT agent_id FROM {{tables.agents}}
             WHERE team_id = $1 AND deleted_at IS NULL
-              AND (did_aw = $2 OR did_key = $2)
+              AND ((did_aw = $2 AND did_aw_verified_key = did_key) OR did_key = $2)
             LIMIT 1
             FOR UPDATE
             """,

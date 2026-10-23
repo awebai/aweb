@@ -377,7 +377,7 @@ async def list_agents(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT a.agent_id, a.alias, a.did_key, a.did_aw, a.address,
+        SELECT a.agent_id, a.alias, a.did_key, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address,
                a.human_name, a.agent_type, a.role, a.identity_scope,
                a.inbound_mode, a.status,
                e.encryption_key_id,

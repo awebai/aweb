@@ -19,6 +19,7 @@ from awid.team_ids import parse_team_id
 from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.deps import get_db
 from aweb.identity_scope import normalize_identity_scope
+from aweb.identity_binding import IdentityBinding, refresh_projection_binding
 from aweb.team_auth_deps import verify_request_certificate
 
 router = APIRouter(prefix="/v1", tags=["connect"])
@@ -91,8 +92,7 @@ async def _ensure_agent(
 ) -> str:
     """Find or create the agent row. Returns agent_id as string.
 
-    did_aw and address come from the certificate's member_did_aw /
-    member_address fields. Empty strings are stored as NULL (local
+    did_aw and address come from independently verified identity bindings. Empty strings are stored as NULL (local
     certificates do not carry these fields).
     """
     existing_agent = await db.fetch_one(
@@ -113,7 +113,7 @@ async def _ensure_agent(
             """
             UPDATE {{tables.agents}}
             SET did_aw = $1, address = $2, identity_scope = $3, human_name = $4,
-                agent_type = $5, role = $6, status = 'active', certificate_id = $8
+                agent_type = $5, role = $6, status = 'active', certificate_id = $8, did_aw_verified_key = $9
             WHERE agent_id = $7
             """,
             did_aw or None,
@@ -124,6 +124,7 @@ async def _ensure_agent(
             role,
             existing_agent["agent_id"],
             (certificate_id or "").strip() or None,
+            did_key if did_aw else None,
         )
         return str(existing_agent["agent_id"])
 
@@ -142,27 +143,29 @@ async def _ensure_agent(
 
     agent_id = uuid.uuid4()
     try:
-        await db.execute(
-            """
-            INSERT INTO {{tables.agents}}
-                (agent_id, team_id, did_key, did_aw, address,
-                 alias, identity_scope, human_name, agent_type, role, inbound_mode,
-                 certificate_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11)
-            ON CONFLICT (team_id, did_key) WHERE deleted_at IS NULL DO NOTHING
-            """,
-            agent_id,
-            team_id,
-            did_key,
-            did_aw or None,
-            address or None,
-            alias,
-            identity_scope,
-            human_name,
-            agent_type,
-            role,
-            (certificate_id or "").strip() or None,
-        )
+        async with db.transaction() as insert_tx:
+            await insert_tx.execute(
+                """
+                INSERT INTO {{tables.agents}}
+                    (agent_id, team_id, did_key, did_aw, address,
+                     alias, identity_scope, human_name, agent_type, role, inbound_mode,
+                     certificate_id, did_aw_verified_key)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11, $12)
+                ON CONFLICT (team_id, did_key) WHERE deleted_at IS NULL DO NOTHING
+                """,
+                agent_id,
+                team_id,
+                did_key,
+                did_aw or None,
+                address or None,
+                alias,
+                identity_scope,
+                human_name,
+                agent_type,
+                role,
+                (certificate_id or "").strip() or None,
+                did_key if did_aw else None,
+            )
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
         if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.exceptions.UniqueViolationError):
             raise
@@ -184,7 +187,7 @@ async def _ensure_agent(
                 """
                 UPDATE {{tables.agents}}
                 SET did_aw = $1, address = $2, identity_scope = $3, human_name = $4,
-                    agent_type = $5, role = $6, status = 'active', certificate_id = $8
+                    agent_type = $5, role = $6, status = 'active', certificate_id = $8, did_aw_verified_key = $9
                 WHERE agent_id = $7
                 """,
                 did_aw or None,
@@ -195,6 +198,7 @@ async def _ensure_agent(
                 role,
                 existing_agent["agent_id"],
                 (certificate_id or "").strip() or None,
+                did_key if did_aw else None,
             )
             return str(existing_agent["agent_id"])
         existing_alias = await db.fetch_one(
@@ -365,12 +369,16 @@ async def connect_agent(
     role: str,
     human_name: str,
     agent_type: str,
+    identity_binding: IdentityBinding | None = None,
 ) -> dict[str, Any]:
     """Auto-provision team + agent + workspace from certificate info.
 
     Args:
         db: The aweb database manager.
-        cert_info: Verified certificate fields (team_id, alias, did_key, identity scope).
+        cert_info: Verified team membership fields; member identity fields are claims.
+        identity_binding: Exact fresh observation from observe_identity_binding,
+            obtained before the caller opens its transaction. Required for global
+            identity/address claims. This function performs no registry I/O.
         team_did_key: The team's public key from awid registry.
         hostname: Agent's hostname.
         workspace_path: Agent's workspace path.
@@ -386,36 +394,55 @@ async def connect_agent(
     alias = cert_info["alias"]
     did_key = cert_info["did_key"]
     identity_scope = normalize_identity_scope(cert_info.get("identity_scope") or cert_info.get("lifetime"))
-    did_aw = cert_info.get("member_did_aw", "")
-    address = cert_info.get("member_address", "")
+    claimed_did_aw = cert_info.get("member_did_aw") or ""
+    claimed_address = cert_info.get("member_address") or ""
+    has_claims = bool(claimed_did_aw or claimed_address)
+    if has_claims and identity_binding is None:
+        raise ValueError("identity_binding_mismatch")
+    if identity_binding is not None and (
+        not isinstance(identity_binding, IdentityBinding)
+        or identity_binding.did_key != did_key
+        or identity_binding.did_aw != claimed_did_aw
+        or identity_binding.address != claimed_address
+        or (has_claims and not identity_binding.fresh_observation)
+    ):
+        raise ValueError("identity_binding_mismatch")
+    did_aw = identity_binding.did_aw if identity_binding is not None else ""
+    address = identity_binding.address if identity_binding is not None else ""
 
-    await _ensure_team(db, team_id, team_did_key)
+    async with db.transaction() as tx:
+        await _ensure_team(tx, team_id, team_did_key)
 
-    agent_id = await _ensure_agent(
-        db,
-        team_id=team_id,
-        did_key=did_key,
-        did_aw=did_aw,
-        address=address,
-        alias=alias,
-        identity_scope=identity_scope,
-        human_name=human_name,
-        agent_type=agent_type,
-        role=role,
-        certificate_id=cert_info.get("certificate_id", ""),
-    )
+        agent_id = await _ensure_agent(
+            tx,
+            team_id=team_id,
+            did_key=did_key,
+            did_aw=did_aw,
+            address=address,
+            alias=alias,
+            identity_scope=identity_scope,
+            human_name=human_name,
+            agent_type=agent_type,
+            role=role,
+            certificate_id=cert_info.get("certificate_id", ""),
+        )
 
-    workspace_id = await _ensure_workspace(
-        db,
-        team_id=team_id,
-        agent_id=agent_id,
-        alias=alias,
-        hostname=hostname,
-        workspace_path=workspace_path,
-        repo_origin=repo_origin,
-        role=role,
-        human_name=human_name,
-    )
+        if identity_binding is not None:
+            await refresh_projection_binding(
+                tx, agent_id=agent_id, did_key=did_key, binding=identity_binding,
+            )
+
+        workspace_id = await _ensure_workspace(
+            tx,
+            team_id=team_id,
+            agent_id=agent_id,
+            alias=alias,
+            hostname=hostname,
+            workspace_path=workspace_path,
+            repo_origin=repo_origin,
+            role=role,
+            human_name=human_name,
+        )
 
     return {
         "team_id": team_id,
@@ -440,7 +467,7 @@ async def connect_endpoint(
     Uses certificate-only auth (no agent lookup) since the agent may not
     exist yet — this endpoint creates the agent row.
     """
-    cert_info = await verify_request_certificate(request, db)
+    cert_info = await verify_request_certificate(request, db, fresh=True)
 
     aweb_db = db.get_manager("aweb")
 
@@ -451,6 +478,7 @@ async def connect_endpoint(
         result = await connect_agent(
             db=aweb_db,
             cert_info=cert_info,
+            identity_binding=cert_info.get("identity_binding"),
             team_did_key=team_did_key,
             hostname=payload.hostname,
             workspace_path=payload.workspace_path,
@@ -461,6 +489,10 @@ async def connect_endpoint(
         )
     except AliasConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        if str(exc) == "identity_binding_mismatch":
+            raise HTTPException(status_code=403, detail="identity_binding_mismatch") from exc
+        raise
 
     return ConnectResponse(**result)
 

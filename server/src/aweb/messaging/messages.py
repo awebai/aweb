@@ -35,7 +35,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     if team_id is None:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
+            SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, status, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND deleted_at IS NULL
             """,
@@ -44,7 +44,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     else:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
+            SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, status, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
             """,
@@ -61,7 +61,7 @@ async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, status, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
           AND COALESCE(agent_type, 'agent') != 'human'
@@ -78,16 +78,41 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, status, deleted_at
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
-          AND (did_aw = $1 OR did_key = $1)
+          AND ((did_aw = $1 AND did_aw_verified_key = did_key) OR did_key = $1)
         ORDER BY CASE WHEN did_aw = $1 THEN 0 ELSE 1 END, created_at DESC
         LIMIT 1
         """,
         did,
     )
     return None if not row else dict(row)
+
+
+async def policy_rows_for_participant(db, participant: dict) -> list[dict]:
+    """Policy evidence for an existing participant, never new routing authority."""
+    if participant.get("agent_id") is not None:
+        row = await get_agent_by_id(db, agent_id=str(participant["agent_id"]))
+        if row is not None:
+            return [row]
+    did = str(participant.get("did") or "").strip()
+    if not did:
+        return []
+    rows = await db.get_manager("aweb").fetch_all(
+        """
+        SELECT agent_id, team_id, alias, did_key,
+               CASE WHEN did_aw_verified_key=did_key THEN did_aw END AS did_aw,
+               CASE WHEN did_aw_verified_key=did_key THEN address END AS address,
+               identity_scope, (NULLIF(did_aw,'') IS NOT NULL) AS has_global_claim,
+               did_aw AS policy_did_aw, inbound_mode
+        FROM {{tables.agents}} WHERE deleted_at IS NULL
+          AND (did_key=$1 OR did_aw=$1)
+        ORDER BY agent_id
+        """, did,
+    )
+    # All raw-claim matches must pass policy; none selects a recipient or route.
+    return [dict(row) for row in rows]
 
 
 INBOUND_MODE_OPEN = "open"
@@ -97,7 +122,11 @@ INBOUND_MODES = {INBOUND_MODE_OPEN, INBOUND_MODE_TEAM_AND_CONTACTS}
 
 
 def _is_global_recipient(recipient_agent: dict) -> bool:
-    return str(recipient_agent.get("did_aw") or "").strip().startswith("did:aw:")
+    return (
+        recipient_agent.get("identity_scope") == "global"
+        or bool(recipient_agent.get("has_global_claim"))
+        or bool(str(recipient_agent.get("did_aw") or "").strip())
+    )
 
 
 def _effective_inbound_mode(recipient_agent: dict) -> str:
@@ -138,7 +167,7 @@ async def _active_team_ids_for_identity(db, dids: list[str]) -> set[str]:
         SELECT DISTINCT team_id
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
-          AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
+          AND ((did_aw = ANY($1::text[]) AND did_aw_verified_key = did_key) OR did_key = ANY($1::text[]))
         """,
         dids,
     )
@@ -291,17 +320,30 @@ async def deliver_message(
     if recipient is None:
         raise NotFoundError("Recipient agent not found")
 
-    if not skip_policy_check and not recipient.get("external"):
-        await authorize_message_delivery(
-            db,
-            recipient_agent=recipient,
-            sender_did=sender_did,
-            sender_address=sender_address,
-            sender_team_id=team_id,
-            sender_verified_team_id=sender_verified_team_id,
-            sender_verified_dids=sender_verified_dids,
-            stored_route_continuation=stored_route_continuation,
-        )
+    if not skip_policy_check and (
+        not recipient.get("external")
+        or (stored_route_continuation and not recipient.get("delivery_origin"))
+    ):
+        policies = [recipient]
+        if stored_route_continuation:
+            policies = await policy_rows_for_participant(db, {
+                "agent_id": to_agent_id or recipient.get("agent_id"), "did": recipient_did,
+            })
+            if not policies:
+                # Mail has one recipient; absence is not a policy denial and
+                # must not create a local delivery to a retired projection.
+                raise NotFoundError("Recipient agent not found")
+        for policy_recipient in policies:
+            await authorize_message_delivery(
+                db,
+                recipient_agent=policy_recipient,
+                sender_did=sender_did,
+                sender_address=sender_address,
+                sender_team_id=team_id,
+                sender_verified_team_id=sender_verified_team_id,
+                sender_verified_dids=sender_verified_dids,
+                stored_route_continuation=stored_route_continuation,
+            )
 
     # The sender-attested time remains in signed_payload or encrypted_envelope.
     # created_at is when this server received the message for ordering, so the

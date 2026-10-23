@@ -59,9 +59,9 @@ async def _seed_recipient_and_authority(db, envelope: FederationEnvelope) -> tup
         """
         INSERT INTO {{tables.agents}} (
             team_id, did_key, did_aw, address, alias, inbound_mode, identity_scope
-        ) VALUES (
+        , did_aw_verified_key) VALUES (
             'backend:beta.example', $1, $2, $3, 'bob', 'open', 'global'
-        )
+        , CASE WHEN NULLIF($2, '') IS NOT NULL THEN $1 END)
         RETURNING agent_id, team_id, did_key, did_aw, address, alias, inbound_mode
         """,
         envelope.target_current_did_key,

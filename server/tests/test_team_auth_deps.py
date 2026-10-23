@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+from collections import OrderedDict
+from time import monotonic
 import hashlib
 import json
 import uuid
@@ -16,12 +18,12 @@ from starlette.requests import Request
 from nacl.signing import SigningKey
 
 import aweb.identity_auth_deps as _identity_auth_mod
-import aweb.team_auth_deps as _team_auth_mod
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.identity_auth_deps import IdentityAuth, get_messaging_auth
-from aweb.team_auth_envelope import compact_team_auth_payload
+from aweb.identity_binding import IdentityBinding
 from aweb.team_auth_deps import TeamIdentity
+from test_dashboard_privacy import privacy_app  # noqa: F401
 
 
 def _make_keypair():
@@ -138,54 +140,34 @@ class TestTeamIdentity:
 
 class TestResolveTeamIdentity:
     @pytest.mark.asyncio
-    async def test_resolves_from_cert_info_and_db(self, aweb_cloud_db):
-        from aweb.team_auth_deps import resolve_team_identity
-
-        db = aweb_cloud_db.aweb_db
-
-        team_sk, _, team_did_key = _make_keypair()
-        _, _, agent_did_key = _make_keypair()
-
-        # Provision team + agent via connect
+    async def test_resolves_from_cert_info_and_db(self, privacy_app):
+        from aweb.identity_binding import observe_identity_binding
         from aweb.routes.connect import connect_agent
+        from aweb.team_auth_deps import resolve_team_identity
+        from identity_binding_support import register_global_identity
+        from test_cli_never_grants import registry_listener
+        from test_dashboard_privacy import TEAM
 
-        result = await connect_agent(
-            db=db,
-            cert_info={
-                "team_id": "backend:acme.com",
-                "alias": "alice",
-                "did_key": agent_did_key,
-                "member_did_aw": "did:aw:alice",
-                "member_address": "acme.com/alice",
-                "identity_scope": "global",
-                "certificate_id": "cert-001",
-            },
-            team_did_key=team_did_key,
-            hostname="Mac.local",
-            workspace_path="/project",
-            repo_origin="",
-            role="developer",
-            human_name="",
-            agent_type="agent",
-        )
-
-        cert_info = {
-            "team_id": "backend:acme.com",
-            "alias": "alice",
-            "did_key": agent_did_key,
-            "member_did_aw": "did:aw:alice",
-            "member_address": "acme.com/alice",
-            "identity_scope": "global",
-            "certificate_id": "cert-001",
-        }
-
-        identity = await resolve_team_identity(db, cert_info)
-
-        assert identity.team_id == "backend:acme.com"
-        assert identity.alias == "alice"
-        assert identity.did_key == agent_did_key
-        assert identity.did_aw == "did:aw:alice"
-        assert identity.address == "acme.com/alice"
+        env = privacy_app
+        bob = env.actors["bob"]
+        address = "example.test/bob"
+        async with registry_listener(env) as (registry, _):
+            stable = await register_global_identity(env, bob, address)
+            binding = await observe_identity_binding(registry, did_key=bob.did, did_aw=stable, address=address)
+            cert_info = dict(team_id=TEAM, alias="bob", did_key=bob.did, member_did_aw=stable,
+                             member_address=address, identity_scope="global", certificate_id="cert-001",
+                             identity_binding=binding)
+            result = await connect_agent(
+                db=env.db, cert_info=cert_info, identity_binding=binding, team_did_key=env.team_did,
+                hostname="Mac.local", workspace_path="/project", repo_origin="", role="developer",
+                human_name="", agent_type="agent",
+            )
+            identity = await resolve_team_identity(env.db, cert_info)
+        assert identity.team_id == TEAM
+        assert identity.alias == "bob"
+        assert identity.did_key == bob.did
+        assert identity.did_aw == stable
+        assert identity.address == address
         assert identity.agent_id == result["agent_id"]
         assert identity.identity_scope == "global"
         assert identity.certificate_id == "cert-001"
@@ -210,56 +192,38 @@ class TestResolveTeamIdentity:
 
 
 @pytest.mark.asyncio
-async def test_get_team_identity_accepts_raw_manager(aweb_cloud_db, monkeypatch):
+async def test_get_team_identity_accepts_raw_manager(privacy_app):
+    from aweb.identity_binding import observe_identity_binding
     from aweb.routes.connect import connect_agent
     from aweb.team_auth_deps import get_team_identity
+    from identity_binding_support import register_global_identity
+    from test_cli_never_grants import registry_listener
+    from test_dashboard_privacy import TEAM
+    from test_messages_http import _make_certificate as certificate, _encode_certificate as encode, _signed_team_headers
 
-    db = aweb_cloud_db.aweb_db
-    team_sk, _, team_did_key = _make_keypair()
-    _, _, agent_did_key = _make_keypair()
-
-    connected = await connect_agent(
-        db=db,
-        cert_info={
-            "team_id": "backend:acme.com",
-            "alias": "alice",
-            "did_key": agent_did_key,
-            "member_did_aw": "did:aw:alice",
-            "member_address": "acme.com/alice",
-            "identity_scope": "global",
-            "certificate_id": "cert-raw-manager",
-        },
-        team_did_key=team_did_key,
-        hostname="Mac.local",
-        workspace_path="/project",
-        repo_origin="",
-        role="developer",
-        human_name="",
-        agent_type="agent",
-    )
-
-    async def _fake_verify_request_certificate(_request, _db):
-        return {
-            "team_id": "backend:acme.com",
-            "alias": "alice",
-            "did_key": agent_did_key,
-            "member_did_aw": "did:aw:alice",
-            "member_address": "acme.com/alice",
-            "identity_scope": "global",
-            "certificate_id": "cert-raw-manager",
-        }
-
-    monkeypatch.setattr(_team_auth_mod, "verify_request_certificate", _fake_verify_request_certificate)
-
-    identity = await get_team_identity(_request_with_headers({}), db)
-
+    env = privacy_app
+    bob = env.actors["bob"]
+    address = "example.test/bob"
+    async with registry_listener(env) as (registry, _):
+        stable = await register_global_identity(env, bob, address)
+        binding = await observe_identity_binding(registry, did_key=bob.did, did_aw=stable, address=address)
+        connected = await connect_agent(
+            db=env.db,
+            cert_info=dict(team_id=TEAM, alias="bob", did_key=bob.did, member_did_aw=stable,
+                           member_address=address, identity_scope="global", certificate_id="cert-raw-manager"),
+            identity_binding=binding, team_did_key=env.team_did,
+            hostname="Mac.local", workspace_path="/project", repo_origin="", role="developer",
+            human_name="", agent_type="agent",
+        )
+        cert = encode(certificate(env.team_sk, env.team_did, bob.did, team_id=TEAM, alias="bob",
+                                  identity_scope="global", member_did_aw=stable, member_address=address,
+                                  certificate_id="cert-raw-manager"))
+        req = _request_with_app_state(_signed_team_headers(bob.sk, bob.did, TEAM, cert, b""))
+        req.scope["app"] = env.app
+        identity = await get_team_identity(req, env.db)
     assert identity.agent_id == connected["agent_id"]
-    assert identity.did_aw == "did:aw:alice"
-    assert identity.address == "acme.com/alice"
-
-
-
-
+    assert identity.did_aw == stable
+    assert identity.address == address
 
 
 @pytest.mark.asyncio
@@ -410,22 +374,29 @@ async def test_get_messaging_auth_allows_identity_scoped_persistent_multi_member
     await db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (team_id, did_key, did_aw, address, alias, identity_scope, status)
+            (team_id, did_key, did_aw, address, alias, identity_scope, status, did_aw_verified_key)
         VALUES
-            ('ops:gsk.aweb.ai', 'did:key:z6MkGsk', 'did:aw:gsk', 'gsk.aweb.ai/grace', 'grace', 'global', 'active'),
-            ('dev:gsk.aweb.ai', 'did:key:z6MkGsk', 'did:aw:gsk', 'gsk.aweb.ai/grace', 'grace', 'global', 'active')
+            ('ops:gsk.aweb.ai', 'did:key:z6MkGsk', 'did:aw:gsk', 'gsk.aweb.ai/grace', 'grace', 'global', 'active', 'did:key:z6MkGsk'),
+            ('dev:gsk.aweb.ai', 'did:key:z6MkGsk', 'did:aw:gsk', 'gsk.aweb.ai/grace', 'grace', 'global', 'active', 'did:key:z6MkGsk')
         """
     )
 
-    async def _fake_resolve_identity_auth(_request):
+    async def _fake_resolve_identity_auth(_request, *, db=None):
         return IdentityAuth(did_key="did:key:z6MkGsk", did_aw="did:aw:gsk", address="gsk.aweb.ai/grace")
 
     monkeypatch.setattr(_identity_auth_mod, "resolve_identity_auth", _fake_resolve_identity_auth)
 
-    auth = await get_messaging_auth(
-        _request_with_headers({"Authorization": "DIDKey did:key:z6MkGsk signature"}),
-        db,
-    )
+    request = _request_with_app_state({"Authorization": "DIDKey did:key:z6MkGsk signature"})
+    # This projection-selection unit test starts after successful identity
+    # verification. The real registry admission cases live in
+    # test_identity_binding_http.py.
+    request.app.state.awid_registry_client = object()
+    request.app.state.identity_binding_cache = OrderedDict({
+        ("did:aw:gsk", "did:key:z6MkGsk", "gsk.aweb.ai/grace"): (
+            monotonic() + 60, IdentityBinding("did:aw:gsk", "gsk.aweb.ai/grace"),
+        ),
+    })
+    auth = await get_messaging_auth(request, db)
 
     assert auth.did_key == "did:key:z6MkGsk"
     assert auth.did_aw == "did:aw:gsk"
