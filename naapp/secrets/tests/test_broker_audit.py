@@ -248,7 +248,8 @@ async def test_post_dispatch_recording_survives_target_loss_without_authorizing_
                 tx, dispatch_id, State.RECONCILED_COMPLETED, {"state": "owner_resolved"}
             )
         else:
-            assert await getattr(recorder, outcome)(tx, dispatch_id, {"state": outcome})
+            method = recorder.complete if outcome == "completed" else getattr(recorder, outcome)
+            assert await method(tx, dispatch_id, {"state": outcome})
     records = await envelopes(db)
     assert records[-1]["payload"]["action"] == outcome
     assert records[-1]["actor"] == records[0]["actor"]
