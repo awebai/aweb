@@ -14,9 +14,11 @@ from aweb.app_registry import (
     get_installation_on,
     manifest_registration,
     next_installation_generation_on,
+    normalize_app_id,
     normalize_scopes,
     validate_team_id,
 )
+from aweb.hook_bindings import revoke_uninstalled_bindings
 from aweb.installation_hooks import write_manifest_bindings_on
 from aweb.service_errors import ServiceError
 
@@ -110,6 +112,46 @@ async def install_verified_manifest_on(
     )
     await _write_verified_registrations(tx, team_id=team_id, app_id=app_id, fetched=fetched, registration=registration)
     await write_manifest_bindings_on(tx, team_id=team_id, fetched=fetched, installation_id=installation_id, generation=generation)
+    return await get_installation_on(tx, team_id=team_id, app_id=app_id)
+
+
+async def cleanup_installation_on(tx, *, installation: dict) -> None:
+    """Run cleanups under the current installation row lock, in its transaction.
+
+    This is the single seam for installation-scoped retirement. C2-S adds its
+    installation_id-bound request cancellation here when those tasks exist.
+    Do not commit, open a separate transaction or suppress a cleanup failure.
+    """
+    await revoke_uninstalled_bindings(tx, team_id=installation["team_id"], app_id=installation["app_id"])
+
+
+async def uninstall_installation_on(tx, *, team_id: str, app_id: str, expected_generation: int) -> dict:
+    """Retire authority without fetching or deleting the retained installation.
+
+    The route checks current admin policy in this transaction. Keep the pin,
+    keys and identity so an authenticated app can observe confirmed uninstall
+    even when its origin is unavailable. App content remains with its owner.
+    """
+    team_id = validate_team_id(team_id)
+    app_id = normalize_app_id(app_id)
+    if type(expected_generation) is not int or not 1 <= expected_generation <= 9223372036854775807:
+        raise InstallationError("generation_invalid", "Expected generation must be a positive BIGINT")
+    current = await get_installation_on(tx, team_id=team_id, app_id=app_id, for_update=True)
+    if current is None:
+        raise InstallationError("installation_not_found", "Installation not found", 404)
+    if current["generation"] != expected_generation:
+        raise InstallationError("generation_conflict", "Installation changed; read it again", 409)
+    if current["state"] == "uninstalled":
+        return current
+    await cleanup_installation_on(tx, installation=current)
+    # A confirmation prepared before uninstall must conflict rather than
+    # silently reinstalling after the administrator removed the app.
+    generation = await next_installation_generation_on(tx, team_id=team_id, app_id=app_id)
+    await tx.execute(
+        "UPDATE {{tables.team_app_installs}} SET state='uninstalled', generation=$3, "
+        "origin_verification_error=NULL, updated_at=NOW() WHERE team_id=$1 AND app_id=$2",
+        team_id, app_id, generation,
+    )
     return await get_installation_on(tx, team_id=team_id, app_id=app_id)
 
 
