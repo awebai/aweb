@@ -191,9 +191,12 @@ async def test_missing_installation_identity_is_refused_before_records_are_writt
     assert refused.value.detail["code"] == "installation_identity_required"
 
 
-async def test_mounted_table_browser_signs_queries_and_reload_requires_reopening(linked):
+@pytest.mark.parametrize("viewport_width", [1280, 375])
+async def test_mounted_table_browser_signs_queries_and_reload_requires_reopening(linked, viewport_width):
     await linked.host.member_operation(linked.authorization, "add_on", RecordAddRequest(
-        collection_id="discovery", values=VALUE, request_id="browser-add"))
+        collection_id="discovery", values={**VALUE, "why_relevant": "Verify the same row through signed tools and a table"}, request_id="browser-add"))
+    await linked.host.member_operation(linked.authorization, "add_on", RecordAddRequest(
+        collection_id="discovery", values={**VALUE, "finding": "Second synthetic record", "why_relevant": "Verify the same row through signed tools and a table"}, request_id="browser-add-second"))
     minted = await linked.host.present(linked.authorization, CreatePresentationRequest(slug=linked.defined["document_slug"]))
     linked.listener.listen()
     server = uvicorn.Server(uvicorn.Config(linked.app, log_level="error", lifespan="off", access_log=False, ws="none"))
@@ -206,7 +209,7 @@ async def test_mounted_table_browser_signs_queries_and_reload_requires_reopening
                     await serving
                 await asyncio.sleep(0.01)
         process = await asyncio.create_subprocess_exec(
-            "node", str(Path(__file__).parent / "browser" / "record-table-mounted.mjs"), minted["url"],
+            "node", str(Path(__file__).parent / "browser" / "record-table-mounted.mjs"), minted["url"], str(viewport_width),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         stdout, stderr = await asyncio.wait_for(process.communicate(), 45)
         assert process.returncode == 0, (stdout + stderr).decode()

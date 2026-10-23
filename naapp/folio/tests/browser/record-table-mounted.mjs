@@ -7,7 +7,7 @@ import {
 const browser = await chromium.launch();
 try {
   const context = await browser.newContext({
-    viewport: { width: 375, height: 800 },
+    viewport: { width: Number(process.argv[3] || 375), height: 800 },
   });
   const page = await context.newPage();
   const errors = [];
@@ -28,7 +28,7 @@ try {
   const source = page.getByRole("link", {
     name: "https://example.test/research?topic=pages",
     exact: true,
-  });
+  }).first();
   await source.click();
   await expect(page.getByRole("dialog")).toContainText(
     "https://example.test/research?topic=pages",
@@ -42,11 +42,17 @@ try {
     await page.evaluate(() => [localStorage.length, sessionStorage.length]),
     [0, 0],
   );
-  assert(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  );
+  const dimensions = await page.evaluate(() => ({
+    width: innerWidth,
+    document: document.documentElement.scrollWidth,
+    body: document.body.scrollWidth,
+    elements: [...document.querySelectorAll("body > *, #identity, .widget-table, .collection-content, .table-scroll, .sr-only")].map((node) => ({
+      tag: node.tagName, id: node.id, className: node.className,
+      right: node.getBoundingClientRect().right, width: node.getBoundingClientRect().width,
+      scroll: node.scrollWidth,
+    })),
+  }));
+  assert(dimensions.document <= dimensions.width, JSON.stringify(dimensions));
   await page.getByRole("button", { name: "Refresh table" }).click();
   await expect(page.locator('[data-widget="records"]')).toContainText(
     "A useful discussion",

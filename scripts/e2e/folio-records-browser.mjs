@@ -35,7 +35,17 @@ try {
       await page.evaluate(() => [localStorage.length, sessionStorage.length]),
       [0, 0],
     );
-    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    const dimensions = await page.evaluate(() => ({
+      width: innerWidth,
+      document: document.documentElement.scrollWidth,
+      body: document.body.scrollWidth,
+      elements: [...document.querySelectorAll("body > *, #identity, .widget-table, .collection-content, .table-scroll, .sr-only")].map((node) => ({
+        tag: node.tagName, id: node.id, className: node.className,
+        right: node.getBoundingClientRect().right, width: node.getBoundingClientRect().width,
+        scroll: node.scrollWidth,
+      })),
+    }));
+    assert(dimensions.document <= dimensions.width, JSON.stringify(dimensions));
     // Reload must discard the capability; the host clears the former table.
     await page.reload();
     await expect(page.getByRole("alert")).toBeVisible();
