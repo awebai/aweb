@@ -31,12 +31,15 @@ def prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_t
     custody = subprocess.Popen([str(aw_bin), 'custody', 'serve'], cwd=homes['bob'], env=env,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     minted = {}
-    def mint(name):
+    def mint(name, *, explicit=False):
         homes[name] = homes['bob'].parent / name
         homes[name].mkdir()
         target = homes[name] / '.aw'
-        minted[name] = data('bob', 'id', 'grant', 'mint', '--bundle', 'normal-agent', '--ttl', '1h',
-             '--custody-socket', 'auto', '--out', str(target))
+        args = ['id', 'grant', 'mint', '--bundle', 'normal-agent', '--ttl', '1h',
+                '--custody-socket', 'auto', '--out', str(target)]
+        if explicit:
+            args += ['--app-tool', 'folio:show']
+        minted[name] = data('bob', *args)
         return target
 
     def tool(name, target):
@@ -58,14 +61,14 @@ def prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_t
         _prove_uninstall(aw=aw, data=data, get=get, folio_request=folio_request, run=run,
                          compose=compose, team=team, other_team=other_team, cache=cache,
                          origin=origin, grant=grant, status=status, mint=mint, tool=tool,
-                         old_target=old_target, minted=minted)
+                         old_target=old_target, minted=minted, homes=homes, env=env)
     finally:
         custody.terminate()  # This harness owns this exact process.
         custody.wait(timeout=10)
 
 
 def _prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_team,
-                     cache, origin, grant, status, mint, tool, old_target, minted):
+                     cache, origin, grant, status, mint, tool, old_target, minted, homes, env):
     def sql(query):
         return run(compose + ['exec', '-T', 'postgres', 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'aweb', '-d', 'library', '-Atc', query]).strip()
 
@@ -149,8 +152,14 @@ def _prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_
     default_target = mint('uninstall-default-grant')
     assert any(app['code'] == 'app_installation_changed' for app in minted['uninstall-default-grant']['skipped_apps'])
     default_reinstalled = tool('uninstall-default-grant', default_target).returncode
+    explicit_dir = homes['bob'].parent / 'uninstall-explicit-refused'
+    explicit_dir.mkdir()
+    explicit = aw('bob', 'id', 'grant', 'mint', '--bundle', 'normal-agent', '--ttl', '1h',
+                  '--custody-socket', 'auto', '--app-tool', 'folio:show',
+                  '--out', str(explicit_dir / '.aw'), check=False)
+    assert explicit.returncode != 0 and 'app_installation_changed' in explicit.stderr, 'explicit mint silently re-approved the replacement: ' + explicit.stderr
     aw('bob', 'plugin', 'install', origin)  # Explicit replacement approval.
-    fresh_target = mint('uninstall-fresh-grant')
+    fresh_target = mint('uninstall-fresh-grant', explicit=True)
     fresh_reinstalled = tool('uninstall-fresh-grant', fresh_target).returncode
     delegation = {'resident_uninstalled': denied.returncode, 'old_grant_uninstalled': old_uninstalled,
                   'old_grant_reinstalled': old_reinstalled, 'default_without_reapproval': default_reinstalled,

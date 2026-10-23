@@ -156,7 +156,10 @@ func setupAppCustodyFixture(t *testing.T, verbs []string) *appCustodyFixture {
 func setupAppCustodyFixtureForTeam(t *testing.T, verbs []string, teamID, identityScope string) *appCustodyFixture {
 	t.Helper()
 	resetGrantCommandGlobals(t)
-	tmp := t.TempDir()
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(tmp)
 	setGrantTestEnv(t, tmp)
 	awHome := filepath.Join(tmp, "aw-home")
@@ -595,6 +598,14 @@ func TestRunGrantMintSnapshotsNamedAppToolsIntoResidentHome(t *testing.T) {
 	}
 
 	writeInstalledAppManifest(t, awHome, appTestManifest("https://apps.example.com", "/v1/things/{thing_id}"))
+	homeForApproval, err := identityHomeForDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := changeAppApproval(homeForApproval.Root, "testapp", "https://apps.example.com", "backend:demo", "fixture-testapp"); err != nil {
+		t.Fatal(err)
+	}
+
 	grantMintOut = filepath.Join(tmp, "worker-grant")
 	grantMintAppTools = []string{"testapp:get-thing"}
 	if _, err := os.Stat(grantMintOut); err == nil {

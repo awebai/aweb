@@ -88,3 +88,49 @@ func TestCustodyInstallationBindingSurvivesRepinAndRefusesReplacementReplay(t *t
 		t.Fatalf("unbound snapshot authorized: %v", err)
 	}
 }
+
+// Unit boundary proof; the disposable Folio stack separately exercises the real
+// mint command after an admin's same-origin/digest uninstall/reinstall.
+func TestGrantAppToolExplicitMintRequiresCurrentInstallationApproval(t *testing.T) {
+	f := setupAppCustodyFixture(t, []string{"get-thing"})
+	const appID = "testapp"
+	selected, err := buildGrantAppSnapshots(map[string][]string{appID: {"get-thing"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := selected[appID].App.Origin
+	mint := func() error {
+		apps, skipped, err := prepareGrantAppSnapshots(f.residentHome, f.grant.TeamID, true, []string{"testapp:get-thing"}, nil)
+		if err != nil {
+			return err
+		}
+		_, err = bindGrantInstallations(context.Background(), f.svc.clientDeps(context.Background()).client,
+			f.grant.TeamID, f.residentHome, true, apps, skipped)
+		return err
+	}
+	if err := changeAppApproval(f.residentHome, appID, origin, f.grant.TeamID, "fixture-testapp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mint(); err != nil {
+		t.Fatalf("approved original install: %v", err)
+	}
+	f.setInstallation(appID, appInstallationReceipt{InstallationID: "replacement", Generation: 3, State: "active", OriginVerified: true})
+	err = mint()
+	var refusal *installationApprovalRefusal
+	if !errors.As(err, &refusal) || refusal.Code != "app_installation_changed" {
+		t.Fatalf("explicit mint adopted the replacement: %v", err)
+	}
+	if err := changeAppApproval(f.residentHome, appID, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	err = mint()
+	if !errors.As(err, &refusal) || refusal.Code != "app_installation_approval_required" {
+		t.Fatalf("explicit mint authorized without approval: %v", err)
+	}
+	if err := changeAppApproval(f.residentHome, appID, origin, f.grant.TeamID, "replacement"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mint(); err != nil {
+		t.Fatalf("fresh explicit approval: %v", err)
+	}
+}

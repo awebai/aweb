@@ -152,7 +152,7 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	}
 	body.Store([]byte(appTestManifest(server.URL, "/v1/things/{thing_id}")))
 	// A host-store edit cannot silently change the resident's approved origin.
-	if err := changeAppApproval(homes[0], "testapp", "https://old.invalid", "backend:acme.com", "old-installation"); err != nil {
+	if err := changeAppApproval(homes[0], "testapp", "https://old.invalid", "approvals:example.test", "fixture-testapp"); err != nil {
 		t.Fatal(err)
 	}
 	invoke(empty, homes[0], "app_origin_mismatch", "plugin", "update", "testapp")
