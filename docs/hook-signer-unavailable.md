@@ -103,9 +103,12 @@ When an end occurs without a usable signer, containment still takes effect in
 that transaction. Preserve the previously active target's exact old binding,
 installation, generation, digest, endpoint, receipt-key authority, end evidence
 and cancellation accounting, under the existing terminal transaction/fence.
-Reserve the sequence for its owed logical terminal firing once. Record its
-terminal obligation as `terminal_reconciliation_required`, surfaced to both the
-owner and operator. A never-active registration receives no terminal obligation.
+Reserve exactly one sequence for that logical `hook_binding.revoked` firing,
+shared by its ordinary owed targets and its terminal obligation. The terminal
+obligation does not allocate a second sequence or duplicate the missing-production
+record for the same firing. Record the obligation as
+`terminal_reconciliation_required`, surfaced to both the owner and operator.
+A never-active registration receives no terminal obligation.
 
 There is no valid terminal event/capsule to dispatch or acknowledge in this
 case. The [terminal contract](hook-terminal-delivery.md#key-windows-and-authority-changes)
