@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from identity_binding_support import seed_verified_bindings
+
 import hashlib
-import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
@@ -126,6 +127,7 @@ async def test_conversations_lists_identity_scoped_mail_by_current_did(aweb_clou
         ]
     )
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    seed_verified_bindings(app, ("did:aw:bob", bob_did_key, "acme.com/bob"))
 
     headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -219,6 +221,7 @@ async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db):
         ]
     )
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    seed_verified_bindings(app, ("did:aw:bob", bob_did_key, "acme.com/bob"))
 
     headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -286,6 +289,7 @@ async def test_conversations_lists_legacy_mail_messages_without_conversation_id_
         ]
     )
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    seed_verified_bindings(app, ("did:aw:bob", bob_did_key, "acme.com/bob"))
 
     headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -368,6 +372,7 @@ async def test_conversations_lists_mail_for_sender_identity(aweb_cloud_db):
         ]
     )
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    seed_verified_bindings(app, ("did:aw:alice", alice_did_key, "acme.com/alice"))
 
     headers = _signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -698,6 +703,7 @@ async def test_conversations_mail_isolation_excludes_other_identities(aweb_cloud
     registry.resolve_key = AsyncMock(side_effect=resolve_key)
     registry.list_did_addresses = AsyncMock(side_effect=list_did_addresses)
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    seed_verified_bindings(app, ("did:aw:carol", carol_did_key, "acme.com/carol"))
 
     headers = _signed_identity_headers(carol_sk, carol_did_key, "did:aw:carol")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -889,6 +895,7 @@ async def test_conversations_lists_identity_scoped_chat_by_participant_did(aweb_
         ]
     )
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    seed_verified_bindings(app, ("did:aw:bob", bob_did_key, "acme.com/bob"))
 
     headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

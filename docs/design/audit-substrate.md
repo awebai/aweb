@@ -176,10 +176,22 @@ Per-hook payloads, beyond the common envelope:
 | Hook | Payload fields |
 | --- | --- |
 | `post-secret-use-hook` | Defined here, and the secrets design cites it. See the flat allowlist below. |
-| `post-governance-hook` | `act` (catalog enum: `role.designated`, `role.revoked`, `credential.enrolled`, `credential.recovered`, `credential.revoked`, `grant.created`, `grant.changed`, `grant.revoked`, `resource.created`, `resource.version_added`, `resource.disabled`, `resource.enabled`, `resource.replaced`, `policy.changed`, `runner.registered`, `runner.deregistered`, `installation.disabled`, `installation.enabled`); `direction` (`widening` or `narrowing`, fixed per act by the catalog and checked at ingest); `role`, `resource_type` (bounded app-local tokens matching `^[a-z][a-z0-9_.-]{0,63}$`); `subject_ref`, `resource_ref`, optional `before_ref`/`after_ref` (opaque); `authority` (`owner_act`, `passkey_session`, `team_cert`); optional `owner_act_sha256` (owner-act-rooted acts), `approval_evidence_sha256` (passkey-confirmed acts), `approval_id`, `policy_digest`, `reason_code`. A governance act that cannot enqueue does not commit. |
-| `post-manifest-command-hook` | `app_id`, `tool`, `operation_kind` (`mutation`, `read`, `refusal`), `request_sha256` over the canonical request bytes of the manifest mapping, declared opaque `resource_refs`, `http_status`, optional `result_ref`. Parameter values are not copied; the digest commits to them. |
+| `post-governance-hook` | `act` (catalog enum: `role.designated`, `role.revoked`, `credential.enrolled`, `credential.recovered`, `credential.revoked`, `grant.created`, `grant.changed`, `grant.revoked`, `resource.created`, `resource.version_added`, `resource.version_observed`, `resource.disabled`, `resource.enabled`, `resource.replaced`, `policy.changed`, `runner.registered`, `runner.deregistered`, `installation.disabled`, `installation.enabled`); `direction` (`widening` or `narrowing`, fixed per act by the catalog and checked at ingest); `role`, `resource_type` (bounded app-local tokens matching `^[a-z][a-z0-9_.-]{0,63}$`); `subject_ref`, `resource_ref`, optional `before_ref`/`after_ref` (opaque); `authority` (`owner_act`, `passkey_session`, `team_cert`, `backend_observation`); optional `owner_act_sha256` (owner-act-rooted acts), `approval_evidence_sha256` (passkey-confirmed acts), `approval_id`, `policy_digest`, `reason_code`. A governance act that cannot enqueue does not commit. |
+| `post-manifest-command-hook` | `app_id`, `tool`, `operation_kind` (`mutation`, `read`, `refusal`), `request_sha256` (historical name; producer-keyed HMAC-SHA-256 of the canonical request, as specified below), declared opaque `resource_refs`, `http_status`, optional `result_ref`. Parameter values are not copied; the HMAC commits to them. |
 | `post-mutation-hook` | `mutation_type` (§A10), `target_ref`, optional `before_ref`/`after_ref` (revision or state refs), and the per-type fields in the catalog (status values, assignee identities, `content_mode`). Never bodies, subjects, previews or titles. |
 | `post-command-hook` | `command` (canonical command path), `flags` (names only, plus values of catalog-declared enum flags), `local_effects` (enumerated, e.g. `identity_key_created`, `team_certificate_stored`, `app_approval_recorded`, `grant_minted`), `exit_status`. |
+
+Decision 92 fixes `resource.version_observed` as non-widening (`narrowing`),
+with `backend_observation` authority exclusive to that act. Only a value that
+validates the immutable shape under the unchanged backend reference may become
+CURRENT for later fresh admissions. The event carries scoped minted secret and
+random local-version refs, no value material or owner/passkey evidence, and a
+system actor. The transition, replacement consequences and outbox commit
+atomically. Invalid or unresolved input activates nothing. Pre-S3 failures use
+the required `refused` event (`secret_value_invalid` or `custody_unavailable`);
+a post-dispatch-fence reread failure uses `not_sent` without `refusal_code`.
+The complete contract is in
+[hook-events, observed backend versions](../hook-events.md#observed-backend-versions-decision-92).
 
 **`post-secret-use-hook` payload, v1** (one flat allowlist, with no nested
 objects and no free text). The hooks catalog vector records it.
@@ -192,21 +204,91 @@ objects and no free text). The hooks catalog vector records it.
 | `target_method`, `target_host`, `target_port`, `target_path_template` | Broker. Open requests carry host plus path template only, never a concrete path or query. |
 | `operation_id`, `operation_digest` | Named operations. |
 | `runner_id`, `job_id`, `job_digest` | Runner jobs. |
-| `request_sha256`, `params_sha256` | The agent's frozen request and parameters, **before credential injection**. |
+| `request_sha256`, `params_sha256` | Historical names for separately keyed HMAC-SHA-256 commitments to the initial authenticated inbound tool HTTP request and validated typed operation/job parameters (decision 73; public hook contract). They are distinct from local idempotency and B2 approval hashes. Open requests omit the parameter MAC. |
 | `grant_id`, `policy_digest` | The secrets grant and the policy evaluated. |
 | `approval_id`, `approval_assurance`, `approver_id`, `approval_credential_id`, `approval_evidence_sha256`, `approval_decision` | Present only when there is an approval. |
 | `dispatch_id`, `dispatch_state` | |
 | `upstream_status_code`, `upstream_bytes`, `upstream_truncated`, `upstream_response_hmac` | The HMAC is producer-keyed and optional. There is no unsalted response digest. |
 | `returned_hmac` | A producer-keyed HMAC of the bytes returned to the agent, after projection and redaction. It is absent when the result is `withheld`. It is an HMAC and not a plain hash, because returned bytes may still carry a credential that redaction missed. |
-| `disposition`, `derived_secret_id` | `returned`, `withheld` or `stored_as_secret`, on `completed`. |
+| `disposition`, `derived_secret_id`, `derived_grant_id` | `returned`, `withheld` or `stored_as_secret`, on `completed`. Only `stored_as_secret` requires the child secret and its newly minted grant together; both are forbidden elsewhere. `grant_id` still names the authorizing source grant. |
 | `undeclared_credential` | Boolean, on `completed`: the response carried a credential that was not declared. |
-| `redaction_count`, `refusal_code` | `refusal_code` is a fixed enum, recorded in the catalog vector: `grant_missing`, `grant_revoked`, `operation_not_allowed`, `open_request_not_allowed`, `policy_rate_limited`, `policy_window_closed`, `destination_not_in_scope`, `destination_address_denied`, `internal_destinations_disabled`, `header_not_allowed`, `params_invalid`, `token_issuing_denied`, `secret_disabled`, `installation_disabled`, `generation_superseded`, `secret_version_changed`, `custody_unavailable`, `attestation_unavailable`, `approval_denied`, `approval_expired`, `approval_revoked`, `approval_unrenderable`, `distinct_approver_required`, `reconciliation_pending`, `dispatch_in_flight`, `idempotency_conflict`, `audit_target_unavailable`, `audit_delivery_stalled`, `runner_unavailable`, `job_not_allowed`. |
+| `redaction_count`, `refusal_code` | `refusal_code` is a fixed enum, recorded in the catalog vector: `grant_missing`, `grant_revoked`, `operation_not_allowed`, `open_request_not_allowed`, `policy_rate_limited`, `policy_window_closed`, `destination_not_in_scope`, `destination_address_denied`, `internal_destinations_disabled`, `header_not_allowed`, `params_invalid`, `token_issuing_denied`, `secret_disabled`, `installation_disabled`, `generation_superseded`, `secret_version_changed`, `secret_value_invalid`, `custody_unavailable`, `attestation_unavailable`, `approval_denied`, `approval_expired`, `approval_revoked`, `approval_consumed`, `approval_unrenderable`, `distinct_approver_required`, `no_eligible_approver`, `reconciliation_pending`, `dispatch_in_flight`, `idempotency_conflict`, `audit_target_unavailable`, `audit_delivery_stalled`, `runner_unavailable`, `job_not_allowed`. |
 
 A withheld value and an undeclared credential are properties of the
 `completed` event, not separate events: one effect, one event.
 `installation_id`, generation and the principal are carried by the envelope's
 `producer` and `actor` (§A6). **Digest rule (security):** no payload digest is
 ever unsalted over bytes that contain or may echo a credential.
+
+**Manifest request commitment (decision 70, K4 design delta).** The digest
+rule forbids an unsalted digest of bytes that contain or may echo a
+credential. Generic manifest-tool parameters can hold a credential even
+before injection; restricting intentional secret ingress to surfaces is a
+policy, not a property of those bytes. For `post-manifest-command-hook`,
+`request_sha256` therefore retains its wire name and 64-character lowercase
+hex shape but means producer-keyed **HMAC-SHA-256**, never plain SHA-256.
+The exact domain-separated input, installation context and independent
+producer-local key lifecycle are specified in
+[the public hook contract](../hook-events.md#post-manifest-command-hook).
+No signing seed, team key or public key is used as the HMAC key. A missing or
+malformed key prevents startup of a runtime configured to produce this hook.
+The receiver verifies producer provenance and field shape; it cannot verify
+the request bytes from this commitment. Rotation affects future commitments,
+while retries retain the originally signed event bytes.
+
+The manifest-command delta leaves its field set and shape unchanged. K4
+proves the producer algorithm and credential-shaped input handling before
+emitting this hook in production.
+
+**Secret-use commitments and child linkage (decision 73).** The two secret-use
+commitments also become HMAC-SHA-256, each under its own dedicated random key
+and domain. The exact inbound-request framing, typed-parameter framing,
+authoritative context, persist-once lifecycle, rotation and refusal behavior
+are specified in [the public hook contract](../hook-events.md#post-secret-use-hook).
+S8's local equality hash and B2's approval hash are unchanged and never copied
+into these audit fields. A conflicting re-submission commits the attempted
+bytes, without borrowing or overwriting the accepted use's commitments.
+Refusal recording needs no intent row and survives rollback of the admission
+savepoint. Missing optional input omits its MAC and never suppresses an
+otherwise-required refusal event.
+
+A `completed`/`stored_as_secret` event links the child secret and its minted
+grant through `derived_secret_id` and `derived_grant_id`. They commit with the
+child, custody value, grant, result and outbox, and replay preserves the pair.
+The issuing grant remains in `grant_id`. No creation pair is emitted after a
+rollback or lost recording fence.
+
+Decision 73 deliberately re-freezes `post-secret-use-hook` in catalog v1 in
+place: no deployed producer or consumer uses it, and no deployed pending use
+exists. The public catalog, packaged copy, transition examples and consumer
+expectations change together; there is no parallel version. S13 builds on this
+shape after kit/ingest/resolution support and owner activation. B2's frozen
+approval bytes remain unchanged.
+
+**Passkey proof and console actors (decision 84, aweb-acgh.39).** Juan
+preserves secrets §10.4: a reviewer holding the independently trusted approver
+public key can check the approval later without trusting B3's verdict. B3
+retains the exact assertion, COSE key, challenge preimage, frozen verification
+context and B2 covered-request sidecar in restricted storage. Both hooks'
+`approval_evidence_sha256` fields commit the exact proof and context through
+unkeyed SHA-256, with domain, fixed length framing and step-by-step independent
+verification in [the public contract](../hook-events.md#passkey-evidence-commitments-and-console-actors).
+This replaces the held summary HMAC, whose destroyed key could not support
+that verification. The verified assertion/context are non-secret proof
+artifacts; credential-bearing B2 request bytes stay outside the outer hash and
+are bound transitively through their existing hash in the signed challenge.
+The request/params audit HMACs and §A2 rules for agent bytes are unchanged.
+
+Only the proof commitment is published; raw bytes, authorizing subject,
+credential ID and counters remain restricted. Frozen proof verifies after key
+rotation, revocation or replacement without a live service or retired secret.
+App-lifecycle deletion ends proof retrieval; the surviving commitment alone
+cannot reconstruct it. Console governance uses the existing identity-free
+system actor; payload subject_ref stays the affected subject. Secret-use keeps
+the requesting-member actor. Authenticator-signed facts and service metadata
+are distinguished. No envelope mode, catalog field or containment gate is
+added. B3 implements the one shared helper after R+A; S13/S14 do not serialize
+it locally.
 
 ### A3. Registration and owner activation
 
@@ -464,8 +546,20 @@ occurred_at`. A revoked binding's backlog is handled by the revocation rule
 of §A3. The event itself is target-independent, so every sink receives
 byte-identical signed bytes. The shared kit takes the caller's transaction for
 the enqueue, and exposes the age of the oldest undelivered event per binding.
-Secrets uses that age for its backlog bound: it refuses new admissions once a
-target is stalled beyond a threshold that Juan sets.
+Secrets uses that age for its backlog bound: it refuses new admissions when
+every eligible active target is beyond the threshold that Juan sets. A current
+target permits admission alongside a stalled secondary.
+
+Decision 94 supplies the shared admission predicate and durable refusal path.
+`HookProducer.require_admission` checks current eligible targets for this team
+and hook, counting unmaterialized events as well as outstanding deliveries.
+At least one current target suffices; a stalled secondary never blocks it.
+`enqueue_refusal` is exclusive to secret-use `action=refused` and bypasses only
+target/backlog gating, preserving validation, keys and atomic storage without
+authorizing an external effect. Zero-target refusals are recorded with zero
+deliveries owed; future targets receive no retroactive event. S13 also keeps
+its operational refusal record for console activity. See the complete
+[audit gate and admission rules](../hook-events.md#the-audit-critical-gate).
 
 **Transport.** Each delivery is `POST` to the binding's origin and path with
 `Authorization: AWEB-Hook DIDKey <did:key> <sig>`. The signed payload binds
@@ -492,7 +586,7 @@ infrastructure, not an audit store (hooks-spec §7).
 
 **Failure mode.**
 
-- *Audit-critical* (`post-secret-use-hook`, and widening
+- *Audit-critical effects* (secret uses, and widening
   `post-governance-hook` acts): the producer refuses the effect (secrets'
   `audit_target_unavailable`, the real error logged) unless both hold:
   - a registry view no older than 60 s holds an active registration with
@@ -622,8 +716,8 @@ Python tests:
 
 | Vector | Covers |
 | --- | --- |
-| docs/vectors/hook-catalog-v1.json | Hooks, class, producer kinds, audit-critical flag, precedence, the flat payload allowlists (including `post-secret-use-hook`, the `post-governance-hook` act/direction table, and the per-type fields of each §A10 mutation type, such as `app_key.revoked`), client command classes. |
-| `hook-event-envelope-v1.json` | Seeds, canonical bytes, signatures. Negatives: wrong prefix, non-canonical bytes, float, duplicate key, unknown payload field, team mismatch, client-signed server hook, a client event whose actor is not its signer, unknown catalog version. Secret digests: `request_sha256` over the pre-injection request, with a negative where the digest covers injected credential bytes. |
+| docs/vectors/hook-catalog-v1.json | Hooks, class, producer kinds, audit-critical flag, precedence, the flat payload allowlists (including `post-secret-use-hook`, the `post-governance-hook` act/direction table, and the per-type fields of each §A10 mutation type, such as `app_key.revoked`), client command classes. Decision 73 re-freezes the secret-use HMAC field types and paired child-secret/grant linkage with positive and single-fault negative cases. |
+| `hook-event-envelope-v1.json` | Seeds, canonical bytes, signatures. Negatives: wrong prefix, non-canonical bytes, float, duplicate key, unknown payload field, team mismatch, client-signed server hook, a client event whose actor is not its signer, unknown catalog version. The obsolete plain-SHA pre-injection demonstration is removed by decision 73; signed envelope cases remain byte-identical. Producer HMAC/framing/lifecycle proofs belong to K4 and S13, since a signature verifier cannot recompute a private producer MAC. |
 | `hook-delivery-credential-v1.json` | `hook-delivery`. Negatives: an app-event or `hook-resolve` credential at a hook target, cross-audience, tampered body, wrong binding, stale timestamp. (`hook-resolve` vectors belong to acgh.7.) |
 | `owner-act-v1.json` | Activate and revoke, plus each logs act. Negatives: admin signer, rotated-out team key, expired, nonce reuse, subject/generation mismatch, a valid act of the wrong type or audience, a team certificate presented as an owner act. |
 | `hook-binding-cases-v1.json` | Semantic cases: admin install leaves bindings pending, a new generation supersedes, an unknown catalog is refused, the `active_from` pad, revocation cancels pending deliveries. |

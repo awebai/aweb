@@ -47,16 +47,16 @@ async def _setup_team_and_agents(aweb_db, team_id="backend:acme.com"):
 
     alice = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope)
-        VALUES ($1, $2, 'did:aw:alice', 'alice', 'global')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
+        VALUES ($1, $2, 'did:aw:alice', 'alice', 'global', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $2 END)
         RETURNING agent_id
         """,
         team_id, alice_did,
     )
     bob = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope)
-        VALUES ($1, $2, 'did:aw:bob', 'bob', 'global')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
+        VALUES ($1, $2, 'did:aw:bob', 'bob', 'global', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $2 END)
         RETURNING agent_id
         """,
         team_id, bob_did,
@@ -169,8 +169,8 @@ async def test_ensure_session_isolates_reused_alias(aweb_cloud_db, replaced_inde
     )
     replacement = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, identity_scope)
-        VALUES ($1, $2, $3, $4, $5, 'global')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, identity_scope, did_aw_verified_key)
+        VALUES ($1, $2, $3, $4, $5, 'global', CASE WHEN NULLIF($3, '') IS NOT NULL THEN $2 END)
         RETURNING *
         """,
         old["team_id"], _make_did_key(), "did:aw:replacement",
@@ -362,8 +362,8 @@ async def test_send_non_participant_returns_none(aweb_cloud_db):
     charlie_did = _make_did_key()
     charlie = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope)
-        VALUES ('backend:acme.com', $1, 'did:aw:charlie', 'charlie', 'local')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
+        VALUES ('backend:acme.com', $1, 'did:aw:charlie', 'charlie', 'local', CASE WHEN NULLIF('did:aw:charlie', '') IS NOT NULL THEN $1 END)
         RETURNING agent_id
         """,
         charlie_did,
@@ -471,8 +471,8 @@ async def test_ensure_session_does_not_merge_different_agents_sharing_did_aw(awe
     alice_new_did_key = _make_did_key()
     old_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope)
-        VALUES ('backend:acme.com', $1, $2, 'alice-old', 'global')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
+        VALUES ('backend:acme.com', $1, $2, 'alice-old', 'global', CASE WHEN NULLIF($2, '') IS NOT NULL THEN $1 END)
         RETURNING agent_id
         """,
         alice_old_did_key,
@@ -480,8 +480,8 @@ async def test_ensure_session_does_not_merge_different_agents_sharing_did_aw(awe
     )
     new_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope)
-        VALUES ('ops:acme.com', $1, $2, 'alice-new', 'global')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
+        VALUES ('ops:acme.com', $1, $2, 'alice-new', 'global', CASE WHEN NULLIF($2, '') IS NOT NULL THEN $1 END)
         RETURNING agent_id
         """,
         alice_new_did_key,

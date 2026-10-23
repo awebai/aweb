@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field, field_validator, model_serializer, model_
 from awid.dns_auth import validate_did_key, verify_signed_json_request
 from awid.e2ee_keys import validate_encryption_key_assertion
 from awid.team_ids import parse_team_id
+from aweb.inbound_modes import INBOUND_MODES, normalize_inbound_mode, effective_inbound_mode, set_identity_inbound_mode
+from aweb.service_errors import ForbiddenError
 from aweb.alias_allocator import candidate_name_prefixes, used_name_prefixes
 from aweb.coordination.roles import ROLE_MAX_LENGTH
 from aweb.coordination.routes.repos import canonicalize_git_url
@@ -112,12 +114,7 @@ class UpdateAgentInboundModeRequest(BaseModel):
     @field_validator("inbound_mode")
     @classmethod
     def validate_inbound_mode(cls, value: str) -> str:
-        value = (value or "").strip().lower()
-        if value == "contacts_only":
-            return "team_and_contacts"
-        if value not in {"open", "team_and_contacts"}:
-            raise ValueError("inbound_mode must be one of open, team_and_contacts")
-        return value
+        return normalize_inbound_mode(value, default="")
 
 
 class SuggestAliasPrefixRequest(BaseModel):
@@ -377,7 +374,7 @@ async def list_agents(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT a.agent_id, a.alias, a.did_key, a.did_aw, a.address,
+        SELECT a.agent_id, a.alias, a.did_key, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address,
                a.human_name, a.agent_type, a.role, a.identity_scope,
                a.inbound_mode, a.status,
                e.encryption_key_id,
@@ -626,7 +623,7 @@ async def _load_current_agent_inbound_mode(
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, identity_scope, inbound_mode
+        SELECT agent_id, team_id, alias, identity_scope, inbound_mode, did_aw
         FROM {{tables.agents}}
         WHERE team_id = $1
           AND agent_id = $2::UUID
@@ -639,9 +636,12 @@ async def _load_current_agent_inbound_mode(
         raise HTTPException(status_code=404, detail="Agent not found")
     identity_scope = str(row.get("identity_scope") or "local")
     inbound_mode = str(row.get("inbound_mode") or "").strip().lower()
-    if inbound_mode == "contacts_only":
-        inbound_mode = "team_and_contacts"
-    if inbound_mode not in {"open", "team_and_contacts"}:
+    if str(row.get("did_aw") or "").startswith("did:aw:"):
+        try:
+            inbound_mode = await effective_inbound_mode(aweb_db, row["did_aw"])
+        except ForbiddenError as exc:
+            raise HTTPException(status_code=409, detail="Agent inbound_mode migration required") from exc
+    if inbound_mode not in INBOUND_MODES:
         raise HTTPException(status_code=409, detail="Agent inbound_mode migration required")
     return AgentInboundModeResponse(
         agent_id=str(row["agent_id"]),
@@ -674,22 +674,14 @@ async def update_my_inbound_mode(
     state = await _load_current_agent_inbound_mode(db, identity)
     if state.identity_scope != "global":
         raise HTTPException(status_code=409, detail="inbound_mode is only configurable for global identities")
+    # Only authentication's verified global identity may select an identity-wide
+    # write. A membership row's raw claim is not identity authority.
+    did_aw = str(identity.did_aw or "").strip()
+    if not did_aw.startswith("did:aw:"):
+        raise HTTPException(status_code=409, detail="Agent identity migration required")
     aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        UPDATE {{tables.agents}}
-        SET inbound_mode = $3
-        WHERE team_id = $1
-          AND agent_id = $2::UUID
-          AND deleted_at IS NULL
-        RETURNING agent_id, team_id, alias, identity_scope, inbound_mode
-        """,
-        identity.team_id,
-        identity.agent_id,
-        payload.inbound_mode,
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    async with aweb_db.transaction() as tx:
+        await set_identity_inbound_mode(tx, did_aw, payload.inbound_mode)
     return await _load_current_agent_inbound_mode(db, identity)
 
 

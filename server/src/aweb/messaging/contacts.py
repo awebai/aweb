@@ -397,6 +397,7 @@ async def resolve_handle_contact_agent(
             WHERE a.deleted_at IS NULL
               AND a.status = 'active'
               AND a.identity_scope = 'global'
+              AND a.did_aw_verified_key = a.did_key
               AND a.address = $1
             GROUP BY a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                      a.identity_scope, a.status, a.created_at
@@ -418,6 +419,7 @@ async def resolve_handle_contact_agent(
             WHERE a.deleted_at IS NULL
               AND a.status = 'active'
               AND a.identity_scope = 'global'
+              AND a.did_aw_verified_key = a.did_key
               AND a.address LIKE $1
             GROUP BY a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                      a.identity_scope, a.status, a.created_at

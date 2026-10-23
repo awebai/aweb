@@ -30,7 +30,7 @@ from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 from pydantic_settings import SettingsConfigDict
 
-from aweb_naapp.manifest import write_manifest_file
+from aweb_naapp.manifest import Manifest, canonical_bytes, load_manifest, write_manifest_file
 from aweb_naapp.outbox import (
     Acked,
     OutboxEvent,
@@ -128,13 +128,30 @@ def _did_key(seed_hex: str) -> str:
     return did_from_public_key(bytes(SigningKey(bytes.fromhex(seed_hex)).verify_key))
 
 
-def _manifest(seed_hex: str) -> dict[str, Any]:
+def _loaded(document: dict[str, Any]) -> Manifest:
+    return load_manifest(canonical_bytes(document))
+
+
+def _manifest_document(seed_hex: str) -> dict[str, Any]:
     return {
         "manifest_version": 1,
         "app": {"id": "example", "origin": "https://example.test"},
         "tools": [],
         "event_emitters": [{"kid": _KID, "did_key": _did_key(seed_hex)}],
     }
+
+
+def _manifest(seed_hex: str) -> Manifest:
+    return _loaded(_manifest_document(seed_hex))
+
+
+def _v2_manifest(*purposes_by_kid: tuple[str, str, list[str]]) -> Manifest:
+    return _loaded({
+        "manifest_version": 2,
+        "app": {"id": "example", "origin": "https://example.test"},
+        "tools": [],
+        "app_keys": [{"kid": kid, "did_key": did, "purposes": p} for kid, did, p in purposes_by_kid],
+    })
 
 
 def _settings(seed_hex: str, origin: str | None = "https://core.example.test", **values: object):
@@ -226,9 +243,26 @@ def test_build_emit_request_signs_the_exact_body_for_the_app(seed: str) -> None:
     )
 
 
-def test_an_app_without_an_app_events_origin_emits_nothing() -> None:
-    events = AppEvents.from_settings(ExampleSettings(_env_file=None), {"tools": []})
+def test_an_app_without_an_app_events_origin_emits_nothing(seed: str) -> None:
+    events = AppEvents.from_settings(ExampleSettings(_env_file=None), _manifest(seed))
     assert events.key is None
+
+
+def test_a_v2_app_key_declared_for_app_event_emits(seed: str) -> None:
+    manifest = _v2_manifest((_KID, _did_key(seed), ["app-event", "app-request"]))
+    events = AppEvents.from_settings(_settings(seed), manifest)
+    assert events.key is not None and events.key.did_key == _did_key(seed)
+
+
+def test_a_v2_app_that_declares_no_app_event_key_needs_no_app_event_settings() -> None:
+    events = AppEvents.from_settings(ExampleSettings(_env_file=None), _v2_manifest())
+    assert events.key is None
+
+
+def test_an_app_events_origin_with_no_key_declared_for_app_event_refuses_to_start(seed: str) -> None:
+    manifest = _v2_manifest((_KID, _did_key(seed), ["app-request"]))
+    with pytest.raises(AppKeyError, match="app-event"):
+        AppEvents.from_settings(_settings(seed), manifest)
 
 
 def test_an_app_events_origin_without_a_declared_key_refuses_to_start(seed: str) -> None:
@@ -298,9 +332,9 @@ async def test_an_emit_commits_with_the_callers_transaction(
 
 
 async def test_an_app_without_an_app_events_origin_enqueues_nothing(
-    db: AsyncDatabaseManager,
+    db: AsyncDatabaseManager, seed: str
 ) -> None:
-    events = AppEvents.from_settings(ExampleSettings(_env_file=None), {"tools": []})
+    events = AppEvents.from_settings(ExampleSettings(_env_file=None), _manifest(seed))
     async with db.transaction() as tx:
         assert await events.emit(tx, team_id=_TEAM, **_EVENT) is None
     assert await db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
@@ -412,7 +446,8 @@ async def test_the_runtime_drains_app_events_while_the_app_runs(
     tmp_path: Path, receiver: Receiver, seed: str, app_database_url: str
 ) -> None:
     manifest_path = tmp_path / "aweb-app.json"
-    write_manifest_file(manifest_path, _manifest(seed))
+    template = {**_manifest_document(seed), "event_emitters": [{"kid": _KID}]}
+    write_manifest_file(manifest_path, template)
     migrations = tmp_path / "migrations"
     migrations.mkdir()
     settings = _settings(seed, receiver.origin, database_url=app_database_url)

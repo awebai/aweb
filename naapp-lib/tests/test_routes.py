@@ -12,7 +12,12 @@ from pydantic_settings import SettingsConfigDict
 
 from aweb_naapp import CSS_SHA256, aweb_css
 from aweb_naapp.css import FONT_NAMES
-from aweb_naapp.manifest import canonical_bytes, manifest_for_origin, write_manifest_file
+from aweb_naapp.manifest import (
+    ManifestError,
+    canonical_bytes,
+    select_variant,
+    write_manifest_file,
+)
 from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes, mount_naapp_routes
 from aweb_naapp.runtime.health import CheckResult
 from aweb_naapp.runtime.settings import NaappSettings
@@ -162,10 +167,11 @@ def test_manifest_is_the_committed_bytes_at_both_paths(tmp_path: Path) -> None:
         assert response.content == committed
 
 
-def test_the_committed_origin_serves_the_committed_file_byte_for_byte(tmp_path: Path) -> None:
+def test_the_hosted_origin_serves_the_canonical_filled_manifest(tmp_path: Path) -> None:
+    # The committed file is a template; every deployment serves its canonical filled bytes.
     committed = json.dumps(_MANIFEST, indent=2).encode("utf-8") + b"\n"
     response = _client(tmp_path, committed=committed).get("/.well-known/aweb-app.json")
-    assert response.content == committed
+    assert response.content == canonical_bytes(_MANIFEST)
 
 
 def test_request_headers_never_change_the_served_manifest(tmp_path: Path) -> None:
@@ -191,15 +197,15 @@ def test_the_manifest_is_fixed_at_startup_and_served_verbatim(tmp_path: Path) ->
     }
     assert digests == {hashlib.sha256(first).hexdigest()}
     assert runtime.manifest_bytes == first
-    assert runtime.manifest == json.loads(first)
+    assert runtime.manifest.document == json.loads(first)
 
 
 def test_manifest_follows_a_self_hosted_origin(tmp_path: Path) -> None:
     origin = "http://127.0.0.1:9876"
-    settings = ExampleSettings(_env_file=None, public_origin=origin)
+    settings = ExampleSettings(_env_file=None, public_origin=origin, app_id="self-example")
     response = _client(tmp_path, settings=settings).get("/.well-known/aweb-app.json")
-    assert response.content == canonical_bytes(manifest_for_origin(_MANIFEST, origin))
-    assert json.loads(response.content)["app"]["origin"] == origin
+    expected = {**_MANIFEST, "app": {"id": "self-example", "origin": origin}}
+    assert response.content == canonical_bytes(expected)
 
 
 def test_skills_are_served_and_unknown_skills_are_not_found(tmp_path: Path) -> None:
@@ -272,3 +278,85 @@ def test_an_app_without_the_docs_surface_serves_its_manifest_alone(tmp_path: Pat
         assert response.content == manifest_path.read_bytes()
     for path in ("/", "/llms.txt", "/health"):
         assert client.get(path).status_code == 404
+
+
+def test_an_app_without_the_docs_surface_serves_its_v2_manifest_through_its_catalog(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "aweb-app.json"
+    write_manifest_file(manifest_path, _MANIFEST_V2)
+    runtime = NaappRuntime(
+        ExampleSettings(_env_file=None),
+        module_name="example",
+        migrations_path=tmp_path,
+        manifest_path=manifest_path,
+    )
+    app = FastAPI()
+    mount_manifest_routes(app, runtime=runtime)
+    client = TestClient(app)
+    variant = select_variant(_HOSTED, (1, 2), _fetch(client))
+    assert (variant.source, variant.manifest_version) == ("catalog", 2)
+    assert variant.data == manifest_path.read_bytes()
+    assert client.get("/aweb-app.json").content == variant.data
+    assert client.get("/.well-known/aweb-app.json").status_code == 404
+    for path in ("/", "/llms.txt", "/health"):
+        assert client.get(path).status_code == 404
+
+
+# --- Manifest discovery --------------------------------------------------------
+
+_MANIFEST_V2 = {
+    "manifest_version": 2,
+    "app": {"id": "example", "origin": _HOSTED},
+    "tools": [{"name": "create", "method": "POST", "path": "/v1/things", "scopes": ["example:write"]}],
+}
+
+
+def _fetch(client: TestClient):
+    def fetch(path: str, max_bytes: int) -> tuple[int, bytes]:
+        response = client.get(path, follow_redirects=False)
+        return response.status_code, response.content[:max_bytes]
+
+    return fetch
+
+
+def test_a_v2_app_is_discovered_through_its_catalog(tmp_path: Path) -> None:
+    client = _client(tmp_path, committed=canonical_bytes(_MANIFEST_V2))
+    variant = select_variant(_HOSTED, (1, 2), _fetch(client))
+    assert (variant.source, variant.manifest_version) == ("catalog", 2)
+    assert variant.data == client.app.state.runtime.manifest_bytes
+
+
+def test_a_v2_app_serves_no_v1_manifest(tmp_path: Path) -> None:
+    client = _client(tmp_path, committed=canonical_bytes(_MANIFEST_V2))
+    assert client.get("/.well-known/aweb-app.json").status_code == 404
+    with pytest.raises(ManifestError) as refused:
+        select_variant(_HOSTED, (1,), _fetch(client))
+    assert refused.value.code == "no_supported_variant"
+
+
+def test_a_self_hosted_v2_app_lists_the_bytes_it_serves(tmp_path: Path) -> None:
+    settings = ExampleSettings(_env_file=None, public_origin="http://self.test", app_id="self-example")
+    client = _client(tmp_path, committed=canonical_bytes(_MANIFEST_V2), settings=settings)
+    variant = select_variant("http://self.test", (2,), _fetch(client))
+    assert variant.source == "catalog"
+    assert json.loads(variant.data)["app"]["origin"] == "http://self.test"
+    assert variant.data == client.app.state.runtime.manifest_bytes
+
+
+def test_a_v1_app_is_discovered_at_the_legacy_path(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    assert client.get("/.well-known/aweb-app-versions.json").status_code == 404
+    variant = select_variant(_HOSTED, (1, 2), _fetch(client))
+    assert (variant.source, variant.manifest_version) == ("legacy", 1)
+
+
+def test_the_catalog_and_its_variant_are_fixed_at_startup(tmp_path: Path) -> None:
+    client = _client(tmp_path, committed=canonical_bytes(_MANIFEST_V2))
+    catalog = client.get("/.well-known/aweb-app-versions.json")
+    assert catalog.status_code == 200
+    catalog = catalog.content
+    variant = select_variant(_HOSTED, (2,), _fetch(client))
+    assert variant.source == "catalog"
+    (tmp_path / "aweb-app.json").write_bytes(canonical_bytes({**_MANIFEST_V2, "tools": []}))
+    assert client.get("/.well-known/aweb-app-versions.json").content == catalog
+    assert select_variant(_HOSTED, (2,), _fetch(client)).data == variant.data
+    assert client.get("/aweb-app.json").content == variant.data

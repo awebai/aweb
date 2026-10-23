@@ -5,9 +5,9 @@ Content-only Claude Code plugin packaging the four canonical aweb skills:
 `aweb-bootstrap`.
 
 Distinct from [`@awebai/claude-channel`](https://github.com/awebai/aweb/tree/main/channel),
-which ships the real-time channel runtime and is started with both
-`--dangerously-skip-permissions` and
-`--dangerously-load-development-channels`. This package has **no runtime**, no
+which ships the real-time channel runtime and is started with
+`--dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace`
+in any permission mode. This package has **no runtime**, no
 `bin`, no MCP server config — just the skill bodies. Users who only want
 aweb's skill catalog install this one and skip the channel.
 

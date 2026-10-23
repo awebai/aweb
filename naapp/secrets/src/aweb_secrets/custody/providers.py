@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from aweb_naapp.signing_key import KeyFileError, read_key_file
+from aweb_naapp.key_file import KeyFileError, read_key_file
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from .sealing import DataKey, additional_data

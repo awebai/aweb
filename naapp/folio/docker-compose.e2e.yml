@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: folio
       POSTGRES_DB: folio
     ports:
-      - "${FOLIO_E2E_POSTGRES_PORT:-55432}:5432"
+      - "${NAAPP_E2E_POSTGRES_PORT:-55432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U folio -d folio"]
       interval: 2s
@@ -17,6 +17,8 @@ services:
 
   redis:
     image: redis:7-alpine
+    ports:
+      - "6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
@@ -39,7 +41,7 @@ services:
       AWID_SKIP_DNS_VERIFY: "1"
       AWID_SERVICE_TOKEN: ${FOLIO_E2E_AWID_SERVICE_TOKEN:-folio-e2e-awid-service-token-0123456789abcdef}
     ports:
-      - "${FOLIO_E2E_AWID_PORT:-18010}:8010"
+      - "${NAAPP_E2E_AWID_PORT:-18010}:8010"
     depends_on:
       postgres:
         condition: service_healthy

@@ -22,7 +22,8 @@ from aweb_secrets.change import (
     covered_bytes,
     validate_change,
 )
-from aweb_secrets.operation import OperationTemplate
+from aweb_secrets.grant import GrantTemplate
+from aweb_secrets.operation import OperationInvalid, OperationTemplate, operation_digest
 from aweb_secrets.policy import Policy
 
 # Fixture identities, derived from fixed seeds the way AWID derives them.
@@ -200,7 +201,7 @@ REFUND_OPERATION = {
         },
     },
     "body": {"template": {"amount": {"$param": "amount_minor_units"}, "currency": "EUR"}},
-    "headers": {"fixed": {}, "allowed": ["idempotency-key"]},
+    "headers": {"fixed": {}, "allowed": ["x-request-id"]},
     "response": {
         "projection": ["/id", "/status"],
         "max_bytes": 65536,
@@ -217,7 +218,7 @@ REFUND_OPERATION = {
 REFUND_DIGEST = OperationTemplate.from_after(REFUND_OPERATION).digest
 REFUND_POLICY = {
     "approval": "per_use",
-    "approvers": ["finance-approver"],
+    "approvers": ["finance-approver", "owner:" + DID_AW_A],
     "approval_ttl_s": 900,
     "rate": [
         {"per": "principal_secret", "capacity": 30, "window_s": 3600},
@@ -316,6 +317,101 @@ POSITIVE.append(
                 {"kind": "operation", "op": "create", "ref": "refund", "after": REFUND_OPERATION},
             ],
             "Set up refunds on the live payments key",
+        ),
+    )
+)
+
+
+ONEPASSWORD_CHANGE = envelope(
+    "chg_7a06",
+    {"via": "console", "scope": "secrets.owner.p1", "subject": "apr_31c9"},
+    [
+        {
+            "kind": "backend_credential",
+            "op": "create",
+            "ref": "onepassword",
+            "after": {
+                "v": 1,
+                "backend": "onepassword",
+                "credential_id": "bkc_onepassword",
+                "version": 3,
+            },
+        },
+        {
+            "kind": "onepassword_binding",
+            "op": "create",
+            "ref": "sec_19ab42",
+            "after": {
+                "v": 1,
+                "secret_id": "sec_19ab42",
+                "version": 4,
+                "credential_version": 3,
+                "vault_id": "a" * 26,
+                "item_id": "b" * 26,
+                "fields": {"value": "credential"},
+                "item_version": 7,
+            },
+        },
+    ],
+    "Bind a read-only vault reference without copying its value",
+)
+POSITIVE.append(("console-onepassword-binding", ONEPASSWORD_CHANGE))
+
+POSITIVE.append(
+    (
+        "console-runner-record",
+        envelope(
+            "chg_7a07",
+            ONEPASSWORD_CHANGE["drafter"],
+            [
+                {
+                    "kind": "runner",
+                    "op": "create",
+                    "ref": "rnr_aaaaaaaaaaaaaaaaaaaaaa",
+                    "after": {
+                        "v": 1,
+                        "runner_id": "rnr_aaaaaaaaaaaaaaaaaaaaaa",
+                        "label": "Build runner",
+                        "allowed_jobs": ["nightly-backup"],
+                    },
+                }
+            ],
+            "Register the owner-managed runner",
+        ),
+    )
+)
+
+
+POSITIVE.append(
+    (
+        "console-job-record",
+        envelope(
+            "chg_7a08",
+            ONEPASSWORD_CHANGE["drafter"],
+            [
+                {
+                    "kind": "job",
+                    "op": "create",
+                    "ref": "nightly-backup",
+                    "after": {
+                        "v": 1,
+                        "job_id": "nightly-backup",
+                        "runner_ids": ["rnr_aaaaaaaaaaaaaaaaaaaaaa"],
+                        "kind": "exec",
+                        "exec": {"path": "/usr/local/bin/check", "sha256": "c" * 64, "files": []},
+                        "oci": None,
+                        "argv": ["--check"],
+                        "env": {},
+                        "cwd": "/srv/check",
+                        "timeout_s": 30,
+                        "output": {"max_bytes": 4096, "projection": ["/exit_code"]},
+                        "params": {},
+                        "credentials": [],
+                        "allow_durable": False,
+                    },
+                }
+            ],
+            "Draft the owner-managed job shape without enabling execution",
         ),
     )
 )
@@ -446,6 +542,10 @@ refused_records = [
     ),
     ("policy-update", mutated_records(setitem(["changes", 1, "op"], "update"))),
     (
+        "policy-approver-untagged-principal",
+        mutated_records(setitem(["changes", 1, "after", "approvers"], [DID_AW_A])),
+    ),
+    (
         "secret-kind-not-an-auth-scheme",
         mutated_records(setitem(["changes", 0, "after", "kind"], "api_key")),
     ),
@@ -491,9 +591,173 @@ refused_records = [
         mutated_records(setitem(["changes", 5, "after", "result_handling"], "withhold")),
     ),
     (
+        "operation-withhold-without-projection",
+        mutated_records(
+            lambda c: (
+                setitem(["changes", 5, "after", "token_issuing"], True)(c),
+                setitem(["changes", 5, "after", "result_handling"], "withhold")(c),
+                setitem(["changes", 5, "after", "response", "projection"], None)(c),
+            )
+        ),
+    ),
+    (
         "grant-template-role-outside-secrets",
         mutated_records(setitem(["changes", 3, "after", "subject"], {"role": "logs.reader"})),
     ),
+]
+
+
+refused_onepassword = []
+for name, mutate in [
+    ("onepassword-member-drafter", setitem(["drafter"], MEMBER)),
+    ("onepassword-credential-update", setitem(["changes", 0, "op"], "update")),
+    ("onepassword-binding-update", setitem(["changes", 1, "op"], "update")),
+    (
+        "onepassword-private-id-is-secret",
+        setitem(["changes", 0, "after", "credential_id"], "sec_19ab42"),
+    ),
+    ("onepassword-value-hash", setitem(["changes", 0, "after", "value_sha256"], "0" * 64)),
+    (
+        "onepassword-fields-mixed-families",
+        setitem(["changes", 1, "after", "fields"], {"value": "field", "password": "other"}),
+    ),
+    ("onepassword-item-version-zero", setitem(["changes", 1, "after", "item_version"], 0)),
+]:
+    altered = copy.deepcopy(ONEPASSWORD_CHANGE)
+    mutate(altered)
+    refused_onepassword.append((name, json.dumps(altered)))
+
+# Derived operation/1 schemas and pins are frozen before the broker's derived
+# paths are enabled. A well-formed issuer remains explicitly unavailable.
+grant_template = records["changes"][3]["after"]
+store_as_secret = {
+    "derived_kind": "aws-sigv4",
+    "kind_params": {"region": "us-east-1", "service": "s3"},
+    "capture": {
+        "access_key_id": "/Credentials/AccessKeyId",
+        "secret_access_key": "/Credentials/SecretAccessKey",
+        "session_token": "/Credentials/SessionToken",
+    },
+    "destinations": [
+        {
+            "v": 1,
+            "scheme": "https",
+            "host": "assets.s3.example.com",
+            "port": 443,
+            "path": "/reports/**",
+            "methods": ["GET"],
+            "query_rules": {},
+            "header_allow": [],
+            "network": "public",
+            "cidr": None,
+        }
+    ],
+    "expires_at": "/Credentials/Expiration",
+    "grant_template": grant_template["grant_template_id"],
+    "grant_template_digest": GrantTemplate.from_after(grant_template).digest,
+}
+relative_store = {
+    **{key: value for key, value in store_as_secret.items() if key != "expires_at"},
+    "derived_kind": "bearer",
+    "kind_params": {},
+    "capture": {"value": "/access_token"},
+    "expires_in": "/expires_in",
+}
+derived_stores = [
+    ("derived-absolute-unavailable", store_as_secret, "store_as_secret_unavailable"),
+    ("derived-relative-unavailable", relative_store, "store_as_secret_unavailable"),
+    (
+        "derived-expiry-ambiguous",
+        {**store_as_secret, "expires_in": "/expires_in"},
+        "operation_invalid",
+    ),
+    (
+        "derived-kind-params-not-fixed",
+        {
+            **store_as_secret,
+            "kind_params": {"region": "us-east-1", "service": {"$param": "service"}},
+        },
+        "operation_invalid",
+    ),
+    ("derived-no-destinations", {**store_as_secret, "destinations": []}, "operation_invalid"),
+    (
+        "derived-destination-method-not-string",
+        {
+            **store_as_secret,
+            "destinations": [{**store_as_secret["destinations"][0], "methods": [{}]}],
+        },
+        "operation_invalid",
+    ),
+    (
+        "derived-destination-header-not-string",
+        {
+            **store_as_secret,
+            "destinations": [{**store_as_secret["destinations"][0], "header_allow": [{}]}],
+        },
+        "operation_invalid",
+    ),
+    (
+        "derived-destination-from-response",
+        {
+            **store_as_secret,
+            "destinations": [{**store_as_secret["destinations"][0], "host": {"$capture": "/host"}}],
+        },
+        "operation_invalid",
+    ),
+    (
+        "derived-sts-without-session-token",
+        {
+            **store_as_secret,
+            "capture": {
+                "access_key_id": "/Credentials/AccessKeyId",
+                "secret_access_key": "/Credentials/SecretAccessKey",
+            },
+        },
+        "operation_invalid",
+    ),
+    (
+        "derived-grant-template-pin-malformed",
+        {**store_as_secret, "grant_template_digest": "A" * 64},
+        "operation_invalid",
+    ),
+]
+derived_operations = []
+for name, store, expected in derived_stores:
+    after = {
+        **copy.deepcopy(REFUND_OPERATION),
+        "token_issuing": True,
+        "result_handling": "store_as_secret",
+        "store_as_secret": store,
+    }
+    try:
+        OperationTemplate.from_after(after)
+    except OperationInvalid as refused_operation:
+        assert refused_operation.code == expected, name
+    else:
+        raise AssertionError(f"{name} must remain refused")
+    derived_operations.append(
+        {
+            "name": name,
+            "after": after,
+            "operation_digest": operation_digest(after),
+            "expected_code": expected,
+        }
+    )
+    refused_records.append((name, mutated_records(setitem(["changes", 5, "after"], after))))
+
+grant_template_cases = [
+    {
+        "name": "complete-grant-template-pin",
+        "after": grant_template,
+        "digest": GrantTemplate.from_after(grant_template).digest,
+    },
+    {
+        "name": "different-template-id-different-pin",
+        "after": {**grant_template, "grant_template_id": "gtp_other01"},
+        "digest": GrantTemplate.from_after(
+            {**grant_template, "grant_template_id": "gtp_other01"}
+        ).digest,
+    },
 ]
 covered_ref = base64.urlsafe_b64decode(positives[0]["covered_bytes_b64url"] + "==")
 body = covered_ref[len(b"aweb.approval-request/1\n") :]
@@ -505,6 +769,10 @@ negatives = (
     + [
         {"name": name, "of": "member-refund-records", "raw_json": raw, "expected": "refused"}
         for name, raw in refused_records
+    ]
+    + [
+        {"name": name, "of": "console-onepassword-binding", "raw_json": raw, "expected": "refused"}
+        for name, raw in refused_onepassword
     ]
     + [
         {
@@ -610,8 +878,10 @@ vector = {
         "strings. A secret, destination, operation, grant, grant template or policy after is that "
         'record v1, checked whole; a policy is referenced by the SHA-256 of "aweb.secrets.policy/1\\n" '
         "|| canonical_json(after without v), and an operation by operation_id and the SHA-256 of "
-        '"aweb.secrets.operation/1\\n" || canonical_json(after without v). The after shapes of job '
-        "and runner are added by S15; until then those kinds are refused. Identifiers are "
+        '"aweb.secrets.operation/1\\n" || canonical_json(after without v). Job and runner have '
+        "their own registered record shapes; shape acceptance does not enable job applicability. "
+        "Backend credential and 1Password binding versions are console-only projections; "
+        "syntax alone never activates either backend. Identifiers are "
         "fixtures; DIDs are "
         "derived from fixed seeds."
     ),
@@ -646,6 +916,8 @@ vector = {
     "negative_cases": negatives,
     "confirmation_cases": confirmations,
     "confirmer_cases": confirmers,
+    "derived_operation_cases": derived_operations,
+    "grant_template_cases": grant_template_cases,
 }
 # Sanity: B2's own canonical form of the reference reproduces its bytes.
 assert canonical_request({"policy": POLICY, "request": reference}) == covered_ref

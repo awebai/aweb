@@ -59,7 +59,9 @@ when an authenticated earlier message established a valid learned return route.
 
 `inbound_mode=open` accepts valid routed senders.
 `inbound_mode=team_and_contacts` accepts verified same-team senders plus exact
-active identity contacts. Neither setting changes AWID resolution.
+active identity contacts. `inbound_mode=contacts_only` accepts only exact active
+identity contacts; verified teammates also require a contact. These settings do
+not change AWID resolution.
 
 When sender and receiver use different AWID registries, the receiving service
 selects external sender authority from the client-signed sender address, not

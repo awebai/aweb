@@ -125,7 +125,7 @@ func init() {
 	initCmd.Flags().BoolVar(&initGlobal, "global", false, "Create an addressed self-custodial global identity instead of the default local workspace")
 	initCmd.Flags().BoolVar(&initGlobal, "persistent", false, "Deprecated alias for --global")
 	markDeprecatedHiddenFlag(initCmd, "persistent", "global")
-	initCmd.Flags().StringVar(&initInboundMode, "inbound-mode", "", "Inbound delivery mode for a global identity (open|team-and-contacts). Only valid with --global.")
+	initCmd.Flags().StringVar(&initInboundMode, "inbound-mode", "", "Inbound delivery mode for a global identity (open|team-and-contacts|contacts-only). Only valid with --global.")
 	initCmd.Flags().StringVar(&initJoinFrom, "join-from", "", "Add an agent to a team by minting one invite from this existing workspace or identity home")
 	initCmd.Flags().StringVar(&initJoinTeam, "join-team", "", "Team ID to use with --join-from when the source has more than one membership")
 	initCmd.Flags().StringVar(&initAdmissionTeamID, "admission-team-id", "", "Add an agent through host human admission for this explicit team ID")
@@ -937,7 +937,7 @@ func printChannelLaunchInstructions(out io.Writer) {
 	fmt.Fprintln(out, "  claude plugin install aweb-channel@awebai-marketplace")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Then start Claude Code with this exact line:")
-	fmt.Fprintln(out, "  claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
+	fmt.Fprintln(out, "  claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
 	fmt.Fprintln(out)
 	for _, line := range channelLaunchWhyLines {
 		fmt.Fprintln(out, line)
@@ -948,13 +948,10 @@ func printChannelLaunchInstructions(out io.Writer) {
 	}
 }
 
-// channelLaunchWhyLines explains why both flags are on the launch line. Channel
-// messages are delivered to the session only in bypass-permissions mode today.
+// channelLaunchWhyLines distinguishes channel loading from permission mode.
 var channelLaunchWhyLines = []string{
-	"Both flags are needed: channel messages are delivered to the session only in",
-	"bypass-permissions mode today. In Claude Code's default auto mode (and plan",
-	"mode) the notification arrives and is silently not surfaced, so without",
-	"--dangerously-skip-permissions there are no wake-ups. Claude Code asks once to",
+	"Channel delivery works in any permission mode, including auto and plan.",
+	"Choose the permission mode that suits your workflow. Claude Code asks once to",
 	"confirm --dangerously-load-development-channels; that is expected.",
 }
 
@@ -1021,28 +1018,8 @@ func resolveAliasValue(explicit string) string {
 	return strings.TrimSpace(os.Getenv("AWEB_ALIAS"))
 }
 
-// validateInitInboundMode enforces the aapl.7 contract on the
-// --inbound-mode flag. The user-facing flag values use the
-// hyphen-spelling CLI convention (open, team-and-contacts); the
-// underscored canonical form (team_and_contacts) is the wire-level value
-// translated by canonicalInitInboundModeForWire before the API call.
-//
-// Per Juan c2d25276: --inbound-mode is a real top-level flag of
-// `aw init --global` and every supported global creation path
-// (API-key bootstrap, guided hosted onboarding, BYOD) must forward
-// the value into the create call. This validator only enforces the
-// flag-shape contract; threading through the paths is the runner's
-// responsibility.
-//
-// Two guards:
-//
-//  1. The flag is only meaningful for a global identity (--global);
-//     local workspaces have no inbound delivery mode.
-//  2. Only the two-value set {open, team-and-contacts} is canonical.
-//     The stale contacts-only spelling is accepted as a compatibility
-//     alias and normalized to team-and-contacts. The withdrawn value
-//     "contacts_or_teammates" (or the hyphenated variant) must fail at
-//     parse time so users copying stale commands see a clear error.
+// validateInitInboundMode validates the global-only flag with the shared
+// CLI-to-wire parser. Creation paths forward the chosen canonical mode.
 func validateInitInboundMode() error {
 	value := strings.TrimSpace(initInboundMode)
 	if value == "" {
@@ -1061,33 +1038,27 @@ func validateInitInboundMode() error {
 		// BYOD identity is up via the dashboard's inbound-mode
 		// surface or the hosted REST API
 		// (`aw inbound-mode <mode>`).
-		return fmt.Errorf("--inbound-mode is not supported on --byod global creation today (no server-side creation endpoint to carry the value); run `aw init --byod --global` first, then set the inbound mode from the dashboard or with `aw inbound-mode <open|team-and-contacts>`")
+		return fmt.Errorf("--inbound-mode is not supported on --byod global creation today (no server-side creation endpoint to carry the value); run `aw init --byod --global` first, then set the inbound mode from the dashboard or with `aw inbound-mode <open|team-and-contacts|contacts-only>`")
 	}
-	switch value {
-	case "open":
-		initInboundMode = "open"
-		return nil
-	case "team-and-contacts", "contacts-only":
-		initInboundMode = "team-and-contacts"
-		return nil
+	mode, err := normalizeInboundModeCLIValue(value)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("--inbound-mode must be one of {open, team-and-contacts}; got %q", value)
+	initInboundMode = strings.ReplaceAll(mode, "_", "-")
+	return nil
 }
 
-// canonicalInitInboundModeForWire translates the user-facing
-// flag value into the canonical wire form expected by the API:
-// "team-and-contacts" → "team_and_contacts". Returns "" when no value was set.
+// canonicalInitInboundModeForWire returns the validated mode's wire spelling.
+// Empty means the caller did not request a mode; defaults remain caller-owned.
 func canonicalInitInboundModeForWire(flag string) string {
-	switch strings.TrimSpace(flag) {
-	case "":
+	if strings.TrimSpace(flag) == "" {
 		return ""
-	case "open":
-		return "open"
-	case "team-and-contacts", "contacts-only":
-		return "team_and_contacts"
 	}
-	// Should be unreachable after validateInitInboundMode; defensive only.
-	return strings.TrimSpace(flag)
+	mode, err := normalizeInboundModeCLIValue(flag)
+	if err != nil {
+		return strings.TrimSpace(flag)
+	}
+	return mode
 }
 
 func resolveRequestedRole(explicit string) string {
@@ -1171,7 +1142,7 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 	lines = append(lines, "    claude plugin install aweb-channel@awebai-marketplace")
 	lines = append(lines, "")
 	lines = append(lines, "  Then start Claude Code with this exact line:")
-	lines = append(lines, "    claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
+	lines = append(lines, "    claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
 	lines = append(lines, "")
 	for _, line := range channelLaunchWhyLines {
 		lines = append(lines, "  "+line)

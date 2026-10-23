@@ -5,14 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
-from typing import Any
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
+from aweb_naapp.manifest import ManifestError, load_manifest
 from awid.team_ids import parse_team_id
 
 from aweb.service_errors import BadRequestError, ConflictError, ValidationError
@@ -36,6 +36,11 @@ class AppInstall:
     manifest_version: int
     digest: str
     granted_scopes: list[str]
+    installation_id: str | None = None
+    generation: int | None = None
+    state: str = "pending_origin_verification"
+    origin_verified: bool = False
+    origin_verification_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +54,15 @@ class AppEventType:
 class AppEmitKey:
     kid: str
     did_key: str
+
+
+@dataclass(frozen=True)
+class AppKey:
+    """A manifest_version 2 app key and the purposes the pinned bytes declare for it."""
+
+    kid: str
+    did_key: str
+    purposes: tuple[str, ...]
 
 
 def _reserved_app_ids_source_path() -> Path:
@@ -251,176 +265,45 @@ def validate_team_id(team_id: str) -> str:
     return value
 
 
-async def install_app(
-    db,
-    *,
-    team_id: str,
-    app_id: str,
-    origin: str,
-    app_version: str,
-    manifest_version: int,
-    digest: str,
-    granted_scopes: list[str],
-    installed_by_agent_id: str | None = None,
-    event_types: list[AppEventType] | None = None,
-    emit_keys: list[AppEmitKey] | None = None,
-    manifest: bytes | None = None,
-    audit: Callable[[Any], Awaitable[None]] | None = None,
-) -> AppInstall:
-    """Install or explicitly re-install an app for a team.
+_APP_KEY_HISTORY_SQL = """
+    SELECT team_id, app_id, key_id, did_key, revoked_at
+    FROM {{tables.team_app_emit_keys}}
+    UNION ALL
+    SELECT team_id, app_id, key_id, did_key, revoked_at
+    FROM {{tables.team_app_keys}}
+"""
 
-    Re-install/update is explicit: the caller supplies the new pinned digest and
-    scopes. Reusing an app id for a different origin within the team is
-    rejected as an app-id collision.
+_ACTIVE_KEY_HISTORY_SQL = f"""
+    NOT EXISTS (
+        SELECT 1 FROM ({_APP_KEY_HISTORY_SQL}) AS history
+        WHERE history.team_id = k.team_id AND history.app_id = k.app_id
+          AND history.key_id = k.key_id
+          AND (history.did_key <> k.did_key OR history.revoked_at IS NOT NULL)
+    )
+"""
 
-    With ``manifest``, the exact bytes that hash to the pinned digest supply the
-    event declarations and emit keys. Separately supplied declarations, keys or
-    versions must equal the bytes', and the granted scopes must be a subset of
-    the scopes the bytes' tools request. ``audit`` runs inside the install
-    transaction, after the registrations are written.
-    """
 
-    team_id = validate_team_id(team_id)
-    app_id = normalize_app_id(app_id)
-    origin = normalize_origin(origin)
-    app_version = normalize_app_version(app_version)
-    manifest_version = normalize_manifest_version(manifest_version)
-    digest = normalize_digest(digest)
-    granted_scopes = normalize_scopes(granted_scopes)
-    event_types = normalize_event_types(event_types or [])
-    emit_keys = normalize_emit_keys(emit_keys or [])
-    if manifest is not None:
-        event_types, emit_keys = _registrations_from_manifest(
-            manifest,
-            app_id=app_id,
-            origin=origin,
-            digest=digest,
-            app_version=app_version,
-            manifest_version=manifest_version,
-            granted_scopes=granted_scopes,
-            event_types=event_types,
-            emit_keys=emit_keys,
-        )
-
-    existing = await db.fetch_one(
-        """
-        SELECT origin FROM {{tables.team_app_installs}}
-        WHERE team_id = $1 AND app_id = $2
+async def _key_identity_conflicts(tx, *, team_id: str, app_id: str, kid: str, did_key: str) -> bool:
+    return await tx.fetch_one(
+        f"""
+        SELECT 1 FROM ({_APP_KEY_HISTORY_SQL}) AS history
+        WHERE team_id = $1 AND app_id = $2 AND key_id = $3 AND did_key <> $4
+        LIMIT 1
         """,
-        team_id,
-        app_id,
-    )
-    if existing and existing["origin"] != origin:
-        raise ConflictError("app_id is already installed for this team from a different origin")
-
-    async with db.transaction() as tx:
-        await tx.execute(
-            """
-            INSERT INTO {{tables.app_registry_apps}} (app_id, origin, updated_at)
-            VALUES ($1, $2, NOW())
-            ON CONFLICT (app_id, origin) DO NOTHING
-            """,
-            app_id,
-            origin,
-        )
-        await tx.execute(
-            """
-            INSERT INTO {{tables.app_registry_entries}} (
-                app_id, origin, digest, app_version, manifest_version, updated_at
-            )
-            VALUES ($1, $2, $3, $4, $5, NOW())
-            ON CONFLICT (app_id, origin, digest) DO NOTHING
-            """,
-            app_id,
-            origin,
-            digest,
-            app_version,
-            manifest_version,
-        )
-        await tx.execute(
-            """
-            INSERT INTO {{tables.team_app_installs}} (
-                team_id, app_id, origin, digest, app_version, manifest_version,
-                granted_scopes, installed_by_agent_id, registered_from_manifest_bytes, updated_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[], $8::UUID, $9, NOW())
-            ON CONFLICT (team_id, app_id) DO UPDATE SET
-                origin = EXCLUDED.origin,
-                digest = EXCLUDED.digest,
-                app_version = EXCLUDED.app_version,
-                manifest_version = EXCLUDED.manifest_version,
-                granted_scopes = EXCLUDED.granted_scopes,
-                installed_by_agent_id = EXCLUDED.installed_by_agent_id,
-                registered_from_manifest_bytes = EXCLUDED.registered_from_manifest_bytes,
-                updated_at = NOW()
-            """,
-            team_id,
-            app_id,
-            origin,
-            digest,
-            app_version,
-            manifest_version,
-            granted_scopes,
-            installed_by_agent_id,
-            manifest is not None,
-        )
-        # The install row upsert above locks (team_id, app_id), so concurrent
-        # installs of one app in one team write registrations one at a time.
-        await _write_team_registrations(
-            tx,
-            team_id=team_id,
-            app_id=app_id,
-            origin=origin,
-            digest=digest,
-            event_types=event_types,
-            emit_keys=emit_keys,
-        )
-        if audit is not None:
-            await audit(tx)
-
-    return AppInstall(
-        app_id=app_id,
-        origin=origin,
-        app_version=app_version,
-        manifest_version=manifest_version,
-        digest=digest,
-        granted_scopes=granted_scopes,
-    )
+        team_id, app_id, kid, did_key,
+    ) is not None
 
 
-def _registrations_from_manifest(
-    manifest: bytes,
-    *,
-    app_id: str,
-    origin: str,
-    digest: str,
-    app_version: str,
-    manifest_version: int,
-    granted_scopes: list[str],
-    event_types: list[AppEventType],
-    emit_keys: list[AppEmitKey],
-) -> tuple[list[AppEventType], list[AppEmitKey]]:
-    registration = manifest_registration(manifest, app_id=app_id, origin=origin, digest=digest)
-    if app_version != registration.app_version or manifest_version != registration.manifest_version:
-        raise ValidationError("install version does not match the manifest bytes")
-    if event_types and set(event_types) != set(registration.event_types):
-        raise ValidationError("install events do not match the manifest bytes")
-    if emit_keys and set(emit_keys) != set(registration.emit_keys):
-        raise ValidationError("install event_emitters do not match the manifest bytes")
-    if not set(granted_scopes) <= set(registration.requested_scopes):
-        raise ValidationError("granted_scopes must be a subset of the scopes the manifest requests")
-    return registration.event_types, registration.emit_keys
-
-
-def _revocation_carried_across_digests(table: str) -> str:
+def _revocation_carried_across_digests() -> str:
     """The earliest revocation of one key in the team, under any of the app's digests.
 
     A team's revocation of a key outlives the digest it was made under, so new
-    bytes that list the same key register it already revoked. For an INSERT
-    whose parameters are $1 team_id, $2 app_id, $5 key_id and $6 did_key.
+    bytes that list the same key register it already revoked, including a
+    v1/v2 representation switch. For an INSERT whose parameters are $1 team_id,
+    $2 app_id, $5 key_id and $6 did_key.
     """
     return (
-        f"(SELECT MIN(revoked_at) FROM {{{{tables.{table}}}}} "
+        f"(SELECT MIN(revoked_at) FROM ({_APP_KEY_HISTORY_SQL}) AS history "
         "WHERE team_id = $1 AND app_id = $2 AND key_id = $5 AND did_key = $6)"
     )
 
@@ -434,8 +317,9 @@ async def _write_team_registrations(
     digest: str,
     event_types: list[AppEventType],
     emit_keys: list[AppEmitKey],
+    app_keys: list[AppKey],
 ) -> None:
-    """Write one team's event declarations and emit keys for an installed digest.
+    """Write one team's event declarations, emit keys and app keys for an installed digest.
 
     The caller holds the team's install row lock. Declarations are replaced;
     a key id keeps its first did_key and a revoked key stays revoked.
@@ -463,26 +347,18 @@ async def _write_team_registrations(
             event_type.description,
         )
     for emit_key in emit_keys:
-        conflicting = await tx.fetch_one(
-            """
-            SELECT 1 FROM {{tables.team_app_emit_keys}}
-            WHERE team_id = $1 AND app_id = $2 AND key_id = $3 AND did_key <> $4
-            LIMIT 1
-            """,
-            team_id,
-            app_id,
-            emit_key.kid,
-            emit_key.did_key,
-        )
-        if conflicting:
+        if await _key_identity_conflicts(
+            tx, team_id=team_id, app_id=app_id, kid=emit_key.kid, did_key=emit_key.did_key
+        ):
             raise ConflictError("emit key id is already registered with a different key")
         await tx.execute(
             f"""
-            INSERT INTO {{{{tables.team_app_emit_keys}}}} (
+            INSERT INTO {{{{tables.team_app_emit_keys}}}} AS registered (
                 team_id, app_id, origin, digest, key_id, did_key, revoked_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, {_revocation_carried_across_digests("team_app_emit_keys")})
-            ON CONFLICT (team_id, app_id, origin, digest, key_id) DO NOTHING
+            VALUES ($1, $2, $3, $4, $5, $6, {_revocation_carried_across_digests()})
+            ON CONFLICT (team_id, app_id, origin, digest, key_id) DO UPDATE SET
+                revoked_at = LEAST(registered.revoked_at, EXCLUDED.revoked_at)
             """,
             team_id,
             app_id,
@@ -490,6 +366,30 @@ async def _write_team_registrations(
             digest,
             emit_key.kid,
             emit_key.did_key,
+        )
+    for app_key in app_keys:
+        if await _key_identity_conflicts(
+            tx, team_id=team_id, app_id=app_id, kid=app_key.kid, did_key=app_key.did_key
+        ):
+            raise ConflictError("app key id is already registered with a different key")
+        # A team's revocation of a key outlives the digest it was made under:
+        # new bytes listing the same key register it already revoked.
+        await tx.execute(
+            f"""
+            INSERT INTO {{{{tables.team_app_keys}}}} AS registered (
+                team_id, app_id, origin, digest, key_id, did_key, purposes, revoked_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[], {_revocation_carried_across_digests()})
+            ON CONFLICT (team_id, app_id, origin, digest, key_id) DO UPDATE SET
+                revoked_at = LEAST(registered.revoked_at, EXCLUDED.revoked_at)
+            """,
+            team_id,
+            app_id,
+            origin,
+            digest,
+            app_key.kid,
+            app_key.did_key,
+            list(app_key.purposes),
         )
 
 
@@ -499,6 +399,7 @@ class ManifestRegistration:
     manifest_version: int
     event_types: list[AppEventType]
     emit_keys: list[AppEmitKey]
+    app_keys: list[AppKey]
     requested_scopes: list[str]
 
 
@@ -513,10 +414,12 @@ def _parse_manifest(manifest: bytes) -> dict:
 
 
 def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: str) -> ManifestRegistration:
-    """Read an install's event declarations and emit keys from its pinned bytes.
+    """Read an install's event declarations and keys from its pinned bytes.
 
-    The bytes must hash to the pinned digest and name the installed app id and
-    origin; nothing is taken from anywhere else.
+    The bytes must hash to the pinned digest, be valid to the one manifest
+    reader (``aweb_naapp.manifest``), and name the installed app id and origin;
+    nothing is taken from anywhere else. Version 1 ``event_emitters`` are emit
+    keys; version 2 ``app_keys`` are app keys with their declared purposes.
     """
 
     app_id = normalize_app_id(app_id)
@@ -524,30 +427,18 @@ def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: 
     digest = normalize_digest(digest)
     if "sha256:" + hashlib.sha256(manifest).hexdigest() != digest:
         raise ValidationError("manifest bytes do not match the pinned digest")
-    parsed = _parse_manifest(manifest)
-    if parsed.get("manifest_version") != 1:
-        raise ValidationError("manifest_version is not supported")
-    app = parsed["app"]
+    try:
+        resolved = load_manifest(manifest, reserved_names=reserved_app_ids())
+    except ManifestError as exc:
+        raise ValidationError({"code": exc.code, "message": str(exc)}) from exc
+    app = resolved.document["app"]
     if normalize_app_id(str(app.get("id") or "")) != app_id:
         raise ValidationError("manifest app id does not match the install")
     if normalize_origin(str(app.get("origin") or "")) != origin:
         raise ValidationError("manifest origin does not match the install")
-    events = parsed.get("events") or []
-    emitters = parsed.get("event_emitters") or []
-    tools = parsed.get("tools") or []
-    if not isinstance(events, list) or not isinstance(emitters, list) or not isinstance(tools, list):
-        raise ValidationError("manifest tools, events and event_emitters must be arrays")
-    requested_scopes: list[str] = []
-    for tool in tools:
-        scopes = tool.get("scopes") if isinstance(tool, dict) else None
-        if not isinstance(tool, dict) or not isinstance(scopes or [], list):
-            raise ValidationError("manifest tool scopes must be an array")
-        requested_scopes.extend(str(scope) for scope in scopes or [])
     prefix = app_id + "/"
     event_types = []
-    for event in events:
-        if not isinstance(event, dict):
-            raise ValidationError("manifest event must be an object")
+    for event in resolved.document.get("events") or []:
         event_type = str(event.get("type") or "").strip()
         event_types.append(
             AppEventType(
@@ -556,17 +447,22 @@ def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: 
                 description=str(event.get("description") or ""),
             )
         )
-    emit_keys = []
-    for emitter in emitters:
-        if not isinstance(emitter, dict):
-            raise ValidationError("manifest event emitter must be an object")
-        emit_keys.append(AppEmitKey(kid=str(emitter.get("kid") or ""), did_key=str(emitter.get("did_key") or "")))
+    if resolved.manifest_version == 1:
+        emit_keys = [
+            AppEmitKey(kid=str(emitter["kid"]), did_key=str(emitter["did_key"]))
+            for emitter in resolved.document.get("event_emitters") or []
+        ]
+        app_keys: list[AppKey] = []
+    else:
+        emit_keys = []
+        app_keys = [AppKey(kid=kid, did_key=did_key, purposes=tuple(purposes)) for kid, did_key, purposes in resolved.app_keys]
     return ManifestRegistration(
         app_version=normalize_app_version(str(app.get("version") or "")),
-        manifest_version=1,
+        manifest_version=resolved.manifest_version,
         event_types=normalize_event_types(event_types),
         emit_keys=normalize_emit_keys(emit_keys),
-        requested_scopes=normalize_scopes(requested_scopes),
+        app_keys=app_keys,
+        requested_scopes=normalize_scopes(list(resolved.install_scopes)),
     )
 
 
@@ -642,6 +538,7 @@ async def reseed_app_registrations(db, *, origin: str, manifest: bytes) -> Resee
                     digest=digest,
                     event_types=registration.event_types,
                     emit_keys=registration.emit_keys,
+                    app_keys=registration.app_keys,
                 )
         except ConflictError:
             key_conflict.append(team_id)
@@ -657,6 +554,52 @@ async def reseed_app_registrations(db, *, origin: str, manifest: bytes) -> Resee
     )
 
 
+async def next_installation_generation_on(tx, *, team_id: str, app_id: str) -> int:
+    """Allocate authority order in the caller's installation transaction.
+
+    Every install, reinstall, update and scope change uses this persistent
+    counter. Uninstall never deletes it. Existing-installation writers first
+    lock the current installation row and check the expected generation.
+    Rollback of the caller also rolls back this unissued allocation.
+    """
+    team_id = validate_team_id(team_id)
+    app_id = normalize_app_id(app_id)
+    generation = await tx.fetch_value(
+        """INSERT INTO {{tables.team_app_install_counters}} AS c
+               (team_id, app_id, last_generation) VALUES ($1, $2, 1)
+           ON CONFLICT (team_id, app_id) DO UPDATE
+               SET last_generation = c.last_generation + 1
+           RETURNING last_generation""",
+        team_id, app_id,
+    )
+    return int(generation)
+
+
+async def get_installation_on(
+    tx, *, team_id: str, app_id: str, for_update: bool = False,
+) -> dict[str, Any] | None:
+    """Read current installation authority in the caller's transaction.
+
+    Task admission/receipt and lifecycle mutations use ``for_update=True`` on
+    this same row, serializing retirement with admitted task work. A pending
+    origin verification or uninstalled state confers no ordinary authority.
+    Pinned manifest bytes are read separately when needed, so credential checks
+    never fetch a multi-megabyte manifest just to check an installation.
+    """
+    team_id = validate_team_id(team_id)
+    app_id = normalize_app_id(app_id)
+    lock = " FOR UPDATE OF i" if for_update else ""
+    row = await tx.fetch_one(
+        """SELECT i.team_id, i.app_id, i.installation_id, i.generation, i.state,
+                  i.origin, i.digest, i.granted_scopes, i.origin_verified,
+                  i.app_version, i.manifest_version, i.origin_verification_error
+           FROM {{tables.team_app_installs}} AS i
+           WHERE i.team_id = $1 AND i.app_id = $2""" + lock,
+        team_id, app_id,
+    )
+    return dict(row) if row is not None else None
+
+
 async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
     team_id = validate_team_id(team_id)
     rows = await db.fetch_all(
@@ -667,9 +610,10 @@ async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
             i.app_version,
             i.manifest_version,
             i.digest,
-            i.granted_scopes
+            i.granted_scopes, i.installation_id, i.generation, i.state,
+            i.origin_verified, i.origin_verification_error
         FROM {{tables.team_app_installs}} AS i
-        WHERE i.team_id = $1
+        WHERE i.team_id = $1 AND i.state = 'active' AND i.origin_verified
         ORDER BY i.app_id ASC
         """,
         team_id,
@@ -682,9 +626,20 @@ async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
             manifest_version=row["manifest_version"],
             digest=row["digest"],
             granted_scopes=list(row["granted_scopes"] or []),
+            installation_id=row["installation_id"], generation=row["generation"],
+            state=row["state"], origin_verified=row["origin_verified"],
+            origin_verification_error=row["origin_verification_error"],
         )
         for row in rows
     ]
+
+
+async def get_installed_app(db, *, team_id: str, app_id: str, digest: str) -> AppInstall | None:
+    """The team's installation of ``app_id``, only while it is pinned to ``digest``."""
+    row = await get_installation_on(db, team_id=team_id, app_id=app_id)
+    if row is None or row["digest"] != normalize_digest(digest):
+        return None
+    return AppInstall(**{key: value for key, value in row.items() if key != "team_id"})
 
 
 async def get_installed_app_event_type(
@@ -709,7 +664,7 @@ async def get_installed_app_event_type(
          AND e.app_id = i.app_id
          AND e.origin = i.origin
          AND e.digest = i.digest
-        WHERE i.team_id = $1
+        WHERE i.team_id = $1 AND i.state = 'active' AND i.origin_verified
           AND i.app_id = $2
           AND e.event_type = $3
         """,
@@ -743,12 +698,13 @@ async def get_active_app_key(
          AND k.origin = i.origin
          AND k.digest = i.digest
         WHERE i.team_id = $1
+          AND ($5 = 'app-grant-read' OR (i.state = 'active' AND i.origin_verified))
           AND i.app_id = $2
           AND k.key_id = $3
           AND k.did_key = $4
           AND $5 = ANY(k.purposes)
           AND k.revoked_at IS NULL
-        """,
+          AND """ + _ACTIVE_KEY_HISTORY_SQL,
         team_id,
         app_id,
         kid,
@@ -778,12 +734,12 @@ async def get_active_app_emit_key(
          AND k.app_id = i.app_id
          AND k.origin = i.origin
          AND k.digest = i.digest
-        WHERE i.team_id = $1
+        WHERE i.team_id = $1 AND i.state = 'active' AND i.origin_verified
           AND i.app_id = $2
           AND k.key_id = $3
           AND k.did_key = $4
           AND k.revoked_at IS NULL
-        """,
+          AND """ + _ACTIVE_KEY_HISTORY_SQL,
         team_id,
         app_id,
         kid,
