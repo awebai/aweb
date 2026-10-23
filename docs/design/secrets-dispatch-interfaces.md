@@ -205,6 +205,9 @@ class RunnerReply:
 class RunDispatch:  # aweb_secrets.run_service
     async def claim(self, submission: RunnerSubmission) -> RunnerReply: ...
     async def started(self, dispatch_ref: str, submission: RunnerSubmission) -> RunnerReply: ...
+    async def result_body_limit(
+        self, *, dispatch_ref: str, header: str, method: str, raw_target: str
+    ) -> int: ...
     async def result(self, dispatch_ref: str, submission: RunnerSubmission) -> RunnerReply: ...
 ```
 
@@ -216,6 +219,32 @@ re-encoding. It never accepts team-auth or a console session as runner authority
 Claim/started accept exactly `{}`; result has the existing six-field report and
 pinned bounds. The service rechecks semantic shape after runner authentication;
 framing/media limits can refuse before unbounded reads. Reports return `204`.
+
+For a result, the adapter first applies the global framing/media/header caps,
+then calls `result_body_limit` **before streaming the body**. S13 parses the
+signed header, reads the active registered runner key, checks its signature
+through `verify_request_signature` (source-reviewed helper at `9a98d8600`),
+and checks signed origin/method/exact external target/time. Actual body-hash
+verification is necessarily deferred. It then resolves the original scoped
+dispatch/run association for that runner and its persisted pinned output
+bound, never a caller bound or a replacement current job definition. Unknown,
+foreign and unassigned references share `404 runner_dispatch_unknown`.
+
+The returned integer is `6 * original_output_max_bytes + 1024`, within the
+protocol's global cap. All read transactions and temporary key locks end
+**before this method returns and before the body streams**. This is an inert
+size hint: no nonce, admission, custody read, state change, assignment or
+effect authority. It exposes no plan, key, raw output or alternate dispatch
+handle. Dependency failure is `503 runner_unavailable`; other precheck errors
+use the existing runner protocol statuses. The adapter enforces the returned
+limit incrementally, aborting an oversized frame with `413
+runner_request_too_large`; it then passes the original complete bytes to
+`result`. That final method independently resolves scope/bounds and reverifies
+the exact body hash, time and current locked key before semantic validation,
+state/dedup checks and atomic nonce/report/evidence/outbox effects. A key,
+installation or scope change during streaming therefore refuses at the final
+check. Neither a returned integer nor an earlier successful preflight is
+accepted as final authority. Claim/started retain their fixed 4096-byte bounds.
 
 S13 calls the existing `runner_scope` for routing only, refreshes F6 outside
 locks, takes the installation fence first and then the complete authority lock
@@ -248,6 +277,7 @@ dispatching and required outbox rows commit together before returning bytes.
 | Claim preparation failure | Recheck for a concurrent published winner first. Only still-admitted attempt may become refused, atomically with nonce/refusal event; return `503 runner_unavailable`. |
 | Claim replay | Current registration/key and original scope/generation/containment checks, fresh nonce, exact unexpired stored bytes. No reopen/reseal/new expiry. |
 | `started` | Record started once, with nonce; no second S3 dispatch transition or release. |
+| `result_body_limit` | Header-only signature/binding/time and scoped pinned-bound read; close the read transaction, return only a byte limit. No nonce or effect. |
 | `result` | Sanitize with original transient context; S3 CAS dispatching to completed, or retain sanitized late evidence after unknown/reconciliation. Nonce/report hash/evidence/outbox atomic. |
 
 Only one unresolved released assignment per runner. Unknown blocks claim with
