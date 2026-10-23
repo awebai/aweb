@@ -35,7 +35,7 @@ async def test_cli_member_request_admin_install_update_and_refused_update_preser
     env.app.state.manifest_fetcher = ManifestFetcher(egress=origin.fetcher.egress, destination=destination)
     await env.db.execute("CREATE TABLE aweb.test_install_admins (team_id TEXT, did_key TEXT)")
 
-    async def policy(tx, subject, *, action, app_id):
+    async def policy(tx, subject, *, action, app_id, verified_origin=None):
         return subject.kind == "certificate" and bool(await tx.fetch_value(
             "SELECT EXISTS(SELECT 1 FROM aweb.test_install_admins WHERE team_id=$1 AND did_key=$2)",
             subject.team_id, subject.did_key,

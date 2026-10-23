@@ -42,7 +42,7 @@ async def client(db, origin, monkeypatch):
         def get_manager(self, name="aweb"):
             return db
 
-    async def policy(tx, subject, *, action, app_id):
+    async def policy(tx, subject, *, action, app_id, verified_origin=None):
         return bool(await tx.fetch_value(
             "SELECT EXISTS(SELECT 1 FROM aweb.test_install_admins WHERE team_id=$1 AND subject_id=$2)",
             subject.team_id, subject.principal_id,
