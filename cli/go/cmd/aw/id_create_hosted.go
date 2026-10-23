@@ -21,6 +21,8 @@ import (
 
 const cliIdentityCreatePath = "/api/v1/cli/identities"
 
+var hostedIdentityTeamUUID = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
 // The recovery association is persisted before any remote effect. A retry must
 // use the same host account, destination, policy and locally held key.
 type hostedIdentityContext struct {
@@ -63,8 +65,9 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 	teamID, _ := cmd.Flags().GetString("team-id")
 	rawMode, _ := cmd.Flags().GetString("inbound-mode")
 	org, teamID, name := strings.TrimSpace(org), strings.TrimSpace(teamID), strings.TrimSpace(idCreateName)
-	if org == "" || name == "" || !regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`).MatchString(teamID) {
-		return usageError("--org, --name and --team-id (the service UUID) are required")
+	_, _, canonicalErr := awid.ParseTeamID(teamID)
+	if org == "" || name == "" || (!hostedIdentityTeamUUID.MatchString(teamID) && canonicalErr != nil) {
+		return usageError("--org, --name and --team-id (a service UUID or canonical name:namespace) are required")
 	}
 	if cmd.Flags().Changed("domain") || cmd.Flags().Changed("skip-dns-verify") {
 		return usageError("--domain and --skip-dns-verify cannot be combined with --org")
@@ -281,7 +284,16 @@ func prepareHostedIdentity(root, statePath string, association hostedIdentityCon
 
 func validateHostedIdentityResponse(response hostedIdentityResponse, context hostedIdentityContext, material workspaceTeamIdentityMaterial) (*awid.TeamCertificate, error) {
 	domain, _, err := awid.ParseTeamID(response.CanonicalTeamID)
-	if err != nil || response.TeamID != context.TeamID || response.Namespace != domain || response.Name != context.Name || response.Address != domain+"/"+context.Name || response.DID != material.DIDKey || response.StableID != material.StableID || response.IdentityScope != awid.IdentityModeGlobal || response.Custody != awid.CustodySelf || response.InboundMode != context.InboundMode || response.IdentityID == "" || response.AgentID == "" || response.APIKey != "" {
+	// Cloud alone resolves the selector under the authorized organization. Keep
+	// its exact supplied spelling in the intent and recovery; bind the response
+	// to the selected form without doing another lookup here.
+	teamMatches := false
+	if hostedIdentityTeamUUID.MatchString(context.TeamID) {
+		teamMatches = strings.EqualFold(response.TeamID, context.TeamID)
+	} else if selectedDomain, selectedName, parseErr := awid.ParseTeamID(context.TeamID); parseErr == nil {
+		teamMatches = response.CanonicalTeamID == awid.BuildTeamID(selectedDomain, selectedName)
+	}
+	if err != nil || !hostedIdentityTeamUUID.MatchString(response.TeamID) || !teamMatches || response.Namespace != domain || response.Name != context.Name || response.Address != domain+"/"+context.Name || response.DID != material.DIDKey || response.StableID != material.StableID || response.IdentityScope != awid.IdentityModeGlobal || response.Custody != awid.CustodySelf || response.InboundMode != context.InboundMode || response.IdentityID == "" || response.AgentID == "" || response.APIKey != "" {
 		return nil, errors.New("hosted identity response does not match the requested identity, team and inbound mode")
 	}
 	cert, err := decodeWorkspaceTeamTeamCert(response.TeamCert)

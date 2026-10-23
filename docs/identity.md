@@ -269,7 +269,7 @@ is the primitive with the same behavior. Existing controller creation and
 certificate-authorized sibling creation keep their own authority paths.
 
 To create a **new** self-custodial global member in an explicitly chosen hosted
-team, select a fresh credential root and the returned Cloud service team UUID:
+team, select a fresh credential root and a Cloud service UUID or canonical team ID:
 
 ```bash
 aw --identity-home /path/to/steward id create --org alice-laptop \
@@ -284,6 +284,12 @@ the private key stays in the selected root. A lost reply is retried with the
 same root and original parameters, retaining the same key. Do not discard that
 root or change the organization/team to recover an uncertain result. A name
 held by another key refuses with `identity_name_taken`.
+
+Once creation completes, the recovery file is removed. Repeating creation in
+that completed root refuses and preserves the installed identity. Use ordinary
+commands with that root; another new identity needs a fresh root. This differs
+from retrying an incomplete operation after a lost response, which keeps its
+original key and exact creation parameters.
 
 This explicit creation differs from joining with an existing global identity:
 `aw team join --global` continues to reuse its stored identity and cannot mint
@@ -304,13 +310,16 @@ the new member's fresh credential directory:
 aw --identity-home /team-root/.aw inbound-mode --json
 aw --identity-home /steward-root/.aw id create \
   --owner-identity-home /team-root/.aw --org alice \
-  --team-id SERVICE_TEAM_UUID --name steward \
+  --team-id TEAM_ID_FROM_INBOUND_MODE --name steward \
   --inbound-mode contacts-only --json
 ```
 
-The read-only first command returns the Cloud service UUID in `team_id`, even
-for a local signup identity. This UUID is distinct from the canonical team ID,
-such as `default:alice.aweb.ai`. `--org` takes the organization slug (`alice`) or
+Pass the read-only first command's `team_id` unchanged as `--team-id`. It may
+be a canonical ID such as `default:alice.aweb.ai` or a service UUID. Cloud
+resolves that selector within the authorized organization and returns both
+the service UUID and canonical ID. The CLI preserves the exact trimmed input
+in its signed intent and recovery state; it does no mapping lookup. `--org`
+takes the organization slug (`alice`) or
 ID, rather than its namespace domain. A newly created signup flow can retain its
 original username as that slug; `whoami.domain` is namespace information rather
 than proof of organization ownership.
