@@ -157,6 +157,11 @@ def _prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_
     stale_editor, stale_session = open_editor(stale_editable)
     legacy(stale_legacy)
     legacy(stale_editable, session=True)
+    unavailable_legacy = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'ttl_seconds': 600})
+    unavailable_editable = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'editable': True, 'ttl_seconds': 300})
+    unavailable_editor, unavailable_session = open_editor(unavailable_editable)
+    legacy(unavailable_legacy)
+    legacy(unavailable_editable, session=True)
     print('PASS pre-deploy legacy links/sessions adopt their older installation; a re-pin preserves them and the old grant', flush=True)
     cached = {str(p): p.read_bytes() for p in Path(cache).rglob('*') if p.is_file()}
     refused = aw('bob', 'plugin', 'uninstall', 'folio', check=False)
@@ -230,3 +235,19 @@ def _prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_
     assert sql("SELECT installation_refused FROM public.presentation_links WHERE token='" + stale_legacy['token'] + "'") == 't'
     assert time.monotonic() - link_started < 300, 'legacy editable row expired before its final refusal check'
     print('PASS real uninstall refuses tools and existing Folio links/sessions; same-origin/digest reinstall cannot revive them; new capabilities work; legacy refusal persists across another reinstall', flush=True)
+    # Stop the actual G1 authority, leaving Folio and AWID running. A refresh
+    # failure must refuse access without adopting or burning legacy rows.
+    run(compose + ['pause', 'aweb'])
+    try:
+        time.sleep(active['max_age_seconds'] + 5)
+        for url, auth in [(unavailable_legacy['url'], {}), (unavailable_editor + '/state', unavailable_session)]:
+            code, raw = status(url, auth)
+            assert code == 503 and json.loads(raw)['detail']['code'] == 'authority_unavailable', (code, raw)
+        assert sql("SELECT count(*) FROM public.presentation_links WHERE token IN ('" + unavailable_legacy['token'] + "','" + unavailable_editable['token'] + "') AND installation_id IS NULL AND NOT installation_refused") == '2'
+        assert sql("SELECT count(*) FROM public.edit_sessions WHERE link_id='" + unavailable_editable['token'] + "' AND installation_id IS NULL AND NOT installation_refused") == '1'
+    finally:
+        run(compose + ['unpause', 'aweb'])
+    recovered = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'ttl_seconds': 600})
+    assert status(recovered['url'])[0] == 200
+    assert time.monotonic() - link_started < 300, 'editable row expired before the real G1 outage check'
+    print('PASS actual G1 outage refuses presentation/session with503 without legacy adoption or permanent refusal; authority recovery restores new capability use', flush=True)
