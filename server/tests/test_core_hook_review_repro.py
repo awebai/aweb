@@ -35,6 +35,8 @@ async def test_queued_valid_event_does_not_get_a_fresh_expired_key_credential(
 ):
     binding = await registration(db, target_origin=origin.url)
     received = []
+    raw = []
+    active_from = await db.fetch_value("SELECT active_from FROM {{tables.app_hook_bindings}} WHERE binding_id=$1", binding)
     _, _, entry = configured
     deadline = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=4 if expired else 60)
     entry = dict(entry, valid_until=deadline.strftime("%Y-%m-%dT%H:%M:%SZ"))
@@ -50,11 +52,10 @@ async def test_queued_valid_event_does_not_get_a_fresh_expired_key_credential(
     original = await db.fetch_one("SELECT payload_sha256,signature FROM {{tables.outbox_events}} WHERE event_id=$1", event_id)
 
     async def ingest(seen):
+        raw.append((datetime.now(UTC), seen.request_line.split(" ")[1]))
         verified = verify_delivery("POST", "/hooks/ingest", dict(seen.headers), seen.body, ReceiveOptions(
             audience=origin.url, binding_id=binding, now=datetime.now(UTC),
         ))
-        if expired:
-            assert datetime.now(UTC) >= deadline
         received.append(verified.envelope.event_id)
         return 200, json.dumps({"event_id": verified.envelope.event_id, "disposition": "appended", "receipt": {"seq": 1}}).encode(), []
 
@@ -81,8 +82,11 @@ async def test_queued_valid_event_does_not_get_a_fresh_expired_key_credential(
     retained = await db.fetch_one("SELECT payload_sha256,signature FROM {{tables.outbox_events}} WHERE event_id=$1", event_id)
     assert retained == original
     if expired:
+        assert raw == []
         assert (received, row["state"] in ("pending", "stalled"), row["acked_at"]) == ([], True, None)
     else:
+        assert len(raw) == 1
+        assert active_from <= raw[0][0] < deadline and raw[0][1] == "/hooks/ingest"
         assert received == [str(event_id)]
         assert row["state"] == "delivered" and row["acked_at"] is not None
 
