@@ -13,6 +13,9 @@ from test_app_manifest_fetch import digest
 
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.routes.apps import router
+from aweb.hook_producer import load_core_hooks
+from tests.test_core_hook_key_config import configured
+from tests.test_core_hook_producer import registration, events
 
 origin = store_fixture.origin
 db = store_fixture.db
@@ -52,6 +55,7 @@ async def client(db, origin, monkeypatch):
     inner.state.db = Managers()
     inner.state.install_admin_policy = policy
     inner.state.manifest_fetcher = origin.fetcher
+    inner.state.core_hooks = load_core_hooks("https://core.example")
     inner.include_router(router)
     outer = FastAPI()
     outer.mount("/api", inner)
@@ -91,6 +95,40 @@ async def test_admin_confirmation_installs_fetched_bytes_and_returns_identity(cl
     assert record["state"] == "active" and record["origin_verified"] is True
     assert record["granted_scopes"] == ["fixture:read"]
     assert (await store_fixture.current(db))["digest"] == record["digest"]
+
+
+async def test_install_and_update_enqueue_with_the_http_effect(db, origin, configured, client):
+    await admin(db)
+    await registration(db)
+    payload = confirmation(origin)
+    installed = await post(client, payload)
+    assert installed.status_code == 200, installed.text
+    data = origin.manifest(version="2.0.0")
+    origin.publish(data)
+    payload.update(digest=digest(data), expected_generation=1)
+    updated = await post(client, payload)
+    assert updated.status_code == 200, updated.text
+    first, second = await events(db)
+    assert first["payload"]["mutation_type"] == "app.installed"
+    assert second["payload"]["mutation_type"] == "app.updated"
+    assert second["payload"]["previous_digest"] == installed.json()["digest"]
+    assert second["payload"]["generation"] == updated.json()["generation"]
+
+
+async def test_install_request_approval_enqueues_with_the_approval(db, origin, configured, client):
+    await registration(db)
+    payload = confirmation(origin)
+    payload["requested_scopes"] = payload.pop("granted_scopes")
+    created = await post(client, payload, "requests")
+    assert created.status_code == 201, created.text
+    assert await events(db) == []
+    await admin(db)
+    request_id = created.json()["request_id"]
+    approved = await post(client, {"granted_scopes": ["fixture:read"]}, f"requests/{request_id}/approve")
+    assert approved.status_code == 200, approved.text
+    recorded, = await events(db)
+    assert recorded["payload"]["installation_id"] == approved.json()["installation_id"]
+    assert recorded["payload"]["mutation_type"] == "app.installed"
 
 
 async def test_planted_keys_and_submitted_bytes_are_not_a_second_install_path(client, db, origin):

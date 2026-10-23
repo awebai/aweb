@@ -107,6 +107,37 @@ Common environment variables:
 The operator-facing meanings and deployment guidance live in
 [../docs/self-hosting-guide.md](../docs/self-hosting-guide.md).
 
+### Core hook signing
+
+Core uses a dedicated operator key for hook events and delivery credentials.
+Set `AWEB_HOOK_PRODUCER_KID` and `AWEB_HOOK_PRODUCER_KEY_FILE` together. The
+file contains a generated Ed25519 seed as 64 hex characters, optionally with
+one trailing newline; it must be regular and not writable by group or others.
+The shared naapp key loader performs these checks. Never select a team
+controller or member key for this purpose.
+
+Publish the same kid and its public `did:key` in `AWEB_HOOK_PRODUCER_KEYS`, a
+JSON list whose entries have exactly `kid`, `did_key`, `valid_from` and
+`valid_until`. Times use `YYYY-MM-DDTHH:MM:SSZ`; `valid_until` may be null.
+The signing key must match that public entry and be inside its validity
+window. Configure `AWEB_PUBLIC_ORIGIN` to the server's public HTTPS origin.
+The anonymous `/v1/hooks/producer-keys` endpoint keeps retired public keys
+discoverable for verification. Drain the hooks outbox before changing the
+signing key: retries keep the event's original signed bytes and key.
+
+The hooks drain runs in both server lifespans and stops before database
+shutdown. A host that mounts core without entering its lifespan must call
+`aweb.hook_producer.start_core_hooks(app, db)` after initialization and
+`await stop_core_hooks(app)` before closing the database. Its default egress
+allows public HTTPS destinations only. A self-hosted embedding host can pass
+its configured `egress` and `internal_cidr`; both are required to allow that
+internal network.
+
+Mutations with no eligible active registration enqueue nothing and require
+no signing key. With an eligible registration, the event and the effect share
+one transaction: a recording failure rolls both back. The existing
+`on_mutation` notification seam is independent.
+
 ## Bootstrap Flow
 
 Point the CLI at the self-hosted server:

@@ -44,6 +44,7 @@ from aweb.installation_views import (
     semantic_diff,
 )
 from aweb.installations import install_verified_manifest_on
+from aweb.hook_producer import request_hook_context
 from aweb.internal_auth import parse_internal_auth_context
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ServiceError
 from aweb.team_auth_deps import get_team_identity
@@ -295,6 +296,7 @@ async def approve_installation_request_route(request_id: UUID, request: Request,
                 tx, team_id=authorized, request_id=request_id, fetched=fetched,
                 granted_scopes=payload.granted_scopes, expected_generation=payload.expected_generation,
                 installed_by_agent_id=identity.agent_id if identity else None,
+                hook_context=request_hook_context(request, identity),
             )
             await audit_success(tx, request, authorized)
         return row
@@ -361,6 +363,7 @@ async def install_app_route(
                 tx, team_id=authorized, fetched=fetched, granted_scopes=payload.granted_scopes,
                 expected_generation=payload.expected_generation,
                 installed_by_agent_id=identity.agent_id if identity is not None else None,
+                hook_context=request_hook_context(request, identity),
             )
             await audit_success(tx, request, authorized)
         return row

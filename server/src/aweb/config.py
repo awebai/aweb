@@ -168,6 +168,17 @@ def get_hook_producer_keys() -> tuple[HookProducerKey, ...]:
     return keys
 
 
+def get_hook_signing_key_file() -> tuple[str, str] | None:
+    """Dedicated core hook key, selected by kid from the public key list."""
+    kid = os.getenv("AWEB_HOOK_PRODUCER_KID", "").strip()
+    path = os.getenv("AWEB_HOOK_PRODUCER_KEY_FILE", "").strip()
+    if not kid and not path:
+        return None
+    if not kid or not path or not _HOOK_KID.fullmatch(kid):
+        raise ValueError("AWEB_HOOK_PRODUCER_KID and AWEB_HOOK_PRODUCER_KEY_FILE must be configured together")
+    return kid, path
+
+
 def _hook_producer_key(entry: object) -> HookProducerKey:
     if not isinstance(entry, dict) or set(entry) != _HOOK_PRODUCER_KEY_FIELDS:
         raise ValueError(

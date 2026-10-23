@@ -11,6 +11,11 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import json
+import hashlib
+from uuid import UUID
+
+from aweb_naapp.hooks.owner_act import PREFIX
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -22,6 +27,8 @@ from aweb.awid_error_handling import (
 from aweb.db import DatabaseInfra, get_db_infra
 from aweb.hook_bindings import (
     HookBinding,
+    BINDING_COLUMNS,
+    binding_from_row,
     OwnerActTeamKeyUnavailable,
     activate_binding,
     core_owner_act_verifier,
@@ -29,6 +36,7 @@ from aweb.hook_bindings import (
     revoke_binding,
 )
 from aweb.hook_times import format_hook_time
+from aweb.hook_producer import MutationHookContext, enqueue_mutation_hook
 from aweb.routes.apps import _caller
 from aweb.service_errors import ServiceError
 from aweb.team_auth_deps import get_team_identity
@@ -137,9 +145,39 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
         if registry_client is None:
             raise awid_registry_not_configured_exception(operation="AWID owner-act team key")
         verifier = core_owner_act_verifier(audience=request.app.state.public_origin, registry_client=registry_client)
+
+        async def enqueue_on(tx):
+            # This callback runs only after the owner act is verified and its
+            # nonce consumed, inside the binding change's own transaction.
+            row = await tx.fetch_one(
+                f"SELECT {BINDING_COLUMNS} FROM {{{{tables.app_hook_bindings}}}} WHERE binding_id=$1 AND team_id=$2",
+                UUID(binding_id), identity.team_id,
+            )
+            changed = binding_from_row(row)
+            act = json.loads(signing[len(PREFIX):])
+            payload = {
+                "mutation_type": "hook_binding.activated" if changed.state == "active" else "hook_binding.revoked",
+                "target_ref": "binding:" + str(changed.binding_id), "binding_id": str(changed.binding_id),
+                "kind": changed.kind, "app_id": changed.app_id, "installation_id": changed.installation_id,
+                "generation": changed.generation, "catalog_id": changed.catalog_id,
+                "catalog_version": changed.catalog_version, "hook": changed.hook,
+            }
+            if changed.state == "active":
+                payload.update(active_from=format_hook_time(changed.active_from, round_up=True),
+                               owner_act_sha256=hashlib.sha256(signing).hexdigest())
+            else:
+                payload.update(reason="owner_act", owner_act_sha256=hashlib.sha256(signing).hexdigest())
+            context = MutationHookContext(
+                getattr(request.app.state, "core_hooks", None),
+                {"authority_mode": "owner_act", "did_key": act["team_key_did"], "attestations": []},
+                getattr(request.state, "verified_hook_trace_id", None),
+            )
+            await enqueue_mutation_hook(tx, team_id=identity.team_id, payload=payload, hook_context=context)
+
         binding = await change(
             db_infra.get_manager("aweb"), verifier, team_id=identity.team_id, binding_id=binding_id,
             signing=signing, signature=payload.signature,
+            in_transaction=enqueue_on,
         )
     except ServiceError as exc:
         if exc.status_code >= 500:

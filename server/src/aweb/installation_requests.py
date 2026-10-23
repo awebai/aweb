@@ -39,7 +39,7 @@ async def get_installation_request_on(tx, *, team_id, request_id, for_update=Fal
     return dict(row)
 
 
-async def approve_installation_request_on(tx, *, team_id, request_id, fetched, granted_scopes, expected_generation, installed_by_agent_id=None):
+async def approve_installation_request_on(tx, *, team_id, request_id, fetched, granted_scopes, expected_generation, installed_by_agent_id=None, hook_context=None):
     requested = await get_installation_request_on(tx, team_id=team_id, request_id=request_id, for_update=True)
     if requested["state"] != "pending":
         raise InstallationError("installation_request_resolved", "Installation request has already been resolved", 409)
@@ -50,6 +50,7 @@ async def approve_installation_request_on(tx, *, team_id, request_id, fetched, g
     installation = await install_verified_manifest_on(
         tx, team_id=team_id, fetched=fetched, granted_scopes=granted_scopes,
         expected_generation=expected_generation, installed_by_agent_id=installed_by_agent_id,
+        hook_context=hook_context,
     )
     await tx.execute(
         "UPDATE {{tables.app_installation_requests}} SET state='approved',installation_id=$3,generation=$4,resolved_at=clock_timestamp() "

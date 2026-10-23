@@ -9,6 +9,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.migrations import AsyncMigrationManager
 
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
+from aweb_naapp.outbox import apply_outbox_migrations
 
 from .config import get_settings
 from awid.db_config import build_database_config
@@ -84,6 +85,7 @@ class DatabaseInfra:
                 # The hooks kit's own module (the owner-act nonces), after
                 # core's chain: one implementation shared with the naapps.
                 await apply_owner_act_migrations(self._manager)
+                await apply_outbox_migrations(self._manager)
 
             self._initialized = True
 

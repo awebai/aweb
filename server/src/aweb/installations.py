@@ -18,6 +18,7 @@ from aweb.app_registry import (
     validate_team_id,
 )
 from aweb.installation_hooks import write_manifest_bindings_on
+from aweb.hook_producer import MutationHookContext, enqueue_mutation_hook
 from aweb.service_errors import ServiceError
 
 
@@ -36,6 +37,7 @@ async def install_verified_manifest_on(
     granted_scopes: list[str],
     expected_generation: int | None = None,
     installed_by_agent_id: str | None = None,
+    hook_context: MutationHookContext | None = None,
 ) -> dict:
     """Confirm exact fetched bytes inside the caller's authorized transaction.
 
@@ -110,6 +112,15 @@ async def install_verified_manifest_on(
     )
     await _write_verified_registrations(tx, team_id=team_id, app_id=app_id, fetched=fetched, registration=registration)
     await write_manifest_bindings_on(tx, team_id=team_id, fetched=fetched, installation_id=installation_id, generation=generation)
+    payload = {
+        "mutation_type": "app.updated" if current is not None and current["state"] != "uninstalled" else "app.installed",
+        "target_ref": "app:" + app_id, "app_id": app_id, "origin": fetched.origin,
+        "digest": fetched.digest, "scopes": scopes,
+        "installation_id": installation_id, "generation": generation,
+    }
+    if payload["mutation_type"] == "app.updated":
+        payload["previous_digest"] = current["digest"]
+    await enqueue_mutation_hook(tx, team_id=team_id, payload=payload, hook_context=hook_context)
     return await get_installation_on(tx, team_id=team_id, app_id=app_id)
 
 

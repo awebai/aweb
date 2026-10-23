@@ -297,6 +297,10 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
         auth_mode="team_auth_v2" if envelope.version == 2 else "team_auth_v1",
         did_key=cert_info["did_key"], did_aw=binding.did_aw or None,
     ))
+    # The producer reads this only after authentication succeeded. Never take a
+    # trace from an unsigned header, body, or an unverified signed-payload header.
+    trace_id = envelope.payload.get("trace_id")
+    request.state.verified_hook_trace_id = trace_id if isinstance(trace_id, str) else None
     return cert_info
 
 

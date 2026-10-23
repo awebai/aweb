@@ -23,6 +23,7 @@ from .lifecycle import replay_lifecycle_side_effects
 from .federation.activation import build_federation_authority_activation
 from .federation.errors import authority_error_body
 from .federation.delivery import replay_federation_mutation_outbox
+from .hook_producer import start_core_hooks, stop_core_hooks
 from .mutation_hooks import create_mutation_handler
 from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
@@ -271,6 +272,7 @@ def _make_standalone_lifespan():
                 public_origin=app.state.public_origin,
             )
             await _validate_awid_registry_client(app.state.awid_registry_client)
+            start_core_hooks(app, default_db_infra.get_manager("aweb"))
             await _mount_mcp_app(
                 app,
                 default_db_infra,
@@ -289,6 +291,7 @@ def _make_standalone_lifespan():
                 logger.exception("Failed to initialize database")
 
             # Clean up any initialized resources on failure
+            await stop_core_hooks(app)
             if db_initialized:
                 await default_db_infra.close()
             if redis is not None:
@@ -299,6 +302,7 @@ def _make_standalone_lifespan():
             yield
         finally:
             logger.info("Shutting down aweb coordination server")
+            await stop_core_hooks(app)
             await _shutdown_mcp_app(app)
             await _shutdown_lifecycle_outbox_replay(app)
             await _shutdown_federation_outbox_replay(app)
@@ -331,20 +335,21 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
             public_origin=app.state.public_origin,
         )
         await _validate_awid_registry_client(app.state.awid_registry_client)
-        await _mount_mcp_app(
-            app,
-            db_infra,
-            redis,
-            app.state.awid_registry_client,
-            app.state.federation_authority,
-        )
-        _schedule_lifecycle_outbox_replay(app)
-        _schedule_federation_outbox_replay(app)
-
         try:
+            start_core_hooks(app, db_infra.get_manager("aweb"))
+            await _mount_mcp_app(
+                app,
+                db_infra,
+                redis,
+                app.state.awid_registry_client,
+                app.state.federation_authority,
+            )
+            _schedule_lifecycle_outbox_replay(app)
+            _schedule_federation_outbox_replay(app)
             yield
         finally:
             # Don't close connections in library mode - caller manages them
+            await stop_core_hooks(app)
             await _shutdown_mcp_app(app)
             await _shutdown_lifecycle_outbox_replay(app)
             await _shutdown_federation_outbox_replay(app)
