@@ -330,7 +330,9 @@ async def deliver_message(
                 "agent_id": to_agent_id or recipient.get("agent_id"), "did": recipient_did,
             })
             if not policies:
-                raise ForbiddenError("Recipient policy unavailable")
+                # Mail has one recipient; absence is not a policy denial and
+                # must not create a local delivery to a retired projection.
+                raise NotFoundError("Recipient agent not found")
         for policy_recipient in policies:
             await authorize_message_delivery(
                 db,

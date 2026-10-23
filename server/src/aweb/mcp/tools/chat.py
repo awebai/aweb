@@ -243,6 +243,8 @@ async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: lis
     for row in rows:
         item = dict(row)
         item["_policy_recipients"] = await policy_rows_for_participant(db_infra, item)
+        if not item["_policy_recipients"] and not item.get("delivery_origin"):
+            item["agent_id"] = None
         participant_address = (item.get("participant_address") or "").strip()
         item["address"] = (item.get("address") or "").strip() or participant_address
         item["delivery_origin"] = (item.get("delivery_origin") or "").strip() or None
@@ -715,7 +717,7 @@ async def chat_send(
                     continue
                 policy_rows = recipient.get("_policy_recipients") or []
                 if not policy_rows:
-                    return json.dumps({"error": "Recipient policy unavailable"})
+                    continue
                 for policy_recipient in policy_rows:
                     await authorize_message_delivery(
                         db_infra, recipient_agent=policy_recipient,

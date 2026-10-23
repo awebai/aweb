@@ -2648,7 +2648,9 @@ async def send_message(
                 continue
             policy_rows = row.get("_policy_recipients") or []
             if not policy_rows:
-                raise ForbiddenError("Recipient policy unavailable")
+                # No live local recipient: keep stored signature context, but
+                # there is no local delivery or policy to authorize.
+                continue
             for policy_recipient in policy_rows:
                 await authorize_message_delivery(
                     db,

@@ -372,7 +372,10 @@ without attributing unverified global metadata. Policy classification still uses
 relaxes a global recipient's inbound policy. Existing conversation participants
 can be looked up by their raw claims solely to enforce policy; this lookup never
 selects a new recipient or supplies routing identity. Every matching local policy
-row must permit continuation; missing policy evidence fails closed.
+row must permit continuation. Lookup errors fail closed. A participant with no
+live local row contributes no local delivery or policy check; a retired group
+member does not prevent continuation for the remaining members. Single-recipient
+mail without a live recipient is not delivered.
 
 After migration 034, operators run `aweb verify-identity-bindings --dry-run`, then
 `aweb verify-identity-bindings` before resuming stable-DID/address delivery. The
