@@ -45,8 +45,8 @@ All runtime env vars use the `FOLIO_` prefix; they are the shared naapp settings
 - `FOLIO_APP_KEY_FILES` — alternative JSON map from declared kids to signing-key files. The template declares `folio:emit-1`; every declared kid needs its key configured, even when outbound event delivery is disabled.
 - `FOLIO_APP_ID` — stable deployment app id, default `folio`. See [production operations](docs/production-operations.md) for manifest filling and install re-pinning.
 - `FOLIO_GIT_SHA` — the build commit `/health` reports when Render does not inject `RENDER_GIT_COMMIT`.
-- `FOLIO_DEFAULT_PRESENT_TTL_SECONDS` — default present-link TTL, default `86400`.
-- `FOLIO_MAX_PRESENT_TTL_SECONDS` — max present-link TTL, default `604800`.
+- `FOLIO_DEFAULT_PRESENT_TTL_SECONDS` — default read-only present-link TTL, default `86400` (one day).
+- `FOLIO_MAX_PRESENT_TTL_SECONDS` — read-only present-link ceiling, default and maximum `2592000` (30 days); operators may set a lower ceiling. Explicit requests above the configured ceiling return `422`, rather than being shortened. Editable links remain limited to `300` seconds.
 - `FOLIO_CLOUDFLARE_ACCOUNT_ID` — Cloudflare account id for Stream.
 - `FOLIO_CLOUDFLARE_STREAM_API_TOKEN` — Stream API token for direct uploads/status.
 - `FOLIO_CLOUDFLARE_STREAM_PLAYBACK_HOST` — signed playback host, for example `customer-<code>.cloudflarestream.com`.
@@ -102,7 +102,7 @@ aw id request PUT "$FOLIO_ORIGIN/v1/theme" --team-auth --raw \
   --body '{"tokens":{"colors":{"background":"#0b1020","surface":"#ffffff","accent":"#7c5cff"},"fonts":{"body":"serif"}},"header":"Team memo","footer":"Confidential"}'
 
 aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \
-  --body '{"slug":"pitch","ttl_seconds":604800}'
+  --body '{"slug":"pitch","ttl_seconds":2592000}'
 ```
 
 The present response includes a public capability URL under `/present/<token>`; the URL is the human-facing permission. User content under `/present/*` and `/assets/*` is marked `noindex, nofollow, noarchive` and disallowed in `robots.txt`. Revoke it when access should end:

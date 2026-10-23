@@ -151,3 +151,17 @@ Approval is per resident, while requests use that resident's own selected team
 certificate. On a host serving multiple customers, each resident approves only
 its own apps. As with existing custody snapshots, hostile processes running as
 the same OS user are outside this isolation model.
+
+## Folio present-link lifetimes
+
+A read-only Folio link accepts up to 30 days (`2592000` seconds), with a one-day
+(`86400` seconds) default. For example:
+
+```sh
+aw folio present --slug pitch --ttl_seconds 2592000
+```
+
+The operator can set a shorter maximum with `FOLIO_MAX_PRESENT_TTL_SECONDS`.
+Explicit requests above the configured maximum return `422`; Folio does not
+silently shorten them. Editable links (`--editable true`) remain limited to
+300 seconds. A link gives its holder access until it expires or is revoked.
