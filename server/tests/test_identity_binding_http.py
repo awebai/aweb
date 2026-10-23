@@ -603,7 +603,8 @@ async def test_verified_proxy_context_rechecks_subject_binding(privacy_app, monk
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target_kind", ["did_key", "did_aw"])
 @pytest.mark.parametrize("keep_marker", [False, True], ids=["historical", "verified"])
-async def test_stored_mail_and_chat_routes_keep_recipient_policy(privacy_app, target_kind, keep_marker):
+@pytest.mark.parametrize("keep_agent_ref", [False, True], ids=["did-reference", "agent-reference"])
+async def test_stored_mail_and_chat_routes_keep_recipient_policy(privacy_app, target_kind, keep_marker, keep_agent_ref):
     from fastapi import FastAPI
     from starlette.responses import JSONResponse
     from aweb.mcp.auth import MCPAuthMiddleware
@@ -641,6 +642,9 @@ async def test_stored_mail_and_chat_routes_keep_recipient_policy(privacy_app, ta
         mail = await signed(sender,"POST","/v1/messages",{"to_did":target,"subject":"policy","body":"while open"})
         chat = await signed(sender,"POST","/v1/chat/sessions",{"to_dids":[target],"message":"while open"})
         assert (mail.status_code,chat.status_code) == (200,200), (mail.text,chat.text)
+        if not keep_agent_ref:
+            await env.db.execute("UPDATE {{tables.chat_participants}} SET agent_id=NULL WHERE session_id=$1::uuid AND agent_id=$2",chat.json()["session_id"],recipient.id)
+            await env.db.execute("UPDATE {{tables.conversation_participants}} SET agent_id=NULL WHERE conversation_id=ANY($1::uuid[]) AND agent_id=$2",[mail.json()["conversation_id"],chat.json()["session_id"]],recipient.id)
         mode = await signed(recipient,"PATCH","/v1/agents/me/inbound-mode",{"inbound_mode":"team_and_contacts"})
         assert mode.status_code == 200, mode.text
         if not keep_marker:

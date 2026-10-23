@@ -8,7 +8,7 @@ from aweb.messaging.conversations import (
     list_conversation_participants,
     require_active_conversation_participant,
 )
-from aweb.messaging.messages import get_agent_by_id
+from aweb.messaging.messages import get_agent_by_id, resolve_agent_by_did
 from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.service_errors import ConflictError, ServiceError, ValidationError
 
@@ -79,6 +79,9 @@ async def recipient_for_conversation_participant(db, participant: dict) -> dict:
                 "Start a new conversation with an active recipient."
             )
 
+    local_recipient = await resolve_agent_by_did(db, did)
+    if local_recipient is not None:
+        return with_requested_address(local_recipient, address) if address else local_recipient
     local_recipient = await _local_recipient_from_address(db, address=address)
     if local_recipient is not None:
         return with_requested_address(local_recipient, address)
