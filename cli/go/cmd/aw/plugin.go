@@ -342,7 +342,18 @@ func addPluginGrantGuidance(cmd *cobra.Command, out *pluginInstallOutput) {
 		return
 	}
 	out.GrantCheckError = "unavailable"
-	client, sel, err := resolveClientSelection()
+	parent := context.Background()
+	if cmd != nil && cmd.Context() != nil {
+		parent = cmd.Context()
+	}
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+	workingDir := mustGetwd()
+	sel, err := resolveSelectionForDir(workingDir)
+	if err != nil {
+		return
+	}
+	client, sel, err := buildClientForSelectionAtIdentityHome(ctx, workingDir, sel.IdentityHome, sel)
 	if err != nil {
 		return
 	}
@@ -355,12 +366,6 @@ func addPluginGrantGuidance(cmd *cobra.Command, out *pluginInstallOutput) {
 		prefix = append(prefix, "--team", sel.TeamID)
 	}
 	out.GrantRefreshCommand = append(prefix, out.GrantRefreshCommand[3:]...)
-	parent := context.Background()
-	if cmd != nil && cmd.Context() != nil {
-		parent = cmd.Context()
-	}
-	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
-	defer cancel()
 	grants, err := client.ListIdentityGrants(ctx)
 	if err != nil {
 		return
@@ -462,7 +467,7 @@ func formatPluginInstall(v any) string {
 		} else {
 			text += "Could not check active grants. Existing grants keep their original tool snapshots.\n"
 		}
-		text += fmt.Sprintf("If the running session cannot use this app, the resident owner must mint a replacement:\n  %s\nChoose the intended scopes and replace <ttl> with the intended lifetime (for example 1h; choose never only deliberately). Replace <new-grant-home> with a new empty directory. Keep the same resident identity and its custody service running.\nStop the old session, then relaunch your agent command using the replacement grant (replace <agent-command>):\n  %s\nFor OATS sessions configured with renew: launch, the host operator can instead renew and restart the same instance (replace <instance-home>):\n  %s\n", formatShellCommand(out.GrantRefreshCommand), formatShellCommand(out.GrantRestartCommand), formatShellCommand(out.OATSRenewRestartCommand))
+		text += fmt.Sprintf("If the running session cannot use this app, the resident owner must mint a replacement:\n  %s\nChoose the intended scopes and replace <ttl> with the intended lifetime (for example 1h; choose never only deliberately). Replace <new-grant-home> with a new empty directory. Keep the same resident identity and its custody service running.\nStop the old session, then relaunch your agent command using the replacement grant (replace the entire quoted '<agent-command>' token, including its surrounding quotes, with the original command line; retain each argument's quoting):\n  %s\nFor OATS sessions configured with renew: launch, the host operator can instead renew and restart the same instance (replace <instance-home>):\n  %s\n", formatShellCommand(out.GrantRefreshCommand), formatShellCommand(out.GrantRestartCommand), formatShellCommand(out.OATSRenewRestartCommand))
 		return text
 	}
 	return fmt.Sprintf("Installed plugin %s -> %s\n", out.Name, out.Path)
