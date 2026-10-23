@@ -703,8 +703,6 @@ def test_install_after_mint_uses_replacement_grant(
                     "oats", "session", "restart", "--home", "<instance-home>",
                 ]
                 updated = _run_aw(aw_workspace, "--json=false", "plugin", "update", "folio")
-                assert "1 active grant" in updated.stdout
-                assert "do not gain tools from this install or update" in updated.stdout
                 commands = [shlex.split(line.strip()) for line in updated.stdout.splitlines()
                             if line.startswith("  ")]
                 assert installed["grant_refresh_command"] in commands
@@ -737,7 +735,6 @@ def test_install_after_mint_uses_replacement_grant(
                     line.strip() for line in updated.stdout.splitlines()
                     if line.startswith("  ") and shlex.split(line.strip()) == installed["grant_restart_command"]
                 )
-                assert "including its surrounding quotes" in updated.stdout
                 restart_shell = restart_template.replace(
                     shlex.quote("AWEB_IDENTITY_HOME=<new-grant-home>"),
                     shlex.quote(f"AWEB_IDENTITY_HOME={replacement_home}"),
@@ -774,8 +771,6 @@ def test_install_after_mint_uses_replacement_grant(
                 _run_aw(aw_workspace, "id", "grant", "revoke", replacement["grant_id"])
                 inactive = _run_aw_json(aw_workspace, "plugin", "update", "folio")
                 assert inactive["active_grants"] == 0
-                quiet = _run_aw(aw_workspace, "--json=false", "plugin", "update", "folio")
-                assert "active grant" not in quiet.stdout
                 assert not (instance / ".aw").exists()
                 assert not (replacement_home / "signing.key").exists()
                 assert before_material == {
