@@ -302,4 +302,3 @@ async def test_an_answer_without_a_positive_whole_max_age_is_refused_and_not_cac
 def test_the_refresh_timeout_must_be_a_positive_finite_number(refresh_timeout):
     with pytest.raises(ValueError):
         FreshnessCache(refresh_timeout=refresh_timeout)
-

@@ -617,6 +617,9 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `app_installation_verifications`
 - `team_app_install_admins`
 - `app_install_admin_audit`
+- `task_answers`
+- `task_app_requests`
+- `task_answer_stage_nonces`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 Migrations `035_team_app_installation_identity` and `036_app_installation_management`

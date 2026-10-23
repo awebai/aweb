@@ -6,6 +6,9 @@
   check with the installation write. Concurrent same-app re-pins return a
   generation conflict instead of a database deadlock; first-install policy
   checks are serialized too.
+- The shared app credential signer supports `app-request`, signing the required
+  installation id and positive generation. Its bytes match the C2 transport
+  vector; existing app-event, grant-read and hook-resolve credentials are unchanged.
 
 - aw app installation names the resident credential directory and gives an
   explicit replacement-grant action. Existing grants retain their original
