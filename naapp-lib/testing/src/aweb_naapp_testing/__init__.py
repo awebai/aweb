@@ -1,9 +1,8 @@
 """Test support for naapps: real AWID routes on PostgreSQL, and a signer for
 team-auth v2 requests.
 
-The verifier reaches AWID through an in-process ASGI transport. Faults, when a
-test asks for them, are applied to a response only after the real AWID handler
-has produced it, so the cache code, the database and the pagination stay real.
+AWID and its recording transport live in awid_service.testing. The names
+previously exported here remain aliases for released test consumers.
 
 This is a dev-only distribution: it mints throwaway team keys and
 certificates, and no production install depends on it.
@@ -14,144 +13,21 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import httpx
-from awid.attestation_records import ATTESTATION_HEADER, encode_attestation_header, sign_record
+from awid.attestation_records import ATTESTATION_HEADER, encode_attestation_header
 from awid.did import did_from_public_key
-from awid.ratelimit import NoOpRateLimiter
-from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
-from awid_service.db import AwidDatabaseInfra
-from awid_service.routes.attestation_records import router as awid_attestation_records_router
-from awid_service.routes.did import router as awid_did_router
-from awid_service.routes.teams import router as awid_teams_router
-from fastapi import FastAPI
 from nacl.signing import SigningKey
-from pgdbm import AsyncDatabaseManager, DatabaseConfig
 
-REGISTRY_URL = "https://registry.example"
-SERVICE_TOKEN = "runtime-test-service-token-32-bytes"
-
-ResponseFault = Callable[[httpx.Request, httpx.Response], None]
-
-
-class RecordingTransport(httpx.AsyncBaseTransport):
-    """Delivers every request to real AWID, records it, then applies `fault`."""
-
-    def __init__(self, app: FastAPI) -> None:
-        self._inner = httpx.ASGITransport(app=app)
-        self.calls: list[httpx.Request] = []
-        self.fault: ResponseFault | None = None
-
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        self.calls.append(request)
-        response = await self._inner.handle_async_request(request)
-        if self.fault is None:
-            return response
-        await response.aread()
-        self.fault(request, response)
-        return response
-
-
-@dataclass
-class Registry:
-    db: Any
-    transport: RecordingTransport
-
-    async def add_team(self, team_id: str, team_did_key: str, *, visibility: str = "public") -> None:
-        name, domain = team_id.split(":", 1)
-        await self.db.execute(
-            "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) VALUES ($1, $2, $3, $4)",
-            domain, name, team_did_key, visibility,
-        )
-
-    async def add_certificate(self, cert: dict[str, Any]) -> None:
-        name, domain = cert["team_id"].split(":", 1)
-        await self.db.execute(
-            "INSERT INTO {{tables.team_certificates}} "
-            "(team_uuid, certificate_id, member_did_key, alias, issued_at) "
-            "SELECT team_uuid, $3, $4, $5, now() FROM {{tables.teams}} WHERE domain = $1 AND name = $2",
-            domain, name, cert["certificate_id"], cert["member_did_key"], cert["alias"],
-        )
-
-    async def revoke(self, certificate_id: str) -> None:
-        await self.db.execute(
-            "UPDATE {{tables.team_certificates}} SET revoked_at = now() WHERE certificate_id = $1",
-            certificate_id,
-        )
-
-    def _client(self) -> RegistryClient:
-        return RegistryClient(registry_url=REGISTRY_URL, transport=self.transport)
-
-    async def register_did(self, key: SigningKey) -> str:
-        """Registers `key` as a new did:aw through AWID's own route; returns the did:aw."""
-        mapping = await self._client().register_did(did_key(key), bytes(key))
-        return mapping.did_aw
-
-    async def rotate_did(self, did_aw: str, old: SigningKey, new: SigningKey) -> None:
-        await self._client().rotate_key(did_aw, did_key(new), bytes(old), bytes(new))
-
-    async def add_custody(self, member: Member, *, custodian_id: str, issuer: SigningKey) -> None:
-        """Publish team-signed records: ``custodian_id`` attests with ``issuer``,
-        and holds ``member``'s certificate."""
-        name, domain = member.team_id.split(":", 1)
-        issued_at = datetime.now(UTC).replace(microsecond=0)
-        common = {"v": 1, "team_id": member.team_id, "team_did_key": member.team_did_key,
-                  "custodian_id": custodian_id, "issued_at": utc_timestamp(issued_at)}
-        custodian = {**common, "type": "aweb.team-custodian", "issuer_did_keys": [did_key(issuer)]}
-        custody = {**common, "type": "aweb.member-custody", "certificate_id": member.certificate_id,
-                   "member_did_key": member.did_key}
-        for table, key_column, record, extra in (
-            ("team_custodians", "custodian_id", custodian, {}),
-            ("member_custody", "certificate_id", custody, {"custodian_id": custodian_id}),
-        ):
-            columns = "".join(f", {column}" for column in extra)
-            values = "".join(f", ${8 + i}" for i in range(len(extra)))
-            await self.db.execute(
-                f"INSERT INTO {{{{tables.{table}}}}} "
-                f"(team_uuid, {key_column}, record_json, signature, team_did_key, issued_at{columns}) "
-                f"SELECT team_uuid, $1, $2, $3, $4, $5::timestamptz{values} FROM {{{{tables.teams}}}} "
-                "WHERE domain = $6 AND name = $7",
-                record[key_column], canonical_json_bytes(record).decode(),
-                sign_record(bytes(member.team_key), record), member.team_did_key,
-                issued_at, domain, name, *extra.values(),
-            )
-
-    async def rotate_team_key(self, team_id: str, team_did_key: str) -> None:
-        name, domain = team_id.split(":", 1)
-        await self.db.execute(
-            "UPDATE {{tables.teams}} SET team_did_key = $3 WHERE domain = $1 AND name = $2",
-            domain, name, team_did_key,
-        )
-
-
-@asynccontextmanager
-async def awid_registry(database_url: str) -> AsyncIterator[Registry]:
-    """Real AWID, with its migrations applied, on the empty database at
-    ``database_url``, reachable through ``Registry.transport``."""
-    pool = await AsyncDatabaseManager.create_shared_pool(
-        DatabaseConfig(connection_string=database_url, schema=None)
-    )
-    infra = AwidDatabaseInfra(schema="awid")
-    try:
-        await infra.initialize(shared_pool=pool, run_migrations=True)
-        app = FastAPI()
-        app.state.db = infra
-        app.state.rate_limiter = NoOpRateLimiter()
-        app.state.awid_service_token = SERVICE_TOKEN
-        app.include_router(awid_teams_router)
-        app.include_router(awid_attestation_records_router)
-        app.include_router(awid_did_router)
-        yield Registry(db=infra.get_manager("aweb"), transport=RecordingTransport(app))
-    finally:
-        await infra.close()
-        await pool.close()
-
+# Published compatibility names; AWID has one implementation in awid_service.testing.
+from awid_service.testing import REGISTRY_URL as REGISTRY_URL
+from awid_service.testing import SERVICE_TOKEN as SERVICE_TOKEN
+from awid_service.testing import Registry as Registry
+from awid_service.testing import ServiceTransport as RecordingTransport
+from awid_service.testing import running_registry as awid_registry
 
 def did_key(key: SigningKey) -> str:
     return did_from_public_key(bytes(key.verify_key))

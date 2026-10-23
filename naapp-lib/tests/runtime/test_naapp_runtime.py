@@ -12,7 +12,8 @@ from typing import Annotated
 
 import httpx
 import pytest
-from aweb_naapp_testing import REGISTRY_URL, Member, attested, did_key
+from aweb_naapp_testing import Member, attested, did_key
+from awid_service.testing import REGISTRY_URL
 from awid.attestation_records import ATTESTATION_HEADER
 from awid.did import stable_id_from_did_key
 from fastapi import Depends, FastAPI, Request

@@ -21,7 +21,8 @@ from aweb_naapp.runtime.app_keys import AppKeyError
 from aweb_naapp.runtime.authorization import DeclaredTool, Grant
 from aweb_naapp.runtime.health import CheckResult, HealthCheck
 from aweb_naapp.runtime.team_auth import Principal
-from aweb_naapp_testing import REGISTRY_URL, Member, attested
+from aweb_naapp_testing import Member, attested
+from awid_service.testing import REGISTRY_URL
 from awid.did import did_from_public_key
 from fastapi import Request
 from nacl.signing import SigningKey

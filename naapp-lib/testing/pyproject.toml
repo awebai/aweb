@@ -9,11 +9,20 @@ dependencies = [
   "aiosmtpd>=1.4.6",
   # Released in lockstep with aweb-naapp, from the same tag and at the same version.
   "aweb-naapp[hooks,runtime]==0.4.0",
-  # The first awid release with the principal-attestation records the runtime reads.
-  "awid-service>=0.5.30",
+  # The first AWID release with the shared in-process registry fixtures.
+  "awid-service>=0.5.32",
   "cbor2>=5.6.0",
   "cryptography>=46.0.0",
   "dnspython>=2.7.0",
+]
+
+[project.optional-dependencies]
+# The aweb coordination server in-process (aweb.testing), found through a
+# team's AWID record as a naapp finds it. Needs Redis at REDIS_URL.
+server = [
+  "aweb>=1.27.34",
+  "pytest-asyncio>=1.2.0",
+  "redis>=6.4.0",
 ]
 
 [build-system]
@@ -26,3 +35,4 @@ packages = ["src/aweb_naapp_testing"]
 [tool.uv.sources]
 aweb-naapp = { path = "..", editable = true }
 awid-service = { path = "../../awid", editable = true }
+aweb = { path = "../../server", editable = true }

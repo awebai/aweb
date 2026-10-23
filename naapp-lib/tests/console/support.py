@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from aweb_naapp_testing import Registry
+from awid_service.testing import Registry
 from aweb_naapp_testing.owner_acts import (
     TeamOwner,
     designation_subject,

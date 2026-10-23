@@ -9,7 +9,7 @@ and, at the same version, its test support aweb-naapp-testing. For each:
   requirement has a floor the in-repo awid satisfies, and aweb-naapp-testing
   requires exactly the aweb-naapp version it is released with.
 - With every extra it installs from the built wheel into a fresh environment,
-  awid-service and aweb-naapp resolved from their in-repo built wheels and
+  awid-service, aweb and aweb-naapp resolved from their in-repo built wheels and
   everything else from the package index, and every module imports.
 """
 
@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 NAAPP_LIB = ROOT / "naapp-lib"
 NAAPP_TESTING = NAAPP_LIB / "testing"
 AWID = ROOT / "awid"
+SERVER = ROOT / "server"
 _DIRECT_REFERENCE = re.compile(r"@\s*(file:|git\+|https?:|\.|/)")
 
 
@@ -141,6 +142,7 @@ def main() -> int:
             naapp_wheel = _build(NAAPP_LIB, out / "naapp-lib")
             testing_wheel = _build(NAAPP_TESTING, out / "naapp-testing")
             _build(AWID, out / "awid")
+            _build(SERVER, out / "server")
             for project, wheel, pin in (
                 (NAAPP_LIB, naapp_wheel, None),
                 (NAAPP_TESTING, testing_wheel, naapp_version),
@@ -148,7 +150,7 @@ def main() -> int:
                 _check_contents(project, wheel)
                 metadata = _metadata(wheel)
                 _check_requirements(wheel, metadata, aweb_naapp_version=pin)
-                _check_install(project, wheel, metadata, [out / "awid", out / "naapp-lib"])
+                _check_install(project, wheel, metadata, [out / "awid", out / "naapp-lib", out / "server"])
         except PackageRefusal as refused:
             print(f"check-naapp-lib-package: {refused}", file=sys.stderr)
             return 1
