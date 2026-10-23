@@ -143,6 +143,10 @@
     "hmac_sha256_hex": {
       "kind": "string",
       "pattern": "^[0-9a-f]{64}$"
+    },
+    "sequence_range": {
+      "kind": "string",
+      "pattern": "^[1-9][0-9]{0,15}:[1-9][0-9]{0,15}$"
     }
   },
   "hooks": {
@@ -580,7 +584,8 @@
             "runner.registered",
             "runner.deregistered",
             "installation.disabled",
-            "installation.enabled"
+            "installation.enabled",
+            "hook_delivery.cancelled"
           ],
           "required": true
         },
@@ -596,7 +601,8 @@
             "owner_act",
             "passkey_session",
             "team_cert",
-            "backend_observation"
+            "backend_observation",
+            "outbox_state"
           ],
           "required": true
         },
@@ -643,9 +649,109 @@
         "reason_code": {
           "type": "token",
           "required": false
+        },
+        "source_binding_id": {
+          "type": "uuid",
+          "required": false
+        },
+        "source_hook": {
+          "enum": [
+            "post-secret-use-hook",
+            "post-governance-hook",
+            "post-manifest-command-hook"
+          ],
+          "required": false
+        },
+        "source_seq_first": {
+          "type": "sequence",
+          "required": false
+        },
+        "source_seq_last": {
+          "type": "sequence",
+          "required": false
+        },
+        "cancelled_count": {
+          "type": "sequence",
+          "required": false
         }
       },
       "rules": [
+        {
+          "when": {
+            "field": "act",
+            "in": [
+              "hook_delivery.cancelled"
+            ]
+          },
+          "require": [
+            "source_binding_id",
+            "source_hook",
+            "source_seq_first",
+            "source_seq_last",
+            "cancelled_count",
+            "reason_code"
+          ],
+          "forbid": [
+            "role",
+            "resource_type",
+            "subject_ref",
+            "resource_ref",
+            "before_ref",
+            "after_ref",
+            "owner_act_sha256",
+            "approval_evidence_sha256",
+            "approval_id",
+            "policy_digest"
+          ],
+          "require_equals": {
+            "authority": "outbox_state",
+            "reason_code": "binding_ended"
+          }
+        },
+        {
+          "when": {
+            "field": "authority",
+            "in": [
+              "outbox_state"
+            ]
+          },
+          "require_equals": {
+            "act": "hook_delivery.cancelled"
+          }
+        },
+        {
+          "when": {
+            "field": "act",
+            "in": [
+              "role.designated",
+              "role.revoked",
+              "credential.enrolled",
+              "credential.recovered",
+              "credential.revoked",
+              "grant.created",
+              "grant.changed",
+              "grant.revoked",
+              "resource.created",
+              "resource.version_added",
+              "resource.version_observed",
+              "resource.disabled",
+              "resource.enabled",
+              "resource.replaced",
+              "policy.changed",
+              "runner.registered",
+              "runner.deregistered",
+              "installation.disabled",
+              "installation.enabled"
+            ]
+          },
+          "forbid": [
+            "source_binding_id",
+            "source_hook",
+            "source_seq_first",
+            "source_seq_last",
+            "cancelled_count"
+          ]
+        },
         {
           "when": {
             "field": "act",
@@ -765,7 +871,8 @@
         "runner.deregistered": "narrowing",
         "installation.disabled": "narrowing",
         "installation.enabled": "widening",
-        "resource.version_observed": "narrowing"
+        "resource.version_observed": "narrowing",
+        "hook_delivery.cancelled": "narrowing"
       }
     },
     "post-manifest-command-hook": {
@@ -1348,6 +1455,12 @@
             "cancelled_seq_last": {
               "type": "sequence",
               "required": false
+            },
+            "cancelled_seq_ranges": {
+              "list_of": "sequence_range",
+              "min_items": 1,
+              "max_items": 9007199254740991,
+              "required": false
             }
           },
           "rules": [
@@ -1380,6 +1493,19 @@
               "require": [
                 "cancelled_seq_first",
                 "cancelled_count"
+              ]
+            },
+            {
+              "when": {
+                "field": "cancelled_seq_ranges",
+                "present": true
+              },
+              "require": [
+                "cancelled_count"
+              ],
+              "forbid": [
+                "cancelled_seq_first",
+                "cancelled_seq_last"
               ]
             }
           ]
@@ -1889,6 +2015,81 @@
         "secret_version": 4,
         "secret_backend": "onepassword",
         "dispatch_id": "dsp_01"
+      }
+    },
+    {
+      "name": "governance_hook_delivery_cancelled_range",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-secret-use-hook",
+        "source_seq_first": 10,
+        "source_seq_last": 12,
+        "cancelled_count": 3,
+        "reason_code": "binding_ended"
+      }
+    },
+    {
+      "name": "governance_hook_delivery_cancelled_single",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-governance-hook",
+        "source_seq_first": 15,
+        "source_seq_last": 15,
+        "cancelled_count": 1,
+        "reason_code": "binding_ended"
+      }
+    },
+    {
+      "name": "mutation_binding_revoked_sparse_ranges",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": [
+          "10:10",
+          "12:12"
+        ]
+      }
+    },
+    {
+      "name": "mutation_binding_revoked_contiguous_range_list",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 4,
+        "cancelled_seq_ranges": [
+          "810:813"
+        ]
       }
     }
   ],
@@ -2734,6 +2935,433 @@
       },
       "error": "rule_violation",
       "field": "refusal_code"
+    },
+    {
+      "name": "cancellation_missing_source_binding_id",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_hook": "post-secret-use-hook",
+        "source_seq_first": 10,
+        "source_seq_last": 12,
+        "cancelled_count": 3,
+        "reason_code": "binding_ended"
+      },
+      "error": "rule_violation",
+      "field": "source_binding_id"
+    },
+    {
+      "name": "cancellation_missing_source_hook",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_seq_first": 10,
+        "source_seq_last": 12,
+        "cancelled_count": 3,
+        "reason_code": "binding_ended"
+      },
+      "error": "rule_violation",
+      "field": "source_hook"
+    },
+    {
+      "name": "cancellation_missing_source_seq_first",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-secret-use-hook",
+        "source_seq_last": 12,
+        "cancelled_count": 3,
+        "reason_code": "binding_ended"
+      },
+      "error": "rule_violation",
+      "field": "source_seq_first"
+    },
+    {
+      "name": "cancellation_missing_source_seq_last",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-secret-use-hook",
+        "source_seq_first": 10,
+        "cancelled_count": 3,
+        "reason_code": "binding_ended"
+      },
+      "error": "rule_violation",
+      "field": "source_seq_last"
+    },
+    {
+      "name": "cancellation_missing_cancelled_count",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-secret-use-hook",
+        "source_seq_first": 10,
+        "source_seq_last": 12,
+        "reason_code": "binding_ended"
+      },
+      "error": "rule_violation",
+      "field": "cancelled_count"
+    },
+    {
+      "name": "cancellation_missing_reason_code",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-secret-use-hook",
+        "source_seq_first": 10,
+        "source_seq_last": 12,
+        "cancelled_count": 3
+      },
+      "error": "rule_violation",
+      "field": "reason_code"
+    },
+    {
+      "name": "cancellation_wrong_authority",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "team_cert",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-secret-use-hook",
+        "source_seq_first": 10,
+        "source_seq_last": 12,
+        "cancelled_count": 3,
+        "reason_code": "binding_ended"
+      },
+      "error": "rule_violation",
+      "field": "authority"
+    },
+    {
+      "name": "cancellation_wrong_reason",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-secret-use-hook",
+        "source_seq_first": 10,
+        "source_seq_last": 12,
+        "cancelled_count": 3,
+        "reason_code": "uninstalled"
+      },
+      "error": "rule_violation",
+      "field": "reason_code"
+    },
+    {
+      "name": "cancellation_wrong_direction",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "widening",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-secret-use-hook",
+        "source_seq_first": 10,
+        "source_seq_last": 12,
+        "cancelled_count": 3,
+        "reason_code": "binding_ended"
+      },
+      "error": "direction_mismatch",
+      "field": "direction"
+    },
+    {
+      "name": "cancellation_core_source_hook",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-mutation-hook",
+        "source_seq_first": 10,
+        "source_seq_last": 12,
+        "cancelled_count": 3,
+        "reason_code": "binding_ended"
+      },
+      "error": "invalid_value",
+      "field": "source_hook"
+    },
+    {
+      "name": "cancellation_client_source_hook",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-command-hook",
+        "source_seq_first": 10,
+        "source_seq_last": 12,
+        "cancelled_count": 3,
+        "reason_code": "binding_ended"
+      },
+      "error": "invalid_value",
+      "field": "source_hook"
+    },
+    {
+      "name": "cancellation_zero_count",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-secret-use-hook",
+        "source_seq_first": 10,
+        "source_seq_last": 12,
+        "cancelled_count": 0,
+        "reason_code": "binding_ended"
+      },
+      "error": "invalid_value",
+      "field": "cancelled_count"
+    },
+    {
+      "name": "cancellation_owner_evidence",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-secret-use-hook",
+        "source_seq_first": 10,
+        "source_seq_last": 12,
+        "cancelled_count": 3,
+        "reason_code": "binding_ended",
+        "owner_act_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "error": "rule_violation",
+      "field": "owner_act_sha256"
+    },
+    {
+      "name": "cancellation_resource_claim",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "hook_delivery.cancelled",
+        "direction": "narrowing",
+        "authority": "outbox_state",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "source_hook": "post-secret-use-hook",
+        "source_seq_first": 10,
+        "source_seq_last": 12,
+        "cancelled_count": 3,
+        "reason_code": "binding_ended",
+        "resource_ref": "secret:s_1"
+      },
+      "error": "rule_violation",
+      "field": "resource_ref"
+    },
+    {
+      "name": "cancellation_fields_on_other_governance_act",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "grant.revoked",
+        "direction": "narrowing",
+        "authority": "team_cert",
+        "source_binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff"
+      },
+      "error": "rule_violation",
+      "field": "source_binding_id"
+    },
+    {
+      "name": "cancellation_authority_on_other_act",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "grant.revoked",
+        "direction": "narrowing",
+        "authority": "outbox_state"
+      },
+      "error": "rule_violation",
+      "field": "act"
+    },
+    {
+      "name": "core_ranges_empty",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": []
+      },
+      "error": "invalid_value",
+      "field": "cancelled_seq_ranges"
+    },
+    {
+      "name": "core_ranges_duplicate",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": [
+          "10:10",
+          "10:10"
+        ]
+      },
+      "error": "invalid_value",
+      "field": "cancelled_seq_ranges"
+    },
+    {
+      "name": "core_ranges_bad_decimal",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": [
+          "010:12"
+        ]
+      },
+      "error": "invalid_value",
+      "field": "cancelled_seq_ranges"
+    },
+    {
+      "name": "core_ranges_bad_item_type",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": [
+          10
+        ]
+      },
+      "error": "invalid_value",
+      "field": "cancelled_seq_ranges"
+    },
+    {
+      "name": "core_ranges_missing_end",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": [
+          "10:"
+        ]
+      },
+      "error": "invalid_value",
+      "field": "cancelled_seq_ranges"
+    },
+    {
+      "name": "core_ranges_missing_count",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_seq_ranges": [
+          "10:10",
+          "12:12"
+        ]
+      },
+      "error": "rule_violation",
+      "field": "cancelled_count"
+    },
+    {
+      "name": "core_ranges_mixed_legacy_fields",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": [
+          "10:10",
+          "12:12"
+        ],
+        "cancelled_seq_first": 10,
+        "cancelled_seq_last": 12
+      },
+      "error": "rule_violation",
+      "field": "cancelled_seq_first"
     }
   ]
 }
