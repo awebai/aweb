@@ -18,7 +18,9 @@ from tests.test_broker_operation import _internal, _template
 
 
 def digest(material, body):
-    return base64.urlsafe_b64encode(hmac.digest(material, body, hashlib.sha256)).decode().rstrip("=")
+    return (
+        base64.urlsafe_b64encode(hmac.digest(material, body, hashlib.sha256)).decode().rstrip("=")
+    )
 
 
 def test_response_key_file_uses_independent_private_material(tmp_path):

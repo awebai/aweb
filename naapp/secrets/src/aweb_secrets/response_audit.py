@@ -57,7 +57,9 @@ class ResponseKey:
         except KeyFileError:
             raise ResponseKeyInvalid("response key file unavailable or unsafe") from None
         if not _KEY_HEX.fullmatch(content):
-            raise ResponseKeyInvalid("a response key file must hold 64 hex characters and optional LF")
+            raise ResponseKeyInvalid(
+                "a response key file must hold 64 hex characters and optional LF"
+            )
         return cls(bytes.fromhex(content.rstrip(b"\n").decode("ascii")))
 
     def record(
