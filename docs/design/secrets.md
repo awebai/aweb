@@ -1870,7 +1870,13 @@ secrets fills `authority` with one of:
 - `owner_act`, with `owner_act_sha256`;
 - `passkey_session`, with `approval_evidence_sha256`;
 - `team_cert`, for narrowing acts through the agent API;
-- `backend_observation`, exclusively for `resource.version_observed` (§5.3).
+- `backend_observation`, exclusively for `resource.version_observed` (§5.3);
+- `outbox_state`, exclusively for the shared kit's producer-local
+  `hook_delivery.cancelled` accounting under the
+  [terminal contract](../hook-terminal-delivery.md#each-app-producers-cancellation-evidence).
+  It uses the system actor and only this producer's persisted cancellation
+  facts. It authorizes no human governance act and no change to secrets' grants
+  or policy.
 
 That observation act requires `direction: narrowing`, `resource_type: secret`
 and `reason_code: external_version_changed`. Its `resource_ref` is the minted
