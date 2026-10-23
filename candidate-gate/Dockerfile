@@ -40,6 +40,7 @@ RUN python3 --version \
 WORKDIR /opt/candidate-browser
 COPY awid awid
 COPY naapp-lib naapp-lib
+COPY server server
 RUN uv sync --frozen --project naapp-lib
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 RUN uv run --frozen --no-sync --project naapp-lib \
