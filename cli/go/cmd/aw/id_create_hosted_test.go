@@ -32,7 +32,17 @@ func TestOwnerPrincipalHostedIdentityCreate(t *testing.T) {
 func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode string) {
 	testHostedIdentityCreateWithAuthority(t, mode, false)
 }
+func TestHostedIdentityCreateCanonicalTeamSelector(t *testing.T) {
+	for _, owner := range []bool{false, true} {
+		t.Run(map[bool]string{false: "human", true: "owner"}[owner], func(t *testing.T) {
+			testHostedIdentityCreateWithSelector(t, "contacts_only", owner, "machine:chosen.example")
+		})
+	}
+}
 func testHostedIdentityCreateWithAuthority(t *testing.T, mode string, ownerMode bool) {
+	testHostedIdentityCreateWithSelector(t, mode, ownerMode, "786a02e4-6a72-44f1-a722-bef232c49a97")
+}
+func testHostedIdentityCreateWithSelector(t *testing.T, mode string, ownerMode bool, selector string) {
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	bin := filepath.Join(t.TempDir(), "aw")
@@ -115,7 +125,7 @@ func testHostedIdentityCreateWithAuthority(t *testing.T, mode string, ownerMode 
 				w.WriteHeader(400)
 				return
 			}
-			if body["org"] != "chosen" || body["team_id"] != serviceTeam || body["name"] != "steward" || body["inbound_mode"] != mode || body["did"] != originalDID {
+			if body["org"] != "chosen" || body["team_id"] != selector || body["name"] != "steward" || body["inbound_mode"] != mode || body["did"] != originalDID {
 				t.Error("creation lost explicit authority/key binding")
 			}
 			if _, ok := body["role"]; ok {
@@ -127,13 +137,19 @@ func testHostedIdentityCreateWithAuthority(t *testing.T, mode string, ownerMode 
 				w.WriteHeader(400)
 				return
 			}
-			payload := map[string]any{"operation": "cli_global_identity_create.v1", "aud": server.URL, "method": "POST", "path": "/api/v1/cli/identities", "org": "chosen", "team_id": serviceTeam, "name": "steward", "did": originalDID, "inbound_mode": mode, "timestamp": proof["timestamp"]}
+			payload := map[string]any{"operation": "cli_global_identity_create.v1", "aud": server.URL, "method": "POST", "path": "/api/v1/cli/identities", "org": "chosen", "team_id": selector, "name": "steward", "did": originalDID, "inbound_mode": mode, "timestamp": proof["timestamp"]}
 			canonical, _ := awid.CanonicalJSONValue(payload)
 			pub, _ := awid.ExtractPublicKey(originalDID)
 			sig, _ := base64.RawStdEncoding.DecodeString(proof["signature"].(string))
 			if !ed25519.Verify(pub, []byte(canonical), sig) {
 				t.Error("creation signature did not bind exact intent")
 			}
+			payload["team_id"] = "different:chosen.example"
+			canonical, _ = awid.CanonicalJSONValue(payload)
+			if ed25519.Verify(pub, []byte(canonical), sig) {
+				t.Error("team selector substitution verified")
+			}
+			payload["team_id"] = selector
 			payload["org"] = "other"
 			canonical, _ = awid.CanonicalJSONValue(payload)
 			if ed25519.Verify(pub, []byte(canonical), sig) {
@@ -203,7 +219,7 @@ func testHostedIdentityCreateWithAuthority(t *testing.T, mode string, ownerMode 
 		}
 	}
 	run := func(org string) ([]byte, []byte, error) {
-		args := []string{"--identity-home", principal, "id", "create", "--org", org, "--team-id", serviceTeam, "--name", "steward", "--inbound-mode", strings.ReplaceAll(mode, "_", "-"), "--registry", server.URL, "--json"}
+		args := []string{"--identity-home", principal, "id", "create", "--org", org, "--team-id", selector, "--name", "steward", "--inbound-mode", strings.ReplaceAll(mode, "_", "-"), "--registry", server.URL, "--json"}
 		if ownerMode {
 			args = append(args, "--owner-identity-home", ownerRoot)
 		}
@@ -225,6 +241,17 @@ func testHostedIdentityCreateWithAuthority(t *testing.T, mode string, ownerMode 
 	if _, err := os.Stat(filepath.Join(principal, "hosted-identity-create.json")); err != nil {
 		t.Error("interrupted creation lost its recovery material")
 	}
+	originalSelector := selector
+	selector = canonicalTeam
+	if originalSelector == canonicalTeam {
+		selector = serviceTeam
+	}
+	beforeRegister := registerCalls
+	_, _, err = run("chosen")
+	if err == nil || registerCalls != beforeRegister || createCalls != 1 {
+		t.Error("recovery replaced the exact original team selector spelling")
+	}
+	selector = originalSelector
 	if ownerMode {
 		originalRoot := ownerRoot
 		otherParent := t.TempDir()
@@ -276,6 +303,28 @@ func testHostedIdentityCreateWithAuthority(t *testing.T, mode string, ownerMode 
 	if data, err := os.ReadFile(filepath.Join(principal, "hosted-identity-create.json.lock")); err != nil || len(data) != 0 {
 		t.Error("reusable recovery lock must remain empty")
 	}
+	installed := map[string][]byte{}
+	for _, name := range []string{"signing.key", "identity.yaml", "teams.yaml", "workspace.yaml"} {
+		data, err := os.ReadFile(filepath.Join(principal, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		installed[name] = data
+	}
+	beforeRegister, beforeCreate := registerCalls, createCalls
+	_, _, err = run("chosen")
+	if err == nil || registerCalls != beforeRegister || createCalls != beforeCreate {
+		t.Error("completed-root creation did not refuse before remote effects")
+	}
+	for name, before := range installed {
+		after, err := os.ReadFile(filepath.Join(principal, name))
+		if err != nil || !bytes.Equal(before, after) {
+			t.Error("completed-root refusal changed installed identity material")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(principal, "hosted-identity-create.json")); !os.IsNotExist(err) {
+		t.Error("completed-root refusal recreated recovery signing material")
+	}
 	if ownerMode {
 		keyAfter, _ := os.ReadFile(filepath.Join(ownerRoot, "signing.key"))
 		bindingAfter, _ := os.ReadFile(filepath.Join(ownerRoot, "workspace.yaml"))
@@ -311,11 +360,31 @@ func TestHostedIdentityRejectsMismatchedServerBinding(t *testing.T) {
 	if _, err := validateHostedIdentityResponse(original, association, material); err != nil {
 		t.Fatalf("valid neighboring response refused: %v", err)
 	}
+	canonicalAssociation := association
+	canonicalAssociation.TeamID = original.CanonicalTeamID
+	if _, err := validateHostedIdentityResponse(original, canonicalAssociation, material); err != nil {
+		t.Errorf("advertised canonical selector refused a correctly bound response: %v", err)
+	}
+	invalidUUID := original
+	invalidUUID.TeamID = original.CanonicalTeamID
+	if _, err := validateHostedIdentityResponse(invalidUUID, canonicalAssociation, material); err == nil {
+		t.Error("canonical selector accepted a non-UUID service response")
+	}
+	otherCert, err := awid.SignTeamCertificate(controller, awid.TeamCertificateFields{Team: "other:chosen.example", MemberDIDKey: material.DIDKey, MemberDIDAW: material.StableID, MemberAddress: original.Address, Alias: "steward", IdentityScope: "global"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTeam := original
+	otherTeam.CanonicalTeamID = otherCert.Team
+	otherTeam.TeamCert, _ = awid.EncodeTeamCertificateHeader(otherCert)
+	if _, err := validateHostedIdentityResponse(otherTeam, canonicalAssociation, material); err == nil {
+		t.Error("accepted a signed response for another canonical team")
+	}
 	for _, tc := range []struct {
 		name   string
 		mutate func(*hostedIdentityResponse)
 	}{
-		{"team", func(r *hostedIdentityResponse) { r.TeamID = "another-team" }},
+		{"team", func(r *hostedIdentityResponse) { r.TeamID = "11111111-2222-3333-4444-555555555555" }},
 		{"key", func(r *hostedIdentityResponse) { r.DID = awid.ComputeDIDKey(controller.Public().(ed25519.PublicKey)) }},
 		{"continuity", func(r *hostedIdentityResponse) { r.StableID = "did:aw:another" }},
 		{"scope", func(r *hostedIdentityResponse) { r.IdentityScope = "local" }},
