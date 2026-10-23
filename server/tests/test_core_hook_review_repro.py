@@ -14,6 +14,7 @@ from ipaddress import ip_network
 
 import pytest
 from aweb.hook_producer import (
+    CoreRegistrations,
     MutationHookContext,
     enqueue_mutation_hook,
     load_core_hooks,
@@ -21,6 +22,8 @@ from aweb.hook_producer import (
     stop_core_hooks,
 )
 from aweb_naapp.hooks.delivery import ReceiveOptions, verify_delivery
+from aweb_naapp.hooks.producer import HOOKS_CHANNEL, hook_targets
+from aweb_naapp.outbox import RetryPolicy, _materialize
 from fastapi import FastAPI
 from tests.test_core_hook_key_config import configured as configured  # noqa: PLC0414
 from tests.test_core_hook_producer import SYSTEM, TEAM, registration
@@ -30,8 +33,9 @@ from tests.test_core_hook_producer import origin as origin  # noqa: PLC0414
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("expired", [False, True])
+@pytest.mark.parametrize("stage", ["materialization", "transport"])
 async def test_queued_valid_event_does_not_get_a_fresh_expired_key_credential(
-    db, origin, configured, monkeypatch, expired,
+    db, origin, configured, monkeypatch, expired, stage,
 ):
     binding = await registration(db, target_origin=origin.url)
     received = []
@@ -50,6 +54,14 @@ async def test_queued_valid_event_does_not_get_a_fresh_expired_key_credential(
             },
         )
     original = await db.fetch_one("SELECT payload_sha256,signature FROM {{tables.outbox_events}} WHERE event_id=$1", event_id)
+    if stage == "transport":
+        # Use the real kit materializer and real core resolver to commit the
+        # delivery first. The lock below then delays transport's own awaited
+        # lookup, rather than its earlier materialization lookup.
+        assert await _materialize(
+            db, HOOKS_CHANNEL, hook_targets(CoreRegistrations(db)),
+            RetryPolicy(stalled_after=timedelta(days=1)), 100,
+        ) == 1
 
     async def ingest(seen):
         raw.append((datetime.now(UTC), seen.request_line.split(" ")[1]))
@@ -68,6 +80,12 @@ async def test_queued_valid_event_does_not_get_a_fresh_expired_key_credential(
         async with db.transaction() as blocker:
             await blocker.execute("LOCK TABLE {{tables.app_hook_bindings}} IN ACCESS EXCLUSIVE MODE")
             start_core_hooks(app, db, egress=origin.fetcher.egress, internal_cidr=ip_network(f"{origin.tls.host}/32"))
+            for _ in range(40):
+                waiting = await db.fetch_value("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='aweb.app_hook_bindings'::regclass AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND NOT granted)")
+                if waiting:
+                    break
+                await asyncio.sleep(0.025)
+            assert waiting and datetime.now(UTC) < deadline
             if expired:
                 await asyncio.sleep(max(0, (deadline-datetime.now(UTC)).total_seconds())+0.02)
         for _ in range(160):
@@ -82,9 +100,11 @@ async def test_queued_valid_event_does_not_get_a_fresh_expired_key_credential(
     retained = await db.fetch_one("SELECT payload_sha256,signature FROM {{tables.outbox_events}} WHERE event_id=$1", event_id)
     assert retained == original
     if expired:
+        assert origin.tls.seen == []
         assert raw == []
         assert (received, row["state"] in ("pending", "stalled"), row["acked_at"]) == ([], True, None)
     else:
+        assert len(origin.tls.seen) == 1
         assert len(raw) == 1
         assert active_from <= raw[0][0] < deadline and raw[0][1] == "/hooks/ingest"
         assert received == [str(event_id)]
@@ -124,6 +144,13 @@ logging.getLogger("formatter-control").error("unrelated-safe-message", extra={"p
                 "kid": "display-current", "valid_until": "2001-01-01T00:00:00Z"}
     if json_format:
         emitted = json.loads(lines[0])
-        assert {key: emitted.get(key) for key in expected} == expected
+        diagnostic = emitted if all(key in emitted for key in expected) else json.loads(emitted["message"])
     else:
-        assert all(value in lines[0] for value in expected.values()), lines[0]
+        # Text mode carries the explicitly structured diagnostic through the
+        # real formatter's message; it does not require a new global schema.
+        start = lines[0].find("{")
+        assert start >= 0, lines[0]
+        diagnostic = json.loads(lines[0][start:])
+    assert isinstance(diagnostic, dict)
+    assert {key: diagnostic.get(key) for key in expected} == expected
+    assert all(type(diagnostic[key]) is str for key in expected)
