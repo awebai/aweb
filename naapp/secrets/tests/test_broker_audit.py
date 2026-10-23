@@ -239,7 +239,11 @@ async def test_post_dispatch_recording_survives_target_loss_without_authorizing_
         )
     current = None if target == "missing" else replace(view(), as_of=NOW - timedelta(seconds=61))
     recorder = machine(
-        BrokerAudit(producer=source, view=current, completed={"disposition": "withheld"})
+        BrokerAudit(
+            producer=source,
+            view=current,
+            completed={"disposition": "withheld", "undeclared_credential": False},
+        )
     )
     async with db.transaction() as tx:
         if outcome == "reconciled":
@@ -291,7 +295,11 @@ async def test_failed_post_dispatch_outbox_insert_preserves_dispatching_for_reco
         "CHECK (kind <> 'post-secret-use-hook') NOT VALID"
     )
     recorder = machine(
-        BrokerAudit(producer=source, view=None, completed={"disposition": "withheld"})
+        BrokerAudit(
+            producer=source,
+            view=None,
+            completed={"disposition": "withheld", "undeclared_credential": False},
+        )
     )
     with pytest.raises(asyncpg.CheckViolationError):
         async with db.transaction() as tx:
