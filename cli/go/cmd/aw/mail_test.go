@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1833,5 +1835,201 @@ func TestMailAndChatDefaultPlaintextAndE2EEOptInFailsClosed(t *testing.T) {
 				t.Fatalf("expected explicit E2E recipient-key error, got:\n%s", string(out))
 			}
 		})
+	}
+}
+
+// One inconsistent roster key used to disable threading for every recipient.
+func TestAwMailSendThreadsDespiteInvalidRosterKey(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	self := awid.ComputeDIDKey(pub)
+	peerPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := awid.ComputeDIDKey(peerPub)
+	badPub, badPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	masked := awid.ComputeDIDKey(badPub)
+	assertion, err := awid.BuildEncryptionKeyAssertion(badPriv, masked, awid.ComputeStableID(badPub), make([]byte, 32), "", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	roster := awid.ListAgentsResponse{TeamID: "devteam:test.local", Agents: []awid.AgentView{
+		{AgentID: "masked-agent", Alias: "masked", DIDKey: masked, IdentityScope: "global", EncryptionKey: assertion},
+		{AgentID: "peer-agent", Alias: "peer", DIDKey: peer, IdentityScope: "local"},
+	}}
+	conversationID := "77777777-7777-4777-8777-777777777777"
+	var posted awid.SendMessageRequest
+	posts, indexes := 0, 0
+	var mu sync.Mutex
+	rosterUnavailable := false
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/v1/agents/me/encryption-key":
+			var key awid.EncryptionKeyAssertion
+			if err := json.NewDecoder(r.Body).Decode(&key); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if err := awid.VerifyEncryptionKeyAssertion(&key, self, "", time.Now().UTC()); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(awid.PublishAgentEncryptionKeyResponse{EncryptionKey: &key})
+		case "/v1/agents":
+			if rosterUnavailable {
+				http.Error(w, "roster unavailable", http.StatusForbidden)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(roster)
+		case "/v1/conversations":
+			indexes++
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{{
+				ConversationType: "mail", ConversationID: conversationID, Status: "active",
+				ParticipantDIDs: []string{self, r.URL.Query().Get("participant_did")},
+				Participants:    []string{"sender", "recipient"}, LastMessageAt: "2026-05-02T00:00:00Z",
+			}}})
+		case "/v1/messages":
+			posts++
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Error(err)
+			}
+			if posted.ConversationID != conversationID {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]string{"detail": "Existing active conversation found; continue that conversation instead"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"message_id": posted.MessageID, "conversation_id": conversationID})
+		case "/api/health", "/health", "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL: server.URL, TeamID: "devteam:test.local", Alias: "sender", WorkspaceID: "workspace-1",
+		DID: self, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal,
+		SigningKey: priv, CreatedAt: "2026-05-02T00:00:00Z",
+	})
+	for _, alias := range []string{"peer", "masked"} {
+		t.Run(alias, func(t *testing.T) {
+			run := exec.CommandContext(ctx, bin, "mail", "send", "--to", alias, "--body", "reply", "--json")
+			run.Dir, run.Env = tmp, append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+			var warnings strings.Builder
+			run.Stderr = &warnings
+			out, err := run.Output()
+			if err != nil {
+				t.Fatalf("send: %v\n%s\n%s", err, out, warnings.String())
+			}
+			mu.Lock()
+			request := posted
+			mu.Unlock()
+			var result map[string]any
+			if err := json.Unmarshal(out, &result); err != nil {
+				t.Fatalf("JSON output: %v: %s", err, out)
+			}
+			if result["conversation_id"] != conversationID || request.ConversationID != conversationID {
+				t.Fatalf("thread changed: %s %+v", out, request)
+			}
+			var signed map[string]any
+			if err := json.Unmarshal([]byte(request.SignedPayload), &signed); err != nil {
+				t.Fatal(err)
+			}
+			if signed["conversation_id"] != conversationID {
+				t.Fatalf("signed id changed: %+v", signed)
+			}
+			if !strings.Contains(warnings.String(), "masked") || strings.Count(warnings.String(), "invalid_encryption_key_assertion") != 1 {
+				t.Fatalf("missing visible key warning: %q", warnings.String())
+			}
+		})
+	}
+	mu.Lock()
+	indexCount := indexes
+	mu.Unlock()
+	if indexCount != 2 {
+		t.Errorf("index requests=%d, want 2", indexCount)
+	}
+	client, err := awid.NewWithIdentity(server.URL, priv, self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed *awid.ListAgentsResponse
+	warning := func() string {
+		readEnd, writeEnd, pipeErr := os.Pipe()
+		if pipeErr != nil {
+			t.Fatal(pipeErr)
+		}
+		original := os.Stderr
+		os.Stderr = writeEnd
+		defer func() { os.Stderr = original; _ = writeEnd.Close(); _ = readEnd.Close() }()
+		listed, err = client.ListAgents(ctx)
+		_ = writeEnd.Close()
+		output, readErr := io.ReadAll(readEnd)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		return string(output)
+	}()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if strings.Count(warning, "Warning:") != 1 || !strings.Contains(warning, "agent masked: invalid_encryption_key_assertion:") {
+		t.Fatalf("expected one captured library warning: %q", warning)
+	}
+	if len(listed.Agents) != 2 {
+		t.Fatalf("discarded identity: %+v", listed)
+	}
+	bad := listed.Agents[0]
+	if bad.DIDKey != masked || bad.DIDAW != "" || bad.Address != "" || bad.EncryptionKey != nil {
+		t.Fatalf("failed assertion repaired the row: %+v", bad)
+	}
+	if _, err := bad.RequireEncryptionKey(time.Now().UTC()); err == nil {
+		t.Fatal("rejected key remained available")
+	}
+	// Both E2EE entry points share roster key discovery. Neither may POST or
+	// silently fall back to plaintext when the projected local row has no key.
+	installMailReadEncryptionKeyForTest(t, tmp, filepath.Join(tmp, ".aw"), self, priv)
+	mu.Lock()
+	before := posts
+	mu.Unlock()
+	for _, args := range [][]string{
+		{"mail", "send", "--to", "masked", "--e2ee", "--body", "secret"},
+		{"chat", "send-and-leave", "masked", "secret", "--start-conversation", "--e2ee"},
+	} {
+		run := exec.CommandContext(ctx, bin, args...)
+		run.Dir, run.Env = tmp, append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+		out, err := run.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "no E2E encryption key") {
+			t.Fatalf("expected unavailable key, err=%v output=%s", err, out)
+		}
+	}
+	mu.Lock()
+	after := posts
+	rosterUnavailable = true
+	mu.Unlock()
+	if after != before {
+		t.Fatal("E2EE refusal stored a message")
+	}
+	// A transport-level roster failure must also be visible without --debug.
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "peer", "--body", "reply")
+	run.Dir, run.Env = tmp, append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	out, err := run.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "Warning: recipient lookup failed; automatic mail threading unavailable") {
+		t.Fatalf("missing lookup warning: err=%v output=%s", err, out)
 	}
 }

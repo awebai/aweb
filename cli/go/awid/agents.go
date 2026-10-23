@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -256,12 +257,14 @@ func (c *Client) ListAgents(ctx context.Context) (*ListAgentsResponse, error) {
 	if err := c.Get(ctx, "/v1/agents", &out); err != nil {
 		return nil, err
 	}
-	for _, agent := range out.Agents {
+	for i := range out.Agents {
+		agent := &out.Agents[i]
 		if agent.EncryptionKey == nil {
 			continue
 		}
 		if err := agent.VerifyEncryptionKey(time.Now().UTC()); err != nil {
-			return nil, fmt.Errorf("ListAgents: invalid encryption key assertion for %s: %w", agent.Alias, err)
+			fmt.Fprintf(os.Stderr, "Warning: agent %s: invalid_encryption_key_assertion: %v; encryption key unavailable\n", agent.Alias, err)
+			agent.EncryptionKey = nil
 		}
 	}
 	return &out, nil
