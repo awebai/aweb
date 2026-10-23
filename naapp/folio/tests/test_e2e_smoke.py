@@ -600,21 +600,28 @@ def test_no_envelope_fails_closed(folio_origin: str) -> None:
     assert response.status_code == 401, response.text
 
 
-def test_well_known_manifest_is_public_and_byte_stable(folio: RunningFolio) -> None:
+def test_manifest_catalog_is_public_and_variants_byte_stable(folio: RunningFolio) -> None:
     from aweb_naapp.manifest import canonical_bytes
     from manifest_config import served_manifest
 
-    # Public discovery doc: no team-auth envelope, still 200.
-    response = httpx.get(f"{folio.origin}/.well-known/aweb-app.json", timeout=10.0)
+    # Catalog discovery is public and pins the deployment's filled v2 bytes.
+    catalog = httpx.get(f"{folio.origin}/.well-known/aweb-app-versions.json", timeout=10.0)
+    assert catalog.status_code == 200, catalog.text
+    variant = catalog.json()["variants"][0]
+    assert variant["manifest_version"] == 2
+    assert variant["url"] == "/manifests/v2.json"
+    response = httpx.get(f"{folio.origin}{variant['url']}", timeout=10.0)
 
     assert response.status_code == 200, response.text
     assert response.headers["content-type"].startswith("application/json")
     # The real server fills the declared kid from its configured key once at
     # startup, and both discovery paths serve those exact deployment bytes.
     assert response.content == canonical_bytes(served_manifest(folio.origin))
+    assert variant["digest"] == "sha256:" + hashlib.sha256(response.content).hexdigest()
     assert httpx.get(f"{folio.origin}/aweb-app.json", timeout=10.0).content == response.content
-    again = httpx.get(f"{folio.origin}/.well-known/aweb-app.json", timeout=10.0)
+    again = httpx.get(f"{folio.origin}{variant['url']}", timeout=10.0)
     assert again.content == response.content
+    assert httpx.get(f"{folio.origin}/.well-known/aweb-app.json", timeout=10.0).status_code == 404
 
 
 def test_real_aw_team_auth_smoke(folio: RunningFolio, aw_workspace: AWWorkspace) -> None:
