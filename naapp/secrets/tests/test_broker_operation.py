@@ -6,6 +6,7 @@ import copy
 import dataclasses
 import hashlib
 import json
+import secrets
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from aweb_naapp.egress import EgressRefused, Network
 from aweb_secrets.broker import SecretVersion, broker_operation
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.operation_request import render_operation
+from aweb_secrets.response_audit import ResponseKey
 from aweb_secrets.tokens import ProcessTokenCache
 
 from .harness import NAME, Upstream, running_upstream
@@ -55,6 +57,7 @@ async def _send(upstream: Upstream, request, token: str | None = None):
         value={"value": token or upstream.creds.bearer},
         kind_params={},
         secret_ref="payments",
+        response_key=ResponseKey(secrets.token_bytes(32)),
     )
 
 
@@ -161,6 +164,7 @@ async def test_denied_issuance_is_refused_before_even_exchanging_oauth_credentia
                 "scope": upstream.creds.oauth_scope,
             },
             secret_ref="oauth-test",
+            response_key=ResponseKey(secrets.token_bytes(32)),
             token_destination=upstream.destination(path="/oauth2/token", methods=["POST"]),
             tokens=ProcessTokenCache(),
             secret=SecretVersion("inst-1", "backend:example.com", "sec-oauth", 1),

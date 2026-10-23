@@ -31,7 +31,7 @@ from aweb.audit import (
 )
 from aweb.config import get_app_grant_max_age_seconds
 from aweb.db import DatabaseInfra, get_db_infra
-from aweb.install_authority import require_install_admin
+from aweb.install_authority import require_install_admin, require_install_admission
 from aweb.installation_requests import (
     approve_installation_request_on,
     get_installation_request_on,
@@ -285,12 +285,18 @@ async def approve_installation_request_route(request_id: UUID, request: Request,
         async with db.transaction() as tx:
             pending = await get_installation_request_on(tx, team_id=authorized, request_id=request_id)
             request.state.operator_audit_target = "app:" + pending["app_id"]
-            await require_install_admin(tx, request, identity, authorized, action="apps.requests.approve", app_id=pending["app_id"])
+            await require_install_admission(
+                tx, request, identity, authorized, action="apps.requests.approve", app_id=pending["app_id"],
+                unverified_origin=pending["origin"],
+            )
             if pending["state"] != "pending":
                 raise HTTPException(409, detail={"code": "installation_request_resolved"})
         fetched = await _fetcher(request).fetch(pending["origin"], expected_digest=pending["digest"])
         async with db.transaction() as tx:
-            await require_install_admin(tx, request, identity, authorized, action="apps.requests.approve", app_id=pending["app_id"])
+            await require_install_admin(
+                tx, request, identity, authorized, action="apps.requests.approve", app_id=pending["app_id"],
+                verified_origin=fetched.origin,
+            )
             row = await approve_installation_request_on(
                 tx, team_id=authorized, request_id=request_id, fetched=fetched,
                 granted_scopes=payload.granted_scopes, expected_generation=payload.expected_generation,
@@ -348,15 +354,21 @@ async def install_app_route(
         authorized, identity = await _caller(request, db_infra, team_id)
         app_id = normalize_app_id(payload.app_id)
         db = db_infra.get_manager("aweb")
-        # Refuse non-admins before network work, then re-read authority in the
-        # transaction that writes. No policy result survives the fetch interval.
+        # Admission permits only network work. Final authority uses the verified
+        # origin in the writing transaction, never the unverified request hint.
         async with db.transaction() as tx:
-            await require_install_admin(tx, request, identity, authorized, action="apps.install", app_id=app_id)
+            await require_install_admission(
+                tx, request, identity, authorized, action="apps.install", app_id=app_id,
+                unverified_origin=payload.origin,
+            )
         fetched = await _fetcher(request).fetch(payload.origin, expected_digest=payload.digest)
         if fetched.manifest.app_id != app_id:
             raise HTTPException(status_code=422, detail={"code":"manifest_app_mismatch", "message":"Manifest names another app"})
         async with db.transaction() as tx:
-            await require_install_admin(tx, request, identity, authorized, action="apps.install", app_id=app_id)
+            await require_install_admin(
+                tx, request, identity, authorized, action="apps.install", app_id=app_id,
+                verified_origin=fetched.origin,
+            )
             row = await install_verified_manifest_on(
                 tx, team_id=authorized, fetched=fetched, granted_scopes=payload.granted_scopes,
                 expected_generation=payload.expected_generation,

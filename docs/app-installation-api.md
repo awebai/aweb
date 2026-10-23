@@ -12,9 +12,21 @@ fields never establish the caller's identity, team or installation authority.
 
 The host installs `app.state.install_admin_policy` on the serving application.
 Install, update, uninstall, request approval and re-verification check current
-admin authority inside the mutation transaction. The named refusal is
+host policy inside the mutation transaction. The standalone policy requires
+an operator-managed admin grant. The named refusal is
 `403` with `detail.code: "admin_required"`; another team's context gets `404`.
 Ordinary members can preview and request an installation, without granting use.
+
+Install/update and request approval first check the optional
+`app.state.install_admission_policy(tx, subject, *, action, app_id,
+unverified_origin)`. This admits only fetching; the requested origin is an
+unverified hint. If absent, admission uses the existing admin policy.
+Final authorization always calls `install_admin_policy(tx, subject, *, action,
+app_id, verified_origin=fetched.origin)` inside the writing transaction, after
+the server verifies the fetched manifest. A preliminary allowance cannot
+authorize the write. Final refusal leaves the installation and success audit
+unchanged. Other actions retain their existing policy calls. See the
+[host policy contract](app-registry.md#host-installation-policy-interface).
 
 ## Preview and confirmation
 
@@ -143,8 +155,8 @@ requester, state and resulting installation identity if approved.
 
 `POST /v1/apps/requests/{request_id}/approve` takes `granted_scopes` and an
 optional `expected_generation` (required when updating an existing installation).
-It checks current admin policy before fetching and again in the write
-transaction. The origin must still serve the request's pin, and selected scopes
+It checks admission before fetching and current final policy, with the verified
+origin, in the write transaction. The origin must still serve the request's pin, and selected scopes
 must be a subset of the request. Approval and installation commit together.
 `POST /v1/apps/requests/{request_id}/decline` resolves a pending request without
 installing anything. Both refuse an already resolved request with

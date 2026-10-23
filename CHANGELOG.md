@@ -79,6 +79,43 @@
 
 ## Release preparations
 
+### Release preparation: awid-service 0.5.32
+
+`awid_service.testing` runs one AWID registry in-process for tests: a
+`Registry` with signed team-server records, `running_registry`, and
+`ServiceTransport`, which routes a registry client's requests to the in-process
+app. `mount_registry` says that an embedding host mounts the registry under a
+prefix.
+
+### Release preparation: aweb-naapp 0.5.0
+
+`aweb-naapp` and `aweb-naapp-testing` 0.5.0 are released together. The library
+code is unchanged since `aweb-naapp-v0.4.0`. `aweb-naapp-testing` takes its AWID
+fixtures from `awid_service.testing` (`awid-service>=0.5.32`). Its new `server`
+extra (`aweb>=1.27.34`) runs a team's coordination server in-process, which a
+naapp finds through the team's AWID record. It needs Redis at `REDIS_URL`.
+
+### Release preparation: server 1.27.34
+
+Server changes are since `server-v1.27.33`.
+
+- App installation has two policy phases. Before fetching, the optional
+  `app.state.install_admission_policy(tx, subject, *, action, app_id,
+  unverified_origin)` permits only the fetch. After the server verifies the
+  fetched manifest, the final `install_admin_policy` receives
+  `verified_origin=fetched.origin` inside the writing transaction.
+  **Host contract change:** an `InstallAdminPolicy` must accept the
+  `verified_origin` keyword (`docs/app-registry.md`, "Host installation policy
+  interface").
+- `aweb.testing` runs the coordination server in-process for tests. A
+  library-mode host gives the AWID registry client its transport.
+- **Dependency floor:** `awid-service>=0.5.32`, because `aweb.testing` imports
+  `awid_service.testing`.
+- **Migrations:** none.
+- **Publish order:** `awid-service` 0.5.32, then `aweb-naapp` 0.5.0, then this
+  server, then `aweb-naapp-testing` 0.5.0 (its `server` extra needs this
+  server on PyPI).
+
 ### Release preparation: aweb-naapp 0.4.0
 
 `aweb-naapp` and `aweb-naapp-testing` 0.4.0 carry the naapp-lib changes since
