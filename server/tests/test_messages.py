@@ -58,8 +58,8 @@ async def _insert_agent(
 ):
     row = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
-        VALUES ($1, $2, $3, $4, $5, 'global', 'developer', $6)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
+        VALUES ($1, $2, $3, $4, $5, 'global', 'developer', $6, CASE WHEN NULLIF($3, '') IS NOT NULL THEN $2 END)
         RETURNING agent_id
         """,
         team_id,
@@ -488,8 +488,8 @@ async def test_deliver_message_local_recipient_same_team_behavior_unchanged(aweb
     bob_did_key = _make_did_key()
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
-        VALUES ('default:local', $1, NULL, NULL, 'bob', 'local', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
+        VALUES ('default:local', $1, NULL, NULL, 'bob', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN $1 END)
         RETURNING agent_id
         """,
         bob_did_key,

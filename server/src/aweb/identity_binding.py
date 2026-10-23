@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import monotonic
 
 from awid.did import stable_id_from_did_key
@@ -20,6 +20,8 @@ _CACHE_LIMIT = 4096
 class IdentityBinding:
     did_aw: str = ""
     address: str = ""
+    fresh_observation: bool = False
+    self_derived: bool = False
 
 
 def verified_projection(row):
@@ -57,11 +59,35 @@ async def verify_identity_binding(
         cache = OrderedDict()
         request.app.state.identity_binding_cache = cache
     key = (did_aw, did_key, address)
+    observations = getattr(request.state, "identity_binding_observations", None)
+    if observations is None:
+        observations = {}
+        request.state.identity_binding_observations = observations
+    if not fresh and key in observations:
+        return observations[key]
     started = monotonic()
     cached = cache.get(key)
     if not fresh and cached is not None and cached[0] > started:
-        return cached[1]
+        return replace(cached[1], fresh_observation=False)
     cache.pop(key, None)
+    binding = await observe_identity_binding(client, did_key=did_key, did_aw=did_aw, address=address)
+    observations[key] = binding
+    # A newly observed current key supersedes older positive cache entries.
+    for cached_key in list(cache):
+        if cached_key[0] == did_aw and cached_key[1] != did_key:
+            cache.pop(cached_key, None)
+    cache[key] = (started + _BINDING_TTL, binding)
+    cache.move_to_end(key)
+    while len(cache) > _CACHE_LIMIT:
+        cache.popitem(last=False)
+    return binding
+
+
+async def observe_identity_binding(client, *, did_key: str, did_aw: str, address: str = "") -> IdentityBinding:
+    """Read current registry authority without a cache or a database lock."""
+    if not did_aw or not did_aw.startswith("did:aw:"):
+        raise HTTPException(status_code=403, detail="identity_binding_mismatch")
+    self_derived = False
     try:
         try:
             # The SDK's ordinary key/address caches have a longer lifetime
@@ -74,6 +100,7 @@ async def verify_identity_binding(
                 raise HTTPException(
                     status_code=403, detail="identity_binding_mismatch"
                 ) from exc
+            self_derived = True
         else:
             if resolution.did_aw != did_aw or resolution.current_did_key != did_key:
                 raise HTTPException(status_code=403, detail="identity_binding_mismatch")
@@ -105,22 +132,15 @@ async def verify_identity_binding(
         raise HTTPException(
             status_code=503, detail="identity_binding_unavailable"
         ) from exc
-    binding = IdentityBinding(did_aw, address)
-    # A newly observed current key supersedes older positive cache entries.
-    for cached_key in list(cache):
-        if cached_key[0] == did_aw and cached_key[1] != did_key:
-            cache.pop(cached_key, None)
-    cache[key] = (started + _BINDING_TTL, binding)
-    cache.move_to_end(key)
-    while len(cache) > _CACHE_LIMIT:
-        cache.popitem(last=False)
-    return binding
+    return IdentityBinding(did_aw, address, fresh_observation=True, self_derived=self_derived)
 
 
 async def refresh_projection_binding(
     db, *, agent_id, did_key: str, binding: IdentityBinding
 ):
     """A verified request refreshes only its own key's projection."""
+    if not binding.fresh_observation:
+        return None
     async with db.transaction() as tx:
         if binding.did_aw:
             await tx.execute(
@@ -145,3 +165,46 @@ async def refresh_projection_binding(
             binding.address or None,
             did_key if binding.did_aw else None,
         )
+
+
+async def verify_pending_identity_bindings(db, registry_client, *, dry_run: bool = False) -> dict[str, int]:
+    """Verify historical projections; write only their own marker, never claims."""
+    counts = dict(verified=0, self_derived=0, unbound=0, awid_error=0)
+    rows = await db.fetch_all(
+        """
+        SELECT agent_id, did_key, did_aw, address FROM {{tables.agents}}
+        WHERE deleted_at IS NULL AND did_aw_verified_key IS NULL
+          AND (identity_scope='global' OR NULLIF(did_aw,'') IS NOT NULL
+               OR NULLIF(address,'') IS NOT NULL)
+        ORDER BY agent_id
+        """
+    )
+    for row in rows:
+        try:
+            binding = await observe_identity_binding(
+                registry_client, did_key=row["did_key"],
+                did_aw=row["did_aw"] or "", address=row["address"] or "",
+            )
+        except HTTPException as exc:
+            counts["awid_error" if exc.status_code == 503 else "unbound"] += 1
+            continue
+        if not dry_run:
+            async with db.transaction() as tx:
+                current = await tx.fetch_one(
+                    """
+                    SELECT did_key, did_aw, address FROM {{tables.agents}}
+                    WHERE agent_id=$1 AND deleted_at IS NULL AND did_aw_verified_key IS NULL
+                    FOR UPDATE
+                    """, row["agent_id"],
+                )
+                if current is None:
+                    continue
+                if any(current[field] != row[field] for field in ("did_key", "did_aw", "address")):
+                    counts["unbound"] += 1
+                    continue
+                await tx.execute(
+                    "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
+                    row["agent_id"],
+                )
+        counts["self_derived" if binding.self_derived else "verified"] += 1
+    return counts

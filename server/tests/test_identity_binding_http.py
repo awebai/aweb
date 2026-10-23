@@ -459,3 +459,106 @@ async def test_observing_rotated_identity_excludes_prior_key_projections(privacy
         bob.did, bob.sk = old_key, old_sk
         denied = await request(env, bob, "GET", "/v1/team", certificate=old_certificate)
         assert denied.status_code == 403, denied.text
+
+
+@pytest.mark.asyncio
+async def test_cached_prior_key_cannot_change_routing_markers(privacy_app):
+    from collections import OrderedDict
+    from types import SimpleNamespace
+    from starlette.requests import Request
+    from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
+    from aweb.messaging.messages import resolve_agent_by_did
+
+    env = privacy_app
+    bob = env.actors["bob"]
+    async with registry_listener(env) as (registry, _):
+        stable = (await registry.register_did(bob.did, bob.sk)).did_aw
+        bob.certificate = certificate(env, bob, stable)
+        assert (await request(env, bob, "POST", "/v1/connect", {})).status_code == 200
+        old_cache = OrderedDict(env.app.state.identity_binding_cache)
+        new_sk, _, new_key = _make_keypair()
+        await registry.rotate_key(stable, new_key, bob.sk, new_sk)
+        new_row = await env.db.fetch_one(
+            "INSERT INTO {{tables.agents}} (team_id,did_key,did_aw,alias,identity_scope) "
+            "VALUES ($1,$2,$3,'new-bob','global') RETURNING agent_id", TEAM,new_key,stable,
+        )
+        other_worker = Request({"type":"http", "app":SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry))})
+        current = await verify_identity_binding(other_worker, did_key=new_key, did_aw=stable)
+        await refresh_projection_binding(env.db, agent_id=new_row["agent_id"], did_key=new_key, binding=current)
+        before = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+        # Model the allowed 60-second authentication cache of a different worker.
+        env.app.state.identity_binding_cache = old_cache
+        cached_auth = await request(env, bob, "GET", "/v1/team")
+        assert cached_auth.status_code == 200, cached_auth.text
+        assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+        assert (await resolve_agent_by_did(env.infra,stable))["agent_id"] == new_row["agent_id"]
+
+
+@pytest.mark.asyncio
+async def test_operator_verification_restores_only_bound_projections(privacy_app):
+    import asyncio
+    import os
+    import sys
+    from urllib.parse import quote
+    from aweb.messaging.messages import resolve_agent_by_did
+
+    env = privacy_app
+    bob, alice, carol = (env.actors[name] for name in ("bob","alice","carol"))
+    async with registry_listener(env) as (registry, origin):
+        stable,address = await register(env,registry,bob)
+        self_derived = stable_id_from_did_key(carol.did)
+        for actor,claim,claimed_address in ((bob,stable,address),(alice,stable,None),(carol,self_derived,None)):
+            await env.db.execute(
+                "UPDATE {{tables.agents}} SET identity_scope='global',did_aw=$2,address=$3,did_aw_verified_key=NULL WHERE agent_id=$1",
+                actor.id,claim,claimed_address,
+            )
+        db_name = await env.db.fetch_value("SELECT current_database()")
+        child_env = dict(os.environ)
+        user = quote(os.environ.get("TEST_DB_USER", "postgres"), safe="")
+        password = quote(os.environ.get("TEST_DB_PASSWORD", "postgres"), safe="")
+        host = os.environ.get("TEST_DB_HOST", "localhost")
+        port = os.environ.get("TEST_DB_PORT", "5432")
+        child_env.update(AWEB_DATABASE_URL=f"postgresql://{user}:{password}@{host}:{port}/{db_name}", AWID_REGISTRY_URL=origin)
+
+        async def operator(*options):
+            command = await asyncio.create_subprocess_exec(
+                sys.executable, "-c", "from aweb.cli import app; app()",
+                "verify-identity-bindings", *options, env=child_env,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            output,error = await asyncio.wait_for(command.communicate(), 30)
+            assert command.returncode == 1, error.decode()
+            return json.loads(output)
+
+        before = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+        assert await resolve_agent_by_did(env.infra,stable) is None
+        expected = dict(verified=1,self_derived=1,unbound=1,awid_error=0)
+        assert await operator("--dry-run") == expected
+        assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+        assert await operator() == expected
+        after = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+        assert [{**dict(row),"did_aw_verified_key":None} for row in after] == [dict(row) for row in before]
+        assert (await resolve_agent_by_did(env.infra,stable))["agent_id"] == bob.id
+        assert (await resolve_agent_by_did(env.infra,self_derived))["agent_id"] == carol.id
+        assert next(row for row in after if row["agent_id"]==alice.id)["did_aw_verified_key"] is None
+        assert await operator() == dict(verified=0,self_derived=0,unbound=1,awid_error=0)
+        assert after == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+
+
+@pytest.mark.asyncio
+async def test_operator_verification_preserves_rows_on_registry_error(privacy_app):
+    from aweb.identity_binding import verify_pending_identity_bindings
+
+    env = privacy_app
+    bob = env.actors["bob"]
+    await env.db.execute("UPDATE {{tables.agents}} SET identity_scope='local',did_aw=NULL,address=NULL,did_aw_verified_key=NULL")
+    async with registry_listener(env) as (registry, origin):
+        stable = (await registry.register_did(bob.did,bob.sk)).did_aw
+        await env.db.execute("UPDATE {{tables.agents}} SET identity_scope='global',did_aw=$2 WHERE agent_id=$1",bob.id,stable)
+    client = CachedRegistryClient(origin,env.redis)
+    try:
+        before = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+        assert await verify_pending_identity_bindings(env.db,client) == dict(verified=0,self_derived=0,unbound=0,awid_error=1)
+        assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+    finally:
+        await client.aclose()

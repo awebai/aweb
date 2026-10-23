@@ -119,10 +119,10 @@ async def _insert_mcp_chat_agents(aweb_db, *, team_id: str, alice_agent_id, bob_
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
-            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
-            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open')
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $4 END),
+            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
         """,
         alice_agent_id,
         bob_agent_id,
@@ -355,8 +355,8 @@ async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status)
-        VALUES ($1, $2, 'did:key:z6MkAlice', 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, did_aw_verified_key)
+        VALUES ($1, $2, 'did:key:z6MkAlice', 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkAlice' END)
         """,
         agent_id,
         team_id,
@@ -554,10 +554,10 @@ async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
-            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
-            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open')
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $4 END),
+            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
         """,
         alice_agent_id,
         bob_agent_id,
@@ -651,10 +651,10 @@ async def test_mcp_send_mail_uses_hosted_encryptor_by_default_for_trusted_proxy(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
-            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
-            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open')
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $4 END),
+            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
         """,
         alice_agent_id,
         bob_agent_id,
@@ -753,10 +753,10 @@ async def test_mcp_send_mail_continues_conversation_without_recipient_rediscover
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
-            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
-            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open')
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $4 END),
+            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
         """,
         alice_agent_id,
         bob_agent_id,
@@ -865,8 +865,8 @@ async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, mon
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
-        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
+        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $3 END)
         """,
         alice_agent_id,
         team_id,
@@ -1018,10 +1018,10 @@ async def test_mcp_send_mail_continues_first_legacy_bound_conversation(aweb_clou
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
-            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
-            ($2, $3, $5, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open')
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $4 END),
+            ($2, $3, $5, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $5 END)
         """,
         alice_agent_id,
         bob_agent_id,
@@ -1155,8 +1155,8 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(awe
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
-        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
+        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $3 END)
         """,
         alice_agent_id,
         team_id,
@@ -1331,10 +1331,10 @@ async def test_mcp_send_mail_requires_current_local_address_authority(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
-            ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
-            ($3, 'ops:otherco.com', 'did:key:z6MkBob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'active', 'open')
+            ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $2 END),
+            ($3, 'ops:otherco.com', 'did:key:z6MkBob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
         """,
         alice_agent_id,
         alice_did,
@@ -1774,8 +1774,8 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_agent_ids(a
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
-        VALUES ($1, $2, 'did:key:z6MkCarol', 'did:aw:carol', 'acme.com/carol', 'carol', 'global', 'active', 'open')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
+        VALUES ($1, $2, 'did:key:z6MkCarol', 'did:aw:carol', 'acme.com/carol', 'carol', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:carol', '') IS NOT NULL THEN 'did:key:z6MkCarol' END)
         """,
         carol_agent_id,
         team_id,
@@ -1866,8 +1866,8 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(awe
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
-        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
+        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $3 END)
         """,
         alice_agent_id,
         team_id,
@@ -2042,10 +2042,10 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
-            ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
-            ($3, 'ops:otherco.com', 'did:key:z6MkBob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'active', 'open')
+            ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $2 END),
+            ($3, 'ops:otherco.com', 'did:key:z6MkBob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
         """,
         alice_agent_id,
         alice_did,
@@ -2222,8 +2222,8 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
-        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
+        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $3 END)
         """,
         alice_agent_id,
         team_id,
@@ -2841,6 +2841,8 @@ async def test_mcp_contacts_accept_equivalent_identity_owner_did(aweb_cloud_db, 
         # with the sender NOT a contact. HTTP refuses this on every continuation;
         # MCP passed skip_policy_check=True and never asked.
         ("global_revoked", "global", "did:aw:bob", "team_and_contacts", False, False),
+        ("global_raw_claim_unmarked", "local", "did:aw:bob", "team_and_contacts", False, False),
+        ("global_verified_revoked", "global", "did:aw:bob", "team_and_contacts", False, False),
         # The regression guard. For a LOCAL recipient an existing conversation IS an
         # authorization by design - authorize_message_delivery returns early on
         # stored_route_continuation. If MCP passes neither flag it becomes STRICTER
@@ -2897,10 +2899,10 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-        (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+        (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
-            ($1, $3, $5, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
-            ($2, $4, $6, $7, 'other.example/bob', 'bob', $8, 'active', $9)
+            ($1, $3, $5, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $5 END),
+            ($2, $4, $6, $7, 'other.example/bob', 'bob', $8, 'active', $9, CASE WHEN NULLIF($7, '') IS NOT NULL THEN $6 END)
         """,
         alice_agent_id,
         bob_agent_id,
@@ -2912,6 +2914,12 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
         recipient_scope,
         inbound_mode,
     )
+    if case in {"global_revoked", "global_raw_claim_unmarked"}:
+        # Historical NULL markers must never relax inbound policy.
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.agents}} SET did_aw_verified_key=NULL WHERE agent_id=$1",
+            bob_agent_id,
+        )
     if alice_is_contact:
         await aweb_cloud_db.aweb_db.execute(
             """

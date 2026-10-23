@@ -194,5 +194,37 @@ def reseed_app_registrations_command(
         raise typer.Exit(1)
 
 
+@app.command("verify-identity-bindings")
+def verify_identity_bindings_command(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Verify without writing markers"),
+) -> None:
+    """Verify pending identity projections after migration; report counts only."""
+    from awid.registry import RegistryClient
+    from .identity_binding import verify_pending_identity_bindings
+
+    async def _verify():
+        settings = get_settings()
+        infra = DatabaseInfra()
+        await infra.initialize(run_migrations=False)
+        try:
+            registry = RegistryClient(
+                registry_url=settings.awid_registry_url,
+                service_token=settings.awid_service_token,
+            )
+            try:
+                return await verify_pending_identity_bindings(
+                    infra.get_manager(), registry, dry_run=dry_run,
+                )
+            finally:
+                await registry.aclose()
+        finally:
+            await infra.close()
+
+    report = asyncio.run(_verify())
+    typer.echo(json.dumps(report, sort_keys=True))
+    if report["unbound"] or report["awid_error"]:
+        raise typer.Exit(1)
+
+
 def _get_api_base() -> str:
     return os.getenv("AWEB_API_URL", "http://localhost:8000")

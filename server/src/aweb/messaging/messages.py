@@ -35,7 +35,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     if team_id is None:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, inbound_mode, status, deleted_at
+            SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, inbound_mode, status, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND deleted_at IS NULL
             """,
@@ -44,7 +44,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     else:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, inbound_mode, status, deleted_at
+            SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, inbound_mode, status, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
             """,
@@ -61,7 +61,7 @@ async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, inbound_mode, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, inbound_mode, status, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
           AND COALESCE(agent_type, 'agent') != 'human'
@@ -78,7 +78,7 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, inbound_mode, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, inbound_mode, status, deleted_at
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
           AND ((did_aw = $1 AND did_aw_verified_key = did_key) OR did_key = $1)
@@ -97,7 +97,11 @@ INBOUND_MODES = {INBOUND_MODE_OPEN, INBOUND_MODE_TEAM_AND_CONTACTS}
 
 
 def _is_global_recipient(recipient_agent: dict) -> bool:
-    return str(recipient_agent.get("did_aw") or "").strip().startswith("did:aw:")
+    return (
+        recipient_agent.get("identity_scope") == "global"
+        or bool(recipient_agent.get("has_global_claim"))
+        or bool(str(recipient_agent.get("did_aw") or "").strip())
+    )
 
 
 def _effective_inbound_mode(recipient_agent: dict) -> str:

@@ -101,12 +101,13 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     try:
-        await verify_identity_binding(request, did_key=did_key, did_aw=did_aw)
+        binding = await verify_identity_binding(request, did_key=did_key, did_aw=did_aw)
     except HTTPException as exc:
         if exc.status_code == 403:
             raise HTTPException(status_code=401, detail="did:aw does not match Authorization did:key") from exc
         raise
 
+    key_binding = binding
     address = None
     try:
         addresses = await registry_client.list_did_addresses(did_aw)
@@ -115,14 +116,13 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     if addresses:
         first = addresses[0]
         address = f"{first.domain}/{first.name}"
-        await verify_identity_binding(request, did_key=did_key, did_aw=did_aw, address=address)
+        binding = await verify_identity_binding(request, did_key=did_key, did_aw=did_aw, address=address)
 
     binding_db = db if db is not None else getattr(request.app.state, "db", None)
     if binding_db is not None:
-        from aweb.identity_binding import IdentityBinding
         await refresh_projection_binding(
             _aweb_db(binding_db), agent_id=None, did_key=did_key,
-            binding=IdentityBinding(did_aw, address or ""),
+            binding=key_binding if key_binding.fresh_observation else binding,
         )
     if envelope.version == 1:
         count_legacy_request_auth(request, "identity")

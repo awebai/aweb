@@ -417,7 +417,7 @@ async def connect_agent(
         )
 
         await refresh_projection_binding(
-            tx, agent_id=agent_id, did_key=did_key, binding=IdentityBinding(did_aw, address),
+            tx, agent_id=agent_id, did_key=did_key, binding=IdentityBinding(did_aw, address, fresh_observation=True),
         )
 
         workspace_id = await _ensure_workspace(
@@ -455,7 +455,7 @@ async def connect_endpoint(
     Uses certificate-only auth (no agent lookup) since the agent may not
     exist yet — this endpoint creates the agent row.
     """
-    cert_info = await verify_request_certificate(request, db)
+    cert_info = await verify_request_certificate(request, db, fresh=True)
 
     aweb_db = db.get_manager("aweb")
 

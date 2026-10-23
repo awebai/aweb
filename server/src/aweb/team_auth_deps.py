@@ -75,7 +75,8 @@ class TeamIdentity:
 
 async def resolve_team_identity(
     db: AsyncDatabaseManager,
-    cert_info: dict[str, str],
+    cert_info: dict,
+    *, request: Request | None = None,
 ) -> TeamIdentity:
     """Resolve a TeamIdentity from verified certificate info.
 
@@ -97,7 +98,7 @@ async def resolve_team_identity(
 
     row = await db.fetch_one(
         """
-        SELECT agent_id, certificate_id FROM {{tables.agents}}
+        SELECT agent_id, certificate_id, did_aw, address FROM {{tables.agents}}
         WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
         """,
         team_id,
@@ -113,7 +114,15 @@ async def resolve_team_identity(
     binding = IdentityBinding(
         cert_info.get("verified_member_did_aw", ""),
         cert_info.get("verified_member_address", ""),
+        fresh_observation=bool(cert_info.get("identity_binding_fresh")),
     )
+    if request is not None and not binding.did_aw and (row.get("did_aw") or row.get("address")):
+        # An older local certificate cannot inherit a stored global identity
+        # without proving that row's binding as well.
+        binding = await verify_identity_binding(
+            request, did_key=did_key, did_aw=row.get("did_aw") or "",
+            address=row.get("address") or "",
+        )
     await refresh_projection_binding(db, agent_id=row["agent_id"], did_key=did_key, binding=binding)
 
     # Keep the admitting certificate recorded on the projection current
@@ -146,7 +155,7 @@ async def resolve_team_identity(
 # ---------------------------------------------------------------------------
 
 
-async def verify_request_certificate(request: Request, db) -> dict[str, str]:
+async def verify_request_certificate(request: Request, db, *, fresh: bool = False) -> dict:
     """Verify a request's DIDKey signature and team certificate.
 
     Steps 1-5 of the auth pipeline:
@@ -268,8 +277,9 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
         request, did_key=did_key,
         did_aw=cert_info.get("member_did_aw", ""),
         address=cert_info.get("member_address", ""),
-        fresh=request.url.path.endswith("/connect"),
+        fresh=fresh,
     )
+    cert_info["identity_binding_fresh"] = binding.fresh_observation
     cert_info["verified_member_did_aw"] = binding.did_aw
     cert_info["verified_member_address"] = binding.address
     cert_info["did_aw_verified_key"] = did_key if binding.did_aw else ""
@@ -313,7 +323,7 @@ async def _get_team_identity_with_grant_scope(
 
     aweb_db = _aweb_db(db)
     try:
-        return await resolve_team_identity(aweb_db, cert_info)
+        return await resolve_team_identity(aweb_db, cert_info, request=request)
     except ValueError as e:
         raise HTTPException(status_code=403, detail=str(e))
 

@@ -361,13 +361,25 @@ or grant subject; a grant session key does not become the subject's root key.
 `agents.did_aw_verified_key` records the key against which a projection was
 verified. Historical rows start with a null marker. Stable-DID and global-address
 routing, identity expansion and membership checks use a row's global claims only
-when the marker equals its `did_key`. A successful authenticated request or
-reconnect refreshes its own projection. Observing a current key also clears the
-markers for other keys of that stable identity in the same transaction. This
+when the marker equals its `did_key`. A fresh registry observation during
+an authenticated request or reconnect refreshes its own projection and clears
+markers for other keys of that stable identity in the same transaction.
+A cached binding authenticates without writing or clearing markers. This
 requires no registry I/O under locks and does not add registry reads to recipient
 resolution. Local key-based access remains available
-without attributing unverified global metadata. Operators must investigate old
-rows before any data repair; this migration does not rewrite their identities.
+without attributing unverified global metadata. Policy classification still uses
+`identity_scope = global` or a raw stable-DID claim: withholding a claim never
+relaxes a global recipient's inbound policy.
+
+After migration 034, operators run `aweb verify-identity-bindings --dry-run`, then
+`aweb verify-identity-bindings` before resuming stable-DID/address delivery. The
+command reads pending live identity projections, observes current AWID evidence
+outside locks, then rechecks the row's key, stable DID and address under a row
+lock. It writes only a verified marker; identities and addresses are never
+rewritten. It reports only counts (`verified`, `self_derived`, `unbound`,
+`awid_error`), is idempotent, and exits nonzero if any row remains unbound or
+unavailable. Operators investigate those counts before proceeding. This command
+requires the server's database and AWID configuration; it performs no migration.
 
 ## Session grants
 
