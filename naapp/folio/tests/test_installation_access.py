@@ -93,3 +93,20 @@ async def test_session_legacy_refusal_does_not_retire_its_valid_parent(present_w
     assert response.status_code == 404 and response.json()["detail"]["code"] == "installation_binding_refused"
     assert (await db.fetch_one("SELECT installation_refused FROM {{tables.edit_sessions}}"))["installation_refused"]
     assert not (await db.fetch_one("SELECT installation_refused FROM {{tables.presentation_links}}"))["installation_refused"]
+
+
+async def test_unavailable_g1_refuses_without_adopting_or_permanently_refusing_rows(present_world, client):
+    from aweb_naapp.runtime.authorization import GrantUnavailable
+
+    app, db, _ = present_world
+    readonly, _, path, headers = await capabilities(present_world, client)
+    await db.execute("UPDATE {{tables.presentation_links}} SET installation_id=NULL")
+    await db.execute("UPDATE {{tables.edit_sessions}} SET installation_id=NULL")
+    async def unavailable(team_id):
+        raise GrantUnavailable("authority cannot be reached")
+    app.state.test_grants.status_for = unavailable
+    for url, auth in [(readonly["url"], {}), (path + "/state", headers)]:
+        response = await client.get(url, headers=auth)
+        assert response.status_code == 503 and response.json()["detail"]["code"] == "authority_unavailable"
+    rows = await db.fetch_all("SELECT installation_id, installation_refused FROM {{tables.presentation_links}} UNION ALL SELECT installation_id, installation_refused FROM {{tables.edit_sessions}}")
+    assert all(row["installation_id"] is None and not row["installation_refused"] for row in rows)
