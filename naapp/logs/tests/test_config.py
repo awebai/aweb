@@ -22,3 +22,12 @@ def test_logs_needs_its_database_and_origin(monkeypatch: pytest.MonkeyPatch) -> 
         LogsSettings(_env_file=None)
     missing = {error["loc"][0] for error in caught.value.errors()}  # type: ignore[attr-defined]
     assert missing == {"database_url", "public_origin"}
+
+
+def test_checkpoints_are_issued_every_five_minutes_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
+    assert LogsSettings(_env_file=None).checkpoint_interval_seconds == 300
+    monkeypatch.setenv("LOGS_CHECKPOINT_INTERVAL_SECONDS", "0")
+    with pytest.raises(ValueError):
+        LogsSettings(_env_file=None)
