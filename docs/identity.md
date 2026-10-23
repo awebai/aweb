@@ -369,7 +369,10 @@ requires no registry I/O under locks and does not add registry reads to recipien
 resolution. Local key-based access remains available
 without attributing unverified global metadata. Policy classification still uses
 `identity_scope = global` or a raw stable-DID claim: withholding a claim never
-relaxes a global recipient's inbound policy.
+relaxes a global recipient's inbound policy. Existing conversation participants
+can be looked up by their raw claims solely to enforce policy; this lookup never
+selects a new recipient or supplies routing identity. Every matching local policy
+row must permit continuation; missing policy evidence fails closed.
 
 After migration 034, operators run `aweb verify-identity-bindings --dry-run`, then
 `aweb verify-identity-bindings` before resuming stable-DID/address delivery. The
