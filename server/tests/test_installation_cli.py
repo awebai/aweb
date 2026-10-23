@@ -65,6 +65,10 @@ async def test_cli_member_request_admin_install_update_and_refused_update_preser
                    "GODEBUG": ",".join(filter(None, [os.environ.get("GODEBUG"), "x509sslcertoverrideplatform=1"]))}
     for name in ("AW_IDENTITY_HOME", "AW_TEAM", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
         process_env.pop(name, None)
+    # The native guard's lowercase proxy remains in force for other hosts.
+    # Only this real TLS fixture's exact address bypasses it in the CLI child.
+    fixture_no_proxy = ",".join(filter(None, [process_env.get("NO_PROXY") or process_env.get("no_proxy"), address]))
+    process_env["NO_PROXY"] = process_env["no_proxy"] = fixture_no_proxy
 
     async def cli(*args, identity_home=home):
         process = await asyncio.create_subprocess_exec(
