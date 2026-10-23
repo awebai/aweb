@@ -12,6 +12,34 @@ The design is [the audit substrate](../../docs/design/audit-substrate.md),
 Part B. The artefacts logs signs, and the chain they commit to, are specified
 in [the logs chain](../../docs/logs-chain.md).
 
+## Configuration
+
+logs reads its settings from `LOGS_`-prefixed environment variables:
+
+- `LOGS_DATABASE_URL` and `LOGS_PUBLIC_ORIGIN`;
+- `LOGS_APP_ID`, the deployment's own app id. The hosted id `logs` is refused at
+  any other origin a team can reach. Keep it for the deployment's lifetime:
+  changing it orphans every team's installation;
+- `LOGS_APP_KEY_FILES`, a JSON object from each kid the committed manifest
+  declares (`logs-chain`, `logs-resolve`) to the path of that kid's key file.
+
+The committed manifest is a template: logs serves it with its app id, origin and
+each kid's did:key derived from these key files, and does not start without a
+key for every declared kid or with a key file for any other. The `logs-chain`
+key signs receipts and checkpoints.
+
+## Running
+
+```bash
+uvicorn aweb_logs.app:serve --factory
+docker build -f naapp/logs/Dockerfile .   # from the repository root
+```
+
+The image takes the same environment; mount the key files, never build them in.
+
+While logs runs, each team whose chain has new events gets a signed checkpoint
+every `LOGS_CHECKPOINT_INTERVAL_SECONDS` (default 300); an idle team gets none.
+
 ## Development
 
 ```bash
