@@ -154,6 +154,14 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 	if err := requireCreatedIdentityInboundMode(cmd, home.Root, home.Root, cfg.Issuer, response.CanonicalTeamID, mode); err != nil {
 		return err
 	}
+	// Recovery material is only for an incomplete operation. In particular it
+	// must not retain a second signing seed after this identity rotates its key.
+	if err := os.Remove(statePath); err != nil {
+		return fmt.Errorf("remove completed hosted identity recovery material: %w", err)
+	}
+	if err := os.Remove(statePath + ".lock"); err != nil {
+		return fmt.Errorf("remove completed hosted identity recovery lock: %w", err)
+	}
 	status := "reused"
 	if response.Created {
 		status = "created"

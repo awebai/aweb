@@ -158,6 +158,9 @@ func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode str
 	if _, err := os.Stat(filepath.Join(principal, "identity.yaml")); !os.IsNotExist(err) {
 		t.Error("installed identity before validated success")
 	}
+	if _, err := os.Stat(filepath.Join(principal, "hosted-identity-create.json")); err != nil {
+		t.Error("interrupted creation lost its recovery material")
+	}
 	registrationsBefore := registerCalls
 	_, _, err = run("other")
 	if err == nil || createCalls != 1 || registerCalls != registrationsBefore {
@@ -187,6 +190,11 @@ func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode str
 	}
 	if _, err := os.Stat(filepath.Join(principal, "signing.key")); err != nil {
 		t.Error("validated identity key was not installed")
+	}
+	for _, name := range []string{"hosted-identity-create.json", "hosted-identity-create.json.lock"} {
+		if _, err := os.Stat(filepath.Join(principal, name)); !os.IsNotExist(err) {
+			t.Errorf("completed creation retained %s", name)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(wd, ".aw")); !os.IsNotExist(err) {
 		t.Error("creation changed invoking workspace")
