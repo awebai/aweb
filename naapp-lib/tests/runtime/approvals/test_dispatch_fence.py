@@ -317,7 +317,7 @@ async def test_preparation_requires_read_committed_not_a_stale_transaction_snaps
 
 async def held_locks(tx):
     return await tx.fetch_all(
-        "SELECT locktype,database,relation,page,tuple,virtualxid,transactionid,"
+        "SELECT locktype,database,relation,page,tuple,virtualxid,transactionid::text,"
         "classid,objid,objsubid,mode,granted FROM pg_locks "
         "WHERE pid=pg_backend_pid() ORDER BY 1,2,3,4,5,6,7,8,9,10,11"
     )
