@@ -42,5 +42,7 @@ docker container rm "$SEED" >/dev/null
 "${COMPOSE[@]}" up --no-build -d --wait postgres redis awid aweb
 "${COMPOSE[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U aweb -d aweb \
   -c 'CREATE DATABASE library OWNER aweb'
+"${COMPOSE[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U aweb -d aweb \
+  -c 'CREATE DATABASE folio_deletions OWNER aweb'
 git -C "$ROOT" rev-parse HEAD >"$EVIDENCE/source-sha.txt"
 "${COMPOSE[@]}" run --rm --no-deps client 2>&1 | tee "$EVIDENCE/acceptance.log"

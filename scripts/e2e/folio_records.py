@@ -78,8 +78,9 @@ def exercise_records(aw, run, root, schema):
     successes = [(who, json.loads(out.stdout)) for who, out in outcomes if out.returncode == 0]
     failures = [out for _, out in outcomes if out.returncode != 0]
     assert len(successes) == len(failures) == 1, outcomes
-    assert "revision_conflict" in failures[0].stderr, failures[0].stderr
-    assert "HTTP 409" in failures[0].stderr, failures[0].stderr
+    # Manifest plugins return an HTTP refusal body on stdout and exit nonzero.
+    refusal = json.loads(failures[0].stdout)
+    assert refusal["detail"]["code"] == "revision_conflict", refusal
     winner, committed = successes[0]
     final_value = {**expected, "status": winner}
     assert committed["record"]["rev"] == 3

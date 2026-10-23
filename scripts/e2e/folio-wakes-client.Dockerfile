@@ -21,13 +21,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 COPY --from=cli /out/aw /usr/local/bin/aw
 COPY --from=channel /usr/local/bin/node /usr/local/bin/node
+COPY --from=channel /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 COPY --from=channel /src/dist /workspace/channel-core/dist
 COPY --from=channel /src/package.json /workspace/channel-core/package.json
 COPY --from=channel /src/node_modules /workspace/channel-core/node_modules
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
+# Use the renderer's lockfile for the exact Playwright version. Install at the
+# script's ancestor so ESM resolves @playwright/test in the real client image.
+WORKDIR /workspace
+COPY naapp-lib/renderer/package.json naapp-lib/renderer/package-lock.json ./
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+RUN node /usr/local/lib/node_modules/npm/bin/npm-cli.js ci --ignore-scripts --no-audit --no-fund \
+    && node node_modules/playwright/cli.js install --with-deps --only-shell chromium \
+    && rm -rf /var/lib/apt/lists/*
 COPY scripts/e2e/ /workspace/scripts/e2e/
 RUN AW_NO_UPDATE_CHECK=1 aw version && node --version && docker compose version && python3 --version
 ENV PYTHONUNBUFFERED=1
-WORKDIR /workspace
 CMD ["python3", "/workspace/scripts/e2e/folio_wakes.py"]
