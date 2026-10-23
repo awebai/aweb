@@ -710,3 +710,95 @@ async def test_retired_group_member_does_not_relax_live_member_policy(privacy_ap
         refused = await signed(sender,"POST",f"/v1/chat/sessions/{session}/messages",{"body":"remaining member restricted"})
         assert refused.status_code == 403, refused.text
         assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1::uuid",session) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["did_key", "address", "stable_only"])
+@pytest.mark.parametrize("evidence", ["current", "old_key", "other_stable", "other_address", "unavailable", "invalid_signature"])
+async def test_signed_continuation_after_rotation_keeps_stored_route(
+    privacy_app, target, evidence
+):
+    from contextlib import AsyncExitStack
+    from aweb.messaging.messages import resolve_agent_by_did
+
+    env = privacy_app
+    alice, bob = env.actors["alice"], env.actors["bob"]
+    async with AsyncExitStack() as stack:
+        listener = await stack.enter_async_context(AsyncExitStack())
+        registry, origin = await listener.enter_async_context(registry_listener(env))
+        stable, address = await register(env, registry, bob)
+        bob.certificate = certificate(env, bob, stable, address)
+        assert (await request(env, bob, "POST", "/v1/connect", {})).status_code == 200
+        opened = await request(env, alice, "POST", "/v1/messages", {
+            "to_did": stable, "subject": "before rotation", "body": "before rotation",
+        })
+        assert opened.status_code == 200, opened.text
+        conversation_id = opened.json()["conversation_id"]
+        participant = await env.db.fetch_one(
+            "SELECT * FROM {{tables.conversation_participants}} WHERE conversation_id=$1::uuid AND did=$2",
+            conversation_id, stable,
+        )
+        assert participant["agent_id"] == bob.id
+        assert participant["address"] == address
+        old_key = bob.did
+        new_sk, _, new_key = _make_keypair()
+        await registry.rotate_key(stable, new_key, bob.sk, new_sk)
+        bob.sk, bob.did = new_sk, new_key
+        authenticated = await request(env, bob, "GET", "/v1/messages/inbox", did_aw=stable)
+        assert authenticated.status_code == 200, authenticated.text
+        assert await resolve_agent_by_did(env.infra, stable) is None
+        before = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+        before_count = await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}")
+
+        signed_key = old_key if evidence == "old_key" else new_key
+        signed_stable = stable_id_from_did_key(alice.did) if evidence == "other_stable" else stable
+        signed_address = "identity.test/elsewhere" if evidence == "other_address" else address
+        timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        message_id = str(uuid4())
+        fields = dict(
+            type="mail", **{"from": "alice"}, from_did=alice.did,
+            to=(signed_address if target == "address" or evidence == "other_address"
+                else signed_key if target == "did_key" else signed_stable),
+            to_stable_id=signed_stable, priority="normal", subject="after rotation", body="after rotation",
+            message_id=message_id, timestamp=timestamp, conversation_id=conversation_id,
+        )
+        if target != "stable_only" or evidence == "old_key":
+            fields["to_did"] = signed_key
+        signed_payload = canonical_json_bytes(fields).decode()
+        signing_key = new_sk if evidence == "invalid_signature" else alice.sk
+        payload = dict(
+            conversation_id=conversation_id, subject="after rotation", body="after rotation",
+            message_id=message_id, timestamp=timestamp, from_did=alice.did,
+            signature=sign_message(signing_key, signed_payload.encode()), signed_payload=signed_payload,
+        )
+        # Close the real dependency, rather than substituting its resolver.
+        if evidence == "unavailable":
+            cached = CachedRegistryClient(origin, env.redis)
+            await cached.get_team_public_key("example.test", TEAM.split(":")[0])
+            await cached.get_team_revocations("example.test", TEAM.split(":")[0])
+            await listener.aclose()
+            stack.callback(setattr, env.app.state, "awid_registry_client", env.app.state.awid_registry_client)
+            stack.push_async_callback(cached.aclose)
+            env.app.state.awid_registry_client = cached
+        result = await request(env, alice, "POST", "/v1/messages", payload)
+        if evidence == "current":
+            assert result.status_code == 200, result.text
+            stored = await env.db.fetch_one(
+                "SELECT to_agent_id,to_did FROM {{tables.messages}} WHERE message_id=$1::uuid", message_id,
+            )
+            assert stored["to_agent_id"] == bob.id
+            assert stored["to_did"] == stable
+        else:
+            assert result.status_code == (503 if evidence == "unavailable" else 403), result.text
+            if evidence == "unavailable":
+                assert result.json()["detail"] == "identity_binding_unavailable"
+            assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == before_count
+        assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+        assert await resolve_agent_by_did(env.infra, stable) is None
+        # A stored continuation must not restore stable-DID routing for new mail.
+        new_mail = await request(env, alice, "POST", "/v1/messages", {
+            "to_did": stable, "subject": "new route", "body": "new route",
+            "new_conversation": True, "conversation_id": str(uuid4()),
+        })
+        assert new_mail.status_code == 422, new_mail.text
+        assert "Bare did:aw first-contact is unsupported" in new_mail.text

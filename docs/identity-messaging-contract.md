@@ -166,6 +166,15 @@ Missing, stale, malformed, mismatched, or revoked route state fails closed.
 Stored route state is not a policy bypass: continuations still apply the
 recipient's current `inbound_mode` at delivery time.
 
+For a signed mail continuation after key rotation, an unmarked local projection
+may lack the current recipient binding. Verify the message signature before
+using its recipient claims; its stable DID and any signed address must match the
+stored participant exactly. If the gated projection cannot establish that signed
+recipient, require current AWID binding evidence outside database transactions.
+This context validates only the signature: delivery keeps the stored participant
+agent ID, and neither routing facts nor verification markers are populated from
+it. A mismatch refuses delivery; unavailable evidence returns 503.
+
 ## Receiver-Wide Replay And Contact Compatibility
 
 Every accepted mail or chat message—local or federated, plaintext or encrypted—
