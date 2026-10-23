@@ -156,5 +156,5 @@ The existing public acfn attachment backend validates staged immutable refs and
 binds on the same transaction, without network access. No provider URL, token,
 platform account ID or replacement wire descriptor is introduced.
 
-Migration `038_native_send_ingress.sql` adds the result, message-ID binding and
+Migration `041_native_send_ingress.sql` adds the result, message-ID binding and
 publication-intent stores. P3's native-only participant gates remain in force.
