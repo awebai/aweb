@@ -48,6 +48,8 @@ async def _verified_install(db, *, team_id, app_id, did_key, kid="requests-1", i
         (team_id,app_id,origin,digest,app_version,manifest_version,granted_scopes,installation_id,generation,state,origin_verified,manifest_bytes)
         VALUES ($1,$2,$3,$4,'1.0.0',2,ARRAY['requests.create','requests.read'],$5,$6,'active',TRUE,$7)""",
         team_id, app_id, origin, digest, installation_id, generation, manifest)
+    await db.execute("""INSERT INTO {{tables.team_app_install_counters}} (team_id,app_id,last_generation)
+        VALUES ($1,$2,$3)""", team_id, app_id, generation)
     await db.execute("""INSERT INTO {{tables.team_app_keys}} (team_id,app_id,origin,digest,key_id,did_key,purposes)
         VALUES ($1,$2,$3,$4,$5,$6,ARRAY['app-request'])""", team_id, app_id, origin, digest, kid, did_key)
     if event_did:
@@ -232,17 +234,36 @@ async def test_app_decision_answer_checks_proposal_and_choice_then_cancellation(
 
 
 @pytest.mark.asyncio
-async def test_f6_cancellation_hook_rolls_back_with_installation_transaction(app_request_context):
-    env, *_ = app_request_context
-    receipt, _ = await _create(app_request_context, _body(env))
+async def test_uninstall_cancellation_and_claim_release_roll_back_together(app_request_context):
+    from aweb.installations import uninstall_installation_on
+
+    env, _, _, installation = app_request_context
+    made = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _body(env))
+    assert made.status_code == 201, made.text
+    receipt = made.json()
+    task_id = UUID(receipt["task_id"])
+    claimed = await _v2_request(env, "bob", "PATCH", f'/v1/tasks/{receipt["task_ref"]}', {"status": "in_progress"})
+    assert claimed.status_code == 200, claimed.text
+    before_task = await env.db.fetch_one("SELECT * FROM {{tables.tasks}} WHERE task_id=$1", task_id)
+    before_claim = await env.db.fetch_one("SELECT * FROM {{tables.task_claims}} WHERE task_ref=$1", receipt["task_ref"])
+    before_focus = await env.db.fetch_one("SELECT focus_task_ref,focus_updated_at FROM {{tables.workspaces}} WHERE workspace_id=$1", env.actors["bob"].workspace)
+    assert before_claim is not None
     with pytest.raises(RuntimeError):
         async with env.db.transaction() as tx:
-            assert await cancel_installation_requests_on(tx, team_id=TEAM, app_id="fixture", installation_id="install-fixture") == 1
-            raise RuntimeError("uninstall rolls back")
-    row = await env.db.fetch_one("SELECT status, cancellation FROM {{tables.tasks}} WHERE task_id=$1", UUID(receipt["task_id"]))
-    assert row["status"] == "open" and row["cancellation"] is None
-    async with env.db.transaction() as tx:
-        assert await cancel_installation_requests_on(tx, team_id=TEAM, app_id="fixture", installation_id="install-fixture") == 1
+            retired = await uninstall_installation_on(tx, team_id=TEAM, app_id="fixture", expected_generation=installation["generation"])
+            assert retired["state"] == "uninstalled"
+            assert await tx.fetch_value("SELECT cancellation IS NOT NULL FROM {{tables.tasks}} WHERE task_id=$1", task_id)
+            assert await tx.fetch_value("SELECT count(*) FROM {{tables.task_claims}} WHERE task_ref=$1", receipt["task_ref"]) == 0
+            # Other connections see the committed pre-uninstall snapshot.
+            assert await env.db.fetch_one("SELECT * FROM {{tables.tasks}} WHERE task_id=$1", task_id) == before_task
+            assert await env.db.fetch_one("SELECT * FROM {{tables.task_claims}} WHERE task_ref=$1", receipt["task_ref"]) == before_claim
+            assert (await get_installation_on(env.db, team_id=TEAM, app_id="fixture"))["state"] == "active"
+            raise RuntimeError("caller aborts uninstall")
+    assert await get_installation_on(env.db, team_id=TEAM, app_id="fixture") == installation
+    assert await env.db.fetch_one("SELECT * FROM {{tables.tasks}} WHERE task_id=$1", task_id) == before_task
+    assert await env.db.fetch_one("SELECT * FROM {{tables.task_claims}} WHERE task_ref=$1", receipt["task_ref"]) == before_claim
+    assert await env.db.fetch_one("SELECT focus_task_ref,focus_updated_at FROM {{tables.workspaces}} WHERE workspace_id=$1", env.actors["bob"].workspace) == before_focus
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_comments}} WHERE task_id=$1", task_id) == 0
 
 
 @pytest.mark.parametrize("body", [b'{"key":1,"key":2}', b'{"n":1.0}', b'{"n":NaN}',
@@ -307,26 +328,34 @@ async def test_naapp_raises_decision_member_answers_and_app_reads_receipt(app_re
 
 
 @pytest.mark.asyncio
-async def test_retirement_atomically_cancels_an_open_request(app_request_context):
-    env, *_ = app_request_context
+@pytest.mark.parametrize("picked_up", [False, True])
+async def test_admin_uninstall_atomically_cancels_an_open_request(app_request_context, picked_up):
+    env, _, _, installation = app_request_context
     made = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _body(env))
     assert made.status_code == 201, made.text
     task_id = UUID(made.json()["task_id"])
-    claimed = await _v2_request(env, "bob", "PATCH", f'/v1/tasks/{made.json()["task_ref"]}', {"status": "in_progress"})
-    assert claimed.status_code == 200, claimed.text
-    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_claims}} WHERE task_ref=$1", made.json()["task_ref"]) == 1
-    async with env.db.transaction() as tx:
-        installation = await get_installation_on(tx, team_id=TEAM, app_id="fixture", for_update=True)
-        assert await cancel_installation_requests_on(tx, team_id=TEAM, app_id="fixture", installation_id=installation["installation_id"]) == 1
-        await tx.execute("UPDATE {{tables.team_app_installs}} SET state='uninstalled' WHERE team_id=$1 AND app_id='fixture'", TEAM)
-        # A separate connection sees neither side of the unfinished retire.
-        assert await env.db.fetch_value("SELECT status FROM {{tables.tasks}} WHERE task_id=$1", task_id) == "in_progress"
-        assert (await get_installation_on(env.db, team_id=TEAM, app_id="fixture"))["state"] == "active"
+    if picked_up:
+        claimed = await _v2_request(env, "bob", "PATCH", f'/v1/tasks/{made.json()["task_ref"]}', {"status": "in_progress"})
+        assert claimed.status_code == 200, claimed.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_claims}} WHERE task_ref=$1", made.json()["task_ref"]) == int(picked_up)
+    ordinary = await _v2_request(env, "alice", "POST", "/v1/tasks", {"title": "Unrelated task", "assignee_alias": "bob"})
+    assert ordinary.status_code == 200, ordinary.text
+    await env.db.execute(
+        "INSERT INTO {{tables.team_app_install_admins}} (team_id,principal_did,role,granted_by) VALUES ($1,$2,'admin','test-operator')",
+        TEAM, env.actors["alice"].did,
+    )
+    retired = await _v2_request(env, "alice", "POST", "/v1/apps/fixture/uninstall", {"expected_generation": installation["generation"]})
+    assert retired.status_code == 200, retired.text
+    assert retired.json()["state"] == "uninstalled"
+    assert retired.json()["generation"] > installation["generation"]
     row = await env.db.fetch_one("SELECT status,cancellation FROM {{tables.tasks}} WHERE task_id=$1", task_id)
     assert row["status"] == "closed"
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_claims}} WHERE task_ref=$1", made.json()["task_ref"]) == 0
+    assert await env.db.fetch_value("SELECT focus_task_ref FROM {{tables.workspaces}} WHERE workspace_id=$1", env.actors["bob"].workspace) is None
     cancellation = json.loads(row["cancellation"]) if isinstance(row["cancellation"], str) else row["cancellation"]
     assert cancellation["reason"] == "installation_retired"
+    unaffected = await env.db.fetch_one("SELECT status,cancellation FROM {{tables.tasks}} WHERE task_id=$1", UUID(ordinary.json()["task_id"]))
+    assert unaffected["status"] == "open" and unaffected["cancellation"] is None
     refused = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _body(env, request_id="after-retire"))
     assert refused.status_code == 403 and refused.json()["detail"] == "scope_denied", refused.text
 
