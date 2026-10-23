@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Server install/update and request approval serialize the final host-policy
+  check with the installation write. Concurrent same-app re-pins return a
+  generation conflict instead of a database deadlock; first-install policy
+  checks are serialized too.
+
 - aw app installation names the resident credential directory and gives an
   explicit replacement-grant action. Existing grants retain their original
   app-tool snapshots; denied tools explain the approve/re-mint/restart remedy.

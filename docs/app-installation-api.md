@@ -28,6 +28,14 @@ authorize the write. Final refusal leaves the installation and success audit
 unchanged. Other actions retain their existing policy calls. See the
 [host policy contract](app-registry.md#host-installation-policy-interface).
 
+Before final authorization, install/update and request approval acquire the
+writer's transaction-scoped installation lock, then the current row lock. The
+installation lock also serializes first installs when no row exists. Host
+policies can read the current installation through their supplied transaction;
+they do not need to construct a lock key. The writer reuses the same locks, held
+until that transaction commits or rolls back. Admission and network fetching
+hold no installation lock.
+
 ## Preview and confirmation
 
 `POST /v1/apps/preview?team_id=...` accepts:

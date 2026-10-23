@@ -28,6 +28,21 @@ class InstallationError(ServiceError):
         self.status_code = status_code
 
 
+async def _lock_installation_on(tx, *, team_id: str, app_id: str) -> dict | None:
+    """Serialize final policy reads and writes, including an absent row.
+
+    Routes take this before final authorization; the writer retakes the same
+    transaction locks. Always acquire the advisory lock before the row lock.
+    """
+    team_id = validate_team_id(team_id)
+    app_id = normalize_app_id(app_id)
+    await tx.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        "aweb.installation:" + team_id + ":" + app_id,
+    )
+    return await get_installation_on(tx, team_id=team_id, app_id=app_id, for_update=True)
+
+
 async def install_verified_manifest_on(
     tx,
     *,
@@ -56,11 +71,7 @@ async def install_verified_manifest_on(
     ):
         raise InstallationError("generation_invalid", "Expected generation must be a positive BIGINT")
 
-    await tx.execute(
-        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-        "aweb.installation:" + team_id + ":" + app_id,
-    )
-    current = await get_installation_on(tx, team_id=team_id, app_id=app_id, for_update=True)
+    current = await _lock_installation_on(tx, team_id=team_id, app_id=app_id)
     if current is not None:
         if expected_generation is None:
             raise InstallationError("generation_required", "Supply the current installation generation")

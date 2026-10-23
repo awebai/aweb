@@ -43,7 +43,7 @@ from aweb.installation_views import (
     pinned_manifest_on,
     semantic_diff,
 )
-from aweb.installations import install_verified_manifest_on
+from aweb.installations import _lock_installation_on, install_verified_manifest_on
 from aweb.internal_auth import parse_internal_auth_context
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ServiceError
 from aweb.team_auth_deps import get_team_identity
@@ -293,6 +293,7 @@ async def approve_installation_request_route(request_id: UUID, request: Request,
                 raise HTTPException(409, detail={"code": "installation_request_resolved"})
         fetched = await _fetcher(request).fetch(pending["origin"], expected_digest=pending["digest"])
         async with db.transaction() as tx:
+            await _lock_installation_on(tx, team_id=authorized, app_id=pending["app_id"])
             await require_install_admin(
                 tx, request, identity, authorized, action="apps.requests.approve", app_id=pending["app_id"],
                 verified_origin=fetched.origin,
@@ -365,6 +366,7 @@ async def install_app_route(
         if fetched.manifest.app_id != app_id:
             raise HTTPException(status_code=422, detail={"code":"manifest_app_mismatch", "message":"Manifest names another app"})
         async with db.transaction() as tx:
+            await _lock_installation_on(tx, team_id=authorized, app_id=app_id)
             await require_install_admin(
                 tx, request, identity, authorized, action="apps.install", app_id=app_id,
                 verified_origin=fetched.origin,
