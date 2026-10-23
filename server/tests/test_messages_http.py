@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from collections import OrderedDict
+from time import monotonic
+from aweb.identity_binding import IdentityBinding
+
 import asyncio
 import base64
 import hashlib
@@ -293,7 +297,7 @@ def test_encrypted_mail_rejects_non_base64_message_signature_shape():
         )
 
 
-def _build_test_app(aweb_db, registry):
+def _build_test_app(aweb_db, registry, *, verified_bindings=()):
     app = FastAPI()
     app.include_router(federation_router)
     app.include_router(messages_router)
@@ -335,6 +339,13 @@ def _build_test_app(aweb_db, registry):
     app.state.redis = None
     app.state.rate_limiter = None
     app.state.awid_registry_client = registry
+    # Routing/signature unit cases supply established authority facts explicitly.
+    # Fresh registry admission and refusals use test_identity_binding_http.
+    app.state.identity_binding_cache = OrderedDict({
+        (did_aw, did_key, selected_address): (monotonic() + 60, IdentityBinding(did_aw, selected_address))
+        for did_aw, did_key, address in verified_bindings
+        for selected_address in {"", address}
+    })
     app.state.federation_authority = TestFederationAuthority(aweb_db, registry)
     app.state.public_origin = "http://test"
     return app
@@ -3560,7 +3571,7 @@ async def test_messages_inbox_accepts_identity_auth(aweb_cloud_db):
             )
         ]
     )
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -3588,7 +3599,7 @@ async def test_messages_inbox_includes_sender_stable_identity_for_current_key(aw
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
     registry.list_did_addresses = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:bob',bob_did_key,'acme.com/bob'),))
 
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -3640,7 +3651,7 @@ async def test_messages_inbox_prefers_stored_sender_address_without_local_metada
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
     registry.list_did_addresses = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:bob',bob_did_key,'acme.com/bob'),))
 
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -3680,7 +3691,7 @@ async def test_messages_inbox_filters_by_message_id(aweb_cloud_db):
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
     registry.list_did_addresses = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -3751,7 +3762,7 @@ async def test_send_message_mutation_context_includes_from_did_aw(aweb_cloud_db)
             )
         ]
     )
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
     app.state.on_mutation = _capture
 
     payload = {"to_did": "did:aw:bob", "subject": "hello", "body": "hi"}
@@ -3844,7 +3855,7 @@ async def test_send_message_accepts_identity_auth(aweb_cloud_db):
         ]
     )
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {"to_did": "did:aw:bob", "subject": "hello", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
@@ -3909,7 +3920,7 @@ async def test_send_message_accepts_external_to_address_without_local_agent(aweb
         ]
     )
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
     app.state.federation_mail_transport = httpx.MockTransport(
         lambda request: httpx.Response(
             200,
@@ -4041,7 +4052,7 @@ async def test_identity_scoped_send_by_address_allows_persistent_multi_membershi
         ]
     )
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
     app.state.federation_mail_transport = httpx.MockTransport(
         lambda request: httpx.Response(
             200,
@@ -4158,7 +4169,7 @@ async def test_team_auth_alias_send_resolves_active_team_with_persistent_multi_m
     registry.get_team_public_key = AsyncMock(return_value=ops_team_did_key)
     registry.get_team_revocations = AsyncMock(return_value=set())
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {"to_alias": "bob", "subject": "multi membership team auth", "body": "hello"}
     body_bytes = json.dumps(payload).encode()
@@ -4226,7 +4237,7 @@ async def test_send_message_to_stable_id_transport_routes_stable_and_accepts_cur
         ]
     )
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {
         "to_did": bob_did_key,
@@ -7074,7 +7085,7 @@ async def test_send_message_team_and_contacts_accepts_equivalent_owner_did(aweb_
         ]
     )
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {"to_did": "did:aw:bob", "subject": "hello via legacy owner", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
@@ -7134,7 +7145,7 @@ async def test_send_message_accepts_team_auth(aweb_cloud_db):
     registry.list_team_certificates = AsyncMock(
         return_value=[_cert("cert-1", "did:aw:alice", alice_did_key, "alice")]
     )
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {"to_alias": "bob", "subject": "hello", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
@@ -7189,7 +7200,7 @@ async def test_send_message_team_and_contacts_accepts_verified_same_team_non_con
     registry.get_team_public_key = AsyncMock(return_value=team_did_key)
     registry.get_team_revocations = AsyncMock(return_value=set())
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {"to_alias": "bob", "subject": "team delivery", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
@@ -7241,7 +7252,7 @@ async def test_send_message_team_and_contacts_accepts_verified_same_team_non_con
     registry.get_team_public_key = AsyncMock(return_value=team_did_key)
     registry.get_team_revocations = AsyncMock(return_value=set())
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {"to_alias": "bob", "subject": "team delivery", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
@@ -7602,7 +7613,7 @@ async def test_send_message_team_auth_uses_cert_identity_when_agent_row_is_parti
     registry.get_team_public_key = AsyncMock(return_value=team_did_key)
     registry.get_team_revocations = AsyncMock(return_value=set())
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {"to_alias": "bob", "subject": "hello partial", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
@@ -7647,7 +7658,7 @@ async def test_inbox_matches_stable_and_current_identity_dids(aweb_cloud_db):
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
     registry.list_did_addresses = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:bob',bob_did_key,'acme.com/bob'),))
 
     headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -7709,7 +7720,7 @@ async def test_messages_inbox_and_ack_accept_persistent_cert_auth(aweb_cloud_db)
     registry = AsyncMock()
     registry.get_team_public_key = AsyncMock(return_value=team_did_key)
     registry.get_team_revocations = AsyncMock(return_value=set())
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     headers = _signed_team_headers(alice_sk, alice_did_key, "backend:acme.com", cert_header)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -7824,7 +7835,7 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
     registry = AsyncMock()
     registry.get_team_public_key = AsyncMock(return_value=team_did_key)
     registry.get_team_revocations = AsyncMock(return_value=set())
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),('did:aw:bob',bob_did_key,'acme.com/bob'),('did:aw:carol',carol_did_key,'acme.com/carol'),))
     alice_headers = cert_headers("alice", alice_sk, alice_did_key)
     bob_headers = cert_headers("bob", bob_sk, bob_did_key)
     carol_headers = cert_headers("carol", carol_sk, carol_did_key)
@@ -7956,7 +7967,7 @@ async def test_send_message_requires_timestamp_when_signature_is_provided(aweb_c
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {
         "to_did": "did:aw:bob",
@@ -7999,7 +8010,7 @@ async def test_send_message_rejects_signed_payload_body_mismatch(aweb_cloud_db):
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     # Generated at run time so the fixture clears the federation skew window and
     # the tampered body is the only thing left that can refuse it.
@@ -8060,7 +8071,7 @@ async def test_send_message_rejects_signed_payload_priority_mismatch(aweb_cloud_
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     timestamp = "2026-04-10T00:00:00Z"
     message_id = "12111111-1111-4111-8111-111111111111"
@@ -8120,7 +8131,7 @@ async def test_send_message_rejects_signed_payload_recipient_mismatch(aweb_cloud
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     timestamp = "2026-04-10T00:00:00Z"
     message_id = "14111111-1111-4111-8111-111111111111"
@@ -8179,7 +8190,7 @@ async def test_send_message_rejects_signed_payload_from_stable_id_mismatch(aweb_
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     timestamp = "2026-04-10T00:00:00Z"
     message_id = "15111111-1111-4111-8111-111111111111"
@@ -8239,7 +8250,7 @@ async def test_send_message_rejects_signed_payload_from_mismatch(aweb_cloud_db):
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     timestamp = "2026-04-10T00:00:00Z"
     message_id = "16111111-1111-4111-8111-111111111111"
@@ -8298,7 +8309,7 @@ async def test_send_message_rejects_signed_from_did_mismatch(aweb_cloud_db):
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {
         "to_did": "did:aw:bob",
@@ -8481,7 +8492,7 @@ async def test_send_message_to_did_does_not_create_unresolved_identity_contact(a
         ]
     )
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {"to_did": "did:aw:bob", "subject": "allowed", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
@@ -8536,7 +8547,7 @@ async def test_send_message_to_global_address_team_and_contacts_rejects_non_cont
     )
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {"to_address": "otherco.com/bob-contacts", "subject": "blocked", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
@@ -8589,7 +8600,7 @@ async def test_send_message_to_global_address_allows_explicit_inbound_mode_open(
     )
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {"to_address": "otherco.com/bob", "subject": "allowed", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
@@ -8623,7 +8634,7 @@ async def test_send_message_global_recipient_null_inbound_mode_fails_migration_r
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {"to_did": "did:aw:bob-migration", "subject": "blocked", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
@@ -8667,7 +8678,7 @@ async def test_send_message_to_address_falls_back_to_local_ephemeral_agent(aweb_
     registry.resolve_address = AsyncMock(return_value=None)
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {"to_address": "otherco.com/bob", "subject": "blocked", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
@@ -8703,7 +8714,7 @@ async def test_send_message_to_address_does_not_fall_back_to_local_persistent_ag
     registry.resolve_address = AsyncMock(return_value=None)
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     payload = {"to_address": "otherco.com/bob", "subject": "hidden", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
@@ -8924,7 +8935,7 @@ async def test_send_message_to_private_address_uses_client_recipient_binding(
     registry.resolve_address = AsyncMock(return_value=None)
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     message_id = str(uuid4())
     timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -8998,7 +9009,7 @@ async def test_send_message_to_private_address_rejects_unverified_client_recipie
     registry.resolve_address = AsyncMock(return_value=None)
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry, verified_bindings=(('did:aw:alice',alice_did_key,'acme.com/alice'),))
 
     message_id = str(uuid4())
     timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()

@@ -567,3 +567,34 @@ async def test_operator_verification_preserves_rows_on_registry_error(privacy_ap
         assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
     finally:
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_verified_proxy_context_rechecks_subject_binding(privacy_app, monkeypatch):
+    from starlette.requests import Request
+    from fastapi import HTTPException
+    from aweb.internal_auth import build_internal_auth_header_value
+    from aweb.mcp.auth import MCPAuthMiddleware
+
+    env = privacy_app
+    bob,alice = env.actors["bob"],env.actors["alice"]
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS","1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET","binding-test-disposable-secret")
+    async with registry_listener(env) as (registry,_):
+        stable,address = await register(env,registry,bob)
+        await env.db.execute("UPDATE {{tables.agents}} SET did_aw=$2,address=$3,identity_scope='global' WHERE agent_id=$1",bob.id,stable,address)
+        user_id = str(uuid4())
+        headers = {
+            "X-Team-ID":TEAM,"X-User-ID":user_id,"X-AWEB-Actor-ID":str(bob.id),
+            "X-AWEB-Auth":build_internal_auth_header_value(secret="binding-test-disposable-secret", team_id=TEAM,principal_type="u",principal_id=user_id,actor_id=str(bob.id)),
+        }
+        middleware = MCPAuthMiddleware(app=env.app,db_infra=env.infra)
+        def proxy_request():
+            return Request({"type":"http","method":"POST","path":"/mcp","headers":[(k.lower().encode(),v.encode()) for k,v in headers.items()],"app":env.app})
+        auth = await middleware._resolve_auth(proxy_request())
+        assert auth.did_aw == stable and auth.did_key == bob.did
+        other = (await registry.register_did(alice.did,alice.sk)).did_aw
+        await env.db.execute("UPDATE {{tables.agents}} SET did_aw=$2,address=NULL,did_aw_verified_key=NULL WHERE agent_id=$1",bob.id,other)
+        with pytest.raises(HTTPException) as refused:
+            await middleware._resolve_auth(proxy_request())
+        assert refused.value.status_code == 403

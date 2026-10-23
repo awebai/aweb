@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
+from time import monotonic
+from types import SimpleNamespace
+from aweb.identity_binding import IdentityBinding
+from aweb.team_auth_deps import TeamIdentity
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -10,7 +15,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from awid.did import did_from_public_key, generate_keypair
-from awid.registry import Address, AddressDelivery, KeyResolution, Namespace
+from awid.registry import Address, AddressDelivery, Namespace
 from awid.signing import sign_message
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.identity_auth_deps import IdentityAuth
@@ -131,7 +136,7 @@ async def _insert_mcp_chat_agents(aweb_db, *, team_id: str, alice_agent_id, bob_
     )
 
 
-def _request_with_headers(headers: dict[str, str]) -> Request:
+def _request_with_headers(headers: dict[str, str], *, verified_bindings=()) -> Request:
     return Request(
         {
             "type": "http",
@@ -143,6 +148,13 @@ def _request_with_headers(headers: dict[str, str]) -> Request:
             "server": ("testserver", 80),
             "client": ("127.0.0.1", 12345),
             "http_version": "1.1",
+            "app": SimpleNamespace(state=SimpleNamespace(
+                awid_registry_client=object(),
+                identity_binding_cache=OrderedDict({
+                    (did_aw,did_key,address): (monotonic()+60,IdentityBinding(did_aw,address))
+                    for did_aw,did_key,address in verified_bindings
+                }),
+            )),
         }
     )
 
@@ -212,18 +224,14 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
         "alice",
     )
 
-    async def _fake_verify_request_certificate(_request, _db_infra):
-        return {
-            "team_id": team_id,
-            "did_key": did_key,
-            "alias": "alice",
-            "member_did_aw": "did:aw:alice",
-            "member_address": "acme.com/alice",
-            "identity_scope": "global",
-            "certificate_id": "cert-1",
-        }
+    async def _fake_get_team_identity(_request, _db_infra):
+        return TeamIdentity(
+            team_id=team_id, did_key=did_key, alias="alice",
+            did_aw="did:aw:alice", address="acme.com/alice",
+            agent_id=str(agent_id), identity_scope="global", certificate_id="cert-1",
+        )
 
-    monkeypatch.setattr(mcp_auth, "verify_request_certificate", _fake_verify_request_certificate)
+    monkeypatch.setattr(mcp_auth, "get_team_identity", _fake_get_team_identity)
 
     middleware = mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db))
     ctx = await middleware._resolve_auth(
@@ -269,18 +277,14 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
         "alice",
     )
 
-    async def _fake_verify_request_certificate(_request, _db_infra):
-        return {
-            "team_id": team_id,
-            "did_key": did_key,
-            "alias": "alice",
-            "member_did_aw": "did:aw:alice",
-            "member_address": "acme.com/alice",
-            "identity_scope": "global",
-            "certificate_id": "cert-1",
-        }
+    async def _fake_get_team_identity(_request, _db_infra):
+        return TeamIdentity(
+            team_id=team_id, did_key=did_key, alias="alice",
+            did_aw="did:aw:alice", address="acme.com/alice",
+            agent_id=str(agent_id), identity_scope="global", certificate_id="cert-1",
+        )
 
-    monkeypatch.setattr(mcp_auth, "verify_request_certificate", _fake_verify_request_certificate)
+    monkeypatch.setattr(mcp_auth, "get_team_identity", _fake_get_team_identity)
 
     middleware = mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=aweb_cloud_db.aweb_db)
     ctx = await middleware._resolve_auth(
@@ -390,7 +394,8 @@ async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch
                     principal_id=user_id,
                     actor_id=str(agent_id),
                 ),
-            }
+            },
+            verified_bindings=[("did:aw:alice","did:key:z6MkAlice","acme.com/alice")],
         )
     )
 
