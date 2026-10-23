@@ -1033,3 +1033,36 @@ async def test_recipient_lock_reads_identity_from_current_storage(aweb_cloud_db,
     async with manager.transaction() as tx:
         current = await _lock_current_recipient(tx, envelope=keyed, recipient={"agent_id": recipient["agent_id"]})
     assert current["inbound_mode"] == "contacts_only"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["open", "contacts_only", None, "unknown"])
+async def test_global_recipient_without_stable_did_uses_own_federation_policy(aweb_cloud_db, mode):
+    from aweb.federation.delivery import _lock_current_recipient, _authorize_policy
+    manager = aweb_cloud_db.aweb_db
+    envelope = _envelope()
+    recipient, _ = await _seed_recipient_and_authority(manager, envelope)
+    if mode == "unknown":
+        await manager.execute("ALTER TABLE {{tables.agents}} DROP CONSTRAINT agents_inbound_mode_valid")
+    await manager.execute("""
+        UPDATE {{tables.agents}} SET did_aw=NULL, did_aw_verified_key=NULL, inbound_mode=$2 WHERE agent_id=$1
+    """, recipient["agent_id"], mode)
+    keyed = envelope.model_copy(update={"target_did_aw": envelope.target_current_did_key})
+    async with manager.transaction() as tx:
+        current = await _lock_current_recipient(tx, envelope=keyed, recipient=recipient)
+        if mode == "open":
+            await _authorize_policy(tx, envelope=keyed, recipient=current, stored_route_continuation=False)
+            return
+        with pytest.raises(FederationAuthorityError) as refused:
+            await _authorize_policy(tx, envelope=keyed, recipient=current, stored_route_continuation=False)
+        assert refused.value.reason == "recipient_policy_rejected"
+    if mode != "contacts_only":
+        return
+    await manager.execute("""
+        INSERT INTO {{tables.contacts}} (owner_did, contact_address, contact_did_aw,
+            binding_controller_did, binding_accepted_at, status)
+        VALUES ($1,$2,$3,'did:key:z6Mkcontroller',clock_timestamp(),'active')
+    """, envelope.target_current_did_key, envelope.sender_address, envelope.sender_did_aw)
+    async with manager.transaction() as tx:
+        current = await _lock_current_recipient(tx, envelope=keyed, recipient=recipient)
+        await _authorize_policy(tx, envelope=keyed, recipient=current, stored_route_continuation=False)
