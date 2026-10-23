@@ -172,6 +172,9 @@ class TestConnect:
             "certificate_id": "cert-persistent-001",
             "member_did_aw": "did:aw:z6Mkstable",
             "member_address": "acme.com/alice",
+            "verified_member_did_aw": "did:aw:z6Mkstable",
+            "verified_member_address": "acme.com/alice",
+            "did_aw_verified_key": agent_did_key,
         }
 
         result = await connect_agent(

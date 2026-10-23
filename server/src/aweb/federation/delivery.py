@@ -244,7 +244,7 @@ async def _lock_current_recipient(
         raise FederationAuthorityError("recipient_identity_not_found")
     row = await tx.fetch_one(
         """
-        SELECT agent_id, team_id, did_key, did_aw, address, alias,
+        SELECT agent_id, team_id, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, alias,
                inbound_mode, identity_scope
         FROM {{tables.agents}}
         WHERE agent_id = $1 AND deleted_at IS NULL
@@ -343,7 +343,7 @@ async def _authorize_policy(
             """
             SELECT agent_id FROM {{tables.agents}}
             WHERE team_id = $1 AND deleted_at IS NULL
-              AND (did_aw = $2 OR did_key = $2)
+              AND ((did_aw = $2 AND did_aw_verified_key = did_key) OR did_key = $2)
             LIMIT 1
             FOR UPDATE
             """,

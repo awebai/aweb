@@ -10,25 +10,28 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from fastapi import Depends, HTTPException, Request
-
-from aweb.auth_metrics import count_legacy_request_auth
-from aweb.audit import AuditActor, is_operator_audit_request, set_verified_audit_actor
-from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
-
-from aweb.deps import get_db
-from pgdbm import AsyncDatabaseManager
-
+from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 from awid.signing import verify_did_key_signature
 from awid.team_certificate import TeamCertificateError, decode_team_certificate
 from awid.team_ids import parse_team_id
-from awid.dns_auth import parse_didkey_auth, require_timestamp, enforce_timestamp_skew
+from fastapi import Depends, HTTPException, Request
+from pgdbm import AsyncDatabaseManager
+
+from aweb.audit import AuditActor, is_operator_audit_request, set_verified_audit_actor
+from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
+from aweb.auth_metrics import count_legacy_request_auth
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
     awid_registry_not_configured_exception,
 )
 from aweb.config import require_registered_certificates
+from aweb.deps import get_db
+from aweb.identity_binding import (
+    IdentityBinding,
+    refresh_projection_binding,
+    verify_identity_binding,
+)
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 from aweb.team_auth import parse_and_verify_certificate
 from aweb.team_auth_envelope import team_auth_signature_payload
@@ -107,6 +110,12 @@ async def resolve_team_identity(
             f"in team {team_id}"
         )
 
+    binding = IdentityBinding(
+        cert_info.get("verified_member_did_aw", ""),
+        cert_info.get("verified_member_address", ""),
+    )
+    await refresh_projection_binding(db, agent_id=row["agent_id"], did_key=did_key, binding=binding)
+
     # Keep the admitting certificate recorded on the projection current
     # (aweb-abfn): identity-only auth checks THIS value against the registry's
     # revocations, so a row still naming a replaced certificate would either
@@ -124,8 +133,8 @@ async def resolve_team_identity(
         team_id=team_id,
         alias=cert_info["alias"],
         did_key=did_key,
-        did_aw=(cert_info.get("member_did_aw") or "").strip(),
-        address=(cert_info.get("member_address") or "").strip(),
+        did_aw=binding.did_aw,
+        address=binding.address,
         agent_id=str(row["agent_id"]),
         identity_scope=normalize_identity_scope(cert_info.get("identity_scope") or cert_info.get("lifetime")),
         certificate_id=cert_info.get("certificate_id", ""),
@@ -254,6 +263,16 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
                 detail=f"Certificate not registered: {presented_certificate_id}",
             )
 
+    # Team authority does not establish the member's stable identity/address.
+    binding = await verify_identity_binding(
+        request, did_key=did_key,
+        did_aw=cert_info.get("member_did_aw", ""),
+        address=cert_info.get("member_address", ""),
+        fresh=request.url.path.endswith("/connect"),
+    )
+    cert_info["verified_member_did_aw"] = binding.did_aw
+    cert_info["verified_member_address"] = binding.address
+    cert_info["did_aw_verified_key"] = did_key if binding.did_aw else ""
     # Include the registry-resolved team key (not the certificate's claim)
     cert_info["verified_team_did_key"] = team_did_key
     if envelope.version == 1:
@@ -261,7 +280,7 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     set_verified_audit_actor(request, AuditActor(
         team_id=cert_info["team_id"], principal_type="c",
         auth_mode="team_auth_v2" if envelope.version == 2 else "team_auth_v1",
-        did_key=cert_info["did_key"], did_aw=cert_info.get("member_did_aw") or None,
+        did_key=cert_info["did_key"], did_aw=binding.did_aw or None,
     ))
     return cert_info
 

@@ -1,0 +1,147 @@
+"""Attribute stable identity claims only through current registry evidence."""
+
+from __future__ import annotations
+
+import logging
+from collections import OrderedDict
+from dataclasses import dataclass
+from time import monotonic
+
+from awid.did import stable_id_from_did_key
+from awid.registry import RegistryError
+from fastapi import HTTPException, Request
+
+logger = logging.getLogger(__name__)
+_BINDING_TTL = 60
+_CACHE_LIMIT = 4096
+
+
+@dataclass(frozen=True)
+class IdentityBinding:
+    did_aw: str = ""
+    address: str = ""
+
+
+def verified_projection(row):
+    """Keep local key/agent authority, withholding unverified global claims."""
+    if row is None:
+        return None
+    result = dict(row)
+    if (
+        not result.get("did_key")
+        or result.get("did_aw_verified_key") != result["did_key"]
+    ):
+        result["did_aw"] = None
+        result["address"] = None
+    return result
+
+
+async def verify_identity_binding(
+    request: Request,
+    *,
+    did_key: str,
+    did_aw: str = "",
+    address: str = "",
+    fresh: bool = False,
+) -> IdentityBinding:
+    did_aw, address = (did_aw or "").strip(), (address or "").strip()
+    if not did_aw and not address:
+        return IdentityBinding()
+    if not did_aw or not did_aw.startswith("did:aw:"):
+        raise HTTPException(status_code=403, detail="identity_binding_mismatch")
+    client = getattr(request.app.state, "awid_registry_client", None)
+    if client is None:
+        raise HTTPException(status_code=503, detail="identity_binding_unavailable")
+    cache = getattr(request.app.state, "identity_binding_cache", None)
+    if cache is None:
+        cache = OrderedDict()
+        request.app.state.identity_binding_cache = cache
+    key = (did_aw, did_key, address)
+    started = monotonic()
+    cached = cache.get(key)
+    if not fresh and cached is not None and cached[0] > started:
+        return cached[1]
+    cache.pop(key, None)
+    try:
+        try:
+            # The SDK's ordinary key/address caches have a longer lifetime
+            # and can serve stale values. They cannot establish this binding.
+            resolution = await client.resolve_key_fresh(did_aw)
+        except RegistryError as exc:
+            if exc.status_code != 404:
+                raise
+            if did_aw != stable_id_from_did_key(did_key):
+                raise HTTPException(
+                    status_code=403, detail="identity_binding_mismatch"
+                ) from exc
+        else:
+            if resolution.did_aw != did_aw or resolution.current_did_key != did_key:
+                raise HTTPException(status_code=403, detail="identity_binding_mismatch")
+        if address:
+            domain, separator, name = address.partition("/")
+            if not separator or not domain or not name or "/" in name:
+                raise HTTPException(status_code=403, detail="identity_binding_mismatch")
+            resolved_address = await client.resolve_address_fresh(domain, name)
+            if (
+                resolved_address is None
+                or resolved_address.did_aw != did_aw
+                or resolved_address.current_did_key != did_key
+                or f"{resolved_address.domain}/{resolved_address.name}" != address
+            ):
+                raise HTTPException(status_code=403, detail="identity_binding_mismatch")
+    except HTTPException:
+        raise
+    except RegistryError as exc:
+        if exc.status_code == 404:
+            raise HTTPException(
+                status_code=403, detail="identity_binding_mismatch"
+            ) from exc
+        logger.warning("Identity binding registry dependency failed", exc_info=True)
+        raise HTTPException(
+            status_code=503, detail="identity_binding_unavailable"
+        ) from exc
+    except Exception as exc:
+        logger.warning("Identity binding registry dependency failed", exc_info=True)
+        raise HTTPException(
+            status_code=503, detail="identity_binding_unavailable"
+        ) from exc
+    binding = IdentityBinding(did_aw, address)
+    # A newly observed current key supersedes older positive cache entries.
+    for cached_key in list(cache):
+        if cached_key[0] == did_aw and cached_key[1] != did_key:
+            cache.pop(cached_key, None)
+    cache[key] = (started + _BINDING_TTL, binding)
+    cache.move_to_end(key)
+    while len(cache) > _CACHE_LIMIT:
+        cache.popitem(last=False)
+    return binding
+
+
+async def refresh_projection_binding(
+    db, *, agent_id, did_key: str, binding: IdentityBinding
+):
+    """A verified request refreshes only its own key's projection."""
+    async with db.transaction() as tx:
+        if binding.did_aw:
+            await tx.execute(
+                """
+                UPDATE {{tables.agents}} SET did_aw_verified_key=NULL
+                WHERE did_aw=$1 AND did_key<>$2 AND did_aw_verified_key IS NOT NULL
+                """,
+                binding.did_aw,
+                did_key,
+            )
+        return await tx.execute(
+            """
+            UPDATE {{tables.agents}}
+            SET did_aw=$3, address=$4, did_aw_verified_key=$5
+            WHERE agent_id=$1::uuid AND did_key=$2 AND deleted_at IS NULL
+              AND (did_aw IS DISTINCT FROM $3 OR address IS DISTINCT FROM $4
+                   OR did_aw_verified_key IS DISTINCT FROM $5)
+            """,
+            agent_id,
+            did_key,
+            binding.did_aw or None,
+            binding.address or None,
+            did_key if binding.did_aw else None,
+        )

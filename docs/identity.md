@@ -336,6 +336,39 @@ machine then uses its local identity key to run `aw id team fetch-cert
 installs the certificate locally. The team controller private key never leaves
 the controller machine.
 
+## Verified identity attribution
+
+A team controller authorizes membership, alias and team scope. Certificate
+`member_did_aw` and `member_address` fields are claims about independent identity
+facts; aweb verifies them with AWID before connecting or authenticating a member.
+The current DID-log key must equal the request's member signing key. An address
+must resolve to that same stable identity and current key. Missing or conflicting
+bindings return `403 identity_binding_mismatch`; unavailable registry evidence
+returns `503 identity_binding_unavailable`. Provisioning does no registry I/O
+inside database locks.
+
+If AWID definitively reports no record for a stable identity, the signing key may
+use its own `stable_id_from_did_key` value. This exception does not apply to an
+existing registry record, a rotated-out key, or a registry failure. An address
+still requires its own positive registry binding.
+
+Successful verification is cached by stable identity, signing key and address
+for at most 60 seconds. A connect always rechecks current registry evidence.
+Neither older SDK caches nor stale registry results establish this binding.
+Identity-only and grant authentication apply the same check to their identity
+or grant subject; a grant session key does not become the subject's root key.
+
+`agents.did_aw_verified_key` records the key against which a projection was
+verified. Historical rows start with a null marker. Stable-DID and global-address
+routing, identity expansion and membership checks use a row's global claims only
+when the marker equals its `did_key`. A successful authenticated request or
+reconnect refreshes its own projection. Observing a current key also clears the
+markers for other keys of that stable identity in the same transaction. This
+requires no registry I/O under locks and does not add registry reads to recipient
+resolution. Local key-based access remains available
+without attributing unverified global metadata. Operators must investigate old
+rows before any data repair; this migration does not rewrite their identities.
+
 ## Session grants
 
 A session grant lets a worker process act as an identity until revoked (or for an explicit finite window)

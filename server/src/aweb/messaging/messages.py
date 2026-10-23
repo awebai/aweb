@@ -35,7 +35,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     if team_id is None:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
+            SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, inbound_mode, status, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND deleted_at IS NULL
             """,
@@ -44,7 +44,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     else:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
+            SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, inbound_mode, status, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
             """,
@@ -61,7 +61,7 @@ async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, inbound_mode, status, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
           AND COALESCE(agent_type, 'agent') != 'human'
@@ -78,10 +78,10 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, inbound_mode, status, deleted_at
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
-          AND (did_aw = $1 OR did_key = $1)
+          AND ((did_aw = $1 AND did_aw_verified_key = did_key) OR did_key = $1)
         ORDER BY CASE WHEN did_aw = $1 THEN 0 ELSE 1 END, created_at DESC
         LIMIT 1
         """,
@@ -138,7 +138,7 @@ async def _active_team_ids_for_identity(db, dids: list[str]) -> set[str]:
         SELECT DISTINCT team_id
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
-          AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
+          AND ((did_aw = ANY($1::text[]) AND did_aw_verified_key = did_key) OR did_key = ANY($1::text[]))
         """,
         dids,
     )
