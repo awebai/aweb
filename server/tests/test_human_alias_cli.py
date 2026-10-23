@@ -17,8 +17,9 @@ from test_messages_http import _insert_agent_encryption_assertion
 @pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("global_human", [True, False])
+@pytest.mark.parametrize("kind", ["mail", "chat"])
 async def test_cli_first_contact_human_alias_with_signed_key(
-    privacy_app, tmp_path, global_human  # noqa: F811
+    privacy_app, tmp_path, global_human, kind  # noqa: F811
 ):
     env = privacy_app
     async with _local_sender_mail(
@@ -93,6 +94,31 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         await _insert_agent_encryption_assertion(
             env.db, agent_id=actor.id, team_id=TEAM, assertion=assertion
         )
+        if kind == "chat":
+            chat_sent = await _cli(
+                binary, cwd, child_env, "--team", TEAM, "--json", "chat",
+                "send-and-leave", "alice", "--start-conversation", "--e2ee",
+                "--body-file", str(body_file),
+            )
+            chat_stored = await env.db.fetch_one(
+                "SELECT content_mode,encrypted_envelope FROM {{tables.chat_messages}} WHERE message_id=$1",
+                UUID(chat_sent["message_id"]),
+            )
+            assert chat_stored["content_mode"] == "encrypted_v2"
+            participants = await env.db.fetch_all(
+                "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
+                UUID(chat_sent["session_id"]),
+            )
+            assert (row["did_aw"] or actor.did) in {p["did"] for p in participants}
+            chat_envelope = chat_stored["encrypted_envelope"]
+            if isinstance(chat_envelope, str):
+                chat_envelope = json.loads(chat_envelope)
+            assert decrypt_e2ee_message(chat_envelope, identity={
+                "did": actor.did, "stable_id": row["did_aw"], "private_key": private,
+                "encryption_key_id": assertion["encryption_key_id"],
+            })["body"] == body_file.read_text()
+            return
+
         sent = await _cli(
             binary,
             cwd,
@@ -130,28 +156,6 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         )
         assert decrypted["body"] == body_file.read_text()
 
-        chat_sent = await _cli(
-            binary, cwd, child_env, "--team", TEAM, "--json", "chat",
-            "send-and-leave", "alice", "--start-conversation", "--e2ee",
-            "--body-file", str(body_file),
-        )
-        chat_stored = await env.db.fetch_one(
-            "SELECT content_mode,encrypted_envelope FROM {{tables.chat_messages}} WHERE message_id=$1",
-            UUID(chat_sent["message_id"]),
-        )
-        assert chat_stored["content_mode"] == "encrypted_v2"
-        participants = await env.db.fetch_all(
-            "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
-            UUID(chat_sent["session_id"]),
-        )
-        assert (row["did_aw"] or actor.did) in {p["did"] for p in participants}
-        chat_envelope = chat_stored["encrypted_envelope"]
-        if isinstance(chat_envelope, str):
-            chat_envelope = json.loads(chat_envelope)
-        assert decrypt_e2ee_message(chat_envelope, identity={
-            "did": actor.did, "stable_id": row["did_aw"], "private_key": private,
-            "encryption_key_id": assertion["encryption_key_id"],
-        })["body"] == body_file.read_text()
 
         # The same actual TCP server now accepts the protected native envelope
         # through the public stable-ID headers and survives loss of preparations.
