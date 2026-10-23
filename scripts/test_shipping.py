@@ -512,7 +512,7 @@ class NpmRcContractTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 args = (root / "args").read_text().splitlines()
                 self.assertEqual(args[args.index("--tag") + 1], expected)
-                self.assertEqual(args[1], str(archive))
+                self.assertEqual(args[1], str(archive.resolve()))
 
     def test_synced_downstream_publisher_routes_all_seven_packages(self):
         # Execute the real publisher with real platform archives. Only npm's
