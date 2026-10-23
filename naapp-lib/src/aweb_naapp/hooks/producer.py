@@ -306,7 +306,7 @@ class HookProducer:
             SELECT r.binding_id, LEAST(
                 (
                     SELECT e.created_at FROM {{tables.outbox_deliveries}} d
-                    JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id
+                    JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id AND e.record_type = 'event'
                     WHERE d.target_id = r.binding_id
                       AND d.state NOT IN ('delivered', 'duplicate')
                       AND e.channel = $3 AND e.team_id = $4 AND e.kind = $5
@@ -314,7 +314,7 @@ class HookProducer:
                     ORDER BY e.created_at LIMIT 1
                 ), (
                     SELECT e.created_at FROM {{tables.outbox_events}} e
-                    WHERE e.materialized_at IS NULL
+                    WHERE e.record_type = 'event' AND e.materialized_at IS NULL
                       AND e.channel = $3 AND e.team_id = $4 AND e.kind = $5
                       AND r.active_from <= e.occurred_at
                     ORDER BY e.created_at LIMIT 1

@@ -63,6 +63,14 @@ class OutboxEvent:
 
 
 @dataclass(frozen=True)
+class MissingProduction:
+    """A local accounting reservation, never a signed event or delivery."""
+
+    record_id: UUID
+    sequence: int
+
+
+@dataclass(frozen=True)
 class StoredEvent:
     """An enqueued event as the resolver and the transport see it."""
 
@@ -226,25 +234,30 @@ async def enqueue(tx: TransactionManager, event: OutboxEvent) -> None:
         return
     stored = await tx.fetch_one(
         """
-        SELECT team_id, kind, payload_sha256, signature, critical, channel
+        SELECT team_id, kind, payload_sha256, signature, critical, channel, record_type
         FROM {{tables.outbox_events}} WHERE event_id = $1
         """,
         event.event_id,
     )
-    if stored is None or (
-        stored["team_id"],
-        stored["kind"],
-        stored["payload_sha256"],
-        stored["signature"],
-        stored["critical"],
-        stored["channel"],
-    ) != (
-        event.team_id,
-        event.kind,
-        payload_sha256,
-        event.signature,
-        event.critical,
-        event.channel,
+    if (
+        stored is None
+        or stored["record_type"] != "event"
+        or (
+            stored["team_id"],
+            stored["kind"],
+            stored["payload_sha256"],
+            stored["signature"],
+            stored["critical"],
+            stored["channel"],
+        )
+        != (
+            event.team_id,
+            event.kind,
+            payload_sha256,
+            event.signature,
+            event.critical,
+            event.channel,
+        )
     ):
         raise OutboxConflict(f"event {event.event_id} was already enqueued with other contents")
 
@@ -265,7 +278,62 @@ async def next_sequence(tx: TransactionManager, *, scope: str, team_id: str) -> 
     return int(value)
 
 
+async def reserve_missing_production(
+    tx: TransactionManager,
+    *,
+    scope: str,
+    team_id: str,
+    origin: str,
+    kind: str,
+    channel: str,
+    occurred_at: datetime,
+    reason: Literal["key_unconfigured", "key_out_of_window"],
+    binding_ids: Sequence[str],
+) -> MissingProduction:
+    """Spend one logical firing's sequence without constructing a wire event.
+
+    Call in the effect's transaction. Use exactly the scope ordinary enqueue
+    uses; all owed targets share this one reservation. No key or recovery
+    signing authority is accepted here. The record survives ordinary drains.
+    """
+    if reason not in ("key_unconfigured", "key_out_of_window"):
+        raise ValueError("invalid signer-unavailable reason")
+    if not all(
+        isinstance(value, str) and value.strip()
+        for value in (scope, team_id, origin, kind, channel)
+    ):
+        raise ValueError("missing-production namespace must be nonempty")
+    if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
+        raise ValueError("missing-production occurrence must be timezone aware")
+    bindings = sorted({str(UUID(binding)) for binding in binding_ids})
+    if not bindings:
+        raise ValueError("missing-production needs its owed binding ids")
+    sequence = await next_sequence(tx, scope=scope, team_id=team_id)
+    record_id = mint_event_id()
+    await tx.execute(
+        """
+        INSERT INTO {{tables.outbox_events}}
+          (event_id, team_id, kind, occurred_at, payload_sha256, channel, record_type,
+           reservation_scope, reservation_seq, producer_origin, missing_reason, owed_binding_ids)
+        VALUES ($1, $2, $3, $4, NULL, $5, 'missing_production', $6, $7, $8, $9, $10::text[])
+        """,
+        record_id,
+        team_id,
+        kind,
+        occurred_at,
+        channel,
+        scope,
+        sequence,
+        origin,
+        reason,
+        bindings,
+    )
+    return MissingProduction(record_id, sequence)
+
+
 def _stored(row: Mapping[str, Any]) -> StoredEvent:
+    if row["record_type"] != "event":
+        raise ValueError("a local accounting record is not an OutboxEvent")
     producer = row["producer"]
     return StoredEvent(
         event_id=row["event_id"],
@@ -308,9 +376,9 @@ async def _materialize(
         rows = await tx.fetch_all(
             """
             SELECT event_id, team_id, kind, occurred_at, payload, signature, critical, producer,
-                   channel
+                   channel, record_type
             FROM {{tables.outbox_events}}
-            WHERE materialized_at IS NULL AND channel = $2
+            WHERE record_type = 'event' AND materialized_at IS NULL AND channel = $2
             ORDER BY position
             LIMIT $1
             FOR UPDATE SKIP LOCKED
@@ -362,11 +430,11 @@ async def _deliver_one(
             """
             SELECT d.event_id, d.target_id, d.target_meta, d.attempts,
                    e.team_id, e.kind, e.occurred_at, e.payload, e.signature, e.critical, e.producer,
-                   e.channel, (NOW() - e.created_at) >= $1 AS past_horizon
+                   e.channel, e.record_type, (NOW() - e.created_at) >= $1 AS past_horizon
             FROM {{tables.outbox_deliveries}} d
-            JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id
+            JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id AND e.record_type = 'event'
             WHERE d.state IN ('pending', 'stalled') AND d.next_attempt_at <= NOW()
-              AND e.channel = $2
+              AND e.channel = $2 AND e.record_type = 'event'
             ORDER BY e.position, d.target_id
             LIMIT 1
             FOR UPDATE OF d SKIP LOCKED
@@ -463,7 +531,7 @@ async def _finish_drained(db: AsyncDatabaseManager) -> int:
         """
         UPDATE {{tables.outbox_events}} AS e
         SET drained_at = NOW(), payload = NULL
-        WHERE e.materialized_at IS NOT NULL AND e.drained_at IS NULL
+        WHERE e.record_type = 'event' AND e.materialized_at IS NOT NULL AND e.drained_at IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM {{tables.outbox_deliveries}} d
             WHERE d.event_id = e.event_id
@@ -519,11 +587,14 @@ async def run_drain(
     policy: RetryPolicy,
     stop: asyncio.Event,
     interval_seconds: float = 1.0,
+    maintenance: Callable[[], None] | None = None,
 ) -> None:
     """Drain until ``stop`` is set, waiting ``interval_seconds`` whenever a pass
     found nothing to do. A failing pass is logged and retried."""
     while not stop.is_set():
         try:
+            if maintenance is not None:
+                maintenance()
             result = await drain(
                 db, channel=channel, resolver=resolver, transport=transport, policy=policy
             )
@@ -557,7 +628,7 @@ async def cancel(
             RETURNING event_id
         )
         SELECT c.event_id FROM cancelled c
-        JOIN {{tables.outbox_events}} e ON e.event_id = c.event_id
+        JOIN {{tables.outbox_events}} e ON e.event_id = c.event_id AND e.record_type = 'event'
         ORDER BY e.position
         """,
         target_id,
@@ -649,7 +720,7 @@ async def outbox_status(db: AsyncDatabaseManager, channel: str | None = None) ->
                EXTRACT(EPOCH FROM NOW() - min(e.created_at)
                        FILTER (WHERE d.state IN ('pending', 'stalled'))) AS oldest
         FROM {{tables.outbox_deliveries}} d
-        JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id
+        JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id AND e.record_type = 'event'
         WHERE $1::text IS NULL OR e.channel = $1
         GROUP BY d.target_id
         """,
@@ -659,7 +730,7 @@ async def outbox_status(db: AsyncDatabaseManager, channel: str | None = None) ->
         """
         SELECT team_id, count(*) AS count, EXTRACT(EPOCH FROM NOW() - min(created_at)) AS oldest
         FROM {{tables.outbox_events}}
-        WHERE materialized_at IS NULL AND ($1::text IS NULL OR channel = $1)
+        WHERE record_type = 'event' AND materialized_at IS NULL AND ($1::text IS NULL OR channel = $1)
         GROUP BY team_id
         """,
         channel,
@@ -667,7 +738,7 @@ async def outbox_status(db: AsyncDatabaseManager, channel: str | None = None) ->
     fault_rows = await db.fetch_all(
         """
         SELECT e.event_id FROM {{tables.outbox_events}} e
-        WHERE e.critical AND e.materialized_at IS NOT NULL
+        WHERE e.record_type = 'event' AND e.critical AND e.materialized_at IS NOT NULL
           AND ($1::text IS NULL OR e.channel = $1)
           AND NOT EXISTS (
             SELECT 1 FROM {{tables.outbox_deliveries}} d
