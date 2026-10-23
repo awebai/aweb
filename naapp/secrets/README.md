@@ -129,6 +129,20 @@ origin; entered bytes and response bodies must never be logged or stored in
 browser storage. Customers enter their own team's token; composition provides
 no operator token loader.
 
+`POST /installations/{installation_id}/onepassword/references` accepts
+`secret` (the complete secret record v1 with backend `onepassword`), `reference`
+(`vault_id`, `item_id`, and logical-field-to-field-ID `fields`), and a positive
+integer `credential_version`, with the same owner session and tab CSRF. After
+owner authorization, it opens the scoped staged or active token and reads the
+item through the official SDK outside authority transactions. A new transaction
+rechecks F6, the owner role, the exact LOGIN evidence, the open session and the
+scoped token/actual secret shape before staging metadata. The no-store response
+is the inert `onepassword_binding/1` after record; it never includes item values
+or the token. Staging creates no active secret or binding. Secret/binding
+confirmation and its forms remain the next console slice; the HTTP confirmation
+router currently accepts backend credentials only. Successful external vault
+access still requires the HO6 fixture and release proof.
+
 `aweb_secrets.approval_email.ApprovalEmailDelivery` implements B2 delivery for
 both use and change approvals. Composition supplies a shared
 `aweb_naapp.email.Mailer` and the trusted absolute console endpoint:
