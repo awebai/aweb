@@ -668,7 +668,7 @@ Every event has `mutation_type` and `target_ref`, and optional `before_ref` and
 | `app.installed` | `app_id`, `origin`, `digest`, `scopes`; optional `installation_id`, `generation` |
 | `app.updated` | as `app.installed`, plus `previous_digest` |
 | `hook_binding.activated` | the binding's identity (`binding_id`, `kind`, `app_id`, `installation_id`, `generation`, `catalog_id`, `catalog_version`, `hook`), `active_from`, `owner_act_sha256` |
-| `hook_binding.revoked` | the binding's identity, `reason` (`owner_act`, `uninstalled` or `superseded`); `owner_act_sha256` when an owner revoked it; optional `cancelled_count` with the cancelled `seq` range |
+| `hook_binding.revoked` | the binding's identity, `reason` (`owner_act`, `uninstalled` or `superseded`); `owner_act_sha256` when an owner revoked it; optional `cancelled_count` with exact `cancelled_seq_ranges` (canonical `first:last` strings, including sparse sets); legacy contiguous first/last stays parseable |
 | `app_key.revoked` | `app_id`, `kid`, `purposes` |
 | `membership.connected` | `member_alias`, `member_did_key`; optional `member_did_aw`, `workspace_ref` |
 | `membership.workspace_retired` | `member_alias`, `workspace_ref` |
@@ -727,6 +727,11 @@ installation and its generation.
   signing deployment's obligation. Activation
   compares the act's subject, including the manifest digest the owner's client
   fetched, with the stored pending row.
+  Ordinary activation remains valid without a `hook-terminal-receipt` key.
+  Under the [terminal contract](hook-terminal-delivery.md), that optional
+  pinned-manifest purpose authorizes only the target's signed completion
+  evidence. Missing key authority leaves terminal completion outstanding;
+  it neither refuses ordinary activation nor delays ending the binding.
 - **A new generation supersedes.** Every binding of the old generation becomes
   `superseded`, and the new generation's bindings start `pending`. Activation is
   never inherited, however similar the new bytes are.
@@ -749,7 +754,8 @@ installation and its generation.
    outstanding and surfaced for reconciliation, never silently complete.
 2. Its other undelivered events are cancelled, including explicit per-target
    tombstones for unmaterialized owed events. Core records its own exact count
-   and source-sequence ranges, not a global atomic count.
+   and exact source-sequence range list inside the one core event, not a
+   global atomic count or an enclosing span that swallows acknowledged events.
 3. Other eligible `post-mutation-hook` registrations receive that unchanged
    core event. Each other app producer cancels locally within the freshness
    bound and emits its own `hook_delivery.cancelled` governance records to

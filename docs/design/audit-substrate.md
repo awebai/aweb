@@ -378,7 +378,8 @@ The owner act is itself a governance event: core emits `post-mutation-hook`
   exact core authorization, cold evidence, separate retry credential and seal.
   Pending registrations and productions receive no terminal delivery.
 - Other backlog cancels, including unmaterialized owed events retained as
-  per-target cancellation tombstones. Core records its own exact cancellations;
+  per-target cancellation tombstones. Core records its own exact cancellations
+  in a `cancelled_seq_ranges` list in the one event, preserving sparse ranges;
   there is no global atomic count across producer databases.
 - Remaining eligible mutation registrations receive the unchanged core event.
   Each other app producer records its own cancellation count and contiguous
@@ -789,7 +790,10 @@ error:
    a conflict fault that `verify` reports. Nothing is overwritten. A valid
    terminal duplicate still atomically seals its addressed binding, even when
    the event previously arrived through another registration; it returns the
-   original receipt without a second append.
+   original receipt without a second append. A receiver-signed binding-seal
+   acknowledgement commits with that seal and authenticates the exact binding,
+   event/capsule and original receipt; the old event receipt alone cannot prove
+   that terminal admission completed.
 6. **Append** (§B3) in one transaction, then return a signed receipt. With
    the event, logs records the **key evidence** it verified against:
    `kid`, `did_key`, purposes, `installation_id`, generation and the

@@ -143,6 +143,10 @@
     "hmac_sha256_hex": {
       "kind": "string",
       "pattern": "^[0-9a-f]{64}$"
+    },
+    "sequence_range": {
+      "kind": "string",
+      "pattern": "^[1-9][0-9]{0,15}:[1-9][0-9]{0,15}$"
     }
   },
   "hooks": {
@@ -1451,6 +1455,12 @@
             "cancelled_seq_last": {
               "type": "sequence",
               "required": false
+            },
+            "cancelled_seq_ranges": {
+              "list_of": "sequence_range",
+              "min_items": 1,
+              "max_items": 9007199254740991,
+              "required": false
             }
           },
           "rules": [
@@ -1483,6 +1493,19 @@
               "require": [
                 "cancelled_seq_first",
                 "cancelled_count"
+              ]
+            },
+            {
+              "when": {
+                "field": "cancelled_seq_ranges",
+                "present": true
+              },
+              "require": [
+                "cancelled_count"
+              ],
+              "forbid": [
+                "cancelled_seq_first",
+                "cancelled_seq_last"
               ]
             }
           ]
@@ -2022,6 +2045,51 @@
         "source_seq_last": 15,
         "cancelled_count": 1,
         "reason_code": "binding_ended"
+      }
+    },
+    {
+      "name": "mutation_binding_revoked_sparse_ranges",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": [
+          "10:10",
+          "12:12"
+        ]
+      }
+    },
+    {
+      "name": "mutation_binding_revoked_contiguous_range_list",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 4,
+        "cancelled_seq_ranges": [
+          "810:813"
+        ]
       }
     }
   ],
@@ -3124,6 +3192,176 @@
       },
       "error": "rule_violation",
       "field": "act"
+    },
+    {
+      "name": "core_ranges_empty",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": []
+      },
+      "error": "invalid_value",
+      "field": "cancelled_seq_ranges"
+    },
+    {
+      "name": "core_ranges_duplicate",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": [
+          "10:10",
+          "10:10"
+        ]
+      },
+      "error": "invalid_value",
+      "field": "cancelled_seq_ranges"
+    },
+    {
+      "name": "core_ranges_bad_decimal",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": [
+          "010:12"
+        ]
+      },
+      "error": "invalid_value",
+      "field": "cancelled_seq_ranges"
+    },
+    {
+      "name": "core_ranges_bad_item_type",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": [
+          10
+        ]
+      },
+      "error": "invalid_value",
+      "field": "cancelled_seq_ranges"
+    },
+    {
+      "name": "core_ranges_missing_end",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": [
+          "10:"
+        ]
+      },
+      "error": "invalid_value",
+      "field": "cancelled_seq_ranges"
+    },
+    {
+      "name": "core_ranges_missing_count",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_seq_ranges": [
+          "10:10",
+          "12:12"
+        ]
+      },
+      "error": "rule_violation",
+      "field": "cancelled_count"
+    },
+    {
+      "name": "core_ranges_mixed_legacy_fields",
+      "hook": "post-mutation-hook",
+      "payload": {
+        "mutation_type": "hook_binding.revoked",
+        "target_ref": "binding:6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 2,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": "post-secret-use-hook",
+        "reason": "owner_act",
+        "owner_act_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "cancelled_count": 2,
+        "cancelled_seq_ranges": [
+          "10:10",
+          "12:12"
+        ],
+        "cancelled_seq_first": 10,
+        "cancelled_seq_last": 12
+      },
+      "error": "rule_violation",
+      "field": "cancelled_seq_first"
     }
   ]
 }

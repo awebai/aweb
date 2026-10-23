@@ -180,12 +180,17 @@ or producer enables a terminal exception ahead of acceptance.
   end-binding fence shared with enqueue/materialization, explicit cancellation
   tombstones for unmaterialized owed events, protected terminal targets in the
   existing hooks outbox, and cancellation summaries scoped to their producer.
+  **aweb-acgh.16.30** supplies nonblocking end fencing, attempt CAS/leases and
+  deterministic multi-binding order before terminal S2 wiring; today's
+  network-held row lock plus `cancel` does not meet the no-ACK-wait rule.
   Do not copy kit SQL or implement another sender/outbox in core. Apply new
   ordered kit migrations through its migration module.
 - **Signing/verification:** Go-generated public terminal-authorization and
-  terminal-credential vectors, with a Python consumer in the shared hooks kit.
-  Proposed paths are `docs/vectors/hook-terminal-authorization-v1.json` and
-  `docs/vectors/hook-terminal-credential-v1.json`; create and register them with
+  terminal-credential and binding-seal vectors, with a Python consumer in the
+  shared hooks kit.
+  Proposed paths are `docs/vectors/hook-terminal-authorization-v1.json`,
+  `docs/vectors/hook-terminal-credential-v1.json`, and
+  `docs/vectors/hook-binding-seal-v1.json`; create and register them with
   their implementations, not as unconsumed placeholder bytes. Preserve all
   existing ordinary event/delivery cases. A current core transport key can
   retry a historically signed event/capsule; each uses its specified window.
@@ -198,7 +203,15 @@ or producer enables a terminal exception ahead of acceptance.
   exact terminal dispatcher and endpoint binding; per-binding seal and team
   event dedup in one transaction. An event previously appended via another
   binding must seal the addressed binding and return the original receipt,
-  with no second append. Ordinary admission serializes with sealing.
+  with no second append. A receiver-signed seal acknowledgement, bound to the
+  exact event/capsule and original receipt, commits with the seal even on that
+  duplicate path. Unsigned flags or an older event receipt cannot prove
+  completion. The seal's cross-clock bounds reuse the 300-second policy and
+  the producer's current response-receipt clock, not an older chain receipt;
+  stored ACKs remain reusable on delayed retries. Ordinary activation without
+  the optional new receipt purpose stays valid; missing authority makes only
+  terminal completion unacknowledgeable. Ordinary admission serializes with
+  sealing.
 - **Cancellation evidence:** both catalog copies and payload cases are a
   deliberate v1 re-freeze under decision 93 and coordinator receipts recorded
   in the terminal contract. New `hook_delivery.cancelled/outbox_state` records

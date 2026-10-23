@@ -62,6 +62,14 @@ Under a per-producer/team/binding fence shared with enqueue and materialization:
    signed event bytes through ordinary delivery; the ended target receives a
    different wrapper around those unchanged bytes.
 
+This requires the shared-kit extension in **aweb-acgh.16.30** before terminal
+S2 wiring. Today's delivery loop holds a row lock across network transport;
+calling today's `outbox.cancel` alone would wait for an ACK and is insufficient.
+Use nonblocking end fencing plus attempt-result CAS/leases, or an equivalent
+shared design: do not hold a cancellation-conflicting lock across transport,
+and serialize multi-binding operations in deterministic binding-ID order within
+the existing team/installation lock order.
+
 The fence closes the race with a drain that already selected an event. A
 committed cancellation cannot be overwritten by an in-flight attempt's later
 ACK/retry result. A request already on the wire may reach the receiver; the
@@ -72,9 +80,25 @@ retain active authority while waiting for a target.
 
 The event's optional cancellation count and sequence range describe **core's
 own** exact cancellations, including unmaterialized owed events. A range is
-per producer, team and source hook; it never describes all producers. Separate
-non-contiguous ranges remain separate accounting evidence; a bounding interval
-must not claim that acknowledged events inside it were cancelled.
+per producer, team and source hook; it never describes all producers. Newly
+emitted core revocation payloads with nonzero cancellations carry
+`cancelled_seq_ranges`: an ascending list of exact maximal disjoint inclusive
+ranges, each a canonical `first:last` decimal string, with no leading zeros.
+Both endpoints are positive safe integers, `first <= last`, ranges neither
+intersect nor touch, and `cancelled_count` equals the sum of their lengths.
+Thus cancelled 10 and 12, with 11 acknowledged, is exactly
+`["10:10", "12:12"]`, count 2. Every remaining mutation sink receives both
+ranges inside the **one unchanged signed terminal event**. The list has the
+safe-integer sequence-space bound, not an arbitrary smaller fragmentation cap;
+transport resource limits still apply, and evidence is never truncated.
+A zero count omits the list. Never emit legacy first/last fields alongside it.
+
+Legacy contiguous `cancelled_seq_first/last/count` remains parseable for the
+existing vector and retained evidence. It explains an exact range only when
+count equals the inclusive width. Sparse legacy bounds alone do not identify
+which gaps were cancelled and must not silently explain them. The new shared
+semantic verifier checks ordering, bounds and total arithmetic; the generic
+catalog reader checks the list/item schema and exclusion rules.
 
 Each other producer applies the same shared-kit fence to its own outbox when
 it learns the binding has ended, within the existing 60-second resolution
@@ -116,8 +140,17 @@ capsule_signing_bytes = "aweb.hook-terminal-authorization/1\n" || canonical(C)
 
 `target` has exactly `kind` (`registration`), `app_id`, `installation_id`,
 `generation`, `digest`, `origin`, `tool`, `method`, `path`, `catalog_id`,
-`catalog_version`, `hook`, `activated_at`, `active_from`, and
-`activation_act_sha256`. Types and spellings are those of the binding and
+`catalog_version`, `hook`, `activated_at`, `active_from`,
+`activation_act_sha256`, and `receipt_keys`. `receipt_keys` is the exact list of
+`{kid, did_key, purposes}` authorized at the end transaction for the narrow
+`hook-terminal-receipt` purpose, derived from the old digest-pinned manifest
+and the old generation's authorized keys immediately before this same
+uninstall/update retires them. Independently revoked keys are excluded.
+Ordinary registration activation remains valid without this new purpose;
+there is no new activation gate. If the old pinned manifest authorizes no such
+key, use an empty set: containment still commits, while terminal completion
+remains unacknowledgeable and surfaced for reconciliation. Never resurrect a
+live-key lookup after uninstall or substitute keys from a new generation. Types and spellings are those of the binding and
 owner-act contracts. `path` is the resolved external raw path and query;
 `method` is `POST`. The snapshot is derived from stored owner-activated bytes,
 not installer-supplied substitute keys or a new tool resolution. Its IDs,
@@ -200,9 +233,16 @@ Uninstall and app origin changes do not remove the capsule or historical core
 evidence. They never change the old destination. If that endpoint no longer
 exists or cannot accept the record, retries remain outstanding and surfaced.
 Keeping the old endpoint reachable until terminal receipt is orderly rollout,
-not a condition that delays revocation. Supersession of an already-ended
-binding creates no second terminal event; its first obligation remains for
-that old binding. A later-active new generation has its own independent end.
+not a condition that delays revocation. Terminal retries continue to the pinned
+old origin while the obligation is outstanding. If that domain changes hands,
+its new holder can receive the final record, including team and binding
+identity, cancellation ranges and the owner-act commitment. The terminal
+record must remain value-free; pinning the origin does not establish continuing
+receiver ownership. A new domain holder without the old receipt key cannot
+produce a valid binding-seal acknowledgement, so the obligation remains surfaced.
+Supersession of an already-ended binding creates no second terminal event;
+its first obligation remains for that old binding. A later-active new generation
+has its own independent end.
 
 ## Receiver admission, dedup and sealing
 
@@ -237,12 +277,69 @@ Within that transaction:
    in the same transaction. Retain the original receipt and the exact evidence
    mapping binding to event, including for a duplicate through another binding.
 
-After commit return the normal appended/duplicate result and original event
-receipt, plus `binding_id` and `terminal_sealed=true`. The terminal producer
-accepts success only when these match its obligation. Identical terminal
-retries return that same event result and maintain the same seal. Changing a
-transport timestamp/key during legitimate rotation does not change event or
-capsule identity. No receipt claims exactly-once network delivery.
+Before committing the seal, generate and store the receiver-signed binding-seal
+acknowledgement below, including on the event-duplicate path. Only after commit
+return the normal appended/duplicate result and original event receipt,
+plus that signed acknowledgement. Unsigned `binding_id`/`terminal_sealed`
+flags are not completion evidence. Identical terminal retries return the same
+stored acknowledgement and original receipt; no second append or new seal
+signature/time is generated. A legitimate retry's current transport key or
+timestamp does not change event/capsule/seal identity. No receipt claims
+exactly-once network delivery.
+
+### Receiver-signed binding-seal acknowledgement
+
+Its signing bytes are `"aweb.hook-binding-seal/1\n" || canonical(S)`, with the
+same canonical and signature encodings as the capsule. `S` has exactly:
+
+- `v=1`, `team_id`, `binding_id`, `event_id`, and `event_sha256`;
+- `capsule_sha256`: SHA-256 of `"aweb.hook-terminal-capsule/1\n"` followed by
+  the canonical object containing the exact `terminal_authorization` and
+  `terminal_signature` strings;
+- `event_result_sha256`: SHA-256 of `"aweb.hook-terminal-result/1\n"` followed
+  by canonical `{event_id, receipt}` with the exact original signed event
+  receipt returned to the producer. If a generic target issues no ordinary
+  receipt, its canonical result contains only `event_id`. Logs always includes
+  its unchanged original chain receipt. Exclude retry-varying disposition and
+  all terminal fields from this commitment;
+- `sealed_at`: the canonical millisecond UTC time of the first seal transaction;
+- `receiver`: exactly `{app_id, installation_id, generation, digest, origin,
+  kid, did_key}`, matching the capsule's old target and one of its authorized
+  receipt keys.
+
+Return strict base64url of these complete signing bytes as `binding_seal`, and
+its detached signature as `binding_seal_signature`. The configured receiving
+app key signs, never a core, controller or member key. `hook-terminal-receipt`
+is a separate generic app-key purpose; Logs may declare the same physical key
+for it and `logs-receipt`. The capsule's authenticated old-key snapshot grants
+only this exact event/capsule's completion acknowledgement after uninstall or
+supersession, not general signing or restored app privileges. A receiver must
+retain that private key until the first seal acknowledgement is durably
+stored; after that, retries use the stored bytes without the old private key.
+Key loss before signing or an empty snapshot is a surfaced outstanding
+obligation, not permission to substitute a new unregistered key. A later-key
+rotation does not rewrite an existing seal.
+
+The producer verifies the signature, exact capsule-authorized key/purpose and
+receiver identity and all event/binding/hash/result fields. Apply the existing
+**300-second** clock-skew policy across the core and receiver clocks:
+`sealed_at >= ended_at - 300 seconds` and
+`sealed_at <= producer_received_at + 300 seconds`, where
+`producer_received_at` is the producer's live clock when it receives this
+terminal HTTP response. It is **not** the original event's chain receipt time,
+which may precede sealing through another binding. A stored acknowledgement
+need not be fresh on retry; its immutable lower bound stays tied to this end,
+while the request transport credential is freshly timestamped each attempt.
+A lagging receiver clock and a delayed response carrying an old original
+receipt therefore cannot permanently strand a legitimate stored seal. It retains
+the signed seal plus the original receipt and capsule/key evidence in its
+outbox acknowledgement. Offline export/verify checks the same evidence.
+An old event receipt plus a capsule **without this receiver signature** proves
+an authorized, still-unacknowledged terminal obligation, never completion.
+Changing a binding, capsule, receipt, receiver key or seal bytes must fail.
+The seal, acknowledgement bytes/signature and any first event append commit
+atomically; rollback exposes none of them. The duplicate path stores the same
+seal acknowledgement without a second team-chain append.
 
 The seal closes only that registration. Other registrations of this logs
 installation, other teams and the team's continuing chain remain open. The
@@ -307,16 +404,25 @@ If a deployed v1 consumer is found, stop this re-freeze and use the next catalog
 version with Juan's decision. No previously accepted payload is removed.
 
 This delta updates the public catalog and its byte-identical packaged copy,
-adds positive and single-fault payload cases for the new act, and preserves
+adds positive and single-fault payload cases for the new act and exact core
+range lists, and preserves
 the existing signed-envelope and ordinary-delivery vectors. Range arithmetic
 and system-actor coupling additionally require shared semantic verification;
 the generic catalog rule language alone does not prove them.
 
-Before enabling the exception, the shared kit must implement the capsule and
-terminal credential with Go-generated public conformance vectors and Python
-verification against those same bytes. New terminal vectors cover each
+Before enabling the exception, the shared kit must implement the capsule,
+terminal credential and receiver-signed binding-seal acknowledgement with
+Go-generated public conformance vectors and Python verification against those
+same bytes. New terminal vectors cover each
 signature, framing/hash, alternate scheme, key rotation/window and mismatch;
-existing ordinary v1 cases stay byte-identical. Shared lifecycle cases cover
+seal cases also reject a pre-existing event receipt/capsule without signed
+completion, wrong receipt/key/binding/capsule, and rollback/duplicate resealing.
+Time cases include a receiver clock lagging 20 seconds, both 300-second
+boundaries, an outside-skew seal, and a delayed response whose original event
+receipt predates sealing through another binding. Activation cases preserve
+an existing pinned manifest/valid owner act with no terminal-receipt purpose;
+its later terminal completion stays visibly unacknowledgeable.
+Existing ordinary v1 cases stay byte-identical. Shared lifecycle cases cover
 never-active refusal, pad-only final entry, cold uninstall, supersession,
 different original hook, rollback, unmaterialized cancellation, drain/ACK
 races, terminal retry, duplicate-via-another-binding sealing, seal/append
@@ -324,6 +430,8 @@ rollback, ordinary ingress racing a seal, independent new generation, and
 unanchorable authority remaining an outstanding reconciliation obligation.
 App cancellation cases cover multiple/disjoint ranges, incorrect count,
 wrong producer/hook, forbidden fields/authority/actor, unavailable targets and
-unexplained gaps. S2 supplies core integration, L2 supplies receiver integration;
+unexplained gaps. Core range-list cases cover sparse 10/12 around acknowledged
+11, ordering, adjacency, overlap, arithmetic, safe-integer limits and conflicting
+legacy fields. S2 supplies core integration, L2 supplies receiver integration;
 neither copies the shared implementation. Production activation waits for the
 reviewed paired implementation and real revocation end-to-end acceptance.
