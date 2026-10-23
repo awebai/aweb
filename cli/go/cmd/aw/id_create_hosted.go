@@ -93,6 +93,12 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 	if err != nil {
 		return orgCommandError(cmd, err)
 	}
+	// The human OAuth issuer names the site origin; ordinary identity APIs
+	// may be mounted below it. Save the resolved API base in the new root.
+	apiBase, err := resolveWorkingBaseURLContext(ctx, cfg.Issuer)
+	if err != nil {
+		return err
+	}
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
 		return err
@@ -148,10 +154,10 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 		return err
 	}
 	enrollment := &workspaceTeamEnrollResponse{TeamID: response.TeamID, CanonicalTeamID: response.CanonicalTeamID, Alias: name, DID: response.DID, StableID: response.StableID, IdentityScope: response.IdentityScope, IdentityID: response.IdentityID, AgentID: response.AgentID}
-	if err := installWorkspaceTeamEnrollment(home.Root, home.Root, cfg.Issuer, material, enrollment, cert, association.RegistryURL); err != nil {
+	if err := installWorkspaceTeamEnrollment(home.Root, home.Root, apiBase, material, enrollment, cert, association.RegistryURL); err != nil {
 		return fmt.Errorf("hosted identity exists; retry with the original root and parameters to finish installation: %w", err)
 	}
-	if err := requireCreatedIdentityInboundMode(cmd, home.Root, home.Root, cfg.Issuer, response.CanonicalTeamID, mode); err != nil {
+	if err := requireCreatedIdentityInboundMode(cmd, home.Root, home.Root, apiBase, response.CanonicalTeamID, mode); err != nil {
 		return err
 	}
 	// Recovery material is only for an incomplete operation. In particular it
@@ -232,7 +238,7 @@ func prepareHostedIdentity(root, statePath string, association hostedIdentityCon
 	if err == nil && !installed.Equal(key) {
 		return workspaceTeamIdentityMaterial{}, errors.New("installed signing key differs from original hosted creation")
 	}
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return workspaceTeamIdentityMaterial{}, err
 	}
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(root, "identity.yaml"))

@@ -50,6 +50,10 @@ func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode str
 			t.Error("hosted operation substituted another authority")
 		}
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusMethodNotAllowed)
 		case r.URL.Path == "/api/v1/cli-auth/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]any{"id": "account-1", "handle": "alice"}})
 		case r.URL.Path == "/v1/did":
@@ -117,7 +121,7 @@ func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode str
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": serviceTeam, "canonical_team_id": canonicalTeam, "identity_id": "identity-1", "agent_id": "agent-1", "name": "steward", "did": responseDID, "stable_id": stable, "identity_scope": "global", "custody": "self", "namespace": "chosen.example", "address": "chosen.example/steward", "inbound_mode": mode, "team_cert": encoded, "created": false})
 		case strings.HasSuffix(r.URL.Path, "/encryption-key") && strings.HasPrefix(r.URL.Path, "/v1/did/"):
 			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
-		case r.URL.Path == "/v1/agents/me/inbound-mode":
+		case r.URL.Path == "/api/v1/agents/me/inbound-mode":
 			requireCertificateAuthForTest(t, r)
 			readCalls++
 			actual := mode
@@ -125,7 +129,7 @@ func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode str
 				actual = "open"
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "agent-1", "team_id": serviceTeam, "alias": "steward", "identity_scope": "global", "inbound_mode": actual, "configurable": true})
-		case r.URL.Path == "/v1/agents/me/encryption-key":
+		case r.URL.Path == "/api/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", canonicalTeam, "steward")
 		default:
 			t.Errorf("unexpected endpoint %s", r.URL.Path)
