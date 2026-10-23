@@ -46,6 +46,9 @@ func runInboundMode(cmd *cobra.Command, args []string) error {
 			return modeErr
 		}
 		resp, err = c.Client.UpdateMyInboundMode(ctx, mode)
+		if err == nil && (resp == nil || resp.InboundMode != mode) {
+			return usageError("inbound_mode_mismatch: server did not retain requested mode %s", mode)
+		}
 	}
 	if err != nil {
 		return err

@@ -49,7 +49,7 @@ type guidedOnboardingRequest struct {
 	AgentType   string
 	Role        string
 	Global      bool
-	// InboundMode is the canonical wire form ("" | "open" | "team_and_contacts")
+	// InboundMode is the canonical wire form; empty preserves the server default.
 	// chosen at the CLI by --inbound-mode. Only meaningful when
 	// Global is true. Forwarded to whichever creation endpoint
 	// the wizard ends up calling.
@@ -177,6 +177,11 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	})
 	if err != nil {
 		return nil, err
+	}
+	if req.Global && strings.TrimSpace(req.InboundMode) != "" {
+		if err := requireCreatedIdentityInboundMode(nil, req.WorkingDir, "", serviceURLs.AwebURL, provisioned.Certificate.Team, req.InboundMode); err != nil {
+			return nil, err
+		}
 	}
 	printOutput(result, formatConnect)
 

@@ -44,12 +44,20 @@ var (
 		Short:       "Create a global identity by claiming a namespace address",
 		Long: "Create a self-custodial global identity in .aw/ by claiming DOMAIN/NAME\n" +
 			"in a namespace you control. This mints a did:aw, stores the local signing\n" +
-			"key material, and atomically claims the global address in AWID.",
+			"key material, and atomically claims the global address in AWID.\n\n" +
+			"With --org and --team-id, an authorized human creates an ordinary hosted member\n" +
+			"in an explicit fresh --identity-home root. The local key stays in that root;\n" +
+			"the hosted operator authorizes the address and certificate. Retry with the\n" +
+			"same root and parameters after a lost response. No namespace controller key\n" +
+			"or API key is used for that path.",
 		RunE: runIDCreate,
 	}
 )
 
 func init() {
+	idCreateCmd.Flags().String("org", "", "Hosted organization slug or ID (uses human CLI authorization)")
+	idCreateCmd.Flags().String("team-id", "", "Chosen hosted team service UUID (requires --org)")
+	idCreateCmd.Flags().String("inbound-mode", "", "Hosted inbound delivery mode (default team-and-contacts; requires --org)")
 	idCreateCmd.Flags().StringVar(&idCreateName, "name", "", "Global identity name (address name under --domain)")
 	idCreateCmd.Flags().StringVar(&idCreateDomain, "domain", "", "Namespace domain for the global identity address")
 	idCreateCmd.Flags().StringVar(&idCreateRegistryURL, "registry", "", "Registry origin override (default: api.awid.ai)")
@@ -93,6 +101,12 @@ type preparedIDCreate struct {
 }
 
 func runIDCreate(cmd *cobra.Command, args []string) error {
+	if cmd.Flags().Changed("org") {
+		return runHostedIdentityCreate(cmd)
+	}
+	if cmd.Flags().Changed("team-id") || cmd.Flags().Changed("inbound-mode") {
+		return usageError("--team-id and --inbound-mode require --org")
+	}
 	if strings.TrimSpace(idCreateName) == "" {
 		return usageError("--name is required")
 	}

@@ -40,7 +40,7 @@ type apiKeyInitRequest struct {
 	HumanName    string
 	AgentType    string
 	Global       bool
-	// InboundMode is "open" or "team_and_contacts" when --inbound-mode is
+	// InboundMode is a canonical delivery mode when --inbound-mode is
 	// set on a global init, "" otherwise. The runner forwards it to
 	// /api/v1/workspaces/init only when non-empty; the server defaults
 	// to "open" when the field is absent.
@@ -250,6 +250,11 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		return connectOutput{}, fmt.Errorf("%w\n(local state from this attempt was rolled back; rerun the same command to resume)", err)
 	}
 	resumable = false // Connected state must not be retried as an incomplete init.
+	if global && strings.TrimSpace(req.InboundMode) != "" {
+		if err := requireCreatedIdentityInboundMode(nil, req.WorkingDir, req.IdentityHome, serverURL, cert.Team, req.InboundMode); err != nil {
+			return connectOutput{}, err
+		}
+	}
 	if global {
 		if err := removeAPIKeyPartialInit(req.WorkingDir, req.IdentityHome); err != nil {
 			return connectOutput{}, fmt.Errorf("remove partial API-key init state: %w", err)

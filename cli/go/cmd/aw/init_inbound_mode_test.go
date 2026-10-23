@@ -293,6 +293,10 @@ func TestProvisionHostedIdentityOmitsInboundModeWhenUnset(t *testing.T) {
 // hyphen flag, and that the field is omitted when the flag is unset.
 
 func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
+	t.Run("matching", func(t *testing.T) { testAPIKeyExplicitModeReadback(t, "team_and_contacts", false) })
+	t.Run("downgraded", func(t *testing.T) { testAPIKeyExplicitModeReadback(t, "open", true) })
+}
+func testAPIKeyExplicitModeReadback(t *testing.T, actual string, wantFailure bool) {
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
 
 	const apiKey = "aw_sk_test_inbound_mode"
@@ -302,6 +306,7 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 	}
 	teamDIDKey := awid.ComputeDIDKey(teamPub)
 
+	readSeen := false
 	var initBody map[string]any
 	var registeredDIDKey string
 	var server *httptest.Server
@@ -368,6 +373,10 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 				"repo_id":      "repo-1",
 				"team_did_key": teamDIDKey,
 			})
+		case r.URL.Path == "/v1/agents/me/inbound-mode":
+			requireCertificateAuthForTest(t, r)
+			readSeen = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "agent-1", "team_id": "default:alice.aweb.ai", "identity_scope": "global", "inbound_mode": actual, "configurable": true})
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
@@ -392,8 +401,11 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 		Global:      true,
 		InboundMode: "team_and_contacts", // canonical wire form post-validation
 	})
-	if err != nil {
-		t.Fatalf("runAPIKeyBootstrapInit: %v", err)
+	if (err != nil) != wantFailure {
+		t.Fatalf("explicit mode result: %v, want failure=%t", err, wantFailure)
+	}
+	if !readSeen {
+		t.Error("explicit mode creation did not read back effective policy")
 	}
 	wire, ok := initBody["inbound_mode"].(string)
 	if !ok {

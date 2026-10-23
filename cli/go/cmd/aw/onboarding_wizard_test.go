@@ -1271,6 +1271,10 @@ func TestExecuteBYODPathDoesNotPromptForDNSWhenNonInteractive(t *testing.T) {
 // the wizard no longer prompts for lifetime; the resulting terminal identity is
 // self-custodial/global with a registered did:aw and on-disk identity.yaml.
 func TestExecuteHostedPathWithCompatibilityAliasCreatesSelfCustodialGlobalCLIIdentity(t *testing.T) {
+	t.Run("matching", func(t *testing.T) { testHostedGuidedExplicitModeReadback(t, "team_and_contacts", false) })
+	t.Run("downgraded", func(t *testing.T) { testHostedGuidedExplicitModeReadback(t, "open", true) })
+}
+func testHostedGuidedExplicitModeReadback(t *testing.T, actual string, wantFailure bool) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USER", "")
@@ -1311,6 +1315,7 @@ func TestExecuteHostedPathWithCompatibilityAliasCreatesSelfCustodialGlobalCLIIde
 		}
 	}))
 
+	readSeen := false
 	var signupBody map[string]any
 	var onboardingURL string
 	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1324,6 +1329,10 @@ func TestExecuteHostedPathWithCompatibilityAliasCreatesSelfCustodialGlobalCLIIde
 				"repo_id":      "repo-1",
 				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents/me/inbound-mode":
+			requireCertificateAuthForTest(t, r)
+			readSeen = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "agent-1", "team_id": "default:jack.aweb.ai", "identity_scope": "global", "inbound_mode": actual, "configurable": true})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:jack.aweb.ai", "laptop")
 		default:
@@ -1407,10 +1416,13 @@ func TestExecuteHostedPathWithCompatibilityAliasCreatesSelfCustodialGlobalCLIIde
 		PromptIn:   strings.NewReader("jack\nlaptop\nn\n"),
 		PromptOut:  &out,
 		BaseURL:    onboardingServer.URL + "/api",
-		Global:     true,
+		Global:     true, InboundMode: "team_and_contacts",
 	})
-	if err != nil {
-		t.Fatalf("executeHostedPath: %v", err)
+	if (err != nil) != wantFailure {
+		t.Fatalf("explicit guided mode result: %v, want failure=%t", err, wantFailure)
+	}
+	if !readSeen {
+		t.Error("guided creation did not read back effective mode")
 	}
 
 	if got, _ := signupBody["did_aw"].(string); strings.TrimSpace(got) == "" {

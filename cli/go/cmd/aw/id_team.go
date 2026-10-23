@@ -544,6 +544,8 @@ var certCmd = &cobra.Command{
 
 func init() {
 	bindTeamSelector(teamCreateCmd)
+	teamCreateCmd.Annotations = map[string]string{hostHumanOrgAnnotation: "true"}
+	teamCreateCmd.Flags().String("org", "", "Hosted organization slug or ID (requires aw auth login)")
 	teamCreateCmd.Flags().StringVar(&teamCreateName, "name", "", "Team name")
 	teamCreateCmd.Flags().StringVar(&teamCreateNamespace, "namespace", "", "Namespace domain")
 	teamCreateCmd.Flags().StringVar(&teamCreateDisplayName, "display-name", "", "Team display name")
@@ -659,6 +661,9 @@ func init() {
 // --- implementations ---
 
 func runTeamCreate(cmd *cobra.Command, args []string) error {
+	if cmd.Flags().Changed("org") {
+		return runOrgTeamCreate(cmd, teamCreateName)
+	}
 	name := strings.ToLower(strings.TrimSpace(teamCreateName))
 	domain := awconfig.NormalizeDomain(teamCreateNamespace)
 	if name == "" {
