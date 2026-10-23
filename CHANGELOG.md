@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- aw app installation names the resident credential directory and gives an
+  explicit replacement-grant action. Existing grants retain their original
+  app-tool snapshots; denied tools explain the approve/re-mint/restart remedy.
+  Installed app verbs accept the global boolean `--json` without sending it as
+  an app parameter.
+
 - Server: an installed app's hook bindings and their owner activation
   (`docs/app-registry.md`, "Hook bindings"). Migration 032 adds
   `app_hook_bindings`. `GET /v1/apps/hook-bindings` lists them, and

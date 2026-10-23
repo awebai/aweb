@@ -107,10 +107,13 @@ type pluginProvenance struct {
 }
 
 type pluginInstallOutput struct {
-	Approved   bool              `json:"approved,omitempty"`
-	Name       string            `json:"name"`
-	Path       string            `json:"path"`
-	Provenance *pluginProvenance `json:"provenance,omitempty"`
+	IdentityHome            string            `json:"identity_home,omitempty"`
+	ExistingGrantsUnchanged bool              `json:"existing_grants_unchanged,omitempty"`
+	GrantRefreshCommand     []string          `json:"grant_refresh_command,omitempty"`
+	Approved                bool              `json:"approved,omitempty"`
+	Name                    string            `json:"name"`
+	Path                    string            `json:"path"`
+	Provenance              *pluginProvenance `json:"provenance,omitempty"`
 }
 
 type pluginRemoveOutput struct {
@@ -400,7 +403,7 @@ func formatPluginInstall(v any) string {
 		}
 	}
 	if out.Approved {
-		return fmt.Sprintf("Installed app %s; approved for this resident and future grants.\n", out.Name)
+		return fmt.Sprintf("Installed app %s; approved for this resident and future grants.\nExisting grants keep their original tool snapshots. If the running session cannot use this app, ask the resident owner to mint a replacement:\n  %s\nChoose the intended scopes and replace <ttl> with the intended lifetime (for example 1h; choose never only deliberately). Replace <new-grant-home> with a new empty directory; restart the session using the replacement grant before calling the app. Keep the same resident identity.\n", out.Name, formatShellCommand(out.GrantRefreshCommand))
 	}
 	return fmt.Sprintf("Installed plugin %s -> %s\n", out.Name, out.Path)
 }
@@ -659,7 +662,13 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 	if policy.registerEvents && policy.residentHome == "" && len(manifest.Events) > 0 {
 		fmt.Fprintln(os.Stderr, "app events not registered: no resident identity here; run aw plugin install from a resident home to enable wakes")
 	}
-	return &pluginInstallOutput{Name: name, Path: appDir, Provenance: &provenance, Approved: policy.residentHome != ""}, nil
+	out := &pluginInstallOutput{Name: name, Path: appDir, Provenance: &provenance, Approved: policy.residentHome != ""}
+	if out.Approved {
+		out.IdentityHome = policy.residentHome
+		out.ExistingGrantsUnchanged = true
+		out.GrantRefreshCommand = []string{"aw", "--identity-home", policy.residentHome, "id", "grant", "mint", "--bundle", "normal-agent", "--ttl", "<ttl>", "--custody-socket", "auto", "--out", "<new-grant-home>"}
+	}
+	return out, nil
 }
 
 // normalizeManifestDevOrigin validates a --dev-origin override and returns it as
@@ -970,6 +979,16 @@ func dispatchPluginIfRequested(args []string) (int, bool) {
 	pluginArgs := stripPluginTraceFlags(args[commandIndex+1:])
 	switch resolution.Kind {
 	case pluginResolutionManifest:
+		// Cobra does not run for installed apps, so validate its global JSON
+		// boolean here as well as in the tool argument parser.
+		for _, arg := range args[:commandIndex] {
+			if arg == "--json" || strings.HasPrefix(arg, "--json=") {
+				if _, _, err := parseManifestDispatchArgs([]string{arg}); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1, true
+				}
+			}
+		}
 		return dispatchInstalledManifestPlugin(commandName, pluginArgs)
 	case pluginResolutionExternal:
 		if argsContainTraceFlag(args) {
@@ -1003,7 +1022,7 @@ func firstNonFlagArg(args []string) (string, int) {
 			}
 			return "", -1
 		}
-		if strings.HasPrefix(arg, "--server-name=") || strings.HasPrefix(arg, "--identity-home=") {
+		if strings.HasPrefix(arg, "--server-name=") || strings.HasPrefix(arg, "--identity-home=") || strings.HasPrefix(arg, "--json=") {
 			continue
 		}
 		switch arg {
@@ -1203,6 +1222,12 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 		return nil, true, fmt.Errorf("installed manifest %s: %w", manifestPath, manifestError(err))
 	}
 	manifest := resolved.Manifest
+	for len(args) > 0 && (args[0] == "--json" || strings.HasPrefix(args[0], "--json=")) {
+		if _, _, err := parseManifestDispatchArgs(args[:1]); err != nil {
+			return nil, true, err
+		}
+		args = args[1:]
+	}
 	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
 		return nil, true, fmt.Errorf("missing verb for app %q; run `aw %s --help`", name, name)
 	}
@@ -1303,6 +1328,9 @@ func executeGrantManifestTool(name, verb string, args map[string]any, rawBody []
 	defer cancel()
 	signed, err := client.SignAppRequestViaCustody(ctx, name, verb, args, rawBody)
 	if err != nil {
+		if err.Error() == "app_tool_denied" {
+			return nil, fmt.Errorf("%w: %s %s is not delegated to this grant; installing an app does not update an existing grant's tool snapshot. Ask the resident owner to approve the app and mint a replacement grant with the intended tools, then restart this session using the new grant (see aw id grant mint --help)", err, name, verb)
+		}
 		return nil, err
 	}
 	target, err := url.Parse(signed.URL)
@@ -1369,6 +1397,16 @@ func parseManifestDispatchArgs(args []string) (map[string]any, []byte, error) {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			return nil, nil, usageError("empty flag name")
+		}
+		// Manifest tools already return the app's response body. Consume the
+		// global boolean flag, never forward it as an app argument.
+		if name == "json" {
+			if hasValue {
+				if _, err := strconv.ParseBool(value); err != nil {
+					return nil, nil, usageError("invalid boolean for --json: %q", value)
+				}
+			}
+			continue
 		}
 		if !hasValue {
 			if i+1 >= len(args) {

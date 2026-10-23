@@ -101,7 +101,7 @@ func pluginManagementHome() (awconfig.IdentityHome, bool, error) {
 		return home, false, err
 	}
 	if _, err := os.Lstat(awconfig.GrantHomeStatePath(home.Root)); err == nil {
-		return home, false, usageError("app_management_denied: grant homes cannot install, update or remove apps; use the resident home")
+		return home, false, usageError("app_management_denied: grant homes cannot install, update or remove apps. Ask the resident owner to repeat this command with --identity-home <resident-credential-directory>: the directory containing signing.key and identity.yaml or teams.yaml, normally <resident-root>/.aw (not its parent). Keep the same resident identity; do not copy keys into the grant home")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return home, false, err
 	}
