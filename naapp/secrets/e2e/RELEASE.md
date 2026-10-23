@@ -72,7 +72,8 @@ bootstrap, personal enrolment/approval delivery and browser lifecycle.
    POST followed by the backend-credential draft; both must return `201`.
    Retain only the inert credential version and draft/approval IDs. The field
    must be cleared, and neither browser storage nor returned page/JSON may
-   contain the token. Never use `ONEPASSWORD_WRITER_TOKEN_FILE` for ingress.
+   contain the token. Never use
+   `AWEB_SECRETS_E2E_ONEPASSWORD_WRITER_TOKEN_FILE` for ingress.
 3. Obtain the personal approval link from S19's real delivery path. Review the
    frozen token change, then explicitly confirm with a fresh APPROVE passkey
    ceremony. LOGIN alone must not apply it. Confirm through the existing
@@ -82,8 +83,10 @@ bootstrap, personal enrolment/approval delivery and browser lifecycle.
    `window.awebSecretsConsole.post`, which supplies the real S4 cookie and tab
    `X-CSRF-Token`. The complete secret record has backend `onepassword`, kind
    `bearer`, and a newly minted ID/ref for this journey. Use exactly
-   `AWEB_SECRETS_E2E_ONEPASSWORD_VAULT_ID`, `ONEPASSWORD_ITEM_ID`, and
-   `ONEPASSWORD_API_FIELD_ID` (the latter mapped to logical field `value`).
+   `AWEB_SECRETS_E2E_ONEPASSWORD_VAULT_ID`,
+   `AWEB_SECRETS_E2E_ONEPASSWORD_ITEM_ID`, and
+   `AWEB_SECRETS_E2E_ONEPASSWORD_API_FIELD_ID` (the latter mapped to logical
+   field `value`).
    The credential version is the version entered and confirmed above.
 
    ```text
