@@ -42,7 +42,7 @@ async def registration(db, *, state="active", pad=False, hook="post-mutation-hoo
         if state == "active":
             activation = datetime.now(UTC).replace(microsecond=0) - (timedelta(0) if pad else timedelta(minutes=2))
             await tx.execute(
-                "UPDATE {{tables.app_hook_bindings}} SET state='active',activated_at=$2,active_from=$2+INTERVAL '60 seconds',activation_act_sha256=$3 WHERE binding_id=$1",
+                "UPDATE {{tables.app_hook_bindings}} SET state='active',activated_at=$2::timestamptz,active_from=$2::timestamptz+INTERVAL '60 seconds',activation_act_sha256=$3 WHERE binding_id=$1",
                 bindings[0].binding_id, activation, "a" * 64,
             )
         elif state != "pending":
