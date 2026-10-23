@@ -124,8 +124,9 @@ email links, SDK items, browser traces or screenshots of value entry. Missing
 root mounting, bootstrap/delivery, HO6, reference ingress or supported
 secret/binding confirmation is a failed prerequisite, never a skip or a pass.
 
-The reference route is held outside the 2026-10-23 combined release. HO6 waits
-on Juan's go to Hestia. Its agreed source contract has no reference form, and
+The reference route is held outside the 2026-10-23 combined release. This
+scenario requires the provisioned HO6 environment. Its agreed source contract
+has no reference form, and
 the current HTTP ConsoleChanges guard supports backend-credential changes
 only. Reference forms and complete secret/binding confirmation remain
 unfinished acceptance. Write and review the journey now; run it once those
