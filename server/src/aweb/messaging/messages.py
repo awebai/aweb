@@ -90,6 +90,31 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
     return None if not row else dict(row)
 
 
+async def policy_rows_for_participant(db, participant: dict) -> list[dict]:
+    """Policy evidence for an existing participant, never new routing authority."""
+    if participant.get("agent_id") is not None:
+        row = await get_agent_by_id(db, agent_id=str(participant["agent_id"]))
+        if row is not None:
+            return [row]
+    did = str(participant.get("did") or "").strip()
+    if not did:
+        return []
+    rows = await db.get_manager("aweb").fetch_all(
+        """
+        SELECT agent_id, team_id, alias, did_key,
+               CASE WHEN did_aw_verified_key=did_key THEN did_aw END AS did_aw,
+               CASE WHEN did_aw_verified_key=did_key THEN address END AS address,
+               identity_scope, (NULLIF(did_aw,'') IS NOT NULL) AS has_global_claim,
+               did_aw AS policy_did_aw, inbound_mode
+        FROM {{tables.agents}} WHERE deleted_at IS NULL
+          AND (did_key=$1 OR did_aw=$1)
+        ORDER BY agent_id
+        """, did,
+    )
+    # All raw-claim matches must pass policy; none selects a recipient or route.
+    return [dict(row) for row in rows]
+
+
 INBOUND_MODE_OPEN = "open"
 INBOUND_MODE_TEAM_AND_CONTACTS = "team_and_contacts"
 INBOUND_MODE_CONTACTS_ONLY_LEGACY = "contacts_only"

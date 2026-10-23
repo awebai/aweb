@@ -3281,7 +3281,9 @@ async def test_create_chat_session_to_external_did_first_contact_fails_closed(aw
 
     assert resp.status_code == 422, resp.text
     assert "Bare did:aw first-contact is unsupported" in resp.json()["detail"]
-    registry.resolve_key.assert_awaited_once_with("did:aw:alice")
+    registry.resolve_key.assert_not_awaited()
+    registry.resolve_key_fresh.assert_not_awaited()
+    assert app.state.identity_binding_cache[("did:aw:alice",alice_did_key,"")][1].did_aw == "did:aw:alice"
     registry.resolve_address.assert_not_called()
 
 

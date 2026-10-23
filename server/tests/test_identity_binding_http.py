@@ -598,3 +598,74 @@ async def test_verified_proxy_context_rechecks_subject_binding(privacy_app, monk
         with pytest.raises(HTTPException) as refused:
             await middleware._resolve_auth(proxy_request())
         assert refused.value.status_code == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target_kind", ["did_key", "did_aw"])
+@pytest.mark.parametrize("keep_marker", [False, True], ids=["historical", "verified"])
+async def test_stored_mail_and_chat_routes_keep_recipient_policy(privacy_app, target_kind, keep_marker):
+    from fastapi import FastAPI
+    from starlette.responses import JSONResponse
+    from aweb.mcp.auth import MCPAuthMiddleware
+    from aweb.mcp.tools.chat import chat_send
+
+    env = privacy_app
+    sender,recipient = env.actors["alice"],env.actors["bob"]
+    outside = "outside:example.test"
+    await env.db.execute("INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,'example.test','outside',$2)",outside,env.team_did)
+    await env.registry_db.execute("INSERT INTO {{tables.teams}} (domain,name,team_did_key,visibility) VALUES ('example.test','outside',$1,'public')",env.team_did)
+    await env.db.execute("UPDATE {{tables.agents}} SET team_id=$2 WHERE agent_id=$1",sender.id,outside)
+    await env.db.execute("UPDATE {{tables.workspaces}} SET team_id=$2 WHERE workspace_id=$1",sender.workspace,outside)
+    async with registry_listener(env) as (registry,_):
+        stable_ids = {}
+        for name,actor,team in (("alice",sender,outside),("bob",recipient,TEAM)):
+            stable = (await registry.register_did(actor.did,actor.sk)).did_aw
+            stable_ids[name] = stable
+            await env.db.execute("UPDATE {{tables.agents}} SET identity_scope='global',did_aw=$2,address=NULL WHERE agent_id=$1",actor.id,stable)
+            actor.certificate = _encode_certificate(_make_certificate(
+                env.team_sk,env.team_did,actor.did,team_id=team,alias=name,
+                identity_scope="global",member_did_aw=stable,certificate_id=f"policy-{name}",
+            ))
+
+        async def signed(actor, method, path, payload=None):
+            body = json.dumps(payload).encode() if payload is not None else b""
+            team = outside if actor is sender else TEAM
+            headers = _signed_team_headers(actor.sk,actor.did,team,actor.certificate,body)
+            return await env.client.request(method,path,content=body,headers={**headers,"Content-Type":"application/json"})
+
+        # Auth establishes the current bindings before any stable-DID routing.
+        for actor in (sender,recipient):
+            admitted = await signed(actor,"GET","/v1/team")
+            assert admitted.status_code == 200, admitted.text
+        target = recipient.did if target_kind == "did_key" else stable_ids["bob"]
+        mail = await signed(sender,"POST","/v1/messages",{"to_did":target,"subject":"policy","body":"while open"})
+        chat = await signed(sender,"POST","/v1/chat/sessions",{"to_dids":[target],"message":"while open"})
+        assert (mail.status_code,chat.status_code) == (200,200), (mail.text,chat.text)
+        mode = await signed(recipient,"PATCH","/v1/agents/me/inbound-mode",{"inbound_mode":"team_and_contacts"})
+        assert mode.status_code == 200, mode.text
+        if not keep_marker:
+            await env.db.execute("UPDATE {{tables.agents}} SET did_aw_verified_key=NULL WHERE agent_id=$1",recipient.id)
+
+        chat_count = await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1::uuid",chat.json()["session_id"])
+        chat_more = await signed(sender,"POST",f"/v1/chat/sessions/{chat.json()['session_id']}/messages",{"body":"after policy change"})
+        mail_more = await signed(sender,"POST","/v1/messages",{"conversation_id":mail.json()["conversation_id"],"subject":"policy","body":"after policy change"})
+        assert (mail_more.status_code,chat_more.status_code) == (403,403), (mail_more.text,chat_more.text)
+
+        # Exercise the actual MCP middleware with the same signed sender and
+        # real registry, rather than replacing its auth context in the tool.
+        mcp_app = FastAPI()
+        @mcp_app.post("/")
+        async def continue_chat():
+            result = await chat_send(env.infra,env.redis,registry_client=registry,
+                session_id=chat.json()["session_id"],message="MCP policy change",plaintext=True)
+            return JSONResponse(json.loads(result))
+        env.app.mount("/binding-policy-mcp",MCPAuthMiddleware(mcp_app,env.infra))
+        mcp_more = await signed(sender,"POST","/binding-policy-mcp/")
+        assert mcp_more.status_code == 200, mcp_more.text
+        assert "error" in mcp_more.json(), mcp_more.text
+        assert "only accepts" in mcp_more.json()["error"], mcp_more.text
+        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1::uuid",chat.json()["session_id"]) == chat_count
+        # A policy-only raw lookup must not make the historical row routable.
+        if not keep_marker:
+            from aweb.messaging.chat import resolve_agent_by_did
+            assert await resolve_agent_by_did(env.infra,stable_ids["bob"]) is None
