@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 
 import httpx
 import pytest
-from aweb_naapp_testing import REGISTRY_URL, Member
+from aweb_naapp_testing import Member
+from awid_service.testing import REGISTRY_URL
 from fastapi import FastAPI, HTTPException, Request
 
 from aweb_naapp.manifest import canonical_bytes, load_manifest

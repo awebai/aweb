@@ -26,7 +26,7 @@ from aweb_naapp.runtime.approvals import (
 from aweb_naapp.runtime.audit import AuditEvent
 from aweb_naapp.runtime.installation import InstallationFence, apply_installation_migrations
 from aweb_naapp.runtime.passkeys import Notice, Passkeys, RelyingParty
-from aweb_naapp_testing import awid_registry
+from awid_service.testing import running_registry
 from aweb_naapp_testing.owner_acts import (
     INSTALLATION_ID,
     TeamOwner,
@@ -130,7 +130,7 @@ async def world(test_db_factory) -> AsyncIterator[World]:
     installations = Installations()
     fence = InstallationFence(db, app_id=installations.app_id, grants=installations)
     await fence.refresh(TEAM)
-    async with awid_registry(registry_db.config.get_dsn()) as registry:
+    async with running_registry(registry_db.config.get_dsn()) as registry:
         yield World(
             db=db,
             passkeys=passkeys,

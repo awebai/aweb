@@ -110,13 +110,14 @@ packages = ["src/aweb_naapp"]
 [tool.uv.sources]
 awid-service = { path = "../awid", editable = true }
 aweb-naapp-testing = { path = "testing", editable = true }
+aweb = { path = "../server", editable = true }
 
 [dependency-groups]
 dev = [
   "aweb-naapp[runtime,pages]",
   "aweb-naapp[egress]",
   "cryptography>=44.0.0",
-  "aweb-naapp-testing",
+  "aweb-naapp-testing[server]",
   "pytest>=9.0.0",
   "pytest-asyncio>=1.2.0",
   "httpx2>=2.9.1",

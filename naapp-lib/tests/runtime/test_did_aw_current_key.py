@@ -13,9 +13,10 @@ from dataclasses import replace
 
 import httpx
 import pytest
-from aweb_naapp_testing import REGISTRY_URL, Member, did_key
+from aweb_naapp_testing import Member, did_key
 from awid.did import stable_id_from_did_key
 from awid.log import canonical_server_origin
+from awid_service.testing import REGISTRY_URL
 from nacl.signing import SigningKey
 
 from aweb_naapp.runtime.team_auth import AWIDTeamCache, DidAwProfile
