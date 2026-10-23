@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 import aweb.installations
@@ -44,6 +45,18 @@ async def compete(host, db, origin, calls):
     host.app.state.install_admin_policy = policy
     outer = FastAPI()
     outer.mount("/api", host.app)
+
+    @outer.middleware("http")
+    async def log_server_error(request, call_next):
+        try:
+            return await call_next(request)
+        except Exception as exc:
+            logging.getLogger(__name__).exception(
+                "installation route error: policy_overlap=%s sqlstate=%s",
+                len(readers) == 2, getattr(exc, "sqlstate", None),
+            )
+            raise
+
     # Exercise the real HTTP refusal, rather than propagating a server exception
     # into the test. No application component or database is substituted.
     async with httpx.AsyncClient(
