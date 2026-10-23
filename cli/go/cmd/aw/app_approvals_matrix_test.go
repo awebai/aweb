@@ -99,7 +99,12 @@ func TestAppApprovalBinaryMintAndDispatchMatrix(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				instance := t.TempDir()
+				// Worker homes are passed explicitly; use a real path on macOS,
+				// where /tmp is a symlink that the identity-home guard refuses.
+				instance, err := filepath.EvalSymlinks(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
 				invoke := func(selected, want string, args ...string) []byte {
 					t.Helper()
 					cmd := exec.CommandContext(ctx, bin, append([]string{"--identity-home", selected, "--json"}, args...)...)
