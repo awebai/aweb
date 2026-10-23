@@ -22,6 +22,7 @@ class IdentityBinding:
     address: str = ""
     fresh_observation: bool = False
     self_derived: bool = False
+    did_key: str = ""
 
 
 def verified_projection(row):
@@ -48,7 +49,7 @@ async def verify_identity_binding(
 ) -> IdentityBinding:
     did_aw, address = (did_aw or "").strip(), (address or "").strip()
     if not did_aw and not address:
-        return IdentityBinding()
+        return IdentityBinding(did_key=did_key)
     if not did_aw or not did_aw.startswith("did:aw:"):
         raise HTTPException(status_code=403, detail="identity_binding_mismatch")
     client = getattr(request.app.state, "awid_registry_client", None)
@@ -84,7 +85,14 @@ async def verify_identity_binding(
 
 
 async def observe_identity_binding(client, *, did_key: str, did_aw: str, address: str = "") -> IdentityBinding:
-    """Read current registry authority without a cache or a database lock."""
+    """Return a fresh key-bound observation for trusted in-process provisioning.
+
+    Call before opening a provisioning transaction. This is the authoritative
+    producer of IdentityBinding: it reads AWID fresh and applies the same
+    identity/address rules as request authentication. A mismatch raises 403;
+    unavailable evidence raises 503. Pass the returned object to connect_agent;
+    never construct a fresh observation from a certificate or transport input.
+    """
     if not did_aw or not did_aw.startswith("did:aw:"):
         raise HTTPException(status_code=403, detail="identity_binding_mismatch")
     self_derived = False
@@ -132,7 +140,7 @@ async def observe_identity_binding(client, *, did_key: str, did_aw: str, address
         raise HTTPException(
             status_code=503, detail="identity_binding_unavailable"
         ) from exc
-    return IdentityBinding(did_aw, address, fresh_observation=True, self_derived=self_derived)
+    return IdentityBinding(did_aw, address, fresh_observation=True, self_derived=self_derived, did_key=did_key)
 
 
 async def refresh_projection_binding(

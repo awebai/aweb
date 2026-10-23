@@ -866,3 +866,87 @@ async def test_federation_target_refreshes_stale_binding_before_refusal(privacy_
             await listener.aclose()
             await _resolve_target_identity(cached, envelope, stored_route_continuation=False)
         assert row == await env.db.fetch_one("SELECT did_key,did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1", bob.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("observation", ["fresh", "missing", "cached", "mapping", "wrong_key", "wrong_stable", "wrong_address", "unclaimed"])
+async def test_public_connect_requires_matching_fresh_observation(privacy_app, observation):
+    from contextlib import AsyncExitStack
+    from dataclasses import asdict, replace
+    from types import SimpleNamespace
+    from aweb.identity_binding import observe_identity_binding
+    from aweb.routes.connect import connect_agent
+
+    env = privacy_app
+    signing_key, _, did_key = _make_keypair()
+    actor = SimpleNamespace(sk=signing_key, did=did_key)
+    async with AsyncExitStack() as stack:
+        listener = await stack.enter_async_context(AsyncExitStack())
+        registry, _ = await listener.enter_async_context(registry_listener(env))
+        stable, address = await register(env, registry, actor, name="hosted")
+        binding = await observe_identity_binding(registry, did_key=did_key, did_aw=stable, address=address)
+        cert_info = dict(
+            team_id=TEAM, alias="hosted", did_key=did_key, identity_scope="global",
+            member_did_aw=stable, member_address=address, certificate_id="public-connect-hosted",
+            # These derived fields are deliberately insufficient as connect input.
+            verified_member_did_aw=stable, verified_member_address=address,
+            did_aw_verified_key=did_key, identity_binding_fresh=True,
+        )
+        supplied = binding
+        if observation == "missing":
+            supplied = None
+        elif observation == "cached":
+            supplied = replace(binding, fresh_observation=False)
+        elif observation == "mapping":
+            supplied = asdict(binding)
+        elif observation == "wrong_key":
+            cert_info["did_key"] = env.actors["alice"].did
+        elif observation == "wrong_stable":
+            cert_info["member_did_aw"] = stable_id_from_did_key(env.actors["alice"].did)
+        elif observation == "wrong_address":
+            cert_info["member_address"] = "identity.test/other"
+        elif observation == "unclaimed":
+            cert_info["member_did_aw"] = cert_info["member_address"] = ""
+        before = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+        # The authoritative read has finished and the actual listener is stopped
+        # before the caller opens its enclosing provisioning transaction.
+        await listener.aclose()
+        async with env.db.transaction() as tx:
+            kwargs = dict(
+                db=tx, cert_info=cert_info, team_did_key=env.team_did, hostname="hosted",
+                workspace_path="/hosted", repo_origin="", role="agent", human_name="", agent_type="agent",
+            )
+            if observation != "missing":
+                kwargs["identity_binding"] = supplied
+            if observation == "fresh":
+                result = await connect_agent(**kwargs)
+                assert binding.did_key == did_key
+                row = await tx.fetch_one("SELECT did_key,did_aw,address,did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1::uuid", result["agent_id"])
+                assert row == dict(did_key=did_key, did_aw=stable, address=address, did_aw_verified_key=did_key)
+            else:
+                with pytest.raises(ValueError, match="^identity_binding_mismatch$"):
+                    await connect_agent(**kwargs)
+                assert before == await tx.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+        if observation == "fresh":
+            assert len(before) + 1 == await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.agents}}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("carrier", ["body", "header"])
+async def test_http_connect_cannot_supply_binding_observation(privacy_app, carrier):
+    env = privacy_app
+    alice, bob = env.actors["alice"], env.actors["bob"]
+    async with registry_listener(env) as (registry, _):
+        stable = (await registry.register_did(alice.did, alice.sk)).did_aw
+        forged = certificate(env, bob, stable)
+        evidence = dict(did_key=bob.did, did_aw=stable, address="", fresh_observation=True)
+        payload = {"identity_binding": evidence} if carrier == "body" else {}
+        body = json.dumps(payload).encode()
+        headers = _signed_team_headers(bob.sk, bob.did, TEAM, forged, body)
+        if carrier == "header":
+            headers["X-AWEB-Identity-Binding"] = json.dumps(evidence)
+        before = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+        result = await env.client.post("/v1/connect", content=body, headers={**headers, "Content-Type": "application/json"})
+        assert result.status_code == 403, result.text
+        assert result.json()["detail"] == "identity_binding_mismatch"
+        assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")

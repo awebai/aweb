@@ -13,7 +13,7 @@ def seed_verified_bindings(app, *bindings):
     for did_aw, did_key, address in bindings:
         for claim_address in {"", address or ""}:
             cache[(did_aw, did_key, claim_address)] = (
-                monotonic() + 60, IdentityBinding(did_aw=did_aw, address=claim_address),
+                monotonic() + 60, IdentityBinding(did_aw=did_aw, address=claim_address, did_key=did_key),
             )
 
 

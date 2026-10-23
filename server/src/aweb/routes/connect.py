@@ -369,12 +369,16 @@ async def connect_agent(
     role: str,
     human_name: str,
     agent_type: str,
+    identity_binding: IdentityBinding | None = None,
 ) -> dict[str, Any]:
     """Auto-provision team + agent + workspace from certificate info.
 
     Args:
         db: The aweb database manager.
-        cert_info: Verified certificate fields (team_id, alias, did_key, identity scope).
+        cert_info: Verified team membership fields; member identity fields are claims.
+        identity_binding: Exact fresh observation from observe_identity_binding,
+            obtained before the caller opens its transaction. Required for global
+            identity/address claims. This function performs no registry I/O.
         team_did_key: The team's public key from awid registry.
         hostname: Agent's hostname.
         workspace_path: Agent's workspace path.
@@ -390,14 +394,21 @@ async def connect_agent(
     alias = cert_info["alias"]
     did_key = cert_info["did_key"]
     identity_scope = normalize_identity_scope(cert_info.get("identity_scope") or cert_info.get("lifetime"))
-    did_aw = cert_info.get("verified_member_did_aw", "")
-    address = cert_info.get("verified_member_address", "")
-    if (cert_info.get("member_did_aw") or cert_info.get("member_address")) and (
-        cert_info.get("did_aw_verified_key") != did_key
-        or did_aw != cert_info.get("member_did_aw", "")
-        or address != cert_info.get("member_address", "")
+    claimed_did_aw = cert_info.get("member_did_aw") or ""
+    claimed_address = cert_info.get("member_address") or ""
+    has_claims = bool(claimed_did_aw or claimed_address)
+    if has_claims and identity_binding is None:
+        raise ValueError("identity_binding_mismatch")
+    if identity_binding is not None and (
+        not isinstance(identity_binding, IdentityBinding)
+        or identity_binding.did_key != did_key
+        or identity_binding.did_aw != claimed_did_aw
+        or identity_binding.address != claimed_address
+        or (has_claims and not identity_binding.fresh_observation)
     ):
         raise ValueError("identity_binding_mismatch")
+    did_aw = identity_binding.did_aw if identity_binding is not None else ""
+    address = identity_binding.address if identity_binding is not None else ""
 
     async with db.transaction() as tx:
         await _ensure_team(tx, team_id, team_did_key)
@@ -416,9 +427,10 @@ async def connect_agent(
             certificate_id=cert_info.get("certificate_id", ""),
         )
 
-        await refresh_projection_binding(
-            tx, agent_id=agent_id, did_key=did_key, binding=IdentityBinding(did_aw, address, fresh_observation=True),
-        )
+        if identity_binding is not None:
+            await refresh_projection_binding(
+                tx, agent_id=agent_id, did_key=did_key, binding=identity_binding,
+            )
 
         workspace_id = await _ensure_workspace(
             tx,
@@ -466,6 +478,7 @@ async def connect_endpoint(
         result = await connect_agent(
             db=aweb_db,
             cert_info=cert_info,
+            identity_binding=cert_info.get("identity_binding"),
             team_did_key=team_did_key,
             hostname=payload.hostname,
             workspace_path=payload.workspace_path,
@@ -476,6 +489,10 @@ async def connect_endpoint(
         )
     except AliasConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        if str(exc) == "identity_binding_mismatch":
+            raise HTTPException(status_code=403, detail="identity_binding_mismatch") from exc
+        raise
 
     return ConnectResponse(**result)
 

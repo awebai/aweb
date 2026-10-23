@@ -111,11 +111,15 @@ async def resolve_team_identity(
             f"in team {team_id}"
         )
 
-    binding = IdentityBinding(
-        cert_info.get("verified_member_did_aw", ""),
-        cert_info.get("verified_member_address", ""),
-        fresh_observation=bool(cert_info.get("identity_binding_fresh")),
-    )
+    binding = cert_info.get("identity_binding")
+    if not isinstance(binding, IdentityBinding):
+        binding = IdentityBinding()
+        if request is not None:
+            binding = await verify_identity_binding(
+                request, did_key=did_key,
+                did_aw=cert_info.get("member_did_aw") or "",
+                address=cert_info.get("member_address") or "",
+            )
     if request is not None and not binding.did_aw and (row.get("did_aw") or row.get("address")):
         # An older local certificate cannot inherit a stored global identity
         # without proving that row's binding as well.
@@ -166,7 +170,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
     5. Check revocation list from awid registry
 
     Returns cert_info dict (team_id, alias, did_key, identity_scope,
-    certificate_id, member_did_aw, member_address). The last two are
+    certificate_id, member_did_aw, member_address, identity_binding). The member claims are
     empty strings for local certificates. Does NOT look up the agent
     in the local DB — suitable for /v1/connect where the agent may not
     exist yet.
@@ -279,6 +283,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
         address=cert_info.get("member_address", ""),
         fresh=fresh,
     )
+    cert_info["identity_binding"] = binding
     cert_info["identity_binding_fresh"] = binding.fresh_observation
     cert_info["verified_member_did_aw"] = binding.did_aw
     cert_info["verified_member_address"] = binding.address

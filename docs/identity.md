@@ -355,6 +355,21 @@ still requires its own positive registry binding.
 Successful verification is cached by stable identity, signing key and address
 for at most 60 seconds. A connect always rechecks current registry evidence.
 Neither older SDK caches nor stale registry results establish this binding.
+
+Embedding hosts obtain an authoritative observation through the public
+`aweb.identity_binding.observe_identity_binding(registry_client, *, did_key,
+did_aw, address="")` function before opening a provisioning transaction. It
+returns a frozen `IdentityBinding` bound to that exact key and fresh AWID facts;
+mismatch is 403 and unavailable evidence is 503. Pass the result as
+`connect_agent(..., identity_binding=observation)`. Connect requires a fresh,
+typed observation exactly matching every certificate identity/address claim,
+then writes the projection and marker in its transaction without registry I/O.
+The observation cannot add claims absent from the certificate. It is an
+in-process Python value, never a header, request body or certificate field.
+Hosts must not construct it from claims or rewrite verification flags. The OSS
+request verifier returns it as the internal `cert_info["identity_binding"]`
+result, and `/v1/connect` obtains that result through its own fresh verification.
+Claimless local connects need no observation.
 Identity-only and grant authentication apply the same check to their identity
 or grant subject; a grant session key does not become the subject's root key.
 
