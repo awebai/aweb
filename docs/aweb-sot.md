@@ -619,7 +619,8 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `app_install_admin_audit`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
-Installation management uses these tables:
+Migrations `035_team_app_installation_identity` and `036_app_installation_management`
+add installation identity and management. They use these tables:
 
 - `team_app_install_counters` keeps the last issued generation for each team and
   app, surviving installation and team deletion so generations are never reused.

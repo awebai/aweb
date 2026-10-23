@@ -437,7 +437,7 @@ the operator should also revoke the grant for the old key.
 
 ## Installation identity and transactional reader
 
-Migration `034_team_app_installation_identity` adds an opaque, unique
+Migration `035_team_app_installation_identity` adds an opaque, unique
 `installation_id`, a positive `BIGINT` generation, install state, per-install
 `origin_verified`, a bounded verification error code and exact pinned manifest
 bytes. State is `pending_origin_verification`, `active` or `uninstalled`.

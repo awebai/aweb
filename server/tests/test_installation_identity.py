@@ -16,7 +16,7 @@ import aweb
 from aweb.app_registry import get_installation_on, next_installation_generation_on
 
 pytestmark = pytest.mark.asyncio
-MIGRATION = "034_team_app_installation_identity.sql"
+MIGRATION = "035_team_app_installation_identity.sql"
 MIGRATIONS = Path(aweb.__file__).parent / "migrations" / "aweb"
 TEAM = "demo:example.com"
 OTHER_TEAM = "other:example.com"
