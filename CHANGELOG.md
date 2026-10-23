@@ -107,6 +107,23 @@ Server changes are since `server-v1.27.33`.
   **Host contract change:** an `InstallAdminPolicy` must accept the
   `verified_origin` keyword (`docs/app-registry.md`, "Host installation policy
   interface").
+- `aw plugin uninstall <app-id>` lets a team admin uninstall an app,
+  conditional on its current generation. Uninstall revokes app access within
+  the documented freshness bounds. Approvals and delegated app tools are now
+  bound to each team's installation: after upgrading, run
+  `aw plugin install <origin>` for each selected team and identity home, mint a
+  fresh grant, and restart custody and workers with the upgraded CLI and new
+  grant. Old approvals are never adopted automatically. Grant status now
+  includes `installed_at`, the installation's creation time; a re-pin
+  preserves it.
+- Folio links and edit sessions are bound to the installation that created
+  them. Uninstall ends their access; reinstall never revives them, while a
+  re-pin keeps them working. A legacy link or session is adopted only after a
+  fresh authority check proves that the current installation predates it.
+  Folio now uses manifest v2 and requires the separate `folio:grant-read-1`
+  key configured through `FOLIO_APP_KEY_FILES`. Folio migration
+  `003_installation_capabilities.sql`. Deploy the server first, then Folio,
+  then re-pin each Folio installation.
 - `aweb.testing` runs the coordination server in-process for tests. A
   library-mode host gives the AWID registry client its transport.
 - **Dependency floor:** `awid-service>=0.5.32`, because `aweb.testing` imports
