@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The shared app credential signer supports `app-request`, signing the required
+  installation id and positive generation. Its bytes match the C2 transport
+  vector; existing app-event, grant-read and hook-resolve credentials are unchanged.
+
 - aw app installation names the resident credential directory and gives an
   explicit replacement-grant action. Existing grants retain their original
   app-tool snapshots; denied tools explain the approve/re-mint/restart remedy.
