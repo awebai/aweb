@@ -35,9 +35,10 @@ aw also checks that resident's grants in the selected team. When active grants
 exist, the receipt reports their count and warns that existing grants do not gain
 tools from this install or update. An update does not mean an already delegated
 app is absent: its original snapshot still applies. Revoked and expired grants
-are excluded. This advisory check has a two-second request budget; if the server
-cannot be reached, installation still succeeds and the count is reported as
-unknown (`grant_check_error: "unavailable"`), with the same recovery guidance.
+are excluded. This advisory check has a two-second request budget. Its failure
+does not reverse a successful installation: the count is reported as unknown
+(`grant_check_error: "unavailable"`), with the same recovery guidance. Required
+installation steps, including event registration, must still succeed.
 JSON reports a known count as `active_grants` (including zero).
 
 The mint action is:

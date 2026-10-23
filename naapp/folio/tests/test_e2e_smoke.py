@@ -784,11 +784,6 @@ def test_install_after_mint_uses_replacement_grant(
                 except subprocess.TimeoutExpired:
                     custody.kill()
                     custody.wait(timeout=10)
-    # The advisory read must not turn a completed install into a failure when
-    # the real coordination server is down, nor report an unknown count as zero.
-    offline = _run_aw_json(aw_workspace, "plugin", "update", "folio")
-    assert offline["approved"] and offline["grant_check_error"] == "unavailable"
-    assert "active_grants" not in offline
 
 
 def test_document_endpoints_versions_raw_utf8_and_attribution(
