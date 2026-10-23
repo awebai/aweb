@@ -99,5 +99,94 @@ Rollback never deploys a commit: a commit deploy rebuilds under the service's
 current settings, which for a commit from before the repository-root build
 fails. Rolling back across that change uses the earlier deploy's artifact.
 
-The deployed commit is read from the Render API. Folio's `/health` does not
-report it yet.
+The deployed commit is read from the Render API and Folio's shared `/health`
+build identity (`RENDER_GIT_COMMIT`, with `FOLIO_GIT_SHA` as a fallback).
+
+
+## Filled manifest and emit-key configuration
+
+The committed `src/folio/aweb-app.json` is a template. It declares the stable
+`folio:emit-1` kid and local event type `doc.changed`; the shared runtime fills
+its public did:key from configuration before serving either manifest URL.
+Keep the production app id `folio` (`FOLIO_APP_ID`), kid and
+`FOLIO_PUBLIC_ORIGIN=https://folio.aweb.ai` unchanged. App id is stable for the
+entire deployment lifetime: changing it orphans installed grants.
+
+The existing `FOLIO_APP_EMIT_KID=folio:emit-1` and secret
+`FOLIO_APP_EMIT_KEY_SEED_HEX`, together with `FOLIO_APP_EVENTS_ORIGIN`, remain
+sufficient. No new emit-key environment variable is required. Alternatively,
+`FOLIO_APP_KEY_FILES` is a JSON map from each declared kid to a mounted signing-key
+file; do not configure both a file and a seed for the same kid. Every declared
+kid requires a configured key even when outbound event delivery is disabled.
+Never place a production seed or private key in the committed template.
+
+The template's local event declaration changes the manifest digest. Emitted
+event bodies, subscriptions and stream wakes still use `folio/doc.changed`:
+the server matches that namespace against installed app `folio` and local type
+`doc.changed`. The redeploy handoff must include updating **every existing
+Folio install** to the new digest immediately after deploy, through
+`aw plugin update folio` or the install API. Until an install is updated, the
+hosted MCP offers no Folio tools for that team. Key rotation likewise adds a
+new declared kid beside the old one, yields a new digest, and needs a re-pin.
+These are separately authorized operator actions; a code landing performs none
+of them.
+
+## Read-only presentation lifetimes
+
+Read-only links accept up to 30 days (`2592000` seconds); the default lifetime
+remains one day (`86400` seconds). Operators may set a shorter ceiling. An
+explicit request above the configured ceiling returns `422` without minting a
+link. Editable openers remain limited to 300 seconds; established edit sessions
+have no expiry, as described below.
+
+For the 30-day rollout, check the existing `FOLIO_MAX_PRESENT_TTL_SECONDS`
+environment setting. If it is `604800` (the former seven-day example), raise it
+to `2592000` or remove it to use the new default. Keeping that override preserves
+the seven-day ceiling even after the code deploys. `.env.example` now uses
+`2592000`. The committed app manifest and its tool schemas do not change, so
+this lifetime change alone needs no manifest re-pin.
+
+## Editable opener and session deployment
+
+Apply forward Folio migration `002_edit_sessions.sql` during deployment. It adds
+hashed opener/consumption/minter-key evidence and a persistent hashed edit-session
+table. Initial migration 001 stays unchanged. No production document rows need
+inspection. Read-only links retain their existing TTL and URL behavior.
+
+Editable URLs now use `/present/edit/<public-id>#k=<opener>`. Their opener is
+single-use and lasts at most 300 seconds; an already-open session never expires
+on time or inactivity. Cloud's exact fragment-URL validation change must deploy
+**before** this Folio build, or dashboard Edit will reject the new URL. Folio's
+manifest bytes/digest remain unchanged, so this change needs no install re-pin.
+
+Old editors still using token paths will enter draft-copy recovery on their next
+request after deployment. There is no compatibility authority path. The person
+copies their unsaved text and reopens Edit from the dashboard. A reload of a new
+session works through its per-link sessionStorage credential; the database keeps
+sessions across app restarts and instances.
+
+Revoke the public link id to end a consumed opener's session. Document deletion,
+minter removal, or replacement/revocation of the minter's certificate also ends
+it. Certificate rotation therefore requires reopening Edit even when the person
+remains a team member. AWID unavailability is a retryable 503, never authority.
+The shared team-facts cache bounds membership freshness at 60 seconds. There is
+no idle timeout or hard session lifetime under Juan's ruling.
+
+Every `/present/` response, including exchange and refusals, carries no-store and
+no-referrer. Neither the fragment opener nor session header reaches access paths.
+Only SHA-256 verifiers reach the database. Folio's access filter also suppresses
+all query strings and redacts old bearer path segments; errors must not log
+request bodies or session headers. Upstream logging must follow the same policy.
+
+Focused proof under the team suite lock:
+
+```sh
+uv run pytest -q tests/test_edit_sessions.py tests/test_editor_browser.py tests/test_live_refresh.py
+```
+
+The session tests use real disposable PostgreSQL/HTTP/Chromium and age only the
+fixture opener to model a hidden tab returning beyond 300 seconds. The existing
+Docker CLI/AWID journey covers actual member signing. The paired Cloud test
+starts at Documents Edit and proves the fragment survives backend validation and
+popup navigation before the Folio shell scrubs it. Exact tested heads and results
+belong to the review and landing receipts, not a production claim.

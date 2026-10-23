@@ -21,8 +21,13 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import unquote
 
-from aweb_secrets.credential_shapes import has_credential_shape
+from aweb_secrets.credential_shapes import (
+    has_credential_shape,
+    has_credential_value,
+    is_credential_field,
+)
 from aweb_secrets.redaction import KnownValues
 
 _PASSED_HEADERS = frozenset(
@@ -93,11 +98,22 @@ def _resolve(document: Any, tokens: Sequence[str]) -> Any:
     return current
 
 
-def _project(body: bytes, projection: Sequence[str], *, complete: bool) -> bytes:
-    """The values the pointers name, keyed by pointer. A body that is cut or is
-    not JSON yields none."""
+def resolve_pointer(document: Any, pointer: str) -> Any:
+    """Resolve one validated JSON pointer, or raise LookupError for a missing value."""
+    value = _resolve(document, _pointer_tokens(pointer))
+    if value is _MISSING:
+        raise LookupError("the JSON pointer has no value")
+    return value
+
+
+def _project(body: bytes, projection: Sequence[str], *, complete: bool) -> tuple[bytes, bool]:
+    """The values the pointers name, keyed by pointer, and whether one of them
+    contains a non-empty string under a credential-named field, including
+    arrays and descendants. A body that is cut or
+    is not JSON yields none."""
     parsed = [(pointer, _pointer_tokens(pointer)) for pointer in projection]
     projected: dict[str, Any] = {}
+    names_credential = False
     if complete:
         try:
             document = json.loads(body)
@@ -108,7 +124,12 @@ def _project(body: bytes, projection: Sequence[str], *, complete: bool) -> bytes
                 value = _resolve(document, tokens)
                 if value is not _MISSING:
                     projected[pointer] = value
-    return json.dumps(projected, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+                    names_credential |= (
+                        any(is_credential_field(token) for token in tokens)
+                        and has_credential_value(value)
+                    )
+    encoded = json.dumps(projected, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return encoded, names_credential
 
 
 def handle_response(
@@ -139,6 +160,11 @@ def handle_response(
         if _passes(name):
             value, count = known.redact_text(value)
             redaction_count += count
+            # Issued credentials are not yet known values. Inspect headers
+            # independently of body projection/withholding; URL-decode names
+            # such as access%5Ftoken as well as the raw header value.
+            if has_credential_shape(value.encode()) or has_credential_shape(unquote(value).encode()):
+                continue
             passed.append((name, value))
 
     def withheld(
@@ -174,13 +200,16 @@ def handle_response(
         body, count = known.redact_tail(body)
         redaction_count += count
 
+    # Projected values are keyed by pointer, so a credential field they name is
+    # found by its pointer, not by the detector's field-name rule.
+    names_credential = False
     if projection is not None:
-        body = _project(body, projection, complete=not truncated)
+        body, names_credential = _project(body, projection, complete=not truncated)
         for redact in (known.redact, known.redact_json):
             body, count = redact(body)
             redaction_count += count
 
-    if has_credential_shape(body):
+    if names_credential or has_credential_shape(body):
         return withheld("credential_shaped", not token_issuing)
     return BrokeredResult(
         status=status,

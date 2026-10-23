@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import secrets
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -23,6 +24,11 @@ from aweb_naapp.runtime.approvals import (
     Assurance,
     PgApprovalStore,
 )
+from aweb_naapp.runtime.installation import (
+    InstallationFence,
+    InstallationRefused,
+    apply_installation_migrations,
+)
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty, contact_sha256
 from aweb_naapp_testing import awid_registry, did_key
 from aweb_naapp_testing.owner_acts import (
@@ -35,15 +41,21 @@ from aweb_naapp_testing.owner_acts import (
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from nacl.signing import SigningKey
 
+from aweb_secrets.change import ChangeRefused
+from aweb_secrets.change_policy import apply_change_policy_migrations, require_four_eyes
+from aweb_secrets.change_sets import apply_change_set_migrations
+from aweb_secrets.console import OwnerConsole
 from aweb_secrets.owners import (
     OWNER_ROLE,
     OwnerDirectory,
     OwnerRequired,
-    apply_owner_act,
     apply_owner_migrations,
     is_owner_scope,
     owner_scope,
 )
+from aweb_secrets.passkey_context import PasskeyContexts
+from aweb_secrets.revisions import apply_revision_migrations
+from tests.test_change_sets import Installations
 from tests.test_owner_directory import ORIGIN, Audit, Contacts
 
 TEAM = "demo:example.com"
@@ -52,13 +64,29 @@ BOB = PrincipalKey(team_id=TEAM, principal_did="did:aw:2Uq51iFVLnqmgbVY3vLZtMD5P
 
 
 class World:
-    def __init__(self, db, passkeys, owner: TeamOwner, contacts: Contacts, registry) -> None:
+    def __init__(
+        self, db, passkeys, owner: TeamOwner, contacts: Contacts, registry, fence, admitted
+    ) -> None:
         self.registry = registry
         self.db = db
         self.passkeys = passkeys
         self.owner = owner
         self.contacts = contacts
         self.directory = OwnerDirectory(passkeys, db)
+        self.admitted = admitted
+
+        async def installation(installation_id):
+            assert installation_id == admitted.installation_id
+            return admitted
+
+        self.console = OwnerConsole(
+            db=db,
+            passkeys=passkeys,
+            directory=self.directory,
+            fence=fence,
+            verifier=owner.verifier,
+            installation=installation,
+        )
 
 
 @pytest.fixture
@@ -81,13 +109,23 @@ async def world(test_db_factory) -> AsyncIterator[World]:
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
         owner_scopes=is_owner_scope,
+        proof_context=PasskeyContexts(app_id=APP_ID),
     )
     await passkeys.migrate()
     await apply_roles_migrations(db)
     await apply_owner_act_migrations(db)
     await apply_owner_migrations(db)
+    await apply_change_set_migrations(db)
+    await apply_installation_migrations(db)
+    await apply_change_policy_migrations(db)
+    await apply_revision_migrations(db)
+    installations = Installations(team_id=TEAM, app_id=APP_ID)
+    fence = InstallationFence(db, app_id=APP_ID, grants=installations)
+    await fence.refresh(TEAM)
+    async with db.transaction() as tx:
+        admitted = await fence.admit(tx, installations.grant)
     async with awid_registry(registry_db.config.get_dsn()) as registry:
-        yield World(db, passkeys, await team_owner(registry), contacts, registry)
+        yield World(db, passkeys, await team_owner(registry), contacts, registry, fence, admitted)
 
 
 def _subject(principal: PrincipalKey, contact: str, installation_id: str = INSTALLATION_ID):
@@ -134,15 +172,10 @@ async def _apply(
         signing, signature = signed
     else:
         signing, signature = signer.sign(act, subject or _subject(principal, contact))
-    designation = await apply_owner_act(
-        world.db,
-        world.passkeys,
-        world.owner.verifier,
+    designation = await world.console.apply_owner_act(
         signing=signing,
         signature=signature,
-        app_id=APP_ID,
-        installation_id=INSTALLATION_ID,
-        installation_team_id=installation_team_id,
+        admitted=replace(world.admitted, team_id=installation_team_id),
         principal=principal,
         contact=contact,
     )
@@ -322,3 +355,33 @@ async def test_an_owner_is_designated_once_and_recovered_after_the_cooling_off(
     scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
     assert await world.passkeys.recovery_pending_until(scope) == designation.effective_at
     assert await _approver(world, scope) is None
+
+
+async def test_the_shared_owner_act_path_refuses_a_stale_installation(world: World) -> None:
+    await world.db.execute(
+        "UPDATE {{tables.installation_fences}}"
+        " SET fresh_until = clock_timestamp() - interval '1 second'"
+    )
+    with pytest.raises(InstallationRefused) as refused:
+        await _apply(world, "app-role.designate", ALICE, "alice@example.com")
+    assert refused.value.code == "authority_unavailable"
+    assert not await has_role(world.db, ALICE, OWNER_ROLE)
+    assert not await world.db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}")
+    assert world.contacts.inbox == {}
+
+
+async def test_the_shared_owner_act_path_preserves_four_eyes(world: World) -> None:
+    await _apply(world, "app-role.designate", ALICE, "alice@example.com")
+    await _enrol(world, "alice@example.com")
+    await _apply(world, "app-role.designate", BOB, "bob@example.com")
+    await _enrol(world, "bob@example.com")
+    async with world.db.transaction() as tx:
+        await require_four_eyes(
+            tx, installation_id=INSTALLATION_ID, team_id=TEAM, directory=world.directory
+        )
+    with pytest.raises(ChangeRefused) as refused:
+        await _apply(world, "app-credential.recover", ALICE, "alice-new@example.com")
+    assert refused.value.code == "four_eyes_needs_two_owners"
+    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+    assert await world.passkeys.recovery_pending_until(scope) is None
+    assert world.contacts.notices == {}

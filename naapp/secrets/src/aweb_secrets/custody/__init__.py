@@ -7,6 +7,7 @@ from .sealing import (
     CustodyUnavailable,
     DataKey,
     KeyProvider,
+    OpenedBackendCredential,
     Plaintext,
     SealContext,
     SealedValue,
@@ -15,6 +16,8 @@ from .sealing import (
     unseal,
 )
 from .store import (
+    BackendCredentialOpener,
+    BackendCredentialPreview,
     Custody,
     Description,
     Health,
@@ -22,8 +25,15 @@ from .store import (
     SecretSealer,
     apply_custody_migrations,
 )
+from .values import ValueInvalid, decode_value, encode_value
 
 __all__ = [
+    "BackendCredentialOpener",
+    "BackendCredentialPreview",
+    "OpenedBackendCredential",
+    "ValueInvalid",
+    "decode_value",
+    "encode_value",
     "AwsKmsProvider",
     "Custody",
     "CustodyUnavailable",

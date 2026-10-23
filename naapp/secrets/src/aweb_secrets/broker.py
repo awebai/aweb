@@ -38,6 +38,7 @@ from aweb_naapp.egress import (
     Egress,
     EgressNotSent,
     EgressOutcomeUnknown,
+    EgressRefused,
     HeaderRules,
 )
 
@@ -45,6 +46,7 @@ from aweb_secrets.credential_shapes import is_credential_shaped_value
 from aweb_secrets.injection import Injection, inject
 from aweb_secrets.operation_request import OperationRequest
 from aweb_secrets.redaction import KnownValues
+from aweb_secrets.response_audit import ResponseAudit, ResponseKey, ResponseKeyInvalid
 from aweb_secrets.responses import BrokeredResult, handle_response
 from aweb_secrets.tokens import TokenCache, TokenKey
 
@@ -76,6 +78,7 @@ class BrokeredCall:
     result: BrokeredResult
     recorded_url: str
     known: KnownValues = field(repr=False)
+    audit: ResponseAudit
 
 
 def _required(values: Mapping[str, str], name: str) -> str:
@@ -194,6 +197,7 @@ async def broker(
     max_bytes: int,
     projection: Sequence[str] | None,
     token_issuing: bool,
+    response_key: ResponseKey,
     amz_allowed: Sequence[str] = (),
     bounds: Bounds | None = None,
     token_destination: Destination | None = None,
@@ -209,6 +213,8 @@ async def broker(
     ``EgressNotSent`` (including :class:`TokenExchangeFailed`) or
     ``EgressOutcomeUnknown`` when the exchange fails.
     """
+    if not isinstance(response_key, ResponseKey):
+        raise ResponseKeyInvalid("a brokered response requires its configured response key")
     if kind == OAUTH2:
         injection = await _oauth2_injection(
             egress,
@@ -256,7 +262,10 @@ async def broker(
         token_issuing=token_issuing,
         content_types=content_types,
     )
-    return BrokeredCall(result=result, recorded_url=injection.recorded_url, known=injection.known)
+    audit = response_key.record(response.body, upstream_truncated=response.truncated, result=result)
+    return BrokeredCall(
+        result=result, recorded_url=injection.recorded_url, known=injection.known, audit=audit
+    )
 
 
 async def broker_operation(
@@ -267,12 +276,19 @@ async def broker_operation(
     value: Mapping[str, str],
     kind_params: Mapping[str, str],
     secret_ref: str,
+    response_key: ResponseKey,
     token_destination: Destination | None = None,
     tokens: TokenCache | None = None,
     secret: SecretVersion | None = None,
 ) -> BrokeredCall:
     """Send a rendered named operation with ``value`` injected, bounded and
-    handled as its template says."""
+    handled as its template says. Token issuance is allowed only with
+    ``withhold`` handling; derived-secret custody is not available here yet.
+    Refusal precedes even an OAuth token exchange."""
+    if request.token_issuing and request.result_handling != "withhold":
+        raise EgressRefused(
+            "token_issuing_denied", "result_handling", "token issuance requires supported result handling"
+        )
     return await broker(
         egress,
         method=request.method,
@@ -287,6 +303,7 @@ async def broker_operation(
         max_bytes=request.max_bytes,
         projection=request.projection,
         token_issuing=request.token_issuing,
+        response_key=response_key,
         amz_allowed=request.amz_allowed,
         bounds=request.bounds,
         token_destination=token_destination,

@@ -5,10 +5,11 @@ from uuid import UUID
 
 from aweb_naapp.runtime.app import NOINDEX_ROBOTS_HEADER, NaappRuntime, mount_naapp_routes
 from aweb_naapp.runtime.team_auth import Principal, record_observed_principal
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from pgdbm import AsyncDatabaseManager
 
+from folio import edit_sessions
 from folio.aweb_manifest import MANIFEST_PATH
 from folio.cloudflare_stream import stream_iframe_url
 from folio.config import Settings, get_settings
@@ -34,22 +35,26 @@ from folio.models import (
     VideoDirectUploadResponse,
 )
 from folio.presentation import (
+    _theme_css,
     content_security_policy,
     render_editor_page,
     render_presented_markdown,
     render_presented_page,
     sanitize_layout_tokens,
+    sanitize_theme_tokens,
     theme_contrast_error,
 )
+from folio.privacy import PresentationPrivacy, install_access_filter
 from folio.repository import (
+    _allowed_assets_for_body,
+    _theme_from_row,
+    append_presented_version,
     append_version,
     create_document,
     create_video_direct_upload,
-    edit_presented_document,
     get_asset_metadata,
     get_billing_status,
     get_document,
-    get_presentation_state,
     get_presented_document,
     get_public_asset,
     get_theme,
@@ -78,6 +83,7 @@ _USER_CONTENT_PATHS = ("/present/", "/assets/")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    install_access_filter()
     resolved = settings or get_settings()
     runtime = NaappRuntime(
         resolved,
@@ -86,6 +92,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         manifest_path=MANIFEST_PATH,
     )
     app = FastAPI(title="folio", version="0.1.0", lifespan=runtime.lifespan)
+    app.add_middleware(PresentationPrivacy)
 
     def db() -> AsyncDatabaseManager:
         return runtime.db()
@@ -115,11 +122,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/documents", response_model=DocumentResponse)
     async def create_document_route(
-        request: Request,
+        payload: CreateDocumentRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        payload = CreateDocumentRequest.model_validate(await request.json())
         has_body = "body" in payload.model_fields_set
         has_template = "template" in payload.model_fields_set
         if has_body == has_template:
@@ -174,11 +180,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/v1/documents/{slug}/versions/template", response_model=DocumentResponse)
     async def append_template_version_route(
         slug: str,
-        request: Request,
+        payload: AppendTemplateVersionRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        payload = AppendTemplateVersionRequest.model_validate(await request.json())
         body = render_declarative_template(payload.model_dump())
         result = await append_version(database, principal=actor, events=runtime.app_events, slug=slug, body=body)
         return result
@@ -200,11 +205,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/present", response_model=PresentationResponse)
     async def create_presentation_route(
-        request: Request,
+        payload: CreatePresentationRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        payload = CreatePresentationRequest.model_validate(await request.json())
         return await mint_presentation_link(
             database,
             principal=actor,
@@ -251,20 +255,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/assets", response_model=ImageAssetResponse)
     async def upload_asset_route(
-        request: Request,
+        payload: ImageAssetUploadRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        payload = ImageAssetUploadRequest.model_validate(await request.json())
         return await upload_image_asset(database, principal=actor, settings=resolved, image=payload)
 
     @app.post("/v1/assets/video/direct-upload", response_model=VideoDirectUploadResponse)
     async def create_video_direct_upload_route(
-        request: Request,
+        payload: VideoDirectUploadRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        payload = VideoDirectUploadRequest.model_validate(await request.json())
         return await create_video_direct_upload(database, principal=actor, settings=resolved, video=payload)
 
     @app.get("/v1/assets/{asset_id}", response_model=AssetMetadataResponse)
@@ -284,11 +286,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.put("/v1/theme", response_model=ThemeResponse)
     async def put_theme_route(
-        request: Request,
+        payload: ThemeRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        payload = ThemeRequest.model_validate(await request.json())
         if "preset" in payload.tokens:
             raise HTTPException(
                 status_code=422,
@@ -324,49 +325,73 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
-    @app.get("/present/{token}/state", response_model=PresentationStateResponse)
-    async def presentation_state_route(
-        token: str,
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
-    ) -> dict:
-        return await get_presentation_state(database, token=token)
+    async def edit_snapshot(database: AsyncDatabaseManager, team_id: str, body: str, version_number: int, assets: dict) -> dict:
+        row = await database.fetch_one("SELECT tokens,logo_asset_id,header,footer FROM {{tables.themes}} WHERE team_id=$1", team_id)
+        theme = _theme_from_row(row, public_origin=resolved.public_origin) if row else None
+        return {"body": body, "version_number": version_number,
+                "theme": {"css": _theme_css(sanitize_theme_tokens((theme or {}).get("tokens"))),
+                          "header": (theme or {}).get("header"), "footer": (theme or {}).get("footer"),
+                          "logo_url": (theme or {}).get("logo_url")},
+                "html": render_presented_markdown(body, public_origin=resolved.public_origin,
+                    asset_embeds=presentation_asset_embeds(assets))}
 
-    @app.post("/present/{token}/edit", response_model=PresentationEditResponse)
-    async def presentation_edit_route(
-        token: str,
-        request: Request,
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
-    ) -> dict:
-        payload = PresentationEditRequest.model_validate(await request.json())
-        edited = await edit_presented_document(
-            database,
-            events=runtime.app_events,
-            token=token,
-            body=payload.body,
-            base_version=payload.base_version,
-            editor_name=payload.editor_name,
-        )
-        return {"version_number": edited["version_number"]}
-
-    @app.post("/present/{token}/preview", response_class=HTMLResponse)
-    async def presentation_preview_route(
-        token: str,
-        request: Request,
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
-    ) -> HTMLResponse:
-        payload = PresentationPreviewRequest.model_validate(await request.json())
-        presented = await get_presented_document(database, token=token)
-        if not bool(presented.get("editable")):
-            raise HTTPException(status_code=404, detail="Presentation link not found")
-        html = render_presented_markdown(
-            payload.body,
-            public_origin=resolved.public_origin,
-            asset_embeds=presentation_asset_embeds(presented.get("allowed_assets")),
-        )
+    @app.get("/present/edit/{link_id}", response_class=HTMLResponse)
+    async def editor_shell(link_id: str) -> HTMLResponse:
+        nonce = secrets.token_urlsafe(16)
         return HTMLResponse(
-            html,
-            headers={"Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'"},
+            render_editor_page(token=link_id, body="", version_number=1, nonce=nonce),
+            headers={"Content-Security-Policy": f"default-src 'self'; img-src 'self'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline' 'self'; base-uri 'none'; frame-ancestors 'none'"},
         )
+
+    @app.post("/present/edit/{link_id}/session")
+    async def editor_exchange(link_id: str, request: Request,
+        database: Annotated[AsyncDatabaseManager, Depends(db)]) -> dict:
+        # Fixed refusals, without validation errors echoing secret input.
+        try:
+            payload = await request.json()
+        except (ValueError, UnicodeError):
+            raise edit_sessions.unavailable() from None
+        if not isinstance(payload, dict) or set(payload) != {"opener"}:
+            raise edit_sessions.unavailable()
+        credential, current = await edit_sessions.exchange(
+            database, runtime, link_id=link_id, opener=payload["opener"],
+        )
+        assets = await _allowed_assets_for_body(database, team_id=current["team_id"], body=current["body"])
+        return {"session_secret": credential, **await edit_snapshot(database, current["team_id"], current["body"], current["version_number"], assets)}
+
+    @app.get("/present/edit/{link_id}/state", response_model=PresentationStateResponse, response_model_exclude_none=True)
+    async def editor_state(link_id: str, request: Request,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        after_version: Annotated[int | None, Query(ge=1)] = None) -> dict:
+        async with edit_sessions.access(database, runtime, link_id=link_id,
+            credential=request.headers.get(edit_sessions.SESSION_HEADER)) as (tx, link):
+            current = await tx.fetch_one("SELECT body,version_number FROM {{tables.document_versions}} WHERE document_id=$1 ORDER BY version_number DESC LIMIT 1", link["document_id"])
+            if current is None:
+                raise edit_sessions.unavailable()
+            state = dict(current)
+        if after_version == state["version_number"]:
+            return {"version_number": state["version_number"]}
+        assets = await _allowed_assets_for_body(database, team_id=link["team_id"], body=state["body"])
+        return await edit_snapshot(database, link["team_id"], state["body"], state["version_number"], assets)
+
+    @app.post("/present/edit/{link_id}/edit", response_model=PresentationEditResponse)
+    async def editor_save(link_id: str, request: Request, payload: PresentationEditRequest,
+        database: Annotated[AsyncDatabaseManager, Depends(db)]) -> dict:
+        async with edit_sessions.access(database, runtime, link_id=link_id,
+            credential=request.headers.get(edit_sessions.SESSION_HEADER), write=True) as (tx, link):
+            return await append_presented_version(tx, events=runtime.app_events, link=link,
+                body=payload.body, base_version=payload.base_version, editor_name=payload.editor_name)
+
+    @app.post("/present/edit/{link_id}/preview", response_class=HTMLResponse)
+    async def editor_preview(link_id: str, request: Request, payload: PresentationPreviewRequest,
+        database: Annotated[AsyncDatabaseManager, Depends(db)]) -> HTMLResponse:
+        async with edit_sessions.access(database, runtime, link_id=link_id,
+            credential=request.headers.get(edit_sessions.SESSION_HEADER)) as (_, link):
+            team_id = link["team_id"]
+        assets = await _allowed_assets_for_body(database, team_id=team_id, body=payload.body)
+        html = render_presented_markdown(payload.body, public_origin=resolved.public_origin,
+            asset_embeds=presentation_asset_embeds(assets))
+        return HTMLResponse(html, headers={"Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'"})
 
     @app.get("/present/{token}", response_class=HTMLResponse)
     async def present_route(
@@ -378,21 +403,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if isinstance(theme, dict) and theme.get("logo_asset_id") is not None:
             theme["logo_url"] = f"{resolved.public_origin.rstrip('/')}/assets/{theme['logo_asset_id']}"
         if bool(presented.get("editable")):
-            nonce = secrets.token_urlsafe(16)
-            return HTMLResponse(
-                render_editor_page(
-                    token=token,
-                    body=str(presented["body"]),
-                    version_number=int(presented["version_number"]),
-                    theme=theme,
-                    public_origin=resolved.public_origin,
-                    asset_embeds=presentation_asset_embeds(presented.get("allowed_assets")),
-                    nonce=nonce,
-                ),
-                headers={
-                    "Content-Security-Policy": f"default-src 'self'; img-src 'self'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline' 'self'; base-uri 'none'; frame-ancestors 'none'",
-                },
-            )
+            raise edit_sessions.unavailable()
         nonce = secrets.token_urlsafe(16)
         mode = sanitize_layout_tokens(theme.get("tokens") if isinstance(theme, dict) else None)["mode"]
         return HTMLResponse(

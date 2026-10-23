@@ -3,6 +3,7 @@ from __future__ import annotations
 from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Annotated, Literal, Optional
 from uuid import UUID
@@ -14,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from awid.federation_errors import FederationAuthorityError
+from awid.registry import RegistryError
 from awid.pagination import decode_cursor, encode_cursor, validate_pagination_params
 from aweb.awid_error_handling import awid_registry_not_configured_exception
 from aweb.deps import get_db
@@ -31,6 +33,7 @@ from aweb.federation.envelope import (
 )
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_mail
 from aweb.hooks import fire_mutation_hook
+from aweb.identity_binding import verify_identity_binding
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.sender_address import sender_address as _sender_address
@@ -82,7 +85,6 @@ from aweb.messaging.signatures import (
 )
 from aweb.messaging.verification import (
     message_verification_status,
-    require_conversation_not_legacy_bound,
 )
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
 
@@ -1126,6 +1128,63 @@ async def _bound_recipient_from_address(
     return local_recipient
 
 
+async def _continuation_signature_recipient(
+    request: Request,
+    *,
+    participant: dict,
+    recipient: dict,
+    payload: SendMessageRequest,
+    sender_did_key: str,
+) -> dict:
+    """Validate a signed stored-route recipient without changing its routing facts."""
+    signed = verified_signed_payload_json(
+        signed_payload=payload.signed_payload,
+        signature=payload.signature,
+        did_key=sender_did_key,
+    )
+    if signed is None:
+        raise HTTPException(status_code=403, detail="Invalid message signature")
+    stable = str(participant.get("did") or "")
+    signed_stable = signed.get("to_stable_id") or ""
+    signed_key = signed.get("to_did") or ""
+    signed_to = signed.get("to") or ""
+    if not signed_stable and isinstance(signed_key, str) and signed_key.startswith("did:aw:"):
+        signed_stable, signed_key = signed_key, ""
+    if not signed_stable and isinstance(signed_to, str) and signed_to.startswith("did:aw:"):
+        signed_stable = signed_to
+    if not stable.startswith("did:aw:") or signed_stable != stable:
+        raise HTTPException(status_code=403, detail="identity_binding_mismatch")
+    address = str(participant.get("address") or "")
+    signed_address = signed_to if isinstance(signed_to, str) and "/" in signed_to else ""
+    if signed_address and signed_address != address:
+        raise HTTPException(status_code=403, detail="identity_binding_mismatch")
+    if not signed_key and isinstance(signed_to, str) and signed_to.startswith("did:key:"):
+        signed_key = signed_to
+    if not signed_key:
+        # Released clients may sign only the stable DID on a stored route.
+        # Discover its current key solely for validation, never for delivery.
+        try:
+            client = request.app.state.awid_registry_client
+            resolved = await client.resolve_key_fresh(stable)
+            signed_key = resolved.current_did_key
+        except RegistryError as exc:
+            if exc.status_code != 404:
+                logging.getLogger(__name__).warning("Stored mail signature binding dependency failed", exc_info=True)
+            detail = "identity_binding_mismatch" if exc.status_code == 404 else "identity_binding_unavailable"
+            raise HTTPException(status_code=403 if exc.status_code == 404 else 503, detail=detail) from exc
+        except Exception as exc:
+            logging.getLogger(__name__).warning("Stored mail signature binding dependency failed", exc_info=True)
+            raise HTTPException(status_code=503, detail="identity_binding_unavailable") from exc
+    if not isinstance(signed_key, str) or not signed_key.startswith("did:key:"):
+        raise HTTPException(status_code=403, detail="identity_binding_mismatch")
+    await verify_identity_binding(
+        request, did_key=signed_key, did_aw=stable, address=signed_address, fresh=True,
+    )
+    # This copy is passed only to the payload validator. The original recipient,
+    # participant agent_id, policy rows and all projection markers stay intact.
+    return {**recipient, "did_aw": stable, "did_key": signed_key, "address": address}
+
+
 async def _send_mail_conversation_continuation(
     request: Request,
     payload: SendMessageRequest,
@@ -1170,7 +1229,7 @@ async def _send_mail_conversation_continuation(
                     status_code=422,
                     detail="message_id and timestamp are required when signature is provided",
                 )
-            _validate_signed_mail_payload(
+            validation = dict(
                 signature=payload.signature,
                 signed_payload=payload.signed_payload,
                 recipient=recipient,
@@ -1188,6 +1247,16 @@ async def _send_mail_conversation_continuation(
                 timestamp=payload.timestamp,
                 conversation_id=conversation_id,
             )
+            try:
+                _validate_signed_mail_payload(**validation)
+            except HTTPException as exc:
+                if exc.status_code != 422 or exc.detail != "signed_payload recipient must match the mail recipient":
+                    raise
+                validation["recipient"] = await _continuation_signature_recipient(
+                    request, participant=recipient_participant, recipient=recipient,
+                    payload=payload, sender_did_key=auth.did_key,
+                )
+                _validate_signed_mail_payload(**validation)
             # payload.timestamp is the sender's attestation retained in
             # signed_payload; deliver_message separately assigns server receipt
             # time for ordering, so the two values may disagree.

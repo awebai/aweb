@@ -233,6 +233,60 @@ async def test_login_responses_carry_the_console_headers(console: Console) -> No
         assert response.headers["referrer-policy"] == "no-referrer"
 
 
+@pytest.mark.parametrize(
+    ("path", "body", "field", "error_type"),
+    [
+        (
+            "/login/options",
+            {"scope": {"unexpected": "submitted-value"}},
+            "scope",
+            "string_type",
+        ),
+        (
+            "/login",
+            {"scope": ["submitted-value"], "assertion": {}},
+            "scope",
+            "string_type",
+        ),
+        (
+            "/login",
+            {"scope": OWNER_A, "assertion": "submitted-value"},
+            "assertion",
+            "dict_type",
+        ),
+        (
+            "/login",
+            {"scope": OWNER_A, "assertion": ["submitted-value"]},
+            "assertion",
+            "dict_type",
+        ),
+        (
+            "/login",
+            {"scope": OWNER_A, "unrelated": "submitted-value"},
+            "assertion",
+            "missing",
+        ),
+    ],
+    ids=[
+        "options-scope",
+        "login-scope",
+        "assertion-string",
+        "assertion-list",
+        "missing-assertion",
+    ],
+)
+async def test_login_validation_returns_only_location_and_type(
+    console: Console, path: str, body: dict[str, Any], field: str, error_type: str
+) -> None:
+    async with _client(_app(console, _limiter(console))) as client:
+        response = await client.post(path, json=body)
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": [{"loc": ["body", field], "type": error_type}]}
+    assert "set-cookie" not in response.headers
+    assert response.headers["cache-control"] == "no-store"
+
+
 async def _closed(console: Console) -> int:
     return await console.db.fetch_value(
         "SELECT count(*) FROM {{tables.console_sessions}} WHERE closed_at IS NOT NULL"
@@ -284,3 +338,59 @@ async def test_a_session_ends_when_the_owner_retires_its_approver(console: Conso
     assert after.status_code == 401
     assert after.json() == {"detail": "console_session_required"}
     assert await _closed(console) == 1
+
+
+def _assert_session_ended(response: httpx.Response) -> None:
+    assert response.status_code == 401
+    assert response.json() == {"detail": "console_session_required"}
+    assert "max-age=0" in response.headers["set-cookie"].lower()
+
+
+async def test_revoking_a_key_ends_its_session_but_preserves_the_sibling_key_session(
+    console: Console,
+) -> None:
+    subject, key_a = await console.enrol(OWNER_A)
+    key_b = await console.add_passkey(subject)
+    async with _client(_app(console, _limiter(console))) as client:
+        cookie_a = _cookie(await _login(client, key_a, OWNER_A))
+        cookie_b = _cookie(await _login(client, key_b, OWNER_A))
+        for cookie in (cookie_a, cookie_b):
+            assert (await client.get("/whoami", headers={"Cookie": cookie})).status_code == 200
+        async with console.db.transaction() as tx:
+            await console.passkeys.revoke_passkey_in(
+                tx,
+                scope=OWNER_A,
+                subject=subject,
+                credential_id=next(iter(key_a.credentials)),
+                authorized_by="team-owner",
+            )
+        revoked = await client.get("/whoami", headers={"Cookie": cookie_a})
+        surviving = await client.get("/whoami", headers={"Cookie": cookie_b})
+        replayed = await client.get("/whoami", headers={"Cookie": cookie_a})
+    _assert_session_ended(revoked)
+    _assert_session_ended(replayed)
+    assert surviving.status_code == 200
+    assert surviving.json()["subject"] == subject
+    assert await _closed(console) == 1
+
+
+async def test_retiring_a_subject_ends_all_its_key_sessions_and_preserves_another_subject(
+    console: Console,
+) -> None:
+    subject, key_a = await console.enrol(OWNER_A)
+    key_b = await console.add_passkey(subject)
+    _, other = await console.enrol(OWNER_B)
+    async with _client(_app(console, _limiter(console))) as client:
+        cookies = [_cookie(await _login(client, key, OWNER_A)) for key in (key_a, key_b)]
+        other_cookie = _cookie(await _login(client, other, OWNER_B))
+        async with console.db.transaction() as tx:
+            await console.passkeys.retire_in(
+                tx, scope=OWNER_A, subject=subject, authorized_by="team-owner"
+            )
+        ended = [await client.get("/whoami", headers={"Cookie": cookie}) for cookie in cookies]
+        surviving = await client.get("/whoami", headers={"Cookie": other_cookie})
+    for response in ended:
+        _assert_session_ended(response)
+    assert surviving.status_code == 200
+    assert surviving.json()["scope"] == OWNER_B
+    assert await _closed(console) == 2

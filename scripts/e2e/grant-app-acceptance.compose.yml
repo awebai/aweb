@@ -22,9 +22,19 @@ services:
     labels:
       aweb.acceptance: grant-app-tools
     environment:
+      AWID_PUBLIC_REGISTRY_URL: http://awid:8010
       APP_ENV: test
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "true"
   aweb:
+    command: ["/app/.venv/bin/python", "/fixture/e2e/grant_app_server.py"]
+    environment:
+      AWEB_PUBLIC_ORIGIN: http://127.0.0.1:8000
+      AWID_PUBLIC_REGISTRY_URL: http://awid:8010
+    volumes:
+      - fixture:/fixture:ro
+    depends_on:
+      library:
+        condition: service_healthy
     cpus: "1"
     mem_limit: "1g"
     pids_limit: 512
@@ -36,3 +46,32 @@ services:
     pids_limit: 512
     labels:
       aweb.acceptance: grant-app-tools
+    command: ["/app/.venv/bin/uvicorn", "library.api:app", "--host", "0.0.0.0", "--port", "8765", "--ssl-keyfile", "/fixture/tls/server.key", "--ssl-certfile", "/fixture/tls/server.pem"]
+    environment:
+      LIBRARY_PUBLIC_ORIGIN: https://library-grant.test:8765
+    volumes:
+      - fixture:/fixture:ro
+    networks:
+      default:
+        aliases: [library-grant.test]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import ssl,urllib.request; urllib.request.urlopen('https://library-grant.test:8765/health', context=ssl.create_default_context(cafile='/fixture/tls/ca.pem'))"]
+
+  client:
+    cpus: "2"
+    mem_limit: "1g"
+    pids_limit: 512
+    build:
+      context: .
+      dockerfile: scripts/e2e/folio-wakes-client.Dockerfile
+    network_mode: service:aweb
+    command: ["bash", "/fixture/e2e/grant_app_tools_client.sh"]
+    environment:
+      GRANT_APP_E2E_PROJECT: ${GRANT_APP_E2E_PROJECT:?set by runner}
+    volumes:
+      - fixture:/fixture:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  fixture:
+    name: ${GRANT_APP_E2E_PROJECT:?set by runner}-fixture

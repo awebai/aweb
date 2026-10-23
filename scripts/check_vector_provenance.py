@@ -14,6 +14,7 @@ PUBLIC_ROOT = PurePosixPath("docs/vectors")
 EXPECTED_VECTOR_ROOTS = {
     PurePosixPath("cli/go/internal/conformance/vectors"),
     PUBLIC_ROOT,
+    PurePosixPath("naapp-lib/tests/vectors"),
     PurePosixPath("naapp/library/tests/vectors"),
     PurePosixPath("naapp/library/test-vectors"),
     PurePosixPath("naapp/secrets/vectors"),
@@ -48,6 +49,10 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("naapp-lib/tests/runtime/approvals/test_passkey_proof.py"): _consumer(
+        "passkey-evidence-v1.json",
+        'Path(__file__).resolve().parents[4] / "docs/vectors/passkey-evidence-v1.json"',
+    ),
     PurePosixPath("server/tests/test_human_channels_participants.py"): _consumer(
         "human-channels-participants-v1.json", "ROOT / 'docs/vectors/human-channels-participants-v1.json'",
     ),
@@ -75,6 +80,15 @@ ROOT_CONSUMERS = {
         {"human-channels-v1.json", "human-channels-profile-v1.json"},
         '"../../../docs/vectors/human-channels-v1.json"',
         '"../../../docs/vectors/human-channels-profile-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/hooks/test_passkey_evidence_vector.py"): _consumer(
+        {"passkey-evidence-v1.json", "hook-catalog-v1.json"},
+        'Path(__file__).resolve().parents[3] / "docs" / "vectors" / "passkey-evidence-v1.json"',
+        'Path(__file__).resolve().parents[3] / "docs" / "vectors" / "hook-catalog-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/hooks/test_commitment.py"): _consumer(
+        "hook-catalog-v1.json",
+        'Path(__file__).resolve().parents[3] / "docs" / "vectors" / "hook-catalog-v1.json"',
     ),
     PurePosixPath("cli/go/awid/app_task_authorization_test.go"): _consumer(
         "app-task-authorization-v1.json",
@@ -238,17 +252,39 @@ ROOT_CONSUMERS = {
         "principal-attestation-v1.json",
         '(Path(__file__).parents[3] / "docs" / "vectors" / "principal-attestation-v1.json")',
     ),
+    PurePosixPath("naapp-lib/renderer/tests/decision-display.test.mjs"): _consumer(
+        "decision-display-v1.json",
+        '"../../../docs/vectors/decision-display-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/renderer/tests/digests.test.mjs"): _consumer(
+        ("page-format-v1.json", "page-proposal-v1.json"),
+        '"../../../docs/vectors/page-format-v1.json"',
+        '"../../../docs/vectors/page-proposal-v1.json"',
+    ),
     PurePosixPath("naapp/secrets/tests/test_hook_actions_vector.py"): _consumer(
         "hook-catalog-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',
     ),
     PurePosixPath("naapp/secrets/tests/test_runner_protocol_vectors.py"): _consumer(
-        "secrets-runner-protocol-v1.json",
+        {"secrets-runner-protocol-v1.json", "secrets-runner-http-v1.json"},
         '(Path(__file__).parents[3] / "docs" / "vectors" / "secrets-runner-protocol-v1.json")',
+        '(Path(__file__).parents[3] / "docs" / "vectors" / "secrets-runner-http-v1.json")',
+    ),
+    PurePosixPath("naapp/secrets/runner/tests/test_protocol.py"): _consumer(
+        "secrets-runner-protocol-v1.json",
+        'Path(__file__).resolve().parents[4] / "docs/vectors/secrets-runner-protocol-v1.json"',
+    ),
+    PurePosixPath("naapp/secrets/tests/test_runner_server_protocol.py"): _consumer(
+        "secrets-runner-protocol-v1.json",
+        '(Path(__file__).parents[3] / "docs/vectors/secrets-runner-protocol-v1.json")',
     ),
     PurePosixPath("naapp/secrets/tests/test_vector_identifiers.py"): _consumer(
         "secrets-runner-protocol-v1.json",
         'ROOT / "docs" / "vectors" / "secrets-runner-protocol-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/renderer/tests/link-client.spec.mjs"): _consumer(
+        "link-request-v1.json",
+        '"../../../docs/vectors/link-request-v1.json"',
     ),
     PurePosixPath("naapp-lib/renderer/tests/render.spec.mjs"): _consumer(
         "page-format-v1.json",
@@ -327,6 +363,10 @@ ROOT_CONSUMERS = {
     PurePosixPath("naapp-lib/tests/hooks/test_delivery.py"): _consumer(
         "hook-delivery-credential-v1.json",
         '(AWEB_ROOT / "docs" / "vectors" / "hook-delivery-credential-v1.json")',
+    ),
+    PurePosixPath("naapp/logs/tests/test_manifest.py"): _consumer(
+        "hook-catalog-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',
     ),
     PurePosixPath("cli/go/logschain/vectors_test.go"): _consumer(
         "logs-chain-v1.json",

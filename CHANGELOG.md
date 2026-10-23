@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- aw app installation names the resident credential directory and gives an
+  explicit replacement-grant action. Existing grants retain their original
+  app-tool snapshots; denied tools explain the approve/re-mint/restart remedy.
+  Installed app verbs accept the global boolean `--json` without sending it as
+  an app parameter.
+
+- Server: an installed app's hook bindings and their owner activation
+  (`docs/app-registry.md`, "Hook bindings"). Migration 032 adds
+  `app_hook_bindings`. `GET /v1/apps/hook-bindings` lists them, and
+  `POST /v1/apps/hook-bindings/{binding_id}/activate` and `/revoke` take the
+  team owner's `aweb.owner-act/1`, verified against the team's controller key
+  read fresh from AWID. The server now depends on `aweb-naapp[hooks]>=0.2.0`
+  and applies its owner-act nonce migrations at startup; the image copies
+  `naapp-lib/` beside `awid/`. Release order: `awid-service`, then
+  `aweb-naapp`, then the server.
+- AWID SDK: `RegistryClient.get_team_fresh` reads a team without a stale cache
+  result, as `get_namespace_fresh` does.
+- `aweb_naapp.runtime.team_grants.TeamGrantSource` reads an app's own grant
+  through the shared AWID-backed team-server directory and an `app-grant-read`
+  signer. Grant and installation-status reads share one bounded cache, verify
+  the team and served-manifest identity, and fail closed on expired or
+  unavailable authority. `status_for` preserves installation state and
+  nullable id, generation and origin provenance for the installation fence.
+  Missing-key denials are cached for at most five seconds so a post-install
+  retry can discover the new grant promptly.
+
+- **Security:** app keys retain their identity and revocation history across
+  v1 `event_emitters` and v2 `app_keys`. Switching manifest versions cannot
+  reactivate a revoked event key or bind its key id to a different `did_key`;
+  both registration and credential verification consult the shared history.
+
 - aw reads manifest version 2 as well as version 1. `aw plugin install` and
   `aw plugin update` read an app's variant catalog first and select the
   highest version they support. Only a missing catalog falls back to the
@@ -48,6 +79,80 @@
 
 ## Release preparations
 
+### Release preparation: aweb-naapp 0.4.0
+
+`aweb-naapp` and `aweb-naapp-testing` 0.4.0 carry the naapp-lib changes since
+`aweb-naapp-v0.3.0`: the durable hook-refusal record and shared admission
+backlog gate (outbox migration `003_admission_backlog.sql`), the runner
+signature protocol with its scoped replay store and HPKE helpers, retained
+verified passkey proofs (`003_retained_proof.sql`), session liveness bound to
+the exact login credential, app-authorized designation, the shared nonce store
+(`001_nonces.sql`), and runtime hook production composition. The lock now
+records the runtime extra's `cbor2` dependency.
+
+### Release preparation: server 1.27.33
+
+Server changes are since `server-v1.27.32`.
+
+- **Security:** a team certificate's member identity and address are claims.
+  The server attributes them only when they are verified against the key that
+  signed the request (AWID's current binding, or a did:aw derived from that key
+  that AWID records for no one else), at connect and in team authentication,
+  and resolves recipients only through verified bindings. Rows written before
+  this release are not attributed until an operator pass
+  (`aweb verify-identity-bindings`) verifies them.
+- Admin-only app installation with pending-install origin verification
+  (`aweb verify-pending-app-installations`, `aweb run-installation-verifications`).
+- Strict `contacts_only` inbound mode, evaluated identity-wide across an
+  identity's memberships; contacts created through MCP carry their verified
+  identity.
+- `aw mail --to <alias>` reaches addressless human team members.
+- **Migrations (aweb schema):** `034_agent_identity_binding.sql`,
+  `035_team_app_installation_identity.sql`,
+  `036_app_installation_management.sql`, `037_contacts_only.sql`.
+- **Dependency floor:** `aweb-naapp[egress,hooks]>=0.4.0`.
+- **Deploy order:** publish `aweb-naapp` 0.4.0, then this server. Right after
+  the migrations, run `aweb verify-identity-bindings` (dry run first) and
+  `aweb verify-pending-app-installations`.
+
+### Release preparation: awid-service 0.5.31
+
+`RegistryClient.get_team_fresh` (and its `CachedRegistryClient` override that
+invalidates the team-metadata cache before reading): read a team's current
+metadata, controller key included, without a stale cached result. The server's
+hook-binding owner acts require it. No AWID server change; the `awid` image is
+not re-released.
+
+### Release preparation: aweb-naapp 0.3.0
+
+`aweb-naapp` and `aweb-naapp-testing` 0.3.0 carry the naapp-lib changes since
+`aweb-naapp-v0.2.0` listed under Unreleased: the persistent page store with
+records, the runtime's shared team-server directory and hook resolver
+(`team_cache()`, `team_server_directory()`, `hook_resolver()`), the
+current-member membership proof, capability-link runtime and storage, the
+hooks commitment helper and proof/observation contracts, and the manifest
+reader's scoped reserved names (root reservations apply to `app.id` only;
+nested tools reserve only the dispatcher's help names).
+
+### Release preparation: server 1.27.32
+
+Server changes are since `server-v1.27.31`; see Unreleased.
+
+- Human channels P0, P3 and P8: the public seam, typed chat participant
+  identity with gated storage, and ownership verification for native and
+  binding presence intents.
+- Hook bindings (aweb-acgh.16.10): read, activate and revoke routes, owner
+  activation and revocation, and the hooks kit's owner-act migrations applied
+  after core's chain.
+- A timed-out AWID registry read is a classified 503 (aweb-acjk).
+- **Migration:** `033_typed_chat_participants.sql` (aweb schema).
+- **Dependency floors:** `aweb-naapp[hooks]>=0.3.0` (the install path's manifest
+  reader, including its reserved-name rule, comes from `aweb-naapp`) and
+  `awid-service>=0.5.31` (hook-binding owner acts call
+  `RegistryClient.get_team_fresh`).
+- **Deploy order:** publish `awid-service` 0.5.31, then `aweb-naapp` 0.3.0,
+  then this server.
+
 ### Release preparation: aweb-naapp 0.2.0
 
 - The `aweb-naapp-vX.Y.Z` tag also publishes PyPI `aweb-naapp-testing` from
@@ -72,6 +177,20 @@ Server changes are since `server-v1.27.30`.
 - **Security:** read-purpose credentials (`app-grant-read`, `hook-resolve`)
   accept one signature encoding only: unpadded standard base64 with zero
   spare bits. App-event credentials are unchanged.
+- Installs read their manifest bytes with the one manifest reader that apps
+  and clients share (`aweb_naapp.manifest`), for both manifest versions. A
+  version 2 install registers the bytes' `app_keys` with their declared
+  purposes. A key id keeps its first `did_key` in the team (409 otherwise,
+  nothing written), revocation is one-way, and an unknown purpose label is
+  stored and grants nothing. A key declaring `app-event` signs app events;
+  version 1 `event_emitters` keys are unchanged. Reseed recreates app keys from
+  the bytes.
+- **Narrowing:** version 1 bytes are now validated by the strict v1 reader.
+  An install whose bytes it refuses is refused with 422 and the reader's
+  stable code. Installs without bytes are unchanged.
+- **Deploy order:** the server depends on `aweb-naapp`. Publish `awid-service`,
+  then `aweb-naapp`, then this server.
+
 
 ### Release preparation: aweb-naapp 0.1.0
 

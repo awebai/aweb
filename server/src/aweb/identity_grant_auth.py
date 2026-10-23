@@ -10,20 +10,26 @@ session-leases, reservations, federation, workspaces, or admin surfaces.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
-
-from fastapi import HTTPException, Request
 
 from awid.dns_auth import enforce_timestamp_skew, require_timestamp
 from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
+from fastapi import HTTPException, Request
 
-from aweb.grant_expiry import never_expires
-from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
+from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext
+from aweb.auth_context import GRANT_SCOPES as GRANT_SCOPES
 from aweb.config import get_settings, require_registered_certificates
+from aweb.grant_expiry import never_expires
 from aweb.identity_auth_deps import MessagingAuth
-from aweb.team_auth_deps import TeamIdentity, _aweb_db, _get_registered_certificates, _get_revoked_certificates
+from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
+from aweb.team_auth_deps import (
+    TeamIdentity,
+    _aweb_db,
+    _get_registered_certificates,
+    _get_revoked_certificates,
+)
 from aweb.team_auth_envelope import decode_signed_payload_header, raw_request_target
 
 GRANT_AUTH_SCHEME = "AWEB-Grant "
@@ -167,7 +173,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
     if row["revoked_at"] is not None:
         raise HTTPException(status_code=403, detail="grant revoked")
-    if not never_expires(row.get("issued_at"), row["expires_at"]) and row["expires_at"] <= datetime.now(timezone.utc):
+    if not never_expires(row.get("issued_at"), row["expires_at"]) and row["expires_at"] <= datetime.now(UTC):
         raise HTTPException(status_code=403, detail="grant expired")
     if row["status"] != "active" or row["deleted_at"] is not None:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
@@ -202,6 +208,12 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
     if required != GRANT_SCOPE_ANY and required is not None and required not in scopes:
         raise HTTPException(status_code=403, detail=_OUT_OF_SCOPE_DETAIL)
 
+    binding = await verify_identity_binding(
+        request, did_key=row["subject_did_key"], did_aw=row.get("did_aw") or "",
+        address=row.get("address") or "",
+    )
+    await refresh_projection_binding(aweb_db, agent_id=row["agent_id"], did_key=row["subject_did_key"], binding=binding)
+    row = {**dict(row), "did_aw": binding.did_aw, "address": binding.address}
     grant = GrantContext(
         grant_id=grant_id,
         session_did_key=did_key,

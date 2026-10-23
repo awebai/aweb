@@ -243,8 +243,7 @@ async def test_the_database_is_unavailable_outside_the_lifespan(tmp_path: Path) 
     assert runtime.connected_db() is None
     with pytest.raises(RuntimeError):
         runtime.db()
-    with pytest.raises(RuntimeError):
-        runtime.team_cache()
+    assert runtime.team_cache() is runtime.team_cache()
 
 
 # --- Every authorized route must be exactly a declared tool ---------------------
@@ -442,6 +441,7 @@ def test_authorization_follows_the_served_manifest_for_a_self_hosted_origin(tmp_
         _env_file=None,
         database_url="postgresql://localhost/unused",
         public_origin="http://self.test",
+        app_id="self-example",
     )
     runtime = NaappRuntime(
         settings,

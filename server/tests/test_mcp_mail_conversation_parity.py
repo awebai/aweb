@@ -1,5 +1,7 @@
 """Mail threading parity through the real MCP/HTTP apps and PostgreSQL."""
 
+from identity_binding_support import seed_verified_bindings
+
 import json
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -68,7 +70,9 @@ async def mail_server(aweb_cloud_db, monkeypatch):
         )
         return {"content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": envelope}
 
-    app = _build_test_app(db, None)
+    app = _build_test_app(db, object())
+    seed_verified_bindings(app, ("did:aw:pilot", pilot_did, "acme.com/pilot"),
+                           ("did:aw:human", human_did, ""))
     from aweb.routes.messaging import router as messaging_router
     app.include_router(messaging_router)
     mcp = create_mcp_app(db_infra=app.state.db, hosted_signer=signer, hosted_encryptor=encryptor)

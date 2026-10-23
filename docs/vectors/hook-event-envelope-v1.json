@@ -1,12 +1,4 @@
 {
-  "digest_construction": {
-    "injected_header": "Authorization: Bearer test-credential-not-a-secret",
-    "refused_request_sha256": "d4dfa61a6436a9137b2826978d1eb8f88ae2f924770c54a712840ae3e22df908",
-    "request_after_injection": "POST /v1/charges HTTP/1.1\r\nHost: api.example.com\r\nContent-Type: application/json\r\nAuthorization: Bearer test-credential-not-a-secret\r\n\r\n{\"amount\":100}",
-    "request_before_injection": "POST /v1/charges HTTP/1.1\r\nHost: api.example.com\r\nContent-Type: application/json\r\n\r\n{\"amount\":100}",
-    "request_sha256": "0fee35751536ebb7ae18ae79bda85f96757ff0f931259c9a54d7a1112532016a",
-    "rule": "request_sha256 and params_sha256 cover the request before credential injection, never after"
-  },
   "name": "hook-event-envelope-v1",
   "negative_cases": [
     {

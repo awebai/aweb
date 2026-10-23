@@ -11,14 +11,15 @@ import subprocess
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 AW = Path(os.environ['AW_BIN']).resolve()
-REGISTRY = 'http://127.0.0.1:38010'
+REGISTRY = 'http://awid:8010'
 SERVER = 'http://127.0.0.1:38000'
-FOLIO = 'http://127.0.0.1:38765'
+FOLIO = os.environ['FOLIO_WAKES_ORIGIN']
 COMPOSE = ['docker', 'compose', '-p', 'abrm-folio', '--project-directory', str(ROOT), '-f', str(ROOT / 'scripts/e2e/folio-wakes.compose.yml')]
 
 def run(args, **kw):
@@ -27,18 +28,30 @@ def run(args, **kw):
         raise AssertionError(f'{args[:4]} failed: {result.stderr}\n{result.stdout}')
     return result.stdout
 
-def configure_manifest(version, events=True, manifest_version=1):
+def configure_manifest(version, events=True, manifest_version=1, extra_emitter=None):
     # The disposable deployment's real manifest file, declaring the public test
     # emitter. No substitute HTTP server or auth bypass. Version 2 declares the
     # emitter as an app-event app key and adds a hook-only tool, whose scope
     # install must not grant.
-    manifest = run(['docker', 'run', '--rm', '--entrypoint', '/app/.venv/bin/python', '-v', str(ROOT / 'scripts/e2e') + ':/e2e:ro', 'abrm-folio-folio', '/e2e/folio_wakes_manifest.py', version, 'true' if events else 'false', str(manifest_version)])
+    arguments = ['docker', 'run', '--rm', '--entrypoint', '/app/.venv/bin/python', '-v', 'abrm-folio-fixture:/fixture:ro', '-e', 'FOLIO_WAKES_ORIGIN', 'abrm-folio-folio', '/fixture/e2e/folio_wakes_manifest.py', version, 'true' if events else 'false', str(manifest_version)]
+    if extra_emitter:
+        arguments.append(extra_emitter)
+    manifest = run(arguments)
     with open(os.environ['FOLIO_WAKES_MANIFEST'], 'w', encoding='utf-8') as handle:
         handle.write(manifest.strip())
-    # Folio reads its manifest once at startup, so it serves the new bytes after a restart.
-    run(COMPOSE + ['restart', 'folio'])
+    document = json.loads(manifest)
+    keys = document.get('app_keys', document.get('event_emitters', []))
+    paths = {'folio:grant-read-1': '/fixture/tls/grant-read.key', 'folio:emit-other': '/fixture/tls/emit-other.key'}
+    os.environ['FOLIO_WAKES_APP_KEY_FILES'] = json.dumps({key['kid']: paths[key['kid']] for key in keys if key['kid'] in paths})
+    # Recreate applies both the changed bytes and purpose-specific key files.
+    run(COMPOSE + ['up', '--no-build', '--no-deps', '-d', '--force-recreate', 'folio'])
     deadline = time.monotonic() + 60
     while True:
+        container = run(COMPOSE + ['ps', '--all', '--quiet', 'folio']).strip()
+        state = json.loads(run(['docker', 'inspect', '--format', '{{json .State}}', container]))
+        if state['Status'] in ('exited', 'dead'):
+            logs = run(COMPOSE + ['logs', '--no-color', '--tail', '80', 'folio'])
+            raise AssertionError(f'folio exited after the manifest change: {state}\n{logs}')
         try:
             with urllib.request.urlopen(FOLIO + '/health', timeout=5) as response:
                 if response.status == 200:
@@ -46,8 +59,21 @@ def configure_manifest(version, events=True, manifest_version=1):
         except (urllib.error.URLError, ConnectionError, TimeoutError):
             pass
         if time.monotonic() > deadline:
-            raise AssertionError('folio did not come back after the manifest change')
+            logs = run(COMPOSE + ['logs', '--no-color', '--tail', '80', 'folio'])
+            raise AssertionError(f'folio did not come back after the manifest change\n{logs}')
         time.sleep(0.5)
+
+def served_manifest():
+    try:
+        with urllib.request.urlopen(FOLIO + '/.well-known/aweb-app-versions.json') as response:
+            catalog = json.load(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+        return urllib.request.urlopen(FOLIO + '/.well-known/aweb-app.json').read()
+    variant = max(catalog['variants'], key=lambda item: item['manifest_version'])
+    return urllib.request.urlopen(FOLIO + variant['url']).read()
+
 
 with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
     root = Path(td).resolve()
@@ -101,15 +127,35 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
         invite = data('alice', 'id', 'team', 'invite', '--team', 'dev', '--namespace', namespace, '--global')['token']
         aw(name, 'id', 'team', 'accept-invite', invite, '--global', '--alias', name)
         aw(name, 'init', '--url', SERVER)
+        if name == 'alice':
+            aw(name, 'id', 'team', 'set-server', '--team', 'dev', '--namespace', namespace, '--url', SERVER, '--registry', REGISTRY)
     configure_manifest('0.0.0', events=False)
-    aw('alice', 'plugin', 'install', FOLIO)
+    refused = aw('alice', 'plugin', 'install', FOLIO, check=False)
+    assert refused.returncode and 'admin_required' in refused.stderr, refused.stderr
+    requested = data('alice', 'plugin', 'request', FOLIO)
+    assert requested['state'] == 'pending', requested
     assert get('alice', '/v1/apps/installed?team_id=' + team)['apps'] == []
+    def grant_admin(who, team_id):
+        did = data(who, 'id', 'show')['did_key']
+        run(COMPOSE + ['exec', '-T', 'aweb', 'aweb', 'install-admin', 'grant',
+                       '--team-id', team_id, '--principal-did', did, '--role', 'owner'])
+    grant_admin('alice', team)
     configure_manifest('0.1.0')
-    raw = urllib.request.urlopen(FOLIO + '/.well-known/aweb-app.json').read()
-    aw('alice', 'plugin', 'install', FOLIO, '--dev-origin', FOLIO)
+    raw = served_manifest()
+    aw('alice', 'plugin', 'install', FOLIO)
     apps = get('alice', '/v1/apps/installed?team_id=' + team)['apps']
     assert len(apps) == 1, f'install did not register Folio: {apps}'
     assert apps[0]['digest'] == 'sha256:' + hashlib.sha256(raw).hexdigest()
+    assert apps[0]['installation_id'] and apps[0]['generation'] > 0 and apps[0]['origin_verified']
+    stale = aw('alice', 'id', 'request', 'POST', SERVER + '/v1/apps/install', '--team-auth', '--raw',
+               '--header', 'Content-Type: application/json', '--body', json.dumps({
+                   'app_id': 'folio', 'origin': FOLIO, 'digest': apps[0]['digest'],
+                   'granted_scopes': apps[0]['granted_scopes'], 'expected_generation': apps[0]['generation'] + 1,
+               }), check=False)
+    assert stale.returncode != 0 and 'HTTP 409' in stale.stderr.splitlines(), stale.stderr
+    assert json.loads(stale.stdout)['detail']['code'] == 'generation_conflict', stale.stdout
+    after_conflict = get('alice', '/v1/apps/installed?team_id=' + team)['apps']
+    assert after_conflict[0]['generation'] == apps[0]['generation'], after_conflict
     from_bytes = run(COMPOSE + ['exec', '-T', 'postgres', 'psql', '-U', 'aweb', '-d', 'aweb', '-Atc', "SELECT registered_from_manifest_bytes FROM aweb.team_app_installs WHERE team_id='" + team + "'"]).strip()
     assert from_bytes == 't', f'aw install did not register from the fetched manifest bytes: {from_bytes!r}'
     subscriptions = get('alice', '/v1/events/subscriptions')['subscriptions']
@@ -131,14 +177,14 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
         # Folio delivers events from its outbox after the write commits, so wait
         # for the expected number, then long enough to see a duplicate arrive.
         deadline = time.monotonic() + within
-        while len(rows := stored(slug)) < count and time.monotonic() < deadline:
+        while len(stored(slug)) < count and time.monotonic() < deadline:
             time.sleep(0.5)
         time.sleep(2)
         return stored(slug)
     def folio_request(who, method, path, body):
         return json.loads(aw(who, 'id', 'request', method, FOLIO + path, '--team-auth', '--raw', '--header', 'Content-Type: application/json', '--body', json.dumps(body)).stdout)
-    def human_edit(url, body, base_version):
-        request = urllib.request.Request(url + '/edit', data=json.dumps({'body': body, 'base_version': base_version, 'editor_name': 'Hana'}).encode(), headers={'Content-Type': 'application/json'}, method='POST')
+    def human_edit(url, headers, body, base_version):
+        request = urllib.request.Request(url + '/edit', data=json.dumps({'body': body, 'base_version': base_version, 'editor_name': 'Hana'}).encode(), headers=headers, method='POST')
         try:
             with urllib.request.urlopen(request, timeout=10) as response:
                 return response.status, json.loads(response.read())
@@ -151,9 +197,19 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
     assert emitted('every-change', 3)[1:] == [{'version': '2', 'source': 'api'}, {'version': '3', 'source': 'api'}], stored('every-change')
     print('PASS create, append and append-template each emit exactly one metadata-only event', flush=True)
     link = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'editable': True})
+    parts = urllib.parse.urlsplit(link['url'])
+    editor_url = parts._replace(fragment='').geturl()
+    session_request = urllib.request.Request(
+        editor_url + '/session',
+        data=json.dumps({'opener': urllib.parse.parse_qs(parts.fragment)['k'][0]}).encode(),
+        headers={'Content-Type': 'application/json'}, method='POST',
+    )
+    with urllib.request.urlopen(session_request, timeout=10) as response:
+        assert response.status == 200
+        edit_headers = {'Content-Type': 'application/json', 'X-Folio-Edit-Session': json.load(response)['session_secret']}
     a = stream('alice')
-    assert human_edit(link['url'], 'four, by a human', 3) == (200, {'version_number': 4})
-    assert human_edit(link['url'], 'stale', 3)[0] == 409
+    assert human_edit(editor_url, edit_headers, 'four, by a human', 3) == (200, {'version_number': 4})
+    assert human_edit(editor_url, edit_headers, 'stale', 3)[0] == 409
     assert emitted('every-change', 4)[3:] == [{'version': '4', 'source': 'present-link'}], stored('every-change')
     # The stream replays its lookback window, so earlier api events arrive too; the
     # stored rows above prove exactly-one, this proves the human edit wakes the agent.
@@ -168,7 +224,7 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
     before = outboxed()
     folio_request('alice', 'POST', '/v1/documents', {'slug': 'outboxed', 'title': 'Outboxed', 'body': 'one'})
     assert outboxed() == before + 1, (before, outboxed())
-    assert human_edit(link['url'], 'stale again', 3)[0] == 409
+    assert human_edit(editor_url, edit_headers, 'stale again', 3)[0] == 409
     assert outboxed() == before + 1, (before, outboxed())
     assert emitted('outboxed', 1) == [{'version': '1', 'source': 'api'}], stored('outboxed')
     print('PASS each write stores its event in the outbox with the write; a rejected edit stores none', flush=True)
@@ -193,7 +249,7 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
         env['AWEB_IDENTITY_HOME'] = old
     print('PASS grant cannot install and events.read without coord.read receives no app event', flush=True)
     configure_manifest('0.1.1')
-    raw = urllib.request.urlopen(FOLIO + '/.well-known/aweb-app.json').read()
+    raw = served_manifest()
     aw('alice', 'plugin', 'update', 'folio')
     apps = get('alice', '/v1/apps/installed?team_id=' + team)['apps']
     assert apps[0]['digest'] == 'sha256:' + hashlib.sha256(raw).hexdigest()
@@ -220,13 +276,13 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
         run(COMPOSE + ['unpause', 'aweb'])
     aw('alice', 'plugin', 'update', 'folio')
     assert get('alice', '/v1/apps/installed?team_id=' + team)['apps'][0]['app_version'] == '0.1.2'
-    denied = aw('alice', 'plugin', 'install', FOLIO, '--dev-origin', 'http://localhost:38765', check=False)
-    assert denied.returncode != 0 and '409' in denied.stderr, denied.stderr
-    print('PASS failed registration preserves cache and retries; origin conflict refuses', flush=True)
+    denied = aw('alice', 'plugin', 'install', FOLIO, '--dev-origin', 'http://localhost:8765', check=False)
+    assert denied.returncode != 0 and 'origin_verification_required' in denied.stderr, denied.stderr
+    print('PASS failed registration preserves cache and retries; origin rewrite refuses', flush=True)
 
-    # Two teams on one server. A member of another team registers Folio keys at
-    # the digest this team pins, reusing Folio's own key id and adding one of
-    # its own. Each key is active only for the team that registered it.
+    # Two teams on one server pin different, genuinely fetched Folio bytes.
+    # Only the other team's pin declares the extra public test key; it cannot
+    # sign for Alice's older pin or override its declarations with metadata.
     homes['carol'] = root / 'carol'
     homes['carol'].mkdir()
     other_namespace = 'other-' + namespace
@@ -237,21 +293,14 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
     invite = data('carol', 'id', 'team', 'invite', '--team', 'ops', '--namespace', other_namespace, '--global')['token']
     aw('carol', 'id', 'team', 'accept-invite', invite, '--global', '--alias', 'carol')
     aw('carol', 'init', '--url', SERVER)
+    aw('carol', 'id', 'team', 'set-server', '--team', 'ops', '--namespace', other_namespace, '--url', SERVER, '--registry', REGISTRY)
     pinned = get('alice', '/v1/apps/installed?team_id=' + team)['apps'][0]
-    served_events = json.loads(urllib.request.urlopen(FOLIO + '/.well-known/aweb-app.json').read()).get('events', [])
-    declared = [dict(e, type=e['type'].removeprefix('folio/')) for e in served_events]
-    other_seed = '02' * 32
+    grant_admin('carol', other_team)
+    other_seed = run(COMPOSE + ['exec', '-T', 'folio', '/app/.venv/bin/python', '-c',
+                                'from pathlib import Path; print(Path("/fixture/tls/emit-other.key").read_text().strip())']).strip()
     other_did = run(COMPOSE + ['exec', '-T', 'folio', '/app/.venv/bin/python', '-c',
                                'from awid.did import did_from_public_key; from nacl.signing import SigningKey; '
                                'print(did_from_public_key(bytes(SigningKey(bytes.fromhex(' + repr(other_seed) + ')).verify_key)))']).strip()
-    def install_with_key(who, kid, check=True):
-        body = json.dumps({
-            'app_id': 'folio', 'origin': pinned['origin'], 'app_version': pinned['app_version'],
-            'manifest_version': pinned['manifest_version'], 'digest': pinned['digest'],
-            'granted_scopes': pinned['granted_scopes'], 'events': declared,
-            'event_emitters': [{'kid': kid, 'did_key': other_did}],
-        })
-        return aw(who, 'id', 'request', 'POST', SERVER + '/v1/apps/install', '--team-auth', '--raw', '--body', body, check=check)
     def emit_with_other_key(team_id, kid):
         code = '''import json, urllib.error, urllib.request
 from datetime import UTC, datetime
@@ -266,42 +315,53 @@ except urllib.error.HTTPError as exc:
     print(exc.code)
 '''.replace('SEED', repr(other_seed)).replace('TEAM', repr(team_id)).replace('KID', repr(kid))
         return int(run(COMPOSE + ['exec', '-T', 'folio', '/app/.venv/bin/python', '-c', code]).strip())
-    install_with_key('carol', 'folio:emit-test')
-    install_with_key('carol', 'folio:emit-other')
+    # Carol pins distinct origin-served bytes declaring the extra public key.
+    # Alice keeps her earlier pin: no caller-supplied key metadata is trusted.
+    configure_manifest('0.1.2', extra_emitter='folio:emit-other')
+    deployed = json.loads(served_manifest())
+    declared = deployed.get('app_keys', deployed.get('event_emitters', []))
+    assert next(key for key in declared if key['kid'] == 'folio:emit-other')['did_key'] == other_did
+    aw('carol', 'plugin', 'install', FOLIO)
     assert emit_with_other_key(team, 'folio:emit-test') == 403
     assert emit_with_other_key(team, 'folio:emit-other') == 403
     assert emit_with_other_key(other_team, 'folio:emit-other') == 200
-    replaced = install_with_key('alice', 'folio:emit-test', check=False)
-    assert replaced.returncode != 0 and '409' in replaced.stderr, replaced.stderr
+    replaced = aw('alice', 'id', 'request', 'POST', SERVER + '/v1/apps/install', '--team-auth', '--raw',
+                  '--header', 'Content-Type: application/json', '--body', json.dumps({
+                      'app_id': 'folio', 'origin': FOLIO, 'digest': pinned['digest'],
+                      'granted_scopes': pinned['granted_scopes'], 'expected_generation': pinned['generation'],
+                      'event_emitters': [{'kid': 'folio:emit-test', 'did_key': other_did}],
+                  }), check=False)
+    assert replaced.returncode != 0 and 'HTTP 422' in replaced.stderr.splitlines(), replaced.stderr
+    configure_manifest('0.1.2')
     a = stream('alice')
     aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'fourth')
     assert any(e['kind'] == 'app' and e['meta']['resource_ref'] == 'wake-proof' for e in events(a))
     print('PASS another team on the server cannot emit as Folio into this team or replace its registered key', flush=True)
 
-    # Deploy runbook: the migrations carry no registry-entry keys or
-    # declarations over, and the operator reseeds each installed app from its
-    # origin's bytes. Teams act on nothing and keep their subscription choices.
+    # Operator repair restores missing keys/declarations for this verified
+    # pin and reports the other team's different pin. Subscription choices
+    # survive the repair. Migration activation is covered by the F6 tests.
     def psql(sql):
         return run(COMPOSE + ['exec', '-T', 'postgres', 'psql', '-U', 'aweb', '-d', 'aweb', '-Atc', sql])
     psql("DELETE FROM aweb.team_app_emit_keys WHERE team_id='" + team + "'; DELETE FROM aweb.team_app_event_types WHERE team_id='" + team + "'")
     intents_before = get('bob', '/v1/events/subscriptions')['subscriptions']
-    # The origin's port is published only on the host, so the exact served
-    # bytes reach the operator command as a file.
-    served = urllib.request.urlopen(FOLIO + '/.well-known/aweb-app.json').read()
+    # Give the repair command the exact bytes served by this deployment.
+    configure_manifest('0.1.2')
+    served = served_manifest()
     run(COMPOSE + ['exec', '-T', 'aweb', 'sh', '-c', 'cat > /tmp/folio-manifest.json'], input=served.decode())
     reseed = subprocess.run(COMPOSE + ['exec', '-T', 'aweb', 'aweb', 'reseed-app-registrations', '--origin', FOLIO, '--manifest-file', '/tmp/folio-manifest.json'], text=True, capture_output=True)
     report = json.loads(reseed.stdout)
     assert team in report['reseeded'], report
-    assert report['key_conflict'] == [other_team], report
+    assert report['digest_mismatch'] == [other_team], report
     assert reseed.returncode == 1, reseed.stderr
     assert get('bob', '/v1/events/subscriptions')['subscriptions'] == intents_before
     a = stream('alice')
     aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'fifth')
     assert any(e['kind'] == 'app' and e['meta']['resource_ref'] == 'wake-proof' for e in events(a))
-    print('PASS operator reseed restores keys and declarations from origin bytes, keeps subscriptions, reports conflicts', flush=True)
+    print("PASS operator reseed restores keys and declarations from origin bytes, keeps subscriptions, reports another team's different pin", flush=True)
 
-    # A version 2 manifest registers against the real server: aw sends no bytes
-    # for it, grants only the scopes of agent and surface tools, takes its
+    # A version 2 manifest is fetched and verified by the real server, grants
+    # only the scopes of agent and surface tools, and takes its
     # emitter from the app-event app key, and refuses its hook-only verb.
     configure_manifest('0.2.0', manifest_version=2)
     # A v2 deployment is discovered through its variant catalog; the legacy
@@ -311,16 +371,18 @@ except urllib.error.HTTPError as exc:
     raw = urllib.request.urlopen(FOLIO + variant['url']).read()
     assert variant['digest'] == 'sha256:' + hashlib.sha256(raw).hexdigest()
     assert json.loads(raw)['manifest_version'] == 2
+    grant_keys = [key for key in json.loads(raw)['app_keys'] if key['kid'] == 'folio:grant-read-1']
+    assert len(grant_keys) == 1 and grant_keys[0]['purposes'] == ['app-grant-read'], grant_keys
     aw('alice', 'plugin', 'update', 'folio')
     apps = get('alice', '/v1/apps/installed?team_id=' + team)['apps']
     assert len(apps) == 1, apps
     assert apps[0]['manifest_version'] == 2 and apps[0]['app_version'] == '0.2.0', apps[0]
     assert apps[0]['digest'] == 'sha256:' + hashlib.sha256(raw).hexdigest()
     assert apps[0]['granted_scopes'] == ['folio:read', 'folio:write'], apps[0]['granted_scopes']
-    assert psql("SELECT registered_from_manifest_bytes FROM aweb.team_app_installs WHERE team_id='" + team + "'").strip() == 'f'
+    assert psql("SELECT registered_from_manifest_bytes FROM aweb.team_app_installs WHERE team_id='" + team + "'").strip() == 't'
     hook_only = aw('alice', 'folio', 'audit-ingest', check=False)
     assert hook_only.returncode != 0 and 'tool_context_denied' in hook_only.stderr, hook_only.stderr
     a = stream('alice')
     aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'sixth')
     assert any(e['kind'] == 'app' and e['meta']['resource_ref'] == 'wake-proof' for e in events(a))
-    print('PASS v2 manifest registers without bytes, grants only agent and surface scopes, emits through its app-event key, refuses its hook-only verb', flush=True)
+    print('PASS v2 manifest registers from server-fetched bytes, grants only agent and surface scopes, emits through its app-event key, refuses its hook-only verb', flush=True)

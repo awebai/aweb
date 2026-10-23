@@ -218,7 +218,7 @@ docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$
 
 BUILDX_CONFIG="$buildx_config" docker buildx build --builder "$builder_name" --load --pull \
   --label "aweb.candidate-gate=$resource_label" \
-  -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout/candidate-gate" \
+  -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
 
 # Record the run's mutable inputs in the evidence (adoption compares them):
@@ -295,21 +295,31 @@ socket_gid="$(docker run --rm \
   --cpus "$redis_cpus" --memory "$redis_memory" --pids-limit "$redis_pids" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   "$IMAGE" stat -c '%g' /var/run/docker.sock)"
-read -r a2a_aweb_port a2a_awid_port a2a_redis_port a2a_pg_port a2a_gateway_port fed_awid_port fed_alpha_port fed_beta_port < <(
-  python3 - <<'PY'
+naapp_packages_text="$(make -s --no-print-directory -C "$ROOT" naapp-e2e-packages)"
+read -r -a naapp_packages <<<"$(printf '%s\n' "$naapp_packages_text" | tr '\n' ' ')"
+port_allocations="$(
+  python3 - "$gate_run_id" "${naapp_packages[@]}" <<'PYPORTS'
 import socket
-sockets=[]
+import sys
+from pathlib import PurePosixPath
+sockets = []
+def allocate_port():
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sockets.append(sock)
+    return sock.getsockname()[1]
 try:
-    for _ in range(8):
-        sock=socket.socket()
-        sock.bind(("127.0.0.1", 0))
-        sockets.append(sock)
-    print(*(sock.getsockname()[1] for sock in sockets))
+    print(*(allocate_port() for _ in range(8)))
+    for package in sys.argv[2:]:
+        project = f"{sys.argv[1]}-naapp-{PurePosixPath(package).name}"
+        print(package, project, allocate_port(), allocate_port())
 finally:
     for sock in sockets:
         sock.close()
-PY
-)
+PYPORTS
+)"
+read -r a2a_aweb_port a2a_awid_port a2a_redis_port a2a_pg_port a2a_gateway_port fed_awid_port fed_alpha_port fed_beta_port <<<"$(printf '%s\n' "$port_allocations" | head -n 1)"
+naapp_e2e_allocations="$(printf '%s\n' "$port_allocations" | tail -n +2)"
 
 # Copy the exact checkout and inputs through the Docker API. The host checkout
 # is never mounted into a container; extracted dependency trees stay in Docker.
@@ -335,6 +345,7 @@ docker run --rm --init \
   --group-add "$socket_gid" \
   --add-host aweb-docker.test:host-gateway \
   -e HOME="$checkout/.candidate-home" \
+  -e PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
   -e PATH="$checkout/candidate-gate/bin:/usr/local/go/bin:/opt/uv:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   -e AWEB_CANDIDATE_REAL_DOCKER=/usr/bin/docker \
   -e AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" \
@@ -378,6 +389,7 @@ docker run --rm --init \
   -e AWEB_FED_AUTH_PROJECT="${suite_projects[2]}" \
   -e AWEB_FED_E2E_PROJECT="${suite_projects[3]}" \
   -e LIBRARY_E2E_PROJECT="${suite_projects[4]}" \
+  -e NAAPP_E2E_ALLOCATIONS="$naapp_e2e_allocations" \
   -e TEST_DB_HOST="$pg_name" \
   -e TEST_DB_PORT=5432 \
   -e TEST_DB_USER=postgres \

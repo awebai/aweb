@@ -521,9 +521,27 @@ var mailSendCmd = &cobra.Command{
 				} else {
 					req.ToAlias = targetValue
 				}
+			} else if sendEncryptE2EE {
+				// Key discovery for a human is scoped to the selected team,
+				// using its original identity-signed assertion.
+				req.ToAlias = targetValue
+			} else if liveTarget, liveFound, liveErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetValue); liveErr != nil {
+				debugLog("resolve live team member %s/%s: %v", strings.TrimSpace(sel.TeamID), targetValue, liveErr)
+				req.ToAlias = targetValue
+			} else if liveFound {
+				kind, value := liveTarget.identityTarget()
+				applyMailRecipientTarget(req, kind, value)
+				// The live team roster already binds the member's current key.
+				// Keep it with the stable ID instead of treating the member as
+				// an external bare-DID first contact. /v1/agents omits humans.
+				req.ToDID = strings.TrimSpace(liveTarget.DIDKey)
+				if mailRecipientTargetApplied(req) {
+					targetKind = kind
+					targetValue = value
+				} else {
+					req.ToAlias = targetValue
+				}
 			} else {
-				// An alias stays scoped to the selected team. A roster DID is
-				// identity metadata, not a first-contact route.
 				req.ToAlias = targetValue
 			}
 		case "did":

@@ -41,10 +41,12 @@ All runtime env vars use the `FOLIO_` prefix; they are the shared naapp settings
 - `FOLIO_AUTH_CACHE_TTL_SECONDS` — AWID auth cache TTL, default and maximum `60`.
 - `FOLIO_TIMESTAMP_SKEW_SECONDS` — signed request skew window, default and maximum `300`.
 - `FOLIO_DID_AW_PROFILE` — how a certificate's did:aw is checked against its current registry key, default `observe` (admit and log); `require` refuses a mismatch.
-- `FOLIO_APP_EVENTS_ORIGIN`, `FOLIO_APP_EMIT_KID`, `FOLIO_APP_EMIT_KEY_SEED_HEX` — where and with which declared key Folio emits `folio/doc.changed`; unset emits nothing.
+- `FOLIO_APP_EVENTS_ORIGIN`, `FOLIO_APP_EMIT_KID`, `FOLIO_APP_EMIT_KEY_SEED_HEX` — where and with which declared key Folio emits `folio/doc.changed`. The released seed settings remain supported.
+- `FOLIO_APP_KEY_FILES` — alternative JSON map from declared kids to signing-key files. The template declares `folio:emit-1`; every declared kid needs its key configured, even when outbound event delivery is disabled.
+- `FOLIO_APP_ID` — stable deployment app id, default `folio`. See [production operations](docs/production-operations.md) for manifest filling and install re-pinning.
 - `FOLIO_GIT_SHA` — the build commit `/health` reports when Render does not inject `RENDER_GIT_COMMIT`.
-- `FOLIO_DEFAULT_PRESENT_TTL_SECONDS` — default present-link TTL, default `86400`.
-- `FOLIO_MAX_PRESENT_TTL_SECONDS` — max present-link TTL, default `604800`.
+- `FOLIO_DEFAULT_PRESENT_TTL_SECONDS` — default read-only present-link TTL, default `86400` (one day).
+- `FOLIO_MAX_PRESENT_TTL_SECONDS` — read-only present-link ceiling, default and maximum `2592000` (30 days); operators may set a lower ceiling. Explicit requests above the configured ceiling return `422`, rather than being shortened. Editable links remain limited to `300` seconds.
 - `FOLIO_CLOUDFLARE_ACCOUNT_ID` — Cloudflare account id for Stream.
 - `FOLIO_CLOUDFLARE_STREAM_API_TOKEN` — Stream API token for direct uploads/status.
 - `FOLIO_CLOUDFLARE_STREAM_PLAYBACK_HOST` — signed playback host, for example `customer-<code>.cloudflarestream.com`.
@@ -100,7 +102,7 @@ aw id request PUT "$FOLIO_ORIGIN/v1/theme" --team-auth --raw \
   --body '{"tokens":{"colors":{"background":"#0b1020","surface":"#ffffff","accent":"#7c5cff"},"fonts":{"body":"serif"}},"header":"Team memo","footer":"Confidential"}'
 
 aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \
-  --body '{"slug":"pitch","ttl_seconds":604800}'
+  --body '{"slug":"pitch","ttl_seconds":2592000}'
 ```
 
 The present response includes a public capability URL under `/present/<token>`; the URL is the human-facing permission. User content under `/present/*` and `/assets/*` is marked `noindex, nofollow, noarchive` and disallowed in `robots.txt`. Revoke it when access should end:
@@ -119,7 +121,13 @@ make lint
 make e2e
 ```
 
-`make e2e` starts local Postgres + AWID via Docker Compose, runs real `aw id request --team-auth` tests, and tears the stack down.
+`make e2e` starts disposable Postgres, Redis and AWID via Docker Compose and
+runs Folio with the checkout's built `aw`. The install-after-mint journey also
+starts the real aweb server from its locked source environment and a real custody
+process, then uses a replacement grant for create/append/show. Prepare that
+source environment with `uv sync --frozen --project ../../server`, build `aw`
+from `../../cli/go`, and put that directory on `PATH` before running e2e.
+All child processes and the disposable stack are stopped on exit.
 
 Folio uses the in-repo `naapp-lib/` and `awid/` through its locked path sources.
 Run it from an aweb checkout; separate sibling clones are unnecessary. Shared

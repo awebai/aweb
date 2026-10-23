@@ -10,18 +10,19 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from awid.signing import canonical_json_bytes, sign_message
 from httpx import ASGITransport, AsyncClient
 
-from awid.signing import canonical_json_bytes, sign_message
 from aweb import app_credentials
 from aweb.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, PURPOSES
-from aweb.app_registry import install_app
 from aweb.config import get_app_grant_max_age_seconds
+from aweb.hook_bindings import PRODUCTION, HookBindingDeclaration, write_pending_bindings
+from aweb.routes.app_hooks import router as app_hooks_router
 from aweb.routes.apps import router as apps_router
+from tests.installation_fixtures import install_fixture_app as install_app
 from tests.test_app_credentials import _register_app_key
 from tests.test_app_events_http import (
     AGENT_ID,
-    DIGEST,
     OTHER_TEAM_ID,
     TEAM_ID,
     _build_events_app,
@@ -75,8 +76,8 @@ async def _get(app, headers: dict, path: str = GRANT_PATH):
         return await client.get(path, headers=headers)
 
 
-async def _reinstall_folio(db, *, team_id: str, digest: str, scopes: list[str], app_version: str) -> None:
-    await install_app(
+async def _reinstall_folio(db, *, team_id: str, digest: str, scopes: list[str], app_version: str):
+    return await install_app(
         db,
         team_id=team_id,
         app_id="folio",
@@ -111,6 +112,7 @@ async def test_grant_read_returns_the_installed_grant_of_the_credentials_team_an
     body = response.json()
     as_of = datetime.strptime(body.pop("as_of"), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     assert before <= as_of <= datetime.now(timezone.utc)
+    current = await installed["db"].fetch_one("SELECT installation_id,generation,digest FROM {{tables.team_app_installs}} WHERE team_id=$1", TEAM_ID)
     assert body == {
         "team_id": TEAM_ID,
         "app_id": "folio",
@@ -118,11 +120,11 @@ async def test_grant_read_returns_the_installed_grant_of_the_credentials_team_an
         "origin": "https://folio.aweb.ai",
         "app_version": "1.x",
         "manifest_version": 1,
-        "digest": DIGEST,
+        "digest": current["digest"],
         "granted_scopes": ["folio:read"],
-        "installation_id": None,
-        "generation": None,
-        "origin_verified": None,
+        "installation_id": current["installation_id"],
+        "generation": current["generation"],
+        "origin_verified": True,
         "max_age_seconds": 60,
     }
 
@@ -171,7 +173,7 @@ async def test_no_key_registered_for_grant_read_is_app_key_not_registered(instal
 @pytest.mark.asyncio
 async def test_a_digest_change_is_visible_on_the_next_read(installed):
     db = installed["db"]
-    await _reinstall_folio(db, team_id=TEAM_ID, digest=NEW_DIGEST, scopes=["folio:read", "folio:write"], app_version="2.0")
+    changed = await _reinstall_folio(db, team_id=TEAM_ID, digest=NEW_DIGEST, scopes=["folio:read", "folio:write"], app_version="2.0")
     new_key, new_did = _make_app_keypair()
     await db.execute(
         """
@@ -179,7 +181,7 @@ async def test_a_digest_change_is_visible_on_the_next_read(installed):
         VALUES ($1, 'folio', 'https://folio.aweb.ai', $2, 'read-2', $3, $4::TEXT[])
         """,
         TEAM_ID,
-        NEW_DIGEST,
+        changed.digest,
         new_did,
         [APP_GRANT_READ],
     )
@@ -191,7 +193,7 @@ async def test_a_digest_change_is_visible_on_the_next_read(installed):
     assert old_digest_key.json()["detail"] == "app_key_not_registered"
     assert new_digest_key.status_code == 200, new_digest_key.text
     body = new_digest_key.json()
-    assert (body["digest"], body["granted_scopes"], body["app_version"]) == (NEW_DIGEST, ["folio:read", "folio:write"], "2.0")
+    assert (body["digest"], body["granted_scopes"], body["app_version"]) == (changed.digest, ["folio:read", "folio:write"], "2.0")
 
 
 @pytest.mark.asyncio
@@ -243,6 +245,18 @@ async def test_an_app_without_an_installation_gets_app_key_not_registered(instal
     assert response.json()["detail"] == "app_key_not_registered"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["pending_origin_verification", "uninstalled"])
+async def test_non_active_installation_is_reported_with_its_real_identity(installed, state):
+    await installed["db"].execute("UPDATE {{tables.team_app_installs}} SET state=$1,origin_verified=FALSE", state)
+    response = await _get(installed["app"], _grant_read_headers(**installed["read"]))
+    assert response.status_code == 200, response.text
+    assert response.json()["state"] == state
+    assert response.json()["installation_id"]
+    assert response.json()["generation"] == 1
+    assert response.json()["origin_verified"] is False
+
+
 # --- app-read-credential-v1 ---
 
 
@@ -269,11 +283,42 @@ async def vector_installed(aweb_cloud_db, monkeypatch):
     await _seed_team_and_agent(db)
     await _install_folio(db, did_key=_make_app_keypair()[1], kid="emit-1")
     case = VECTOR["cases"][0]
-    await _register_app_key(db, did_key=VECTOR["did_key"], kid=case["payload"]["kid"], purposes=[APP_GRANT_READ])
+    await _register_app_key(
+        db, did_key=VECTOR["did_key"], kid=case["payload"]["kid"], purposes=[APP_GRANT_READ, HOOK_RESOLVE]
+    )
+    # Seed a production under the actual installation pin for the hook-resolve
+    # case. Owner-act activation is covered separately.
+    current = await db.fetch_one(
+        "SELECT digest, installation_id, generation FROM {{tables.team_app_installs}} "
+        "WHERE team_id = $1 AND app_id = 'folio'", TEAM_ID,
+    )
+    assert current is not None
+    async with db.transaction() as tx:
+        [production] = await write_pending_bindings(
+            tx, team_id=TEAM_ID, app_id="folio", origin="https://folio.aweb.ai", digest=current["digest"],
+            installation_id=current["installation_id"], generation=current["generation"],
+            declarations=[
+                HookBindingDeclaration(
+                    kind=PRODUCTION, catalog_id="aweb.hooks", catalog_version=1, hook="post-secret-use-hook"
+                )
+            ],
+        )
+    await db.execute(
+        """
+        UPDATE {{tables.app_hook_bindings}}
+        SET state = 'active', activated_at = date_trunc('milliseconds', NOW()),
+            active_from = date_trunc('milliseconds', NOW()) + INTERVAL '60 seconds',
+            activation_act_sha256 = $2
+        WHERE binding_id = $1
+        """,
+        production.binding_id, "ab" * 32,
+    )
     # The vector's timestamp is fixed for byte parity. Skew is covered by the
     # verifier's own tests; here every other check runs on the frozen bytes.
     monkeypatch.setattr(app_credentials, "enforce_timestamp_skew", lambda _timestamp: None)
-    return _app(db, public_origin=case["payload"]["aud"])
+    app = _app(db, public_origin=case["payload"]["aud"])
+    app.include_router(app_hooks_router)
+    return app
 
 
 async def _send_case(app, case: dict):
@@ -283,11 +328,16 @@ async def _send_case(app, case: dict):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", VECTOR["cases"], ids=lambda case: case["name"])
-async def test_vector_positive_cases_verify_at_the_grant_route(vector_installed, case):
+async def test_vector_positive_cases_verify_at_their_routes(vector_installed, case):
     response = await _send_case(vector_installed, case)
 
     assert response.status_code == 200, response.text
-    assert (response.json()["team_id"], response.json()["app_id"]) == (case["payload"]["team_id"], case["payload"]["app_id"])
+    assert response.json()["team_id"] == case["payload"]["team_id"]
+    if case["purpose"] == APP_GRANT_READ:
+        assert response.json()["app_id"] == case["payload"]["app_id"]
+    else:
+        assert case["purpose"] == HOOK_RESOLVE
+        assert response.json()["bindings"] == []
 
 
 @pytest.mark.asyncio

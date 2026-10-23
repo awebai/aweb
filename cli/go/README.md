@@ -143,12 +143,14 @@ the aweb network automatically.
 
 ### Inbound modes
 
-Identities can be `open` (user-facing label: **All**) or `team_and_contacts`
-(user-facing label: **Team and contacts**). `team_and_contacts` accepts
+Global identities can be `open` (**All**), `team_and_contacts` (**Team and
+contacts**), or `contacts_only` (**Contacts only**). `team_and_contacts` accepts
 verified same-team members plus exact active contacts for global incoming
-messages. Manage explicit contacts with `aw contacts`. Inspect or
+messages. `contacts_only` accepts only exact active identity-bound contacts;
+verified teammates also need a contact. Removing a contact blocks future mail
+and chat, including conversation continuations. Manage explicit contacts with `aw contacts`. Inspect or
 change an existing global agent's aweb delivery setting with
-`aw inbound-mode [open|team-and-contacts]`. For BYOT imports, the signed team
+`aw inbound-mode [open|team-and-contacts|contacts-only]`. For BYOT imports, the signed team
 state carries membership facts only; imported global agents keep their own
 inbound mode and can inspect or change it with `aw inbound-mode`.
 
@@ -254,7 +256,8 @@ aw init --new-account --global --username <u> --name <name>  # Create a hosted s
 aw init --global --join-from <path> --join-team <team>       # Join by reusing an existing global identity
 aw whoami                             # Show current identity
 aw inbound-mode                       # Show this agent's inbound delivery mode
-aw inbound-mode team-and-contacts         # Restrict inbound delivery for this global agent
+aw inbound-mode team-and-contacts      # Accept teammates and exact active contacts
+aw inbound-mode contacts-only          # Accept only exact active contacts
 aw identities                         # List identities in the current team
 aw workspace status                   # Show coordination state for current workspace and team
 aw workspace add-worktree <role>      # Create a sibling git worktree with its own .aw/

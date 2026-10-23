@@ -288,8 +288,11 @@ and its `/state`/`/edit`/`/preview`, `/llms.txt`, `/skills/`, `/health`) are
 - **Relative-path only.** Reject any `tool.path` with a scheme/host at validation.
 - The dispatcher derives `aud`+`path` from the absolute target *it* constructs
   from the granted origin; a manifest cannot override host/scheme.
-- Reserved built-in command **names and aliases** cannot be an `app.id` or a verb
-  (install-time rejection).
+- Reserved root command **names and aliases** cannot be an `app.id`
+  (install-time rejection). Tools live inside that app namespace: root names
+  such as `run` or `introspect` are valid tool names. Only commands and aliases
+  owned by the app dispatcher are reserved there: currently `help`, `--help`
+  and `-h`. Version 2 also rejects duplicate tool names within an app.
 
 ### Parsing and size bounds (fail closed)
 
@@ -528,8 +531,10 @@ tool's scopes are granted only at owner activation.
 
 A verifier accepts a key only for a purpose the key declares and the
 verifier implements. D1 uses `app-event`, `app-request` and `app-usage`, and
-the hooks lane defines its own. An unrecognized purpose is shown to the
-admin and grants nothing. A v1 `event_emitters` entry reads as an
+the hooks lane defines its own. logs signs its receipts and checkpoints with a
+key declaring `logs-receipt` and `logs-checkpoint` ([the logs
+chain](logs-chain.md)); only logs and the verifiers of its artefacts consume
+those two. An unrecognized purpose is shown to the admin and grants nothing. A v1 `event_emitters` entry reads as an
 `app-event` key only.
 
 ## Variant discovery
@@ -580,6 +585,19 @@ path and publishes no catalog for it. For a v2 manifest it serves the
 catalog, listing the exact bytes it serves at `/manifests/v2.json`, and no
 v1 variant, so the legacy path is not found. It computes both once at
 startup.
+
+The manifest a deployment serves is its own. The committed manifest is a
+template: it declares the kids and the purposes each signs, local event types
+and the hosted `app.id` default, and commits no `did_key`. The runtime fills in
+the deployment's `app.id`, its origin and each declared kid's `did_key`, derived
+from the deployment's configured key, and serves the canonical bytes
+(`aweb_naapp.manifest.fill_manifest`). One configuration therefore serves
+byte-identical bytes on every replica. Event types, and the surface event
+bindings that reference them, are named locally in the template, without an
+`app.id/` prefix, because they resolve against the deployment's `app.id`; a
+prefixed one stops every deployment from starting. A deployment must keep its `app.id` for
+its lifetime, and rotates a key by adding a kid, which changes the digest every
+team pins.
 
 ## CLI resident and grant access
 

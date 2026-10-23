@@ -1,0 +1,128 @@
+{
+  "manifest_version": 2,
+  "app": {
+    "id": "logs",
+    "version": "0.1.0",
+    "origin": "https://logs.aweb.ai"
+  },
+  "tools": [
+    {
+      "name": "ingest",
+      "description": "Admit one hook event delivered to this team's log: its producer's signed envelope, appended to the team's hash chain. Answers a signed receipt.",
+      "method": "POST",
+      "path": "/v1/hooks/ingest",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "hook_event": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hook_event",
+          "signature"
+        ],
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "hook_event",
+          "in": "body"
+        },
+        {
+          "name": "signature",
+          "in": "body"
+        }
+      ],
+      "scopes": [
+        "logs.ingest"
+      ],
+      "mutation": true,
+      "body": {
+        "mode": "json"
+      },
+      "invocation_contexts": [
+        "hook"
+      ]
+    }
+  ],
+  "app_keys": [
+    {
+      "kid": "logs-chain",
+      "purposes": [
+        "logs-receipt",
+        "logs-checkpoint"
+      ]
+    },
+    {
+      "kid": "logs-resolve",
+      "purposes": [
+        "hook-resolve"
+      ]
+    }
+  ],
+  "hooks": {
+    "registration_version": 1,
+    "registrations": [
+      {
+        "catalog": {
+          "id": "aweb.hooks",
+          "version": 1
+        },
+        "hook": "post-secret-use-hook",
+        "tool": "ingest",
+        "scopes": [
+          "logs.ingest"
+        ]
+      },
+      {
+        "catalog": {
+          "id": "aweb.hooks",
+          "version": 1
+        },
+        "hook": "post-governance-hook",
+        "tool": "ingest",
+        "scopes": [
+          "logs.ingest"
+        ]
+      },
+      {
+        "catalog": {
+          "id": "aweb.hooks",
+          "version": 1
+        },
+        "hook": "post-manifest-command-hook",
+        "tool": "ingest",
+        "scopes": [
+          "logs.ingest"
+        ]
+      },
+      {
+        "catalog": {
+          "id": "aweb.hooks",
+          "version": 1
+        },
+        "hook": "post-mutation-hook",
+        "tool": "ingest",
+        "scopes": [
+          "logs.ingest"
+        ]
+      },
+      {
+        "catalog": {
+          "id": "aweb.hooks",
+          "version": 1
+        },
+        "hook": "post-command-hook",
+        "tool": "ingest",
+        "scopes": [
+          "logs.ingest"
+        ]
+      }
+    ],
+    "productions": []
+  }
+}

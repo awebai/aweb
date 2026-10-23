@@ -1903,7 +1903,9 @@ func loadSelectedTeamState(workingDir string, home awconfig.IdentityHome) (*awco
 // Validate only the selected principal. Team/workspace commands resolve any
 // additional membership state they need from this same home.
 func validateSelectedIdentityHome(home awconfig.IdentityHome) error {
-	fail := func(err error) error { return fmt.Errorf("selected identity home %s: %w", home.Root, err) }
+	fail := func(err error) error {
+		return fmt.Errorf("selected identity home %s: %w; --identity-home must name the credential directory containing signing.key or grant.yaml (usually <workspace>/.aw, not its parent)", home.Root, err)
+	}
 	if awconfig.IsGrantHome(home.Root) {
 		if _, err := awconfig.LoadGrantHome(home.Root); err != nil {
 			return fail(err)

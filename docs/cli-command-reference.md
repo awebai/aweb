@@ -26,7 +26,7 @@ to refresh it.
 
 - `--debug Log background errors to stderr`
 - `-h, --help help for aw`
-- `--identity-home string Use identity authority from this absolute credential root`
+- `--identity-home string Use this absolute credential directory (contains signing.key or grant.yaml; usually <workspace>/.aw, not its parent)`
 - `--json Output as JSON`
 - `--server-name string Override the server host or name for this command`
 - `--trace Trace redacted HTTP requests and responses to stderr`
@@ -100,7 +100,7 @@ Flags:
 - `--global Create an addressed self-custodial global identity instead of the default local workspace`
 - `-h, --help help for init`
 - `--human-name string Human name (default: AWEB_HUMAN or $USER)`
-- `--inbound-mode string Inbound delivery mode for a global identity (open|team-and-contacts). Only valid with --global.`
+- `--inbound-mode string Inbound delivery mode for a global identity (open|team-and-contacts|contacts-only). Only valid with --global.`
 - `--inject-docs Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
 - `--join-from string Add an agent to a team by minting one invite from this existing workspace or identity home`
 - `--join-team string Team ID to use with --join-from when the source has more than one membership`
@@ -2533,7 +2533,11 @@ Flags:
 
 ### `inbound-mode`
 
-Show or set the current agent's inbound delivery mode
+Show or set the current agent's inbound delivery mode.
+
+open accepts valid routed senders. team-and-contacts accepts verified teammates
+and exact active contacts. contacts-only accepts only exact active identity
+contacts, including for senders on the same team.
 
 Flags:
 - `-h, --help help for inbound-mode`
@@ -3786,6 +3790,7 @@ Subcommands:
 - `install` Install a plugin into the trusted aw plugin directory
 - `list` List installed plugins
 - `remove` Remove an installed plugin
+- `request` Ask a team administrator to install an app; grants no tools or scopes
 - `reserved-names` Emit reserved top-level aw app ids
 - `update` Update an installed manifest plugin
 
@@ -3802,6 +3807,7 @@ Flags:
 - `--app-id string App id to record in plugin provenance`
 - `--app-version string App version to record in plugin provenance`
 - `--dev-origin string Override the app origin to this base URL for a self-hosted or dev service; the request base URL becomes this, bypassing the manifest origin self-consistency check`
+- `--grant-scope strings Grant only these requested scopes (repeat or comma-separate; default: all requested scopes)`
 - `-h, --help help for install`
 - `--manifest-version string Manifest version to record in plugin provenance`
 - `--origin string App origin to record in plugin provenance`
@@ -3824,6 +3830,15 @@ Remove an installed plugin
 Flags:
 - `-h, --help help for remove`
 
+## `plugin request`
+
+### `plugin request`
+
+Ask a team administrator to install an app; grants no tools or scopes
+
+Flags:
+- `-h, --help help for request`
+
 ## `plugin reserved-names`
 
 ### `plugin reserved-names`
@@ -3840,6 +3855,7 @@ Flags:
 Update an installed manifest plugin
 
 Flags:
+- `--grant-scope strings Explicitly select granted scopes (default: preserve existing grants, dropping removed scopes)`
 - `-h, --help help for update`
 
 ## `upgrade`

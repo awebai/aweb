@@ -85,7 +85,7 @@ from aweb.messaging.contacts import (
     upsert_successful_identity_contact,
 )
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
-from aweb.messaging.messages import authorize_message_delivery, utc_iso as _utc_iso
+from aweb.messaging.messages import authorize_message_delivery, policy_rows_for_participant, utc_iso as _utc_iso
 from aweb.messaging.signatures import (
     MessageSignatureShapeError,
     validate_ed25519_message_signature,
@@ -1104,7 +1104,7 @@ async def _resolve_session_recipient_rows(
     left_dids = (await _left_dids_by_session(db, [session_id])).get(str(session_id), set())
     rows = await aweb_db.fetch_all(
         """
-        SELECT did, alias, address, delivery_origin, current_did_key
+        SELECT did, agent_id, alias, address, delivery_origin, current_did_key
         FROM {{tables.chat_participants}}
         WHERE session_id = $1
           AND NOT (did = ANY($2::text[]))
@@ -1117,6 +1117,8 @@ async def _resolve_session_recipient_rows(
     for row in rows:
         participant = dict(row)
         resolved = await resolve_agent_by_did(db, participant.get("did") or "")
+        policy_rows = await policy_rows_for_participant(db, participant)
+        policy = resolved or (policy_rows[0] if policy_rows else {})
         participant_did = (participant.get("did") or "").strip()
         if participant_did in left_dids:
             continue
@@ -1141,6 +1143,10 @@ async def _resolve_session_recipient_rows(
                 "team_id": ((resolved or {}).get("team_id") if resolved else None),
                 "inbound_mode": ((resolved or {}).get("inbound_mode") if resolved else None),
                 "local_resolved": resolved is not None,
+                "identity_scope": policy.get("identity_scope"),
+                "has_global_claim": policy.get("has_global_claim"),
+                "policy_did_aw": policy.get("policy_did_aw"),
+                "_policy_recipients": policy_rows,
             }
         )
     return recipient_rows
@@ -2657,18 +2663,24 @@ async def send_message(
             conversation_type="chat",
         )
         for row in recipient_rows:
-            if _target_delivery_origin(row) or not row.get("local_resolved"):
+            if _target_delivery_origin(row):
                 continue
-            await authorize_message_delivery(
-                db,
-                recipient_agent=row,
-                sender_did=actor_did,
-                sender_address=sender_address,
-                sender_team_id=auth.team_id,
-                sender_verified_team_id=auth.verified_team_id,
-                sender_verified_dids=auth_dids(auth),
-                stored_route_continuation=True,
-            )
+            policy_rows = row.get("_policy_recipients") or []
+            if not policy_rows:
+                # No live local recipient: keep stored signature context, but
+                # there is no local delivery or policy to authorize.
+                continue
+            for policy_recipient in policy_rows:
+                await authorize_message_delivery(
+                    db,
+                    recipient_agent=policy_recipient,
+                    sender_did=actor_did,
+                    sender_address=sender_address,
+                    sender_team_id=auth.team_id,
+                    sender_verified_team_id=auth.verified_team_id,
+                    sender_verified_dids=auth_dids(auth),
+                    stored_route_continuation=True,
+                )
     except (ValidationError, NotFoundError, ForbiddenError) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 

@@ -35,7 +35,7 @@ from aweb.messaging.alias_targets import (
 from aweb.messaging.address_auth import local_recipient_visible_to_auth
 from aweb.messaging.contacts import resolve_local_namespace_controller_did
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
-from aweb.messaging.messages import authorize_message_delivery
+from aweb.messaging.messages import authorize_message_delivery, policy_rows_for_participant
 from aweb.messaging.verification import message_verification_status, require_conversation_not_legacy_bound
 from aweb.messaging.waiting import register_waiting, unregister_waiting
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
@@ -225,9 +225,13 @@ async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: lis
     rows = await aweb_db.fetch_all(
         """
         SELECT p.did, p.agent_id, p.alias, p.address AS participant_address, p.delivery_origin,
-               p.current_did_key, a.did_key, a.did_aw, a.address
+               p.current_did_key, a.did_key,
+               CASE WHEN a.did_aw_verified_key=a.did_key THEN a.did_aw END AS did_aw,
+               CASE WHEN a.did_aw_verified_key=a.did_key THEN a.address END AS address,
+               a.identity_scope, (NULLIF(a.did_aw,'') IS NOT NULL) AS has_global_claim,
+               a.did_aw AS policy_did_aw, a.inbound_mode
         FROM {{tables.chat_participants}} p
-        LEFT JOIN {{tables.agents}} a ON a.agent_id = p.agent_id
+        LEFT JOIN {{tables.agents}} a ON a.agent_id = p.agent_id AND a.deleted_at IS NULL
         WHERE p.session_id = $1
           AND p.did <> ALL($2::text[])
           AND p.left_at IS NULL
@@ -239,6 +243,9 @@ async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: lis
     result: list[dict] = []
     for row in rows:
         item = dict(row)
+        item["_policy_recipients"] = await policy_rows_for_participant(db_infra, item)
+        if not item["_policy_recipients"] and not item.get("delivery_origin"):
+            item["agent_id"] = None
         participant_address = (item.get("participant_address") or "").strip()
         item["address"] = (item.get("address") or "").strip() or participant_address
         item["delivery_origin"] = (item.get("delivery_origin") or "").strip() or None
@@ -750,6 +757,22 @@ async def chat_send(
         sender_attested_at = datetime.now(timezone.utc).replace(microsecond=0)
         pre_message_id = uuid_mod.uuid4()
         recipient_rows = await _session_recipient_rows(db_infra, session_id=sid, actor_dids=actor_dids)
+        try:
+            for recipient in recipient_rows:
+                if recipient.get("delivery_origin"):
+                    continue
+                policy_rows = recipient.get("_policy_recipients") or []
+                if not policy_rows:
+                    continue
+                for policy_recipient in policy_rows:
+                    await authorize_message_delivery(
+                        db_infra, recipient_agent=policy_recipient,
+                        sender_did=session_actor_did, sender_address=sender_address,
+                        sender_team_id=auth.team_id, sender_verified_dids=actor_dids,
+                        stored_route_continuation=True,
+                    )
+        except ServiceError as exc:
+            return json.dumps({"error": exc.detail})
         remote_recipients = [row for row in recipient_rows if row.get("delivery_origin")]
         if remote_recipients:
             if len(recipient_rows) != 1 or len(remote_recipients) != 1:

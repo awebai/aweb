@@ -26,6 +26,7 @@ The other tracked vector directories have disjoint, explicit purposes:
 |---|---|
 | `cli/go/internal/conformance/vectors/` | Consumer-local Go fixtures plus the byte-enforced `team-auth-envelope-v2.json` package copy linked by the currently pinned naapp reference generator. |
 | `naapp-lib/src/aweb_naapp/hooks/catalog-v1.json` | The byte-enforced package copy of `hook-catalog-v1.json`, shipped in the naapp-lib wheel so an installed app loads the catalog (`aweb_naapp.hooks.catalog.packaged_catalog`) with no repository checkout. |
+| `naapp-lib/tests/vectors/` | External cryptographic known-answer fixtures: `hpke-rfc9180-base-x25519.json` pins RFC 9180 upstream test-vector data for `test_crypto_hpke.py`; it is not an aweb public protocol vector. |
 | `naapp/folio/tests/vectors/` | App test snapshots; `app-emit-credential-v1.json` is byte-checked against its Go consumer authority. |
 | `naapp/library/tests/vectors/` | App snapshots plus Library blueprint input/output goldens; the app-emit snapshot is byte-checked. |
 | `naapp/secrets/vectors/` | secrets' app-internal contracts: the `aweb.secrets.use-approval/1` request object under B2's prefix, and the transition-to-hook-action table checked against `hook-catalog-v1.json`. Each file is consumed by a test in `naapp/secrets/tests/`. |
@@ -94,6 +95,17 @@ refusal case for every verification step on either side. Signing keys are
 fixed seeds; sealed values were generated once and are checked by opening them.
 Credential plaintexts are fixtures. secrets' `test_runner_protocol_vectors.py`
 consumes every case.
+
+### `secrets-runner-http-v1.json`
+
+[Runner protocol §4](../secrets-runner-protocol.md#4-http-bodies-reports-and-credential-fields)
+body bytes and their private request-binding hashes, six-field result refusals,
+combined UTF-8 bounds, declared env-field families and report-state expectations.
+No credential material is present. The contract reference reader in
+`test_runner_protocol_vectors.py` consumes every case. Mounted server/runner
+implementations still owe nonce, release, CAS, late-evidence and redaction-context
+proofs; these examples do not authorize a dispatch. The existing signed/sealed
+`secrets-runner-protocol-v1.json` bytes are unchanged.
 
 ### `message-signing-v1.json`
 
@@ -372,13 +384,28 @@ Ingress separation is the required `type` at every route. Athena and the
 protocol reviewer ACKed these bytes at `4502edac0` before either side
 implemented them; changing them needs a new version.
 
+### `passkey-evidence-v1.json`
+
+Decision 84's retained assertion, frozen context, exact framed SHA-256 input
+and commitment of [the public hook contract](../hook-events.md#passkey-evidence-commitments-and-console-actors).
+Real ES256 login/approval assertions have public COSE keys and independent
+fixture trust anchors; private keys existed only in generator memory and are
+not retained. Cases cover raw client-data bytes, B2 domain/wrapper hashing,
+null task-answer challenge fields, UTF-8 scope, UTC microseconds and the
+identity-free console actor with a different affected subject. Single-fault
+cases reject missing/substituted proof/key/context, changed request/policy,
+reserialization, counters and commitments. The independent Python reader is
+`naapp-lib/tests/hooks/test_passkey_evidence_vector.py`. Verification needs no
+live service or commitment secret. B3's real retention transaction, shared
+helper and lifecycle/deletion proofs remain implementation obligations.
+
 ### `hook-catalog-v1.json`
 
 The `aweb.hooks` catalog, version 1 (aweb-acgh.16.1; contract in
 [`hook-events.md`](../hook-events.md)). It names the five hooks with their
 firing class, producer kinds, audit-critical rule and precedence. It holds each
 hook's flat payload allowlist: value types with patterns and bounds, required
-fields, enums (including the 28 `post-secret-use-hook` refusal codes), the
+fields, enums (including the 33 `post-secret-use-hook` refusal codes), the
 conditional rules, each `post-governance-hook` act's fixed direction, every
 `post-mutation-hook` type with its own fields, and the `post-command-hook`
 command classes with their local effects. Positive cases validate. Each
@@ -388,9 +415,31 @@ reference, a rule violation, a direction that differs from the catalog's, and an
 effect outside its command class. A payload that this file may not hold, such
 as a float, is given as JSON text in `payload_json`. The strict reader in
 `aweb_naapp.hooks.catalog` refuses the whole file on any unknown key, duplicate
-key, float or unresolved reference. Any payload change, including an addition,
-is a new catalog version. secrets' `test_hook_actions_vector.py` checks its
-transition-to-action table against it.
+key, float or unresolved reference. Once a deployed hook producer or consumer
+exists, a payload change, including an addition, requires a new catalog version
+and explicit consumer updates. Until that first deployment, pre-release shapes
+are re-frozen in place (decisions 44, 73 and 93), without parallel compatibility
+versions. Published library code alone does not establish a deployed hook
+producer or consumer. The deployment condition must be verified before an
+in-place re-freeze. secrets' `test_hook_actions_vector.py` checks its
+transition-to-action table against the catalog.
+
+Decision 92 adds catalog cases for the exclusive non-widening
+`resource.version_observed` / `backend_observation` mapping, its required opaque
+refs and fixed reason, and rejection of invented owner/passkey evidence, other
+acts using observation authority, raw values and provider versions. Invalid
+observed shape and an unresolved reference have pre-S3 refusal examples;
+post-fence `not_sent` retains its existing prohibition on `refusal_code`.
+
+Decision 73 deliberately re-freezes the pre-deployment secret-use shape in
+place: `request_sha256` and `params_sha256` have HMAC-SHA-256 meaning, and
+`completed`/`stored_as_secret` requires `derived_secret_id` and
+`derived_grant_id` together, forbidden elsewhere. The paired creation case and
+single-fault negatives are part of this vector. Its managed package copy and
+secrets' transition examples change in the same stack. The envelope vector's
+old plain-SHA demonstration is removed without changing signed cases;
+producer MAC input/lifecycle proofs belong to K4/S13. There is no parallel
+catalog version because no deployed producer or consumer uses this hook.
 
 ### `hook-binding-cases-v1.json`
 
@@ -623,7 +672,8 @@ reference duplication are mutation-tested failures.
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
-| `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` |
+| `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` and production-server `test_runner_server_protocol.py` |
+| `secrets-runner-http-v1.json` | secrets `test_runner_protocol_vectors.py` |
 | `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |

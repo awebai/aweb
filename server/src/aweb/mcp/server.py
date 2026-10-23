@@ -539,7 +539,9 @@ def register_tools(
         description="Add a contact by routable address.",
     )
     async def add_contact(address: str, label: str = "") -> str:
-        return await _contacts_add_impl(db_infra, contact_address=address, label=label)
+        return await _contacts_add_impl(
+            db_infra, contact_address=address, label=label, federation_authority=federation_authority,
+        )
 
     @mcp.tool(
         name="add_contact_by_handle",
@@ -694,7 +696,9 @@ def register_tools(
         description="Legacy compatibility alias for add_contact. Prefer add_contact.",
     )
     async def contacts_add(contact_address: str, label: str = "") -> str:
-        return await _contacts_add_impl(db_infra, contact_address=contact_address, label=label)
+        return await _contacts_add_impl(
+            db_infra, contact_address=contact_address, label=label, federation_authority=federation_authority,
+        )
 
     @mcp.tool(
         name="contacts_remove",
