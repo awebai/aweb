@@ -6,12 +6,13 @@ uninstall path must not hide missing enforcement in the actual consumer.
 import json
 from pathlib import Path
 import time
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
 
 
-def prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_team, cache, origin):
+def prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_team, cache, origin, homes, env, aw_bin):
     def status(url, headers=None, body=None):
         request = urllib.request.Request(url, headers=headers or {}, data=body)
         try:
@@ -24,13 +25,54 @@ def prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_t
         return json.loads(run(compose + ['exec', '-T', 'folio', '/app/.venv/bin/python',
                                         '/fixture/e2e/folio_uninstall_grant.py', team]))
 
+    # An independently approved resident delegates a real app-tool snapshot.
+    # The old grant must never authorize the replacement, even at the same digest.
+    aw('bob', 'plugin', 'install', origin)
+    custody = subprocess.Popen([str(aw_bin), 'custody', 'serve'], cwd=homes['bob'], env=env,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    def mint(name):
+        homes[name] = homes['bob'].parent / name
+        homes[name].mkdir()
+        target = homes[name] / '.aw'
+        data('bob', 'id', 'grant', 'mint', '--bundle', 'normal-agent', '--ttl', '1h',
+             '--custody-socket', 'auto', '--out', str(target))
+        return target
+
+    def tool(name, target):
+        previous = env['AWEB_IDENTITY_HOME']
+        env['AWEB_IDENTITY_HOME'] = str(target)
+        try:
+            return aw(name, 'folio', 'show', '--slug', 'every-change', check=False)
+        finally:
+            env['AWEB_IDENTITY_HOME'] = previous
+
+    try:
+        deadline = time.monotonic() + 10
+        while data('bob', 'custody', 'status')['status'] != 'running':
+            assert custody.poll() is None, 'own custody process exited during startup'
+            assert time.monotonic() < deadline, 'own custody did not start'
+            time.sleep(0.1)
+        old_target = mint('uninstall-old-grant')
+        assert tool('uninstall-old-grant', old_target).returncode == 0, 'pre-uninstall grant did not work'
+        _prove_uninstall(aw=aw, data=data, get=get, folio_request=folio_request, run=run,
+                         compose=compose, team=team, other_team=other_team, cache=cache,
+                         origin=origin, grant=grant, status=status, mint=mint, tool=tool,
+                         old_target=old_target)
+    finally:
+        custody.terminate()  # This harness owns this exact process.
+        custody.wait(timeout=10)
+
+
+def _prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_team,
+                     cache, origin, grant, status, mint, tool, old_target):
     first = get('alice', '/v1/apps/folio/installation?team_id=' + team)
     peer = get('carol', '/v1/apps/folio/installation?team_id=' + other_team)
     active = grant()
     assert active['state'] == 'active' and active['installation_id'] == first['installation_id']
     assert aw('alice', 'folio', 'show', '--slug', 'every-change').returncode == 0
     readonly = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'ttl_seconds': 600})
-    editable = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'editable': True, 'ttl_seconds': 600})
+    link_started = time.monotonic()
+    editable = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'editable': True, 'ttl_seconds': 300})
     parts = urllib.parse.urlsplit(editable['url'])
     editor = parts._replace(fragment='').geturl()
     code, raw = status(editor + '/session', {'Content-Type': 'application/json'},
@@ -55,14 +97,28 @@ def prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_t
     # No fake clock or direct mutation of the consumer's cache/installation data.
     time.sleep(active['max_age_seconds'] + 5)
     denied = aw('alice', 'folio', 'show', '--slug', 'every-change', check=False)
-    assert denied.returncode != 0, 'CLI tool still authorizes the uninstalled app'
+    old_uninstalled = tool('uninstall-old-grant', old_target).returncode
     before_reinstall = {'readonly': status(readonly['url'])[0], 'edit_session': status(editor + '/state', session)[0]}
     print('UNINSTALL surfaces before reinstall: ' + json.dumps(before_reinstall), flush=True)
     aw('alice', 'plugin', 'install', origin)
     replacement = get('alice', '/v1/apps/folio/installation?team_id=' + team)
     assert replacement['installation_id'] != first['installation_id'] and replacement['generation'] > retired['generation']
+    assert replacement['digest'] == first['digest'] and replacement['origin'] == first['origin']
+    old_reinstalled = tool('uninstall-old-grant', old_target).returncode
+    default_target = mint('uninstall-default-grant')
+    default_reinstalled = tool('uninstall-default-grant', default_target).returncode
+    aw('bob', 'plugin', 'install', origin)  # Explicit replacement approval.
+    fresh_target = mint('uninstall-fresh-grant')
+    fresh_reinstalled = tool('uninstall-fresh-grant', fresh_target).returncode
+    delegation = {'resident_uninstalled': denied.returncode, 'old_grant_uninstalled': old_uninstalled,
+                  'old_grant_reinstalled': old_reinstalled, 'default_without_reapproval': default_reinstalled,
+                  'fresh_after_reapproval': fresh_reinstalled}
+    print('UNINSTALL delegation exit codes: ' + json.dumps(delegation), flush=True)
     after_reinstall = {'readonly': status(readonly['url'])[0], 'edit_session': status(editor + '/state', session)[0]}
     print('UNINSTALL surfaces after reinstall: ' + json.dumps(after_reinstall), flush=True)
+    assert time.monotonic() - link_started < 300, 'link expired during proof; refusal would be ambiguous'
+    assert old_reinstalled != 0 and default_reinstalled != 0 and fresh_reinstalled == 0, delegation
+    assert denied.returncode != 0 and old_uninstalled != 0, delegation
     assert all(code in (401, 403, 404, 410) for code in before_reinstall.values()), before_reinstall
     assert all(code in (401, 403, 404, 410) for code in after_reinstall.values()), after_reinstall
     print('PASS real uninstall refuses tools and existing Folio links/sessions; reinstall cannot revive them', flush=True)

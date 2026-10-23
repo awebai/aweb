@@ -189,6 +189,15 @@ The disposable real-stack consumer proof is
 existing read-only presentation and open edit session after uninstall and after
 reinstall; a consumer that still serves them fails this acceptance.
 
-Normal use stops within the grant/fence freshness contract. Work already
+On commit the server refuses ordinary app-event and hook-resolve credentials
+and retires live hook bindings. `app-grant-read` deliberately keeps answering
+with typed `state: "uninstalled"`, so the app can observe the end.
+
+App-side tool authorization stops within the advertised grant-status
+`max_age_seconds` (at most 60 seconds) plus one refresh deadline (5 seconds
+with the shared runtime defaults). A hosted tool gateway also has its own
+origin-and-digest tool cache; its maximum lifetime must be included in the
+host's uninstall bound and proved by that gateway's integration tests. This
+server's grant-status lifetime does not establish the gateway's cache lifetime. Work already
 committed is reconciled, never reported as rolled back. A reinstall cannot
 revive the old ID's roles, links, approvals or app requests.
