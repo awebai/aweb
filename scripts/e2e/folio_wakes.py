@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -182,8 +183,8 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
         return stored(slug)
     def folio_request(who, method, path, body):
         return json.loads(aw(who, 'id', 'request', method, FOLIO + path, '--team-auth', '--raw', '--header', 'Content-Type: application/json', '--body', json.dumps(body)).stdout)
-    def human_edit(url, body, base_version):
-        request = urllib.request.Request(url + '/edit', data=json.dumps({'body': body, 'base_version': base_version, 'editor_name': 'Hana'}).encode(), headers={'Content-Type': 'application/json'}, method='POST')
+    def human_edit(url, headers, body, base_version):
+        request = urllib.request.Request(url + '/edit', data=json.dumps({'body': body, 'base_version': base_version, 'editor_name': 'Hana'}).encode(), headers=headers, method='POST')
         try:
             with urllib.request.urlopen(request, timeout=10) as response:
                 return response.status, json.loads(response.read())
@@ -196,9 +197,19 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
     assert emitted('every-change', 3)[1:] == [{'version': '2', 'source': 'api'}, {'version': '3', 'source': 'api'}], stored('every-change')
     print('PASS create, append and append-template each emit exactly one metadata-only event', flush=True)
     link = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'editable': True})
+    parts = urllib.parse.urlsplit(link['url'])
+    editor_url = parts._replace(fragment='').geturl()
+    session_request = urllib.request.Request(
+        editor_url + '/session',
+        data=json.dumps({'opener': urllib.parse.parse_qs(parts.fragment)['k'][0]}).encode(),
+        headers={'Content-Type': 'application/json'}, method='POST',
+    )
+    with urllib.request.urlopen(session_request, timeout=10) as response:
+        assert response.status == 200
+        edit_headers = {'Content-Type': 'application/json', 'X-Folio-Edit-Session': json.load(response)['session_secret']}
     a = stream('alice')
-    assert human_edit(link['url'], 'four, by a human', 3) == (200, {'version_number': 4})
-    assert human_edit(link['url'], 'stale', 3)[0] == 409
+    assert human_edit(editor_url, edit_headers, 'four, by a human', 3) == (200, {'version_number': 4})
+    assert human_edit(editor_url, edit_headers, 'stale', 3)[0] == 409
     assert emitted('every-change', 4)[3:] == [{'version': '4', 'source': 'present-link'}], stored('every-change')
     # The stream replays its lookback window, so earlier api events arrive too; the
     # stored rows above prove exactly-one, this proves the human edit wakes the agent.
@@ -213,7 +224,7 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
     before = outboxed()
     folio_request('alice', 'POST', '/v1/documents', {'slug': 'outboxed', 'title': 'Outboxed', 'body': 'one'})
     assert outboxed() == before + 1, (before, outboxed())
-    assert human_edit(link['url'], 'stale again', 3)[0] == 409
+    assert human_edit(editor_url, edit_headers, 'stale again', 3)[0] == 409
     assert outboxed() == before + 1, (before, outboxed())
     assert emitted('outboxed', 1) == [{'version': '1', 'source': 'api'}], stored('outboxed')
     print('PASS each write stores its event in the outbox with the write; a rejected edit stores none', flush=True)
