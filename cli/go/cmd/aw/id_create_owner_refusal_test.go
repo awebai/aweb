@@ -107,6 +107,9 @@ func TestOwnerPrincipalErrorsPreserveHTTPStatus(t *testing.T) {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
 				calls++
 				if !strings.HasPrefix(r.Header.Get("Authorization"), "DIDKey ") {
 					t.Error("owner request used another credential")

@@ -179,7 +179,7 @@ func testHostedIdentityCreateWithAuthority(t *testing.T, mode string, ownerMode 
 	defer server.Close()
 	if ownerMode {
 		ownerParent := t.TempDir()
-		writeDefaultWorkspaceBindingForTest(t, ownerParent, server.URL+"/api")
+		writeDefaultWorkspaceBindingForTest(t, ownerParent, server.URL+"/api/")
 		ownerRoot, err = filepath.EvalSymlinks(filepath.Join(ownerParent, ".aw"))
 		if err != nil {
 			t.Fatal(err)
