@@ -20,7 +20,6 @@ from typing import Any
 from awid.attestation_records import ATTESTATION_HEADER, encode_attestation_header
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
-from nacl.signing import SigningKey
 
 # Published compatibility names; AWID has one implementation in awid_service.testing.
 from awid_service.testing import REGISTRY_URL as REGISTRY_URL
@@ -28,6 +27,21 @@ from awid_service.testing import SERVICE_TOKEN as SERVICE_TOKEN
 from awid_service.testing import Registry as Registry
 from awid_service.testing import ServiceTransport as RecordingTransport
 from awid_service.testing import running_registry as awid_registry
+from nacl.signing import SigningKey
+
+__all__ = [
+    "REGISTRY_URL",
+    "SERVICE_TOKEN",
+    "Member",
+    "RecordingTransport",
+    "Registry",
+    "attested",
+    "awid_registry",
+    "did_key",
+    "envelope_headers",
+    "utc_timestamp",
+]
+
 
 def did_key(key: SigningKey) -> str:
     return did_from_public_key(bytes(key.verify_key))
