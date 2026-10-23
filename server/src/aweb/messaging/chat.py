@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.messaging.admission import capture_sender_admission
+
 from aweb.human_channels.contract import ContractError
 from aweb.human_channels.participants import require_native_participant_input
 from aweb.service_errors import ValidationError
@@ -446,6 +448,7 @@ async def ensure_session(
 async def send_in_session(
     db,
     *,
+    sender_auth=None,
     session_id: UUID,
     sender_did: str,
     body: str,
@@ -491,10 +494,10 @@ async def send_in_session(
              content_mode, message_version, encrypted_envelope, encrypted_ciphertext,
              encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
              encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite,
-             encrypted_signing_key_id, signed_envelope_hash, created_at)
+             encrypted_signing_key_id, signed_envelope_hash, created_at, sender_admission)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25)
+                $21, $22, $23, $24, $25, $26::jsonb)
         RETURNING message_id, created_at
         """,
         effective_message_id,
@@ -522,6 +525,11 @@ async def send_in_session(
         encrypted_metadata.get("encrypted_signing_key_id"),
         encrypted_metadata.get("signed_envelope_hash"),
         effective_created_at,
+        capture_sender_admission(sender_auth, dict(
+            message_id=effective_message_id, from_did=participant["did"], signature=signature,
+            signed_payload=signed_payload, content_mode=content_mode,
+            encrypted_envelope=encrypted_envelope, conversation_id=session_id,
+        )),
     )
 
     await aweb_db.execute(
@@ -712,7 +720,7 @@ async def get_message_history(
                    CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                    created_at, sender_leaving, from_agent_id, reply_to, from_did,
                    signature, signed_payload, content_mode, message_version,
-                   encrypted_envelope
+                   encrypted_envelope, sender_admission
             FROM {{tables.chat_messages}}
             WHERE session_id = $1
               AND message_id = $2
@@ -729,7 +737,7 @@ async def get_message_history(
                    CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                    created_at, sender_leaving, from_agent_id, reply_to, from_did,
                    signature, signed_payload, content_mode, message_version,
-                   encrypted_envelope
+                   encrypted_envelope, sender_admission
             FROM {{tables.chat_messages}}
             WHERE session_id = $1
               AND (

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
 
-from aweb.messaging.sender_membership import sender_memberships
+from aweb.messaging.sender_membership import sender_memberships, membership_for_message
 from aweb.identity_metadata import native_participant_reference
 
 import asyncio
@@ -1523,6 +1523,7 @@ async def create_or_send(
         )
         msg_row = await send_in_session(
             db,
+            sender_auth=auth,
             session_id=session_id,
             sender_did=actor_did,
             sender_agent_id=actor_agent_id,
@@ -1666,6 +1667,7 @@ async def create_or_send(
     try:
         msg_row = await send_in_session(
             db,
+            sender_auth=auth,
             session_id=session_id,
             sender_did=actor_did,
             sender_agent_id=actor_agent_id,
@@ -1953,7 +1955,7 @@ async def history(
         history_items.append(
             {
                 "attachment_refs": await attachment_references(db, "chat", msg["message_id"]),
-                "sender_membership": memberships[(str(sess["team_id"] or ""), str(msg.get("from_agent_id") or ""))],
+                "sender_membership": membership_for_message(memberships, msg, team_id=sess["team_id"]),
                 "conversation_id": str(session_uuid),
                 "message_id": msg["message_id"],
                 "from_agent": msg["from_alias"],
@@ -2213,7 +2215,7 @@ async def _sse_events(
                 SELECT message_id, from_agent_id, from_alias, from_address,
                        CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                        content_mode, message_version, encrypted_envelope, created_at,
-                       sender_leaving, hang_on, reply_to, from_did, signature, signed_payload
+                       sender_leaving, hang_on, reply_to, from_did, signature, signed_payload, sender_admission
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1 AND created_at > $2
                 ORDER BY created_at ASC
@@ -2242,7 +2244,7 @@ async def _sse_events(
                     row["from_alias"],
                 )
                 payload = {
-                    "sender_membership": memberships[(str(delivery_team_id or ""), str(row.get("from_agent_id") or ""))].model_dump(),
+                    "sender_membership": membership_for_message(memberships, row, team_id=delivery_team_id).model_dump(),
                     "type": "message",
                     "session_id": session_id_str,
                     "conversation_id": session_id_str,
@@ -2349,7 +2351,7 @@ async def _sse_events(
                     SELECT message_id, from_agent_id, from_alias, from_address,
                            CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                            content_mode, message_version, encrypted_envelope, created_at,
-                           sender_leaving, hang_on, reply_to, from_did, signature, signed_payload
+                           sender_leaving, hang_on, reply_to, from_did, signature, signed_payload, sender_admission
                     FROM {{tables.chat_messages}}
                     WHERE session_id = $1 AND created_at > $2
                     ORDER BY created_at ASC
@@ -2376,7 +2378,7 @@ async def _sse_events(
                         row["from_alias"],
                     )
                     payload = {
-                        "sender_membership": memberships[(str(delivery_team_id or ""), str(row.get("from_agent_id") or ""))].model_dump(),
+                        "sender_membership": membership_for_message(memberships, row, team_id=delivery_team_id).model_dump(),
                         "type": "message",
                         "session_id": session_id_str,
                         "conversation_id": session_id_str,
@@ -2751,6 +2753,7 @@ async def send_message(
         try:
             msg_row = await send_in_session(
                 db,
+                sender_auth=auth,
                 session_id=session_uuid,
                 sender_did=actor_did,
                 sender_agent_id=actor_agent_id,
@@ -2810,6 +2813,7 @@ async def send_message(
     try:
         msg_row = await send_in_session(
             db,
+            sender_auth=auth,
             session_id=session_uuid,
             sender_did=actor_did,
             sender_agent_id=actor_agent_id,

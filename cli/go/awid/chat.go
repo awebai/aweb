@@ -752,7 +752,7 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 		m := &out.Messages[i]
 		m.Attachments = nil
 		m.AttachmentsAvailable = true
-		binding := ReceivedSenderBinding{ProjectedDID: m.FromDID}
+		binding := ReceivedSenderBinding{ProjectedDID: m.FromDID, MessageID: m.MessageID}
 		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !signedDisplayMatches(m.SignedPayload, map[string]string{
 			"type": "chat", "body": m.Body,
 			"message_id": m.MessageID, "conversation_id": m.ConversationID,

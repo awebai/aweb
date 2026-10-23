@@ -6,6 +6,8 @@ from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
+from aweb.messaging.admission import SenderAdmission, stored_sender_admission
+
 from aweb.team_auth_deps import _get_revoked_certificates
 
 
@@ -13,6 +15,8 @@ class SenderMembership(BaseModel):
     team_id: str
     member_did_aw: str | None = None
     state: Literal["active", "inactive", "unknown"] = "unknown"
+    current_status: Literal["active", "retired", "revoked", "unknown"] = "unknown"
+    admission: SenderAdmission | None = None
 
 
 async def sender_memberships(request: Request | None, db, rows) -> dict[tuple[str, str], SenderMembership]:
@@ -41,6 +45,7 @@ async def sender_memberships(request: Request | None, db, rows) -> dict[tuple[st
         projection.member_did_aw = str(member.get("did_aw") or "").strip() or None
         if member["status"] != "active" or member.get("deleted_at") is not None:
             projection.state = "inactive"
+            projection.current_status = "retired"
             continue
         certificate_id = str(member.get("certificate_id") or "").strip()
         if not certificate_id:
@@ -59,4 +64,10 @@ async def sender_memberships(request: Request | None, db, rows) -> dict[tuple[st
         revoked = revocations[team]
         if revoked is not None:
             projection.state = "inactive" if certificate_id in revoked else "active"
+            projection.current_status = "revoked" if certificate_id in revoked else "active"
     return result
+
+
+def membership_for_message(memberships, row, *, team_id=None):
+    membership = memberships[(str(team_id or row.get("team_id") or ""), str(row.get("from_agent_id") or ""))]
+    return membership.model_copy(update={"admission": stored_sender_admission(row)})

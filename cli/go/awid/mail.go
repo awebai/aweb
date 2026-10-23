@@ -771,7 +771,7 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 		m := &out.Messages[i]
 		m.Attachments = nil
 		m.AttachmentsAvailable = true
-		binding := ReceivedSenderBinding{ProjectedDID: m.FromDID}
+		binding := ReceivedSenderBinding{ProjectedDID: m.FromDID, MessageID: m.MessageID}
 		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !c.signedMailDisplayMatches(m.SignedPayload, map[string]string{
 			"type": "mail", "body": m.Body, "subject": m.Subject,
 			"message_id": m.MessageID, "conversation_id": m.ConversationID,

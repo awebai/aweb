@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.messaging.admission import capture_sender_admission
+
 from aweb.attachment_service import attachment_transaction
 
 import json
@@ -253,6 +255,7 @@ async def authorize_message_delivery(
 async def deliver_message(
     db,
     *,
+    sender_auth=None,
     registry_client=None,
     recipient_agent: dict | None = None,
     from_did: str,
@@ -358,9 +361,9 @@ async def deliver_message(
              conversation_id, message_version, content_mode, encrypted_envelope,
              encrypted_ciphertext, encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
              encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite, encrypted_signing_key_id,
-             signed_envelope_hash)
+             signed_envelope_hash, sender_admission)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                $17, $18, $19::jsonb, $20, $21::jsonb, $22, $23, $24, $25, $26, $27, $28)
+                $17, $18, $19::jsonb, $20, $21::jsonb, $22, $23, $24, $25, $26, $27, $28, $29::jsonb)
         RETURNING message_id, created_at
         """,
         message_id,
@@ -391,6 +394,11 @@ async def deliver_message(
         encrypted_metadata.get("encrypted_suite"),
         encrypted_metadata.get("encrypted_signing_key_id"),
         encrypted_metadata.get("signed_envelope_hash"),
+        capture_sender_admission(sender_auth, dict(
+            message_id=message_id, from_did=sender_did, signature=signature,
+            signed_payload=signed_payload, content_mode=content_mode,
+            encrypted_envelope=encrypted_envelope, conversation_id=conversation_uuid,
+        )),
     )
     if not row:
         raise ServiceError("Failed to create message")

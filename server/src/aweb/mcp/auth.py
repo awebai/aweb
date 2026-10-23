@@ -42,6 +42,7 @@ class AuthContext:
     workspace_id: str | None = None
     trusted_proxy: bool = False
     identity_scope: str | None = None
+    certificate_id: str | None = None
 
 
 def auth_dids(auth: AuthContext) -> list[str]:
@@ -146,6 +147,7 @@ class MCPAuthMiddleware:
                 did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),
                 address=identity.address or ((row or {}).get("address") or None),
                 identity_scope=(row or {}).get("identity_scope") or None,
+                certificate_id=(row or {}).get("certificate_id") or None,
             )
 
         cert_info = await verify_request_certificate(request, self.db_infra)
@@ -183,6 +185,7 @@ class MCPAuthMiddleware:
             did_aw=(cert_info.get("member_did_aw") or row.get("did_aw") or "").strip() or None,
             address=(cert_info.get("member_address") or row.get("address") or "").strip() or None,
             identity_scope=cert_info.get("identity_scope") or row.get("identity_scope") or None,
+            certificate_id=cert_info.get("certificate_id") or None,
         )
 
     async def _resolve_proxy_auth(self, internal: dict[str, str]) -> AuthContext:

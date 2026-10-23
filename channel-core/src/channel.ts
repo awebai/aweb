@@ -758,6 +758,8 @@ async function dispatchMailEvent(
       trust_status: msg.verification_status || "unknown",
       verified: String(isTrustedVerificationStatus(msg.verification_status)),
     };
+    if (msg.sender_membership?.current_status) meta.sender_current_status = msg.sender_membership.current_status;
+    if (msg.sender_membership?.admission) meta.sender_membership_at_acceptance = msg.sender_membership.admission.outcome === "unrecorded" ? "unrecorded" : "recorded";
     if (conversationID) meta.conversation_id = conversationID;
     if (msg.subject) meta.subject = msg.subject;
     if (msg.priority && msg.priority !== "normal") meta.priority = msg.priority;
@@ -838,6 +840,8 @@ async function dispatchChatEvent(
       trust_status: msg.verification_status || "unknown",
       verified: String(isTrustedVerificationStatus(msg.verification_status)),
     };
+    if (msg.sender_membership?.current_status) meta.sender_current_status = msg.sender_membership.current_status;
+    if (msg.sender_membership?.admission) meta.sender_membership_at_acceptance = msg.sender_membership.admission.outcome === "unrecorded" ? "unrecorded" : "recorded";
     if (conversationID) meta.conversation_id = conversationID;
     if (event.sender_waiting) meta.sender_waiting = "true";
     if (msg.sender_leaving) meta.sender_leaving = "true";
@@ -881,7 +885,7 @@ async function commitPinStore(
 
 async function normalizeAndPersistMessageTrust(
   options: Pick<ChannelLoopOptions, "trust" | "pinStore" | "pinStorePath" | "pinStoreWriter" | "workdir" | "awCommand" | "onTrace">,
-  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from" | "signed_from_team_id" | "projected_from_did" | "sender_membership">,
+  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from" | "signed_from_team_id" | "projected_from_did" | "sender_membership" | "message_id">,
   fromAlias: string | undefined,
   fromAddress: string | undefined,
   toDID: string | undefined,
@@ -907,6 +911,7 @@ async function normalizeAndPersistMessageTrust(
           // signed-envelope normalization cannot supply membership authority.
           senderAddress: fromAddress?.trim() || (msg.signed_from?.includes("/") ? msg.signed_from : ""),
           senderMembership: msg.sender_membership,
+          messageID: msg.message_id,
           senderTeamID: msg.signed_from_team_id,
           projectedSenderDID: msg.projected_from_did,
           pinStore: options.pinStore,
@@ -967,7 +972,7 @@ async function persistDeliveryMark(
 
 async function normalizeMessageTrust(
   options: Pick<ChannelLoopOptions, "trust" | "pinStore">,
-  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from" | "signed_from_team_id" | "projected_from_did" | "sender_membership">,
+  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from" | "signed_from_team_id" | "projected_from_did" | "sender_membership" | "message_id">,
   trustAddress: string,
   verificationAddress: string,
   toDID: string | undefined,

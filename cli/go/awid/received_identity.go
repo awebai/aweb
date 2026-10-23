@@ -9,10 +9,22 @@ import (
 
 // SenderMembership is delivery-server attestation, not a signed-envelope claim.
 // Only participant-authorized reads supply it, using the stored sender and team.
+type SenderAdmission struct {
+	Outcome       string `json:"outcome"`
+	MessageID     string `json:"message_id,omitempty"`
+	DIDKey        string `json:"did_key,omitempty"`
+	TeamID        string `json:"team_id,omitempty"`
+	CertificateID string `json:"certificate_id,omitempty"`
+	DIDAW         string `json:"did_aw,omitempty"`
+	Address       string `json:"address,omitempty"`
+}
+
 type SenderMembership struct {
-	TeamID      string `json:"team_id"`
-	MemberDIDAW string `json:"member_did_aw"`
-	State       string `json:"state"`
+	TeamID        string           `json:"team_id"`
+	MemberDIDAW   string           `json:"member_did_aw"`
+	State         string           `json:"state"`
+	CurrentStatus string           `json:"current_status,omitempty"`
+	Admission     *SenderAdmission `json:"admission,omitempty"`
 }
 
 // receivedRegistry isolates key/log caches by the delivery team's registry.
@@ -48,6 +60,9 @@ func (r *RegistryResolver) receivedRegistry(ctx context.Context, teamID string) 
 // NormalizeReceivedSenderTrust keeps display labels out of cross-team local
 // and no-address global verification. It cannot promote a failed signature or recipient mismatch.
 func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status VerificationStatus, address, alias, did, stableID string, membership *SenderMembership, ra *RotationAnnouncement, repl *ReplacementAnnouncement, contact *bool, binding ...ReceivedSenderBinding) (VerificationStatus, *bool) {
+	if membership != nil && membership.Admission != nil {
+		return admittedSenderTrust(status, did, stableID, membership.Admission, binding), nil
+	}
 	if len(binding) > 0 && strings.TrimSpace(stableID) == "" {
 		if localStatus, handled := c.receivedLocalSenderTrust(status, address, did, membership, binding[0]); handled {
 			return localStatus, nil
@@ -215,6 +230,7 @@ func (c *Client) saveReceivedCheckpoint(registryURL, stableID string, head *Veri
 // ReceivedSenderBinding keeps the participant-authorized projection separate
 // from the sender's signed claims during read normalization.
 type ReceivedSenderBinding struct {
+	MessageID    string
 	ProjectedDID string
 	TeamID       string
 }
@@ -272,4 +288,34 @@ func (c *Client) receivedLocalSenderTrust(status VerificationStatus, address, di
 		}
 	}
 	return Verified, true
+}
+
+// Admission attests accepted authorship, never current authority or an address pin.
+func admittedSenderTrust(status VerificationStatus, did, stableID string, a *SenderAdmission, bindings []ReceivedSenderBinding) VerificationStatus {
+	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
+		return status
+	}
+	var b ReceivedSenderBinding
+	if len(bindings) > 0 {
+		b = bindings[0]
+	}
+	if b.ProjectedDID != "" && b.ProjectedDID != did && b.ProjectedDID != stableID {
+		return IdentityMismatch
+	}
+	if a.Outcome == "unrecorded" {
+		return status
+	}
+	if a.Outcome == "failed" {
+		return IdentityMismatch
+	}
+	if a.Outcome != "verified" && a.Outcome != "verified_legacy" {
+		return VerificationStale
+	}
+	if a.MessageID == "" || b.MessageID != a.MessageID {
+		return VerificationStale
+	}
+	if a.DIDKey != did || (stableID != "" && stableID != a.DIDAW) || (b.TeamID != "" && b.TeamID != a.TeamID) {
+		return IdentityMismatch
+	}
+	return status
 }

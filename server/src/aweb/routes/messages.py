@@ -87,7 +87,7 @@ from aweb.messaging.verification import (
 )
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
 
-from aweb.messaging.sender_membership import SenderMembership, sender_memberships
+from aweb.messaging.sender_membership import SenderMembership, sender_memberships, membership_for_message
 
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
 
@@ -297,7 +297,7 @@ async def _inbox_response_from_rows(
         messages.append(
             InboxMessage(
                 attachment_refs=await attachment_references(db, "mail", r["message_id"]) if content_mode == "encrypted_v2" else [],
-                sender_membership=memberships[(str(r.get("team_id") or ""), str(r.get("from_agent_id") or ""))],
+                sender_membership=membership_for_message(memberships, r),
                 message_id=str(r["message_id"]),
                 conversation_id=(str(r["conversation_id"]) if r.get("conversation_id") else None),
                 from_agent_id=(str(r["from_agent_id"]) if r.get("from_agent_id") else None),
@@ -419,7 +419,7 @@ async def get_mail_conversation(
             f"""
             SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                    m.subject, m.body, m.priority, m.read_at, m.created_at,
-                   m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+                   m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id, m.sender_admission,
                    m.content_mode, m.message_version, m.encrypted_envelope
             FROM {{{{tables.messages}}}} m
             {where}
@@ -448,7 +448,7 @@ async def get_mail_conversation(
         """
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id, m.sender_admission,
                m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{tables.messages}} m
         WHERE m.message_id = $1
@@ -1008,6 +1008,7 @@ async def _deliver_remote_mail_and_project_locally(
             )
         local_message_id, local_created_at = await deliver_message(
             db,
+            sender_auth=auth,
             registry_client=registry_client,
             recipient_agent=recipient,
             team_id=auth.team_id,
@@ -1200,6 +1201,7 @@ async def _send_mail_conversation_continuation(
         )
         message_id, server_received_at = await deliver_message(
             db,
+            sender_auth=auth,
             registry_client=registry_client,
             recipient_agent=recipient,
             team_id=continuation.conversation.get("team_id") or auth.team_id,
@@ -1820,6 +1822,7 @@ async def send_message(
         )
         message_id, server_received_at = await deliver_message(
             db,
+            sender_auth=auth,
             registry_client=registry_client,
             recipient_agent=recipient,
             team_id=auth.team_id,
@@ -1937,7 +1940,7 @@ async def get_inbox(
         f"""
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id, m.sender_admission,
                m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{{{tables.messages}}}} m
         {where_clause}
@@ -1986,7 +1989,7 @@ async def get_message(
         """
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id, m.sender_admission,
                m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{tables.messages}} m
         WHERE m.message_id = $1

@@ -390,6 +390,7 @@ async def send_mail(
                 )
             message_id, server_received_at = await deliver_message(
                 db_infra,
+                sender_auth=mcp_messaging_auth(auth),
                 registry_client=registry_client,
                 recipient_agent=recipient,
                 from_did=sender_did,
@@ -664,6 +665,7 @@ async def send_mail(
         )
         message_id, server_received_at = await deliver_message(
             db_infra,
+            sender_auth=mcp_messaging_auth(auth),
             registry_client=registry_client,
             recipient_agent=recipient,
             from_did=sender_did,

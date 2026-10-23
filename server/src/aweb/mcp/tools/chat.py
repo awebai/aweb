@@ -654,6 +654,7 @@ async def chat_send(
                 return json.dumps({"error": "Federated chat response message_id mismatch"})
         msg = await send_in_session(
             db_infra,
+            sender_auth=mcp_messaging_auth(auth),
             session_id=sid,
             sender_did=signed.from_did if signed else actor_did,
             sender_agent_id=actor_agent_id,
@@ -823,6 +824,7 @@ async def chat_send(
 
         msg = await send_in_session(
             db_infra,
+            sender_auth=mcp_messaging_auth(auth),
             session_id=sid,
             sender_did=session_actor_did,
             sender_agent_id=actor_agent_id,

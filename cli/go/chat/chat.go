@@ -1151,7 +1151,7 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 				return nil, err
 			}
 			tofuFrom := chatEventTrustAddress(chatEvent, participants)
-			chatEvent.VerificationStatus, chatEvent.IsContact = client.NormalizeReceivedSenderTrust(ctx, chatEvent.VerificationStatus, chatEvent.FromAddress, tofuFrom, chatEvent.FromDID, chatEvent.FromStableID, chatEvent.SenderMembership, chatEvent.RotationAnnouncement, chatEvent.ReplacementAnnouncement, chatEvent.IsContact)
+			chatEvent.VerificationStatus, chatEvent.IsContact = client.NormalizeReceivedSenderTrust(ctx, chatEvent.VerificationStatus, chatEvent.FromAddress, tofuFrom, chatEvent.FromDID, chatEvent.FromStableID, chatEvent.SenderMembership, chatEvent.RotationAnnouncement, chatEvent.ReplacementAnnouncement, chatEvent.IsContact, awid.ReceivedSenderBinding{MessageID: chatEvent.MessageID})
 			chatEvent.VerificationStatus = client.NormalizeRecipientBinding(chatEvent.VerificationStatus, chatEvent.ToDID, chatEvent.ToStableID)
 
 			if chatEvent.Type == "read_receipt" {
