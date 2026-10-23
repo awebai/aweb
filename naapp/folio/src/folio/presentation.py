@@ -986,6 +986,11 @@ def render_editor_page(
     }}
     .ghost-button:hover {{ color: var(--text); border-color: var(--muted); }}
     .ghost-button:disabled {{ opacity: 0.4; cursor: default; }}
+    .bootstrap-status {{
+      position: fixed; top: calc(var(--bar-h) + 16px); left: 16px; right: 16px; z-index: 4;
+      padding: 16px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); color: var(--text); overflow-wrap: break-word;
+    }}
     .workspace {{ display: grid; grid-template-columns: 1fr 1fr; height: calc(100vh - var(--bar-h)); }}
     .pane {{ height: 100%; overflow-y: auto; }}
     .pane-edit {{ border-right: 1px solid var(--border); background: var(--surface); }}
@@ -1054,6 +1059,7 @@ def render_editor_page(
     }}
     .btn-danger:hover {{ opacity: 0.92; }}
   </style>
+  <style id="session-theme"></style>
 </head>
 <body>
   <header class="bar">
@@ -1090,8 +1096,9 @@ def render_editor_page(
     </div>
   </dialog>
   <main class="workspace">
+    <div id="bootstrap-status" class="bootstrap-status" role="status" aria-atomic="true" data-state="loading">Opening the editor…</div>
     <section id="pane-edit" class="pane pane-edit is-active">
-      <textarea id="body" class="editor" spellcheck="false" autofocus placeholder="Start writing in Markdown…"></textarea>
+      <textarea id="body" class="editor" spellcheck="false" autofocus disabled placeholder=""></textarea>
     </section>
     <section id="pane-preview" class="pane pane-preview">
       <article class="surface" id="preview-card">
@@ -1111,12 +1118,27 @@ def render_editor_page(
     </div>
   </dialog>
   <script nonce="{escape(nonce, quote=True)}">
+    (() => {{
+    // The fragment must leave history before storage, parsing or requests.
+    let opener = window.location.hash;
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    opener = /^#k=[A-Za-z0-9_-]{{43}}$/.test(opener) ? opener.slice(3) : '';
     const INITIAL = {initial_json};
+    const sessionKey = 'folio.editSession:' + INITIAL.token;
+    let sessionSecret = null;
+    try {{ sessionSecret = sessionStorage.getItem(sessionKey); }} catch (err) {{}}
+    const endpoint = '/present/edit/' + encodeURIComponent(INITIAL.token);
+    let ready = false;
+    async function sessionFetch(path, options = {{}}) {{
+      return fetch(endpoint + path, {{...options, cache:'no-store', credentials:'omit', referrerPolicy:'no-referrer',
+        headers: {{...options.headers, 'X-Folio-Edit-Session': sessionSecret || ''}}}});
+    }}
     const bodyEl = document.getElementById('body');
     const previewEl = document.getElementById('preview');
     const previewCard = document.getElementById('preview-card');
     const eyebrowEl = document.getElementById('preview-eyebrow');
     const statusEl = document.getElementById('status');
+    const bootstrapEl = document.getElementById('bootstrap-status');
     const nameEl = document.getElementById('editor-name');
     const saveBtn = document.getElementById('save');
     const discardBtn = document.getElementById('discard');
@@ -1134,7 +1156,8 @@ def render_editor_page(
     const newVersionEl = document.getElementById('new-version');
     const loadDialog = document.getElementById('load-dialog');
     bodyEl.value = INITIAL.body;
-    nameEl.value = window.localStorage.getItem('folio.editorName') || '';
+    try {{ nameEl.value = window.localStorage.getItem('folio.editorName') || ''; }} catch (err) {{}}
+    bodyEl.disabled = true;
 
     let previewTimer = null;
     let previewSeq = 0;
@@ -1152,16 +1175,17 @@ def render_editor_page(
       }}
     }}
     async function refreshPreview() {{
-      if (unavailable) return;
+      if (unavailable || !ready) return;
       const seq = ++previewSeq;
       let html = null;
       try {{
-        const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/preview', {{
+        const response = await sessionFetch('/preview', {{
           method: 'POST',
           headers: {{'content-type': 'application/json'}},
           body: JSON.stringify({{body: bodyEl.value}})
         }});
         if (seq !== previewSeq) return;
+        if (response.status === 404) {{ showUnavailable(); return; }}
         if (response.ok) html = await response.text();
       }} catch (err) {{ /* keep the last good preview */ }}
       if (seq !== previewSeq) return;
@@ -1169,7 +1193,7 @@ def render_editor_page(
       if (html !== null) applyPreview(html);
     }}
     function schedulePreview() {{
-      if (unavailable) return;
+      if (unavailable || !ready) return;
       previewCard.classList.add('is-updating');
       if (previewTimer) clearTimeout(previewTimer);
       previewTimer = setTimeout(refreshPreview, 350);
@@ -1178,6 +1202,7 @@ def render_editor_page(
     function updateButtons() {{
       saveBtn.classList.toggle('is-conflict', conflict);
       if (unavailable) {{ saveBtn.disabled = true; saveBtn.textContent = 'Link unavailable'; }}
+      else if (!ready) {{ saveBtn.disabled = true; saveBtn.textContent = 'Loading…'; }}
       else if (saving) {{ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }}
       else if (conflict) {{ saveBtn.disabled = false; saveBtn.textContent = 'Overwrite?'; }}
       else if (dirty) {{ saveBtn.disabled = false; saveBtn.textContent = 'Save new version'; }}
@@ -1213,12 +1238,12 @@ def render_editor_page(
     nameEl.addEventListener('input', () => window.localStorage.setItem('folio.editorName', nameEl.value));
 
     async function save() {{
-      if (unavailable || saving || (!dirty && !conflict)) return;
+      if (unavailable || !ready || saving || (!dirty && !conflict)) return;
       saving = true; setStatus('Saving…', 'saving'); updateButtons();
       const sent = bodyEl.value;
       let response;
       try {{
-        response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/edit', {{
+        response = await sessionFetch('/edit', {{
           method: 'POST',
           headers: {{'content-type': 'application/json'}},
           body: JSON.stringify({{body: bodyEl.value, base_version: baseVersion, editor_name: nameEl.value || null}})
@@ -1311,6 +1336,11 @@ def render_editor_page(
     }}
     function showUnavailable() {{
       unavailable = true;
+      bootstrapEl.hidden = true;
+      bootstrapEl.textContent = '';
+      sessionSecret = null;
+      try {{ sessionStorage.removeItem(sessionKey); }} catch (err) {{}}
+      bodyEl.disabled = false;
       cancelPreview();
       newVersionEl.hidden = true;
       updateButtons();
@@ -1319,6 +1349,19 @@ def render_editor_page(
     function applyCurrent(state) {{
       cancelPreview();
       const start = bodyEl.selectionStart, end = bodyEl.selectionEnd;
+      if (state.theme) {{
+        document.getElementById('session-theme').textContent = ':root {{' + (state.theme.css || '') + '}}';
+        for (const kind of ['header', 'footer']) {{
+          let el = previewCard.querySelector('.theme-' + kind);
+          if (!el) {{ el = document.createElement(kind); el.className = 'theme-' + kind;
+            if (kind === 'header') previewCard.insertBefore(el, previewEl); else previewCard.append(el); }}
+          el.textContent = state.theme[kind] || '';
+          el.hidden = !el.textContent;
+        }}
+        let logo = previewCard.querySelector('.brand-logo');
+        if (!logo && state.theme.logo_url) {{ logo = document.createElement('img'); logo.className='brand-logo'; logo.alt='Team logo'; previewCard.prepend(logo); }}
+        if (logo) {{ logo.hidden = !state.theme.logo_url; if (state.theme.logo_url) logo.src=state.theme.logo_url; }}
+      }}
       savedBody = state.body;
       baseVersion = state.version_number;
       bodyEl.value = savedBody;
@@ -1355,14 +1398,14 @@ def render_editor_page(
     let readController = null;
     async function pollState() {{
       if (pollTimer) clearTimeout(pollTimer);
-      if (unavailable || document.hidden || reading) return;
+      if (unavailable || !ready || document.hidden || reading) return;
       reading = true;
       const controller = new AbortController();
       readController = controller;
       try {{
         if (saving) return;
         const known = pendingVersion ? pendingVersion.version_number : baseVersion;
-        const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/state?after_version=' + known,
+        const response = await sessionFetch('/state?after_version=' + known,
           {{cache: 'no-store', referrerPolicy: 'no-referrer', signal: controller.signal}});
         if (controller.signal.aborted || unavailable) return;
         if (response.status === 404) {{ showUnavailable(); return; }}
@@ -1394,7 +1437,42 @@ def render_editor_page(
     window.addEventListener('pageshow', pollState);
     pollTimer = setTimeout(pollState, 4000);
 
+    async function startSession() {{
+      try {{
+        let response;
+        if (sessionSecret) response = await sessionFetch('/state');
+        else if (opener) response = await fetch(endpoint + '/session', {{
+          method:'POST', cache:'no-store', credentials:'omit', referrerPolicy:'no-referrer',
+          headers: {{'content-type':'application/json'}}, body:JSON.stringify({{opener}})
+        }});
+        else {{ showUnavailable(); return; }}
+        if (response.status === 404) {{ showUnavailable(); return; }}
+        if (!response.ok) throw new Error('session unavailable');
+        const state = await response.json();
+        if (!sessionSecret) {{
+          sessionSecret = state.session_secret;
+          try {{ sessionStorage.setItem(sessionKey, sessionSecret); }} catch (err) {{}}
+        }}
+        opener = '';
+        ready = true;
+        bodyEl.disabled = false;
+        bodyEl.placeholder = 'Start writing in Markdown…';
+        bootstrapEl.hidden = true;
+        bootstrapEl.textContent = '';
+        applyCurrent(state);
+        activate(true);
+        bodyEl.focus();
+        pollState();
+      }} catch (err) {{
+        bootstrapEl.dataset.state = 'retry';
+        const retryMessage = "Couldn't open the editor yet. Retrying…";
+        if (bootstrapEl.textContent !== retryMessage) bootstrapEl.textContent = retryMessage;
+        if (!unavailable) setTimeout(startSession, 4000);
+      }}
+    }}
     updateButtons();
+    startSession();
+    }})();
   </script>
 </body>
 </html>"""

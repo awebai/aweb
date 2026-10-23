@@ -172,7 +172,7 @@ wheels = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -217,6 +217,7 @@ roles = [
 ]
 runtime = [
     { name = "awid-service" },
+    { name = "cbor2" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jsonschema" },
@@ -294,7 +295,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp-testing"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "testing" }
 dependencies = [
     { name = "aiosmtpd" },

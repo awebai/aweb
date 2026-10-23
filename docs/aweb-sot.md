@@ -612,7 +612,27 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `team_app_event_types`
 - `team_app_keys`
 - `app_hook_bindings`
+- `team_app_install_counters`
+- `app_installation_requests`
+- `app_installation_verifications`
+- `team_app_install_admins`
+- `app_install_admin_audit`
 <!-- END SOURCE INVENTORY: aweb-tables -->
+
+Migrations `035_team_app_installation_identity` and `036_app_installation_management`
+add installation identity and management. They use these tables:
+
+- `team_app_install_counters` keeps the last issued generation for each team and
+  app, surviving installation and team deletion so generations are never reused.
+- `app_installation_requests` stores members' pinned installation requests and
+  their approval or decline; a pending request grants no authority.
+- `app_installation_verifications` queues origin-verification jobs and records
+  worker leases and results, keeping network fetches outside HTTP requests and
+  installation locks.
+- `team_app_install_admins` stores operator-managed owner/admin grants for
+  standalone installations, including their revocation state.
+- `app_install_admin_audit` records local operator grant and revoke actions,
+  including explicit forced removals.
 
 The server also applies the hooks kit's own migration module, `aweb_naapp_hooks`
 (`naapp-lib/src/aweb_naapp/hooks/migrations/*.sql`), to the same `aweb` schema,

@@ -30,7 +30,18 @@ this approval; their session credential cannot approve apps.
 A new grant minted after this install includes the approved tools. **An already
 running grant session keeps its original snapshot**. Install output includes
 `identity_home`, `existing_grants_unchanged` and `grant_refresh_command` in JSON,
-and prints the replacement action in text:
+and prints the replacement action in text. After a resident install or update,
+aw also checks that resident's grants in the selected team. When active grants
+exist, the receipt reports their count and warns that existing grants do not gain
+tools from this install or update. An update does not mean an already delegated
+app is absent: its original snapshot still applies. Revoked and expired grants
+are excluded. This advisory check has a two-second request budget. Its failure
+does not reverse a successful installation: the count is reported as unknown
+(`grant_check_error: "unavailable"`), with the same recovery guidance. Required
+installation steps, including event registration, must still succeed.
+JSON reports a known count as `active_grants` (including zero).
+
+The mint action is:
 
 ```sh
 aw --identity-home /absolute/resident-root/.aw id grant mint --bundle normal-agent --ttl '<ttl>' --custody-socket auto --out /absolute/new-grant-home
@@ -44,9 +55,32 @@ not time-limited. A replacement does not infer the previous session's limits.
 the resident's custody service must be running for signed app tools. Omitting
 this option produces a grant with no custody locator. The owner supplies a new
 empty output directory and restarts the session using that replacement grant.
-Do not overwrite the live grant home or change resident identities. In an OATS deployment with `renew: launch`, the host
-operator can instead use `oats session restart --home /absolute/instance-home`;
-the launch renewal mints a fresh snapshot for the same resident. A readiness pass
+Do not overwrite the live grant home or change resident identities. Stop the
+old session, then relaunch its agent command with the new grant; replace
+the entire quoted `'<agent-command>'` token, **including its surrounding
+quotes**, with that session's original command line and arguments. Retain the
+original quoting of each argument:
+
+```sh
+env AWEB_IDENTITY_HOME=/absolute/new-grant-home '<agent-command>'
+```
+
+JSON exposes this template as `grant_restart_command`. The CLI cannot discover
+which process uses a grant, so it leaves the agent command explicit. A JSON
+consumer replaces the placeholder element with the executable and each argument
+as separate array elements; it must not place a whole command line in one
+executable element.
+
+For an OATS deployment configured with `renew: launch`, use this **alternative**
+from the host instead of manually minting and assigning a new grant:
+
+```sh
+oats session restart --home /absolute/instance-home
+```
+
+The launch renewal mints a fresh snapshot for the same resident. JSON exposes
+this conditional template as `oats_renew_restart_command`; replace the instance
+home explicitly, since the resident may have several sessions. A readiness pass
 or `aw folio help` only proves discovery, not that a live grant has these tools.
 
 App verbs accept the global boolean `--json` before or after the verb, including

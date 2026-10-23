@@ -157,3 +157,18 @@ async def test_policy_patch_uses_authenticated_identity_scope(aweb_cloud_db, ver
         assert await manager.fetch_value("SELECT inbound_mode FROM {{tables.agents}} WHERE did_aw=$1", verified_did) == "open"
     rows = await manager.fetch_all("SELECT inbound_mode FROM {{tables.agents}} WHERE did_aw='did:aw:policy' ORDER BY alias")
     assert [row["inbound_mode"] for row in rows] == ["contacts_only", "open"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["open", "team_and_contacts", "contacts_only", None, "unknown"])
+async def test_global_policy_without_raw_did_uses_only_its_own_mode(aweb_cloud_db, mode):
+    from aweb.messaging.messages import _effective_inbound_mode
+    from aweb.service_errors import ForbiddenError
+    from test_messages import _DbShim
+
+    recipient = {"identity_scope": "global", "policy_did_aw": None, "did_aw": None, "inbound_mode": mode}
+    if mode is None or mode == "unknown":
+        with pytest.raises(ForbiddenError, match="inbound_mode migration required"):
+            await _effective_inbound_mode(_DbShim(aweb_cloud_db.aweb_db), recipient)
+    else:
+        assert await _effective_inbound_mode(_DbShim(aweb_cloud_db.aweb_db), recipient) == mode

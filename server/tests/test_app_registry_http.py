@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from uuid import UUID
 
 import pytest
+import test_installation_http as install_http
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
 
-import aweb.routes.apps as apps_routes
-from aweb.app_registry import install_app, reserved_app_ids
+from aweb.app_registry import reserved_app_ids
 from aweb.audit import AuditActor, set_verified_audit_actor
-from aweb.internal_auth import build_internal_auth_header_value
-from aweb.service_errors import ConflictError
 from aweb.routes.apps import router as apps_router
 from aweb.team_auth_deps import TeamIdentity
+
+client = install_http.client
+db = install_http.db
+origin = install_http.origin
 
 TEAM_ID = "backend:acme.com"
 AGENT_ID = UUID("00000000-0000-0000-0000-000000000123")
@@ -78,356 +78,105 @@ async def _seed_team_and_agent(aweb_db) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_apps_empty_team_returns_empty_apps(aweb_cloud_db, monkeypatch):
-    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
-    app = _build_apps_app(aweb_cloud_db.aweb_db)
-    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(f"/v1/apps/installed?team_id={TEAM_ID}")
-
-    assert resp.status_code == 200, resp.text
-    assert resp.json() == {"team_id": TEAM_ID, "apps": []}
+async def test_list_apps_empty_team_returns_empty_apps(client):
+    response = await client.get(f"/api/v1/apps/installed?team_id={install_http.TEAM}", headers=install_http.headers())
+    assert response.status_code == 200, response.text
+    assert response.json() == {"team_id": install_http.TEAM, "apps": []}
 
 
 @pytest.mark.asyncio
-async def test_install_and_list_apps_returns_contract_shape(aweb_cloud_db, monkeypatch):
-    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
-    app = _build_apps_app(aweb_cloud_db.aweb_db)
-    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        install_resp = await client.post(
-            "/v1/apps/install",
-            json={
-                "app_id": "folio",
-                "origin": "https://FOLIO.aweb.ai/",
-                "app_version": "1.x",
-                "manifest_version": 1,
-                "digest": DIGEST_1,
-                "granted_scopes": ["folio:write", "folio:read", "folio:write"],
-            },
-        )
-        list_resp = await client.get(f"/v1/apps/installed?team_id={TEAM_ID}")
-
-    assert install_resp.status_code == 200, install_resp.text
-    assert install_resp.json() == {
-        "app_id": "folio",
-        "origin": "https://folio.aweb.ai",
-        "app_version": "1.x",
-        "manifest_version": 1,
-        "digest": DIGEST_1,
-        "granted_scopes": ["folio:read", "folio:write"],
-    }
-    assert list_resp.status_code == 200, list_resp.text
-    assert list_resp.json() == {
-        "team_id": TEAM_ID,
-        "apps": [install_resp.json()],
-    }
+async def test_install_and_list_apps_returns_verified_identity_and_scope_projection(client, db, origin):
+    await install_http.admin(db)
+    body = install_http.confirmation(origin)
+    body["granted_scopes"] *= 2
+    installed = await install_http.post(client, body)
+    assert installed.status_code == 200, installed.text
+    record = installed.json()
+    assert record["granted_scopes"] == ["fixture:read"]
+    assert record["installation_id"] and record["generation"] == 1
+    assert record["state"] == "active" and record["origin_verified"]
+    response = await client.get(f"/api/v1/apps/installed?team_id={install_http.TEAM}", headers=install_http.headers())
+    assert response.status_code == 200
+    assert response.json()["apps"] == [record]
 
 
 @pytest.mark.asyncio
-async def test_zero_scope_install_remains_listed_with_empty_grants(aweb_cloud_db, monkeypatch):
-    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
-    app = _build_apps_app(aweb_cloud_db.aweb_db)
-    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        install_resp = await client.post(
-            "/v1/apps/install",
-            json={
-                "app_id": "folio",
-                "origin": "https://folio.aweb.ai",
-                "app_version": "1.x",
-                "manifest_version": 1,
-                "digest": DIGEST_1,
-                "granted_scopes": [],
-            },
-        )
-        list_resp = await client.get(f"/v1/apps/installed?team_id={TEAM_ID}")
-
-    assert install_resp.status_code == 200, install_resp.text
-    assert list_resp.status_code == 200, list_resp.text
-    assert list_resp.json()["apps"] == [
-        {
-            "app_id": "folio",
-            "origin": "https://folio.aweb.ai",
-            "app_version": "1.x",
-            "manifest_version": 1,
-            "digest": DIGEST_1,
-            "granted_scopes": [],
-        }
-    ]
+async def test_zero_scope_install_remains_listed_with_empty_grants(client, db, origin):
+    await install_http.admin(db)
+    body = install_http.confirmation(origin)
+    body["granted_scopes"] = []
+    response = await install_http.post(client, body)
+    assert response.status_code == 200, response.text
+    response = await client.get(f"/api/v1/apps/installed?team_id={install_http.TEAM}", headers=install_http.headers())
+    assert response.json()["apps"][0]["granted_scopes"] == []
 
 
 @pytest.mark.asyncio
-async def test_internal_gateway_auth_can_read_installed_apps(aweb_cloud_db, monkeypatch):
-    app = _build_apps_app(aweb_cloud_db.aweb_db)
-    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
-    await install_app(
-        aweb_cloud_db.aweb_db,
-        team_id=TEAM_ID,
-        app_id="folio",
-        origin="https://folio.aweb.ai",
-        app_version="1.x",
-        manifest_version=1,
-        digest=DIGEST_1,
-        granted_scopes=["folio:read"],
-        installed_by_agent_id=str(AGENT_ID),
-    )
-    secret = "test-internal-secret"
-    user_id = "00000000-0000-0000-0000-000000000999"
-    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "true")
-    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
-    auth = build_internal_auth_header_value(
-        secret=secret,
-        team_id=TEAM_ID,
-        principal_type="u",
-        principal_id=user_id,
-        actor_id=str(AGENT_ID),
-    )
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            f"/v1/apps/installed?team_id={TEAM_ID}",
-            headers={
-                "X-AWEB-Auth": auth,
-                "X-Team-ID": TEAM_ID,
-                "X-User-ID": user_id,
-                "X-AWEB-Actor-ID": str(AGENT_ID),
-            },
-        )
-
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["apps"][0]["app_id"] == "folio"
+async def test_internal_gateway_cannot_select_another_team(client):
+    response = await client.get(f"/api/v1/apps/installed?team_id={TEAM_ID}", headers=install_http.headers())
+    assert response.status_code == 404
 
 
 def test_reserved_app_ids_are_loaded_from_cli_artifact():
-    artifact = Path(__file__).resolve().parents[2] / "test-vectors" / "reserved-app-ids-v1.json"
-    expected = set(json.loads(artifact.read_text())["reserved_app_ids"])
-
-    assert reserved_app_ids() == expected
-    assert "introspect" in reserved_app_ids()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("app_id", ["mail", "doctor", "introspect", "activity", "org"])
-async def test_install_rejects_reserved_app_id(aweb_cloud_db, monkeypatch, app_id):
-    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
-    app = _build_apps_app(aweb_cloud_db.aweb_db)
-    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(
-            "/v1/apps/install",
-            json={
-                "app_id": app_id,
-                "origin": f"https://{app_id}.example.com",
-                "app_version": "1.0.0",
-                "manifest_version": 1,
-                "digest": DIGEST_1,
-                "granted_scopes": [],
-            },
-        )
-
-    assert resp.status_code == 409
-    assert "reserved" in resp.json()["detail"]
+    artifact = Path(__file__).resolve().parents[2] / "test-vectors/reserved-app-ids-v1.json"
+    import json
+    assert reserved_app_ids() == frozenset(json.loads(artifact.read_bytes())["reserved_app_ids"])
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("origin", "detail_fragment"),
-    [
-        ("https://example.com:bad", "port"),
-        ("https://example.com:99999", "port"),
-        ("http://[::1", "origin URL"),
-        ("http://[not-an-ip]", "origin URL"),
-    ],
+    "app_id", ["id", "whoami", "plugin", "mail", "doctor", "introspect", "activity", "org"]
 )
-async def test_install_rejects_malformed_origin_parse_errors(
-    aweb_cloud_db, monkeypatch, origin, detail_fragment
-):
-    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
-    app = _build_apps_app(aweb_cloud_db.aweb_db)
-    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(
-            "/v1/apps/install",
-            json={
-                "app_id": "folio",
-                "origin": origin,
-                "app_version": "1.0.0",
-                "manifest_version": 1,
-                "digest": DIGEST_1,
-                "granted_scopes": [],
-            },
-        )
-
-    assert resp.status_code == 422
-    assert detail_fragment in resp.json()["detail"]
+async def test_install_rejects_reserved_app_id(client, origin, app_id):
+    body = install_http.confirmation(origin)
+    body["app_id"] = app_id
+    response = await install_http.post(client, body)
+    assert response.status_code == 409, response.text
+    assert not origin.tls.seen
 
 
 @pytest.mark.asyncio
-async def test_install_rejects_same_app_id_from_different_origin(aweb_cloud_db, monkeypatch):
-    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
-    app = _build_apps_app(aweb_cloud_db.aweb_db)
-    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        first = await client.post(
-            "/v1/apps/install",
-            json={
-                "app_id": "folio",
-                "origin": "https://folio.aweb.ai",
-                "app_version": "1.x",
-                "manifest_version": 1,
-                "digest": DIGEST_1,
-                "granted_scopes": ["folio:read"],
-            },
-        )
-        second = await client.post(
-            "/v1/apps/install",
-            json={
-                "app_id": "folio",
-                "origin": "https://evil.example.com",
-                "app_version": "1.x",
-                "manifest_version": 1,
-                "digest": DIGEST_2,
-                "granted_scopes": ["folio:read"],
-            },
-        )
-
-    assert first.status_code == 200, first.text
-    assert second.status_code == 409
-    assert "different origin" in second.json()["detail"]
+@pytest.mark.parametrize("invalid", ["http://plain.example", "https://example.test/path", "https://example.test:bad", "https://[malformed"])
+async def test_install_rejects_malformed_or_non_https_origin(client, db, origin, invalid):
+    await install_http.admin(db)
+    body = install_http.confirmation(origin)
+    body["origin"] = invalid
+    response = await install_http.post(client, body)
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "origin_invalid"
+    assert not origin.tls.seen
 
 
 @pytest.mark.asyncio
-async def test_reinstall_same_origin_repins_digest_and_scopes(aweb_cloud_db, monkeypatch):
-    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
-    app = _build_apps_app(aweb_cloud_db.aweb_db)
-    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        await client.post(
-            "/v1/apps/install",
-            json={
-                "app_id": "folio",
-                "origin": "https://folio.aweb.ai",
-                "app_version": "1.x",
-                "manifest_version": 1,
-                "digest": DIGEST_1,
-                "granted_scopes": ["folio:read"],
-            },
-        )
-        reinstall = await client.post(
-            "/v1/apps/install",
-            json={
-                "app_id": "folio",
-                "origin": "https://folio.aweb.ai",
-                "app_version": "1.y",
-                "manifest_version": 1,
-                "digest": DIGEST_2,
-                "granted_scopes": ["folio:read", "folio:write"],
-            },
-        )
-        listed = await client.get(f"/v1/apps/installed?team_id={TEAM_ID}")
-
-    assert reinstall.status_code == 200, reinstall.text
-    assert listed.json()["apps"] == [
-        {
-            "app_id": "folio",
-            "origin": "https://folio.aweb.ai",
-            "app_version": "1.y",
-            "manifest_version": 1,
-            "digest": DIGEST_2,
-            "granted_scopes": ["folio:read", "folio:write"],
-        }
-    ]
+async def test_conditional_update_repins_exact_bytes_and_selected_scopes(client, db, origin):
+    await install_http.admin(db)
+    first = await install_http.post(client, install_http.confirmation(origin))
+    before = first.json()
+    data = origin.manifest(version="2.0.0")
+    origin.publish(data)
+    body = {"app_id":"fixture", "origin":origin.url, "digest":install_http.digest(data),
+            "granted_scopes":[], "expected_generation":before["generation"]}
+    response = await install_http.post(client, body)
+    assert response.status_code == 200, response.text
+    assert response.json()["digest"] != before["digest"]
+    assert response.json()["installation_id"] == before["installation_id"]
+    assert response.json()["generation"] == before["generation"] + 1
+    assert response.json()["granted_scopes"] == []
 
 
 @pytest.mark.asyncio
-async def test_install_refuses_a_different_key_for_a_registered_emit_key_id(aweb_cloud_db, monkeypatch):
-    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
-    app = _build_apps_app(aweb_cloud_db.aweb_db)
-    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
+async def test_a_key_id_cannot_be_rebound_to_another_did_from_new_origin_bytes(client, db, origin):
+    import json
 
-    def _install_body(digest: str, did_key: str) -> dict:
-        return {
-            "app_id": "folio",
-            "origin": "https://folio.aweb.ai",
-            "app_version": "1.x",
-            "manifest_version": 1,
-            "digest": digest,
-            "granted_scopes": ["folio:read"],
-            "event_emitters": [{"kid": "emit-1", "did_key": did_key}],
-        }
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        first = await client.post(
-            "/v1/apps/install",
-            json=_install_body(DIGEST_1, "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"),
-        )
-        conflicting = await client.post(
-            "/v1/apps/install",
-            json=_install_body(DIGEST_2, "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"),
-        )
-        listed = await client.get("/v1/apps/installed", params={"team_id": TEAM_ID})
-
-    assert first.status_code == 200, first.text
-    assert conflicting.status_code == 409, conflicting.text
-    assert listed.json()["apps"][0]["digest"] == DIGEST_1
-
-
-@pytest.mark.asyncio
-async def test_app_origin_bound_by_another_team_does_not_bind_this_team(aweb_cloud_db, monkeypatch):
-    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
-    db = aweb_cloud_db.aweb_db
-    app = _build_apps_app(db)
-    await _seed_team_and_agent(db)
-    await db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('frontend:other.example', 'other.example', 'frontend', 'did:key:z6Mkother')
-        """
-    )
-    await install_app(
-        db,
-        team_id="frontend:other.example",
-        app_id="folio",
-        origin="https://folio.other.example",
-        app_version="1.x",
-        manifest_version=1,
-        digest=DIGEST_2,
-        granted_scopes=["folio:read"],
-    )
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        installed = await client.post(
-            "/v1/apps/install",
-            json={
-                "app_id": "folio",
-                "origin": "https://folio.aweb.ai",
-                "app_version": "1.x",
-                "manifest_version": 1,
-                "digest": DIGEST_1,
-                "granted_scopes": ["folio:read"],
-            },
-        )
-        listed = await client.get("/v1/apps/installed", params={"team_id": TEAM_ID})
-
-    assert installed.status_code == 200, installed.text
-    assert listed.json()["apps"][0]["origin"] == "https://folio.aweb.ai"
-
-    with pytest.raises(ConflictError):
-        await install_app(
-            db,
-            team_id="frontend:other.example",
-            app_id="folio",
-            origin="https://folio.aweb.ai",
-            app_version="1.x",
-            manifest_version=1,
-            digest=DIGEST_1,
-            granted_scopes=["folio:read"],
-        )
+    from test_app_events_http import _make_app_keypair
+    await install_http.admin(db)
+    before = (await install_http.post(client, install_http.confirmation(origin))).json()
+    document = json.loads(origin.manifest())
+    document["app_keys"][0]["did_key"] = _make_app_keypair()[1]
+    data = json.dumps(document).encode()
+    origin.publish(data)
+    response = await install_http.post(client, {"app_id":"fixture", "origin":origin.url, "digest":install_http.digest(data),
+                                               "granted_scopes":[], "expected_generation":before["generation"]})
+    assert response.status_code == 409, response.text
+    assert await db.fetch_value("SELECT generation FROM {{tables.team_app_installs}}") == before["generation"]
+    assert await db.fetch_value("SELECT digest FROM {{tables.team_app_installs}}") == before["digest"]

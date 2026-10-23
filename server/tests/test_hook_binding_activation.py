@@ -20,7 +20,6 @@ import pytest_asyncio
 from nacl.signing import SigningKey
 from redis.asyncio import Redis
 
-from aweb.app_registry import install_app
 from aweb.hook_bindings import (
     PRODUCTION,
     REGISTRATION,
@@ -39,6 +38,7 @@ from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app as create_registry_app
+from tests.installation_fixtures import seed_pending_installation
 from tests.test_app_events_http import _seed_team_and_agent
 
 TEAM = "backend:acme.com"
@@ -146,7 +146,9 @@ async def env(aweb_cloud_db, shared_test_pool, monkeypatch):
 
 
 async def _install(db, *, team_id=TEAM, digest=DIGEST, from_bytes=True):
-    await install_app(
+    # Owner-act tests seed historical registration evidence, not an origin
+    # confirmation. The shared fixture keeps ordinary use pending/unverified.
+    await seed_pending_installation(
         db, team_id=team_id, app_id="logs", origin=ORIGIN, app_version="1.0.0",
         manifest_version=1, digest=digest, granted_scopes=[],
     )

@@ -202,7 +202,7 @@ async def write_pending_bindings(
           AND (digest <> $3
                OR origin <> $6
                OR COALESCE(installation_id, '') <> COALESCE($4::TEXT, '')
-               OR COALESCE(generation, 0) <> COALESCE($5::INTEGER, 0))
+               OR COALESCE(generation, 0) <> COALESCE($5::BIGINT, 0))
         """,
         team_id,
         app_id,
@@ -243,7 +243,7 @@ async def write_pending_bindings(
             SELECT {BINDING_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
             WHERE team_id = $1 AND app_id = $2 AND digest = $10 AND origin = $11 AND state IN ('pending', 'active')
               AND COALESCE(installation_id, '') = COALESCE($3::TEXT, '')
-              AND COALESCE(generation, 0) = COALESCE($4::INTEGER, 0)
+              AND COALESCE(generation, 0) = COALESCE($4::BIGINT, 0)
               AND kind = $5 AND catalog_id = $6 AND catalog_version = $7 AND hook = $8
               AND COALESCE(tool, '') = COALESCE($9::TEXT, '')
             """,

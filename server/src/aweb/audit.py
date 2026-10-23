@@ -25,6 +25,9 @@ _ACTIONS = {
     'deactivate_team_roles_endpoint': 'roles.deactivate',
     'delete_repo': 'repos.delete',
     'install_app_route': 'apps.install',
+    'approve_installation_request_route': 'apps.requests.approve',
+    'decline_installation_request_route': 'apps.requests.decline',
+    'reverify_installation_route': 'apps.reverify',
 }
 
 
@@ -96,7 +99,7 @@ def _target(request: Request, action: str, actor: AuditActor) -> str:
             return f'repo:{UUID(str(value))}'
         except ValueError:
             return 'repo:invalid'
-    if action == 'apps.install':
+    if action.startswith('apps.'):
         return getattr(request.state, 'operator_audit_target', None) or 'app:invalid'
     return f'roles:{actor.team_id}'
 

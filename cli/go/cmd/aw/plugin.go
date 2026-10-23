@@ -36,6 +36,8 @@ var (
 	pluginInstallAppVersion      string
 	pluginInstallOrigin          string
 	pluginInstallDevOrigin       string
+	pluginInstallGrantedScopes   []string
+	pluginUpdateGrantedScopes    []string
 )
 
 var pluginCmd = &cobra.Command{
@@ -90,26 +92,32 @@ type pluginListItem struct {
 }
 
 type pluginProvenance struct {
-	RegisteredDigest string `json:"registered_digest,omitempty"`
-	RegisteredTeam   string `json:"registered_team,omitempty"`
-	RegisteredServer string `json:"registered_server,omitempty"`
-	DevOrigin        string `json:"dev_origin,omitempty"`
-	AppName          string `json:"app_name"`
-	AppID            string `json:"app_id,omitempty"`
-	ManifestVersion  string `json:"manifest_version,omitempty"`
-	AppVersion       string `json:"app_version,omitempty"`
-	Origin           string `json:"origin,omitempty"`
-	Source           string `json:"source,omitempty"`
-	ManifestURL      string `json:"manifest_url,omitempty"`
-	Digest           string `json:"digest,omitempty"`
-	InstalledAt      string `json:"installed_at,omitempty"`
-	UpdatedAt        string `json:"updated_at,omitempty"`
+	RegisteredInstallationID string `json:"registered_installation_id,omitempty"`
+	RegisteredGeneration     int64  `json:"registered_generation,omitempty"`
+	RegisteredDigest         string `json:"registered_digest,omitempty"`
+	RegisteredTeam           string `json:"registered_team,omitempty"`
+	RegisteredServer         string `json:"registered_server,omitempty"`
+	DevOrigin                string `json:"dev_origin,omitempty"`
+	AppName                  string `json:"app_name"`
+	AppID                    string `json:"app_id,omitempty"`
+	ManifestVersion          string `json:"manifest_version,omitempty"`
+	AppVersion               string `json:"app_version,omitempty"`
+	Origin                   string `json:"origin,omitempty"`
+	Source                   string `json:"source,omitempty"`
+	ManifestURL              string `json:"manifest_url,omitempty"`
+	Digest                   string `json:"digest,omitempty"`
+	InstalledAt              string `json:"installed_at,omitempty"`
+	UpdatedAt                string `json:"updated_at,omitempty"`
 }
 
 type pluginInstallOutput struct {
 	IdentityHome            string            `json:"identity_home,omitempty"`
 	ExistingGrantsUnchanged bool              `json:"existing_grants_unchanged,omitempty"`
 	GrantRefreshCommand     []string          `json:"grant_refresh_command,omitempty"`
+	GrantRestartCommand     []string          `json:"grant_restart_command,omitempty"`
+	OATSRenewRestartCommand []string          `json:"oats_renew_restart_command,omitempty"`
+	ActiveGrants            *int              `json:"active_grants,omitempty"`
+	GrantCheckError         string            `json:"grant_check_error,omitempty"`
 	Approved                bool              `json:"approved,omitempty"`
 	Name                    string            `json:"name"`
 	Path                    string            `json:"path"`
@@ -134,6 +142,8 @@ func init() {
 	pluginInstallCmd.Flags().StringVar(&pluginInstallAppVersion, "app-version", "", "App version to record in plugin provenance")
 	pluginInstallCmd.Flags().StringVar(&pluginInstallOrigin, "origin", "", "App origin to record in plugin provenance")
 	pluginInstallCmd.Flags().StringVar(&pluginInstallDevOrigin, "dev-origin", "", "Override the app origin to this base URL for a self-hosted or dev service; the request base URL becomes this, bypassing the manifest origin self-consistency check")
+	pluginInstallCmd.Flags().StringSliceVar(&pluginInstallGrantedScopes, "grant-scope", nil, "Grant only these requested scopes (repeat or comma-separate; default: all requested scopes)")
+	pluginUpdateCmd.Flags().StringSliceVar(&pluginUpdateGrantedScopes, "grant-scope", nil, "Explicitly select granted scopes (default: preserve existing grants, dropping removed scopes)")
 
 	pluginCmd.GroupID = groupUtility
 	pluginCmd.AddCommand(pluginListCmd, pluginInstallCmd, pluginRemoveCmd, pluginUpdateCmd, pluginReservedNamesCmd)
@@ -169,6 +179,9 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 	}
 	if isManifestInstallSource(source) {
 		policy := manifestManagementPolicy{registerEvents: true}
+		if cmd.Flags().Changed("grant-scope") {
+			policy.grantedScopes = append([]string{}, pluginInstallGrantedScopes...)
+		}
 		if resident {
 			policy.residentHome = home.Root
 		}
@@ -176,6 +189,7 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		addPluginGrantGuidance(cmd, out)
 		printOutput(out, formatPluginInstall)
 		return nil
 	}
@@ -314,6 +328,9 @@ func runPluginUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("plugin %q is missing manifest provenance", name)
 	}
 	policy := manifestManagementPolicy{expectedName: name, registerEvents: true}
+	if cmd.Flags().Changed("grant-scope") {
+		policy.grantedScopes = append([]string{}, pluginUpdateGrantedScopes...)
+	}
 	if resident {
 		policy.residentHome = home.Root
 	}
@@ -325,8 +342,54 @@ func runPluginUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	addPluginGrantGuidance(cmd, out)
 	printOutput(out, formatPluginInstall)
 	return nil
+}
+
+// Grant discovery is advisory after a successful install/update. It neither
+// changes a snapshot nor makes installing an app depend on server availability.
+func addPluginGrantGuidance(cmd *cobra.Command, out *pluginInstallOutput) {
+	if !out.Approved {
+		return
+	}
+	out.GrantCheckError = "unavailable"
+	parent := context.Background()
+	if cmd != nil && cmd.Context() != nil {
+		parent = cmd.Context()
+	}
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+	workingDir := mustGetwd()
+	sel, err := resolveSelectionForDir(workingDir)
+	if err != nil {
+		return
+	}
+	client, sel, err := buildClientForSelectionAtIdentityHome(ctx, workingDir, sel.IdentityHome, sel)
+	if err != nil {
+		return
+	}
+	// Keep the replacement on the team/server selected for the install.
+	prefix := []string{"aw", "--identity-home", out.IdentityHome}
+	if sel.ServerName != "" {
+		prefix = append(prefix, "--server-name", sel.ServerName)
+	}
+	if sel.TeamID != "" {
+		prefix = append(prefix, "--team", sel.TeamID)
+	}
+	out.GrantRefreshCommand = append(prefix, out.GrantRefreshCommand[3:]...)
+	grants, err := client.ListIdentityGrants(ctx)
+	if err != nil {
+		return
+	}
+	active := 0
+	for _, grant := range grants.Grants {
+		if grant.Status == "active" {
+			active++
+		}
+	}
+	out.ActiveGrants = &active
+	out.GrantCheckError = ""
 }
 
 func installedPlugins() ([]pluginListItem, error) {
@@ -403,7 +466,21 @@ func formatPluginInstall(v any) string {
 		}
 	}
 	if out.Approved {
-		return fmt.Sprintf("Installed app %s; approved for this resident and future grants.\nExisting grants keep their original tool snapshots. If the running session cannot use this app, ask the resident owner to mint a replacement:\n  %s\nChoose the intended scopes and replace <ttl> with the intended lifetime (for example 1h; choose never only deliberately). Replace <new-grant-home> with a new empty directory; restart the session using the replacement grant before calling the app. Keep the same resident identity.\n", out.Name, formatShellCommand(out.GrantRefreshCommand))
+		text := fmt.Sprintf("Installed app %s; approved for this resident and future grants.\n", out.Name)
+		if out.ActiveGrants != nil && *out.ActiveGrants == 0 {
+			return text
+		}
+		if out.ActiveGrants != nil {
+			plural := ""
+			if *out.ActiveGrants != 1 {
+				plural = "s"
+			}
+			text += fmt.Sprintf("%d active grant%s found for this resident in the selected team. Existing grants do not gain tools from this install or update.\n", *out.ActiveGrants, plural)
+		} else {
+			text += "Could not check active grants. Existing grants keep their original tool snapshots.\n"
+		}
+		text += fmt.Sprintf("If the running session cannot use this app, the resident owner must mint a replacement:\n  %s\nChoose the intended scopes and replace <ttl> with the intended lifetime (for example 1h; choose never only deliberately). Replace <new-grant-home> with a new empty directory. Keep the same resident identity and its custody service running.\nStop the old session, then relaunch your agent command using the replacement grant (replace the entire quoted '<agent-command>' token, including its surrounding quotes, with the original command line; retain each argument's quoting):\n  %s\nFor OATS sessions configured with renew: launch, the host operator can instead renew and restart the same instance (replace <instance-home>):\n  %s\n", formatShellCommand(out.GrantRefreshCommand), formatShellCommand(out.GrantRestartCommand), formatShellCommand(out.OATSRenewRestartCommand))
+		return text
 	}
 	return fmt.Sprintf("Installed plugin %s -> %s\n", out.Name, out.Path)
 }
@@ -512,6 +589,7 @@ func installManifestPlugin(source, dir string) (*pluginInstallOutput, error) {
 type manifestManagementPolicy struct {
 	residentHome, expectedName string
 	registerEvents             bool
+	grantedScopes              []string
 }
 
 func installOrUpdateManifestPlugin(source, dir string, update bool, devOrigin string) (*pluginInstallOutput, error) {
@@ -546,7 +624,6 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 	if err != nil {
 		return nil, manifestError(err)
 	}
-	fetchedBytes := manifestBytes
 	manifest := resolved.Manifest
 	declaredOrigin := manifest.App.Origin
 	if devOrigin != "" {
@@ -637,8 +714,16 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		InstalledAt:     installedAt,
 		UpdatedAt:       now,
 	}
-	if policy.registerEvents && policy.residentHome != "" && (len(manifest.Events) > 0 || (update && previous != nil && previous.RegisteredDigest != "")) {
-		if err := registerManifestEvents(resolved, fetchedDigest, registrationManifestBytesFor(fetchedBytes, manifest.ManifestVersion, declaredOrigin, manifest.App.Origin), previous, &provenance, update); err != nil {
+	if policy.registerEvents && policy.residentHome != "" {
+		declared, err := canonicalAppOrigin(declaredOrigin)
+		if err != nil {
+			return nil, err
+		}
+		registered, err := canonicalAppOrigin(manifest.App.Origin)
+		if err != nil || declared != registered {
+			return nil, usageError("origin_verification_required: install from the app's served origin without a --dev-origin rewrite")
+		}
+		if err := registerManifestEvents(resolved, fetchedDigest, previous, &provenance, update, policy.grantedScopes); err != nil {
 			return nil, err
 		}
 	}
@@ -667,6 +752,8 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		out.IdentityHome = policy.residentHome
 		out.ExistingGrantsUnchanged = true
 		out.GrantRefreshCommand = []string{"aw", "--identity-home", policy.residentHome, "id", "grant", "mint", "--bundle", "normal-agent", "--ttl", "<ttl>", "--custody-socket", "auto", "--out", "<new-grant-home>"}
+		out.GrantRestartCommand = []string{"env", "AWEB_IDENTITY_HOME=<new-grant-home>", "<agent-command>"}
+		out.OATSRenewRestartCommand = []string{"oats", "session", "restart", "--home", "<instance-home>"}
 	}
 	return out, nil
 }

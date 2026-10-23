@@ -13,6 +13,7 @@ from aweb.inbound_modes import (
     INBOUND_MODE_OPEN,
     INBOUND_MODE_TEAM_AND_CONTACTS,
     effective_inbound_mode,
+    normalize_inbound_mode,
 )
 from aweb.messaging.contacts import has_exact_active_identity_contact, normalize_owner_dids
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
@@ -133,7 +134,13 @@ async def _effective_inbound_mode(db, recipient_agent: dict) -> str:
     # Raw identity facts select policy, never routing or mutation authority.
     # Direct service fixtures may omit the separate policy projection.
     policy_did_aw = recipient_agent.get("policy_did_aw", recipient_agent.get("did_aw"))
-    return await effective_inbound_mode(db.get_manager("aweb"), str(policy_did_aw or ""))
+    if policy_did_aw:
+        return await effective_inbound_mode(db.get_manager("aweb"), str(policy_did_aw))
+    # Without a stable identity there is no link to other memberships.
+    try:
+        return normalize_inbound_mode(recipient_agent.get("inbound_mode"), default="")
+    except ValueError as exc:
+        raise ForbiddenError("Recipient inbound_mode migration required") from exc
 
 
 def _identity_dids_from_agent(agent: dict) -> list[str]:

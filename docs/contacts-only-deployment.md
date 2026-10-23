@@ -17,6 +17,9 @@ confirm the deployment's read-only mixed-policy inventory before release.
 Connecting a global identity into a new team also refuses with migration-required
 while any live membership has a missing or invalid policy. Support must resolve
 that migration state before retrying the new-team connection.
+A global-scope row without a raw `did:aw` uses its own explicit row mode; a
+missing or invalid mode still refuses. Its signed identity-wide PATCH remains
+unavailable until authentication verifies a stable identity.
 
 Cloud must use the public `aweb.inbound_modes` services rather than a second
 mode table or locking algorithm. `effective_inbound_mode(db, did_aw)` reads the

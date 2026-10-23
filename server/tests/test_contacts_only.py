@@ -182,7 +182,9 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
 
 
 @pytest.mark.asyncio
-async def test_unmarked_global_recipient_keeps_strict_policy(privacy_app):
+@pytest.mark.parametrize("raw_did", [True, False])
+@pytest.mark.parametrize("mode", ["contacts_only", None])
+async def test_unmarked_global_recipient_keeps_strict_policy(privacy_app, raw_did, mode):
     from aweb.messaging.messages import resolve_agent_by_did
 
     env = privacy_app
@@ -195,12 +197,12 @@ async def test_unmarked_global_recipient_keeps_strict_policy(privacy_app):
     ))
     await env.db.execute("""
         UPDATE {{tables.agents}} SET identity_scope='global', did_aw=$1,
-            address='example.test/bob', inbound_mode='contacts_only', did_aw_verified_key=NULL
+            address='example.test/bob', inbound_mode=$3, did_aw_verified_key=NULL
         WHERE agent_id=$2
-    """, recipient_id, recipient.id)
+    """, recipient_id if raw_did else None, recipient.id, mode)
     projected = await resolve_agent_by_did(env.infra, recipient.did)
     assert projected["did_aw"] is None
-    assert projected["policy_did_aw"] == recipient_id
+    assert projected["policy_did_aw"] == (recipient_id if raw_did else None)
 
     async def send_both(expected):
         for path, payload in (
@@ -211,11 +213,16 @@ async def test_unmarked_global_recipient_keeps_strict_policy(privacy_app):
             headers = _signed_team_headers(sender.sk, sender.did, TEAM, sender.certificate, body)
             response = await env.client.post(path, content=body, headers={**headers, "Content-Type": "application/json"})
             assert response.status_code == expected, response.text
-            assert "migration required" not in response.text
-            if expected == 403:
-                assert "exact active contacts" in response.text
+            if mode is None:
+                assert "inbound_mode migration required" in response.text
+            else:
+                assert "migration required" not in response.text
+                if expected == 403:
+                    assert "exact active contacts" in response.text
 
     await send_both(403)
+    if mode is None:
+        return
     # Key-owned contacts remain valid without attributing an unverified global
     # claim to this recipient. Raw policy facts never grant identity authority.
     await env.db.execute("""
