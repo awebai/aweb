@@ -40,7 +40,7 @@ type apiKeyInitRequest struct {
 	HumanName    string
 	AgentType    string
 	Global       bool
-	// InboundMode is a canonical delivery mode when --inbound-mode is
+	// InboundMode is "open", "team_and_contacts" or "contacts_only" when --inbound-mode is
 	// set on a global init, "" otherwise. The runner forwards it to
 	// /api/v1/workspaces/init only when non-empty; the server defaults
 	// to "open" when the field is absent.

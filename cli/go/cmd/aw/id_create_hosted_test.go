@@ -127,6 +127,9 @@ func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode str
 			actual := mode
 			if readCalls == 1 {
 				actual = "open"
+				if mode == "contacts_only" {
+					actual = "team_and_contacts"
+				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "agent-1", "team_id": serviceTeam, "alias": "steward", "identity_scope": "global", "inbound_mode": actual, "configurable": true})
 		case r.URL.Path == "/api/v1/agents/me/encryption-key":

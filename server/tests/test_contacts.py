@@ -282,6 +282,10 @@ async def test_handle_contact_default_agent_resolution_uses_recent_activity(aweb
         recent["agent_id"],
     )
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=ANY($1::uuid[])",
+        [older["agent_id"], recent["agent_id"]],
+    )
     resolved = await resolve_handle_contact_agent(db_shim, handle_namespace="acme.com")
     assert resolved is not None
     assert resolved["address"] == "acme.com/recent"

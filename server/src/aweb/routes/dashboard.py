@@ -362,7 +362,7 @@ async def list_team_agents(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT a.agent_id, a.alias, a.did_key, a.human_name, a.address, a.agent_type,
+        SELECT a.agent_id, a.alias, a.did_key, a.human_name, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address, a.agent_type,
                a.role, a.status, a.identity_scope, a.created_at,
                w.last_seen_at, w.workspace_path
         FROM {{tables.agents}} a
@@ -442,7 +442,7 @@ async def get_team_agent(
 
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, alias, did_key, did_aw, address, role, status, identity_scope,
+        SELECT agent_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, role, status, identity_scope,
                human_name, agent_type, created_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL

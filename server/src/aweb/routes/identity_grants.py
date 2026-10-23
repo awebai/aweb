@@ -110,7 +110,7 @@ async def mint_identity_grant(
     )
     if not subject or subject["status"] != "active":
         raise HTTPException(status_code=403, detail="subject identity is not active")
-    subject_did_aw = (identity.did_aw or subject.get("did_aw") or "").strip() or None
+    subject_did_aw = (identity.did_aw or "").strip() or None
 
     now = datetime.now(timezone.utc)
     expires_at = add_years(now, 100) if payload.ttl_seconds in (None, "never") else now + timedelta(seconds=payload.ttl_seconds)

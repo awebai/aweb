@@ -1271,10 +1271,21 @@ func TestExecuteBYODPathDoesNotPromptForDNSWhenNonInteractive(t *testing.T) {
 // the wizard no longer prompts for lifetime; the resulting terminal identity is
 // self-custodial/global with a registered did:aw and on-disk identity.yaml.
 func TestExecuteHostedPathWithCompatibilityAliasCreatesSelfCustodialGlobalCLIIdentity(t *testing.T) {
-	t.Run("matching", func(t *testing.T) { testHostedGuidedExplicitModeReadback(t, "team_and_contacts", false) })
-	t.Run("downgraded", func(t *testing.T) { testHostedGuidedExplicitModeReadback(t, "open", true) })
+	for _, mode := range []string{"open", "team_and_contacts", "contacts_only"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Run("matching", func(t *testing.T) { testHostedGuidedExplicitModeReadback(t, mode, mode, false) })
+			wrong := "open"
+			if mode == "open" {
+				wrong = "team_and_contacts"
+			}
+			if mode == "contacts_only" {
+				wrong = "team_and_contacts"
+			}
+			t.Run("mismatched", func(t *testing.T) { testHostedGuidedExplicitModeReadback(t, mode, wrong, true) })
+		})
+	}
 }
-func testHostedGuidedExplicitModeReadback(t *testing.T, actual string, wantFailure bool) {
+func testHostedGuidedExplicitModeReadback(t *testing.T, mode, actual string, wantFailure bool) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USER", "")
@@ -1416,13 +1427,16 @@ func testHostedGuidedExplicitModeReadback(t *testing.T, actual string, wantFailu
 		PromptIn:   strings.NewReader("jack\nlaptop\nn\n"),
 		PromptOut:  &out,
 		BaseURL:    onboardingServer.URL + "/api",
-		Global:     true, InboundMode: "team_and_contacts",
+		Global:     true, InboundMode: mode,
 	})
 	if (err != nil) != wantFailure {
 		t.Fatalf("explicit guided mode result: %v, want failure=%t", err, wantFailure)
 	}
 	if !readSeen {
 		t.Error("guided creation did not read back effective mode")
+	}
+	if signupBody["inbound_mode"] != mode {
+		t.Error("guided creation did not preserve the requested mode")
 	}
 
 	if got, _ := signupBody["did_aw"].(string); strings.TrimSpace(got) == "" {
