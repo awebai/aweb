@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from datetime import datetime
 
 import pytest
 import test_installation_http as http_fixture
@@ -10,6 +11,7 @@ from aweb_naapp.runtime.app_keys import AppKey
 from awid.did import did_from_public_key
 from nacl.signing import SigningKey
 from test_installation_http import admin, confirmation, post
+from test_app_manifest_fetch import digest
 from test_verified_installations import current
 
 client = http_fixture.client
@@ -138,9 +140,7 @@ async def test_caller_rollback_restores_installation_hooks_and_generation_counte
     assert await db.fetch_value("SELECT last_generation FROM {{tables.team_app_install_counters}}") == before["generation"]
 
 
-async def test_real_uninstall_revokes_signed_grant_and_hook_reads_without_losing_status(client, db, origin):
-    from test_app_manifest_fetch import digest
-
+async def lifecycle_app(client, db, origin):
     await admin(db)
     key = SigningKey.generate()
     signer_key = AppKey(kid="lifecycle-read", did_key=did_from_public_key(bytes(key.verify_key)), signing_key=key)
@@ -156,6 +156,12 @@ async def test_real_uninstall_revokes_signed_grant_and_hook_reads_without_losing
     async def read(purpose, path):
         signer = AppCredentialSigner(app_id="fixture", key=signer_key, purpose=purpose)
         return await client.get(path, headers=signer.sign(method="GET", target="http://test" + path, team_id=http_fixture.TEAM).headers)
+
+    return pin, first, read
+
+
+async def test_real_uninstall_revokes_signed_grant_and_hook_reads_without_losing_status(client, db, origin):
+    pin, first, read = await lifecycle_app(client, db, origin)
 
     binding_id = await db.fetch_value("SELECT binding_id FROM {{tables.app_hook_bindings}} LIMIT 1")
     grant_path = "/api/v1/apps/self/grant"
@@ -193,3 +199,24 @@ async def test_other_team_uninstall_cannot_mutate_the_callers_installation(clien
                                 headers=http_fixture.headers())
     assert refused.status_code == 404, refused.text
     assert await current(db) == before
+
+
+async def test_grant_creation_time_is_fixed_for_repin_and_changes_only_on_reinstall(client, db, origin):
+    pin, first, read = await lifecycle_app(client, db, origin)
+    path = "/api/v1/apps/self/grant"
+    response = await read("app-grant-read", path)
+    assert response.status_code == 200, response.text
+    assert "installed_at" in response.json(), "grant-read must expose the installation creation time"
+    created = datetime.fromisoformat(response.json()["installed_at"])
+    repin = await post(client, dict(pin, expected_generation=first.json()["generation"]))
+    assert repin.status_code == 200, repin.text
+    assert repin.json()["installation_id"] == first.json()["installation_id"]
+    assert repin.json()["generation"] > first.json()["generation"]
+    assert datetime.fromisoformat((await read("app-grant-read", path)).json()["installed_at"]) == created
+    retired = await post(client, {"expected_generation": repin.json()["generation"]}, "fixture/uninstall")
+    assert retired.status_code == 200, retired.text
+    assert datetime.fromisoformat((await read("app-grant-read", path)).json()["installed_at"]) == created
+    replacement = await post(client, dict(pin, expected_generation=retired.json()["generation"]))
+    assert replacement.status_code == 200, replacement.text
+    assert replacement.json()["installation_id"] != first.json()["installation_id"]
+    assert datetime.fromisoformat((await read("app-grant-read", path)).json()["installed_at"]) > created
