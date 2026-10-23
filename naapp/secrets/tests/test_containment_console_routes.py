@@ -1,5 +1,6 @@
 """Human-only narrowing through the shared S4/B3/F6 and PostgreSQL services."""
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
 
@@ -236,6 +237,66 @@ async def test_console_rechecks_login_and_admitted_context_after_request_entry(u
             PATH, json=BODY, headers={"X-CSRF-Token": logged.json()["csrf_token"]}
         )
         assert response.status_code in {401, 409, 503}
+    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
+    assert (
+        await w.db.fetch_value("SELECT state FROM {{tables.secrets}} WHERE secret_id=$1", SECRET_ID)
+        == "active"
+    )
+
+
+async def test_logout_during_installation_lookup_refuses_the_inflight_action(uses):
+    await seed(uses)
+    w = uses.world
+    entered = asyncio.Event()
+    resume = asyncio.Event()
+
+    async def paused_lookup():
+        entered.set()
+        await resume.wait()
+
+    async with clients(uses, lookup=paused_lookup) as (human, _, _):
+        logged = await login(w, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        headers = {"X-CSRF-Token": logged.json()["csrf_token"]}
+        action = asyncio.create_task(human.post(PATH, json=BODY, headers=headers))
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            logged_out = await human.post("/logout", headers=headers)
+            assert logged_out.status_code == 200
+            resume.set()
+            response = await asyncio.wait_for(action, 5)
+            assert response.status_code == 401
+        finally:
+            resume.set()
+            if not action.done():
+                action.cancel()
+            await asyncio.gather(action, return_exceptions=True)
+    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.containment_receipts}}") == 0
+    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
+    assert (
+        await w.db.fetch_value("SELECT state FROM {{tables.secrets}} WHERE secret_id=$1", SECRET_ID)
+        == "active"
+    )
+
+
+async def test_final_session_check_rolls_back_effect_after_awaited_action_work(uses):
+    await seed(uses)
+    w = uses.world
+    await w.db.execute(
+        "CREATE FUNCTION close_containment_session() RETURNS trigger LANGUAGE plpgsql AS $$ "
+        "BEGIN UPDATE {{tables.console_sessions}} SET closed_at=clock_timestamp(); "
+        "RETURN NEW; END $$"
+    )
+    async with clients(uses) as (human, _, _):
+        await w.db.execute(
+            "CREATE TRIGGER close_containment_session BEFORE INSERT ON {{tables.containment_receipts}} "
+            "FOR EACH ROW EXECUTE FUNCTION close_containment_session()"
+        )
+        logged = await login(w, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        response = await human.post(
+            PATH, json=BODY, headers={"X-CSRF-Token": logged.json()["csrf_token"]}
+        )
+        assert response.status_code == 401
+    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.containment_receipts}}") == 0
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
     assert (
         await w.db.fetch_value("SELECT state FROM {{tables.secrets}} WHERE secret_id=$1", SECRET_ID)

@@ -347,6 +347,7 @@ class Containment:
             await self.authorize_console(
                 tx, admitted=admitted, session=session, action=action, target=target
             )
+            await self._session_current(tx, session)
             try:
                 commitment = await self.passkeys.evidence_commitment(
                     session.evidence_ref,
@@ -377,7 +378,7 @@ class Containment:
                 evidence_sha256=commitment,
             )
             await self.fence.check(tx, admitted)
-            self._session_unexpired(session)
+            await self._session_current(tx, session)
         try:
             await self.evict(admitted.installation_id, admitted.team_id, result.affected_secret_ids)
         except Exception:
@@ -389,6 +390,27 @@ class Containment:
     @staticmethod
     def _session_unexpired(session: ConsoleSession) -> None:
         if session.expires_at <= datetime.now(UTC):
+            raise ContainmentRefused("console_session_required", 401)
+
+    @staticmethod
+    async def _session_current(tx: TransactionManager, session: ConsoleSession) -> None:
+        # F6, application authority and exact LOGIN credential precede this
+        # session lock. Logout only updates the session row. Holding it makes
+        # logout serialize with the effect, while a completed logout is seen.
+        row = await tx.fetch_one(
+            "SELECT scope,subject,evidence_ref,expires_at,closed_at FROM {{tables.console_sessions}}"
+            " WHERE token_sha256=$1 FOR SHARE",
+            session.token_sha256,
+        )
+        # Check the live clock AFTER any row-lock wait, and bind every field
+        # back to the exact token S4 authenticated, never another live session.
+        if (
+            row is None
+            or row["closed_at"] is not None
+            or (row["scope"], row["subject"], row["evidence_ref"], row["expires_at"])
+            != (session.scope, session.subject, session.evidence_ref, session.expires_at)
+            or row["expires_at"] <= datetime.now(UTC)
+        ):
             raise ContainmentRefused("console_session_required", 401)
 
     @staticmethod
