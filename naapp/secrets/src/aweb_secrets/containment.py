@@ -7,6 +7,7 @@ writes commit together. No audit availability predicate is consulted here.
 
 import hashlib
 import json
+import logging
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -20,7 +21,12 @@ from aweb_naapp.roles import hold_role, principal_key
 from aweb_naapp.runtime.approvals import Approvals
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationFence
-from aweb_naapp.runtime.passkeys import Passkeys, RetirementRefused
+from aweb_naapp.runtime.passkeys import (
+    PasskeyInstallationContext,
+    PasskeyProofUnavailable,
+    Passkeys,
+    RetirementRefused,
+)
 from aweb_naapp.runtime.team_auth import Principal
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
@@ -32,6 +38,8 @@ from aweb_secrets.custody import Custody, SealContext
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, owner_scope
 from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.tokens import TokenCache
+
+_LOG = logging.getLogger(__name__)
 
 
 async def _lock_tree(
@@ -313,8 +321,75 @@ class Containment:
                 actor=actor,
                 signed_trace_id=signed_trace_id,
             )
+            await self.fence.check(tx, installed)
         await self.evict(installed.installation_id, installed.team_id, result.affected_secret_ids)
         return result
+
+    async def by_console(
+        self,
+        *,
+        admitted: AdmittedInstallation,
+        session: ConsoleSession,
+        request_id: str,
+        action: str,
+        target: str | None = None,
+        credential_id: bytes | None = None,
+    ) -> ContainmentResult:
+        """Narrow under the current LOGIN proof, without a fresh ceremony.
+
+        The human router supplies S4 session/CSRF and authoritative installation
+        lookup. All authority, effects and the governance outbox share this tx.
+        """
+        self._validate(request_id, action, target, credential_id)
+        async with self.db.transaction() as tx:
+            await self.fence.check(tx, admitted)
+            self._session_unexpired(session)
+            await self.authorize_console(
+                tx, admitted=admitted, session=session, action=action, target=target
+            )
+            try:
+                commitment = await self.passkeys.evidence_commitment(
+                    session.evidence_ref,
+                    context=PasskeyInstallationContext(
+                        admitted.app_id,
+                        admitted.team_id,
+                        admitted.installation_id,
+                        admitted.generation,
+                    ),
+                    scope=session.scope,
+                    subject=session.subject,
+                    purpose="login",
+                    tx=tx,
+                )
+            except PasskeyProofUnavailable:
+                raise ContainmentRefused("login_evidence_unavailable", 401) from None
+            result = await self._act(
+                tx,
+                installation_id=admitted.installation_id,
+                team_id=admitted.team_id,
+                authorized_by=session.subject,
+                request_id=request_id,
+                action=action,
+                target=target,
+                credential_id=credential_id,
+                authority="passkey_session",
+                actor={"authority_mode": "system", "attestations": []},
+                evidence_sha256=commitment,
+            )
+            await self.fence.check(tx, admitted)
+            self._session_unexpired(session)
+        try:
+            await self.evict(admitted.installation_id, admitted.team_id, result.affected_secret_ids)
+        except Exception:
+            # The effect is committed. Cleanup failure must not invite a replay;
+            # S13 checks active custody before using a cached token.
+            _LOG.warning("post-containment cache cleanup unavailable")
+        return result
+
+    @staticmethod
+    def _session_unexpired(session: ConsoleSession) -> None:
+        if session.expires_at <= datetime.now(UTC):
+            raise ContainmentRefused("console_session_required", 401)
 
     @staticmethod
     def _validate(
