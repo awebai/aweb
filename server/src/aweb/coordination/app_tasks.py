@@ -349,7 +349,7 @@ async def cancel_app_task_on(tx, *, team_id, task_id, external_request_id, reaso
 
 
 async def cancel_installation_requests_on(tx, *, team_id: str, app_id: str, installation_id: str):
-    """F6 calls this while holding its installation row lock, before uninstall."""
+    """Cancel requests through the cleanup seam under its installation row lock."""
     rows = await tx.fetch_all(
         """SELECT t.task_id, r.external_request_id FROM {{tables.task_app_requests}} r
            JOIN {{tables.tasks}} t ON t.task_id = r.task_id

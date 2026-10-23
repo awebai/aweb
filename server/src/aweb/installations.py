@@ -118,11 +118,16 @@ async def install_verified_manifest_on(
 async def cleanup_installation_on(tx, *, installation: dict) -> None:
     """Run cleanups under the current installation row lock, in its transaction.
 
-    This is the single seam for installation-scoped retirement. C2-S adds its
-    installation_id-bound request cancellation here when those tasks exist.
-    Do not commit, open a separate transaction or suppress a cleanup failure.
+    This is the single seam for installation-scoped retirement. Do not commit,
+    open a separate transaction or suppress a cleanup failure.
     """
+    from aweb.coordination.app_tasks import cancel_installation_requests_on
+
     await revoke_uninstalled_bindings(tx, team_id=installation["team_id"], app_id=installation["app_id"])
+    await cancel_installation_requests_on(
+        tx, team_id=installation["team_id"], app_id=installation["app_id"],
+        installation_id=installation["installation_id"],
+    )
 
 
 async def uninstall_installation_on(tx, *, team_id: str, app_id: str, expected_generation: int) -> dict:
