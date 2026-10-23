@@ -111,43 +111,49 @@ Until that lands, agents use `aw id request --team-auth` plus folio's skills and
 
 ### 6. Editable present links (human edit)
 
-An agent can mint an **editable** present link so its human can edit the document
-— a write-capable capability link, distinct from the read-only present link.
+An editable link opens one document's editor. The opener expires within 300
+seconds and is consumed once; an established editing session has **no idle
+or maximum lifetime**, including while its tab is hidden.
 
-- **Mint** (cert-auth): `POST /v1/present {slug, editable: true, ttl_seconds?}` →
-  an edit-capable token. Read links omit `editable`. The capability lives in the
-  token (server-authoritative); a read token cannot be escalated to edit via a URL
-  arg.
-- **Surface**: `GET /present/<token>` renders the **editor** if the token is
-  edit-capable (with a view/preview toggle), else the read-only rendered page.
-  Same URL, capability-driven.
-- **Editing is append-only.** A save appends a new document version (the spine is
-  append-only) — history is preserved; an edit can never destroy prior versions.
-- **Concurrency — optimistic, version-based (NOT real-time co-editing).** The
-  editor loads with the current `version_number`. On save
-  (`POST /present/<token>/edit {body, base_version}`) the server requires
-  `base_version == latest`; if stale → **409**, returning the latest body+version
-  for the human to reconcile; else it appends and returns the new version. No
-  silent overwrite.
-- **Seeing the latest** — the editor polls `GET /present/<token>/state` every
-  four seconds while visible, without overlapping reads, and checks immediately
-  when it becomes visible again. With `after_version=N`, an unchanged response
-  contains only the version; a newer version also returns its body and sanitized
-  preview HTML under the same editable-token checks. A clean buffer updates
-  automatically. A dirty buffer keeps its text, focus and selection and offers
-  Load latest version with discard confirmation. No save is retried automatically.
-  Expiry or revocation stops polling and retains the copyable draft. Read-only
-  presentation links retain their existing snapshot behavior in this editor slice.
-- **Attribution** — the editor optionally captures a display name ("editing as
-  ___"); the appended version records it as a human-via-link edit. No login or
-  identity — just a label, consistent with the no-accounts stance.
-- **Editor UI** — a minimal first-party editor (markdown textarea + live preview +
-  Save + conflict/refresh), served as our own nonce-gated JS **only on
-  edit-capable pages**; read pages stay minimal. The edit API enforces the token
-  capability server-side; never trust the client.
-- **Trust + limits** — an edit token is scoped write to ONE document, agent-minted
-  (the agent explicitly allows its human to edit), TTL-bound, revocable. Rendered
-  content stays sanitized. Edit rate-limiting is a follow-up.
+- **Mint** (cert-auth): `POST /v1/present {slug, editable: true, ttl_seconds?}`
+  keeps its existing parameters and response shape. The response `token` is a
+  random public link id used for revoke. The URL is
+  `/present/edit/<id>#k=<opener>`: id is 16 random bytes in 22 unpadded
+  base64url characters; the opener is 32 random bytes in 43 such characters.
+  Only its SHA-256 is stored. Read-only URLs and snapshots remain unchanged.
+- **Open**: GET serves a nonce-CSP editor shell without content or side effects.
+  Its script removes the fragment from history before storage or requests, then
+  POSTs the opener to the shell URL's `/session`. Atomic database-clock
+  consumption and session creation admit one concurrent winner. Prefetch and
+  link-scanner GETs do not consume the opener. A spent/expired opener refuses.
+- **Session**: the exchange returns one 256-bit secret, stored only as SHA-256
+  in the database. The page keeps it in memory and
+  `sessionStorage['folio.editSession:<id>']` for tab reloads. It travels only in
+  `X-Folio-Edit-Session` on `/state`, `/preview` and `/edit`, never in the URL,
+  cookies, localStorage or logs. Reload resumes the session without reusing the
+  opener. A duplicated tab may share that session; version CAS still applies.
+- **Authority**: every session request joins its link and document, checks
+  revocation/deletion and the matching document id, and checks the minter's
+  stored certificate/team key against current cached AWID membership. Membership
+  loss or certificate replacement ends the session like revocation. AWID outage
+  returns retryable 503 and authorizes nothing. Network checks precede database
+  locks; the bounded membership proof is checked locally after locking.
+- **Save** remains append-only with `body` and `base_version`; a stale version
+  receives 409 with current body/version. There is no silent overwrite or
+  automatic save retry. Stored minter attribution and optional editor-name
+  metadata are unchanged by the session transport.
+- **Live refresh** polls the authorized session state every four seconds while
+  visible, with no overlapping reads and an immediate check on visibility return.
+  A clean buffer follows the newest saved version and sanitized preview. A dirty
+  buffer keeps text, focus and selection and offers an explicit confirmed latest
+  load. Preview always uses the existing sanitized server renderer.
+- **End**: revoke still addresses the original public link id after consumption.
+  Document deletion also ends sessions. The editor keeps an unsaved buffer and
+  copy/reopen recovery on refusal; a clean buffer shows unavailable guidance
+  without claiming unsaved text. Closing the tab discards its sessionStorage.
+
+The manifest bytes are unchanged. Moving read-only link tokens to fragments is
+separate work, and no legacy editable-token authority path remains.
 
 ## Authority & privacy
 

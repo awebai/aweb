@@ -99,6 +99,7 @@ class PresentationStateResponse(BaseModel):
     version_number: int
     body: str | None = None
     html: str | None = None
+    theme: dict | None = None
 
 
 class ImageAssetUploadRequest(BaseModel):
