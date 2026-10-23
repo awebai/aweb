@@ -438,7 +438,11 @@ key material, and atomically claims the global address in AWID.
 With --org and --team-id, create an ordinary hosted member
 in an explicit fresh --identity-home root. The local key stays in that root;
 the hosted operator authorizes the address and certificate. Retry with the
-same root and parameters after a lost response. No namespace controller key
+same root and parameters after a lost response. A completed root refuses
+another creation; use ordinary commands with its installed identity.
+Pass inbound-mode --json's team_id unchanged as --team-id; Cloud resolves
+the service UUID or canonical name:namespace within the chosen organization.
+No namespace controller key
 or API key is used for that path. With --owner-identity-home, the existing
 organization owner's native key authorizes creation using its bound service;
 otherwise the host's human CLI login authorizes it.
@@ -452,7 +456,7 @@ Flags:
 - `--owner-identity-home string Authorize --org creation with this owner's absolute native credential directory`
 - `--registry string Registry origin override (default: api.awid.ai)`
 - `--skip-dns-verify Skip the DNS TXT verification prompt and lookup`
-- `--team-id string Chosen hosted team service UUID (requires --org)`
+- `--team-id string Chosen hosted team service UUID or canonical name:namespace (requires --org)`
 
 ## `id encryption-key`
 
