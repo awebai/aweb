@@ -514,7 +514,7 @@ type teamHumanCreateFoundingResult struct {
 }
 
 func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
-	if cmd.Flags().Changed("org") {
+	if cmd != nil && cmd.Flags().Changed("org") {
 		return runOrgTeamCreate(cmd, args[0])
 	}
 	teamName := strings.TrimSpace(args[0])

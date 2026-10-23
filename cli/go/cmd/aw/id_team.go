@@ -661,7 +661,7 @@ func init() {
 // --- implementations ---
 
 func runTeamCreate(cmd *cobra.Command, args []string) error {
-	if cmd.Flags().Changed("org") {
+	if cmd != nil && cmd.Flags().Changed("org") {
 		return runOrgTeamCreate(cmd, teamCreateName)
 	}
 	name := strings.ToLower(strings.TrimSpace(teamCreateName))
