@@ -29,8 +29,8 @@ CASES = [
         "max_duration_seconds",
     ),
     ("PUT", "/v1/theme", {"header": "x" * 2001}, "header"),
-    ("POST", "/present/{token}/edit", {"body": "Must not save", "base_version": 0}, "base_version"),
-    ("POST", "/present/{token}/preview", {"body": "x" * 200001}, "body"),
+    ("POST", "/present/edit/{token}/edit", {"body": "Must not save", "base_version": 0}, "base_version"),
+    ("POST", "/present/edit/{token}/preview", {"body": "x" * 200001}, "body"),
 ]
 
 

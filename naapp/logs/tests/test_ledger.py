@@ -20,6 +20,7 @@ from aweb_logs.ledger import (
     LogsSigner,
     OriginMismatch,
     append,
+    checkpoint_moved_heads,
     issue_checkpoint,
     load_epoch,
     open_next_epoch,
@@ -285,3 +286,73 @@ async def test_a_checkpoint_waiting_on_an_epoch_move_witnesses_the_new_epoch(
         )
     checkpoint = open_checkpoint(*await waiting)
     assert (checkpoint.chain_epoch, checkpoint.team_seq) == (2, 0)
+
+
+async def _checkpoint_seqs(db: AsyncDatabaseManager, team_id: str = TEAM_ID) -> list[tuple[int, int]]:
+    rows = await db.fetch_all(
+        "SELECT chain_epoch, team_seq FROM {{tables.chain_checkpoints}}"
+        " WHERE team_id = $1 ORDER BY position",
+        team_id,
+    )
+    return [(row["chain_epoch"], row["team_seq"]) for row in rows]
+
+
+async def test_a_pass_checkpoints_each_head_that_moved_and_nothing_else(
+    db: AsyncDatabaseManager,
+) -> None:
+    await _append(db, team_id=TEAM_ID)
+    await _append(db, team_id=TEAM_ID, seq=2)
+    await _append(db, team_id=OTHER_TEAM)
+    assert sorted(await checkpoint_moved_heads(db, SIGNER, issued_at=START)) == sorted(
+        [TEAM_ID, OTHER_TEAM]
+    )
+    assert await _checkpoint_seqs(db) == [(1, 2)]
+    assert await checkpoint_moved_heads(db, SIGNER, issued_at=START) == []
+
+    await _append(db, team_id=TEAM_ID, seq=3)
+    assert await checkpoint_moved_heads(db, SIGNER, issued_at=START) == [TEAM_ID]
+    assert await _checkpoint_seqs(db) == [(1, 2), (1, 3)]
+    checkpoints = await db.fetch_all(
+        "SELECT signing_bytes, signature FROM {{tables.chain_checkpoints}}"
+        " WHERE team_id = $1 ORDER BY position",
+        TEAM_ID,
+    )
+    report = await _verify(
+        db, checkpoints=[(bytes(row["signing_bytes"]), row["signature"]) for row in checkpoints]
+    )
+    assert report.intact
+
+
+async def test_a_pass_skips_an_epoch_with_no_events_yet(db: AsyncDatabaseManager) -> None:
+    await _append(db)
+    await open_next_epoch(db, SIGNER, TEAM_ID, at=START)
+    assert await checkpoint_moved_heads(db, SIGNER, issued_at=START) == []
+    assert await _checkpoint_seqs(db) == [(1, 1)]
+
+
+async def test_a_pass_leaves_an_epoch_of_another_origin_to_it(db: AsyncDatabaseManager) -> None:
+    await _append(db)
+    await open_next_epoch(db, SIGNER, TEAM_ID, at=START, logs_origin=MOVED.logs_origin)
+    signing, signature = signed_event("core", event_id=str(uuid.uuid4()), seq=2)
+    await append(
+        db,
+        MOVED,
+        event=hook_envelope.verify(signing, signature, team_id=TEAM_ID),
+        signing_bytes=signing,
+        signature=signature,
+        key_evidence=_evidence(signing),
+        received_at=START,
+    )
+    assert await checkpoint_moved_heads(db, SIGNER, issued_at=START) == []
+    assert await checkpoint_moved_heads(db, MOVED, issued_at=START) == [TEAM_ID]
+    assert await _checkpoint_seqs(db) == [(1, 1), (2, 1)]
+
+
+async def test_concurrent_passes_sign_each_moved_head_once(db: AsyncDatabaseManager) -> None:
+    for seq in range(1, 4):
+        await _append(db, seq=seq)
+    passes = await asyncio.gather(
+        *(checkpoint_moved_heads(db, SIGNER, issued_at=START) for _ in range(6))
+    )
+    assert sorted(team for result in passes for team in result) == [TEAM_ID]
+    assert await _checkpoint_seqs(db) == [(1, 3)]
