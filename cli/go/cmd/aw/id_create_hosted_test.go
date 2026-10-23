@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,7 +26,13 @@ func TestHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T) {
 		t.Run(mode, func(t *testing.T) { testHostedIdentityCreateRetainsKeyAcrossLostResponse(t, mode) })
 	}
 }
+func TestOwnerPrincipalHostedIdentityCreate(t *testing.T) {
+	testHostedIdentityCreateWithAuthority(t, "contacts_only", true)
+}
 func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode string) {
+	testHostedIdentityCreateWithAuthority(t, mode, false)
+}
+func testHostedIdentityCreateWithAuthority(t *testing.T, mode string, ownerMode bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	bin := filepath.Join(t.TempDir(), "aw")
@@ -41,12 +50,14 @@ func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode str
 	const canonicalTeam = "machine:chosen.example"
 	var originalDID string
 	registerCalls, createCalls, readCalls := 0, 0, 0
+	var ownerRoot, ownerDID string
+	var ownerKeyBefore, ownerBindingBefore []byte
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/v1/cli") && r.Header.Get("Authorization") != "Bearer test-access" {
+		if !ownerMode && strings.HasPrefix(r.URL.Path, "/api/v1/cli") && r.Header.Get("Authorization") != "Bearer test-access" {
 			t.Error("hosted operation substituted another authority")
 		}
 		switch {
@@ -55,6 +66,9 @@ func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode str
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		case r.URL.Path == "/api/v1/cli-auth/status":
+			if ownerMode {
+				t.Error("owner path used human CLI status")
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]any{"id": "account-1", "handle": "alice"}})
 		case r.URL.Path == "/v1/did":
 			registerCalls++
@@ -72,8 +86,31 @@ func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode str
 			_ = json.NewEncoder(w).Encode(map[string]any{"did_aw": awid.ComputeStableID(pub), "current_did_key": originalDID, "created_at": "2026-10-22T00:00:00Z", "updated_at": "2026-10-22T00:00:00Z"})
 		case r.URL.Path == "/api/v1/cli/identities":
 			createCalls++
+			rawBody, readErr := io.ReadAll(r.Body)
+			if readErr != nil {
+				t.Error(readErr)
+				w.WriteHeader(400)
+				return
+			}
+			if ownerMode {
+				parts := strings.Fields(r.Header.Get("Authorization"))
+				if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != ownerDID {
+					t.Error("owner request used another authority")
+					w.WriteHeader(401)
+					return
+				}
+				digest := sha256.Sum256(rawBody)
+				payload, _ := json.Marshal(map[string]string{"aud": server.URL, "body_sha256": hex.EncodeToString(digest[:]), "method": "POST", "path": "/api/v1/cli/identities", "timestamp": r.Header.Get("X-AWEB-Timestamp")})
+				ownerPub, _ := awid.ExtractPublicKey(ownerDID)
+				sig, err := base64.RawStdEncoding.DecodeString(parts[2])
+				if err != nil || !ed25519.Verify(ownerPub, payload, sig) {
+					t.Error("owner envelope lost audience/method/path/exact body binding")
+					w.WriteHeader(401)
+					return
+				}
+			}
 			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			if err := json.Unmarshal(rawBody, &body); err != nil {
 				t.Error(err)
 				w.WriteHeader(400)
 				return
@@ -140,17 +177,37 @@ func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode str
 		}
 	}))
 	defer server.Close()
-	cfg := cliAuthConfig{Issuer: server.URL, Resource: server.URL + "/cli", ClientID: cliAuthClientID, Scope: "cli.workspace_team cli.org_create", AccessToken: "test-access", RefreshToken: "test-refresh", ExpiresAt: time.Now().Add(time.Hour)}
-	data, _ := json.Marshal(cfg)
-	dir := filepath.Join(host, ".config", "aw")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "auth.json"), data, 0600); err != nil {
-		t.Fatal(err)
+	if ownerMode {
+		ownerParent := t.TempDir()
+		writeDefaultWorkspaceBindingForTest(t, ownerParent, server.URL+"/api")
+		ownerRoot, err = filepath.EvalSymlinks(filepath.Join(ownerParent, ".aw"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, err := awid.LoadSigningKey(filepath.Join(ownerRoot, "signing.key"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ownerDID = awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
+		ownerKeyBefore, _ = os.ReadFile(filepath.Join(ownerRoot, "signing.key"))
+		ownerBindingBefore, _ = os.ReadFile(filepath.Join(ownerRoot, "workspace.yaml"))
+	} else {
+		cfg := cliAuthConfig{Issuer: server.URL, Resource: server.URL + "/cli", ClientID: cliAuthClientID, Scope: "cli.workspace_team cli.org_create", AccessToken: "test-access", RefreshToken: "test-refresh", ExpiresAt: time.Now().Add(time.Hour)}
+		data, _ := json.Marshal(cfg)
+		dir := filepath.Join(host, ".config", "aw")
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "auth.json"), data, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	run := func(org string) ([]byte, []byte, error) {
-		cmd := exec.CommandContext(ctx, bin, "--identity-home", principal, "id", "create", "--org", org, "--team-id", serviceTeam, "--name", "steward", "--inbound-mode", strings.ReplaceAll(mode, "_", "-"), "--registry", server.URL, "--json")
+		args := []string{"--identity-home", principal, "id", "create", "--org", org, "--team-id", serviceTeam, "--name", "steward", "--inbound-mode", strings.ReplaceAll(mode, "_", "-"), "--registry", server.URL, "--json"}
+		if ownerMode {
+			args = append(args, "--owner-identity-home", ownerRoot)
+		}
+		cmd := exec.CommandContext(ctx, bin, args...)
 		cmd.Dir = wd
 		cmd.Env = append(os.Environ(), "HOME="+host, "AW_NO_UPDATE_CHECK=1", "AWEB_API_KEY=", "AWEB_IDENTITY_HOME=", "AW_IDENTITY_HOME=", "AWID_REGISTRY_URL=")
 		var out, diagnostic bytes.Buffer
@@ -167,6 +224,21 @@ func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode str
 	}
 	if _, err := os.Stat(filepath.Join(principal, "hosted-identity-create.json")); err != nil {
 		t.Error("interrupted creation lost its recovery material")
+	}
+	if ownerMode {
+		originalRoot := ownerRoot
+		otherParent := t.TempDir()
+		writeDefaultWorkspaceBindingForTest(t, otherParent, server.URL+"/api")
+		ownerRoot, err = filepath.EvalSymlinks(filepath.Join(otherParent, ".aw"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		beforeRegister := registerCalls
+		_, _, err = run("chosen")
+		if err == nil || registerCalls != beforeRegister || createCalls != 1 {
+			t.Error("recovery changed its original authorizing principal")
+		}
+		ownerRoot = originalRoot
 	}
 	registrationsBefore := registerCalls
 	_, _, err = run("other")
@@ -203,6 +275,16 @@ func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode str
 	}
 	if data, err := os.ReadFile(filepath.Join(principal, "hosted-identity-create.json.lock")); err != nil || len(data) != 0 {
 		t.Error("reusable recovery lock must remain empty")
+	}
+	if ownerMode {
+		keyAfter, _ := os.ReadFile(filepath.Join(ownerRoot, "signing.key"))
+		bindingAfter, _ := os.ReadFile(filepath.Join(ownerRoot, "workspace.yaml"))
+		if !bytes.Equal(keyAfter, ownerKeyBefore) || !bytes.Equal(bindingAfter, ownerBindingBefore) {
+			t.Error("creation modified the owner credential root")
+		}
+		if _, err := os.Stat(filepath.Join(host, ".config", "aw", "auth.json")); !os.IsNotExist(err) {
+			t.Error("owner route created a human device session")
+		}
 	}
 	if _, err := os.Stat(filepath.Join(wd, ".aw")); !os.IsNotExist(err) {
 		t.Error("creation changed invoking workspace")
