@@ -233,7 +233,8 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 				installed.Store(true)
 				return
 			}
-			if !installed.Load() && serveUnadvertisedHealth(w, r) {
+			if !installed.Load() && r.Method == http.MethodGet && r.URL.Path == "/v1/agents/heartbeat" {
+				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
 			probes.Add(1)
