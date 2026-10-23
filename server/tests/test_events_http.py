@@ -238,6 +238,9 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
         bob["agent_id"],
     )
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice["agent_id"],
+    )
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
     seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
     deadline = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
@@ -372,6 +375,9 @@ async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_d
         bob["agent_id"],
     )
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice["agent_id"],
+    )
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
     seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
     deadline = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
@@ -577,6 +583,9 @@ async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_
         "hello stable bob",
     )
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice["agent_id"],
+    )
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
     seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
     deadline = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()

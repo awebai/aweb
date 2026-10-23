@@ -645,6 +645,10 @@ async def test_consumer_mcp_send_message_to_handle_contact_uses_recent_active_ag
         """
     )
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=ANY($1::uuid[])",
+        [older_id, recent_id],
+    )
     result = json.loads(
         await contacts_tools.send_message_to_contact(
             DBInfra(aweb_cloud_db.aweb_db),

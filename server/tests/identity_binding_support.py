@@ -2,7 +2,6 @@
 from collections import OrderedDict
 from time import monotonic
 
-from awid.registry import RegistryError
 from aweb.identity_binding import IdentityBinding
 
 
@@ -24,11 +23,7 @@ async def register_global_identity(env, actor, address=""):
     identity = await registry.register_did(actor.did, actor.sk)
     if address:
         domain, name = address.split("/", 1)
-        try:
-            await registry.get_namespace(domain)
-        except RegistryError as exc:
-            if exc.status_code != 404:
-                raise
+        if await registry.get_namespace(domain) is None:
             await registry.register_namespace(domain, env.team_did, env.team_sk)
         await registry.register_address(domain, name, identity.did_aw, env.team_sk)
     return identity.did_aw
