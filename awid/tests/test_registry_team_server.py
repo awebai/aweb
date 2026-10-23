@@ -9,11 +9,13 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+import httpx
 from nacl.signing import SigningKey
 
 from awid import team_server_record
 from awid.did import did_from_public_key
 from awid.registry import RegistryClient, RegistryError
+from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER, MemoryFixedWindowRateLimiter
 from awid.signing import sign_message
 from awid_service.testing import (
     REGISTRY_URL,
@@ -179,3 +181,52 @@ async def test_methods_follow_domain_resolver_without_leaking_home_service_token
             assert all("X-AWID-Service-Token" not in request.headers for request in registry.transport.calls)
         finally:
             await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_publish_sends_service_token_to_configured_registry(database_url):
+    key = SigningKey.generate()
+    body = signed_team_server_record(TEAM_ID, key, server_url=SERVER_URL, issued_at=datetime.now(UTC))
+    async with running_registry(database_url) as registry:
+        await registry.add_team(TEAM_ID, did_from_public_key(bytes(key.verify_key)))
+        client = RegistryClient(
+            registry_url=REGISTRY_URL, transport=registry.transport, service_token=SERVICE_TOKEN,
+        )
+        try:
+            assert await client.publish_team_server_record(DOMAIN, NAME, **body) == body
+            assert registry.transport.calls[-1].headers[AWID_SERVICE_TOKEN_HEADER] == SERVICE_TOKEN
+        finally:
+            await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("credential", ["ordinary", "invalid-token", "trusted-service"])
+async def test_publish_limit_preserves_only_trusted_service_exemption(database_url, credential):
+    key = SigningKey.generate()
+    body = signed_team_server_record(TEAM_ID, key, server_url=SERVER_URL, issued_at=datetime.now(UTC))
+    headers = {}
+    if credential != "ordinary":
+        headers[AWID_SERVICE_TOKEN_HEADER] = (
+            SERVICE_TOKEN if credential == "trusted-service" else "invalid-service-token"
+        )
+    async with running_registry(database_url) as registry:
+        # Exercise the production in-memory limiter, replacing the harness's NoOp default.
+        registry.app.state.rate_limiter = MemoryFixedWindowRateLimiter()
+        await registry.add_team(TEAM_ID, did_from_public_key(bytes(key.verify_key)))
+        async with httpx.AsyncClient(transport=registry.transport, base_url=REGISTRY_URL) as client:
+            path = f"/v1/namespaces/{DOMAIN}/teams/{NAME}/server"
+            for _ in range(30):
+                assert (await client.put(path, json=body, headers=headers)).status_code == 200
+            response = await client.put(path, json=body, headers=headers)
+            assert response.status_code == (200 if credential == "trusted-service" else 429)
+            if credential != "trusted-service":
+                # The trusted caller can still publish when the ordinary bucket is exhausted.
+                assert (await client.put(
+                    path, json=body, headers={AWID_SERVICE_TOKEN_HEADER: SERVICE_TOKEN},
+                )).status_code == 200
+            wrong_key_body = signed_team_server_record(
+                TEAM_ID, SigningKey.generate(), server_url=SERVER_URL, issued_at=datetime.now(UTC),
+            )
+            assert (await client.put(
+                path, json=wrong_key_body, headers={AWID_SERVICE_TOKEN_HEADER: SERVICE_TOKEN},
+            )).status_code == 404
