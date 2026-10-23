@@ -56,6 +56,47 @@ def prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_t
             assert custody.poll() is None, 'own custody process exited during startup'
             assert time.monotonic() < deadline, 'own custody did not start'
             time.sleep(0.1)
+        # Recreate the released local JSON shapes, retaining the real server
+        # grant, session key and signed requests. These are custody policy files,
+        # not a substituted server, grant response or signature.
+        upgrade_target = mint('upgrade-old-grant', explicit=True)
+        snapshot_path = homes['bob'] / '.aw' / 'grants' / minted['upgrade-old-grant']['grant_id'] / 'app-tools.json'
+        snapshot = json.loads(snapshot_path.read_text())
+        snapshot['apps']['folio'].pop('installation_id')
+        snapshot_path.write_text(json.dumps(snapshot))
+        approval_path = homes['bob'] / '.aw' / 'app-approvals.json'
+        approval = json.loads(approval_path.read_text())
+        approval.pop('installations')
+        approval_path.write_text(json.dumps(approval))
+        custody.terminate()
+        custody.wait(timeout=10)
+        custody = subprocess.Popen([str(aw_bin), 'custody', 'serve'], cwd=homes['bob'], env=env,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.monotonic() + 10
+        while data('bob', 'custody', 'status')['status'] != 'running':
+            assert custody.poll() is None, 'own upgraded custody exited during startup'
+            assert time.monotonic() < deadline, 'own upgraded custody did not start'
+            time.sleep(0.1)
+        upgrade_old = tool('upgrade-old-grant', upgrade_target)
+        assert upgrade_old.returncode and 'app_installation_required' in upgrade_old.stderr, upgrade_old.stderr
+        listed = data('bob', 'plugin', 'list')['plugins']
+        assert next(app for app in listed if app['name'] == 'folio')['approval_code'] == 'app_installation_approval_required'
+        upgrade_default = mint('upgrade-default-grant')
+        skipped = next(app for app in minted['upgrade-default-grant']['skipped_apps'] if app['app_id'] == 'folio')
+        assert skipped['code'] == 'app_installation_approval_required', skipped
+        assert skipped['recovery_command'] == ['aw', '--identity-home', str(homes['bob'] / '.aw'), '--team', team, 'plugin', 'install', origin], skipped
+        assert tool('upgrade-default-grant', upgrade_default).returncode != 0
+        upgrade_explicit_dir = homes['bob'].parent / 'upgrade-explicit-refused'
+        upgrade_explicit_dir.mkdir()
+        upgrade_explicit = aw('bob', 'id', 'grant', 'mint', '--bundle', 'normal-agent', '--ttl', '1h',
+                              '--custody-socket', 'auto', '--app-tool', 'folio:show',
+                              '--out', str(upgrade_explicit_dir / '.aw'), check=False)
+        assert upgrade_explicit.returncode and 'app_installation_approval_required' in upgrade_explicit.stderr, upgrade_explicit.stderr
+        aw('bob', 'plugin', 'install', origin)
+        upgrade_fresh = mint('upgrade-fresh-grant', explicit=True)
+        assert tool('upgrade-fresh-grant', upgrade_fresh).returncode == 0
+        assert 'app_installation_required' in tool('upgrade-old-grant', upgrade_target).stderr
+        print('PASS origin-only upgrade state never adopts an installation; old snapshot refused after custody restart; default/explicit mint require approval; explicit approval plus fresh grant recovers', flush=True)
         old_target = mint('uninstall-old-grant')
         assert tool('uninstall-old-grant', old_target).returncode == 0, 'pre-uninstall grant did not work'
         _prove_uninstall(aw=aw, data=data, get=get, folio_request=folio_request, run=run,
