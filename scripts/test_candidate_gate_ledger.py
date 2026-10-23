@@ -130,6 +130,12 @@ candidate-gate:
         # New commit metadata with the identical tree does not invalidate proof.
         checked(repo, "git", "commit", "--allow-empty", "-qm", "same tree new commit")
         assert "no stages run" in invoke("same-tree-commit", "make", "candidate-gate")
+        refused_final = invoke("final-without-rc", sys.executable, "scripts/release_candidate.py",
+                               "aw-v1.2.3", stages="checks", success=False)
+        assert "final requires a prior RC" in refused_final
+        assert run(repo, "git", "rev-parse", "--verify", "refs/tags/aw-v1.2.3").returncode != 0
+        assert ledger.read_text().splitlines() == rows
+        checked(repo, "git", "tag", "aw-v1.2.3-rc.1")
         # The real RC must require all stages despite an inherited focused selector.
         output = invoke("rc-reuse", sys.executable, "scripts/release_candidate.py", "aw-v1.2.3", stages="checks")
         assert "no stages run" in output and "checks unit artifacts integration" in output
