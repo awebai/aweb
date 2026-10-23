@@ -306,7 +306,7 @@ def _aw_json(result: subprocess.CompletedProcess[str], *, context: str) -> Any:
 
 @contextmanager
 def _running_folio(
-    *, awid_service_token: str | None, tls_dir: Path | None = None,
+    *, awid_service_token: str | None, tls_dir: Path | None = None, app_id: str = "folio",
 ) -> Iterator[RunningFolio]:
     _require_e2e_enabled()
     _wait_http_ok(f"{AWID_URL}/health")
@@ -330,6 +330,7 @@ def _running_folio(
             "FOLIO_AWID_REGISTRY_URL": AWID_URL,
             "FOLIO_AUTH_CACHE_TTL_SECONDS": "2",
             "FOLIO_PUBLIC_ORIGIN": proxy_origin,
+            "FOLIO_APP_ID": app_id,
         }
     )
     env.pop("FOLIO_AWID_SERVICE_TOKEN", None)
@@ -698,7 +699,11 @@ def test_install_after_mint_uses_replacement_grant(
     replacement_home = tmp_path / "after-install"
     instance = tmp_path / "instance"
     instance.mkdir()
-    with _running_folio(awid_service_token=AWID_SERVICE_TOKEN, tls_dir=tmp_path / "tls") as folio:
+    # A reachable TLS deployment has its own identity, never the hosted id.
+    app_id = "folio-install"
+    with _running_folio(
+        awid_service_token=AWID_SERVICE_TOKEN, tls_dir=tmp_path / "tls", app_id=app_id,
+    ) as folio:
         assert folio.ca_file is not None
         with _running_coordination_server(tmp_path, app_origin=folio.origin, ca_file=folio.ca_file) as (origin, server_env):
             aw_workspace.env["AWEB_URL"] = origin
@@ -751,7 +756,7 @@ def test_install_after_mint_uses_replacement_grant(
                     payload = tmp_path / "document.json"
                     payload.write_text(json.dumps(dict(slug="grant-install", title="Grant install", body="first")))
                     denied = subprocess.run(
-                        ["aw", "folio", "create", "--body-file", str(payload)], cwd=instance,
+                        ["aw", app_id, "create", "--body-file", str(payload)], cwd=instance,
                         env=grant_env, text=True, capture_output=True, timeout=30,
                     )
                     assert denied.returncode != 0 and "app_tool_denied" in denied.stderr
@@ -767,15 +772,15 @@ def test_install_after_mint_uses_replacement_grant(
                     assert replacement["custody_socket_path"] == minted["custody_socket_path"]
                     expires = datetime.fromisoformat(replacement["expires_at"].replace("Z", "+00:00"))
                     assert timedelta(0) < expires - datetime.now(UTC) <= timedelta(minutes=15)
-                    assert "folio" in {app["app_id"] for app in replacement["apps"]}
+                    assert app_id in {app["app_id"] for app in replacement["apps"]}
                     grant = AWWorkspace(path=instance, env=dict(grant.env, AWEB_IDENTITY_HOME=str(replacement_home)))
-                    created = _run_aw_json(grant, "folio", "create", "--body-file", str(payload), "--json")
+                    created = _run_aw_json(grant, app_id, "create", "--body-file", str(payload), "--json")
                     assert created["slug"] == "grant-install" and created["body"] == "first"
                     body = tmp_path / "append.md"
                     body.write_text("second\n")
-                    appended = _run_aw_json(grant, "folio", "append", "--slug", "grant-install", "--body-file", str(body), "--json=true")
+                    appended = _run_aw_json(grant, app_id, "append", "--slug", "grant-install", "--body-file", str(body), "--json=true")
                     assert appended["current_version"] == 2
-                    shown = _run_aw_json(grant, "folio", "show", "--slug", "grant-install", "--json=false")
+                    shown = _run_aw_json(grant, app_id, "show", "--slug", "grant-install", "--json=false")
                     assert shown["body"] == "second\n" and shown["latest"]["created_by_did_key"] == team.did_key
                     assert not (instance / ".aw").exists()
                     assert not (replacement_home / "signing.key").exists()
