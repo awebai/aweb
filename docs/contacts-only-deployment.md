@@ -6,7 +6,7 @@ not route strict contacts-only traffic to an old replica: old code interprets
 `contacts_only` as `team_and_contacts`, including during a rolling deployment.
 Enable strict provisioning only when every serving replica enforces it.
 
-Migration 036 first converts existing legacy `contacts_only` agent rows to
+Migration 037 first converts existing legacy `contacts_only` agent rows to
 `team_and_contacts`, preserving their previous effective behavior, then widens
 the CHECK. Existing differing membership policies need no unification migration:
 delivery uses the strictest valid policy across all non-deleted rows for the
