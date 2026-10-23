@@ -1728,6 +1728,24 @@ SOT §2), reached through the hook.
   refused or stays in its previous state, and nothing is dispatched.
 - A dispatch therefore never happens without durably enqueued `admitted` and
   `dispatching` events.
+- **Per-action availability.** The catalog gates `approval_requested`,
+  `approval_decided: approved`, `admitted` and `dispatching`.
+  `approval_decided: denied|expired|revoked` (including requester withdrawal
+  and B2 containment cancellation), `completed`, `not_sent`,
+  `outcome_unknown` and `reconciled` record decisions/consequences without
+  target/backlog gating, through the shared `enqueue_lifecycle` seam or
+  ordinary catalog-classified `enqueue`. `refused` keeps `enqueue_refusal`.
+  All retain catalog/envelope/key checks and local transaction atomicity.
+  The actor stays the original requester, with the frozen use scope/trace.
+  Recording never authorizes child/grant creation (including
+  `stored_as_secret`), result/runner-credential release, an upstream
+  reconciliation call or retry; independent scope/lineage/policy/fence checks
+  still apply. No new availability gate is imposed on storing an observed
+  result. Every new send, including after `not_sent`, repeats its gated
+  dispatch transition. A failed post-dispatch local commit leaves the prior
+  durable state for reconciliation. The
+  [normative hook contract](../hook-events.md#the-audit-critical-gate)
+  specifies the exact catalog classification and decision-93 re-freeze.
 - **No active target.** secrets resolves targets through aweb-acgh.7, using the
   hooks design's freshness bound of 60 s at most. The rule counts only a
   registration whose `active_from` is at or before the event's `occurred_at`.

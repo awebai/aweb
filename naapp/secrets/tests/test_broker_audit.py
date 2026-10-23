@@ -223,6 +223,84 @@ async def test_outbox_storage_failure_rolls_back_s3_and_operational_record_and_s
     assert await db.fetch_value("SELECT dispatch_started_at FROM {{tables.use_contexts}}") is None
 
 
+@pytest.mark.parametrize("target", ["missing", "stale"])
+@pytest.mark.parametrize("outcome", ["completed", "not_sent", "outcome_unknown", "reconciled"])
+async def test_post_dispatch_recording_survives_target_loss_without_authorizing_retry(
+    db, fence, target, outcome
+):
+    from aweb_naapp.hooks.strictjson import Refused
+
+    request, admitted, dispatch_id, state = await prepared(db, fence, signed_trace_id="a" * 32)
+    async with db.transaction() as tx:
+        await state.admit(tx, dispatch_id, fence=authority(fence, admitted, request, dispatch_id))
+    async with db.transaction() as tx:
+        await state.begin_dispatch(
+            tx, dispatch_id, fence=authority(fence, admitted, request, dispatch_id)
+        )
+    current = None if target == "missing" else replace(view(), as_of=NOW - timedelta(seconds=61))
+    recorder = machine(
+        BrokerAudit(producer=source, view=current, completed={"disposition": "withheld"})
+    )
+    async with db.transaction() as tx:
+        if outcome == "reconciled":
+            await recorder.outcome_unknown(tx, dispatch_id, {"state": "unknown"})
+            await recorder.reconcile(
+                tx, dispatch_id, State.RECONCILED_COMPLETED, {"state": "owner_resolved"}
+            )
+        else:
+            assert await getattr(recorder, outcome)(tx, dispatch_id, {"state": outcome})
+    records = await envelopes(db)
+    assert records[-1]["payload"]["action"] == outcome
+    assert records[-1]["actor"] == records[0]["actor"]
+    assert records[-1]["trace"] == {"id": "a" * 32, "origin": "signed_request"}
+    assert records[-1]["payload"]["request_sha256"] == "a" * 64
+    assert records[-1]["payload"]["grant_id"] == admitted.grant_id
+    assert (
+        await db.fetch_value(
+            "SELECT critical FROM {{tables.outbox_events}} ORDER BY position DESC LIMIT 1"
+        )
+        is False
+    )
+    if outcome == "not_sent":
+        # Recording a no-send fact cannot grant a new dispatch. The actual S3
+        # retry still runs the real authority fence and the target gate.
+        with pytest.raises(Refused) as refused:
+            async with db.transaction() as tx:
+                await recorder.begin_dispatch(
+                    tx, dispatch_id, fence=authority(fence, admitted, request, dispatch_id)
+                )
+        assert refused.value.code == "audit_target_unavailable"
+        async with db.transaction() as tx:
+            assert (await recorder.get(tx, dispatch_id)).state is State.NOT_SENT
+        assert len(await envelopes(db)) == 3
+
+
+async def test_failed_post_dispatch_outbox_insert_preserves_dispatching_for_reconciliation(
+    db, fence
+):
+    request, admitted, dispatch_id, state = await prepared(db, fence)
+    async with db.transaction() as tx:
+        await state.admit(tx, dispatch_id, fence=authority(fence, admitted, request, dispatch_id))
+    async with db.transaction() as tx:
+        await state.begin_dispatch(
+            tx, dispatch_id, fence=authority(fence, admitted, request, dispatch_id)
+        )
+    await db.execute(
+        "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT reject_result "
+        "CHECK (kind <> 'post-secret-use-hook') NOT VALID"
+    )
+    recorder = machine(
+        BrokerAudit(producer=source, view=None, completed={"disposition": "withheld"})
+    )
+    with pytest.raises(asyncpg.CheckViolationError):
+        async with db.transaction() as tx:
+            await recorder.complete(tx, dispatch_id, {"state": "withheld"})
+    async with db.transaction() as tx:
+        assert (await recorder.get(tx, dispatch_id)).state is State.DISPATCHING
+    assert len(await envelopes(db)) == 2
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.broker_use_events}}") == 2
+
+
 async def test_no_target_refusal_is_recorded_without_send_authority(db, fence):
     request, admitted, dispatch_id, _ = await prepared(db, fence)
     state = machine(
