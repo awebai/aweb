@@ -19,6 +19,7 @@ from tests.test_admission import ALICE, BOB, _grant_source_grant
 from tests.test_broker_audit import INSTALLATION, machine, prepared, source, view
 from tests.test_broker_audit import db as db
 from tests.test_broker_audit import fence as fence
+from tests.test_broker_fence import authority
 
 STATUS = DeclaredTool(
     "status", "GET", "/v1/status/{ref}", frozenset({"secrets:read"}), frozenset({"agent"})
@@ -158,10 +159,21 @@ async def test_refusal_status_uses_the_fixed_transactional_audit_code(db, fence)
     "state", ["not_sent", "outcome_unknown", "admitted", "dispatching", "cancelled"]
 )
 async def test_reading_progress_and_no_send_outcomes_never_rearms_dispatch(db, fence, state):  # noqa: F811
-    _, admission, dispatch_id, _ = await prepared(db, fence)
-    await db.execute(
-        "UPDATE {{tables.dispatches}} SET state=$2 WHERE dispatch_id=$1", dispatch_id, state
-    )
+    request, admission, dispatch_id, dispatches = await prepared(db, fence)
+    if state == "dispatching":
+        # Let S3 establish its required sweep deadline and attempt count.
+        async with db.transaction() as tx:
+            await dispatches.admit(
+                tx, dispatch_id, fence=authority(fence, admission, request, dispatch_id)
+            )
+        async with db.transaction() as tx:
+            final = authority(fence, admission, request, dispatch_id)
+            current = await dispatches.begin_dispatch(tx, dispatch_id, fence=final)
+            await final.check(tx, current)
+    else:
+        await db.execute(
+            "UPDATE {{tables.dispatches}} SET state=$2 WHERE dispatch_id=$1", dispatch_id, state
+        )
     before = await snapshot(db)
     reply = await UseStatus(db, fence=fence).get(
         ref=admission.intent_id, authorization=authorization()
