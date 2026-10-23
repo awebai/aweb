@@ -17,4 +17,4 @@ request = urllib.request.Request(target, headers=signer.sign(method='GET', targe
 with urllib.request.urlopen(request, timeout=10) as response:
     body = json.load(response)
     # Only lifecycle evidence; never emit credentials or request headers.
-    print(json.dumps({k: body[k] for k in ('state', 'installation_id', 'generation', 'granted_scopes', 'max_age_seconds')}))
+    print(json.dumps({k: body[k] for k in ('state', 'installation_id', 'generation', 'granted_scopes', 'max_age_seconds', 'installed_at')}))

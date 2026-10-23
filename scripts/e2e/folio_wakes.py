@@ -390,4 +390,5 @@ except urllib.error.HTTPError as exc:
     if os.environ.get('FOLIO_UNINSTALL_PROOF') == '1':
         from folio_uninstall import prove_uninstall
         prove_uninstall(aw=aw, data=data, get=get, folio_request=folio_request, run=run,
-                        compose=COMPOSE, team=team, other_team=other_team, cache=cache, origin=FOLIO)
+                        compose=COMPOSE, team=team, other_team=other_team, cache=cache, origin=FOLIO,
+                        homes=homes, env=env, aw_bin=AW)

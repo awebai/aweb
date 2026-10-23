@@ -117,6 +117,7 @@ class AppGrantStatusResponse(BaseModel):
     installation_id: str | None
     generation: int | None
     origin_verified: bool | None
+    installed_at: datetime
     as_of: str
     max_age_seconds: int
 
@@ -419,6 +420,7 @@ async def app_grant_status_route(
         installation_id=app.installation_id,
         generation=app.generation,
         origin_verified=app.origin_verified,
+        installed_at=app.installed_at,
         as_of=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         max_age_seconds=get_app_grant_max_age_seconds(),
     )

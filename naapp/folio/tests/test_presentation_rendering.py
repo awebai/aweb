@@ -119,11 +119,11 @@ def test_present_route_sets_x_robots_tag(monkeypatch) -> None:
     db_dependency = present_route.dependant.dependencies[0].call
     app.dependency_overrides[db_dependency] = lambda: object()
 
-    async def fake_get_presented_document(_database, *, token: str) -> dict:
+    async def fake_get_presented_document(_database, *, runtime, token: str) -> dict:
         assert token == "secret-token"
         return {"body": "# Private", "theme": None, "allowed_assets": {}}
 
-    monkeypatch.setattr(folio_api, "get_presented_document", fake_get_presented_document)
+    monkeypatch.setattr(folio_api, "presented_document", fake_get_presented_document)
 
     response = TestClient(app).get("/present/secret-token")
 
@@ -345,10 +345,10 @@ def test_present_route_sets_content_security_policy(monkeypatch) -> None:
     db_dependency = present_route.dependant.dependencies[0].call
     app.dependency_overrides[db_dependency] = lambda: object()
 
-    async def fake_get_presented_document(_database, *, token: str) -> dict:
+    async def fake_get_presented_document(_database, *, runtime, token: str) -> dict:
         return {"body": "# Private", "theme": None, "allowed_assets": {}}
 
-    monkeypatch.setattr(folio_api, "get_presented_document", fake_get_presented_document)
+    monkeypatch.setattr(folio_api, "presented_document", fake_get_presented_document)
     response = TestClient(app).get("/present/secret-token")
 
     assert response.status_code == 200

@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
@@ -36,6 +37,7 @@ class AppInstall:
     manifest_version: int
     digest: str
     granted_scopes: list[str]
+    installed_at: datetime | None = None
     installation_id: str | None = None
     generation: int | None = None
     state: str = "pending_origin_verification"
@@ -591,7 +593,7 @@ async def get_installation_on(
     lock = " FOR UPDATE OF i" if for_update else ""
     row = await tx.fetch_one(
         """SELECT i.team_id, i.app_id, i.installation_id, i.generation, i.state,
-                  i.origin, i.digest, i.granted_scopes, i.origin_verified,
+                  i.origin, i.digest, i.granted_scopes, i.origin_verified, i.installed_at,
                   i.app_version, i.manifest_version, i.origin_verification_error
            FROM {{tables.team_app_installs}} AS i
            WHERE i.team_id = $1 AND i.app_id = $2""" + lock,

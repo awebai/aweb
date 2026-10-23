@@ -90,7 +90,7 @@ async def install_verified_manifest_on(
         app_id, fetched.origin, fetched.digest, registration.app_version, registration.manifest_version,
     )
     await tx.execute(
-        """INSERT INTO {{tables.team_app_installs}}
+        """INSERT INTO {{tables.team_app_installs}} AS previous
            (team_id, app_id, origin, digest, app_version, manifest_version,
             granted_scopes, installed_by_agent_id, registered_from_manifest_bytes,
             installation_id, generation, state, origin_verified, manifest_bytes, updated_at)
@@ -103,6 +103,8 @@ async def install_verified_manifest_on(
                installed_by_agent_id = EXCLUDED.installed_by_agent_id,
                registered_from_manifest_bytes = TRUE,
                installation_id = EXCLUDED.installation_id, generation = EXCLUDED.generation,
+               installed_at = CASE WHEN previous.installation_id = EXCLUDED.installation_id
+                   THEN previous.installed_at ELSE EXCLUDED.installed_at END,
                state = 'active', origin_verified = TRUE,
                origin_verification_error = NULL, manifest_bytes = EXCLUDED.manifest_bytes,
                updated_at = NOW()""",

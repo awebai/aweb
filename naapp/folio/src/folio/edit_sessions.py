@@ -12,10 +12,14 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from aweb_naapp.runtime.app import NaappRuntime
+from aweb_naapp.runtime.installation import InstallationRefused
 from aweb_naapp.runtime.team_auth import MembershipProof
 from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
+
+from folio.installation_access import capability_permit, require_binding
+from folio.installation_access import refusal as installation_refusal
 
 SESSION_HEADER = "X-Folio-Edit-Session"
 
@@ -73,6 +77,7 @@ async def exchange(
     )
     if evidence is None:
         raise unavailable()
+    permit = await capability_permit(db, runtime, link_id=link_id)
     try:
         proof = await member_proof(runtime, dict(evidence))
     except HTTPException as error:
@@ -80,7 +85,7 @@ async def exchange(
             raise unavailable() from None
         raise
     credential = secrets.token_urlsafe(32)
-    async with db.transaction() as tx:
+    async with installation_transaction(permit) as tx:
         # UPDATE's predicate is rechecked after any concurrent updater commits.
         consumed = await tx.fetch_one(
             """UPDATE {{tables.presentation_links}} SET consumed_at=NOW()
@@ -96,12 +101,14 @@ async def exchange(
         row = dict(consumed)
         row["team_id"] = evidence["team_id"]
         require_proof(row, proof)
+        require_binding(permit, row)
         await tx.execute(
-            """INSERT INTO {{tables.edit_sessions}} (credential_hash,link_id,document_id)
-            VALUES ($1,$2,$3)""",
+            """INSERT INTO {{tables.edit_sessions}} (credential_hash,link_id,document_id,installation_id)
+            VALUES ($1,$2,$3,$4)""",
             secret_hash(credential),
             link_id,
             row["document_id"],
+            permit.admitted.installation_id,
         )
         current = await tx.fetch_one(
             """SELECT body,version_number FROM {{tables.document_versions}}
@@ -114,7 +121,8 @@ async def exchange(
     return credential, row
 
 
-_SESSION = """SELECT p.*, d.team_id, d.slug
+_SESSION = """SELECT p.*, d.team_id, d.slug, s.installation_id AS session_installation_id,
+    s.installation_refused AS session_installation_refused, s.created_at AS session_created_at
     FROM {{tables.edit_sessions}} s
     JOIN {{tables.presentation_links}} p ON p.token=s.link_id AND p.document_id=s.document_id
     JOIN {{tables.documents}} d ON d.document_id=s.document_id
@@ -135,6 +143,7 @@ async def access(
     evidence = await db.fetch_one(_SESSION, digest, link_id)
     if evidence is None:
         raise unavailable()
+    permit = await capability_permit(db, runtime, link_id=link_id, session_hash=digest)
     try:
         proof = await member_proof(runtime, dict(evidence))
     except HTTPException as error:
@@ -146,11 +155,22 @@ async def access(
             )
             raise unavailable() from None
         raise
-    async with db.transaction() as tx:
+    async with installation_transaction(permit) as tx:
         lock = "FOR UPDATE OF p,d,s" if write else "FOR SHARE OF p,d,s"
         selected = await tx.fetch_one(_SESSION + " " + lock, digest, link_id)
         if selected is None:
             raise unavailable()
         row = dict(selected)
         require_proof(row, proof)
+        require_binding(permit, row)
+        require_binding(permit, row, session=True)
         yield tx, row
+
+
+@asynccontextmanager
+async def installation_transaction(permit):
+    try:
+        async with permit.transaction() as tx:
+            yield tx
+    except InstallationRefused as error:
+        raise installation_refusal(error) from None
