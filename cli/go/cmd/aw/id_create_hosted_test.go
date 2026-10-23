@@ -191,10 +191,11 @@ func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode str
 	if _, err := os.Stat(filepath.Join(principal, "signing.key")); err != nil {
 		t.Error("validated identity key was not installed")
 	}
-	for _, name := range []string{"hosted-identity-create.json", "hosted-identity-create.json.lock"} {
-		if _, err := os.Stat(filepath.Join(principal, name)); !os.IsNotExist(err) {
-			t.Errorf("completed creation retained %s", name)
-		}
+	if _, err := os.Stat(filepath.Join(principal, "hosted-identity-create.json")); !os.IsNotExist(err) {
+		t.Error("completed creation retained recovery seed material")
+	}
+	if data, err := os.ReadFile(filepath.Join(principal, "hosted-identity-create.json.lock")); err != nil || len(data) != 0 {
+		t.Error("reusable recovery lock must remain empty")
 	}
 	if _, err := os.Stat(filepath.Join(wd, ".aw")); !os.IsNotExist(err) {
 		t.Error("creation changed invoking workspace")

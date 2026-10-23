@@ -159,9 +159,8 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 	if err := os.Remove(statePath); err != nil {
 		return fmt.Errorf("remove completed hosted identity recovery material: %w", err)
 	}
-	if err := os.Remove(statePath + ".lock"); err != nil {
-		return fmt.Errorf("remove completed hosted identity recovery lock: %w", err)
-	}
+	// Retain the empty lock: unlinking an open lock fails on Windows, and on
+	// Unix it can split concurrent callers across different lock-file inodes.
 	status := "reused"
 	if response.Created {
 		status = "created"
