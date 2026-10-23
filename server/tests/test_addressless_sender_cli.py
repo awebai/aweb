@@ -1,4 +1,6 @@
 """Addressless global sender verification using real apps and the public CLI."""
+from identity_binding_support import register_global_identity
+
 import asyncio
 import base64
 from contextlib import asynccontextmanager
@@ -53,6 +55,7 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
         address = "example.test/bob" if global_resident and name == "bob" else ""
         stable_id = stable_id_from_did_key(actor.did) if address or name == "alice" else ""
         if stable_id:
+            assert await register_global_identity(env, actor, address) == stable_id
             await env.db.execute("UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2 WHERE agent_id = $3",
                                  stable_id, address, actor.id)
         assertion = build_encryption_key_assertion(

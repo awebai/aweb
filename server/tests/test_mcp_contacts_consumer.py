@@ -77,6 +77,10 @@ async def _seed_team(aweb_db) -> tuple[str, str]:
         alice_agent_id,
         bob_agent_id,
     )
+    await aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=ANY($1::uuid[])",
+        [alice_agent_id, bob_agent_id],
+    )
     return alice_agent_id, bob_agent_id
 
 
@@ -94,6 +98,9 @@ async def _seed_hosted_target(aweb_db) -> str:
         VALUES ($1, 'default:jane.aweb.ai', 'did:key:c3po', 'did:aw:c3po', 'jane.aweb.ai/c3po', 'c3po', 'global', 'developer', 'active', 'open')
         """,
         c3po_agent_id,
+    )
+    await aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", c3po_agent_id,
     )
     return c3po_agent_id
 

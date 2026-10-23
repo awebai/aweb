@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from identity_binding_support import seed_verified_bindings
+
 import asyncio
 import base64
 import hashlib
@@ -418,6 +420,7 @@ async def test_suggest_alias_prefix_global_uses_namespace_names_and_user_prefix(
         team_id="backend:acme.com",
         alias="maria",
         identity_scope="global",
+        member_did_aw="did:aw:maria",
         member_address="acme.com/maria",
     )
     cert_header = _encode_certificate(cert)
@@ -457,6 +460,7 @@ async def test_suggest_alias_prefix_global_uses_namespace_names_and_user_prefix(
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    seed_verified_bindings(app, ("did:aw:maria", agent_did_key, "acme.com/maria"))
     app.state.awid_registry_client.list_addresses = AsyncMock(
         return_value=[
             SimpleNamespace(domain="acme.com", name="maria"),
@@ -1210,6 +1214,7 @@ async def test_publish_my_encryption_key_requires_global_stable_id(aweb_cloud_db
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    seed_verified_bindings(app, (stable_id, agent_did_key, ""))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         missing = await client.put(
             "/v1/agents/me/encryption-key",
