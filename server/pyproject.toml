@@ -21,7 +21,7 @@ classifiers = [
 dependencies = [
     "awid-service>=0.5.32",
     # Shared origin egress, manifest reader and hooks; no runtime extra.
-    "aweb-naapp[egress,hooks]>=0.4.0",
+    "aweb-naapp[egress,hooks]>=0.5.0",
     "base58>=2.1.1",
     "cryptography>=45.0.6",
     "dnspython>=2.8.0",

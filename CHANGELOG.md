@@ -108,11 +108,21 @@ limit. Every publication still requires the current team-key signature.
 
 ### Release preparation: aweb-naapp 0.5.0
 
-`aweb-naapp` and `aweb-naapp-testing` 0.5.0 are released together. The library
-code is unchanged since `aweb-naapp-v0.4.0`. `aweb-naapp-testing` takes its AWID
-fixtures from `awid_service.testing` (`awid-service>=0.5.32`). Its new `server`
-extra (`aweb>=1.27.34`) runs a team's coordination server in-process, which a
-naapp finds through the team's AWID record. It needs Redis at `REDIS_URL`.
+`aweb-naapp` and `aweb-naapp-testing` 0.5.0 are released together. Changes
+since `aweb-naapp-v0.4.0`:
+
+- App-request credentials (the C2 transport) are bound to the installation id
+  and positive generation, and the shared signer signs them.
+- Installation-aware runtime: tools, capabilities and member SQL are fenced by
+  the team's current installation; verified grant status includes
+  `installed_at`. A naapp that uses installation grants finds the team server
+  through its `aweb.team-server/1` AWID record and refuses a team without one.
+- Hooks: terminal delivery authority and cancellation evidence, and
+  non-authorizing secret-use lifecycle events.
+- `aweb-naapp-testing` takes its AWID fixtures from `awid_service.testing`
+  (`awid-service>=0.5.32`). Its new `server` extra (`aweb>=1.27.34`) runs a
+  team's coordination server in-process, which a naapp finds through the
+  team's AWID record. It needs Redis at `REDIS_URL`.
 
 ### Release preparation: server 1.27.34
 
@@ -145,9 +155,26 @@ Server changes are since `server-v1.27.33`.
   then re-pin each Folio installation.
 - `aweb.testing` runs the coordination server in-process for tests. A
   library-mode host gives the AWID registry client its transport.
-- **Dependency floor:** `awid-service>=0.5.32`, because `aweb.testing` imports
-  `awid_service.testing`.
-- **Migrations:** none.
+- Apps can raise task requests to a team, with conditional member answers and
+  signed receipts; uninstalling an app cancels its open requests.
+- Fixed: MCP saved-contact mail and chat sends (`send_message_to_contact`)
+  failed with unexpected federation transport arguments.
+- `GET /v1/agents` returns an encryption key only for the identity it shows: a
+  row whose `did_aw` is masked (binding not yet verified) no longer carries a
+  key assertion bound to that hidden `did_aw`. This removes the 409 on
+  `aw mail send` to existing correspondents while identity verification is
+  pending.
+- **Upgrade step for self-hosted operators:** Folio, and any naapp that uses
+  installation grants, refuses a team with no `aweb.team-server/1` record.
+  Before relying on Folio, run once per team:
+  `aw id team set-server --team <team> --namespace <domain> --url <server origin>`.
+  Hosted aweb.ai teams are published and backfilled by aweb Cloud.
+- **Dependency floors:** `awid-service>=0.5.32` (`aweb.testing` imports
+  `awid_service.testing`) and `aweb-naapp[egress,hooks]>=0.5.0` (C2 task
+  requests verify installation-bound app-request credentials).
+- **Migrations (aweb schema):** `038_task_revisions.sql`,
+  `039_app_task_requests.sql`, `040_task_answer_stages.sql`. Folio:
+  `003_installation_capabilities.sql`.
 - **Publish order:** `awid-service` 0.5.32, then `aweb-naapp` 0.5.0, then this
   server, then `aweb-naapp-testing` 0.5.0 (its `server` extra needs this
   server on PyPI).
