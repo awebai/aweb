@@ -31,7 +31,6 @@ from aweb_naapp.runtime.installation import (
 )
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty, contact_sha256
 from aweb_naapp_testing import did_key
-from awid_service.testing import running_registry
 from aweb_naapp_testing.owner_acts import (
     APP_ID,
     AUDIENCE,
@@ -40,6 +39,7 @@ from aweb_naapp_testing.owner_acts import (
     team_owner,
 )
 from aweb_naapp_testing.webauthn import SoftAuthenticator
+from awid_service.testing import running_registry
 from nacl.signing import SigningKey
 
 from aweb_secrets.change import ChangeRefused
