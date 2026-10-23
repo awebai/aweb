@@ -23,12 +23,18 @@ async def register_global_identity(env, actor, address=""):
     identity = await registry.register_did(actor.did, actor.sk)
     if address:
         domain, name = address.split("/", 1)
-        if await registry.get_namespace(domain) is None:
-            # DNS ownership is fixture provisioning; DID registration, address
-            # mutation and all binding reads still use the real AWID service.
-            await env.registry_db.execute(
+        # DNS and address rows are fixture provisioning, as in the binding
+        # admission tests; signature and binding reads use the real service.
+        namespace = await env.registry_db.fetch_one(
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain=$1", domain,
+        )
+        if namespace is None:
+            namespace = await env.registry_db.fetch_one(
                 "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
-                "VALUES ($1, $2, 'verified')", domain, env.team_did,
+                "VALUES ($1, $2, 'verified') RETURNING namespace_id", domain, env.team_did,
             )
-        await registry.register_address(domain, name, identity.did_aw, env.team_sk)
+        await env.registry_db.execute(
+            "INSERT INTO {{tables.public_addresses}} (namespace_id, name, did_aw) VALUES ($1,$2,$3)",
+            namespace["namespace_id"], name, identity.did_aw,
+        )
     return identity.did_aw
