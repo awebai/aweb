@@ -25,7 +25,7 @@ def test_live_views_follow_cli_and_human_saves_without_losing_a_draft(folio, aw_
         browser = p.chromium.launch()
         try:
             clean, dirty, other = [browser.new_page() for _ in range(3)]
-            for page, link in [(clean, edit), (dirty, edit), (other, edit)]:
+            for page, link in [(clean, edit), (dirty, _mint_present(folio, team, slug="live", editable=True)), (other, _mint_present(folio, team, slug="live", editable=True))]:
                 page.goto(link["url"])
             dirty.locator("#body").fill("Retained local draft")
             _append_version(folio, team, slug="live", body="# CLI second version", tmp_path=tmp_path)
