@@ -10,8 +10,8 @@ from aweb_naapp.runtime.app_credentials import AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKey
 from awid.did import did_from_public_key
 from nacl.signing import SigningKey
-from test_installation_http import admin, confirmation, post
 from test_app_manifest_fetch import digest
+from test_installation_http import admin, confirmation, post
 from test_verified_installations import current
 
 client = http_fixture.client

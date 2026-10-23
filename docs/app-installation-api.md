@@ -191,7 +191,11 @@ reinstall; a consumer that still serves them fails this acceptance.
 
 On commit the server refuses ordinary app-event and hook-resolve credentials
 and retires live hook bindings. `app-grant-read` deliberately keeps answering
-with typed `state: "uninstalled"`, so the app can observe the end.
+with typed `state: "uninstalled"`, so the app can observe the end. The grant answer also
+includes `installed_at`, the UTC creation time of that `installation_id`.
+A re-pin preserves it; uninstall preserves it for lifecycle reporting, and a
+reinstall creates a new ID and creation time. The shared `GrantStatus` parser
+requires this typed UTC timestamp; it never substitutes an observation time.
 
 App-side tool authorization stops within the advertised grant-status
 `max_age_seconds` (at most 60 seconds) plus one refresh deadline (5 seconds
