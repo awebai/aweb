@@ -937,7 +937,7 @@ func printChannelLaunchInstructions(out io.Writer) {
 	fmt.Fprintln(out, "  claude plugin install aweb-channel@awebai-marketplace")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Then start Claude Code with this exact line:")
-	fmt.Fprintln(out, "  claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
+	fmt.Fprintln(out, "  claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
 	fmt.Fprintln(out)
 	for _, line := range channelLaunchWhyLines {
 		fmt.Fprintln(out, line)
@@ -948,13 +948,10 @@ func printChannelLaunchInstructions(out io.Writer) {
 	}
 }
 
-// channelLaunchWhyLines explains why both flags are on the launch line. Channel
-// messages are delivered to the session only in bypass-permissions mode today.
+// channelLaunchWhyLines distinguishes channel loading from permission mode.
 var channelLaunchWhyLines = []string{
-	"Both flags are needed: channel messages are delivered to the session only in",
-	"bypass-permissions mode today. In Claude Code's default auto mode (and plan",
-	"mode) the notification arrives and is silently not surfaced, so without",
-	"--dangerously-skip-permissions there are no wake-ups. Claude Code asks once to",
+	"Channel delivery works in any permission mode, including auto and plan.",
+	"Choose the permission mode that suits your workflow. Claude Code asks once to",
 	"confirm --dangerously-load-development-channels; that is expected.",
 }
 
@@ -1171,7 +1168,7 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 	lines = append(lines, "    claude plugin install aweb-channel@awebai-marketplace")
 	lines = append(lines, "")
 	lines = append(lines, "  Then start Claude Code with this exact line:")
-	lines = append(lines, "    claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
+	lines = append(lines, "    claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
 	lines = append(lines, "")
 	for _, line := range channelLaunchWhyLines {
 		lines = append(lines, "  "+line)
