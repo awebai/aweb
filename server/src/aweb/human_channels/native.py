@@ -22,6 +22,8 @@ from fastapi import HTTPException
 
 from aweb.attachment_service import prepare_attachment_send
 from aweb.identity_auth_deps import auth_dids
+from aweb.identity_binding import verified_projection
+from aweb.inbound_modes import effective_inbound_mode
 from aweb.messaging.chat import ensure_session, send_in_session
 from aweb.messaging.conversations import create_conversation, get_conversation
 from aweb.messaging.messages import authorize_message_delivery, deliver_message
@@ -135,11 +137,14 @@ class NativeMessagingService:
     async def _row(self, *, principal=None, actor_id=None, team_id=None):
         rows = await self.db.get_manager("aweb").fetch_all(
             """SELECT agent_id, team_id, alias, did_key, did_aw, address,
+                      did_aw_verified_key, identity_scope,
+                      (NULLIF(did_aw,'') IS NOT NULL) AS has_global_claim,
+                      did_aw AS policy_did_aw,
                       status, deleted_at, certificate_id, agent_type, inbound_mode
                FROM {{tables.agents}}
                WHERE deleted_at IS NULL
                  AND ($1::uuid IS NULL OR agent_id=$1)
-                 AND ($2::text IS NULL OR did_aw=$2 OR did_key=$2)
+                 AND ($2::text IS NULL OR (did_aw=$2 AND did_aw_verified_key=did_key) OR did_key=$2)
                  AND ($3::text IS NULL OR team_id=$3)""",
             UUID(actor_id) if actor_id else None,
             principal,
@@ -149,7 +154,7 @@ class NativeMessagingService:
             raise ContractError(
                 "not_found" if not rows else "forbidden", "exact local actor"
             )
-        row = dict(rows[0])
+        row = verified_projection(rows[0])
         if row["status"] != "active":
             raise ContractError("forbidden", "inactive actor")
         return row
@@ -693,7 +698,7 @@ class NativeMessagingUnitOfWork:
                 {retained.author["agent_id"], retained.recipient["agent_id"]}, key=str
             ),
         )
-        by_id = {str(row["agent_id"]): dict(row) for row in rows}
+        by_id = {str(row["agent_id"]): verified_projection(row) for row in rows}
         for old in (retained.author, retained.recipient):
             row = by_id.get(str(old["agent_id"]))
             if (
@@ -712,12 +717,18 @@ class NativeMessagingUnitOfWork:
                     "agent_type",
                     "alias",
                     "address",
+                    "did_aw_verified_key",
                 )
             ):
                 raise ContractError("stale", "current actor binding")
         if value["expires_at"] <= datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"):
             raise ContractError("stale", "preparation expired while locking")
         _grant(self.auth, value["kind"])
+        # Identity-wide policy can be narrowed through another membership.
+        # Hold its complete current cohort until this acceptance commits.
+        policy_did = retained.recipient.get("policy_did_aw")
+        if policy_did:
+            await effective_inbound_mode(self.manager, policy_did, for_share=True)
         # Freeze any existing contact proof against concurrent removal/narrowing.
         # Missing contacts cannot permit a send; a later insert only widens.
         await self.manager.fetch_all(

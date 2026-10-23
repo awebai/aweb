@@ -11,6 +11,9 @@ separate capabilities.
 ## Actor and key discovery
 
 Ordinary mail/chat aliases include active human actors in the selected team.
+Global DID/address projections require the current identity-binding marker,
+as on existing native reads; an unverified stored claim is withheld. Its raw
+policy identity still selects the restrictive identity-wide inbound policy.
 Qualified aliases do not select a different team's human. Existing native agent
 selectors retain their behavior. HTTP and MCP use the same messaging-only
 lookup and existing inbound policy. A revoked admitting certificate cannot
@@ -126,6 +129,12 @@ envelope hash before returning the original acceptance. This is remote stable-ID
 recovery, not atomicity with a caller's remote database. The caller persists its
 own remote intent first and reconciles a timeout through the result read.
 
+For encrypted HTTP ingress the outer timestamp and reply ID, when supplied,
+must match the preserved envelope. Non-default priority, wait, leaving and
+hang-on controls are unsupported on this path and refuse before effects;
+plaintext controls must match the signed payload. Legacy attachment descriptors
+also refuse here; use the immutable attachment references and configured backend.
+
 For hosted MCP ingress, pass `human_channels_service` to `create_mcp_app` and
 supply the same headers. Ordinary `send_mail`/`chat_send` then use this UoW before
 session or message insertion. The authenticated key determines stable message
@@ -147,5 +156,5 @@ The existing public acfn attachment backend validates staged immutable refs and
 binds on the same transaction, without network access. No provider URL, token,
 platform account ID or replacement wire descriptor is introduced.
 
-Migration `039_native_send_ingress.sql` adds the result, message-ID binding and
+Migration `038_native_send_ingress.sql` adds the result, message-ID binding and
 publication-intent stores. P3's native-only participant gates remain in force.

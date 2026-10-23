@@ -798,3 +798,95 @@ async def test_returned_accepted_dto_cannot_rebind_committed_result(native_send)
     assert (await env["db"].fetch_one("SELECT count(*) n FROM {{tables.messages}}"))[
         "n"
     ] == 0
+
+
+@pytest.mark.asyncio
+async def test_human_discovery_withholds_unverified_global_claim(native_send):
+    from aweb.messaging.participants import messaging_participant_by_alias
+
+    env = native_send
+    await env["db"].execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=NULL WHERE agent_id=$1",
+        UUID(env["b"]),
+    )
+    row = await messaging_participant_by_alias(
+        env["service"].db,
+        team_id=env["auth"].team_id,
+        selected_team_id=env["auth"].team_id,
+        alias="human",
+    )
+    assert row["did_key"] == env["recipient_did"]
+    assert row["did_aw"] is None
+    assert row["address"] is None
+    assert row["policy_did_aw"] == "did:aw:human"
+    # The host's global assertion cannot repair an unverified OSS projection.
+    with pytest.raises(ContractError, match="authority_unavailable"):
+        await env["service"].resolve(
+            env["auth"],
+            dto("ResolveRequest", dict(
+                version="aweb-human-resolve-v1", team_id=env["auth"].team_id,
+                selector="human",
+            )),
+        )
+
+
+@pytest.mark.asyncio
+async def test_native_accept_rechecks_identity_wide_contacts_only(native_send):
+    env = native_send
+    prepared = await env["prepared"]()
+    await _insert_team(env["db"], "other:example.test")
+    await _insert_agent(
+        env["db"], team_id="other:example.test", alias="other-human",
+        did_key=env["recipient_did"], did_aw="did:aw:human", address=None,
+        inbound_mode="contacts_only",
+    )
+    with pytest.raises(ContractError, match="forbidden"):
+        await complete(env, prepared)
+    for table in ("messages", "conversations", "human_channel_ingress", "human_channel_mutations"):
+        assert (await env["db"].fetch_one(
+            "SELECT count(*) n FROM {{tables." + table + "}}"
+        ))["n"] == 0
+    # A fresh exact contact is the valid neighbouring authority.
+    from aweb.messaging.contacts import add_contact
+    await add_contact(
+        env["service"].db, owner_did="did:aw:human",
+        contact_address="example.test/agent", contact_did_aw="did:aw:agent",
+        binding_controller_did=env["auth"].did_key, label="agent",
+    )
+    from dataclasses import replace
+    env["auth"] = replace(env["auth"], address="example.test/agent")
+    await complete(env, await env["prepared"]())
+    assert (await env["db"].fetch_one("SELECT count(*) n FROM {{tables.messages}}"))["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_identity_policy_lock_spans_outer_commit(native_send):
+    import asyncio
+
+    env = native_send
+    await _insert_team(env["db"], "other:example.test")
+    other = await _insert_agent(
+        env["db"], team_id="other:example.test", alias="other-human",
+        did_key=env["recipient_did"], did_aw="did:aw:human", address=None,
+    )
+    prepared = await env["prepared"]()
+    update = None
+    try:
+        async with env["service"].unit_of_work(env["auth"]) as uow:
+            await uow.claim_ingress(env["key"])
+            accepted = await uow.accept(prepared)
+            update = asyncio.create_task(env["db"].execute(
+                "UPDATE {{tables.agents}} SET inbound_mode='contacts_only' WHERE agent_id=$1",
+                UUID(other),
+            ))
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(update), 0.05)
+            await uow.finish_ingress(dto("IngressResult", dict(
+                version="aweb-ingress-result-v1", key=env["key"].value,
+                accepted=accepted.value, result={},
+            )))
+        await asyncio.wait_for(update, 2)
+    finally:
+        if update and not update.done():
+            update.cancel()
+            await asyncio.gather(update, return_exceptions=True)
