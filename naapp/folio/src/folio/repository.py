@@ -348,7 +348,7 @@ async def revoke_presentation_link(
     )
 
 
-async def get_presented_document(db: AsyncDatabaseManager, *, token: str) -> dict[str, Any]:
+async def get_presented_document(db: AsyncDatabaseManager | TransactionManager, *, token: str) -> dict[str, Any]:
     row = await db.fetch_one(
         """
         SELECT p.editable, p.expires_at, d.team_id, t.tokens, t.logo_asset_id, t.header, t.footer,

@@ -620,3 +620,23 @@ async def test_real_s3_admission_and_dispatch_take_the_installation_fence_first(
 
     for round_number in range(10):
         await run_round(round_number)
+
+
+async def test_member_sql_facade_rolls_back_when_a_resource_wait_exhausts_freshness(db, setup):
+    fence, source = setup
+    source.current = grant(ttl=1.0)
+    await db.execute("CREATE TABLE {{schema}}.member_content (id integer primary key, value text)")
+    await db.execute("INSERT INTO {{schema}}.member_content VALUES (1,'before')")
+    permit = await fence.permit(TEAM)
+    async with db.transaction() as holder:
+        await holder.fetch_one("SELECT id FROM {{schema}}.member_content WHERE id=1 FOR UPDATE")
+        changing = asyncio.create_task(permit.database().execute(
+            "UPDATE {{schema}}.member_content SET value='after' WHERE id=1"))
+        await asyncio.sleep(0.05)
+        assert not changing.done(), "the real resource lock must block the write"
+        # The app row remains locked until the advertised authority has expired.
+        await asyncio.sleep(1.1)
+    with pytest.raises(InstallationRefused) as refused:
+        await changing
+    assert refused.value.code == "authority_unavailable"
+    assert await db.fetch_value("SELECT value FROM {{schema}}.member_content WHERE id=1") == "before"

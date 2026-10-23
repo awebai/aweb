@@ -85,8 +85,7 @@ async def exchange(
             raise unavailable() from None
         raise
     credential = secrets.token_urlsafe(32)
-    async with installation_transaction(db) as tx:
-        await permit.check(tx)
+    async with installation_transaction(permit) as tx:
         # UPDATE's predicate is rechecked after any concurrent updater commits.
         consumed = await tx.fetch_one(
             """UPDATE {{tables.presentation_links}} SET consumed_at=NOW()
@@ -156,8 +155,7 @@ async def access(
             )
             raise unavailable() from None
         raise
-    async with installation_transaction(db) as tx:
-        await permit.check(tx)
+    async with installation_transaction(permit) as tx:
         lock = "FOR UPDATE OF p,d,s" if write else "FOR SHARE OF p,d,s"
         selected = await tx.fetch_one(_SESSION + " " + lock, digest, link_id)
         if selected is None:
@@ -170,9 +168,9 @@ async def access(
 
 
 @asynccontextmanager
-async def installation_transaction(db: AsyncDatabaseManager):
+async def installation_transaction(permit):
     try:
-        async with db.transaction() as tx:
+        async with permit.transaction() as tx:
             yield tx
     except InstallationRefused as error:
         raise installation_refusal(error) from None

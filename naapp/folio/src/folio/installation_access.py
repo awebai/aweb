@@ -37,7 +37,7 @@ async def capability_permit(
     query = """SELECT p.*, d.team_id FROM {{tables.presentation_links}} p
         JOIN {{tables.documents}} d ON d.document_id=p.document_id
         WHERE p.token=$1 AND p.revoked_at IS NULL"""
-    parameters = [link_id]
+    parameters: list[str | bytes] = [link_id]
     lock = " FOR UPDATE OF p"
     if session_hash is not None:
         query = """SELECT p.*, d.team_id, s.installation_id AS session_installation_id,
@@ -59,8 +59,7 @@ async def capability_permit(
     try:
         permit = await runtime.installation_fence().permit(evidence["team_id"])
         denied = None
-        async with db.transaction() as tx:
-            await permit.check(tx)
+        async with permit.transaction() as tx:
             selected = await tx.fetch_one(query + lock, *parameters)
             if selected is None:
                 raise HTTPException(404, detail="Presentation not found")
@@ -111,8 +110,7 @@ async def presented_document(
 
     permit = await capability_permit(db, runtime, link_id=token)
     try:
-        async with db.transaction() as tx:
-            await permit.check(tx)
+        async with permit.transaction() as tx:
             selected = await tx.fetch_one(
                 "SELECT * FROM {{tables.presentation_links}} WHERE token=$1 FOR SHARE", token
             )

@@ -98,8 +98,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(PresentationPrivacy)
     app.state.folio_runtime = runtime
 
-    def db() -> AsyncDatabaseManager:
-        return runtime.db()
+    @app.exception_handler(InstallationRefused)
+    async def installation_refused(request: Request, error: InstallationRefused):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=error.status, content={"detail": {"code": error.code}})
+
+    def db(request: Request):
+        permit = getattr(request.state, "folio_installation", None)
+        return permit.database() if permit is not None else runtime.db()
 
     # Folio's domain policy admits current members; the shared guard separately
     # enforces exact manifest tools, invocation contexts and installed scopes.
@@ -113,8 +119,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             permit = await runtime.installation_fence().permit(authorization.principal.team_id)
             if (authorization.grant.installation_id, authorization.grant.generation) != (permit.admitted.installation_id, permit.admitted.generation):
                 raise InstallationRefused("generation_superseded", 409, "Installation changed during admission")
-            async with runtime.db().transaction() as tx:
-                await permit.check(tx)
         except InstallationRefused as error:
             raise HTTPException(error.status, detail={"code": error.code}) from None
         request.state.folio_installation = permit

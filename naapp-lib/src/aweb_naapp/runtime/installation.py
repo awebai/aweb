@@ -10,7 +10,8 @@ There is no cross-server lease and no rollback of already committed work.
 from __future__ import annotations
 
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -87,6 +88,18 @@ class InstallationPermit:
     async def check(self, tx: TransactionManager) -> None:
         await self.store.check(tx, self.admitted)
 
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[TransactionManager]:
+        """Fence before resources and recheck freshness before their commit."""
+        async with self.store.db.transaction() as tx:
+            await self.check(tx)
+            yield tx
+            await self.check(tx)
+
+    def database(self) -> InstallationDatabase:
+        """A SQL facade for member handlers using this exact admission."""
+        return InstallationDatabase(self)
+
     def bind(self, *, installation_id: str | None, created_at: datetime, refused: bool = False) -> str:
         """Bind a legacy capability only to an installation older than that row.
 
@@ -106,6 +119,33 @@ class InstallationPermit:
         if installed_at >= created_at:
             raise InstallationRefused("installation_binding_refused", 403, "The current installation was created after this capability")
         return self.admitted.installation_id
+
+
+class InstallationDatabase:
+    """Route SQL through a permit; nested app transactions stay on its lock.
+
+    This contains no authority logic or cache. A handler's explicit transaction
+    gets the shared fence before app locks and rechecks it before committing.
+    Single statements use the same transaction path.
+    """
+
+    def __init__(self, permit: InstallationPermit) -> None:
+        self.permit = permit
+
+    def transaction(self):
+        return self.permit.transaction()
+
+    async def execute(self, query, *args, **kwargs):
+        async with self.transaction() as tx:
+            return await tx.execute(query, *args, **kwargs)
+
+    async def fetch_one(self, query, *args, **kwargs):
+        async with self.transaction() as tx:
+            return await tx.fetch_one(query, *args, **kwargs)
+
+    async def fetch_all(self, query, *args, **kwargs):
+        async with self.transaction() as tx:
+            return await tx.fetch_all(query, *args, **kwargs)
 
 
 class InstallationDispatchFence:
