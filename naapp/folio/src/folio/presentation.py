@@ -1070,7 +1070,7 @@ def render_editor_page(
     </div>
   </header>
   <div id="link-recovery" class="link-recovery" role="alert" tabindex="-1" hidden>
-    <p>This edit link has expired or been revoked. Your unsaved text is still in the editor.</p>
+    <p id="recovery-message">This edit link has expired or been revoked. Your unsaved text is still in the editor.</p>
     <button id="copy-draft" class="ghost-button" type="button">Copy your text</button>
     <p id="reopen-instructions">Return to your dashboard and reopen Edit, then paste your text.</p>
     <p id="copy-status" role="status"></p>
@@ -1183,6 +1183,17 @@ def render_editor_page(
       else if (dirty) {{ saveBtn.disabled = false; saveBtn.textContent = 'Save new version'; }}
       else {{ saveBtn.disabled = true; saveBtn.textContent = 'Saved'; }}
       discardBtn.disabled = saving || !(dirty || conflict);
+      if (unavailable) {{
+        document.getElementById('copy-draft').hidden = !dirty;
+        document.getElementById('recovery-message').textContent = dirty
+          ? 'This edit link has expired or been revoked. Your unsaved text is still in the editor.'
+          : 'This edit link has expired or been revoked.';
+        document.getElementById('reopen-instructions').textContent = dirty
+          ? 'Return to your dashboard and reopen Edit, then paste your text.'
+          : 'Return to your dashboard and reopen Edit.';
+        setStatus(dirty ? 'Not saved. Copy your text before reopening Edit.' : 'Link unavailable', dirty ? 'conflict' : null);
+        if (!dirty) copyStatusEl.textContent = '';
+      }}
     }}
 
     function setStatus(message, kind) {{
@@ -1302,9 +1313,8 @@ def render_editor_page(
       unavailable = true;
       cancelPreview();
       newVersionEl.hidden = true;
-      recoveryEl.hidden = false;
-      setStatus('Not saved. Copy your text before reopening Edit.', 'conflict');
       updateButtons();
+      recoveryEl.hidden = false;
     }}
     function applyCurrent(state) {{
       cancelPreview();

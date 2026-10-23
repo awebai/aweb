@@ -63,13 +63,11 @@ Diagnose and fix the aweb channel setup for this project.
    this exact line:
 
    ```bash
-   claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+   claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
    ```
 
-   Tell them why both flags are there: channel messages are delivered to the
-   session only in bypass-permissions mode today — in Claude Code's default
-   auto mode (and plan mode) the notification arrives and is silently not
-   surfaced, so without `--dangerously-skip-permissions` there are no wake-ups.
+   Explain that channel delivery works in any permission mode, including auto
+   and plan. The user chooses the permission mode that suits their workflow.
    Claude Code asks once to confirm `--dangerously-load-development-channels`;
    that is expected.
 

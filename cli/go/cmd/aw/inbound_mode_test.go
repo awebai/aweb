@@ -69,7 +69,7 @@ func TestAwInboundModeShow(t *testing.T) {
 	}
 }
 
-func TestAwInboundModeSetContactsOnly(t *testing.T) {
+func TestAwInboundModeSetTeamAndContacts(t *testing.T) {
 	t.Parallel()
 
 	var gotBody map[string]any
@@ -127,5 +127,17 @@ func TestAwInboundModeRejectsUnknownValue(t *testing.T) {
 	}
 	if got, err := normalizeInboundModeCLIValue("all"); err != nil || got != "open" {
 		t.Fatalf("all normalized to %q err=%v", got, err)
+	}
+}
+
+func TestContactsOnlyCanonicalMode(t *testing.T) {
+	for _, value := range []string{"contacts-only", "contacts_only"} {
+		got, err := normalizeInboundModeCLIValue(value)
+		if err != nil || got != "contacts_only" {
+			t.Fatalf("%q normalized to %q, err=%v; want contacts_only", value, got, err)
+		}
+	}
+	if got := inboundModeLabel("contacts_only"); got != "Contacts only" {
+		t.Fatalf("label=%q want Contacts only", got)
 	}
 }

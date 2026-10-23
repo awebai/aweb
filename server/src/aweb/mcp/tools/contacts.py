@@ -46,18 +46,30 @@ async def list_contacts_tool(db_infra) -> str:
     return await contacts_list(db_infra)
 
 
-async def contacts_add(db_infra, *, contact_address: str, label: str = "") -> str:
+async def contacts_add(
+    db_infra, *, contact_address: str, label: str = "", federation_authority=None,
+) -> str:
     """Add a contact for the authenticated identity."""
     auth = get_auth()
     owner_dids = normalize_owner_dids(owner_dids=[auth.did_aw, auth.did_key])
     owner_did = owner_dids[0] if owner_dids else ""
     try:
+        if federation_authority is None:
+            raise FederationAuthorityError("federation_authority_coordination_unavailable")
+        resolved = await federation_authority.resolve_contact(
+            normalize_hosted_handle_reference(contact_address),
+            source_ip="mcp:" + str(auth.did_key or auth.did_aw or "unknown"),
+        )
         result = await add_contact(
             db_infra,
             owner_did=owner_did,
-            contact_address=contact_address,
+            contact_address=resolved.canonical_address,
+            contact_did_aw=resolved.did_aw,
+            binding_controller_did=resolved.controller_did,
             label=label or None,
         )
+    except FederationAuthorityError as exc:
+        return json.dumps({"error": exc.reason})
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
 

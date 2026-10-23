@@ -1,7 +1,7 @@
 # CLI naapp access
 
 A naapp is a declarative HTTP app described by a v1 app manifest. Install it
-once from the identity's own home:
+once for the acting resident identity. From a resident workspace:
 
 ```sh
 aw plugin install https://notes.example/.well-known/aweb-app.json
@@ -13,6 +13,79 @@ app requests. An attached resident may use `--identity-home` or
 `AWEB_IDENTITY_HOME`; commands never fall back to the instance directory.
 Installing from that resident home also approves the app for future grants.
 Installing an already installed app records approval for this resident too.
+
+For an attached/grant deployment, the resident owner runs one install command:
+
+```sh
+aw --identity-home /absolute/resident-root/.aw plugin install https://folio.aweb.ai/.well-known/aweb-app.json
+```
+
+`--identity-home` names the **credential directory itself**, containing
+`signing.key` and `identity.yaml` or `teams.yaml`. In a workspace layout that is
+`<resident-root>/.aw`, not `<resident-root>`. It must belong to the same resident
+the session represents. The CLI never guesses a stronger credential or copies a
+resident key into a grant home. Grant seats ask their resident owner to perform
+this approval; their session credential cannot approve apps.
+
+A new grant minted after this install includes the approved tools. **An already
+running grant session keeps its original snapshot**. Install output includes
+`identity_home`, `existing_grants_unchanged` and `grant_refresh_command` in JSON,
+and prints the replacement action in text. After a resident install or update,
+aw also checks that resident's grants in the selected team. When active grants
+exist, the receipt reports their count and warns that existing grants do not gain
+tools from this install or update. An update does not mean an already delegated
+app is absent: its original snapshot still applies. Revoked and expired grants
+are excluded. This advisory check has a two-second request budget. Its failure
+does not reverse a successful installation: the count is reported as unknown
+(`grant_check_error: "unavailable"`), with the same recovery guidance. Required
+installation steps, including event registration, must still succeed.
+JSON reports a known count as `active_grants` (including zero).
+
+The mint action is:
+
+```sh
+aw --identity-home /absolute/resident-root/.aw id grant mint --bundle normal-agent --ttl '<ttl>' --custody-socket auto --out /absolute/new-grant-home
+```
+
+The resident owner selects the intended scopes (the example uses the
+normal-agent bundle) and replaces `<ttl>` with an explicit lifetime, for example
+`1h`. Choose `never` only deliberately: it makes the grant revocation-only,
+not time-limited. A replacement does not infer the previous session's limits.
+`--custody-socket auto` records the selected resident's default custody locator;
+the resident's custody service must be running for signed app tools. Omitting
+this option produces a grant with no custody locator. The owner supplies a new
+empty output directory and restarts the session using that replacement grant.
+Do not overwrite the live grant home or change resident identities. Stop the
+old session, then relaunch its agent command with the new grant; replace
+the entire quoted `'<agent-command>'` token, **including its surrounding
+quotes**, with that session's original command line and arguments. Retain the
+original quoting of each argument:
+
+```sh
+env AWEB_IDENTITY_HOME=/absolute/new-grant-home '<agent-command>'
+```
+
+JSON exposes this template as `grant_restart_command`. The CLI cannot discover
+which process uses a grant, so it leaves the agent command explicit. A JSON
+consumer replaces the placeholder element with the executable and each argument
+as separate array elements; it must not place a whole command line in one
+executable element.
+
+For an OATS deployment configured with `renew: launch`, use this **alternative**
+from the host instead of manually minting and assigning a new grant:
+
+```sh
+oats session restart --home /absolute/instance-home
+```
+
+The launch renewal mints a fresh snapshot for the same resident. JSON exposes
+this conditional template as `oats_renew_restart_command`; replace the instance
+home explicitly, since the resident may have several sessions. A readiness pass
+or `aw folio help` only proves discovery, not that a live grant has these tools.
+
+App verbs accept the global boolean `--json` before or after the verb, including
+`--json=true` and `--json=false`. They return the app's response body unchanged;
+the flag is never sent as an app parameter.
 
 ## Discovery and resident approval
 
@@ -51,7 +124,9 @@ Custody signs from that snapshot, not from a worker's manifest. Later worker
 edits cannot widen or redirect it. Removing local discovery may make a tool
 unavailable, but cannot add authority. Re-minting picks up newly approved apps;
 existing grants keep their original snapshots. An app missing from a grant is
-refused with `app_tool_denied` before an app HTTP request.
+refused with `app_tool_denied` before an app HTTP request. The CLI explains the
+missing delegation and the approve/re-mint/restart remedy; it never updates an
+existing snapshot. A deliberately narrowed tool selection remains refused too.
 
 Mint JSON includes `apps`, sorted by app ID, with the actual persisted inventory:
 
@@ -77,3 +152,17 @@ Approval is per resident, while requests use that resident's own selected team
 certificate. On a host serving multiple customers, each resident approves only
 its own apps. As with existing custody snapshots, hostile processes running as
 the same OS user are outside this isolation model.
+
+## Folio present-link lifetimes
+
+A read-only Folio link accepts up to 30 days (`2592000` seconds), with a one-day
+(`86400` seconds) default. For example:
+
+```sh
+aw folio present --slug pitch --ttl_seconds 2592000
+```
+
+The operator can set a shorter maximum with `FOLIO_MAX_PRESENT_TTL_SECONDS`.
+Explicit requests above the configured maximum return `422`; Folio does not
+silently shorten them. Editable links (`--editable true`) remain limited to
+300 seconds. A link gives its holder access until it expires or is revoked.

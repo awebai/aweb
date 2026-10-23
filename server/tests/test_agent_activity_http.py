@@ -21,6 +21,8 @@ import logging
 import pytest
 from redis.asyncio import Redis
 
+from identity_binding_support import register_global_identity
+
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.messaging.activity_stream import SessionActivity
 from test_agent_status_host_http import _team_request
@@ -109,7 +111,8 @@ async def test_team_certificate_caller_publishes_and_the_event_is_relayed(privac
 
 async def _global_member(env, alias="dave"):
     sk, _, did = _make_keypair()
-    agent_id, did_aw = uuid4(), f"did:aw:{alias}{uuid4().hex[:12]}"
+    agent_id = uuid4()
+    did_aw = await register_global_identity(env, SimpleNamespace(sk=sk, did=did), f"example.test/{alias}")
     await env.db.execute(
         "INSERT INTO {{tables.agents}} "
         "(agent_id, team_id, did_key, did_aw, address, alias, identity_scope, inbound_mode) "

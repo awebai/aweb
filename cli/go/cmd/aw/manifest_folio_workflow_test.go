@@ -98,18 +98,24 @@ func TestDeployedFolioBinaryWorkflow(t *testing.T) {
 	}
 	instance := t.TempDir()
 	calls := [][]string{
-		{"create", "--body-file", create}, {"show", "--slug", "synthetic"}, {"list"},
+		{"--json", "create", "--body-file", create, "--json"}, {"show", "--json=true", "--slug", "synthetic"}, {"list", "--json=false"},
 		{"append", "--slug", "synthetic", "--body-file", appendFile}, {"versions", "--slug", "synthetic"},
 		{"present", "--slug", "synthetic", "--version", "2", "--ttl_seconds", "300", "--editable", "false"},
 		{"revoke", "--token", "synthetic-token"},
 	}
 	for _, args := range calls {
-		cmd := exec.CommandContext(ctx, bin, append([]string{"folio"}, args...)...)
+		cmd := exec.CommandContext(ctx, bin, append([]string{"--json=true", "folio"}, args...)...)
 		cmd.Dir = instance
 		cmd.Env = append(os.Environ(), awconfig.IdentityHomeEnv+"="+home, "AW_NO_UPDATE_CHECK=1")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%s failed: %v %s", args[0], err, out)
 		}
+	}
+	invalid := exec.CommandContext(ctx, bin, "folio", "list", "--json=invalid")
+	invalid.Dir = instance
+	invalid.Env = append(os.Environ(), awconfig.IdentityHomeEnv+"="+home, "AW_NO_UPDATE_CHECK=1")
+	if out, err := invalid.CombinedOutput(); err == nil {
+		t.Fatalf("invalid boolean flag was accepted: %s", out)
 	}
 	_, verified := f.app.requests()
 	if len(verified) != 7 || bodyChecks != 3 {
