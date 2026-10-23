@@ -95,6 +95,10 @@
 app. `mount_registry` says that an embedding host mounts the registry under a
 prefix.
 
+`RegistryClient` can publish and read team-server records through its existing
+registry resolution and request path. Shared `build_team_server_record` and
+`sign_team_server_record` helpers match the Go signing vectors.
+
 ### Release preparation: aweb-naapp 0.5.0
 
 `aweb-naapp` and `aweb-naapp-testing` 0.5.0 are released together. The library
