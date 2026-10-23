@@ -111,6 +111,7 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
             "custody": "self", "identity_scope": "global", "created_at": now.isoformat(),
         }))
     team_sk, _, team_did = _make_keypair()
+    env.team_sk, env.team_did = team_sk, team_did
     await env.db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", team_did, TEAM)
     await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2", team_did, TEAM.split(":", 1)[0])
     cert = _make_certificate(team_sk, team_did, agent["did"], team_id=TEAM, alias="bob", identity_scope="global" if global_resident else "local",

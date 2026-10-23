@@ -6,7 +6,7 @@ import pytest
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_e2ee_local_sender_read_trust import _local_sender_mail
 from test_cli_human_reply import _cli
-from test_messages_http import _signed_team_headers
+from test_messages_http import _signed_team_headers, _make_certificate, _encode_certificate
 
 
 @pytest.mark.usefixtures("source_cli_binary")
@@ -19,7 +19,9 @@ async def test_verified_mail_survives_workspace_retirement(privacy_app, tmp_path
         assert before["messages"][0]["verification_status"] == "verified"
         actor = env.actors["alice"]
         retired = await env.client.delete(f"/v1/workspaces/{actor.workspace}", headers=_signed_team_headers(
-            actor.sk, actor.did, TEAM, actor.certificate, b""))
+            actor.sk, actor.did, TEAM, _encode_certificate(_make_certificate(
+                env.team_sk, env.team_did, actor.did, team_id=TEAM, alias="alice",
+                identity_scope="local", certificate_id="privacy-alice")), b""))
         assert retired.status_code == 200, retired.text
         after = await _cli(binary, command_dir, command_env, "mail", "show", "--message-id", message_id, "--json")
         shown = after["messages"][0]
