@@ -176,7 +176,7 @@ Per-hook payloads, beyond the common envelope:
 | Hook | Payload fields |
 | --- | --- |
 | `post-secret-use-hook` | Defined here, and the secrets design cites it. See the flat allowlist below. |
-| `post-governance-hook` | `act` (catalog enum: `role.designated`, `role.revoked`, `credential.enrolled`, `credential.recovered`, `credential.revoked`, `grant.created`, `grant.changed`, `grant.revoked`, `resource.created`, `resource.version_added`, `resource.version_observed`, `resource.disabled`, `resource.enabled`, `resource.replaced`, `policy.changed`, `runner.registered`, `runner.deregistered`, `installation.disabled`, `installation.enabled`); `direction` (`widening` or `narrowing`, fixed per act by the catalog and checked at ingest); `role`, `resource_type` (bounded app-local tokens matching `^[a-z][a-z0-9_.-]{0,63}$`); `subject_ref`, `resource_ref`, optional `before_ref`/`after_ref` (opaque); `authority` (`owner_act`, `passkey_session`, `team_cert`, `backend_observation`); optional `owner_act_sha256` (owner-act-rooted acts), `approval_evidence_sha256` (passkey-confirmed acts), `approval_id`, `policy_digest`, `reason_code`. A governance act that cannot enqueue does not commit. |
+| `post-governance-hook` | `act` (catalog enum: `role.designated`, `role.revoked`, `credential.enrolled`, `credential.recovered`, `credential.revoked`, `grant.created`, `grant.changed`, `grant.revoked`, `resource.created`, `resource.version_added`, `resource.version_observed`, `resource.disabled`, `resource.enabled`, `resource.replaced`, `policy.changed`, `runner.registered`, `runner.deregistered`, `installation.disabled`, `installation.enabled`, `hook_delivery.cancelled`); `direction` (`widening` or `narrowing`, fixed per act by the catalog and checked at ingest); `role`, `resource_type` (bounded app-local tokens matching `^[a-z][a-z0-9_.-]{0,63}$`); `subject_ref`, `resource_ref`, optional `before_ref`/`after_ref` (opaque); `authority` (`owner_act`, `passkey_session`, `team_cert`, `backend_observation`, `outbox_state`); optional `owner_act_sha256` (owner-act-rooted acts), `approval_evidence_sha256` (passkey-confirmed acts), `approval_id`, `policy_digest`, `reason_code`. `hook_delivery.cancelled` additionally requires its source binding/hook, contiguous source sequence bounds and count, under the [terminal amendment](../hook-terminal-delivery.md#each-app-producers-cancellation-evidence), with all unrelated governance fields forbidden. A governance act that cannot enqueue does not commit. |
 | `post-manifest-command-hook` | `app_id`, `tool`, `operation_kind` (`mutation`, `read`, `refusal`), `request_sha256` (historical name; producer-keyed HMAC-SHA-256 of the canonical request, as specified below), declared opaque `resource_refs`, `http_status`, optional `result_ref`. Parameter values are not copied; the HMAC commits to them. |
 | `post-mutation-hook` | `mutation_type` (§A10), `target_ref`, optional `before_ref`/`after_ref` (revision or state refs), and the per-type fields in the catalog (status values, assignee identities, `content_mode`). Never bodies, subjects, previews or titles. |
 | `post-command-hook` | `command` (canonical command path), `flags` (names only, plus values of catalog-declared enum flags), `local_effects` (enumerated, e.g. `identity_key_created`, `team_certificate_stored`, `app_approval_recorded`, `grant_minted`), `exit_status`. |
@@ -372,14 +372,23 @@ cooling-off. Each act produces a `post-governance-hook` event.
 The owner act is itself a governance event: core emits `post-mutation-hook`
 `hook_binding.activated` and `.revoked`. **Revocation:**
 
-- The revoked target receives `hook_binding.revoked` as its final entry, then
-  it is cut off, so its chain ends with an explanation instead of just
-  stopping.
-- Its other undelivered backlog is cancelled; the cut is the exfiltration
-  remedy.
-- The remaining registrations receive a governance event recording the
-  cancelled count and per-producer `seq` range, so their `verify` shows an
-  explained gap.
+- Each previously active registration is owed one `hook_binding.revoked` as
+  its final record, even for a different original hook or inside its activation
+  pad. The [terminal amendment](../hook-terminal-delivery.md) specifies its
+  exact core authorization, cold evidence, separate retry credential and seal.
+  Pending registrations and productions receive no terminal delivery.
+- Other backlog cancels, including unmaterialized owed events retained as
+  per-target cancellation tombstones. Core records its own exact cancellations
+  in a `cancelled_seq_ranges` list in the one event, preserving sparse ranges;
+  there is no global atomic count across producer databases.
+- Remaining eligible mutation registrations receive the unchanged core event.
+  Each other app producer records its own cancellation count and contiguous
+  source-`seq` ranges through `hook_delivery.cancelled` governance events to
+  remaining governance registrations. An unexplained gap stays unexplained.
+- Uninstall/supersession never reroutes or cancels the old terminal obligation.
+  An unreachable or unanchorable target remains pending/stalled and surfaced
+  for reconciliation; no receiver ACK delays the revocation. A seal closes
+  only that binding, not the continuing team chain.
 - Producers stop delivering within the freshness bound (§A4). The target's
   operator may therefore see redacted activity for up to `max_age` after
   revocation, and the owner copy states this.
@@ -388,7 +397,8 @@ The owner act is itself a governance event: core emits `post-mutation-hook`
 resolution freshness bound (60 s, §A4). From `active_from` on, every producer
 is guaranteed to have refreshed and to deliver. Events that occurred earlier
 are never delivered to that binding, so a new target is never back-fed
-history.
+history. The one deliberate exception is the previously active target’s own
+terminal lifecycle record specified above; it carries no earlier activity.
 
 ### A4. Server-side target resolution: requirements on aweb-acgh.7
 
@@ -568,7 +578,10 @@ binding_id, event_id, producer, kid, did_key, timestamp}`, and the body is
 `{hook_event: <base64url signing bytes>, signature: <base64>}`. Egress
 follows the secrets §14 network rules: HTTPS only, no redirects, no private or
 internal addresses unless the operator allows them, and the destination taken
-only from the owner-activated binding.
+only from the owner-activated binding. The sole final-record exception uses
+the [terminal capsule and separate credential](../hook-terminal-delivery.md#separate-terminal-request-credential),
+whose current core transport signer may differ from the historical event key.
+It preserves ordinary v1 and every recipient’s identical event bytes.
 
 **Ack.** A 2xx response carries `{event_id, disposition: "appended" |
 "duplicate", receipt?}`, and the producer keeps any receipt, such as logs'
@@ -751,9 +764,16 @@ error:
 2. **Binding.** `binding_id` must be logs' own active registration in
    `team_id` for the envelope's hook (acgh.7 resolution, ≤ 60 s cache). Logs
    returns 503 when authority is unavailable, so the producer retries and
-   nothing is lost.
-3. **Provenance.** Verify the envelope signature with the transport signer's
-   key, and require the envelope `producer` to equal the transport signer:
+   nothing is lost. The [terminal admission rule](../hook-terminal-delivery.md#receiver-admission-dedup-and-sealing)
+   is the only exception: its capsule authenticates the exact old registration
+   without restoring the removed install’s read credentials. It bypasses only
+   active state, original hook and the final-record pad.
+3. **Provenance.** Ordinary delivery verifies the envelope signature with the
+   transport signer's key and requires their producer identity to match. The
+   separate terminal credential verifies historical event/capsule signatures
+   and a current core transport key under its explicit windows; it preserves
+   the same anchored core origin and never substitutes app/member authority.
+   For ordinary delivery:
    - `app` producers need an active production for the hook in that team, with
      a key active for that generation (acgh.7);
    - `core` producers need a key published by the team's discovered core
@@ -767,7 +787,13 @@ error:
    strict allowlist. `occurred_at` must be no later than receipt plus skew.
 5. **Dedup** on `(team_id, event_id)`. Identical bytes return `duplicate` with
    the original receipt. Different bytes return `409 event_conflict` and record
-   a conflict fault that `verify` reports. Nothing is overwritten.
+   a conflict fault that `verify` reports. Nothing is overwritten. A valid
+   terminal duplicate still atomically seals its addressed binding, even when
+   the event previously arrived through another registration; it returns the
+   original receipt without a second append. A receiver-signed binding-seal
+   acknowledgement commits with that seal and authenticates the exact binding,
+   event/capsule and original receipt; the old event receipt alone cannot prove
+   that terminal admission completed.
 6. **Append** (§B3) in one transaction, then return a signed receipt. With
    the event, logs records the **key evidence** it verified against:
    `kid`, `did_key`, purposes, `installation_id`, generation and the
