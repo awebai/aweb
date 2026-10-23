@@ -252,14 +252,16 @@ async def test_phase_b_commits_receipt_message_participants_and_outbox_together(
     contact = await manager.fetch_one(
         """
         SELECT owner_did, contact_address, contact_did_aw,
-               binding_controller_did, status
+               binding_controller_did, binding_accepted_at, status
         FROM {{tables.contacts}}
         WHERE owner_did = $1 AND contact_address = $2
         """,
         envelope.target_did_aw,
         envelope.sender_address,
     )
-    assert dict(contact) == {
+    contact = dict(contact)
+    assert contact.pop("binding_accepted_at") is not None
+    assert contact == {
         "owner_did": envelope.target_did_aw,
         "contact_address": envelope.sender_address,
         "contact_did_aw": envelope.sender_did_aw,
@@ -330,6 +332,15 @@ async def test_phase_b_chat_commits_session_message_and_participants(aweb_cloud_
         "SELECT COUNT(*) FROM {{tables.chat_participants}} WHERE session_id = $1",
         UUID(envelope.conversation_id),
     ) == 2
+
+    contact = await manager.fetch_one("""
+        SELECT contact_did_aw, binding_controller_did, binding_accepted_at, status
+        FROM {{tables.contacts}} WHERE owner_did=$1 AND contact_address=$2
+    """, envelope.target_did_aw, envelope.sender_address)
+    assert contact["contact_did_aw"] == envelope.sender_did_aw
+    assert contact["binding_controller_did"] == "did:key:z6Mkcontroller"
+    assert contact["binding_accepted_at"] is not None
+    assert contact["status"] == "active"
 
 
 @pytest.mark.asyncio

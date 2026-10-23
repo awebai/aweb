@@ -2970,12 +2970,14 @@ async def test_cross_team_same_registry_chat_creates_bound_contact_without_looku
     contact = await aweb_cloud_db.aweb_db.fetch_one(
         """
         SELECT owner_did, contact_address, contact_did_aw,
-               binding_controller_did, status
+               binding_controller_did, binding_accepted_at, status
         FROM {{tables.contacts}}
         WHERE owner_did = 'did:aw:alice' AND contact_address = 'otherco.com/bob'
         """
     )
-    assert dict(contact) == {
+    contact = dict(contact)
+    assert contact.pop("binding_accepted_at") is not None
+    assert contact == {
         "owner_did": "did:aw:alice",
         "contact_address": "otherco.com/bob",
         "contact_did_aw": "did:aw:bob",
