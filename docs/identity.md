@@ -330,7 +330,8 @@ an API key or grant and does not switch to human login after a refusal. Omitting
 claim-human alone do not mint that human device authorization.
 
 The owner-request DIDKey signature covers canonical JSON with `aud` (the
-service's external origin), `body_sha256` (the exact transmitted request bytes),
+hosted service's configured public origin, which must equal the owner workspace
+binding's `scheme://host[:port]`), `body_sha256` (the exact transmitted request bytes),
 `method`, `path` and `timestamp`. The service checks the audience and timestamp
 before looking up authority. This is the audience-bound variant for hosted
 identity creation; existing signup, claim-human and bootstrap-redeem signature
