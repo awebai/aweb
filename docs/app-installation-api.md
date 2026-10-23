@@ -36,6 +36,9 @@ they do not need to construct a lock key. The writer reuses the same locks, held
 until that transaction commits or rolls back. Admission and network fetching
 hold no installation lock.
 
+For actions other than install/update and request approval, host policies must
+not lock installation rows; those calls run without the installation lock.
+
 ## Preview and confirmation
 
 `POST /v1/apps/preview?team_id=...` accepts:
