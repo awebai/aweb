@@ -170,11 +170,13 @@ Server changes are since `server-v1.27.33`.
   `aw id team set-server --team <team> --namespace <domain> --url <server origin>`.
   Hosted aweb.ai teams are published and backfilled by aweb Cloud.
 - **Dependency floors:** `awid-service>=0.5.32` (`aweb.testing` imports
-  `awid_service.testing`) and `aweb-naapp[egress,hooks]>=0.5.0` (C2 task
-  requests verify installation-bound app-request credentials).
+  `awid_service.testing`) and `aweb-naapp[egress,hooks]>=0.5.0` (the release
+  baseline this server is qualified with; the server and aweb-naapp ship
+  together).
 - **Migrations (aweb schema):** `038_task_revisions.sql`,
   `039_app_task_requests.sql`, `040_task_answer_stages.sql`. Folio:
-  `003_installation_capabilities.sql`.
+  `003_installation_capabilities.sql` (`002_edit_sessions.sql` is already live
+  with Folio `71f68028b`).
 - **Publish order:** `awid-service` 0.5.32, then `aweb-naapp` 0.5.0, then this
   server, then `aweb-naapp-testing` 0.5.0 (its `server` extra needs this
   server on PyPI).
