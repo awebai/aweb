@@ -198,7 +198,25 @@ func prepareGrantAppSnapshots(home, teamID string, explicit bool, values, denied
 			return nil, nil, usageError("--app-tool requires a nonempty app:verb selection")
 		}
 		apps, err := buildGrantAppSnapshots(specs, deniedOrigins)
-		return apps, skipped, err
+		if err != nil {
+			return nil, nil, err
+		}
+		catalog, err := loadAppApprovals(home)
+		if err != nil {
+			return nil, nil, err
+		}
+		for name, app := range apps {
+			approval := catalog.Installations[teamID][name]
+			if approval.InstallationID == "" {
+				return nil, nil, installationApprovalError("app_installation_approval_required", app.App.Origin, home, teamID)
+			}
+			if approval.Origin != app.App.Origin {
+				return nil, nil, installationApprovalError("app_origin_mismatch", app.App.Origin, home, teamID)
+			}
+			app.InstallationID = approval.InstallationID
+			apps[name] = app
+		}
+		return apps, skipped, nil
 	}
 	catalog, err := loadAppApprovals(home)
 	if err != nil {

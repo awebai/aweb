@@ -237,7 +237,11 @@ For each affected selected resident and team:
    Relaunch the worker with `AWEB_IDENTITY_HOME` pointing to the new grant home.
    The old snapshot is not repaired in place.
 
-Effective app approvals are scoped to exact team/app/installation ID. A re-pin
+Effective app approvals are scoped to exact team/app/installation ID.
+An explicit `--app-tool app:verb` at mint only narrows that approved catalog;
+it cannot approve a missing or replaced installation. Run `aw plugin install
+<origin>` for the selected team before minting either an explicit or default
+app-tool grant. A re-pin
 keeps that ID, so existing consent and immutable tool snapshots keep working;
 it never adds new tools to an old snapshot. Uninstall/reinstall changes the ID,
 so old snapshots remain refused even at the same origin and digest. Explicit

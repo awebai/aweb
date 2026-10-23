@@ -32,6 +32,9 @@ func TestAppApprovalMintSelection(t *testing.T) {
 	if err := changeAppApproval(f.residentHome, "otherapp", f.app.server.URL, f.grant.TeamID, "fixture-otherapp"); err != nil {
 		t.Fatal(err)
 	}
+	if err := changeAppApproval(f.residentHome, "testapp", f.app.server.URL, f.grant.TeamID, "fixture-testapp"); err != nil {
+		t.Fatal(err)
+	}
 	before, _ := os.ReadFile(appApprovalsPath(f.residentHome))
 	selected, err := selectGrantAppSnapshots(f.residentHome, f.grant.TeamID, true, []string{"testapp:get-thing"}, nil)
 	if err != nil || len(selected) != 1 || len(selected["testapp"].Tools) != 1 {
@@ -48,6 +51,10 @@ func TestAppApprovalMintSelection(t *testing.T) {
 		if _, err := selectGrantAppSnapshots(f.residentHome, f.grant.TeamID, true, values, nil); err == nil {
 			t.Fatalf("invalid explicit selection fell back: %v", values)
 		}
+	}
+	// The later default selection isolates the other app's approval.
+	if err := changeAppApproval(f.residentHome, "testapp", "", "", ""); err != nil {
+		t.Fatal(err)
 	}
 	all, err := selectGrantAppSnapshots(f.residentHome, f.grant.TeamID, false, nil, nil)
 	if err != nil || len(all) != 1 || len(all["otherapp"].Tools) != 3 {

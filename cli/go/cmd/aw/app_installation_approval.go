@@ -57,7 +57,7 @@ func bindGrantInstallations(ctx context.Context, client *aweb.Client, teamID, ho
 		code := ""
 		if err != nil {
 			code = err.Error()
-		} else if !explicit && app.InstallationID != current.InstallationID {
+		} else if app.InstallationID != current.InstallationID {
 			code = "app_installation_changed"
 		}
 		if code != "" {
