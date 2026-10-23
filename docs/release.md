@@ -52,11 +52,14 @@ mode changes and source changes refuse. Commit release notes before RC1:
 docs and CHANGELOG changes after the selected RC also refuse.
 
 The same check runs in the tag publisher, including runnerless publication.
+The aw sync workflow calls the read-only `publish_release.py --check-tag`
+entry point before it clones, syncs, pushes or tags the downstream repository.
 It proves source identity plus version promotion, **not qualification**.
 The coordinator must separately hold the Cloud train's green receipt for the
-exact selected RC before final tagging. A final with no existing RC retains
-the prior candidate-gate behavior. Keep RC tags in the fetched local tag
-history when preparing or publishing a final; tags are immutable.
+exact selected RC before final tagging. A paired-package final with no
+matching RC refuses; there is no implicit exception path. Both candidate
+creation and publication need the RC tag history: run `git fetch --tags`
+before either entry point. A missing fetch fails closed. Tags are immutable.
 
 ## 1. Test the final candidate locally
 

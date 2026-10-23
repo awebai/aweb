@@ -73,6 +73,22 @@ class TagContractTest(unittest.TestCase):
                 encoding="utf-8",
             )
         command(root, "git", "add", ".")
+        # Build a real RC tree and its version-only final, rather than relying
+        # on the now-refused final-without-RC path in neighboring tests.
+        manifests = [root / path for path in ("server/pyproject.toml", "awid/pyproject.toml",
+                                             "naapp-lib/pyproject.toml", "naapp-lib/testing/pyproject.toml")]
+        stable = {path: path.read_text() for path in manifests}
+        for path in manifests:
+            value = stable[path]
+            import re
+            path.write_text(re.sub(r'(version = "[^"]+)(")', r'\g<1>rc1\2', value))
+        command(root, "git", "add", ".")
+        command(root, "git", "commit", "-qm", "RC")
+        for tag in ("server-v1.2.3rc1", "awid-service-v2.3.4rc1", "aweb-naapp-v0.1.0rc1", "aw-v1.2.3-rc.1"):
+            command(root, "git", "tag", tag)
+        for path, value in stable.items():
+            path.write_text(value)
+        command(root, "git", "add", ".")
         command(root, "git", "commit", "-qm", "candidate")
         return temporary, root
 
@@ -111,6 +127,8 @@ class TagContractTest(unittest.TestCase):
             import re
             manifest.write_text(re.sub(r'version = "[^"]+"', f'version = "{version}"', value))
         command(root, "git", "commit", "-qam", "RC versions")
+        for tag in command(root, "git", "tag", "--list").splitlines():
+            command(root, "git", "tag", "-d", tag)
         tags = ["server-v1.2.3rc1", "awid-service-v2.3.4rc2", "aweb-naapp-v0.1.0rc1", "aw-v1.2.3-rc.1"]
         _source, versions = CANDIDATE.validate_tags(root, tags)
         self.assertEqual(versions["server-v"], "1.2.3rc1")

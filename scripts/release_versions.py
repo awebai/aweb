@@ -96,7 +96,8 @@ def _npm_package(document: dict, name: str, promotions: dict) -> None:
         document["version"] = _promote(document["version"], name, promotions)
     for field in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
         if field in document:
-            document[field] = {name: _promote(value, name, promotions) for name, value in document[field].items()}
+            document[field] = {dependency: _promote(value, dependency, promotions)
+                               for dependency, value in document[field].items()}
 
 
 def _normalize_manifest(document: dict, path: str, promotions: dict) -> dict:
@@ -184,7 +185,7 @@ def _normalize_lock(old: dict, new: dict, path: str, promotions: dict) -> dict:
 
 
 def require_final_promotion(root: Path, tag: str, final_commit: str) -> str | None:
-    """Return the compared RC tag, or None if this is RC/has no prior RC."""
+    """Return the compared RC tag; paired finals require a prior RC."""
     prefix, version = tag_parts(tag)
     if final_version(version) or prefix not in {"server-v", "awid-service-v", "aweb-naapp-v", "aw-v"}:
         return None
@@ -195,7 +196,7 @@ def require_final_promotion(root: Path, tag: str, final_commit: str) -> str | No
         if match:
             candidates.append((int(match.group(1)), candidate))
     if not candidates:
-        return None
+        raise VersionRefusal("final requires a prior RC of the same version; fetch tags or publish rc1 first")
     rc_tag = max(candidates)[1]
     rc_commit = _git(root, "rev-parse", rc_tag + "^{commit}").strip()
     _git(root, "merge-base", "--is-ancestor", rc_commit, final_commit)

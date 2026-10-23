@@ -505,10 +505,14 @@ def publish(root: Path, tag: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check-tag", action="store_true", help="validate tag/tree identity without publishing")
     parser.add_argument("tag")
     arguments = parser.parse_args(argv)
     try:
-        publish(Path.cwd().resolve(), arguments.tag)
+        if arguments.check_tag:
+            tag_identity(Path.cwd().resolve(), arguments.tag)
+        else:
+            publish(Path.cwd().resolve(), arguments.tag)
     except (
         PublishRefusal,
         OSError,
