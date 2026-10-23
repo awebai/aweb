@@ -377,8 +377,9 @@ class Containment:
                 actor={"authority_mode": "system", "attestations": []},
                 evidence_sha256=commitment,
             )
-            await self.fence.check(tx, admitted)
             await self._session_current(tx, session)
+            await self.fence.check(tx, admitted)
+            self._session_unexpired(session)
         try:
             await self.evict(admitted.installation_id, admitted.team_id, result.affected_secret_ids)
         except Exception:
