@@ -897,8 +897,8 @@ async def test_phase_b_contacts_only_requires_exact_active_contact(aweb_cloud_db
         """, envelope.target_current_did_key, envelope.target_did_aw, envelope.target_address, mode)
     if same_team:
         await manager.execute("""
-            INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode)
-            VALUES ('backend:beta.example', 'alice', $1, $2, $3, 'global', 'open')
+            INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode, did_aw_verified_key)
+            VALUES ('backend:beta.example', 'alice', $1, $2, $3, 'global', 'open', $1)
         """, envelope.sender_current_did_key, envelope.sender_did_aw, envelope.sender_address)
 
     async def deliver(current=envelope, **kwargs):
@@ -945,8 +945,8 @@ async def test_phase_b_contacts_only_requires_exact_active_contact(aweb_cloud_db
             VALUES ('after:beta.example', 'beta.example', 'After', 'did:key:team-after')
         """)
         recipient = dict(await manager.fetch_one("""
-            INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode)
-            VALUES ('after:beta.example', 'bob-after', $1, $2, $3, 'global', 'open') RETURNING *
+            INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode, did_aw_verified_key)
+            VALUES ('after:beta.example', 'bob-after', $1, $2, $3, 'global', 'open', $1) RETURNING *
         """, envelope.target_current_did_key, envelope.target_did_aw, envelope.target_address))
     assert await deliver() == accepted
 
@@ -978,8 +978,8 @@ async def test_identity_policy_share_locks_allow_opposite_team_deliveries(aweb_c
     bob, _ = await _seed_recipient_and_authority(manager, forward)
     await manager.execute("UPDATE {{tables.agents}} SET inbound_mode='team_and_contacts' WHERE agent_id=$1", bob["agent_id"])
     alice = dict(await manager.fetch_one("""
-        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode)
-        VALUES ('backend:beta.example', 'alice', $1, $2, $3, 'global', 'team_and_contacts')
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode, did_aw_verified_key)
+        VALUES ('backend:beta.example', 'alice', $1, $2, $3, 'global', 'team_and_contacts', $1)
         RETURNING *
     """, forward.sender_current_did_key, forward.sender_did_aw, forward.sender_address))
     reverse = forward.model_copy(update={
@@ -1000,7 +1000,8 @@ async def test_identity_policy_share_locks_allow_opposite_team_deliveries(aweb_c
 
 
 @pytest.mark.asyncio
-async def test_recipient_lock_reads_identity_from_current_storage(aweb_cloud_db):
+@pytest.mark.parametrize("marked", [True, False])
+async def test_recipient_lock_reads_identity_from_current_storage(aweb_cloud_db, marked):
     from aweb.federation.delivery import _lock_current_recipient
     manager = aweb_cloud_db.aweb_db
     envelope = _envelope()
@@ -1013,6 +1014,8 @@ async def test_recipient_lock_reads_identity_from_current_storage(aweb_cloud_db)
         INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, identity_scope, inbound_mode)
         VALUES ('second:beta.example', 'bob2', $1, $2, 'global', 'contacts_only')
     """, envelope.target_current_did_key, envelope.target_did_aw)
+    if not marked:
+        await manager.execute("UPDATE {{tables.agents}} SET did_aw_verified_key=NULL WHERE agent_id=$1", recipient["agent_id"])
     # A stored key-addressed route or minimal lookup result must still discover
     # the live recipient's global identity policy from storage.
     keyed = envelope.model_copy(update={"target_did_aw": envelope.target_current_did_key})

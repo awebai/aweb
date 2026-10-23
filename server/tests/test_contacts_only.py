@@ -12,6 +12,7 @@ from uuid import UUID
 
 import pytest
 
+from identity_binding_support import register_global_identity
 from test_cli_human_reply import _pem
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
@@ -42,12 +43,11 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
         await env.db.execute("UPDATE {{tables.agents}} SET team_id=$1 WHERE agent_id=$2", sender_team, sender.id)
         await env.db.execute("UPDATE {{tables.workspaces}} SET team_id=$1 WHERE workspace_id=$2", sender_team, sender.workspace)
 
-    async with registry_listener(env) as (registry, registry_origin):
+    async with registry_listener(env) as (_registry, registry_origin):
         identities = {}
         for name, actor, team in (("alice", sender, sender_team), ("bob", recipient, TEAM)):
-            registered = await registry.register_did(actor.did, actor.sk)
-            stable_id = registered.did_aw
             address = f"example.test/{name}"
+            stable_id = await register_global_identity(env, actor, address)
             identities[name] = stable_id
             await env.db.execute("""
                 UPDATE {{tables.agents}} SET identity_scope='global', did_aw=$1, address=$2
@@ -93,8 +93,8 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
                 VALUES ($1, 'example.test', $2, $3)
             """, team, name, env.team_did)
             await env.db.execute("""
-                INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode)
-                VALUES ($1, $2, $3, $4, 'example.test/bob', 'global', 'open')
+                INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode, did_aw_verified_key)
+                VALUES ($1, $2, $3, $4, 'example.test/bob', 'global', 'open', $3)
             """, team, name, recipient.did, identities["bob"])
 
         if multiple == "initial":
@@ -178,3 +178,103 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
             connected = await request(joined, joined_team, "POST", "/v1/connect", {"hostname": "policy-test", "workspace_path": str(tmp_path / "joined")})
             assert connected.status_code == 200, connected.text
             assert await env.db.fetch_value("SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id=$1", UUID(connected.json()["agent_id"])) == mode
+
+
+@pytest.mark.asyncio
+async def test_unmarked_global_recipient_keeps_strict_policy(privacy_app):
+    from aweb.messaging.messages import resolve_agent_by_did
+
+    env = privacy_app
+    sender, recipient = env.actors["alice"], env.actors["bob"]
+    sender_id = await register_global_identity(env, sender, "example.test/alice")
+    recipient_id = await register_global_identity(env, recipient, "example.test/bob")
+    sender.certificate = _encode_certificate(_make_certificate(
+        env.team_sk, env.team_did, sender.did, team_id=TEAM, alias="alice",
+        identity_scope="global", member_did_aw=sender_id, member_address="example.test/alice",
+    ))
+    await env.db.execute("""
+        UPDATE {{tables.agents}} SET identity_scope='global', did_aw=$1,
+            address='example.test/bob', inbound_mode='contacts_only', did_aw_verified_key=NULL
+        WHERE agent_id=$2
+    """, recipient_id, recipient.id)
+    projected = await resolve_agent_by_did(env.infra, recipient.did)
+    assert projected["did_aw"] is None
+    assert projected["policy_did_aw"] == recipient_id
+
+    async def send_both(expected):
+        for path, payload in (
+            ("/v1/messages", {"to_did": recipient.did, "subject": "raw policy", "body": "policy check"}),
+            ("/v1/chat/sessions", {"to_dids": [recipient.did], "message": "policy check"}),
+        ):
+            body = json.dumps(payload).encode()
+            headers = _signed_team_headers(sender.sk, sender.did, TEAM, sender.certificate, body)
+            response = await env.client.post(path, content=body, headers={**headers, "Content-Type": "application/json"})
+            assert response.status_code == expected, response.text
+            assert "migration required" not in response.text
+            if expected == 403:
+                assert "exact active contacts" in response.text
+
+    await send_both(403)
+    # Key-owned contacts remain valid without attributing an unverified global
+    # claim to this recipient. Raw policy facts never grant identity authority.
+    await env.db.execute("""
+        INSERT INTO {{tables.contacts}} (
+            owner_did, contact_address, contact_did_aw, binding_controller_did, binding_accepted_at, status
+        ) VALUES ($1, 'example.test/alice', $2, $3, clock_timestamp(), 'active')
+    """, recipient.did, sender_id, env.team_did)
+    await send_both(200)
+    assert await env.db.fetch_value("SELECT did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1", recipient.id) is None
+
+
+@pytest.mark.asyncio
+async def test_unverified_caller_cannot_change_another_identity_policy(privacy_app):
+    from test_messages_http import _make_keypair
+
+    env = privacy_app
+    attacker, recipient, sender = env.actors["carol"], env.actors["bob"], env.actors["alice"]
+    victim_id = await register_global_identity(env, recipient)
+    await env.db.execute("""
+        UPDATE {{tables.agents}} SET identity_scope='global', did_aw=$1,
+            inbound_mode='contacts_only', did_aw_verified_key=did_key WHERE agent_id=$2
+    """, victim_id, recipient.id)
+    controller_sk, _, controller_did = _make_keypair()
+    evil_team = "foreign:example.test"
+    await env.registry_db.execute("""
+        INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility)
+        VALUES ('example.test', 'foreign', $1, 'public')
+    """, controller_did)
+    forged = _encode_certificate(_make_certificate(
+        controller_sk, controller_did, attacker.did, team_id=evil_team, alias="mallory",
+        identity_scope="global", member_did_aw=victim_id, certificate_id="foreign-global-claim",
+    ))
+
+    async def request(actor, team, certificate, method, path, payload):
+        body = json.dumps(payload).encode()
+        headers = _signed_team_headers(actor.sk, actor.did, team, certificate, body)
+        return await env.client.request(method, path, content=body, headers={**headers, "Content-Type": "application/json"})
+
+    refused = await request(attacker, evil_team, forged, "POST", "/v1/connect", {})
+    assert refused.status_code == 403, refused.text
+    assert "identity_binding_mismatch" in refused.text
+    assert not await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.agents}} WHERE team_id=$1", evil_team)
+    # Reproduce a pre-existing unverified projection as well: blocking new
+    # connect alone must not let an old forged row authorize an all-row PATCH.
+    await env.db.execute("""
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'example.test', 'foreign', $2)
+    """, evil_team, controller_did)
+    await env.db.execute("""
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, identity_scope, inbound_mode)
+        VALUES ($1, 'mallory', $2, $3, 'global', 'open')
+    """, evil_team, attacker.did, victim_id)
+    refused = await request(attacker, evil_team, forged, "PATCH", "/v1/agents/me/inbound-mode", {"inbound_mode": "open"})
+    assert refused.status_code == 403, refused.text
+    assert "identity_binding_mismatch" in refused.text
+    assert await env.db.fetch_value("SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id=$1", recipient.id) == "contacts_only"
+    for path, payload in (
+        ("/v1/messages", {"to_did": recipient.did, "subject": "still strict", "body": "denied"}),
+        ("/v1/chat/sessions", {"to_dids": [recipient.did], "message": "denied"}),
+    ):
+        refused = await request(sender, TEAM, sender.certificate, "POST", path, payload)
+        assert refused.status_code == 403, refused.text
+        assert "exact active contacts" in refused.text

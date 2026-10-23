@@ -801,6 +801,8 @@ async def test_patch_my_inbound_mode_updates_global_agent_policy(aweb_cloud_db, 
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    from identity_binding_support import seed_verified_bindings
+    seed_verified_bindings(app, ("did:aw:alice", agent_did_key, ""))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.patch(
             "/v1/agents/me/inbound-mode",

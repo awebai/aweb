@@ -224,7 +224,7 @@ async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: lis
     rows = await aweb_db.fetch_all(
         """
         SELECT p.did, p.agent_id, p.alias, p.address AS participant_address, p.delivery_origin,
-               p.current_did_key, a.did_key, a.team_id,
+               p.current_did_key, a.did_key,
                CASE WHEN a.did_aw_verified_key=a.did_key THEN a.did_aw END AS did_aw,
                CASE WHEN a.did_aw_verified_key=a.did_key THEN a.address END AS address,
                a.identity_scope, (NULLIF(a.did_aw,'') IS NOT NULL) AS has_global_claim,

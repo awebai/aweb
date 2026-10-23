@@ -450,13 +450,13 @@ async def connect_agent(
             human_name=human_name,
         )
 
-        return {
-            "team_id": team_id,
-            "alias": alias,
-            "agent_id": agent_id,
-            "workspace_id": workspace_id,
-            "role": role,
-        }
+    return {
+        "team_id": team_id,
+        "alias": alias,
+        "agent_id": agent_id,
+        "workspace_id": workspace_id,
+        "role": role,
+    }
 
 
 # ---------------------------------------------------------------------------

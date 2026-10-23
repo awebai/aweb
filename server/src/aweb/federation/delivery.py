@@ -272,7 +272,7 @@ async def _lock_current_recipient(
     if row is None:
         raise FederationAuthorityError("recipient_identity_not_found")
     current = dict(row)
-    if str(current.get("did_aw") or "") != identity_did:
+    if str(current.get("policy_did_aw") or "") != identity_did:
         raise FederationAuthorityError("recipient_identity_not_found")
     if identity_mode is not None:
         current["inbound_mode"] = identity_mode
