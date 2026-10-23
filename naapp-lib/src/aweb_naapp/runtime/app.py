@@ -32,6 +32,7 @@ import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+import hashlib
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -63,7 +64,7 @@ from aweb_naapp.manifest import (
 )
 from aweb_naapp.outbox import outbox_status, run_drain
 from aweb_naapp.robots import robots_txt
-from aweb_naapp.runtime.app_credentials import HOOK_RESOLVE, AppCredentialSigner
+from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKeyError, declared_did_keys, load_app_key
 from aweb_naapp.runtime.attestation import (
     AttestationRefused,
@@ -98,6 +99,7 @@ from aweb_naapp.runtime.team_auth import (
     record_observed_principal,
 )
 from aweb_naapp.runtime.team_server import TeamServerDirectory
+from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
 from aweb_naapp.skills import Skills
 
 if TYPE_CHECKING:
@@ -182,6 +184,16 @@ class NaappRuntime:
         self._team_server_directory = TeamServerDirectory(
             team_cache=self._team_cache, transport=awid_transport,
         )
+        self._installation_grants = None
+        if self.manifest.app_keys_for(APP_GRANT_READ):
+            key = load_app_key(settings, self.manifest, APP_GRANT_READ)
+            self._installation_grants = TeamGrantSource(
+                identity=AppIdentity(app_id=self.manifest.app_id,
+                    origin=self.manifest.document["app"]["origin"],
+                    digest="sha256:" + hashlib.sha256(self.manifest_bytes).hexdigest()),
+                signer=AppCredentialSigner(app_id=self.manifest.app_id, key=key, purpose=APP_GRANT_READ),
+                discovery=self.team_server_directory(), transport=team_server_transport,
+            )
         hook_key = (
             load_app_key(settings, self._manifest, HOOK_RESOLVE)
             if self._manifest.app_keys_for(HOOK_RESOLVE) else None
@@ -320,6 +332,16 @@ class NaappRuntime:
         records through the configured AWID transport.
         """
         return self._team_server_directory
+
+    def installation_grants(self) -> TeamGrantSource:
+        """The process's one G1 source/cache for its exact served manifest.
+
+        Member tools, presentation/session fences and records consume this same
+        object. A key for another purpose never substitutes for grant-read.
+        """
+        if self._installation_grants is None:
+            raise AppKeyError("manifest declares no app-grant-read key")
+        return self._installation_grants
 
     def hook_resolver(self) -> HookResolver:
         """The shared resolver, signing with the hook-resolve key loaded at startup.

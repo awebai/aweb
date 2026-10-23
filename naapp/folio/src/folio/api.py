@@ -93,6 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app = FastAPI(title="folio", version="0.1.0", lifespan=runtime.lifespan)
     app.add_middleware(PresentationPrivacy)
+    app.state.folio_runtime = runtime
 
     def db() -> AsyncDatabaseManager:
         return runtime.db()
