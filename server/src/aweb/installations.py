@@ -14,6 +14,7 @@ from aweb.app_registry import (
     get_installation_on,
     manifest_registration,
     next_installation_generation_on,
+    normalize_app_id,
     normalize_scopes,
     validate_team_id,
 )
