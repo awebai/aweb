@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"path/filepath"
@@ -380,5 +381,112 @@ func TestLiveTeamRosterFallbackIgnoresQualifiedTargets(t *testing.T) {
 	}
 	if found || strings.TrimSpace(target.Address) != "" {
 		t.Fatalf("qualified target should not be resolved as alias: found=%v target=%+v", found, target)
+	}
+}
+
+// Humans are intentionally absent from /v1/agents, but remain members of the
+// active team's live registry roster. A member name is not a global address.
+func TestMailSendAliasReachesActiveTeamMembers(t *testing.T) {
+	t.Setenv("AWEB_IDENTITY_HOME", "")
+	t.Setenv("AW_NO_UPDATE_CHECK", "1")
+	resetMailSendGlobalsForLiveRosterTest(t)
+	oldNewConversation := mailSendNewConversation
+	t.Cleanup(func() { mailSendNewConversation = oldNewConversation })
+	for _, tc := range []struct {
+		name, kind, address, scope string
+		fresh                      bool
+	}{
+		{name: "addressless human", kind: "human", scope: awid.IdentityModeGlobal},
+		{name: "addressless human fresh conversation", kind: "human", scope: awid.IdentityModeGlobal, fresh: true},
+		{name: "addressed human", kind: "human", scope: awid.IdentityModeGlobal, address: "demo/juan"},
+		{name: "addressless agent", kind: "agent", scope: awid.IdentityModeGlobal},
+		{name: "addressed agent", kind: "agent", scope: awid.IdentityModeGlobal, address: "demo/juan"},
+		{name: "local human", kind: "human", scope: awid.IdentityModeLocal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			selfPub, selfKey, _ := ed25519.GenerateKey(nil)
+			memberPub, _, _ := ed25519.GenerateKey(nil)
+			selfDID, memberDID := awid.ComputeDIDKey(selfPub), awid.ComputeDIDKey(memberPub)
+			memberStable := ""
+			if tc.scope == awid.IdentityModeGlobal {
+				memberStable = awid.ComputeStableID(memberPub)
+			}
+			var sent []awid.SendMessageRequest
+			rosterReads := 0
+			api := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/v1/agents":
+					var agents []awid.AgentView
+					if tc.kind == "agent" {
+						agents = []awid.AgentView{{AgentID: "juan-agent", Alias: "juan", AgentType: tc.kind, DIDKey: memberDID, DIDAW: memberStable, Address: tc.address, IdentityScope: tc.scope}}
+					}
+					_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{TeamID: "backend:demo", Agents: agents})
+				case "/v1/conversations":
+					_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
+				case "/v1/messages":
+					cert, err := awid.DecodeTeamCertificateHeader(r.Header.Get("X-AWID-Team-Certificate"))
+					if err != nil || cert.Team != "backend:demo" || cert.MemberDIDKey != selfDID {
+						t.Errorf("mail lost active-team authentication: cert=%+v err=%v", cert, err)
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
+					var req awid.SendMessageRequest
+					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+						t.Error(err)
+						w.WriteHeader(400)
+						return
+					}
+					sent = append(sent, req)
+					_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: req.MessageID, ConversationID: req.ConversationID, Status: "delivered"})
+				default:
+					t.Errorf("unexpected team API request %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			registry := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/namespaces/demo/teams/backend/members/juan" {
+					t.Errorf("team alias escaped into global first-contact resolution: %s", r.URL.Path)
+					http.NotFound(w, r)
+					return
+				}
+				rosterReads++
+				_ = json.NewEncoder(w).Encode(awid.TeamMemberReference{TeamID: "backend:demo", CertificateID: "juan-membership", Alias: "juan", MemberDIDKey: memberDID, MemberDIDAW: memberStable, MemberAddress: tc.address, IdentityScope: tc.scope})
+			}))
+			writeSelectionFixtureForTest(t, root, testSelectionFixture{AwebURL: api.URL, TeamID: "backend:demo", Alias: "ada", WorkspaceID: "ada-workspace", DID: selfDID, StableID: awid.ComputeStableID(selfPub), Address: "demo/ada", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: registry.URL, SigningKey: selfKey})
+			mailSendTo, mailSendSubject, mailSendBody = "juan", "team mail", "hello human or agent"
+			mailSendNewConversation = tc.fresh
+			cmd := &cobra.Command{}
+			cmd.Flags().Bool("e2ee", false, "")
+			if err := mailSendCmd.RunE(cmd, nil); err != nil {
+				t.Fatalf("active-team %s alias send failed: %v", tc.kind, err)
+			}
+			if len(sent) != 1 {
+				t.Fatalf("mail posts=%d want1", len(sent))
+			}
+			req := sent[0]
+			if req.NewConversation != tc.fresh {
+				t.Fatalf("new_conversation=%v want%v", req.NewConversation, tc.fresh)
+			}
+			if tc.kind == "human" {
+				if rosterReads != 1 || req.ToDID != memberDID || req.ToStableID != memberStable || req.ToAddress != "" {
+					t.Fatalf("live team recipient binding lost: roster=%d request=%+v", rosterReads, req)
+				}
+			} else if req.ToAlias != "juan" {
+				t.Fatalf("agent lost team alias route: %+v", req)
+			}
+			sig, err := base64.RawStdEncoding.DecodeString(req.Signature)
+			if err != nil || !ed25519.Verify(selfPub, []byte(req.SignedPayload), sig) {
+				t.Fatal("invalid message signature")
+			}
+			var signed awid.MessageEnvelope
+			if err := json.Unmarshal([]byte(req.SignedPayload), &signed); err != nil {
+				t.Fatal(err)
+			}
+			if signed.ToDID != req.ToDID || signed.ToStableID != req.ToStableID || signed.Body != "hello human or agent" {
+				t.Fatalf("signed binding/body differ from delivery: %+v", signed)
+			}
+		})
 	}
 }
