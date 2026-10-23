@@ -332,6 +332,13 @@ its registered keys from manifest bytes that hash to the pinned digest. That
 is acgh.7's key-registration fix, built after step 1 of aweb-acgh.8 (today's
 install-time app keys are global and installer-controlled).
 
+A registration for `post-mutation-hook` additionally requires a currently
+valid configured core signer at activation. The explicit
+[signer-readiness correction](../hook-signer-unavailable.md#authority-and-failure-policy)
+returns `409 core_hook_producer_unconfigured` without consuming the nonce or
+activating the row. It does not change controller authority, other binding
+kinds or the optional terminal-receipt purpose.
+
 **Binding state.** Install or update creates each declared binding as `pending`.
 An owner act moves it to `active`. Revocation, uninstall or a new generation
 moves it to `revoked`/`superseded`. A new generation never inherits activation,
@@ -507,13 +514,17 @@ result_status, per-hook fields):
   "stable per effect" property of hooks-spec §4.
 - **`producer.kind`** is `core`, `app` (with `app_id`, `installation_id`,
   `generation`) or `client` (the member's `did_key` and `certificate_id`).
-  `producer.seq` is a gap-free counter per **(producer, team, hook)**,
-  assigned in the effecting transaction, so a consumer can prove completeness
-  per producer for each hook it is bound to. A per-producer counter would
+  `producer.seq` is a counter per **(producer, team, hook)**,
+  assigned in the effecting transaction, so a consumer can check observed
+  sequence continuity per producer for each hook it is bound to. A per-producer counter would
   report legitimate gaps to consumers bound to a subset of hooks. It is
   required for server producers (recommendation; it costs one counter-row
-  lock per producing transaction). `verify` judges gaps only inside the
-  binding's active intervals.
+  lock per producing transaction). Ordinary enqueue is gap-free. An
+  unavailable core signer reserves an owed firing's sequence with a typed local
+  [missing-production record](../hook-signer-unavailable.md); no unsigned event
+  is sent. Later authenticated evidence can expose an unexplained hole, while
+  an absent trailing event alone cannot prove loss remotely. `verify` judges
+  gaps only inside the binding's active intervals.
 - **Client events name their signer as actor.** For `producer.kind: client`,
   `actor.did_key` and `actor.certificate_id` must equal the producer's. Member
   A therefore cannot file agent-reported events attributed to member B.
@@ -621,11 +632,14 @@ infrastructure, not an audit store (hooks-spec §7).
   targets (for example, hosted to self-hosted) therefore follows a fixed
   order: activate the new target, wait for its `active_from`, then revoke the
   old one (§B7).
-- *Core* (`post-mutation-hook`): the event row shares the mutation's
-  transaction, so the two commit together or not at all. Core enqueues only
-  when its fresh view shows an active registration. Requiring a target before
-  every core mutation would make all coordination depend on logs being
-  installed, so it is not required (recommendation).
+- *Core* (`post-mutation-hook`): with a valid signer, its signed event and
+  mutation share a transaction. When the signer is unavailable, a typed local
+  [missing-production reservation](../hook-signer-unavailable.md) and mutation
+  commit together instead; containment remains effective and an unrecorded
+  terminal obligation remains surfaced. A fresh view must show an eligible
+  active registration for an ordinary event to be owed. Core requires no target
+  before a mutation. Operator diagnostics and conservative remote gap reporting
+  follow that correction; they never supply unsigned delivery or completion.
 - **Delivery is at least once. One logical firing is one `event_id`.** No
   exactly-once network claim is made. Consumers dedup on `(team_id, event_id)`.
 

@@ -38,6 +38,12 @@ terminal materialization and transport. Core has no second outbox or custom
 network sender. Any schema additions are new ordered kit migrations, applied
 to core through the kit's migration module.
 
+The signed path below requires a usable core signer. If it is unavailable,
+the [signer-loss correction](hook-signer-unavailable.md#terminal-obligations)
+keeps the end, old target and local accounting durable with a sequence
+reservation and an outstanding terminal obligation. Its local cancellation
+counts do not become receiver-verifiable explanations without signed evidence.
+
 Under a per-producer/team/binding fence shared with enqueue and materialization:
 
 1. Preserve the old registration's identity, installed digest, resolved tool
@@ -159,7 +165,12 @@ envelope's team and producer equal the capsule's team and issuer. The event
 has `result_status=success`; its reason equals the capsule's reason. The
 event's owner-act commitment remains required for an owner-act revocation.
 
-The core key that signs the event signs the capsule in the same transaction.
+With a valid signer, the core key that signs the event signs the capsule in
+the same transaction. If the signer is unavailable at the end, the
+[signer-unavailable correction](hook-signer-unavailable.md#terminal-obligations)
+commits containment and a durable outstanding terminal obligation instead.
+No unsigned reservation or later ordinary event can stand in for this event,
+capsule or receiver completion.
 The capsule is never rebuilt on retry or after an install changes. Persist
 its bytes and signature with the terminal target. It is authority only for
 the committed old-binding transition and the committed event hash, not a

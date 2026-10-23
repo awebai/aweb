@@ -732,6 +732,10 @@ installation and its generation.
   pinned-manifest purpose authorizes only the target's signed completion
   evidence. Missing key authority leaves terminal completion outstanding;
   it neither refuses ordinary activation nor delays ending the binding.
+  A registration for `post-mutation-hook` also follows the separate
+  [core-signer readiness rule](hook-signer-unavailable.md#authority-and-failure-policy):
+  no currently valid core signer gives `409 core_hook_producer_unconfigured`
+  without consuming the nonce or activating the row.
 - **A new generation supersedes.** Every binding of the old generation becomes
   `superseded`, and the new generation's bindings start `pending`. Activation is
   never inherited, however similar the new bytes are.
@@ -872,9 +876,16 @@ must not wait. Revocation can still race the drain, so an audit-critical event
 whose deliveries all end `cancelled` or `rejected` is a **surfaced fault**: the
 owner learns that an effect happened with no surviving audit record.
 
-`post-mutation-hook` is not audit-critical. Core enqueues it in the mutation's
-transaction whenever its fresh view shows an active registration, and never
-refuses a mutation for want of one.
+`post-mutation-hook` is not audit-critical. With a valid core signer, core
+signs/enqueues its owed event in the mutation's transaction whenever its fresh
+view shows an eligible active registration. It never requires a target before
+a mutation. If the signer is unavailable, the mutation and a typed local
+[missing-production sequence reservation](hook-signer-unavailable.md) commit
+together. A later authenticated higher sequence can expose an unexplained
+hole; an absent trailing event alone cannot prove loss remotely. No unsigned
+event or fabricated terminal completion is delivered. The separate registration
+readiness refusal, terminal obligation and operator diagnostics are specified
+in that correction.
 
 ## Event envelope
 
@@ -941,7 +952,11 @@ describe.
   - `client`: `did_key` and `certificate_id`, with no `seq`, because a client's
     events are bypassable and their gaps prove nothing.
 
-  `seq` counts the producer's events per team and hook, without gaps, from 1.
+  `seq` counts the producer's logical firings per team and hook from 1.
+  An unavailable core signer reserves an owed firing's sequence under the
+  [missing-production rule](hook-signer-unavailable.md); no signed event is
+  emitted for that number, so authenticated later evidence can expose a gap.
+  Other producers' ordinary gap-free enqueue semantics are unchanged.
 - `actor` always carries `authority_mode` (`team_cert`, `identity_grant`,
   `app_key`, `link_capability`, `owner_act` or `system`) and `attestations`.
   - Every authority but `system` names the actor's `did_key`, and may add
