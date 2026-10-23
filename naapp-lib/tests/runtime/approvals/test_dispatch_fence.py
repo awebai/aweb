@@ -22,6 +22,7 @@ class DatabaseAuthority:
         self.world = world
         self.after_read = None
         self.min_assurance = Assurance.PASSKEY
+        self.prepared_batches = []
 
     async def create(self):
         await self.world.store.db.execute(
@@ -33,6 +34,7 @@ class DatabaseAuthority:
         )
 
     async def prepare(self, tx, approvals):
+        self.prepared_batches.append(tuple(a.approval_id for a in approvals))
         await tx.fetch_all(
             "SELECT * FROM {{tables.dispatch_authority}} WHERE policy_ref = ANY($1::text[]) "
             "ORDER BY policy_ref FOR SHARE",
@@ -59,8 +61,9 @@ class DatabaseAuthority:
         )
 
 
-async def admitted(world, request=REQUEST):
-    approval = await approved(world, request)
+async def admitted(world, request=REQUEST, policy_ref="send-charge"):
+    _, pending = await mint(world, request, policy_ref=policy_ref)
+    approval = await decide(world, pending)
     result = await world.approvals.admit(approval.approval_id, request, "op-1")
     assert result.may_send
     return approval
@@ -333,14 +336,25 @@ async def test_final_check_acquires_no_new_locks_and_does_not_write(world):
         assert await rows(world, tx) == before
 
 
-async def test_batch_prepares_whole_authority_union_before_b2_rows_and_requests(world):
+@pytest.mark.parametrize("blocked", ["authority_union", "row_union"])
+async def test_batch_prepares_whole_authority_union_before_b2_rows_and_requests(world, blocked):
     from aweb_naapp.runtime.approvals import DispatchBinding
 
-    first = await admitted(world)
+    world.policies.set(policy(policy_ref="send-charge-a"))
+    world.policies.set(policy(policy_ref="send-charge-z"))
+    first = await admitted(world, policy_ref="send-charge-a")
     other_request = {**REQUEST, "source_version": 2}
-    second = await admitted(world, other_request)
+    second = await admitted(world, other_request, policy_ref="send-charge-z")
     source = await authority(world)
     db = world.store.db
+    await db.executemany(
+        "INSERT INTO {{tables.dispatch_authority}} VALUES ($1,1,true)",
+        [(first.policy_ref,), (second.policy_ref,)],
+    )
+    items = [(first, REQUEST), (second, other_request)]
+    if blocked == "row_union":
+        # Block the later approval in the promised sorted B2 row order.
+        items.sort(key=lambda item: item[0].approval_id)
     started = asyncio.get_running_loop().create_future()
     ready = asyncio.Event()
     release = asyncio.Event()
@@ -350,10 +364,7 @@ async def test_batch_prepares_whole_authority_union_before_b2_rows_and_requests(
             started.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
             prepared = await world.approvals.prepare_dispatches(
                 tx,
-                [
-                    DispatchBinding(second.approval_id, other_request, "op-1"),
-                    DispatchBinding(first.approval_id, REQUEST, "op-1"),
-                ],
+                [DispatchBinding(a.approval_id, request, "op-1") for a, request in items],
                 authority=source,
             )
             ready.set()
@@ -365,7 +376,19 @@ async def test_batch_prepares_whole_authority_union_before_b2_rows_and_requests(
     try:
         async with db.transaction() as holder:
             blocker = await holder.fetch_value("SELECT pg_backend_pid()")
-            await holder.fetch_all("SELECT * FROM {{tables.dispatch_authority}} FOR UPDATE")
+            if blocked == "authority_union":
+                # Distinct authority rows: the first can be prepared immediately,
+                # but the later one blocks the complete authority batch.
+                await holder.fetch_value(
+                    "SELECT policy_ref FROM {{tables.dispatch_authority}} "
+                    "WHERE policy_ref=$1 FOR UPDATE",
+                    second.policy_ref,
+                )
+            else:
+                await holder.fetch_value(
+                    "SELECT approval_id FROM {{tables.approvals}} WHERE approval_id=$1 FOR UPDATE",
+                    items[-1][0].approval_id,
+                )
             task = asyncio.create_task(worker())
             pid = await asyncio.wait_for(started, 5)
             async with asyncio.timeout(5):
@@ -373,16 +396,33 @@ async def test_batch_prepares_whole_authority_union_before_b2_rows_and_requests(
                     if task.done():
                         await task
                     await asyncio.sleep(0.01)
-            # Authority prepare is blocked: not one B2 row/request may yet be held.
+            # The real SQL adapter must see the complete union in ONE invocation.
+            assert len(source.prepared_batches) == 1
+            assert set(source.prepared_batches[0]) == {first.approval_id, second.approval_id}
+            if blocked == "authority_union":
+                # Even the earlier item's B2 row stays free while later authority blocks.
+                for a in (first, second):
+                    async with db.transaction() as observer:
+                        assert (
+                            await observer.fetch_value(
+                                "SELECT approval_id FROM {{tables.approvals}} "
+                                "WHERE approval_id=$1 FOR UPDATE NOWAIT",
+                                a.approval_id,
+                            )
+                            == a.approval_id
+                        )
+            else:
+                # The earlier row is held before waiting for the later row;
+                # neither request advisory lock may have been acquired yet.
+                with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+                    async with db.transaction() as observer:
+                        await observer.fetch_value(
+                            "SELECT approval_id FROM {{tables.approvals}} "
+                            "WHERE approval_id=$1 FOR UPDATE NOWAIT",
+                            items[0][0].approval_id,
+                        )
             for a in (first, second):
                 async with db.transaction() as observer:
-                    assert (
-                        await observer.fetch_value(
-                            "SELECT approval_id FROM {{tables.approvals}} WHERE approval_id=$1 FOR UPDATE NOWAIT",
-                            a.approval_id,
-                        )
-                        == a.approval_id
-                    )
                     assert await observer.fetch_value(
                         "SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))",
                         "aweb_naapp_approvals:" + a.request_sha256,
