@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
 import pytest
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.db import NaappDatabase
+from aweb_naapp.runtime.installation import apply_installation_migrations
 from aweb_naapp.runtime.team_auth import MembershipProof, Principal
 
 from folio.api import create_app
@@ -31,6 +33,18 @@ async def present_world(test_db_factory, monkeypatch):
         now = time.monotonic()
         return MembershipProof(team_id, certificate_id, team_did_key, now, now + 60)
     monkeypatch.setattr(NaappRuntime, "check_current_member", current)
+    class TestGrants:
+        state = "active"
+        installation_id = "test-installation"
+        generation = 1
+        installed_at = datetime.now(UTC) - timedelta(days=1)
+        async def status_for(self, team_id):
+            return SimpleNamespace(team_id=team_id, app_id="folio", state=self.state,
+                installation_id=self.installation_id, generation=self.generation,
+                installed_at=self.installed_at, granted_scopes=frozenset({"folio:read", "folio:write"}),
+                fresh_until=time.monotonic()+60)
+    grants = TestGrants()
+    monkeypatch.setattr(NaappRuntime, "installation_grants", lambda self: grants)
     database = await test_db_factory.create_db(suffix="folio_present")
     settings = Settings(
         _env_file=None,
@@ -43,6 +57,7 @@ async def present_world(test_db_factory, monkeypatch):
         settings,
         module_name="folio",
         migrations_path=Path(__file__).resolve().parents[1] / "src/folio/migrations",
+        stores=(apply_installation_migrations,),
     )
     await storage.connect()
     try:
@@ -72,7 +87,10 @@ async def present_world(test_db_factory, monkeypatch):
             OWNER.alias,
             OWNER.certificate_id,
         )
+        # All runtime instances in this fixture use the same real migrated DB.
+        monkeypatch.setattr(NaappRuntime, "db", lambda self: db)
         app = create_app(settings)
+        app.state.test_grants = grants
         # Inject the real, independently migrated database. Everything after this
         # dependency (SQL, CAS, serialization, HTML/JS, headers) is production code.
         for route in app.routes:
@@ -89,6 +107,7 @@ async def mint(world, *, editable=True, ttl_seconds=None):
     _, db, settings = world
     return await mint_presentation_link(
         db,
+        installation_id="test-installation",
         principal=OWNER,
         settings=settings,
         slug="draft",

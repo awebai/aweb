@@ -32,7 +32,6 @@ import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-import hashlib
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -89,6 +88,7 @@ from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.hook_resolver import HookResolver
 from aweb_naapp.runtime.hooks import RuntimeHooks
+from aweb_naapp.runtime.installation import InstallationFence
 from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
@@ -98,8 +98,8 @@ from aweb_naapp.runtime.team_auth import (
     authenticate_request,
     record_observed_principal,
 )
-from aweb_naapp.runtime.team_server import TeamServerDirectory
 from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
+from aweb_naapp.runtime.team_server import TeamServerDirectory
 from aweb_naapp.skills import Skills
 
 if TYPE_CHECKING:
@@ -184,6 +184,7 @@ class NaappRuntime:
         self._team_server_directory = TeamServerDirectory(
             team_cache=self._team_cache, transport=awid_transport,
         )
+        self._installation_fence: InstallationFence | None = None
         self._installation_grants = None
         if self.manifest.app_keys_for(APP_GRANT_READ):
             key = load_app_key(settings, self.manifest, APP_GRANT_READ)
@@ -277,6 +278,7 @@ class NaappRuntime:
             if drains:
                 await asyncio.gather(*drains)
             await client.aclose()
+            self._installation_fence = None
             self._database = None
             self._attestation_records = None
             await database.disconnect()
@@ -342,6 +344,18 @@ class NaappRuntime:
         if self._installation_grants is None:
             raise AppKeyError("manifest declares no app-grant-read key")
         return self._installation_grants
+
+    def installation_fence(self) -> InstallationFence:
+        """One shared SQL fence over this runtime's G1 source and database.
+
+        Apps opting in apply the shared installation store before their own
+        migrations. No app creates another copy of this authority protocol.
+        """
+        if self._installation_fence is None:
+            self._installation_fence = InstallationFence(
+                self.db(), app_id=self.manifest.app_id, grants=self.installation_grants(),
+            )
+        return self._installation_fence
 
     def hook_resolver(self) -> HookResolver:
         """The shared resolver, signing with the hook-resolve key loaded at startup.

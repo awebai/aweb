@@ -242,6 +242,7 @@ async def list_versions(db: AsyncDatabaseManager, *, principal: Principal, slug:
 async def mint_presentation_link(
     db: AsyncDatabaseManager,
     *,
+    installation_id: str,
     principal: Principal,
     settings: Settings,
     slug: str,
@@ -297,8 +298,8 @@ async def mint_presentation_link(
         """
         INSERT INTO {{tables.presentation_links}}
           (token, document_id, version_number, expires_at, created_by_did_key,
-           created_by_did_aw, created_by_alias, certificate_id, editable, opener_sha256, creator_team_did_key)
-        VALUES ($1, $2, $3, NOW() + $4::integer * interval '1 second', $5, $6, $7, $8, $9, $10, $11)
+           created_by_did_aw, created_by_alias, certificate_id, editable, opener_sha256, creator_team_did_key, installation_id)
+        VALUES ($1, $2, $3, NOW() + $4::integer * interval '1 second', $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING expires_at
         """,
         token,
@@ -312,6 +313,7 @@ async def mint_presentation_link(
         editable,
         hashlib.sha256(opener.encode()).digest() if opener else None,
         principal.team_did_key,
+        installation_id,
     )
     assert minted is not None
     return {

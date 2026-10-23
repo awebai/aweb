@@ -246,3 +246,28 @@ reapproval and a fresh grant are required for the replacement.
 The uninstall server/CLI change and Folio's tool, presentation and edit-session
 installation fence land in the same train and ship in the same release. The
 combined real-stack uninstall proof must pass before that train can land.
+
+
+Folio consumes `NaappRuntime.installation_grants()` and its shared SQL
+`installation_fence()` for member tools, read-only presentations and edit
+sessions. These surfaces fail closed when the installation is inactive or its
+pin cannot authenticate app-grant-read. Existing presentations and sessions
+remain usable across a re-pin of the same installation ID; a replacement ID
+never revives them. New links and sessions persist the current installation ID.
+
+Folio migration 003 adds nullable installation IDs without network access.
+A legacy row binds on its first verified, fresh, active grant observation only
+when the installation's `installed_at` is strictly earlier than the row's
+`created_at`. This preserves a pre-deploy capability created under the still
+current installation. An older row, including equality, is refused permanently;
+that refusal is committed and never retried against another installation.
+This rule assumes comparable clocks across the server and Folio databases;
+clock skew between those databases is a theoretical boundary of the rule.
+
+Deploy the server carrying the creation-time grant field first, then Folio with
+its required purpose-bound app-grant-read key, then re-pin every Folio
+installation to the new manifest digest. Until the re-pin, the old pin refuses
+G1 and Folio denies access. The manifest/key transition is shared with records;
+records uses the same runtime grant source and fence. There is no second cache
+or deployment-manifest fallback. A cached inactive observation may also deny a
+fresh reinstall until the advertised grant-status freshness window expires.

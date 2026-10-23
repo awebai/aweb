@@ -4,7 +4,9 @@ from typing import Annotated
 from uuid import UUID
 
 from aweb_naapp.runtime.app import NOINDEX_ROBOTS_HEADER, NaappRuntime, mount_naapp_routes
-from aweb_naapp.runtime.team_auth import Principal, record_observed_principal
+from aweb_naapp.runtime.authorization import Authorization
+from aweb_naapp.runtime.installation import InstallationRefused, apply_installation_migrations
+from aweb_naapp.runtime.team_auth import Principal
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from pgdbm import AsyncDatabaseManager
@@ -13,6 +15,7 @@ from folio import edit_sessions
 from folio.aweb_manifest import MANIFEST_PATH
 from folio.cloudflare_stream import stream_iframe_url
 from folio.config import Settings, get_settings
+from folio.installation_access import presented_document
 from folio.models import (
     AppendTemplateVersionRequest,
     AssetMetadataResponse,
@@ -55,7 +58,6 @@ from folio.repository import (
     get_asset_metadata,
     get_billing_status,
     get_document,
-    get_presented_document,
     get_public_asset,
     get_theme,
     list_documents,
@@ -90,6 +92,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         module_name="folio",
         migrations_path=_MIGRATIONS_DIR,
         manifest_path=MANIFEST_PATH,
+        stores=(apply_installation_migrations,),
     )
     app = FastAPI(title="folio", version="0.1.0", lifespan=runtime.lifespan)
     app.add_middleware(PresentationPrivacy)
@@ -98,12 +101,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def db() -> AsyncDatabaseManager:
         return runtime.db()
 
-    async def principal(request: Request) -> Principal:
-        # The team member who signed the request, recorded as observed. Every
-        # document, link, asset and theme is scoped to its certificate's team.
-        member = await runtime.principal(request)
-        await record_observed_principal(runtime.db(), member)
-        return member
+    # Folio's domain policy admits current members; the shared guard separately
+    # enforces exact manifest tools, invocation contexts and installed scopes.
+    async def member_policy(request, member, tool):
+        return True
+
+    member_authorized = runtime.authorized(grants=runtime.installation_grants(), policy=member_policy)
+
+    async def principal(request: Request, authorization: Annotated[Authorization, Depends(member_authorized)]) -> Principal:
+        try:
+            permit = await runtime.installation_fence().permit(authorization.principal.team_id)
+            if (authorization.grant.installation_id, authorization.grant.generation) != (permit.admitted.installation_id, permit.admitted.generation):
+                raise InstallationRefused("generation_superseded", 409, "Installation changed during admission")
+            async with runtime.db().transaction() as tx:
+                await permit.check(tx)
+        except InstallationRefused as error:
+            raise HTTPException(error.status, detail={"code": error.code}) from None
+        request.state.folio_installation = permit
+        return authorization.principal
 
     async def landing() -> str:
         return render_landing_page(public_origin=resolved.public_origin)
@@ -206,12 +221,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/present", response_model=PresentationResponse)
     async def create_presentation_route(
+        request: Request,
         payload: CreatePresentationRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         return await mint_presentation_link(
             database,
+            installation_id=request.state.folio_installation.admitted.installation_id,
             principal=actor,
             settings=resolved,
             slug=payload.slug,
@@ -399,7 +416,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         token: str,
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> HTMLResponse:
-        presented = await get_presented_document(database, token=token)
+        presented = await presented_document(database, runtime=runtime, token=token)
         theme = presented.get("theme")
         if isinstance(theme, dict) and theme.get("logo_asset_id") is not None:
             theme["logo_url"] = f"{resolved.public_origin.rstrip('/')}/assets/{theme['logo_asset_id']}"

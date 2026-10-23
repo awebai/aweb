@@ -66,6 +66,24 @@ def prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_t
 
 def _prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_team,
                      cache, origin, grant, status, mint, tool, old_target, minted):
+    def sql(query):
+        return run(compose + ['exec', '-T', 'postgres', 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'aweb', '-d', 'library', '-Atc', query]).strip()
+
+    def legacy(link, *, session=False):
+        # Simulate a pre-003 capability row, not an installation or grant.
+        token = link['token']
+        sql("UPDATE public.presentation_links SET installation_id=NULL WHERE token='" + token + "'")
+        if session:
+            sql("UPDATE public.edit_sessions SET installation_id=NULL WHERE link_id='" + token + "'")
+
+    def open_editor(link):
+        parts = urllib.parse.urlsplit(link['url'])
+        editor = parts._replace(fragment='').geturl()
+        code, raw = status(editor + '/session', {'Content-Type': 'application/json'},
+                           json.dumps({'opener': urllib.parse.parse_qs(parts.fragment)['k'][0]}).encode())
+        assert code == 200, (code, raw)
+        return editor, {'X-Folio-Edit-Session': json.loads(raw)['session_secret']}
+
     first = get('alice', '/v1/apps/folio/installation?team_id=' + team)
     peer = get('carol', '/v1/apps/folio/installation?team_id=' + other_team)
     active = grant()
@@ -74,13 +92,28 @@ def _prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_
     readonly = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'ttl_seconds': 600})
     link_started = time.monotonic()
     editable = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'editable': True, 'ttl_seconds': 300})
-    parts = urllib.parse.urlsplit(editable['url'])
-    editor = parts._replace(fragment='').geturl()
-    code, raw = status(editor + '/session', {'Content-Type': 'application/json'},
-                       json.dumps({'opener': urllib.parse.parse_qs(parts.fragment)['k'][0]}).encode())
-    assert code == 200, code
-    session = {'X-Folio-Edit-Session': json.loads(raw)['session_secret']}
+    editor, session = open_editor(editable)
+    legacy(readonly)
+    legacy(editable, session=True)
     assert status(readonly['url'])[0] == status(editor + '/state', session)[0] == 200
+    assert sql("SELECT count(*) FROM public.presentation_links WHERE token IN ('" + readonly['token'] + "','" + editable['token'] + "') AND installation_id='" + first['installation_id'] + "'") == '2'
+    assert sql("SELECT installation_id FROM public.edit_sessions WHERE link_id='" + editable['token'] + "'") == first['installation_id']
+    # An identical fetched pin still advances the generation and keeps the ID.
+    repin = data('alice', 'id', 'request', 'POST', 'http://127.0.0.1:38000/v1/apps/install', '--team-auth', '--raw',
+                 '--header', 'Content-Type: application/json', '--body', json.dumps({
+                     'app_id': 'folio', 'origin': origin, 'digest': first['digest'],
+                     'granted_scopes': active['granted_scopes'], 'expected_generation': first['generation']}))
+    assert repin['installation_id'] == first['installation_id'] and repin['generation'] > first['generation']
+    assert grant()['installed_at'] == active['installed_at']
+    first = get('alice', '/v1/apps/folio/installation?team_id=' + team)
+    assert tool('uninstall-old-grant', old_target).returncode == 0
+    assert status(readonly['url'])[0] == status(editor + '/state', session)[0] == 200
+    stale_legacy = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'ttl_seconds': 600})
+    stale_editable = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'editable': True, 'ttl_seconds': 300})
+    stale_editor, stale_session = open_editor(stale_editable)
+    legacy(stale_legacy)
+    legacy(stale_editable, session=True)
+    print('PASS pre-deploy legacy links/sessions adopt their older installation; a re-pin preserves them and the old grant', flush=True)
     cached = {str(p): p.read_bytes() for p in Path(cache).rglob('*') if p.is_file()}
     refused = aw('bob', 'plugin', 'uninstall', 'folio', check=False)
     assert refused.returncode and 'admin_required' in refused.stderr
@@ -105,6 +138,9 @@ def _prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_
     replacement = get('alice', '/v1/apps/folio/installation?team_id=' + team)
     assert replacement['installation_id'] != first['installation_id'] and replacement['generation'] > retired['generation']
     assert replacement['digest'] == first['digest'] and replacement['origin'] == first['origin']
+    assert grant()['installed_at'] > active['installed_at']
+    # A cached typed inactive answer can deny the replacement until it expires.
+    time.sleep(active['max_age_seconds'] + 5)
     old_result = tool('uninstall-old-grant', old_target)
     old_reinstalled = old_result.returncode
     listed = data('bob', 'plugin', 'list')['plugins']
@@ -128,4 +164,19 @@ def _prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_
     assert denied.returncode != 0 and old_uninstalled != 0, delegation
     assert all(code in (401, 403, 404, 410) for code in before_reinstall.values()), before_reinstall
     assert all(code in (401, 403, 404, 410) for code in after_reinstall.values()), after_reinstall
-    print('PASS real uninstall refuses tools and existing Folio links/sessions; reinstall cannot revive them', flush=True)
+    for url, auth in [(stale_legacy['url'], {}), (stale_editor + '/state', stale_session)]:
+        code, raw = status(url, auth)
+        assert code == 404 and json.loads(raw)['detail']['code'] == 'installation_binding_refused', (code, raw)
+    assert sql("SELECT installation_refused FROM public.presentation_links WHERE token='" + stale_legacy['token'] + "'") == 't'
+    assert sql("SELECT installation_refused FROM public.presentation_links WHERE token='" + stale_editable['token'] + "'") == 't'
+    new_readonly = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'ttl_seconds': 600})
+    new_editable = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'editable': True, 'ttl_seconds': 300})
+    new_editor, new_session = open_editor(new_editable)
+    assert status(new_readonly['url'])[0] == status(new_editor + '/state', new_session)[0] == 200
+    data('alice', 'plugin', 'uninstall', 'folio')
+    aw('alice', 'plugin', 'install', origin)
+    # Permanent refusal is persisted, so even another replacement cannot retry it.
+    assert status(stale_legacy['url'])[0] == status(stale_editor + '/state', stale_session)[0] == 404
+    assert sql("SELECT installation_refused FROM public.presentation_links WHERE token='" + stale_legacy['token'] + "'") == 't'
+    assert time.monotonic() - link_started < 300, 'legacy editable row expired before its final refusal check'
+    print('PASS real uninstall refuses tools and existing Folio links/sessions; same-origin/digest reinstall cannot revive them; new capabilities work; legacy refusal persists across another reinstall', flush=True)
