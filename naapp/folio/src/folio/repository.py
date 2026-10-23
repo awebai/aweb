@@ -278,6 +278,11 @@ async def mint_presentation_link(
         raise HTTPException(
             status_code=422, detail="Editable links expire after at most 300 seconds"
         )
+    if not editable and ttl_seconds is not None and ttl_seconds > settings.max_present_ttl_seconds:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Read-only links expire after at most {settings.max_present_ttl_seconds} seconds",
+        )
     requested_ttl = (
         (300 if ttl_seconds is None else ttl_seconds)
         if editable

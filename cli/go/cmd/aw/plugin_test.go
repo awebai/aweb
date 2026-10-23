@@ -1003,8 +1003,9 @@ func TestPluginInstallDevOriginOverridesSelfHostedOrigin(t *testing.T) {
 
 	// The served manifest advertises a DIFFERENT origin than where it is served,
 	// like a self-hosted Library whose manifest still claims the production
-	// origin. Without an override the install must reject this; with --dev-origin
-	// the operator points aw at the real (self-hosted) base URL.
+	// origin. This empty-home discovery test grants no team authority. Without
+	// an override discovery rejects it; --dev-origin fills the local origin.
+	// Resident installs refuse that rewrite (the wakes journey covers this).
 	manifest := `{"manifest_version":1,"app":{"id":"devlib","version":"1.0.0","origin":"https://library.aweb.ai"},"tools":[{"name":"ping","auth":"none","method":"GET","path":"/v1/ping","input_schema":{"type":"object","properties":{}},"params":[],"mutation":false}]}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if serveNoManifestCatalog(w, r) {

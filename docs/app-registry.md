@@ -1,189 +1,40 @@
 # App registry and team grants
 
 Status: **current experimental public contract**. Owner: the aweb OSS server
-extension surface. The implementation lives in `server/src/aweb/app_registry.py`
-and `server/src/aweb/routes/apps.py`; the schema is added by
-`server/src/aweb/migrations/aweb/008_app_registry_grants.sql` and
-`009_app_events.sql`. HTTP behavior is covered by
-`server/tests/test_app_registry_http.py`.
+extension surface. Implementation: `server/src/aweb/app_registry.py` and
+`server/src/aweb/routes/apps.py`.
 
-This registry is optional and is not part of aweb's default communication
-journey. It records app metadata, a digest pin, and per-team granted scopes. It
-is not an app marketplace, a source of canonical manifest bytes, or a promise
-that a hosted gateway dynamically composes tools.
+The registry records each team's installation identity, pinned manifest bytes,
+origin, generation, scopes and state. It is optional: core mail, chat and
+coordination do not require an app installation.
 
-## Relationship to app manifests
+## Install, update and management reads
 
-The manifest format and interpretation rules live in
-[`app-manifest.md`](app-manifest.md). An app publishes exact bytes at:
+See [Installation management HTTP API](app-installation-api.md) for preview,
+confirmation, member requests, admin approvals and re-verification. The server
+fetches exact bytes from the declared HTTPS origin through shared egress and
+interprets them through `aweb_naapp.manifest`. A failed origin fetch refuses the
+installation. Installer-uploaded bytes and separately supplied keys, versions
+or event declarations are not installation authority.
 
-```text
-<origin>/.well-known/aweb-app.json
-```
+Mutations require the host's current install-admin policy on every ingress,
+including a mounted server and the CLI. Updates require the previous generation;
+an update never silently replaces a concurrent change. Granted scopes are a
+subset of the shared reader's agent/surface install scopes. Hook-only scopes
+await separate owner activation. Every generation leaves declared hooks pending.
 
-The registry stores the app id, origin, app version, manifest version, and
-`sha256:<lowercase hex>` digest of those exact bytes. It does **not** fetch the
-origin or verify that the supplied digest matches the served manifest. The
-installer is responsible for fetching, validating, and hashing the bytes before
-calling the install route. Consumers must compare cached bytes with the recorded
-digest; a registry row is not evidence that this verification occurred.
+`GET /v1/apps/installed?team_id=...` exposes active, origin-verified installations
+only, ordered by app ID. Management reads under `/v1/apps/installations` and
+`/v1/apps/{app_id}/installation` also expose pending and uninstalled records,
+which confer no ordinary authority. Authentication is verified team auth or the
+host's verified internal context; the requested team must match it.
 
-## Install or update
-
-```http
-POST /v1/apps/install
-```
-
-Authentication: normal team-certificate auth. The authenticated certificate
-selects the team; there is no `team_id` in the request body.
-
-```json
-{
-  "app_id": "folio",
-  "origin": "https://folio.example",
-  "app_version": "1.4.0",
-  "manifest_version": 1,
-  "digest": "sha256:4f3c000000000000000000000000000000000000000000000000000000000000",
-  "granted_scopes": ["folio:read", "folio:write"],
-  "events": [
-    {
-      "type": "doc.changed",
-      "default_delivery_intent": "wake",
-      "description": "A document changed."
-    }
-  ],
-  "event_emitters": [
-    {"kid": "emit-2026-06", "did_key": "did:key:z6Mk..."}
-  ]
-}
-```
-
-The response is the installed-app projection:
-
-```json
-{
-  "app_id": "folio",
-  "origin": "https://folio.example",
-  "app_version": "1.4.0",
-  "manifest_version": 1,
-  "digest": "sha256:4f3c000000000000000000000000000000000000000000000000000000000000",
-  "granted_scopes": ["folio:read", "folio:write"]
-}
-```
-
-Current rules:
-
-- `app_id` is lower-case, path-safe, and cannot collide with a reserved `aw`
-  top-level command id. The shared reserved set is
-  `test-vectors/reserved-app-ids-v1.json`.
-- One app id has one origin per team, bound by that team's install. Reinstalling
-  an app id from another origin in the same team conflicts with `409`. Another
-  team's install of the same app id, from any origin, binds only that team.
-- An origin is an `http` or `https` origin only: no userinfo, path, query, or
-  fragment. Production operators should require HTTPS at their policy boundary;
-  the experimental OSS route permits HTTP for local deployments.
-- Reinstalling the same team/app/origin explicitly replaces its digest,
-  app-version projection, scopes and event declarations, and registers the
-  supplied emit keys for the new digest. Publishing new bytes at the origin
-  does not silently update an installation.
-- Event declarations, emit keys and the app-version projection belong to the
-  installing team. Another team's install of the same app and digest never
-  changes this team's declared types, default delivery intents or
-  descriptions, and a key registered by one team is never active for another
-  team. Within
-  a team, a key id keeps the `did_key` it was first registered with: an install
-  supplying a different `did_key` for a registered key id is refused with
-  `409`, and the install is not applied. Rotate a key under a new key id.
-  Reinstalling never reactivates a revoked key. Key identity and revocation
-  history span both v1 `event_emitters` and v2 `app_keys`: changing manifest
-  version never resets either. Registration carries the earliest revocation
-  for the same team, app, key id and `did_key`; verification also checks that
-  shared history, including rows registered before the version switch.
-- Scopes are normalized and stored. Without `manifest` (below), the server
-  cannot prove that the granted scopes are within the manifest's
-  `tools[].scopes`.
-- Event declarations are app-local names. Emit keys are public `did:key`
-  material; private emit keys never belong in a manifest or install request.
-- No public uninstall route ships today. Do not document uninstall or automatic
-  upgrade as current behavior.
-- Each install or update, accepted or refused after authentication, writes one
-  append-only operator audit row (`apps.install`, target `app:<app_id>`); a
-  successful install's row commits with its registrations
-  ([operator audit](operator-audit.md)).
-
-### Installing with the manifest bytes
-
-The request may carry `manifest`: standard base64 of the exact bytes the app
-serves, at most 10 MiB. The install body is read under a bound of that encoded
-size plus 1 MiB, and refused with `413` before it is parsed when it is larger;
-a `manifest` over the encoded bound is also `413`. `aw plugin install` and
-`aw plugin update` send the bytes for `manifest_version` 1 manifests, unless
-`--dev-origin` registers the app at an origin its bytes do not declare. When
-present:
-
-- the bytes must hash to `digest` and name the request's `app_id`, `origin`,
-  `app_version` and `manifest_version`;
-- the bytes must be a valid manifest of either version, read by the one
-  manifest reader that apps and clients share (`aweb_naapp.manifest`, held to
-  `test-vectors/app-manifests/app-manifest-v2-v1.json`). A manifest it refuses
-  is refused with `422`, and the detail carries its stable code;
-- `events` come from the bytes; version 1 `event_emitters` are the app's
-  app-event keys. If the request also supplies them, they must equal the
-  bytes' declarations;
-- version 2 `app_keys` register the app's keys with the purposes the bytes
-  declare for each. They come only from the bytes; there is no request field.
-  A key id keeps its first `did_key` in the team, so a later install naming a
-  different key for it is refused with `409` and nothing is written, and a
-  revoked key stays revoked. A purpose label the server does not know is
-  stored and grants nothing. A key that declares `app-event` signs app events;
-- `granted_scopes` must be a subset of the scopes the bytes' tools request; a
-  team may grant less, never more.
-
-A disagreement refuses the whole install with `422`, and nothing is written.
-An install without `manifest` behaves as before and registers the supplied
-fields. Each install row records which way it was registered, so an operator
-can measure when every client sends the bytes before requiring them:
-
-```sql
-SELECT registered_from_manifest_bytes, count(*)
-FROM aweb.team_app_installs
-GROUP BY registered_from_manifest_bytes;
-```
-
-## Read installed apps and grants
-
-```http
-GET /v1/apps/installed?team_id=<name:domain>
-```
-
-Authentication: team-certificate auth for the requested team. The source also
-supports a trusted host-integration read context, but that internal header
-scheme is not a portable third-party protocol; independent clients use team
-auth.
-
-Response:
-
-```json
-{
-  "team_id": "default:example.com",
-  "apps": [
-    {
-      "app_id": "folio",
-      "origin": "https://folio.example",
-      "app_version": "1.4.0",
-      "manifest_version": 1,
-      "digest": "sha256:4f3c000000000000000000000000000000000000000000000000000000000000",
-      "granted_scopes": ["folio:read", "folio:write"]
-    }
-  ]
-}
-```
-
-- Apps are ordered by `app_id`.
-- A team with no installs receives `200` with `apps: []`.
-- V1 has no pagination.
-- `400` means invalid `team_id`; `401`/`403` means the caller cannot read that
-  team; storage failures are server errors.
+A key ID keeps its first `did_key` within a team and app. A conflicting key is
+refused with 409 and nothing is written. Identity and revocation history span both v1 emitters and v2 app keys.
+Revocation survives digest and manifest-version changes; reinstall never
+reactivates a revoked key. Purpose labels come from pinned
+bytes. An unknown purpose is stored and grants nothing. Private keys never
+belong in manifests or installation requests.
 
 ## Hook bindings
 
@@ -309,9 +160,9 @@ Response:
   "manifest_version": 2,
   "digest": "sha256:4f3c000000000000000000000000000000000000000000000000000000000000",
   "granted_scopes": ["folio:read", "folio:write"],
-  "installation_id": null,
-  "generation": null,
-  "origin_verified": null,
+  "installation_id": "opaque-installation-id",
+  "generation": 1,
+  "origin_verified": true,
   "as_of": "2026-10-20T12:00:00Z",
   "max_age_seconds": 60
 }
@@ -319,14 +170,15 @@ Response:
 
 - The team and the app come from the verified credential, never from the
   query, so an app reads only its own grant in the team that signed for.
-- `state` is `active`. Any other state grants no normal use.
-- `installation_id`, `generation` and `origin_verified` are always present and
-  `null` until installations carry them. A consumer that binds them refuses
-  `null`. `origin_verified` says whether the server verified the pinned bytes
-  against the app's origin; bytes being present is not that.
+- `state` is the current registry state, including `pending_origin_verification`
+  and `uninstalled`. Only `active` grants normal use. The grant-read key remains
+  usable for these non-active status reads; ordinary key purposes do not.
+- `installation_id`, `generation` and `origin_verified` come from the shared
+  installation reader. A consumer that binds identity refuses missing values.
+  `origin_verified` records the server's verification of the exact pinned bytes.
 - `as_of` is the server's time of the answer, in UTC seconds.
 - `max_age_seconds` is how long the app may reuse the answer, counted from
-  when it asked for it. It is `AWEB_APP_GRANT_MAX_AGE_SECONDS`, from 1 to 60
+  when it asked for it: the start of the shared refresh. It is `AWEB_APP_GRANT_MAX_AGE_SECONDS`, from 1 to 60
   seconds, default 60; the server refuses to start with any other value.
 - A reinstall with new bytes is visible on the next read: keys belong to their
   digest, so the old digest's keys are refused and the new digest's keys read
@@ -483,38 +335,30 @@ aweb reseed-app-registrations --origin https://notes.example
 aweb reseed-app-registrations --origin https://notes.example --manifest-file notes-1.2.0.json
 ```
 
-An operator command, run against the server's database. It takes the exact
-manifest bytes the origin serves at `/.well-known/aweb-app.json` (over
-https, or plain http to a loopback host only; a direct `200`, no redirects, at
-most 10 MiB), or a file of exact bytes. For every team
-whose install of that app and origin pins the SHA-256 of those bytes, it
-recreates the team's event declarations, emit keys and version projection
-from the bytes alone. The bytes must name the installed app id and origin.
+This operator repair command derives registrations from exact bytes whose hash
+matches the stored pin. A supplied file can repair declarations; it is never
+origin verification and cannot activate a pending installation. Without a file,
+the command uses the shared HTTPS origin fetcher, catalog discovery and bounds.
+Revoked keys stay revoked, conflicting key IDs refuse, subscriptions stay as
+selected, and other digests are left unchanged.
 
-- Subscriptions are never changed.
-- Teams pinned to another digest are reported as `digest_mismatch` and left
-  unchanged; reseed them with their own pinned bytes through
-  `--manifest-file`.
-- A team whose key id already holds a different `did_key` is reported as
-  `key_conflict` and left unchanged.
-- Running it again changes nothing further. It exits `1` when any team was
-  left unchanged, and prints the report as JSON.
-
-Upgrading a server to team-scoped registrations: the migrations do not carry
-registry-entry keys or declarations over, because those rows record no
-installing team. App events for existing installs are refused until either
-the operator reseeds each installed app or the team installs the app again.
-Run the migrations, then reseed every installed app origin.
+After the F6 migration, run `aweb verify-pending-app-installations` immediately.
+Existing app authority pauses until each pinned origin is verified. The command
+preserves scopes, identity, generation and pin; a failure leaves the row pending
+with an admin-visible reason. Core mail and chat remain available. For queued
+admin retries, run `aweb run-installation-verifications` periodically on a worker.
+Neither migration nor the re-verify HTTP request fetches an old installation.
 
 ## Cache and consumer boundary
 
 The registry is authoritative for its own stored tuple
-`(team_id, app_id, origin, digest, granted_scopes)`. Canonical manifest bytes
-remain at the app origin and in each consumer's digest-verified cache.
+`(team_id, app_id, origin, digest, granted_scopes)`. The exact verified bytes are retained with the installation and remain
+available from the app origin and each consumer's digest-verified cache.
 
-A consumer may cache the installed-app read through transient failures, but it
-must keep the digest and origin together and must never reinterpret different
-bytes under the old digest. Connector grants, human accounts, billing, and a
+Consumers keep digest and origin together and never reinterpret different
+bytes under the old digest. App authority uses the bounded, fail-closed grant
+source and the installation fence below; an expired grant is never reused
+through an outage. Connector grants, human accounts, billing, and a
 hosted operator's tool-composition policy are outside this OSS contract.
 
 ## Lifecycle limits
@@ -524,6 +368,117 @@ source tests and documentation review. The digest pin and explicit-update rule
 are compatibility constraints. App installation is not required for mail, chat,
 events from built-in coordination mutations, or self-hosting the core
 communication service.
+
+## Host installation policy interface
+
+`aweb.install_authority.require_install_admin(tx, request, identity, team_id,
+*, action, app_id)` is the shared administration check for installation
+mutations and team app-key revocation. Certificate ingress passes its verified
+`TeamIdentity`; authenticated internal ingress may pass `None`. Internal context
+is verified through the existing proxy trust/HMAC verifier.
+
+The serving application's `app.state.install_admin_policy` implements
+`InstallAdminPolicy`: `async __call__(tx, subject, *, action, app_id) -> bool`.
+It reads current authority inside the passed mutation transaction. A standalone
+operator configures authority rooted in its team controller and explicit
+delegations; an embedding host supplies its authoritative policy. A configured
+host policy is the only source: its denial never falls back to standalone grants.
+Without a host policy, the standalone policy reads an operator-managed grant
+for the verified member's `did:key` inside the mutation transaction, holding
+`FOR SHARE` until commit. No grant, or a result other than `True`, produces
+`403` with code `admin_required`.
+Membership, custody, audit attribution and role strings confer no installation
+administration authority. Identity session grants cannot acquire it through
+their coordination scopes.
+
+The immutable `InstallAdminSubject` union has two verified variants:
+
+| `kind` | Verified fields |
+| --- | --- |
+| `certificate` | `team_id`, `agent_id`, `certificate_id`, `did_key` |
+| `internal` | `team_id`, `principal_type`, `principal_id`, `actor_id` |
+
+Internal principal type remains distinct from the attributed actor; the host
+decides which authenticated principal kinds may administer. Policy exceptions
+fail the mutation. Decisions are not cached. Install the policy on the actual
+serving/mounted application so certificate and internal ingress use the same
+check. Installation confirmation, request approval and queued re-verification
+use it on both certificate and internal ingress; uninstall uses it in the
+lifecycle service. Ordinary members can submit installation requests without
+granting authority. See [the installation API](app-installation-api.md).
+
+## Standalone installation administrators
+
+The server starts with no install-admin grants and prints bootstrap guidance;
+core mail and chat keep working. A server operator grants the first owner
+locally, using the normal server database configuration:
+
+```sh
+aweb install-admin grant --team-id TEAM --principal-did did:key:MEMBER --role owner
+aweb install-admin list --team-id TEAM
+aweb install-admin grant --team-id TEAM --principal-did did:key:ANOTHER --role admin
+aweb install-admin revoke --team-id TEAM --principal-did did:key:ANOTHER
+```
+
+These are local server commands, not `aw` member commands. There is no HTTP
+grant/revoke route. `team_app_install_admins` records team, principal DID,
+owner/admin role, database operator, grant time and revocation time. Changes
+and their content-free operator audit commit together. Revoking or demoting
+the last owner requires an explicit `--force`. A revoked grant stops authorizing
+new mutation transactions; an already-authorized transaction holds its grant
+until commit. Certificate membership and member-writable agent/workspace role
+labels or prompt-role bundles do not confer this authority. Internal-auth
+hosts must provide their own policy; no internal actor is guessed into a DID.
+
+Grants are keyed by the member's `did:key`. After a member rotates keys, the
+new key has no install-admin authority until the server operator re-grants it
+with `aweb install-admin grant`. Key rotation does not transfer the old grant;
+the operator should also revoke the grant for the old key.
+
+## Installation identity and transactional reader
+
+Migration `035_team_app_installation_identity` adds an opaque, unique
+`installation_id`, a positive `BIGINT` generation, install state, per-install
+`origin_verified`, a bounded verification error code and exact pinned manifest
+bytes. State is `pending_origin_verification`, `active` or `uninstalled`.
+Active rows require origin verification and bytes matching their pinned SHA-256
+digest. Existing rows receive new IDs and generation 1 without changing their
+origin, digest or granted scopes.
+
+Existing rows begin in `pending_origin_verification`: installer-supplied bytes
+were not proof that this server fetched the origin. Migrations perform no
+network access. A separate operator/admin verification job must fetch the
+original pinned bytes before activating a pending row, preserving its ID,
+generation and scopes. Until then normal app authority fails closed; core mail
+and chat are unaffected. Deploy plans must run the pending-row verifier
+immediately after migration to keep the app interruption short. The schema and
+reader ship with origin-fetch enforcement and state guards on existing registry
+lookups; a schema-only cutover is not supported.
+
+`aweb.app_registry.get_installation_on(tx, *, team_id, app_id,
+for_update=False)` returns the current row or `None`. Its projection includes
+`installation_id`, `generation`, `state`, `origin`, `digest`, `granted_scopes`,
+`origin_verified`, version metadata and `origin_verification_error`. It does not
+load manifest bytes for ordinary authority reads.
+
+Task ingress, authorized receipt reads and lifecycle mutations pass
+`for_update=True`. They lock the same current installation row with
+`FOR UPDATE OF i` inside their own transaction. Retirement therefore serializes
+with task admission; both services use this reader. Generations change on
+updates or scope changes; reinstall uses a new ID. Neither an absent row nor
+a non-active state confers normal app authority.
+
+
+Generation is strictly increasing per `(team_id, app_id)`, across installation
+IDs. A new installation ID continues the order rather than resetting it.
+`next_installation_generation_on(tx, team_id=..., app_id=...)` allocates the next
+value in the same registry transaction. Existing-installation writers hold the
+installation row lock and validate the caller's expected generation first.
+`team_app_install_counters` survives uninstall and removal of the installation
+row, and also survives deletion and recreation of the team itself. Counter
+rows are never deleted, so reusing a team ID cannot reset app authority. Every install,
+update and scope change uses the allocator. A rolled-back transaction issues
+no generation. Migrated current installations and their counters start at 1.
 
 ## App-side installation admission and dispatch fence (X9)
 

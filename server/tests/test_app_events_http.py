@@ -8,27 +8,27 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from awid.did import did_from_public_key
+from awid.signing import canonical_json_bytes, sign_message
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 import aweb.app_credentials as app_credentials
 import aweb.routes.events as events_routes
-from awid.did import did_from_public_key
-from awid.signing import canonical_json_bytes, sign_message
 from aweb.app_events import current_app_events_for_agent
 from aweb.app_registry import (
     AppEmitKey,
     AppEventType,
     get_active_app_emit_key,
     get_installed_app_event_type,
-    install_app,
     list_installed_apps,
 )
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.routes.events import router as events_router
 from aweb.service_errors import ConflictError
 from aweb.team_auth_deps import TeamIdentity
+from tests.installation_fixtures import install_fixture_app as install_app
 
 TEAM_ID = "backend:acme.com"
 AGENT_ID = UUID("00000000-0000-0000-0000-000000000123")
@@ -609,7 +609,7 @@ async def test_registry_entry_emit_keys_are_not_active_for_a_team(aweb_cloud_db)
         INSERT INTO {{tables.app_registry_emit_keys}} (app_id, origin, digest, key_id, did_key)
         VALUES ('folio', 'https://folio.aweb.ai', $1, 'emit-entry', $2)
         """,
-        DIGEST,
+        await db.fetch_value("SELECT digest FROM {{tables.team_app_installs}} WHERE team_id=$1", TEAM_ID),
         entry_did,
     )
 
@@ -619,24 +619,16 @@ async def test_registry_entry_emit_keys_are_not_active_for_a_team(aweb_cloud_db)
     assert resp.status_code == 403, resp.text
 
 
-def _folio_snapshot_digest() -> str:
-    manifest = (
-        Path(__file__).resolve().parents[2] / "test-vectors" / "app-manifests" / "folio" / "aweb-app.json"
-    ).read_bytes()
-    return "sha256:" + hashlib.sha256(manifest).hexdigest()
-
-
 @pytest.mark.asyncio
-async def test_another_team_cannot_replace_keys_at_a_public_folio_digest(aweb_cloud_db):
+async def test_another_teams_bytes_cannot_replace_this_teams_derived_keys(aweb_cloud_db):
     db = aweb_cloud_db.aweb_db
     app = _build_events_app(db)
     await _seed_team_and_agent(db)
     await _seed_team_and_agent(db, team_id=OTHER_TEAM_ID)
-    digest = _folio_snapshot_digest()
     team_key, team_did = _make_app_keypair()
     other_key, other_did = _make_app_keypair()
-    await _install_folio(db, did_key=team_did, kid="folio:emit-1", digest=digest)
-    await _install_folio(db, team_id=OTHER_TEAM_ID, did_key=other_did, kid="folio:emit-1", digest=digest)
+    await _install_folio(db, did_key=team_did, kid="folio:emit-1")
+    await _install_folio(db, team_id=OTHER_TEAM_ID, did_key=other_did, kid="folio:emit-1")
 
     registered = await _emit_doc_changed(
         app, signing_key=team_key, did_key=team_did, team_id=TEAM_ID, kid="folio:emit-1"

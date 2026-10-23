@@ -4,28 +4,28 @@ import hashlib
 import logging
 from dataclasses import dataclass
 
-from fastapi import Depends, HTTPException, Request
-
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 from awid.signing import verify_did_key_signature
-from aweb.awid_error_handling import (
-    AWID_DEPENDENCY_ERRORS,
-    awid_dependency_http_exception,
-    awid_registry_not_configured_exception,
-)
+from fastapi import Depends, HTTPException, Request
+
 from aweb.auth_context import GrantContext
 from aweb.auth_metrics import count_legacy_request_auth
-from aweb.team_auth_envelope import identity_auth_signature_payload
 from aweb.config import require_registered_certificates
 from aweb.deps import get_db
+from aweb.identity_binding import (
+    refresh_projection_binding,
+    verified_projection,
+    verify_identity_binding,
+)
 from aweb.team_auth_deps import (
     TeamIdentity,
     _aweb_db,
     _get_registered_certificates,
     _get_revoked_certificates,
-    get_team_identity,
     _team_auth_allowed_audiences,
+    get_team_identity,
 )
+from aweb.team_auth_envelope import identity_auth_signature_payload
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ def _get_body_sha256(request: Request) -> str:
     return hashlib.sha256(b"").hexdigest()
 
 
-async def resolve_identity_auth(request: Request) -> IdentityAuth:
+async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     auth_header = request.headers.get("Authorization")
     if not auth_header:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
@@ -100,27 +100,14 @@ async def resolve_identity_auth(request: Request) -> IdentityAuth:
         return IdentityAuth(did_key=did_key, did_aw=None, address=None)
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is None:
-        raise awid_registry_not_configured_exception(operation="AWID did:aw resolution")
-
     try:
-        resolution = await registry_client.resolve_key(did_aw)
-    except AWID_DEPENDENCY_ERRORS as exc:
-        logger.warning("AWID registry dependency failed for did:aw resolution: %s", did_aw, exc_info=True)
-        raise awid_dependency_http_exception(exc, operation="AWID did:aw resolution") from exc
-    except Exception as exc:
-        logger.exception("Unexpected AWID registry dependency error for did:aw resolution: %s", did_aw)
-        raise awid_dependency_http_exception(exc, operation="AWID did:aw resolution") from exc
+        binding = await verify_identity_binding(request, did_key=did_key, did_aw=did_aw)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise HTTPException(status_code=401, detail="did:aw does not match Authorization did:key") from exc
+        raise
 
-    if resolution and resolution.current_did_key != did_key and hasattr(registry_client, "resolve_key_fresh"):
-        try:
-            resolution = await registry_client.resolve_key_fresh(did_aw)
-        except Exception:
-            logger.warning("AWID fresh did:aw resolution failed for %s", did_aw, exc_info=True)
-
-    if not resolution or resolution.current_did_key != did_key:
-        raise HTTPException(status_code=401, detail="did:aw does not match Authorization did:key")
-
+    key_binding = binding
     address = None
     try:
         addresses = await registry_client.list_did_addresses(did_aw)
@@ -129,15 +116,21 @@ async def resolve_identity_auth(request: Request) -> IdentityAuth:
     if addresses:
         first = addresses[0]
         address = f"{first.domain}/{first.name}"
+        binding = await verify_identity_binding(request, did_key=did_key, did_aw=did_aw, address=address)
 
+    binding_db = db if db is not None else getattr(request.app.state, "db", None)
+    if binding_db is not None:
+        await refresh_projection_binding(
+            _aweb_db(binding_db), agent_id=None, did_key=did_key,
+            binding=key_binding if key_binding.fresh_observation else binding,
+        )
     if envelope.version == 1:
         count_legacy_request_auth(request, "identity")
     return IdentityAuth(did_key=did_key, did_aw=did_aw, address=address)
 
 
 async def get_identity_auth(request: Request, db=Depends(get_db)) -> IdentityAuth:
-    del db
-    return await resolve_identity_auth(request)
+    return await resolve_identity_auth(request, db=db)
 
 
 async def lookup_identity_agent_context(
@@ -146,23 +139,31 @@ async def lookup_identity_agent_context(
     did_key: str,
     did_aw: str | None = None,
     allow_ambiguous_global_identity: bool = False,
+    request: Request | None = None,
 ) -> dict | None:
     did_aw_value = (did_aw or "").strip()
     aweb_db = _aweb_db(db)
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, team_id, alias, did_aw, address, identity_scope, certificate_id
+        SELECT agent_id, team_id, alias, did_key, did_aw, address, did_aw_verified_key, identity_scope, certificate_id
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
-          AND (did_key = $1 OR ($2 <> '' AND did_aw = $2))
+          AND did_key = $1
         ORDER BY created_at DESC
-        LIMIT 2
         """,
         did_key,
-        did_aw_value,
     )
     if not rows:
         return None
+    if request is not None:
+        for row in rows:
+            binding = await verify_identity_binding(
+                request, did_key=did_key, did_aw=row.get("did_aw") or "",
+                address=row.get("address") or "",
+            )
+            await refresh_projection_binding(aweb_db, agent_id=row["agent_id"], did_key=did_key, binding=binding)
+        rows = [{**dict(row), "did_aw_verified_key": did_key} for row in rows]
+    rows = [verified_projection(row) for row in rows]
     if len(rows) > 1:
         if allow_ambiguous_global_identity and did_aw_value:
             return None
@@ -239,21 +240,10 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
 
     if request.headers.get("X-AWID-Team-Certificate"):
         team_identity: TeamIdentity = await get_team_identity(request, db)
-        aweb_db = _aweb_db(db)
-        row = await aweb_db.fetch_one(
-            """
-            SELECT did_aw, address
-            FROM {{tables.agents}}
-            WHERE agent_id = $1 AND deleted_at IS NULL
-            """,
-            team_identity.agent_id,
-        )
-        row_did_aw = (row.get("did_aw") if row else None) or None
-        row_address = (row.get("address") if row else None) or None
         return MessagingAuth(
             did_key=team_identity.did_key,
-            did_aw=team_identity.did_aw or row_did_aw,
-            address=team_identity.address or row_address,
+            did_aw=team_identity.did_aw or None,
+            address=team_identity.address or None,
             team_id=team_identity.team_id,
             alias=team_identity.alias,
             agent_id=team_identity.agent_id,
@@ -270,6 +260,7 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         did_key=identity.did_key,
         did_aw=identity.did_aw,
         allow_ambiguous_global_identity=True,
+        request=request,
     )
     row = await _enforce_current_membership(request, row)
     return MessagingAuth(

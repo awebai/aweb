@@ -29,7 +29,7 @@ from aweb.hook_bindings import (
     revoke_binding,
 )
 from aweb.hook_times import format_hook_time
-from aweb.routes.apps import _authorized_team_id
+from aweb.routes.apps import _caller
 from aweb.service_errors import ServiceError
 from aweb.team_auth_deps import get_team_identity
 
@@ -122,7 +122,7 @@ async def list_hook_bindings_route(
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> HookBindingsResponse:
     try:
-        authorized_team_id, _ = await _authorized_team_id(request, db_infra, team_id)
+        authorized_team_id, _ = await _caller(request, db_infra, team_id)
         bindings = await list_app_bindings(db_infra.get_manager("aweb"), team_id=authorized_team_id, app_id=app_id)
     except ServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

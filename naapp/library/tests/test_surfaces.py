@@ -26,7 +26,7 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     # Native Agentic App framing: core aw onboarding plus opt-in shelf verbs.
     assert "Native Agentic App" in response.text
     assert "aw team admin add alice@aweb.team/developer=claude-code" in response.text
-    assert "claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" in response.text
+    assert "claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" in response.text
     assert "pi install npm:@awebai/pi@latest" in response.text
     assert "aw agent start" not in response.text
     assert "aw run" not in response.text
@@ -51,9 +51,10 @@ def test_llms_txt_is_complete_operator_guide() -> None:
     assert "claude plugin marketplace add awebai/claude-plugins" in text
     assert "claude plugin install aweb-channel@awebai-marketplace" in text
     assert "cd agents/instances/alice" in text
-    assert "claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" in text
-    # Both launch flags are required, and the reason must travel with the line.
-    assert "bypass-permissions mode today" in text
+    assert "claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" in text
+    # Permission mode is independent of channel delivery.
+    assert "Channel delivery works in any permission mode, including auto and plan." in text
+    assert "--dangerously-skip-permissions" not in text
     assert "pi install npm:@awebai/pi@latest" in text
     assert "\npi\n" in text
     assert "aw agent start" not in text

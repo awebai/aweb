@@ -125,6 +125,36 @@ async def test_editable_ttl_default_and_explicit_maximum(present_world):
         assert (await client.get(f"/present/edit/{link['token']}")).status_code == 200
 
 
+@pytest.mark.parametrize("ttl_seconds,expected", [(None, 86_400), (2_592_000, 2_592_000)])
+async def test_read_only_ttl_default_and_thirty_day_maximum(present_world, ttl_seconds, expected):
+    app, db, _ = present_world
+    link = await mint(present_world, editable=False, ttl_seconds=ttl_seconds)
+    row = await db.fetch_one(
+        "SELECT created_at, expires_at, editable FROM {{tables.presentation_links}} WHERE token=$1",
+        link["token"],
+    )
+    assert not row["editable"]
+    assert (row["expires_at"] - row["created_at"]).total_seconds() == expected
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://folio.test"
+    ) as client:
+        assert (await client.get(f"/present/{link['token']}")).status_code == 200
+
+
+@pytest.mark.parametrize("maximum,requested", [(2_592_000, 2_592_001), (604_800, 604_801)])
+async def test_read_only_ttl_over_maximum_refuses_without_minting(present_world, maximum, requested):
+    from fastapi import HTTPException
+
+    _, db, settings = present_world
+    settings.max_present_ttl_seconds = maximum
+    before = await db.fetch_one("SELECT count(*) AS n FROM {{tables.presentation_links}}")
+    with pytest.raises(HTTPException) as refused:
+        await mint(present_world, editable=False, ttl_seconds=requested)
+    assert refused.value.status_code == 422
+    after = await db.fetch_one("SELECT count(*) AS n FROM {{tables.presentation_links}}")
+    assert after["n"] == before["n"]
+
+
 @pytest.mark.parametrize("state", ["valid", "expired", "revoked", "legacy-long"])
 async def test_present_responses_are_private_and_legacy_edit_links_refuse(present_world, state):
     app, db, _ = present_world

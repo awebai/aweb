@@ -139,6 +139,9 @@ async def test_mutation_handler_backfills_from_did_aw_from_agent_id(aweb_cloud_d
         agent_id,
     )
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", agent_id,
+    )
     seen: dict[str, str] = {}
 
     def _capture_translate(event_type: str, ctx: dict):

@@ -249,6 +249,9 @@ async def _seed(aweb_db):
         """,
     )
 
+    await aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice_id,
+    )
     return str(alice_id), str(bob_id)
 
 
