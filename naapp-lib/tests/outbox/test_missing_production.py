@@ -7,6 +7,7 @@ from uuid import uuid4
 import asyncpg
 import pytest
 from nacl.signing import SigningKey
+from pgdbm.errors import QueryError
 
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.hooks.producer import HookProducer, Registration, RegistrationView, ServerProducer
@@ -157,12 +158,13 @@ async def test_reservation_is_never_an_event_delivery_backlog_receipt_or_fault(d
     assert await redrive(db, BINDING, [record.record_id]) == []
     assert await acknowledge_dead_letters(db, BINDING, [record.record_id]) == []
     assert await latest_receipt(db, BINDING) is None
-    with pytest.raises(asyncpg.ForeignKeyViolationError):
+    with pytest.raises(QueryError) as rejected:
         await db.execute(
             "INSERT INTO {{tables.outbox_deliveries}} (event_id,target_id) VALUES ($1,$2)",
             record.record_id,
             BINDING,
         )
+    assert isinstance(rejected.value.__cause__, asyncpg.ForeignKeyViolationError)
     with pytest.raises(OutboxConflict):
         async with db.transaction() as tx:
             await enqueue(
@@ -219,8 +221,9 @@ async def test_one_firing_shares_one_record_across_all_owed_bindings(db):
     assert row["reservation_seq"] == 1
     assert row["owed_binding_ids"] == sorted([BINDING, other])
     assert await db.fetch_value("SELECT last_seq FROM {{tables.outbox_sequences}}") == 1
-    with pytest.raises(asyncpg.CheckViolationError):
+    with pytest.raises(QueryError) as rejected:
         await db.execute(
             "UPDATE {{tables.outbox_events}} SET signature='fabricated' WHERE event_id=$1",
             record.record_id,
         )
+    assert isinstance(rejected.value.__cause__, asyncpg.CheckViolationError)
