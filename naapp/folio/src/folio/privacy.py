@@ -8,6 +8,7 @@ import re
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+_EDIT_LINK = re.compile(r"^(/present/edit/)[^/]+")
 _PRESENT_TOKEN = re.compile(r"^(/(?:v1/)?present/)[^/]+")
 
 
@@ -24,7 +25,9 @@ class PresentAccessFilter(logging.Filter):
             if isinstance(target, str):
                 path = target.split("?", 1)[0]
                 # Records link IDs are public identifiers, not legacy bearer tokens.
-                if not path.startswith("/present/links/"):
+                if path.startswith("/present/edit/"):
+                    path = _EDIT_LINK.sub(r"\1[redacted]", path)
+                elif not path.startswith("/present/links/"):
                     path = _PRESENT_TOKEN.sub(r"\1[redacted]", path)
                 record.args = (client, method, path, version, status)
         return True

@@ -14,6 +14,7 @@ from aweb_secrets.runner_protocol import (
     consume_request,
     parse_request,
     verify_request,
+    verify_request_signature,
 )
 
 VECTOR = json.loads(
@@ -112,3 +113,64 @@ async def test_only_verified_requests_consume_and_pruning_keeps_skew_pad(db):
         )
         assert await prune_request_nonces(tx, now=parsed.expires_at + timedelta(seconds=120)) == 0
         assert await prune_request_nonces(tx, now=parsed.expires_at + timedelta(seconds=121)) == 1
+
+
+@pytest.mark.parametrize("missing_key", [False, True])
+def test_signature_precheck_refuses_unknown_current_key(missing_key):
+    from awid.did import did_from_public_key
+    from nacl.signing import SigningKey
+
+    valid = next(c for c in VECTOR["requests"] if c["name"] == "valid")
+    parsed = parse_request(valid["header"])
+    registered = (
+        None if missing_key else did_from_public_key(bytes(SigningKey.generate().verify_key))
+    )
+    with pytest.raises(RunnerRefused) as refused:
+        verify_request_signature(parsed, registered_kid=registered)
+    assert refused.value.code == "runner_unknown"
+    verify_request_signature(parsed, registered_kid=parsed.payload["kid"])
+
+
+def test_signature_precheck_refuses_forged_signature_for_registered_key():
+    from aweb_naapp.hooks.strictjson import encode_base64url
+    from nacl.signing import SigningKey
+
+    valid = next(c for c in VECTOR["requests"] if c["name"] == "valid")
+    original = parse_request(valid["header"])
+    forged = SigningKey.generate().sign(b"aweb.secrets.runner-request/1\n" + original.raw).signature
+    parsed = parse_request(valid["header"].split(".")[0] + "." + encode_base64url(forged))
+    with pytest.raises(RunnerRefused) as refused:
+        verify_request_signature(parsed, registered_kid=original.payload["kid"])
+    assert refused.value.code == "runner_request_invalid"
+    verify_request_signature(original, registered_kid=original.payload["kid"])
+
+
+async def test_signature_precheck_cannot_consume_or_bypass_body_and_time_checks(db):
+    from datetime import timedelta
+
+    from aweb_naapp.hooks.strictjson import decode_base64url
+
+    valid = next(c for c in VECTOR["requests"] if c["name"] == "valid")
+    parsed = parse_request(valid["header"])
+    verify_request_signature(parsed, registered_kid=parsed.payload["kid"])
+    arguments = {
+        "registered_kid": parsed.payload["kid"],
+        "origin": valid["deployment"]["origin"],
+        "method": valid["received"]["method"],
+        "path": valid["received"]["path"],
+        "body": decode_base64url(valid["received"]["body_b64url"], "body"),
+        "now": at(valid["now"]),
+    }
+    with pytest.raises(RunnerRefused) as refused:
+        verify_request(parsed, **{**arguments, "body": arguments["body"] + b" "})
+    assert refused.value.code == "runner_request_binding_mismatch"
+    with pytest.raises(RunnerRefused) as refused:
+        verify_request(parsed, **{**arguments, "now": parsed.timestamp + timedelta(seconds=121)})
+    assert refused.value.code == "runner_request_stale"
+    async with db.transaction() as tx:
+        with pytest.raises(TypeError):
+            await consume_request(tx, parsed, clock=lambda: at(valid["now"]))
+        assert await tx.fetch_value("SELECT count(*) FROM {{tables.scoped_nonces}}") == 0
+        verified = verify_request(parsed, **arguments)
+        await consume_request(tx, verified, clock=lambda: at(valid["now"]))
+        assert await tx.fetch_value("SELECT count(*) FROM {{tables.scoped_nonces}}") == 1
