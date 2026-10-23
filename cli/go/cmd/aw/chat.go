@@ -39,7 +39,23 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 		}
 	}
 	target := strings.TrimSpace(toAlias)
-
+	// Encrypted human aliases use selected-team key discovery; preserve the
+	// released plaintext live-roster route.
+	if !opts.EncryptE2EE && shouldTryLiveRosterAliasFallback(target) {
+		if found, findErr := clientHasAgentAlias(ctx, c, target); findErr != nil {
+			debugLog("list agents for chat live alias fallback: %v", findErr)
+		} else if !found {
+			liveTarget, liveFound, liveErr := resolveLiveTeamMemberAliasTarget(ctx, sel, target)
+			if liveErr != nil {
+				debugLog("resolve live team member %s/%s: %v", strings.TrimSpace(sel.TeamID), target, liveErr)
+			} else if liveFound {
+				_, value := liveTarget.identityTarget()
+				if strings.TrimSpace(value) != "" {
+					target = strings.TrimSpace(value)
+				}
+			}
+		}
+	}
 	r, err := chat.Send(ctx, c.Client, sel.Alias, []string{target}, message, opts, chatStderrCallback)
 	return r, sel, err
 }
