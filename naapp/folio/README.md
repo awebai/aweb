@@ -42,7 +42,7 @@ All runtime env vars use the `FOLIO_` prefix; they are the shared naapp settings
 - `FOLIO_TIMESTAMP_SKEW_SECONDS` — signed request skew window, default and maximum `300`.
 - `FOLIO_DID_AW_PROFILE` — how a certificate's did:aw is checked against its current registry key, default `observe` (admit and log); `require` refuses a mismatch.
 - `FOLIO_APP_EVENTS_ORIGIN`, `FOLIO_APP_EMIT_KID`, `FOLIO_APP_EMIT_KEY_SEED_HEX` — where and with which declared key Folio emits `folio/doc.changed`. The released seed settings remain supported.
-- `FOLIO_APP_KEY_FILES` — alternative JSON map from declared kids to signing-key files. The template declares `folio:emit-1`; every declared kid needs its key configured, even when outbound event delivery is disabled.
+- `FOLIO_APP_KEY_FILES` — alternative JSON map from declared kids to signing-key files. The v2 template declares `folio:emit-1` (app-event) and the separate `folio:grant-read-1` (app-grant-read); every declared kid needs its key configured, even when outbound event delivery is disabled.
 - `FOLIO_APP_ID` — stable deployment app id, default `folio`. See [production operations](docs/production-operations.md) for manifest filling and install re-pinning.
 - `FOLIO_GIT_SHA` — the build commit `/health` reports when Render does not inject `RENDER_GIT_COMMIT`.
 - `FOLIO_DEFAULT_PRESENT_TTL_SECONDS` — default read-only present-link TTL, default `86400` (one day).

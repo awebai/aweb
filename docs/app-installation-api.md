@@ -164,9 +164,23 @@ installing anything. Both refuse an already resolved request with
 
 Uninstall is `POST /v1/apps/{app_id}/uninstall?team_id=...` with
 `{"expected_generation":1}`. It locks the same current installation row as
-app-task admission, checks admin authority and generation, marks it uninstalled,
-revokes normal authority and cancels all still-open app requests in that same
-transaction through the task service's cancellation hook. It retains the
+other installation writes, checks `InstallAdminPolicy` with action
+`apps.uninstall` (without an origin), and requires an exact current positive
+BIGINT generation. Non-admins receive `403 admin_required`, an absent
+installation `404 installation_not_found`, a stale generation
+`409 generation_conflict`, and missing or invalid generations `422`.
+
+The writing transaction calls
+`aweb.installations.cleanup_installation_on(tx, *, installation)` under the
+current installation row lock, before changing state. This single cleanup seam
+retires live hook bindings; a cleanup failure rolls back the entire uninstall.
+The app-request task service, when introduced, adds installation-scoped request
+cancellation and claim release here in the same transaction. Cleanups never
+commit, open another transaction or suppress failures.
+
+Uninstall sets `state: "uninstalled"` and allocates a higher generation, making
+older confirmations conflict. Repeating uninstall at the returned generation is
+idempotent. It fetches nothing from the app origin. It retains the
 installation and purpose-key history needed for authenticated status and scoped
 lifecycle reporting. It does not delete app content.
 
@@ -175,6 +189,101 @@ and explicitly distinguish app-reported status from unavailable reporting.
 A missing report is not an empty dataset or zero outstanding work. The detailed
 lifecycle-report response shape remains to be finalized with its reporter.
 
-Normal use stops within the grant/fence freshness contract. Work already
+`aw plugin uninstall <app-id> [--expected-generation N]` acts on the selected
+team's server installation. Without the flag it reads the current generation
+then sends one conditional uninstall; conflicts are surfaced without retry.
+Local cached bytes and approvals remain available to other teams.
+`aw plugin remove <name>` removes local bytes or this resident's local approval;
+it does not uninstall the team's server installation.
+
+The disposable real-stack consumer proof is
+`FOLIO_UNINSTALL_PROOF=1 scripts/e2e-folio-wakes.sh`. It asserts refusal of an
+existing read-only presentation and open edit session after uninstall and after
+reinstall; a consumer that still serves them fails this acceptance.
+
+On commit the server refuses ordinary app-event and hook-resolve credentials
+and retires live hook bindings. `app-grant-read` deliberately keeps answering
+with typed `state: "uninstalled"`, so the app can observe the end. The grant answer also
+includes `installed_at`, the UTC creation time of that `installation_id`.
+A re-pin preserves it; uninstall preserves it for lifecycle reporting, and a
+reinstall creates a new ID and creation time. The shared `GrantStatus` parser
+requires this typed UTC timestamp; it never substitutes an observation time.
+
+App-side tool authorization stops within the advertised grant-status
+`max_age_seconds` (at most 60 seconds) plus one refresh deadline (5 seconds
+with the shared runtime defaults). A hosted tool gateway also has its own
+origin-and-digest tool cache; its maximum lifetime must be included in the
+host's uninstall bound and proved by that gateway's integration tests. This
+server's grant-status lifetime does not establish the gateway's cache lifetime. Work already
 committed is reconciled, never reported as rolled back. A reinstall cannot
 revive the old ID's roles, links, approvals or app requests.
+
+
+## CLI upgrade and replacement approval
+
+Origin-only local consent and app-tool snapshots without `installation_id`
+are not adopted. Default mint still grants core communication, but omits each
+unbound or stale app with a named reason and the selected resident/team's
+explicit recovery command. `aw plugin list` identifies apps that need approval
+for this team's installation. Local cached bytes and another team's approvals
+remain intact.
+
+An upgraded custody service refuses app signing from an unbound snapshot
+(`app_installation_required`), an inactive installation
+(`app_installation_inactive`), or a replacement (`app_installation_changed`).
+Its diagnostic gives both recovery steps; it never includes grant material.
+An already-issued grant's ordinary coordination scopes continue working.
+A running old custody process retains its loaded behavior until restarted.
+
+For each affected selected resident and team:
+
+1. Restart that resident's custody service under its harness with the upgraded
+   binary: `aw --identity-home <resident-credential-dir> custody stop`, then
+   `aw --identity-home <resident-credential-dir> custody serve`.
+2. Explicitly approve the current installation:
+   `aw --identity-home <resident-credential-dir> --team <team-id> plugin install <existing-app-origin>`.
+   Joining an existing active pin needs no install-admin authority and does not
+   change that team's installation.
+3. Mint a fresh worker grant:
+   `aw --identity-home <resident-credential-dir> --team <team-id> id grant mint --bundle normal-agent --ttl 1h --custody-socket auto --out <new-empty-grant-home>`.
+   Relaunch the worker with `AWEB_IDENTITY_HOME` pointing to the new grant home.
+   The old snapshot is not repaired in place.
+
+Effective app approvals are scoped to exact team/app/installation ID.
+An explicit `--app-tool app:verb` at mint only narrows that approved catalog;
+it cannot approve a missing or replaced installation. Run `aw plugin install
+<origin>` for the selected team before minting either an explicit or default
+app-tool grant. A re-pin
+keeps that ID, so existing consent and immutable tool snapshots keep working;
+it never adds new tools to an old snapshot. Uninstall/reinstall changes the ID,
+so old snapshots remain refused even at the same origin and digest. Explicit
+reapproval and a fresh grant are required for the replacement.
+
+The uninstall server/CLI change and Folio's tool, presentation and edit-session
+installation fence land in the same train and ship in the same release. The
+combined real-stack uninstall proof must pass before that train can land.
+
+
+Folio consumes `NaappRuntime.installation_grants()` and its shared SQL
+`installation_fence()` for member tools, read-only presentations and edit
+sessions. These surfaces fail closed when the installation is inactive or its
+pin cannot authenticate app-grant-read. Existing presentations and sessions
+remain usable across a re-pin of the same installation ID; a replacement ID
+never revives them. New links and sessions persist the current installation ID.
+
+Folio migration 003 adds nullable installation IDs without network access.
+A legacy row binds on its first verified, fresh, active grant observation only
+when the installation's `installed_at` is strictly earlier than the row's
+`created_at`. This preserves a pre-deploy capability created under the still
+current installation. An older row, including equality, is refused permanently;
+that refusal is committed and never retried against another installation.
+This rule assumes comparable clocks across the server and Folio databases;
+clock skew between those databases is a theoretical boundary of the rule.
+
+Deploy the server carrying the creation-time grant field first, then Folio with
+its required purpose-bound app-grant-read key, then re-pin every Folio
+installation to the new manifest digest. Until the re-pin, the old pin refuses
+G1 and Folio denies access. The manifest/key transition is shared with records;
+records uses the same runtime grant source and fence. There is no second cache
+or deployment-manifest fallback. A cached inactive observation may also deny a
+fresh reinstall until the advertised grant-status freshness window expires.

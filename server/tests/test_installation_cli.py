@@ -124,3 +124,27 @@ async def test_cli_member_request_admin_install_update_and_refused_update_preser
     assert code != 0 and "admin_required" in error, out + error
     assert path.read_bytes() == saved
     assert await env.db.fetch_value("SELECT generation FROM {{tables.team_app_installs}}") == 2
+
+    # Team uninstall uses the selected resident authority and retains the
+    # local bytes/approval, which may also serve another team.
+    code, out, error = await cli("uninstall", "fixture")
+    assert code != 0 and "admin_required" in error, out + error
+    assert path.read_bytes() == saved
+    assert await env.db.fetch_value("SELECT state FROM {{tables.team_app_installs}}") == "active"
+    await env.db.execute("INSERT INTO aweb.test_install_admins VALUES ($1,$2)", services.TEAM, env.actors["alice"].did)
+    code, out, error = await cli("uninstall", "fixture", "--expected-generation", "1")
+    assert code != 0 and "generation_conflict" in error, out + error
+    code, out, error = await cli("uninstall", "fixture")
+    assert code == 0, out + error
+    retired = json.loads(out)
+    assert retired["state"] == "uninstalled" and retired["generation"] == 3
+    assert retired["installation_id"] == installation_id
+    assert path.read_bytes() == saved
+    code, out, error = await cli("uninstall", "fixture")
+    assert code == 0 and json.loads(out)["generation"] == retired["generation"], out + error
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.app_hook_bindings}} WHERE state IN ('active','pending')") == 0
+    code, out, error = await cli("install", origin.url)
+    assert code == 0, out + error
+    replacement = json.loads(out)["provenance"]
+    assert replacement["registered_installation_id"] != installation_id
+    assert replacement["registered_generation"] > retired["generation"]

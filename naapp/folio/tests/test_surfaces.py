@@ -378,10 +378,10 @@ def test_present_route_keeps_noindex_header(monkeypatch) -> None:
     app = folio_api.create_app(Settings(public_origin="https://folio.aweb.ai"))
     _override_db_for_path(app, "/present/{token}")
 
-    async def fake_get_presented_document(_database, *, token: str) -> dict:
+    async def fake_get_presented_document(_database, *, runtime, token: str) -> dict:
         return {"body": "# Private", "theme": None, "allowed_assets": {}}
 
-    monkeypatch.setattr(folio_api, "get_presented_document", fake_get_presented_document)
+    monkeypatch.setattr(folio_api, "presented_document", fake_get_presented_document)
 
     response = TestClient(app).get("/present/private-token")
 

@@ -43,7 +43,7 @@ from aweb.installation_views import (
     pinned_manifest_on,
     semantic_diff,
 )
-from aweb.installations import install_verified_manifest_on
+from aweb.installations import install_verified_manifest_on, uninstall_installation_on
 from aweb.internal_auth import parse_internal_auth_context
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ServiceError
 from aweb.team_auth_deps import get_team_identity
@@ -117,6 +117,7 @@ class AppGrantStatusResponse(BaseModel):
     installation_id: str | None
     generation: int | None
     origin_verified: bool | None
+    installed_at: datetime
     as_of: str
     max_age_seconds: int
 
@@ -380,6 +381,28 @@ async def install_app_route(
         raise _failure(exc) from exc
 
 
+@router.post("/{app_id}/uninstall", response_model=InstalledAppResponse)
+async def uninstall_installation_route(
+    app_id: str, request: Request,
+    team_id: str | None = Query(None),
+    db_infra: DatabaseInfra = Depends(get_db_infra),
+):
+    payload = await _payload(request, ExpectedGeneration)
+    try:
+        authorized, identity = await _caller(request, db_infra, team_id)
+        app_id = normalize_app_id(app_id)
+        request.state.operator_audit_target = "app:" + app_id
+        async with db_infra.get_manager("aweb").transaction() as tx:
+            await require_install_admin(tx, request, identity, authorized, action="apps.uninstall", app_id=app_id)
+            row = await uninstall_installation_on(
+                tx, team_id=authorized, app_id=app_id, expected_generation=payload.expected_generation,
+            )
+            await audit_success(tx, request, authorized)
+        return row
+    except ServiceError as exc:
+        raise _failure(exc) from exc
+
+
 @router.get("/self/grant", response_model=AppGrantStatusResponse)
 async def app_grant_status_route(
     request: Request,
@@ -409,6 +432,7 @@ async def app_grant_status_route(
         installation_id=app.installation_id,
         generation=app.generation,
         origin_verified=app.origin_verified,
+        installed_at=app.installed_at,
         as_of=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         max_age_seconds=get_app_grant_max_age_seconds(),
     )

@@ -72,7 +72,7 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	}
 	decoy := filepath.Join(root, "decoy")
 	writeResident(decoy, awid.IdentityModeLocal)
-	if err := changeAppApproval(filepath.Join(decoy, ".aw"), "decoyapp", "https://decoy.invalid"); err != nil {
+	if err := changeAppApproval(filepath.Join(decoy, ".aw"), "decoyapp", "https://decoy.invalid", "decoy:example.test", "decoy-installation"); err != nil {
 		t.Fatal(err)
 	}
 	decoyBefore, _ := os.ReadFile(appApprovalsPath(filepath.Join(decoy, ".aw")))
@@ -152,7 +152,7 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	}
 	body.Store([]byte(appTestManifest(server.URL, "/v1/things/{thing_id}")))
 	// A host-store edit cannot silently change the resident's approved origin.
-	if err := changeAppApproval(homes[0], "testapp", "https://old.invalid"); err != nil {
+	if err := changeAppApproval(homes[0], "testapp", "https://old.invalid", "approvals:example.test", "fixture-testapp"); err != nil {
 		t.Fatal(err)
 	}
 	invoke(empty, homes[0], "app_origin_mismatch", "plugin", "update", "testapp")

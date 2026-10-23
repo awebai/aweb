@@ -59,6 +59,7 @@ class GrantStatus:
     installation_id: str | None
     generation: int | None
     origin_verified: bool | None
+    installed_at: datetime
     as_of: datetime
     max_age_seconds: int
     fresh_until: float
@@ -178,6 +179,9 @@ class TeamGrantSource:
         if not _AS_OF.fullmatch(body["as_of"]):
             raise ValueError("invalid grant as_of")
         as_of = datetime.fromisoformat(body["as_of"])
+        if not isinstance(body["installed_at"], str) or not _AS_OF.fullmatch(body["installed_at"]):
+            raise ValueError("invalid grant installed_at")
+        installed_at = datetime.fromisoformat(body["installed_at"])
         scopes = body["granted_scopes"]
         if not isinstance(scopes, list) or not all(isinstance(s, str) and s for s in scopes):
             raise ValueError("invalid granted_scopes")
@@ -207,6 +211,7 @@ class TeamGrantSource:
             installation_id=installation_id,
             generation=generation,
             origin_verified=origin_verified,
+            installed_at=installed_at,
             as_of=as_of,
             max_age_seconds=body["max_age_seconds"],
             fresh_until=0.0,

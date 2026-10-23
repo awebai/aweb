@@ -514,7 +514,7 @@ Flags:
 Mint a session grant and write a self-contained grant home
 
 Flags:
-- `--app-tool stringArray Legacy one-mint app:verb selection; replaces the resident approval catalog for this mint only`
+- `--app-tool stringArray Select app:verb tools for this grant; requires plugin install approval for this team's current installation`
 - `--bundle stringArray Grant scope bundle, repeatable or comma-separated (normal-agent)`
 - `--custody-socket string Resident custody Unix socket path to write into grant.yaml, or auto for the resident identity home's default custody socket`
 - `-h, --help help for mint`
@@ -3789,9 +3789,10 @@ Manage aw plugins
 Subcommands:
 - `install` Install a plugin into the trusted aw plugin directory
 - `list` List installed plugins
-- `remove` Remove an installed plugin
+- `remove` Remove a local plugin or this home's app approval; keep the team installation
 - `request` Ask a team administrator to install an app; grants no tools or scopes
 - `reserved-names` Emit reserved top-level aw app ids
+- `uninstall` Uninstall an app from the selected team's server installation
 - `update` Update an installed manifest plugin
 
 Flags:
@@ -3825,7 +3826,8 @@ Flags:
 
 ### `plugin remove`
 
-Remove an installed plugin
+Remove a local plugin or this home's app approval only. The team's server installation is unchanged.
+Use aw plugin uninstall to remove the team's server installation.
 
 Flags:
 - `-h, --help help for remove`
@@ -3847,6 +3849,17 @@ Emit reserved top-level aw app ids
 
 Flags:
 - `-h, --help help for reserved-names`
+
+## `plugin uninstall`
+
+### `plugin uninstall`
+
+Uninstall an app from the selected team's server installation. Requires current install-admin authority.
+Local plugin files and approvals are retained; use aw plugin remove for local removal only.
+
+Flags:
+- `--expected-generation int Require this installation generation (default: read the team's current generation)`
+- `-h, --help help for uninstall`
 
 ## `plugin update`
 

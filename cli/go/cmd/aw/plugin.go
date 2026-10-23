@@ -60,9 +60,11 @@ var pluginInstallCmd = &cobra.Command{
 
 var pluginRemoveCmd = &cobra.Command{
 	Use:   "remove <name>",
-	Short: "Remove an installed plugin",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runPluginRemove,
+	Short: "Remove a local plugin or this home's app approval; keep the team installation",
+	Long: "Remove a local plugin or this home's app approval only. The team's server installation is unchanged.\n" +
+		"Use aw plugin uninstall to remove the team's server installation.",
+	Args: cobra.ExactArgs(1),
+	RunE: runPluginRemove,
 }
 
 var pluginUpdateCmd = &cobra.Command{
@@ -84,11 +86,14 @@ type pluginListOutput struct {
 }
 
 type pluginListItem struct {
-	Name         string            `json:"name"`
-	Kind         string            `json:"kind"`
-	Path         string            `json:"path"`
-	ManifestPath string            `json:"manifest_path,omitempty"`
-	Provenance   *pluginProvenance `json:"provenance,omitempty"`
+	ApprovalStatus  string            `json:"approval_status,omitempty"`
+	ApprovalCode    string            `json:"approval_code,omitempty"`
+	RecoveryCommand []string          `json:"recovery_command,omitempty"`
+	Name            string            `json:"name"`
+	Kind            string            `json:"kind"`
+	Path            string            `json:"path"`
+	ManifestPath    string            `json:"manifest_path,omitempty"`
+	Provenance      *pluginProvenance `json:"provenance,omitempty"`
 }
 
 type pluginProvenance struct {
@@ -153,6 +158,9 @@ func init() {
 func runPluginList(cmd *cobra.Command, args []string) error {
 	plugins, err := installedPlugins()
 	if err != nil {
+		return err
+	}
+	if err := annotateInstallationApprovals(cmd, plugins); err != nil {
 		return err
 	}
 	printOutput(pluginListOutput{Plugins: plugins}, formatPluginList)
@@ -269,7 +277,7 @@ func runPluginRemove(cmd *cobra.Command, args []string) error {
 				printOutput(pluginRemoveOutput{Name: name, Path: appApprovalsPath(home.Root), NotApproved: true}, formatPluginRemove)
 				return nil
 			}
-			if err := changeAppApproval(home.Root, name, ""); err != nil {
+			if err := changeAppApproval(home.Root, name, "", "", ""); err != nil {
 				return err
 			}
 			printOutput(pluginRemoveOutput{Name: name, Path: appApprovalsPath(home.Root), ApprovalRemoved: true}, formatPluginRemove)
@@ -453,6 +461,12 @@ func formatPluginList(v any) string {
 		if plugin.Provenance != nil && strings.TrimSpace(plugin.Provenance.Origin) != "" {
 			extra = "\t" + strings.TrimSpace(plugin.Provenance.Origin)
 		}
+		if plugin.ApprovalStatus == "needs_approval" {
+			extra += "\tneeds approval for this team's installation"
+		}
+		if plugin.ApprovalStatus == "unavailable" {
+			extra += "\tinstallation approval unavailable"
+		}
 		sb.WriteString(fmt.Sprintf("  %s\t%s%s\n", plugin.Name, plugin.Path, extra))
 	}
 	return sb.String()
@@ -598,13 +612,21 @@ func installOrUpdateManifestPlugin(source, dir string, update bool, devOrigin st
 
 func installManagedManifestPlugin(source, dir string, update bool, devOrigin string, policy manifestManagementPolicy) (*pluginInstallOutput, error) {
 	var catalog *appApprovalCatalog
+	var approval appInstallationApproval
 	if policy.residentHome != "" {
 		var err error
 		catalog, err = loadAppApprovals(policy.residentHome)
 		if err != nil {
 			return nil, err
 		}
-		if update && catalog.Apps[policy.expectedName] == "" {
+		if update {
+			selection, err := resolveSelectionForDir(mustGetwd())
+			if err != nil {
+				return nil, err
+			}
+			approval = catalog.Installations[selection.TeamID][policy.expectedName]
+		}
+		if update && approval.InstallationID == "" {
 			return nil, usageError("app_not_approved: install %s to approve it for this resident", policy.expectedName)
 		}
 	}
@@ -669,7 +691,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 	if err != nil {
 		return nil, err
 	}
-	if update && catalog != nil && catalog.Apps[name] != origin {
+	if update && catalog != nil && approval.Origin != origin {
 		return nil, usageError("app_origin_mismatch: %s changed origin; reinstall to approve", name)
 	}
 	appDir := manifestPluginDir(dir, name)
@@ -723,14 +745,14 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		if err != nil || declared != registered {
 			return nil, usageError("origin_verification_required: install from the app's served origin without a --dev-origin rewrite")
 		}
-		if err := registerManifestEvents(resolved, fetchedDigest, previous, &provenance, update, policy.grantedScopes); err != nil {
+		if err := registerManifestEvents(resolved, fetchedDigest, previous, &provenance, update, policy.grantedScopes, approval.InstallationID); err != nil {
 			return nil, err
 		}
 	}
 	// The resident approves the app's origin only once its registration
 	// succeeded, so a refused install leaves the earlier approval in force.
 	if policy.residentHome != "" {
-		if err := changeAppApproval(policy.residentHome, name, origin); err != nil {
+		if err := changeAppApproval(policy.residentHome, name, origin, provenance.RegisteredTeam, provenance.RegisteredInstallationID); err != nil {
 			return nil, err
 		}
 	}

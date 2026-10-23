@@ -63,7 +63,7 @@ from aweb_naapp.manifest import (
 )
 from aweb_naapp.outbox import outbox_status, run_drain
 from aweb_naapp.robots import robots_txt
-from aweb_naapp.runtime.app_credentials import HOOK_RESOLVE, AppCredentialSigner
+from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKeyError, declared_did_keys, load_app_key
 from aweb_naapp.runtime.attestation import (
     AttestationRefused,
@@ -88,6 +88,7 @@ from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.hook_resolver import HookResolver
 from aweb_naapp.runtime.hooks import RuntimeHooks
+from aweb_naapp.runtime.installation import InstallationFence
 from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
@@ -97,6 +98,7 @@ from aweb_naapp.runtime.team_auth import (
     authenticate_request,
     record_observed_principal,
 )
+from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
 from aweb_naapp.runtime.team_server import TeamServerDirectory
 from aweb_naapp.skills import Skills
 
@@ -182,6 +184,17 @@ class NaappRuntime:
         self._team_server_directory = TeamServerDirectory(
             team_cache=self._team_cache, transport=awid_transport,
         )
+        self._installation_fence: InstallationFence | None = None
+        self._installation_grants = None
+        if self.manifest.app_keys_for(APP_GRANT_READ):
+            key = load_app_key(settings, self.manifest, APP_GRANT_READ)
+            self._installation_grants = TeamGrantSource(
+                identity=AppIdentity(app_id=self.manifest.app_id,
+                    origin=self.manifest.document["app"]["origin"],
+                    digest="sha256:" + hashlib.sha256(self.manifest_bytes).hexdigest()),
+                signer=AppCredentialSigner(app_id=self.manifest.app_id, key=key, purpose=APP_GRANT_READ),
+                discovery=self.team_server_directory(), transport=team_server_transport,
+            )
         hook_key = (
             load_app_key(settings, self._manifest, HOOK_RESOLVE)
             if self._manifest.app_keys_for(HOOK_RESOLVE) else None
@@ -265,6 +278,7 @@ class NaappRuntime:
             if drains:
                 await asyncio.gather(*drains)
             await client.aclose()
+            self._installation_fence = None
             self._database = None
             self._attestation_records = None
             await database.disconnect()
@@ -320,6 +334,28 @@ class NaappRuntime:
         records through the configured AWID transport.
         """
         return self._team_server_directory
+
+    def installation_grants(self) -> TeamGrantSource:
+        """The process's one G1 source/cache for its exact served manifest.
+
+        Member tools, presentation/session fences and records consume this same
+        object. A key for another purpose never substitutes for grant-read.
+        """
+        if self._installation_grants is None:
+            raise AppKeyError("manifest declares no app-grant-read key")
+        return self._installation_grants
+
+    def installation_fence(self) -> InstallationFence:
+        """One shared SQL fence over this runtime's G1 source and database.
+
+        Apps opting in apply the shared installation store before their own
+        migrations. No app creates another copy of this authority protocol.
+        """
+        if self._installation_fence is None:
+            self._installation_fence = InstallationFence(
+                self.db(), app_id=self.manifest.app_id, grants=self.installation_grants(),
+            )
+        return self._installation_fence
 
     def hook_resolver(self) -> HookResolver:
         """The shared resolver, signing with the hook-resolve key loaded at startup.
