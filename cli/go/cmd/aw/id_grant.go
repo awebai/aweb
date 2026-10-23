@@ -584,7 +584,7 @@ func init() {
 	}
 	mintCmd.Flags().StringArrayVar(&grantMintScopes, "scope", nil, "Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send, events.read, coord.read, coord.write, presence.write, contacts.read, contacts.write)")
 	mintCmd.Flags().StringArrayVar(&grantMintBundles, "bundle", nil, "Grant scope bundle, repeatable or comma-separated (normal-agent)")
-	mintCmd.Flags().StringArrayVar(&grantMintAppTools, "app-tool", nil, "Legacy one-mint app:verb selection; replaces the resident approval catalog for this mint only")
+	mintCmd.Flags().StringArrayVar(&grantMintAppTools, "app-tool", nil, "Select app:verb tools for this grant; requires plugin install approval for this team's current installation")
 	mintCmd.Flags().StringVar(&grantMintCustodySocket, "custody-socket", "", "Resident custody Unix socket path to write into grant.yaml, or auto for the resident identity home's default custody socket")
 	grantMintTTL = identityGrantNeverTTL
 	mintCmd.Flags().Var(grantTTLFlag{}, "ttl", "Grant duration: never (revocation-only) or a duration from 60s to 720h")
