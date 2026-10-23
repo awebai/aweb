@@ -152,6 +152,81 @@ async def test_a_dispatch_runs_from_received_to_completed(
     ]
 
 
+async def test_immediate_unknown_is_a_durable_cas_and_keeps_late_evidence(db, machine, recorder):
+    dispatch_id = await _dispatching(db, machine)
+    async with db.transaction() as tx:
+        assert await machine.outcome_unknown(tx, dispatch_id, {"error": "transport_reset"}) is True
+    async with db.transaction() as tx:
+        assert await machine.outcome_unknown(tx, dispatch_id, {"error": "late_reset"}) is False
+        assert await machine.complete(tx, dispatch_id, {"status": 200}) is False
+    current = await _state(db, machine, dispatch_id)
+    assert current.state is State.OUTCOME_UNKNOWN
+    assert current.result == {"error": "transport_reset"}
+    assert current.late_results == [{"error": "late_reset"}, {"status": 200}]
+    assert recorder.states(dispatch_id).count(State.OUTCOME_UNKNOWN) == 1
+    async with db.transaction() as tx:
+        await machine.reconcile(tx, dispatch_id, State.RECONCILED_FAILED, {"by": "owner"})
+        assert await machine.outcome_unknown(tx, dispatch_id, {"error": "after_reconcile"}) is False
+    current = await _state(db, machine, dispatch_id)
+    assert current.state is State.RECONCILED_FAILED
+    assert current.result == {"by": "owner"}
+    assert current.late_results[-1] == {"error": "after_reconcile"}
+
+
+async def test_immediate_unknown_rolls_back_when_transition_enqueue_fails(db, machine, recorder):
+    dispatch_id = await _dispatching(db, machine)
+    recorder.fail_on = State.OUTCOME_UNKNOWN
+    with pytest.raises(EnqueueFailed):
+        async with db.transaction() as tx:
+            await machine.outcome_unknown(tx, dispatch_id, {"error": "timeout"})
+    current = await _state(db, machine, dispatch_id)
+    assert current.state is State.DISPATCHING
+    assert current.result is None
+    assert current.late_results == []
+
+
+async def test_immediate_unknown_racing_completion_never_overwrites_the_winner(db, machine):
+    dispatch_id = await _dispatching(db, machine)
+
+    async def settle(method, result):
+        try:
+            async with db.transaction() as tx:
+                return await getattr(machine, method)(tx, dispatch_id, result)
+        except InvalidTransition:
+            return "terminal"
+
+    results = await asyncio.gather(
+        settle("outcome_unknown", {"error": "timeout"}), settle("complete", {"status": 200})
+    )
+    assert results.count(True) == 1
+    current = await _state(db, machine, dispatch_id)
+    assert current.state in {State.OUTCOME_UNKNOWN, State.COMPLETED}
+    if current.state is State.OUTCOME_UNKNOWN:
+        assert current.result == {"error": "timeout"}
+        assert current.late_results == [{"status": 200}]
+    else:
+        assert current.result == {"status": 200}
+        assert current.late_results == []
+
+
+@pytest.mark.parametrize("state", ["received", "admitted", "completed"])
+async def test_immediate_unknown_refuses_an_unstarted_or_terminal_dispatch(db, machine, state):
+    if state == "received":
+        dispatch_id = uuid.uuid4()
+        async with db.transaction() as tx:
+            await machine.create(tx, dispatch_id=dispatch_id, subject=SUBJECT, action=ACTION)
+    elif state == "admitted":
+        dispatch_id = await _admitted(db, machine)
+    else:
+        dispatch_id = await _dispatching(db, machine)
+        async with db.transaction() as tx:
+            await machine.complete(tx, dispatch_id, {"status": 200})
+    with pytest.raises(InvalidTransition):
+        async with db.transaction() as tx:
+            await machine.outcome_unknown(tx, dispatch_id, {"error": "timeout"})
+    assert (await _state(db, machine, dispatch_id)).state.value == state
+
+
 async def test_approval_states(db: AsyncDatabaseManager, machine: Dispatches) -> None:
     for closing in (State.APPROVAL_DENIED, State.APPROVAL_EXPIRED, State.CANCELLED):
         dispatch_id = uuid.uuid4()

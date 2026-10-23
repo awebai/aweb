@@ -36,6 +36,7 @@ class TeamOwner:
 
     team_key: SigningKey
     verifier: OwnerActVerifier
+    team_id: str = TEAM_ID
 
     def sign(self, act: str, subject: dict[str, Any]) -> tuple[bytes, str]:
         issued = datetime.now(UTC).replace(microsecond=0)
@@ -43,7 +44,7 @@ class TeamOwner:
             "v": 1,
             "type": "aweb.owner-act",
             "act": act,
-            "team_id": TEAM_ID,
+            "team_id": self.team_id,
             "aud": AUDIENCE,
             "team_key_did": did_key(self.team_key),
             "subject": subject,
@@ -57,7 +58,7 @@ class TeamOwner:
 
     async def prepare(self, act: str, subject: dict[str, Any]) -> PreparedOwnerAct:
         signing, signature = self.sign(act, subject)
-        return await self.verifier.prepare(signing, signature, team_id=TEAM_ID)
+        return await self.verifier.prepare(signing, signature, team_id=self.team_id)
 
     async def consume(
         self, tx: TransactionManager, prepared: PreparedOwnerAct, subject: dict[str, Any]
@@ -84,9 +85,10 @@ def revocation_subject(scope: str, subject_ref: str) -> dict[str, Any]:
     }
 
 
-async def team_owner(registry) -> TeamOwner:
+async def team_owner(registry, *, team_id: str = TEAM_ID) -> TeamOwner:
+    """Register a real owner key for the team the app fixture actually uses."""
     key = SigningKey.generate()
-    await registry.add_team(TEAM_ID, did_key(key))
+    await registry.add_team(team_id, did_key(key))
     cache = AWIDTeamCache(
         registry_url=REGISTRY_URL,
         ttl_seconds=0,
@@ -100,4 +102,4 @@ async def team_owner(registry) -> TeamOwner:
     verifier = OwnerActVerifier(
         scope=APP_ID, audience=AUDIENCE, acts=APP_ACTS, team_key_for=current_team_key
     )
-    return TeamOwner(team_key=key, verifier=verifier)
+    return TeamOwner(team_key=key, verifier=verifier, team_id=team_id)

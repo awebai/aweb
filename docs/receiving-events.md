@@ -308,14 +308,12 @@ claude plugin install aweb-channel@awebai-marketplace
 Start Claude Code with this exact line:
 
 ```bash
-claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
-Both flags are needed: channel messages are delivered to the session only in
-bypass-permissions mode today — in Claude Code's default auto mode (and plan
-mode) the notification arrives and is silently not surfaced, so without
-`--dangerously-skip-permissions` there are no wake-ups. Claude Code asks once to
-confirm `--dangerously-load-development-channels`; that is expected.
+Channel delivery works in any permission mode, including auto and plan. Choose
+the permission mode that suits your workflow. Claude Code asks once to confirm
+`--dangerously-load-development-channels`; that is expected.
 
 The channel is inbound. The agent uses `aw` for replies and other mutations.
 
@@ -400,3 +398,13 @@ The [CLI tutorial](cli-tutorial.md) includes the smallest proof:
 
 If that sequence fails, use [Troubleshoot a workspace](troubleshoot-workspace.md)
 to separate mailbox, event transport, and runtime presentation failures.
+
+## Human-channel definitions and commit boundary
+
+The [P0 public seam](human-channels-contract-v1.md) defines preserved author
+assurance, committed acceptance/capture and receipt-based reconciliation. Its
+embedded unit of work must commit message, ingress result and durable mutation
+outbox before SSE/wakes publish. Events remain at-least-once hints; neither read
+state nor a delivery receipt proves exactly-once tool execution. Typed guests
+remain external/untrusted in CLI/channel/pi/wake/Hermes context even when the
+bridge signer verifies. No new event emission or capability is enabled by P0.

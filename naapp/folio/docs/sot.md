@@ -129,10 +129,15 @@ An agent can mint an **editable** present link so its human can edit the documen
   `base_version == latest`; if stale → **409**, returning the latest body+version
   for the human to reconcile; else it appends and returns the new version. No
   silent overwrite.
-- **Seeing the latest** — the editor polls `GET /present/<token>/state` (latest
-  version_number) every few seconds; a newer version surfaces a "reload" prompt
-  (warned if there are unsaved edits). Several humans on several machines each edit
-  via their own link, save deliberately, and all converge on the latest version.
+- **Seeing the latest** — the editor polls `GET /present/<token>/state` every
+  four seconds while visible, without overlapping reads, and checks immediately
+  when it becomes visible again. With `after_version=N`, an unchanged response
+  contains only the version; a newer version also returns its body and sanitized
+  preview HTML under the same editable-token checks. A clean buffer updates
+  automatically. A dirty buffer keeps its text, focus and selection and offers
+  Load latest version with discard confirmation. No save is retried automatically.
+  Expiry or revocation stops polling and retains the copyable draft. Read-only
+  presentation links retain their existing snapshot behavior in this editor slice.
 - **Attribution** — the editor optionally captures a display name ("editing as
   ___"); the appended version records it as a human-via-link edit. No login or
   identity — just a label, consistent with the no-accounts stance.

@@ -203,6 +203,267 @@ slots or assignments without failing the binding check.
 
 The credential exists in plaintext only on the runner host, for that job.
 
+## 4. HTTP bodies, reports and credential fields
+
+This section fixes the shared server/runner adapter contract. The signed header,
+assignment, HPKE framing and verification order in §§1–3 are unchanged. Neither a
+runner request nor a report supplies a job definition, credential value, runner
+override, slot ordinal or new send authority.
+
+### 4.1 Bodies and responses
+
+All three routes use `POST`, with no query string, `Content-Type:
+application/json` (an optional `charset=utf-8` is permitted) and no content
+encoding. Bodies are UTF-8 JSON objects. Duplicate keys, floats, non-finite
+numbers, non-scalar strings, unsafe integers and unknown fields refuse. JSON
+whitespace and key order may vary; the signed `body_sha256` always commits the
+exact received bytes, not a re-encoding. Claim and started bodies are at most
+4096 bytes. An empty byte string is not the JSON object `{}`.
+
+| Route | Exact body | Success |
+| --- | --- | --- |
+| `/runner/v1/claim` | `{}` | `200` with the exact §2 assignment body, or `204` with no body when no assignment is available |
+| `/runner/v1/dispatches/{dispatch_id}/started` | `{}` | `204`, no body |
+| `/runner/v1/dispatches/{dispatch_id}/result` | the six fields below | `204`, no body |
+
+All responses carry `Cache-Control: no-store`. A claim waits at most 30 seconds;
+there is no database transaction or row lock held during the wait. The final
+selection/release transaction rechecks live authority. An empty claim still
+consumes its authenticated nonce (§1). An HTTP timeout is not evidence that a
+claim released nothing. Every transport retry uses a fresh signed timestamp and
+nonce; replaying a signed request itself gives `runner_request_replayed`.
+
+The result body has exactly:
+
+| Field | Type and meaning |
+| --- | --- |
+| `exit_code` | integer within ±(2^53 − 1), never a boolean; the process exit status reported by the runner |
+| `stdout` | Unicode scalar string |
+| `stderr` | Unicode scalar string |
+| `truncated` | boolean; the runner cut either stream to its output bound |
+| `result_withheld` | boolean; local output checks withheld the streams |
+| `redaction_count` | integer from 0 through 2^53 − 1, never a boolean; local redaction count |
+
+The combined UTF-8 byte length of the decoded `stdout` and `stderr` is at most
+the pinned job's `output.max_bytes`, not that bound per stream. Before JSON
+encoding the runner bounds the streams, preserving scalar boundaries, and sets
+`truncated` when it cuts output. The encoded HTTP frame is bounded separately at
+`6 * output.max_bytes + 1024` bytes, including all keys and JSON escaping. The
+server enforces both bounds while reading/parsing. A locally withheld report
+requires both streams to be empty. Empty output is still a valid report; a
+nonzero exit code is a process outcome, not an HTTP error.
+
+The flags and local count are untrusted observations. The server independently
+redacts known values, checks credential shapes on decoded streams before JSON
+escaping, then applies the pinned output projection (§9.6). A local withhold
+returns no output. Local truncation/withhold/count and server disposition/count
+remain visible as result metadata even when projection omits stdout/stderr.
+Counts remain separate; they are not added into an overflowing wire integer.
+Neither a false flag nor a zero local count disables server checks.
+
+### 4.2 One dispatch, one assignment
+
+The `dsp_` identifier is one immutable, unique, random wire alias on the existing
+UUID-backed dispatch/run record, in the same installation and team. It is
+persisted before assignment. Assignment signatures, report paths and HPKE
+`info` use that alias. There is no second dispatch registry or state machine.
+
+**Runner preparation and the final fence.** First select the original durably
+admitted run, with its persisted joint-approval/ordered-slot/plan association.
+Derive every exact custody context from that original record. The sole private
+custody opener reads those contexts **outside all held database transactions
+and locks**, before the final release fence. Its read capability does not grant
+send authority. Keep plaintext and original known values only in transient
+memory for that run/slot/version/reference/token epoch. This is runner
+preparation; broker opening still follows its committed `dispatching` transition.
+
+A `PreparedRun` is transaction-bound. Never carry its former transaction's
+authority across the SDK wait. In the new release transaction, rebuild and
+check the original persisted plan without rewriting it or consuming B2 again.
+The sole S13 fence takes the complete existing authority locks, then compares
+the exact prepared contexts/versions/reference/token epochs, current runner keys,
+installation generation/containment, approvals and live expiry. Its checker is
+DB-only; it performs no SDK/KMS I/O or late authority locking. Only then commit
+`dispatching`, the immutable alias, exact sealed/signed assignment bytes, nonce
+and required outbox effects together, before any assignment byte leaves.
+Changed authority or a failed commit discards all transient preparation and
+releases nothing; a failed commit leaves no committed `dispatching` transition.
+
+If another claim already published while preparation was outside the
+transaction, discard the losing preparation and use the winner's stored bytes
+only after the usual replay checks. Never replace or reseal its assignment.
+Check for that winner even when the losing SDK preparation failed: only a row
+still admitted may become refused. A losing worker cannot refuse an already
+published run or overwrite its receipt.
+There is no new durable preparation state, queue, resolver or custody opener.
+The original admitted-run authority and shared S3 record remain authoritative.
+
+An SDK/open failure before this final commit closes the original admitted
+attempt with the shared **`admitted → refused`** transition and a fixed,
+phase-appropriate refusal cause. Operational/refusal outbox recording and the
+claim nonce commit atomically. A failed recording transaction leaves the
+admitted row for S13's cleanup, with no release; it must not create `not_sent`
+or `outcome_unknown`, rearm approval, or transplant a replacement version.
+The claim returns `503 runner_unavailable` without an assignment; the owner
+sees the safe cause in the run receipt/activity. A broker SDK failure after its
+`dispatching` commit but before sending remains `not_sent`, as §11 requires.
+Report state changes use the same shared dispatch transition path and commit
+atomically with their nonce and required outbox records.
+
+There is at most one unresolved released assignment per runner. While it is
+`dispatching`, another claim returns the stored assignment bytes; it never opens
+credentials again, reseals them, extends their expiry or creates an independent
+assignment. Concurrent claims serialize this selection. An `outcome_unknown`
+assignment blocks a new release to that runner until reconciled; its claims
+return `409 runner_reconciliation_required`, never the idle `204`. The runner
+surfaces this refusal to its operator, and the console activity view labels the
+original item "runner blocked until you reconcile". A still-`dispatching`
+assignment whose executable lifetime expired refuses its claim with
+`409 runner_dispatch_state_conflict` while awaiting result or the normal timeout;
+expiry alone must not sweep a job before its original execution deadline. Only
+a genuinely idle runner with no eligible assignment returns `204`. Before
+returning stored credential-bearing
+bytes, recheck current registration/key, installation generation and containment
+authority. If those
+checks fail, do not return or reseal the assignment. An expired assignment is
+not returned as executable work. Expiry, a lost response or failure to receive
+`started` does not establish `not_sent`: retain the original attempt and follow
+§11's timeout/reconciliation path. Never make the uncertain attempt executable
+again under a new alias. The runner's local journal still prevents execution of
+an assignment twice (§2); receipt of a duplicate is not another execution.
+
+A report is accepted only from the current authenticated active runner assigned
+to that dispatch, within its original installation/team/generation. Unknown,
+foreign and unassigned dispatches have the same refusal. A report acknowledges
+that runner's observation; it cannot renew approval, execute, open, release,
+reseal or authorize any other dispatch.
+
+| Existing dispatch/report condition | Started | Result |
+| --- | --- | --- |
+| Assignment released, state `dispatching` | `204`; record started once | `204`; sanitize and CAS to `completed` |
+| Released attempt already `completed` or reconciled, or `outcome_unknown` | `204`; no state change | `204`; retain sanitized late evidence, without overwriting terminal/unknown state |
+| Same accepted report retried with fresh nonce and identical raw body hash | `204`; no additional effect | `204`; no duplicate result, evidence or event |
+| Different raw result body after a result was accepted | n/a | `409 runner_result_conflict`; preserve the first report |
+| No assignment was released, including `admitted`, `not_sent`, refused or cancelled | `409 runner_dispatch_state_conflict` | `409 runner_dispatch_state_conflict` |
+
+A result need not be preceded by `started`; network reordering or a failed
+started acknowledgment must not discard a real exit. Record the first accepted
+result's private raw-body SHA-256 (the §1 request binding) with the sanitized
+result/evidence in the same transaction; compare it on subsequent reports.
+This hash is private deduplication state, never a public audit commitment.
+Raw output is processed before persistence and is not retained for comparison.
+Re-encoding an accepted result differently changes its raw hash and conflicts;
+the runner retains its exact report bytes for retries. An `outcome_unknown` or
+already reconciled row is never silently turned into `completed` by a late
+report. Reconciliation alone resolves it under §11.4.
+
+The sweeper threshold exceeds the original job timeout plus a margin. Loss of
+the runner after release is uncertain even without a started report. A report's
+`204` means its sanitized observation was durably accepted or already present;
+it does not imply that an earlier unknown outcome has been reconciled.
+
+### 4.3 Original-value redaction context
+
+Server redaction uses the exact values released for this dispatch, including a
+1Password value read at release. A later read of a changed vault item is not an
+equivalent redaction context. Keep the original known-value context only in
+transient memory, bound to this dispatch, with a deadline bounded by its original
+job timeout plus sweep margin. Dispose of it on final result, expiry or
+containment. Do not persist a plaintext value, create a vault cache across
+dispatches, or add an undeclared sealed-value cache.
+
+If that context is unavailable (including restart, worker loss, disposal or a
+late report), withhold all returned streams with disposition reason
+`release_context_unavailable`. Preserve exit status and local metadata, and
+accept/deduplicate the report under §4.2. Do not reread the vault or reopen a
+secret to recover a context for output. Local redaction is still required and
+is not a substitute for the server check. A lost transient context trades output
+availability for confidentiality; it does not authorize a new run.
+
+### 4.4 Explicit environment fields
+
+A job's environment credential reference is exactly
+`{"$credential":"<fixed slot label>","field":"<field name>"}`. This replaces
+the underspecified one-key reference, including for single-field kinds. The
+slot must be declared in the job's ordered credentials. Its label remains the
+fixed job label after any approved child substitution; it is not a caller-chosen
+child ref or ordinal. Field names and bindings are covered by the job/1 digest,
+owner confirmation and runner-local digest pin. Existing pins are not silently
+rewritten; a changed definition needs confirmation and new grants/pins.
+
+| Permitted selected fields for one slot | Shared decoder validation kind |
+| --- | --- |
+| `value` | `bearer` (the `header` and `query` mapping shape is identical) |
+| `username`, `password` | `basic` |
+| `client_id`, `client_secret` | `oauth2-client-credentials` |
+| `access_key_id`, `secret_access_key`, `session_token` | `aws-sigv4` |
+
+Each declared credential slot has at least one env field reference, so its
+validation family is determined without a wire kind. Every selected field for
+a slot must belong to one row; missing references, mixed families or an unknown
+field refuse the job definition. A job may select a subset of a row or
+bind one field to several env names. This does not limit the delivered secret
+kinds. S13 validates each field against the actual scoped delivered secret's
+kind and requires it to exist before release. In particular, an optional native
+AWS `session_token` must exist and be nonempty when selected. No empty fallback
+is permitted. Basic's empty username remains valid under the shared codec.
+
+The plaintext of §3 is custody's sole structured UTF-8 JSON `Mapping[str,str]`
+encoding. The runner chooses the validation kind above from the pinned selected
+field names, decodes and validates the **whole mapping** with the shared custody
+codec, then selects the named fields. The representative is only a validation
+family, not authority to infer a broker kind. There is no new kind field in
+`{secret_ref,sealed}`, no extra plaintext wrapper, and no runner-local codec.
+Custody owns the required/optional field table and encode/decode implementation;
+server and standalone runner consume the same dependency-light implementation.
+
+Both sides refuse a missing selected field or a selected string containing NUL
+before release/execution. The runner never chooses dictionary order, stringifies
+an object, concatenates fields or substitutes an empty value. Parameter/fixed
+env values also refuse NUL. All §9.4 environment-name, empty starting environment
+and executable pin checks remain in force.
+
+### 4.5 Transport refusals and implementation boundary
+
+Errors are JSON `{"detail":{"code":"<code>"}}`, with no raw body, output,
+credential, identifier lookup detail or exception text. The §1 verification
+order remains authoritative; bounded transport framing is checked before
+reading an unbounded body. Result frames have a global pre-authentication cap of
+`6 * 16 MiB + 1024` bytes (the maximum job output bound); after authentication,
+resolve dispatch scope and enforce its smaller pinned bound. Validate the
+endpoint body, then apply the locked
+state/dedup checks. Failed requests never return assignment bytes or accept a
+result. Successful empty/no-effect requests consume the nonce; effects and
+nonce insertion are atomic. A transaction failure rolls back both.
+
+| HTTP | Code / condition |
+| --- | --- |
+| `400` | `runner_request_invalid` for invalid header/signature or claim/started body; `runner_request_binding_mismatch` for origin/method/path/body mismatch; `runner_result_invalid` for malformed result fields or decoded stream bound |
+| `401` | `runner_unknown` for an unknown/inactive runner or non-current signing key |
+| `404` | `runner_dispatch_unknown` for unknown, foreign or unassigned dispatch |
+| `409` | `runner_request_stale`, `runner_request_replayed`, `runner_dispatch_state_conflict`, `runner_result_conflict`, or `runner_reconciliation_required` (claim blocked until the original attempt is reconciled) |
+| `413` | `runner_request_too_large` for the bounded body frame (an oversized signed header remains `runner_request_invalid` under §1) |
+| `415` | `runner_request_invalid` for unsupported media type or content encoding |
+| `503` | `runner_unavailable` for a required authority/database/custody dependency failure; log the real failure without output or values |
+
+These adapter errors are not new public hook refusal-code values. Reports do not
+create another secret-use intent. Existing dispatch transitions/evidence and
+outbox rules apply; publication uses the hook contract's permitted commitments,
+not the private report hash or raw output.
+
+Activation requires reviewed server routes, nonce/CAS/outbox integration, job
+env validation/confirmation, shared-codec packaging and runner consumption.
+Focused runtime proofs must cover lost claim responses/concurrent claims,
+SDK preparation outside transactions, preparation failure and losing concurrent
+preparation, changed authority/commit failure before publication,
+containment/key changes before replay, identical/conflicting results, late
+reports after sweeping/reconciliation, atomic rollback, exact original-value
+redaction (including changed 1Password items and unavailable context), multipart
+env fields and NUL. The public HTTP vector fixes body bytes, bounds, field
+families and status expectations, including idle versus blocked claims; it does
+not replace those runtime proofs.
+Short-lived mint authority and the separately guarded derived paths are unchanged.
+
 ## Conformance
 
 `docs/vectors/secrets-runner-protocol-v1.json` gives the keys (as fixed test
@@ -224,3 +485,39 @@ credentials with the recipient key, and refusal cases for every step above:
 
 The credential plaintexts in the vector are fixtures, not secrets.
 `naapp/secrets/tests/test_runner_protocol_vectors.py` consumes every case.
+
+`docs/vectors/secrets-runner-http-v1.json` fixes §4 body bytes and raw hashes,
+combined stream bounds, safe metadata, declared env-field families and result
+status examples. The same contract reference reader consumes these cases;
+server/runner runtime integration proofs remain required by §4.5.
+
+## Server registration and runner records
+
+Before it has a registered key, a runner exchanges its one-use code with
+`POST /runner/v1/register`. This code exchange is the exception to signed
+runner requests. Its JSON body has exactly three string fields: `code`,
+`signing_key` (Ed25519 `did:key`) and `encryption_key` (32 raw X25519 public
+bytes, canonical unpadded base64url). Duplicate fields and invalid keys are
+refused without consuming a code. A code is 32 random bytes in base64url,
+stored only as SHA-256, expires ten minutes after creation, and is consumed
+atomically with binding the two keys. Concurrent exchanges have one winner.
+A used, unknown, expired or deregistered code returns
+`registration_code_invalid`; invalid public keys return `runner_keys_invalid`.
+The response is exactly `{runner_id, origin, service_kid}`, with `origin` and
+the service `did:key` taken from server configuration. Responses are not cached.
+
+The owner-confirmed runner change/1 `after` v1 is exactly
+`{v:1, runner_id, label, allowed_jobs}`. `label` is nonempty text of at most
+256 characters; `allowed_jobs` is a sorted, distinct list of job IDs (possibly
+empty). The item `ref` is the `runner_id`. Creation or replacement issues a
+new console-only code. Replacement clears the old keys and code immediately;
+deregistration also clears them. Neither codes nor private keys are part of
+this record. Public registration stores no private key.
+
+The server holds the active runner row while authenticating and consuming a
+request nonce in its effect transaction. Rotation or deregistration that
+commits first makes that request refuse. Empty claims consume a nonce too.
+The server's request-nonce pruner retains an extra 120 seconds of clock padding.
+Credential sealing re-reads the current registered X25519 key under this same
+row lock and fixes HPKE `info` to the dispatch ID; callers cannot choose a
+different recipient key or context.

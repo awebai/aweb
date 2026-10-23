@@ -3,7 +3,11 @@
 Status: **frozen contract** (aweb-acgg.7, C1). It promotes the page format of
 the [agent pages design](design/agent-pages.md) (§2, §4 and §7) to a versioned
 contract. A change that alters what an existing page means is a new major
-version (`aweb.page/2`), never an edit to this one.
+version (`aweb.page/2`), never an edit to this one. Additive vocabulary that
+does not change any previously valid page may extend `aweb.page/1`. Producers
+use a new value only with consumers upgraded to accept it: older validators
+refuse unknown values of closed enums. The `url` table-column format below is
+such an extension; use `text` when serving consumers without it.
 
 | Artifact | Location |
 | --- | --- |
@@ -150,13 +154,13 @@ Bound widgets also have `bind`; containers also have `children`.
 | `heading` | **`text`**, **`level`** 1–6: the heading's rank under the page title, which is the page's only top-level heading. The renderer renders it one level down, so `level` 1 is an `h2`; `level` 6 renders as `role="heading"` with `aria-level="7"`. |
 | `stat` | **`label`**, `field` or `value`, `unit`. A string `value` is display text, rendered exactly as written: the agent formats it. An integer `value` is formatted by the renderer, in English. |
 | `status_badge` | **`label`**, **`tone`** (`neutral`, `info`, `success`, `warning`, `danger`), `field`. |
-| `table` | **`columns`** (`field`, `label`, `format`: `text`, `date`, `number`, `money_minor`, `status`), `row_actions`. Requires `bind`. |
+| `table` | **`columns`** (`field`, `label`, `format`: `text`, `date`, `number`, `money_minor`, `status`, `url`), `row_actions`. Requires `bind`. |
 | `cards`, `list` | **`fields`** (display slot to field), `actions`. Requires `bind`. |
 | `activity_timeline` | **`fields`**. Requires `bind`. |
 | `chart` | **`kind`** (`bar`, `line`, `pie`), **`x`**, **`series`**, **`alternative`** (the text or table alternative). Requires `bind`. |
 | `form` | **`fields`**, **`submit_action`**. A field has `id`, `kind` (`text`, `number`, `date`, `select`, `checkbox`, `file`), `label`, `required` and `description`. A `select` requires `options`; a `file` requires `accept` (MIME types) and `max_bytes`. There are no password fields. |
 | `button` | **`label`**, **`action`**, `confirmation`. |
-| `decision_card` | See §5. |
+| `decision_card` | See §5. Its status area is host chrome: `widget_state` `message`, `progress` and `busy` are ignored on a decision card. |
 | `file_drop` | **`label`**, **`action`**, **`accept`** (MIME types), **`max_bytes`** (at most 10 MiB). |
 | `image`, `video` | **`asset_id`**, **`alt`**, `caption`. Assets load only from the app's asset origin, never inline in the host origin. |
 | `agent_presence` | **`subject`**: rendered from published health evidence and its age, never a guessed indicator. |
@@ -176,6 +180,19 @@ code, and the minor-unit scale follows that currency (two decimals for EUR,
 none for JPY). A record with no `currency` property, or one that is not an ISO
 4217 code, shows the amount without a symbol at two decimals. Agents always
 include `currency` (the agent skill, N6, teaches it).
+
+**URL columns.** A `url` column treats a string as a potential outbound URL,
+using the renderer's existing `safeLink` policy, without changing that policy.
+Only an accepted absolute HTTPS URL is interactive. The cell displays the
+URL-normalized host (punycode for international domains, including any port),
+and its accessible name includes the full normalized URL, preserving encoded
+path delimiters. HTTP, other schemes, embedded credentials, malformed URLs and
+all other refused destinations remain the original inert, isolated text.
+Non-string values use ordinary text formatting: null or a missing field shows
+`—`, other scalars show their text, and objects/arrays show JSON; none is a link.
+A URL cell uses the same trusted-gesture, host-owned confirmation as other page
+links (§7). The page holds no active `href` or URL attribute; only the host's
+explicit Open control navigates in a new tab with `noopener,noreferrer`.
 
 **Unknown widgets.** A widget whose `type` this version does not define needs a
 `fallback`. It may carry `props` of at most 32 properties, which the renderer
@@ -278,9 +295,11 @@ meet every `render` expectation in the vectors:
 | `bidi_isolated` | Bound record values are isolated, so bidi controls cannot reorder surrounding text. |
 | `asset_origin_only` | Assets load only from the app's asset origin. |
 | `text_escaped` | Plain text renders verbatim as text. |
+| `table_url_link` | A URL cell shows the normalized host, includes the full normalized HTTPS destination in its accessible name, and activates only through host confirmation. |
+| `table_url_inert` | A refused or non-string URL cell renders ordinary isolated text, with no active destination. |
 
-Activating any outbound link, whether a `link_out` or a Markdown link with an
-active destination, first opens a host-owned confirmation outside the page
+Activating any outbound link, whether a `url` table cell, a `link_out` or a
+Markdown link with an active destination, first opens a host-owned confirmation outside the page
 container. It names the normalized destination domain, and the host navigates
 only after the person confirms it. Nothing in the page can submit or navigate
 without that step.

@@ -336,6 +336,72 @@ machine then uses its local identity key to run `aw id team fetch-cert
 installs the certificate locally. The team controller private key never leaves
 the controller machine.
 
+## Verified identity attribution
+
+A team controller authorizes membership, alias and team scope. Certificate
+`member_did_aw` and `member_address` fields are claims about independent identity
+facts; aweb verifies them with AWID before connecting or authenticating a member.
+The current DID-log key must equal the request's member signing key. An address
+must resolve to that same stable identity and current key. Missing or conflicting
+bindings return `403 identity_binding_mismatch`; unavailable registry evidence
+returns `503 identity_binding_unavailable`. Provisioning does no registry I/O
+inside database locks.
+
+If AWID definitively reports no record for a stable identity, the signing key may
+use its own `stable_id_from_did_key` value. This exception does not apply to an
+existing registry record, a rotated-out key, or a registry failure. An address
+still requires its own positive registry binding.
+
+Successful verification is cached by stable identity, signing key and address
+for at most 60 seconds. A connect always rechecks current registry evidence.
+Neither older SDK caches nor stale registry results establish this binding.
+
+Embedding hosts obtain an authoritative observation through the public
+`aweb.identity_binding.observe_identity_binding(registry_client, *, did_key,
+did_aw, address="")` function before opening a provisioning transaction. It
+returns a frozen `IdentityBinding` bound to that exact key and fresh AWID facts;
+mismatch is 403 and unavailable evidence is 503. Pass the result as
+`connect_agent(..., identity_binding=observation)`. Connect requires a fresh,
+typed observation exactly matching every certificate identity/address claim,
+then writes the projection and marker in its transaction without registry I/O.
+The observation cannot add claims absent from the certificate. It is an
+in-process Python value, never a header, request body or certificate field.
+Hosts must not construct it from claims or rewrite verification flags. The OSS
+request verifier returns it as the internal `cert_info["identity_binding"]`
+result, and `/v1/connect` obtains that result through its own fresh verification.
+Claimless local connects need no observation.
+Identity-only and grant authentication apply the same check to their identity
+or grant subject; a grant session key does not become the subject's root key.
+
+`agents.did_aw_verified_key` records the key against which a projection was
+verified. Historical rows start with a null marker. Stable-DID and global-address
+routing, identity expansion and membership checks use a row's global claims only
+when the marker equals its `did_key`. A fresh registry observation during
+an authenticated request or reconnect refreshes its own projection and clears
+markers for other keys of that stable identity in the same transaction.
+A cached binding authenticates without writing or clearing markers. This
+requires no registry I/O under locks and does not add registry reads to recipient
+resolution. Local key-based access remains available
+without attributing unverified global metadata. Policy classification still uses
+`identity_scope = global` or a raw stable-DID claim: withholding a claim never
+relaxes a global recipient's inbound policy. Existing conversation participants
+can be looked up by their raw claims solely to enforce policy; this lookup never
+selects a new recipient or supplies routing identity. Every matching local policy
+row must permit continuation. Lookup errors fail closed. A participant with no
+live local row contributes no local delivery or policy check; a retired group
+member does not prevent continuation for the remaining members. Single-recipient
+mail without a live recipient is not delivered.
+
+After migration 034, operators run `aweb verify-identity-bindings --dry-run`, then
+`aweb verify-identity-bindings` before resuming stable-DID/address delivery. The
+command reads pending live identity projections, observes current AWID evidence
+outside locks, then rechecks the row's key, stable DID and address under a row
+lock. It writes only a verified marker; identities and addresses are never
+rewritten. It reports only counts (`verified`, `self_derived`, `unbound`,
+`awid_error`), is idempotent, and exits nonzero if any row remains unbound or
+unavailable. Operators investigate those counts before proceeding. This command
+requires the server's database and AWID configuration; it performs no migration.
+
 ## Session grants
 
 A session grant lets a worker process act as an identity until revoked (or for an explicit finite window)

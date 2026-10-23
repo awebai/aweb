@@ -99,5 +99,88 @@ Rollback never deploys a commit: a commit deploy rebuilds under the service's
 current settings, which for a commit from before the repository-root build
 fails. Rolling back across that change uses the earlier deploy's artifact.
 
-The deployed commit is read from the Render API. Folio's `/health` does not
-report it yet.
+The deployed commit is read from the Render API and Folio's shared `/health`
+build identity (`RENDER_GIT_COMMIT`, with `FOLIO_GIT_SHA` as a fallback).
+
+
+## Filled manifest and emit-key configuration
+
+The committed `src/folio/aweb-app.json` is a template. It declares the stable
+`folio:emit-1` kid and local event type `doc.changed`; the shared runtime fills
+its public did:key from configuration before serving either manifest URL.
+Keep the production app id `folio` (`FOLIO_APP_ID`), kid and
+`FOLIO_PUBLIC_ORIGIN=https://folio.aweb.ai` unchanged. App id is stable for the
+entire deployment lifetime: changing it orphans installed grants.
+
+The existing `FOLIO_APP_EMIT_KID=folio:emit-1` and secret
+`FOLIO_APP_EMIT_KEY_SEED_HEX`, together with `FOLIO_APP_EVENTS_ORIGIN`, remain
+sufficient. No new emit-key environment variable is required. Alternatively,
+`FOLIO_APP_KEY_FILES` is a JSON map from each declared kid to a mounted signing-key
+file; do not configure both a file and a seed for the same kid. Every declared
+kid requires a configured key even when outbound event delivery is disabled.
+Never place a production seed or private key in the committed template.
+
+The template's local event declaration changes the manifest digest. Emitted
+event bodies, subscriptions and stream wakes still use `folio/doc.changed`:
+the server matches that namespace against installed app `folio` and local type
+`doc.changed`. The redeploy handoff must include updating **every existing
+Folio install** to the new digest immediately after deploy, through
+`aw plugin update folio` or the install API. Until an install is updated, the
+hosted MCP offers no Folio tools for that team. Key rotation likewise adds a
+new declared kid beside the old one, yields a new digest, and needs a re-pin.
+These are separately authorized operator actions; a code landing performs none
+of them.
+
+## Read-only presentation lifetimes
+
+Read-only links accept up to 30 days (`2592000` seconds); the default lifetime
+remains one day (`86400` seconds). Operators may set a shorter ceiling. An
+explicit request above the configured ceiling returns `422` without minting a
+link. Editable links remain limited to 300 seconds.
+
+For the 30-day rollout, check the existing `FOLIO_MAX_PRESENT_TTL_SECONDS`
+environment setting. If it is `604800` (the former seven-day example), raise it
+to `2592000` or remove it to use the new default. Keeping that override preserves
+the seven-day ceiling even after the code deploys. `.env.example` now uses
+`2592000`. The committed app manifest and its tool schemas do not change, so
+this lifetime change alone needs no manifest re-pin.
+
+**Release hold:** land the reviewed change on main, then wait for Juan to lift
+the hold before deploying or changing the production environment. This document
+is a deployment handoff, not permission to deploy.
+
+## Editable presentation privacy and expiry
+
+Editable presentation links default to 300 seconds. The server refuses an
+explicit editable TTL above 300 seconds; read-only lifetimes are described above.
+An editable row minted by an older build with an expiry more than 300 seconds
+after its creation is refused on the editor, state, preview and save paths.
+This requires no migration or inspection of production document rows.
+
+After an expired or revoked save, the editor keeps the unsaved textarea and
+provides a copy action with instructions to return to the dashboard, reopen
+Edit and paste the draft. It never retries a failed save automatically.
+
+Every `/present/` response, including expected refusals, carries
+`Cache-Control: no-store` and `Referrer-Policy: no-referrer`. Folio installs its
+access-log filter when constructing the app, including under the Dockerfile's
+standard Uvicorn command. The filter redacts legacy capability-token path
+segments and suppresses query strings on all access records, including records
+queries whose `bind` values may be private. It changes only log records, never
+the URL used for routing or signature verification. Upstream access logs must
+follow the same redaction policy; the Folio filter operates on Folio's own logs.
+
+Focused local proof (requires PostgreSQL, `uv sync` and the Chromium matching
+`uv run playwright install chromium`; run under the team's suite lock):
+
+```sh
+uv run pytest -q tests/test_present_privacy.py tests/test_editor_browser.py
+FOLIO_EDIT_REAL_EXPIRY=1 uv run pytest -q tests/test_editor_browser.py -k expired
+```
+
+The second command keeps a real editor open for more than 300 wall-clock
+seconds, then saves through the production route and SQL to assert refusal,
+copyable retained text and no appended version. The normal regression ages
+only disposable test rows for fast coverage of the same failure path. These
+checks seed a synthetic document in real PostgreSQL; they do not claim the
+separate dashboard mint/authentication flow or a deployed production pass.

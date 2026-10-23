@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -21,16 +21,34 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
-AWID_URL = os.environ.get("LIBRARY_E2E_AWID_URL", "http://127.0.0.1:18010")
+@dataclass(frozen=True)
+class E2EStack:
+    awid_url: str
+    postgres_url: str
+    compose: list[str]
+
+
+def e2e_stack(env: Mapping[str, str]) -> E2EStack:
+    """Endpoints and project for the stack allocated by the gate or local make."""
+    host = env.get("NAAPP_E2E_HOST", "127.0.0.1")
+    project = env.get("NAAPP_E2E_PROJECT", "library-e2e")
+    awid_port = env.get("NAAPP_E2E_AWID_PORT", "18010")
+    postgres_port = env.get("NAAPP_E2E_POSTGRES_PORT", "55432")
+    return E2EStack(
+        awid_url=f"http://{host}:{awid_port}",
+        postgres_url=f"postgresql://library:library@{host}:{postgres_port}/library",
+        compose=["docker", "compose", "-p", project, "-f", "docker-compose.e2e.yml"],
+    )
+
+
+STACK = e2e_stack(os.environ)
+AWID_URL = STACK.awid_url
 # Same-operator credential shared with the e2e awid service (docker-compose.e2e.yml).
 AWID_SERVICE_TOKEN = os.environ.get(
     "LIBRARY_E2E_AWID_SERVICE_TOKEN", "library-e2e-awid-service-token-0123456789abcdef"
 )
-POSTGRES_URL = os.environ.get(
-    "LIBRARY_E2E_DATABASE_URL",
-    "postgresql://library:library@127.0.0.1:55432/library",
-)
-COMPOSE = ["docker", "compose", "-p", "library-e2e", "-f", "docker-compose.e2e.yml"]
+POSTGRES_URL = STACK.postgres_url
+COMPOSE = STACK.compose
 E2E_BUILD_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
@@ -368,6 +386,20 @@ def library_origin(library: RunningLibrary) -> str:
     return library.origin
 
 
+def aw_workspace_env(*, home: Path) -> dict[str, str]:
+    """Keep disposable aw commands independent of the caller's identity and config."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AW_"))}
+    env.update(
+        {
+            "HOME": str(home),
+            "AWEB_URL": "http://127.0.0.1:1",
+            "AWID_REGISTRY_URL": AWID_URL,
+            "NO_COLOR": "1",
+        }
+    )
+    return env
+
+
 @pytest.fixture()
 def aw_workspace_factory(tmp_path: Path) -> Callable[[str], AWWorkspace]:
     _require_e2e_enabled()
@@ -377,15 +409,7 @@ def aw_workspace_factory(tmp_path: Path) -> Callable[[str], AWWorkspace]:
         home = tmp_path / name / "home"
         workspace.mkdir(parents=True)
         home.mkdir(parents=True)
-        env = os.environ.copy()
-        env.update(
-            {
-                "HOME": str(home),
-                "AWEB_URL": "http://127.0.0.1:1",
-                "AWID_REGISTRY_URL": AWID_URL,
-                "NO_COLOR": "1",
-            }
-        )
+        env = aw_workspace_env(home=home)
         return AWWorkspace(path=workspace, env=env)
 
     return make

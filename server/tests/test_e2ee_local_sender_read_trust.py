@@ -10,6 +10,8 @@ registry, and a registry front that answers an address lookup with a 503.
 """
 from __future__ import annotations
 
+from identity_binding_support import register_global_identity
+
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -61,9 +63,11 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
         address = "example.test/bob" if global_resident and name == "bob" else ""
         stable_id = stable_id_from_did_key(actor.did) if address or (human and name == "alice") else ""
         if stable_id:
-            await env.db.execute("UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2 WHERE agent_id = $3",
+            assert await register_global_identity(env, actor, address) == stable_id
+            # The registered recipient is ready for stable/address delivery
+            # before its first authenticated read, as after the operator pass.
+            await env.db.execute("UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2, did_aw_verified_key=did_key WHERE agent_id = $3",
                                  stable_id, address, actor.id)
-            await env.app.state.awid_registry_client.register_did(actor.did, actor.sk)
         assertion = build_encryption_key_assertion(
             signing_key=actor.sk, identity_did=actor.did, identity_stable_id=stable_id,
             encryption_public_key=public, custody="hosted_custodial" if human and name == "alice" else "self", now=now,

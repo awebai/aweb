@@ -21,7 +21,9 @@
     "destination_domain_shown": "the normalized destination domain is shown with the link, in host chrome",
     "bidi_isolated": "the value is isolated so bidi controls cannot reorder surrounding text",
     "asset_origin_only": "the asset loads only from the app's asset origin, never inline in the host origin",
-    "text_escaped": "the text renders verbatim as text"
+    "text_escaped": "the text renders verbatim as text",
+    "table_url_link": "the URL cell displays the normalized host, has the full normalized HTTPS URL in its accessible name, and activates only through existing host confirmation",
+    "table_url_inert": "the URL cell displays ordinary isolated text with no active destination or navigation"
   },
   "bases": {
     "price-proposal": {
@@ -195,29 +197,6 @@
           "label": "Answer the proposal",
           "input_schema": {
             "type": "object",
-            "properties": {
-              "choice": {
-                "enum": [
-                  "approve",
-                  "reject"
-                ]
-              },
-              "proposal_digest": {
-                "type": "string",
-                "minLength": 71,
-                "maxLength": 71
-              },
-              "expected_task_rev": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              }
-            },
-            "required": [
-              "choice",
-              "proposal_digest",
-              "expected_task_rev"
-            ],
             "additionalProperties": false
           },
           "policy_ref": "manager-approve",
@@ -361,29 +340,6 @@
           "label": "Approve the exact reply",
           "input_schema": {
             "type": "object",
-            "properties": {
-              "choice": {
-                "enum": [
-                  "approve",
-                  "reject"
-                ]
-              },
-              "proposal_digest": {
-                "type": "string",
-                "minLength": 71,
-                "maxLength": 71
-              },
-              "expected_task_rev": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              }
-            },
-            "required": [
-              "choice",
-              "proposal_digest",
-              "expected_task_rev"
-            ],
             "additionalProperties": false
           },
           "policy_ref": "manager-approve",
@@ -32389,6 +32345,308 @@
         "errors": []
       },
       "render": "text_escaped"
+    },
+    {
+      "name": "table-url-https",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/columns/0/format",
+            "value": "url"
+          },
+          {
+            "op": "replace",
+            "path": "/collections/0/records/0/value/label",
+            "value": "https://EXAMPLE.com:8443/a%2Fb?q=1#part"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "table_url_link",
+      "render_expected": {
+        "widget_id": "items",
+        "record_id": "item-1",
+        "field": "label",
+        "text": "example.com:8443",
+        "host": "example.com:8443",
+        "href": "https://example.com:8443/a%2Fb?q=1#part"
+      }
+    },
+    {
+      "name": "table-url-idn",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/columns/0/format",
+            "value": "url"
+          },
+          {
+            "op": "replace",
+            "path": "/collections/0/records/0/value/label",
+            "value": "https://bücher.example/path"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "table_url_link",
+      "render_expected": {
+        "widget_id": "items",
+        "record_id": "item-1",
+        "field": "label",
+        "text": "xn--bcher-kva.example",
+        "host": "xn--bcher-kva.example",
+        "href": "https://xn--bcher-kva.example/path"
+      }
+    },
+    {
+      "name": "table-url-http",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/columns/0/format",
+            "value": "url"
+          },
+          {
+            "op": "replace",
+            "path": "/collections/0/records/0/value/label",
+            "value": "http://example.com/path"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "table_url_inert",
+      "render_expected": {
+        "widget_id": "items",
+        "record_id": "item-1",
+        "field": "label",
+        "text": "http://example.com/path"
+      }
+    },
+    {
+      "name": "table-url-javascript",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/columns/0/format",
+            "value": "url"
+          },
+          {
+            "op": "replace",
+            "path": "/collections/0/records/0/value/label",
+            "value": "javascript:alert(1)"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "table_url_inert",
+      "render_expected": {
+        "widget_id": "items",
+        "record_id": "item-1",
+        "field": "label",
+        "text": "javascript:alert(1)"
+      }
+    },
+    {
+      "name": "table-url-data",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/columns/0/format",
+            "value": "url"
+          },
+          {
+            "op": "replace",
+            "path": "/collections/0/records/0/value/label",
+            "value": "data:text/html,<script>alert(1)</script>"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "table_url_inert",
+      "render_expected": {
+        "widget_id": "items",
+        "record_id": "item-1",
+        "field": "label",
+        "text": "data:text/html,<script>alert(1)</script>"
+      }
+    },
+    {
+      "name": "table-url-credentials",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/columns/0/format",
+            "value": "url"
+          },
+          {
+            "op": "replace",
+            "path": "/collections/0/records/0/value/label",
+            "value": "https://user:secret@example.com/path"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "table_url_inert",
+      "render_expected": {
+        "widget_id": "items",
+        "record_id": "item-1",
+        "field": "label",
+        "text": "https://user:secret@example.com/path"
+      }
+    },
+    {
+      "name": "table-url-malformed",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/columns/0/format",
+            "value": "url"
+          },
+          {
+            "op": "replace",
+            "path": "/collections/0/records/0/value/label",
+            "value": "https://[invalid"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "table_url_inert",
+      "render_expected": {
+        "widget_id": "items",
+        "record_id": "item-1",
+        "field": "label",
+        "text": "https://[invalid"
+      }
+    },
+    {
+      "name": "table-url-non-string",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/columns/0/format",
+            "value": "url"
+          },
+          {
+            "op": "replace",
+            "path": "/collections/0/records/0/value/label",
+            "value": 17
+          },
+          {
+            "op": "replace",
+            "path": "/collections/0/schema/properties/label",
+            "value": {
+              "type": "integer"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "table_url_inert",
+      "render_expected": {
+        "widget_id": "items",
+        "record_id": "item-1",
+        "field": "label",
+        "text": "17"
+      }
+    },
+    {
+      "name": "table-url-null",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/columns/0/format",
+            "value": "url"
+          },
+          {
+            "op": "replace",
+            "path": "/collections/0/records/0/value/label",
+            "value": null
+          },
+          {
+            "op": "replace",
+            "path": "/collections/0/schema/properties/label",
+            "value": {
+              "type": "null"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "table_url_inert",
+      "render_expected": {
+        "widget_id": "items",
+        "record_id": "item-1",
+        "field": "label",
+        "text": "—"
+      }
+    },
+    {
+      "name": "table-unknown-column-format",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/columns/0/format",
+            "value": "url-future"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/0/props/columns/0/format"
+          }
+        ]
+      }
     }
   ],
   "bundle_hash": [

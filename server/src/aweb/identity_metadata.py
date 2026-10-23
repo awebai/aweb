@@ -1,6 +1,32 @@
 from __future__ import annotations
 
 from awid.team_ids import parse_team_id
+from awid.signing import canonical_json_bytes
+from aweb.human_channels.contract import ContractError, ContractRecord, canonical_record, decode_record
+
+
+def native_participant_reference(did: str) -> dict[str, str] | None:
+    """Add a typed view without narrowing historical native DID projections.
+
+    Old native storage accepted arbitrary strings. Preserve those old fields;
+    omit this optional new field when they cannot form a P0 typed reference.
+    A reference itself makes no claim of verified current identity.
+    """
+    try:
+        return decode_record('NativeParticipant', canonical_json_bytes(dict(kind='native', did=did))).value
+    except ContractError:
+        return None
+
+
+async def lookup_participant_identity_metadata(db_or_manager, participant: ContractRecord) -> dict[str, str]:
+    """Typed metadata only; a guest never resolves as its bridge's agent row."""
+    if participant.schema not in ('NativeParticipant', 'BridgedParticipant'):
+        raise ContractError('invalid', 'participant reference')
+    ref = decode_record(participant.schema, canonical_record(participant)).value
+    if ref['kind'] == 'bridged':
+        return {'participant_kind':'bridged', 'author_assurance':'platform_attested'}
+    values = await lookup_identity_metadata_by_did(db_or_manager, [ref['did']])
+    return {**values.get(ref['did'], {}), 'participant_kind':'native'}
 
 
 def _aweb_db(db_or_manager):
@@ -9,6 +35,8 @@ def _aweb_db(db_or_manager):
 
 def routable_chat_address(meta: dict[str, str] | None, viewer_team_id: str | None, fallback_alias: str) -> str:
     meta = meta or {}
+    if meta.get('participant_kind') == 'bridged':
+        return ''  # Typed session/participant route only, never the display name.
     address = (meta.get("address") or "").strip()
     if address:
         return address
@@ -42,10 +70,10 @@ async def lookup_identity_metadata_by_did(db_or_manager, dids: list[str]) -> dic
     aweb_db = _aweb_db(db_or_manager)
     rows = await aweb_db.fetch_all(
         """
-        SELECT did_aw, did_key, address, team_id, alias, identity_scope
+        SELECT CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, team_id, alias, identity_scope
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
-          AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
+          AND ((did_aw = ANY($1::text[]) AND did_aw_verified_key = did_key) OR did_key = ANY($1::text[]))
         """,
         unique_dids,
     )
@@ -86,7 +114,7 @@ async def lookup_identity_metadata_by_agent_id(
     aweb_db = _aweb_db(db_or_manager)
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id::text AS agent_id, did_aw, did_key, address
+        SELECT agent_id::text AS agent_id, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key, CASE WHEN did_aw_verified_key = did_key THEN address END AS address
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
           AND agent_id::text = ANY($1::text[])

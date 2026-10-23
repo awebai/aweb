@@ -2,7 +2,8 @@
 # Check Python lock freshness without rewriting the worktree. The self-test uses
 # the real uv checker against an isolated copy, in both the clean and stale-AWID
 # directions (default-aajc.5). Every lock that takes the in-repo awid as a source
-# is checked: awid, server, naapp-lib, naapp/folio, naapp/secrets and naapp/logs.
+# is checked: awid, server, naapp-lib, naapp/folio, naapp/library, naapp/secrets
+# and naapp/logs.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,7 +12,7 @@ export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-/tmp/pycache}"
 
 # Every lock that takes the in-repo awid as a source, with the path its
 # awid-service entry records.
-LOCKS=(awid server naapp-lib naapp/folio naapp/secrets naapp/logs)
+LOCKS=(awid server naapp-lib naapp/folio naapp/library naapp/secrets naapp/logs)
 
 # Each check returns on failure itself: the self-test calls this with errexit
 # off, where only the last command's status would otherwise be reported.
@@ -83,10 +84,56 @@ self_test() (
     mkdir -p "$tmp/$lock"
     cp "$ROOT/$lock/pyproject.toml" "$ROOT/$lock/uv.lock" "$ROOT/$lock/README.md" "$tmp/$lock/"
   done
-  # naapp-lib's dev-only test-support distribution, which the dependents' dev groups lock too.
-  mkdir -p "$tmp/naapp-lib/testing"
-  cp "$ROOT/naapp-lib/testing/pyproject.toml" "$tmp/naapp-lib/testing/"
-  cp -R "$ROOT/naapp-lib/testing/src" "$tmp/naapp-lib/testing/"
+  # Include the local source closure, including newly declared (not yet locked)
+  # paths, so a missing fixture cannot mask a genuinely stale lock.
+  python3 - "$ROOT" "$tmp" "${LOCKS[@]}" <<'PY'
+import shutil
+import sys
+import tomllib
+from pathlib import Path
+
+root, target = (Path(arg).resolve() for arg in sys.argv[1:3])
+pending = [root / lock for lock in sys.argv[3:]]
+copied = set(pending)
+while pending:
+    project = pending.pop()
+    metadata = tomllib.loads((project / "pyproject.toml").read_text(encoding="utf-8"))
+    paths = []
+    for source in metadata.get("tool", {}).get("uv", {}).get("sources", {}).values():
+        for entry in source if isinstance(source, list) else [source]:
+            if "path" in entry:
+                paths.append(entry["path"])
+    lock = project / "uv.lock"
+    if lock.is_file():
+        for package in tomllib.loads(lock.read_text(encoding="utf-8")).get("package", []):
+            source = package.get("source", {})
+            for kind in ("editable", "directory", "virtual", "path"):
+                if kind in source:
+                    paths.append(source[kind])
+    for path in paths:
+        dependency = (project / path).resolve()
+        if not dependency.is_relative_to(root):
+            raise SystemExit(f"self-test local dependency is outside repository: {dependency}")
+        if dependency in copied:
+            continue
+        copied.add(dependency)
+        destination = target / dependency.relative_to(root)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if dependency.is_dir():
+            shutil.copytree(
+                dependency,
+                destination,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns(
+                    ".git", ".venv", "__pycache__", ".pytest_cache", ".mypy_cache",
+                    ".ruff_cache", "node_modules",
+                ),
+            )
+            if (dependency / "pyproject.toml").is_file():
+                pending.append(dependency)
+        else:
+            shutil.copy2(dependency, destination)
+PY
 
   if ! check_locks "$tmp" >/dev/null; then
     echo "SELF-TEST FAIL: clean copied locks were rejected" >&2
@@ -127,11 +174,11 @@ PY
     return 1
   fi
 
-  for lock in naapp-lib naapp/folio naapp/secrets naapp/logs; do
+  for lock in naapp-lib naapp/folio naapp/library naapp/secrets naapp/logs; do
     stale_awid_self_test "$tmp" "$lock"
   done
 
-  echo "self-test passed: clean locks pass; stale AWID versions in server, naapp-lib, naapp/folio, naapp/secrets and naapp/logs and a missing dependent-lock dependency fail"
+  echo "self-test passed: clean locks pass; stale AWID versions in server, naapp-lib, naapp/folio, naapp/library, naapp/secrets and naapp/logs and a missing dependent-lock dependency fail"
 )
 
 case "${1:-}" in

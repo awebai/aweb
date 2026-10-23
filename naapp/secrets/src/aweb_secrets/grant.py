@@ -10,6 +10,7 @@ grant.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import secrets as random
 from collections.abc import Mapping, Sequence
@@ -17,12 +18,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from aweb_naapp.roles import is_role_name
+from awid.signing import canonical_json_bytes
 
 from aweb_secrets.policy import DIGEST, IDENTIFIER
 from aweb_secrets.principal import is_principal
 from aweb_secrets.secret import SECRET_ID
 
 CAPABILITIES = ("use", "run")
+TEMPLATE_DIGEST_PREFIX = b"aweb.secrets.grant-template/1\n"
 FIELDS = frozenset(
     {
         "v",
@@ -208,6 +211,11 @@ class GrantTemplate:
     def grant_for(self, secret_id: str, *, grant_id: str) -> GrantRecord:
         """The grant of these terms on ``secret_id``."""
         return GrantRecord.from_after({**self.terms, "grant_id": grant_id, "secret_id": secret_id})
+
+    @property
+    def digest(self) -> str:
+        """The issuance pin of the complete template, including its version and ID."""
+        return hashlib.sha256(TEMPLATE_DIGEST_PREFIX + canonical_json_bytes(self.after)).hexdigest()
 
     @property
     def after(self) -> dict[str, Any]:

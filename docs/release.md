@@ -8,7 +8,7 @@ commit.
 |---|---|
 | `server-vX.Y.Z` | PyPI `aweb` |
 | `awid-service-vX.Y.Z` | PyPI `awid-service` |
-| `aweb-naapp-vX.Y.Z` | PyPI `aweb-naapp`, the shared naapp toolkit in `naapp-lib/` |
+| `aweb-naapp-vX.Y.Z` | PyPI `aweb-naapp`, the shared naapp toolkit in `naapp-lib/`, then its dev-only test support `aweb-naapp-testing` (`naapp-lib/testing/`) at the same version |
 | `awid-vX.Y.Z` | `ghcr.io/awebai/awid` image |
 | `aw-vX.Y.Z` | `aw` CLI distributions and npm platform packages |
 | `channel-vX.Y.Z` | npm Claude channel; the unpinned marketplace resolves the public package |
@@ -16,7 +16,9 @@ commit.
 | `skills-vX.Y.Z` | npm skills package, unpinned marketplace source, and resumable hosted ZIP assets |
 | `a2a-gw-vX.Y.Z` | `ghcr.io/awebai/a2a-gateway` image |
 
-Manifest-backed tags must equal the version in their package manifest. CLI and
+Manifest-backed tags must equal the version in their package manifest. A tag
+that publishes two packages (`aweb-naapp-v`) requires both manifests at the tag
+version, and `aweb-naapp-testing` requires exactly that `aweb-naapp`. CLI and
 A2A gateway versions are explicit in their tags.
 
 ## 1. Test the final candidate locally

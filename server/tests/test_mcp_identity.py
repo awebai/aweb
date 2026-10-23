@@ -53,6 +53,9 @@ async def test_whoami_returns_agent_identity_with_stable_fields(aweb_cloud_db, m
         "alice",
     )
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", agent_id,
+    )
     monkeypatch.setattr(
         identity_tools,
         "get_auth",

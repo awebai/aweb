@@ -36,6 +36,8 @@ var (
 	pluginInstallAppVersion      string
 	pluginInstallOrigin          string
 	pluginInstallDevOrigin       string
+	pluginInstallGrantedScopes   []string
+	pluginUpdateGrantedScopes    []string
 )
 
 var pluginCmd = &cobra.Command{
@@ -90,27 +92,36 @@ type pluginListItem struct {
 }
 
 type pluginProvenance struct {
-	RegisteredDigest string `json:"registered_digest,omitempty"`
-	RegisteredTeam   string `json:"registered_team,omitempty"`
-	RegisteredServer string `json:"registered_server,omitempty"`
-	DevOrigin        string `json:"dev_origin,omitempty"`
-	AppName          string `json:"app_name"`
-	AppID            string `json:"app_id,omitempty"`
-	ManifestVersion  string `json:"manifest_version,omitempty"`
-	AppVersion       string `json:"app_version,omitempty"`
-	Origin           string `json:"origin,omitempty"`
-	Source           string `json:"source,omitempty"`
-	ManifestURL      string `json:"manifest_url,omitempty"`
-	Digest           string `json:"digest,omitempty"`
-	InstalledAt      string `json:"installed_at,omitempty"`
-	UpdatedAt        string `json:"updated_at,omitempty"`
+	RegisteredInstallationID string `json:"registered_installation_id,omitempty"`
+	RegisteredGeneration     int64  `json:"registered_generation,omitempty"`
+	RegisteredDigest         string `json:"registered_digest,omitempty"`
+	RegisteredTeam           string `json:"registered_team,omitempty"`
+	RegisteredServer         string `json:"registered_server,omitempty"`
+	DevOrigin                string `json:"dev_origin,omitempty"`
+	AppName                  string `json:"app_name"`
+	AppID                    string `json:"app_id,omitempty"`
+	ManifestVersion          string `json:"manifest_version,omitempty"`
+	AppVersion               string `json:"app_version,omitempty"`
+	Origin                   string `json:"origin,omitempty"`
+	Source                   string `json:"source,omitempty"`
+	ManifestURL              string `json:"manifest_url,omitempty"`
+	Digest                   string `json:"digest,omitempty"`
+	InstalledAt              string `json:"installed_at,omitempty"`
+	UpdatedAt                string `json:"updated_at,omitempty"`
 }
 
 type pluginInstallOutput struct {
-	Approved   bool              `json:"approved,omitempty"`
-	Name       string            `json:"name"`
-	Path       string            `json:"path"`
-	Provenance *pluginProvenance `json:"provenance,omitempty"`
+	IdentityHome            string            `json:"identity_home,omitempty"`
+	ExistingGrantsUnchanged bool              `json:"existing_grants_unchanged,omitempty"`
+	GrantRefreshCommand     []string          `json:"grant_refresh_command,omitempty"`
+	GrantRestartCommand     []string          `json:"grant_restart_command,omitempty"`
+	OATSRenewRestartCommand []string          `json:"oats_renew_restart_command,omitempty"`
+	ActiveGrants            *int              `json:"active_grants,omitempty"`
+	GrantCheckError         string            `json:"grant_check_error,omitempty"`
+	Approved                bool              `json:"approved,omitempty"`
+	Name                    string            `json:"name"`
+	Path                    string            `json:"path"`
+	Provenance              *pluginProvenance `json:"provenance,omitempty"`
 }
 
 type pluginRemoveOutput struct {
@@ -131,6 +142,8 @@ func init() {
 	pluginInstallCmd.Flags().StringVar(&pluginInstallAppVersion, "app-version", "", "App version to record in plugin provenance")
 	pluginInstallCmd.Flags().StringVar(&pluginInstallOrigin, "origin", "", "App origin to record in plugin provenance")
 	pluginInstallCmd.Flags().StringVar(&pluginInstallDevOrigin, "dev-origin", "", "Override the app origin to this base URL for a self-hosted or dev service; the request base URL becomes this, bypassing the manifest origin self-consistency check")
+	pluginInstallCmd.Flags().StringSliceVar(&pluginInstallGrantedScopes, "grant-scope", nil, "Grant only these requested scopes (repeat or comma-separate; default: all requested scopes)")
+	pluginUpdateCmd.Flags().StringSliceVar(&pluginUpdateGrantedScopes, "grant-scope", nil, "Explicitly select granted scopes (default: preserve existing grants, dropping removed scopes)")
 
 	pluginCmd.GroupID = groupUtility
 	pluginCmd.AddCommand(pluginListCmd, pluginInstallCmd, pluginRemoveCmd, pluginUpdateCmd, pluginReservedNamesCmd)
@@ -166,6 +179,9 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 	}
 	if isManifestInstallSource(source) {
 		policy := manifestManagementPolicy{registerEvents: true}
+		if cmd.Flags().Changed("grant-scope") {
+			policy.grantedScopes = append([]string{}, pluginInstallGrantedScopes...)
+		}
 		if resident {
 			policy.residentHome = home.Root
 		}
@@ -173,6 +189,7 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		addPluginGrantGuidance(cmd, out)
 		printOutput(out, formatPluginInstall)
 		return nil
 	}
@@ -311,15 +328,68 @@ func runPluginUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("plugin %q is missing manifest provenance", name)
 	}
 	policy := manifestManagementPolicy{expectedName: name, registerEvents: true}
+	if cmd.Flags().Changed("grant-scope") {
+		policy.grantedScopes = append([]string{}, pluginUpdateGrantedScopes...)
+	}
 	if resident {
 		policy.residentHome = home.Root
 	}
-	out, err := installManagedManifestPlugin(provenance.ManifestURL, dir, true, provenance.DevOrigin, policy)
+	source := strings.TrimSpace(provenance.Source)
+	if source == "" {
+		source = provenance.ManifestURL
+	}
+	out, err := installManagedManifestPlugin(source, dir, true, provenance.DevOrigin, policy)
 	if err != nil {
 		return err
 	}
+	addPluginGrantGuidance(cmd, out)
 	printOutput(out, formatPluginInstall)
 	return nil
+}
+
+// Grant discovery is advisory after a successful install/update. It neither
+// changes a snapshot nor makes installing an app depend on server availability.
+func addPluginGrantGuidance(cmd *cobra.Command, out *pluginInstallOutput) {
+	if !out.Approved {
+		return
+	}
+	out.GrantCheckError = "unavailable"
+	parent := context.Background()
+	if cmd != nil && cmd.Context() != nil {
+		parent = cmd.Context()
+	}
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+	workingDir := mustGetwd()
+	sel, err := resolveSelectionForDir(workingDir)
+	if err != nil {
+		return
+	}
+	client, sel, err := buildClientForSelectionAtIdentityHome(ctx, workingDir, sel.IdentityHome, sel)
+	if err != nil {
+		return
+	}
+	// Keep the replacement on the team/server selected for the install.
+	prefix := []string{"aw", "--identity-home", out.IdentityHome}
+	if sel.ServerName != "" {
+		prefix = append(prefix, "--server-name", sel.ServerName)
+	}
+	if sel.TeamID != "" {
+		prefix = append(prefix, "--team", sel.TeamID)
+	}
+	out.GrantRefreshCommand = append(prefix, out.GrantRefreshCommand[3:]...)
+	grants, err := client.ListIdentityGrants(ctx)
+	if err != nil {
+		return
+	}
+	active := 0
+	for _, grant := range grants.Grants {
+		if grant.Status == "active" {
+			active++
+		}
+	}
+	out.ActiveGrants = &active
+	out.GrantCheckError = ""
 }
 
 func installedPlugins() ([]pluginListItem, error) {
@@ -396,7 +466,21 @@ func formatPluginInstall(v any) string {
 		}
 	}
 	if out.Approved {
-		return fmt.Sprintf("Installed app %s; approved for this resident and future grants.\n", out.Name)
+		text := fmt.Sprintf("Installed app %s; approved for this resident and future grants.\n", out.Name)
+		if out.ActiveGrants != nil && *out.ActiveGrants == 0 {
+			return text
+		}
+		if out.ActiveGrants != nil {
+			plural := ""
+			if *out.ActiveGrants != 1 {
+				plural = "s"
+			}
+			text += fmt.Sprintf("%d active grant%s found for this resident in the selected team. Existing grants do not gain tools from this install or update.\n", *out.ActiveGrants, plural)
+		} else {
+			text += "Could not check active grants. Existing grants keep their original tool snapshots.\n"
+		}
+		text += fmt.Sprintf("If the running session cannot use this app, the resident owner must mint a replacement:\n  %s\nChoose the intended scopes and replace <ttl> with the intended lifetime (for example 1h; choose never only deliberately). Replace <new-grant-home> with a new empty directory. Keep the same resident identity and its custody service running.\nStop the old session, then relaunch your agent command using the replacement grant (replace the entire quoted '<agent-command>' token, including its surrounding quotes, with the original command line; retain each argument's quoting):\n  %s\nFor OATS sessions configured with renew: launch, the host operator can instead renew and restart the same instance (replace <instance-home>):\n  %s\n", formatShellCommand(out.GrantRefreshCommand), formatShellCommand(out.GrantRestartCommand), formatShellCommand(out.OATSRenewRestartCommand))
+		return text
 	}
 	return fmt.Sprintf("Installed plugin %s -> %s\n", out.Name, out.Path)
 }
@@ -505,6 +589,7 @@ func installManifestPlugin(source, dir string) (*pluginInstallOutput, error) {
 type manifestManagementPolicy struct {
 	residentHome, expectedName string
 	registerEvents             bool
+	grantedScopes              []string
 }
 
 func installOrUpdateManifestPlugin(source, dir string, update bool, devOrigin string) (*pluginInstallOutput, error) {
@@ -524,25 +609,23 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		}
 	}
 
-	manifestURL, err := manifestURLForSource(source)
+	base, err := manifestBaseForSource(source)
 	if err != nil {
 		return nil, err
 	}
-	manifestBytes, digest, err := fetchManifest(manifestURL)
+	variant, err := discoverManifest(base)
 	if err != nil {
-		return nil, err
+		return nil, manifestError(err)
 	}
+	manifestURL := variant.URL
+	manifestBytes, digest := variant.Bytes, variant.Digest
 	fetchedDigest := digest
-	fetchedBytes := manifestBytes
-	var manifest appmanifest.Manifest
-	if err := appmanifest.DecodeSingleJSONStrict(manifestBytes, &manifest); err != nil {
-		return nil, fmt.Errorf("decode manifest: %w", err)
+	resolved, err := appmanifest.Load(manifestBytes, reservedRootCommandNames())
+	if err != nil {
+		return nil, manifestError(err)
 	}
+	manifest := resolved.Manifest
 	declaredOrigin := manifest.App.Origin
-	reserved := reservedRootCommandNames()
-	if err := appmanifest.Validate(manifest, reserved); err != nil {
-		return nil, err
-	}
 	if devOrigin != "" {
 		// Operator override: point the app at this base URL regardless of the
 		// origin the manifest declares. Rewrite the stored manifest so dispatch
@@ -553,6 +636,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 			return nil, err
 		}
 		manifest.App.Origin = normalized
+		resolved.Manifest = manifest
 		manifestBytes, err = json.Marshal(manifest)
 		if err != nil {
 			return nil, fmt.Errorf("re-encode manifest with --dev-origin: %w", err)
@@ -560,12 +644,12 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		sum := sha256.Sum256(manifestBytes)
 		digest = "sha256:" + hex.EncodeToString(sum[:])
 	} else {
-		claimedManifestURL, err := manifestURLForSource(manifest.App.Origin)
+		claimedBase, err := manifestBaseForSource(manifest.App.Origin)
 		if err != nil {
 			return nil, err
 		}
-		if claimedManifestURL != manifestURL {
-			return nil, fmt.Errorf("manifest fetched from %s claims origin %s (expected manifest URL %s); pass --dev-origin <base-url> to install a self-hosted app at its real origin", manifestURL, manifest.App.Origin, claimedManifestURL)
+		if claimedBase != base {
+			return nil, fmt.Errorf("manifest fetched from %s claims origin %s (expected base %s); pass --dev-origin <base-url> to install a self-hosted app at its real origin", manifestURL, manifest.App.Origin, claimedBase)
 		}
 	}
 	name, err := normalizePluginName(manifest.App.ID)
@@ -630,13 +714,23 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		InstalledAt:     installedAt,
 		UpdatedAt:       now,
 	}
-	if policy.residentHome != "" {
-		if err := changeAppApproval(policy.residentHome, name, origin); err != nil {
+	if policy.registerEvents && policy.residentHome != "" {
+		declared, err := canonicalAppOrigin(declaredOrigin)
+		if err != nil {
+			return nil, err
+		}
+		registered, err := canonicalAppOrigin(manifest.App.Origin)
+		if err != nil || declared != registered {
+			return nil, usageError("origin_verification_required: install from the app's served origin without a --dev-origin rewrite")
+		}
+		if err := registerManifestEvents(resolved, fetchedDigest, previous, &provenance, update, policy.grantedScopes); err != nil {
 			return nil, err
 		}
 	}
-	if policy.registerEvents && policy.residentHome != "" && (len(manifest.Events) > 0 || (update && previous != nil && previous.RegisteredDigest != "")) {
-		if err := registerManifestEvents(manifest, fetchedDigest, registrationManifestBytesFor(fetchedBytes, manifest.ManifestVersion, declaredOrigin, manifest.App.Origin), previous, &provenance, update); err != nil {
+	// The resident approves the app's origin only once its registration
+	// succeeded, so a refused install leaves the earlier approval in force.
+	if policy.residentHome != "" {
+		if err := changeAppApproval(policy.residentHome, name, origin); err != nil {
 			return nil, err
 		}
 	}
@@ -653,7 +747,15 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 	if policy.registerEvents && policy.residentHome == "" && len(manifest.Events) > 0 {
 		fmt.Fprintln(os.Stderr, "app events not registered: no resident identity here; run aw plugin install from a resident home to enable wakes")
 	}
-	return &pluginInstallOutput{Name: name, Path: appDir, Provenance: &provenance, Approved: policy.residentHome != ""}, nil
+	out := &pluginInstallOutput{Name: name, Path: appDir, Provenance: &provenance, Approved: policy.residentHome != ""}
+	if out.Approved {
+		out.IdentityHome = policy.residentHome
+		out.ExistingGrantsUnchanged = true
+		out.GrantRefreshCommand = []string{"aw", "--identity-home", policy.residentHome, "id", "grant", "mint", "--bundle", "normal-agent", "--ttl", "<ttl>", "--custody-socket", "auto", "--out", "<new-grant-home>"}
+		out.GrantRestartCommand = []string{"env", "AWEB_IDENTITY_HOME=<new-grant-home>", "<agent-command>"}
+		out.OATSRenewRestartCommand = []string{"oats", "session", "restart", "--home", "<instance-home>"}
+	}
+	return out, nil
 }
 
 // normalizeManifestDevOrigin validates a --dev-origin override and returns it as
@@ -670,34 +772,48 @@ func normalizeManifestDevOrigin(raw string) (string, error) {
 	return u.String(), nil
 }
 
-func manifestURLForSource(source string) (string, error) {
+// manifestBaseForSource is the app base an install source names: the source
+// URL without a well-known manifest path, query or fragment.
+func manifestBaseForSource(source string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(source))
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return "", fmt.Errorf("invalid manifest source %q", source)
 	}
-	if strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/.well-known/aweb-app.json") {
-		u.RawQuery = ""
-		u.Fragment = ""
-		return u.String(), nil
+	path := strings.TrimRight(u.Path, "/")
+	for _, wellKnown := range []string{appmanifest.LegacyManifestPath, appmanifest.DiscoveryCatalogPath} {
+		path = strings.TrimSuffix(path, wellKnown)
 	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/.well-known/aweb-app.json"
+	u.Path = strings.TrimRight(path, "/")
+	u.RawPath = ""
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String(), nil
 }
 
-func fetchManifest(manifestURL string) ([]byte, string, error) {
+// discoverManifest selects the manifest variant an app base offers this CLI.
+// The catalog and its variants are fetched without redirects; the legacy
+// manifest keeps its same-origin redirect tolerance.
+func discoverManifest(base string) (*appmanifest.Variant, error) {
+	fetch := func(path string, maxBytes int64) (int, []byte, error) {
+		return fetchManifestURL(base+path, min(maxBytes, maxManifestBytes), path == appmanifest.LegacyManifestPath)
+	}
+	return appmanifest.SelectVariant(base, appmanifest.SupportedManifestVersions, fetch)
+}
+
+// fetchManifestURL GETs one manifest document and returns its status and at
+// most maxBytes of body; a larger body is an error.
+func fetchManifestURL(rawURL string, maxBytes int64, sameOriginRedirects bool) (int, []byte, error) {
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, "", err
+		return 0, nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) == 0 {
-				return nil
+			if !sameOriginRedirects {
+				return http.ErrUseLastResponse
 			}
 			origin := via[0].URL
 			if req.URL.Scheme != origin.Scheme || req.URL.Host != origin.Host {
@@ -708,18 +824,22 @@ func fetchManifest(manifestURL string) ([]byte, string, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", fmt.Errorf("fetch manifest: HTTP %d", resp.StatusCode)
-	}
-	data, err := readAllBounded(resp.Body, maxManifestBytes)
+	data, err := readAllBounded(resp.Body, maxBytes)
 	if err != nil {
-		return nil, "", fmt.Errorf("fetch manifest: %w", err)
+		return 0, nil, fmt.Errorf("fetch manifest: %w", err)
 	}
-	sum := sha256.Sum256(data)
-	return data, "sha256:" + hex.EncodeToString(sum[:]), nil
+	return resp.StatusCode, data, nil
+}
+
+// manifestError prefixes a coded manifest error with its stable code.
+func manifestError(err error) error {
+	if code := appmanifest.ErrorCode(err); code != "" {
+		return fmt.Errorf("%s: %w", code, err)
+	}
+	return err
 }
 
 func manifestPluginDir(dir, name string) string {
@@ -946,6 +1066,16 @@ func dispatchPluginIfRequested(args []string) (int, bool) {
 	pluginArgs := stripPluginTraceFlags(args[commandIndex+1:])
 	switch resolution.Kind {
 	case pluginResolutionManifest:
+		// Cobra does not run for installed apps, so validate its global JSON
+		// boolean here as well as in the tool argument parser.
+		for _, arg := range args[:commandIndex] {
+			if arg == "--json" || strings.HasPrefix(arg, "--json=") {
+				if _, _, err := parseManifestDispatchArgs([]string{arg}); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1, true
+				}
+			}
+		}
 		return dispatchInstalledManifestPlugin(commandName, pluginArgs)
 	case pluginResolutionExternal:
 		if argsContainTraceFlag(args) {
@@ -979,7 +1109,7 @@ func firstNonFlagArg(args []string) (string, int) {
 			}
 			return "", -1
 		}
-		if strings.HasPrefix(arg, "--server-name=") || strings.HasPrefix(arg, "--identity-home=") {
+		if strings.HasPrefix(arg, "--server-name=") || strings.HasPrefix(arg, "--identity-home=") || strings.HasPrefix(arg, "--json=") {
 			continue
 		}
 		switch arg {
@@ -1053,13 +1183,27 @@ func manifestToolParamInfos(tool *appmanifest.Tool) []manifestToolParamInfo {
 	return infos
 }
 
-func renderInstalledManifestAppHelp(name string, manifest appmanifest.Manifest) []byte {
+func renderInstalledManifestAppHelp(name string, resolved *appmanifest.Resolved) []byte {
 	var out strings.Builder
 	fmt.Fprintf(&out, "Usage:\n  aw %s <verb> [flags]\n  aw %s help [verb]\n\nAvailable verbs:\n", name, name)
-	for _, tool := range manifest.Tools {
-		fmt.Fprintf(&out, "  %-20s %s\n", strings.TrimSpace(tool.Name), strings.TrimSpace(tool.Description))
+	for _, verb := range resolved.AgentTools {
+		tool, _ := resolved.Tool(verb)
+		fmt.Fprintf(&out, "  %-20s %s\n", verb, strings.TrimSpace(tool.Description))
 	}
 	return []byte(out.String())
+}
+
+// installedAgentTool returns a declared tool an agent caller may invoke: the
+// CLI is an agent caller, so surface-only and hook-only tools are refused.
+func installedAgentTool(resolved *appmanifest.Resolved, verb string) (*appmanifest.Tool, error) {
+	tool, err := installedManifestTool(resolved.Manifest, verb)
+	if err != nil {
+		return nil, err
+	}
+	if err := resolved.CheckInvocationContext(verb, nil); err != nil {
+		return nil, manifestError(err)
+	}
+	return tool, nil
 }
 
 func renderInstalledManifestVerbHelp(name string, tool *appmanifest.Tool) []byte {
@@ -1160,19 +1304,23 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 		}
 		return nil, true, err
 	}
-	var manifest appmanifest.Manifest
-	if err := appmanifest.DecodeSingleJSONStrict(data, &manifest); err != nil {
-		return nil, true, fmt.Errorf("decode manifest %s: %w", manifestPath, err)
+	resolved, err := appmanifest.Load(data, reservedRootCommandNames())
+	if err != nil {
+		return nil, true, fmt.Errorf("installed manifest %s: %w", manifestPath, manifestError(err))
 	}
-	if err := appmanifest.Validate(manifest, reservedRootCommandNames()); err != nil {
-		return nil, true, err
+	manifest := resolved.Manifest
+	for len(args) > 0 && (args[0] == "--json" || strings.HasPrefix(args[0], "--json=")) {
+		if _, _, err := parseManifestDispatchArgs(args[:1]); err != nil {
+			return nil, true, err
+		}
+		args = args[1:]
 	}
 	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
 		return nil, true, fmt.Errorf("missing verb for app %q; run `aw %s --help`", name, name)
 	}
 	if isManifestHelpToken(args[0]) {
 		if strings.TrimSpace(args[0]) == "help" && len(args) == 2 {
-			tool, err := installedManifestTool(manifest, args[1])
+			tool, err := installedAgentTool(resolved, args[1])
 			if err != nil {
 				return nil, true, err
 			}
@@ -1181,10 +1329,10 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 		if len(args) != 1 {
 			return nil, true, usageError("help accepts at most one verb")
 		}
-		return &installedManifestToolResult{Status: http.StatusOK, Body: renderInstalledManifestAppHelp(name, manifest)}, true, nil
+		return &installedManifestToolResult{Status: http.StatusOK, Body: renderInstalledManifestAppHelp(name, resolved)}, true, nil
 	}
 	verb := strings.TrimSpace(args[0])
-	tool, err := installedManifestTool(manifest, verb)
+	tool, err := installedAgentTool(resolved, verb)
 	if err != nil {
 		return nil, true, err
 	}
@@ -1267,6 +1415,9 @@ func executeGrantManifestTool(name, verb string, args map[string]any, rawBody []
 	defer cancel()
 	signed, err := client.SignAppRequestViaCustody(ctx, name, verb, args, rawBody)
 	if err != nil {
+		if err.Error() == "app_tool_denied" {
+			return nil, fmt.Errorf("%w: %s %s is not delegated to this grant; installing an app does not update an existing grant's tool snapshot. Ask the resident owner to approve the app and mint a replacement grant with the intended tools, then restart this session using the new grant (see aw id grant mint --help)", err, name, verb)
+		}
 		return nil, err
 	}
 	target, err := url.Parse(signed.URL)
@@ -1333,6 +1484,16 @@ func parseManifestDispatchArgs(args []string) (map[string]any, []byte, error) {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			return nil, nil, usageError("empty flag name")
+		}
+		// Manifest tools already return the app's response body. Consume the
+		// global boolean flag, never forward it as an app argument.
+		if name == "json" {
+			if hasValue {
+				if _, err := strconv.ParseBool(value); err != nil {
+					return nil, nil, usageError("invalid boolean for --json: %q", value)
+				}
+			}
+			continue
 		}
 		if !hasValue {
 			if i+1 >= len(args) {

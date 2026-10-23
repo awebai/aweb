@@ -20,16 +20,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
-from aweb_naapp.hooks.strictjson import Refused
-from aweb_naapp.roles import PrincipalKey, assign, has_role
+from aweb_naapp.roles import PrincipalKey, has_role
 from aweb_naapp.runtime.approvals import ActionPolicy, Approver
-from aweb_naapp.runtime.passkeys import (
-    Designation,
-    DesignationRefused,
-    Passkeys,
-    contact_sha256,
-)
+from aweb_naapp.runtime.passkeys import Passkeys
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
@@ -221,50 +214,3 @@ class OwnerDirectory:
             )
             return Drafter(principal_did=principal_did, scope=scope)
         return Drafter()
-
-
-async def apply_owner_act(
-    db: AsyncDatabaseManager,
-    passkeys: Passkeys,
-    verifier: OwnerActVerifier,
-    *,
-    signing: bytes,
-    signature: str,
-    app_id: str,
-    installation_id: str,
-    installation_team_id: str,
-    principal: PrincipalKey,
-    contact: str,
-) -> Designation:
-    """Make ``principal`` an owner on the strength of the team owner act (design §10.2).
-
-    ``principal`` comes from the request body; the controller's act is the
-    only authority for it. The principal must be on the team the installation
-    belongs to: ``installation_team_id`` comes from the app's installation
-    record, never from the request. The act must be signed by the current
-    controller key of that team and name exactly this installation, this
-    principal's owner scope and this contact. ``app-role.designate`` makes the scope's first owner;
-    ``app-credential.recover`` replaces it after the cooling-off. In one
-    transaction the act's nonce is consumed, the principal is given
-    secrets.owner and recorded as the scope's owner, and the scope is
-    designated. Anything less is ``owner_required``, and nothing changes.
-    Deliver the returned designation after this returns.
-    """
-    if principal.team_id != installation_team_id:
-        raise OwnerRequired("the principal is not on the installation's team")
-    scope = owner_scope(installation_id, principal.team_id, principal.principal_did)
-    expected_subject = {
-        "app_id": app_id,
-        "installation_id": installation_id,
-        "role": scope,
-        "contact_sha256": contact_sha256(contact),
-    }
-    try:
-        prepared = await verifier.prepare(signing, signature, team_id=principal.team_id)
-        async with db.transaction() as tx:
-            act = await verifier.consume_in(tx, prepared, expected_subject=expected_subject)
-            await record_owner(tx, installation_id=installation_id, principal=principal)
-            await assign(tx, principal, OWNER_ROLE)
-            return await passkeys.designate(tx, scope=scope, contact=contact, evidence=act)
-    except (Refused, DesignationRefused, OwnerRequired) as exc:
-        raise OwnerRequired(str(exc)) from None

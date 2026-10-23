@@ -486,6 +486,9 @@ func TestPluginInstallFetchesWellKnownManifestAndUpdateRefreshes(t *testing.T) {
 	var version guarded[string]
 	version.set("1.0.0")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != "/.well-known/aweb-app.json" {
 			t.Fatalf("unexpected manifest request %s %s", r.Method, r.URL.String())
 		}
@@ -566,6 +569,9 @@ func TestInstalledManifestDispatchInvokesTeamAuthRequest(t *testing.T) {
 
 	var sawSignedPayload bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/.well-known/aweb-app.json":
 			w.Header().Set("Content-Type", "application/json")
@@ -643,6 +649,9 @@ func TestInstalledLibraryManifestDispatchTracesRequestsAndResponses(t *testing.T
 	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
 	manifestBytes := readLibraryManifestFixtureForTest(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/.well-known/aweb-app.json":
 			w.Header().Set("Content-Type", "application/json")
@@ -821,6 +830,9 @@ func TestLibraryManifestPluginInstallAndDispatch(t *testing.T) {
 	manifestBytes := readLibraryManifestFixtureForTest(t)
 	var sawListPacks, sawImportToShelf bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/.well-known/aweb-app.json":
 			w.Header().Set("Content-Type", "application/json")
@@ -955,6 +967,9 @@ func TestPluginInstallRejectsMalformedManifestViaSharedValidation(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			home := filepath.Join(tmp, "home-"+strings.NewReplacer(" ", "-", "/", "-").Replace(tc.name))
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveNoManifestCatalog(w, r) {
+					return
+				}
 				if r.URL.Path != "/.well-known/aweb-app.json" {
 					t.Fatalf("unexpected request path %s", r.URL.Path)
 				}
@@ -988,10 +1003,14 @@ func TestPluginInstallDevOriginOverridesSelfHostedOrigin(t *testing.T) {
 
 	// The served manifest advertises a DIFFERENT origin than where it is served,
 	// like a self-hosted Library whose manifest still claims the production
-	// origin. Without an override the install must reject this; with --dev-origin
-	// the operator points aw at the real (self-hosted) base URL.
+	// origin. This empty-home discovery test grants no team authority. Without
+	// an override discovery rejects it; --dev-origin fills the local origin.
+	// Resident installs refuse that rewrite (the wakes journey covers this).
 	manifest := `{"manifest_version":1,"app":{"id":"devlib","version":"1.0.0","origin":"https://library.aweb.ai"},"tools":[{"name":"ping","auth":"none","method":"GET","path":"/v1/ping","input_schema":{"type":"object","properties":{}},"params":[],"mutation":false}]}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		if r.URL.Path != "/.well-known/aweb-app.json" {
 			t.Fatalf("unexpected request path %s", r.URL.Path)
 		}
@@ -1049,6 +1068,9 @@ func TestPluginInstallRejectsCrossOriginManifestRedirect(t *testing.T) {
 
 	var source *httptest.Server
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		if r.URL.Path != "/.well-known/aweb-app.json" {
 			t.Fatalf("unexpected target path %s", r.URL.Path)
 		}
@@ -1057,6 +1079,9 @@ func TestPluginInstallRejectsCrossOriginManifestRedirect(t *testing.T) {
 	}))
 	defer target.Close()
 	source = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveNoManifestCatalog(w, r) {
+			return
+		}
 		if r.URL.Path != "/.well-known/aweb-app.json" {
 			t.Fatalf("unexpected source path %s", r.URL.Path)
 		}
@@ -1108,5 +1133,45 @@ func TestPluginBuiltInCommandWinsOverTrustedPlugin(t *testing.T) {
 	}
 	if !strings.Contains(text, "aw dev") {
 		t.Fatalf("expected built-in version output:\n%s", text)
+	}
+}
+
+func TestManifestNestedRootVerbBinary(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	bin := filepath.Join(root, "aw")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	buildAwBinary(t, ctx, bin)
+	var paths guarded[[]string]
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths.set(append(paths.get(), r.Method+" "+r.URL.Path))
+		if r.Header.Get("Authorization") != "" {
+			t.Error("public tool must not be signed")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	appDir := filepath.Join(root, "plugins", "utility")
+	if err := os.MkdirAll(appDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"manifest_version":2,"app":{"id":"utility","version":"1","origin":"` + server.URL + `"},"tools":[{"name":"run","method":"GET","path":"/v1/run","params":[],"auth":"none"},{"name":"introspect","method":"GET","path":"/v1/inspect","params":[],"auth":"none"}]}`
+	if err := os.WriteFile(filepath.Join(appDir, "manifest.json"), []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"utility", "--help"}, {"utility", "help", "run"}, {"utility", "run", "--help"}, {"utility", "run"}, {"utility", "introspect"}} {
+		cmd := exec.CommandContext(ctx, bin, args...)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "AW_HOME="+root, "AWEB_IDENTITY_HOME=", "AW_NO_UPDATE_CHECK=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	if got := strings.Join(paths.get(), ","); got != "GET /v1/run,GET /v1/inspect" {
+		t.Fatalf("requests=%s", got)
 	}
 }

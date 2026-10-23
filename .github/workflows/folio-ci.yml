@@ -1,26 +1,24 @@
 name: Folio CI
 
-# Folio's equivalent of library-ci.yml: lint and type-check, unit and contract
-# tests, and the real-stack e2e against naapp/folio. Folio's tests fail on any
+# Lint and type-check Folio and its in-repo naapp runtime, run their offline
+# tests, then the real-stack document and event/wake e2e. Tests fail on any
 # warning (pyproject filterwarnings = ["error"]), so a passing run is a clean
 # run.
 #
-# Advisory, like library-ci.yml: aweb main is not protected, so this check
-# reports but cannot block a merge. Run it on the exact commit before deploying
-# folio.
+# Required-check candidate: "Folio lint, test, and real-stack e2e". Enforcing
+# it on main is a repository-admin setting, separate from this workflow.
 #
 # No path filter, for the reason library-ci.yml gives: a path-filtered gate is
 # how naapp coverage went missing before.
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
-
-env:
-  AW_VERSION: "1.36.30"
 
 concurrency:
   group: folio-ci-${{ github.ref }}
@@ -30,7 +28,13 @@ jobs:
   quality:
     name: Folio lint, test, and real-stack e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
+    env:
+      NAAPP_REQUIRE_TEST_DATABASE: "1"
+      TEST_DB_HOST: localhost
+      TEST_DB_PORT: "5432"
+      TEST_DB_USER: postgres
+      TEST_DB_PASSWORD: postgres
     services:
       postgres:
         image: postgres:16
@@ -59,21 +63,59 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          cache-dependency-glob: naapp/folio/uv.lock
+          cache-dependency-glob: |
+            naapp/folio/uv.lock
+            naapp-lib/uv.lock
 
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go/go.mod
+          cache-dependency-path: cli/go/go.sum
+
+      # The wakes acceptance builds channel-core with npm.
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
           node-version: "22"
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Install locked shared runtime dependencies
+        working-directory: naapp-lib
+        run: uv sync --locked
+
+      # The runtime's console tests exercise real WebAuthn in Chromium.
+      - name: Install the runtime test browser
+        working-directory: naapp-lib
+        run: uv run --no-sync playwright install --with-deps --only-shell chromium
+
+      - name: Lint and type-check the shared runtime
+        working-directory: naapp-lib
+        env:
+          UV_OFFLINE: "1"
+          UV_FROZEN: "1"
+        run: make lint
+
+      - name: Run shared runtime tests offline against real PostgreSQL
+        working-directory: naapp-lib
+        env:
+          UV_OFFLINE: "1"
+          UV_FROZEN: "1"
+        run: make test
+
       - name: Install locked Folio dependencies
         working-directory: naapp/folio
         run: uv sync --locked
 
-      - name: Install the pinned released aw client used by e2e
+      - name: Build aw from the checkout
         run: |
-          npm install --global "@awebai/aw@$AW_VERSION"
-          aw version
+          make -C cli/go build
+          echo "$GITHUB_WORKSPACE/cli/go" >> "$GITHUB_PATH"
+
+      - name: Check the e2e aw build
+        run: bash scripts/check-naapp-e2e-aw.sh
 
       - name: Lint and type-check
         working-directory: naapp/folio
@@ -81,6 +123,9 @@ jobs:
 
       - name: Run unit and contract tests
         working-directory: naapp/folio
+        env:
+          UV_OFFLINE: "1"
+          UV_FROZEN: "1"
         run: make test
 
       # docker-compose.e2e.yml builds the awid service from the repository
@@ -88,3 +133,8 @@ jobs:
       - name: Run real-stack e2e
         working-directory: naapp/folio
         run: make e2e
+
+      # Builds Folio's repository-root Dockerfile and this commit's aw client;
+      # proves metadata-only doc.changed delivery through aweb and channel-core.
+      - name: Run real document-change and browser-wake acceptance
+        run: bash scripts/e2e-folio-wakes.sh
