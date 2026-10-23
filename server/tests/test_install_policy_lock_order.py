@@ -46,10 +46,9 @@ async def compete(host, db, origin, calls):
     outer = FastAPI()
     outer.mount("/api", host.app)
 
-    @outer.middleware("http")
-    async def log_server_error(request, call_next):
+    async def log_server_error(scope, receive, send):
         try:
-            return await call_next(request)
+            return await outer(scope, receive, send)
         except Exception as exc:
             logging.getLogger(__name__).exception(
                 "installation route error: policy_overlap=%s sqlstate=%s",
@@ -60,7 +59,7 @@ async def compete(host, db, origin, calls):
     # Exercise the real HTTP refusal, rather than propagating a server exception
     # into the test. No application component or database is substituted.
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=outer, raise_app_exceptions=False), base_url="http://test",
+        transport=httpx.ASGITransport(app=log_server_error, raise_app_exceptions=False), base_url="http://test",
     ) as client:
         tasks = []
         try:
