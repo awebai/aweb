@@ -224,10 +224,18 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 		t.Fatalf("remove receipt: %v", err)
 	}
 	t.Run("stalled_resolution", func(t *testing.T) {
-		// A real TCP listener accepts discovery requests but never answers them.
-		// One advisory deadline must cover every candidate, not restart per probe.
+		// Authoritative installation must finish first. Then a real TCP listener
+		// stalls advisory discovery; its deadline covers all candidates together.
+		var installed atomic.Bool
 		var probes atomic.Int32
 		stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if installation(w, r) {
+				installed.Store(true)
+				return
+			}
+			if !installed.Load() && serveUnadvertisedHealth(w, r) {
+				return
+			}
 			probes.Add(1)
 			<-r.Context().Done()
 		}))
