@@ -70,10 +70,10 @@ async def lookup_identity_metadata_by_did(db_or_manager, dids: list[str]) -> dic
     aweb_db = _aweb_db(db_or_manager)
     rows = await aweb_db.fetch_all(
         """
-        SELECT did_aw, did_key, address, team_id, alias, identity_scope
+        SELECT CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, team_id, alias, identity_scope
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
-          AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
+          AND ((did_aw = ANY($1::text[]) AND did_aw_verified_key = did_key) OR did_key = ANY($1::text[]))
         """,
         unique_dids,
     )
@@ -114,7 +114,7 @@ async def lookup_identity_metadata_by_agent_id(
     aweb_db = _aweb_db(db_or_manager)
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id::text AS agent_id, did_aw, did_key, address
+        SELECT agent_id::text AS agent_id, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key, CASE WHEN did_aw_verified_key = did_key THEN address END AS address
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
           AND agent_id::text = ANY($1::text[])

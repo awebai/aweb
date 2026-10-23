@@ -29,7 +29,7 @@ async def sender_memberships(request: Request | None, db, rows) -> dict[tuple[st
     if not ids:
         return result
     members = await db.get_manager("aweb").fetch_all(
-        "SELECT agent_id, team_id, did_aw, status, deleted_at, certificate_id "
+        "SELECT agent_id, team_id, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, status, deleted_at, certificate_id "
         "FROM {{tables.agents}} WHERE agent_id = ANY($1::uuid[])", ids,
     )
     revocations = {}

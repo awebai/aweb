@@ -5,6 +5,8 @@ real PostgreSQL. The embedding application's ``on_mutation`` callback and the
 Redis chat-session publish are recorded at their boundaries.
 """
 
+from identity_binding_support import seed_verified_bindings
+
 import json
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -93,7 +95,9 @@ async def server(aweb_cloud_db, monkeypatch):
         mutations.append((event_type, dict(context)))
 
     redis = _RecordingRedis()
-    app = _build_test_app(db, None)
+    app = _build_test_app(db, object())
+    seed_verified_bindings(app, *((f"did:aw:{alias}", did, f"acme.com/{alias}")
+                                  for alias, (_, did) in keys.items()))
     app.state.on_mutation = record_mutation
     mcp = create_mcp_app(db_infra=app.state.db, redis=redis, hosted_signer=signer)
     app.mount("/mcp", mcp)

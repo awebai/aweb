@@ -223,7 +223,7 @@ async def _equivalent_identity_refs(
     if agent_uuid is not None:
         seed_row = await aweb_db.fetch_one(
             """
-            SELECT did_aw, did_key
+            SELECT CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key
             FROM {{tables.agents}}
             WHERE deleted_at IS NULL
               AND agent_id = $1
@@ -248,7 +248,7 @@ async def _equivalent_identity_refs(
         # did_aw collisions (different did_keys, same did_aw) do not.
         rows = await aweb_db.fetch_all(
             """
-            SELECT agent_id, did_aw, did_key
+            SELECT agent_id, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key
             FROM {{tables.agents}}
             WHERE deleted_at IS NULL
               AND did_key = ANY($1::text[])
@@ -261,10 +261,10 @@ async def _equivalent_identity_refs(
         # of the input is the caller's responsibility.
         rows = await aweb_db.fetch_all(
             """
-            SELECT agent_id, did_aw, did_key
+            SELECT agent_id, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key
             FROM {{tables.agents}}
             WHERE deleted_at IS NULL
-              AND did_aw = ANY($1::text[])
+              AND did_aw = ANY($1::text[]) AND did_aw_verified_key = did_key
             """,
             seed_did_aws,
         )

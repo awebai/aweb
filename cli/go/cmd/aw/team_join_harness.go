@@ -92,7 +92,7 @@ func setupJoinHarness(workingDir string, home awconfig.IdentityHome, harness str
 			return result, installed.Error
 		}
 		result.Delivery = "native channel plugin installed; session not launched or verified"
-		result.StartCommand = "claude --dangerously-skip-permissions --dangerously-load-development-channels " + claudeChannelSpec
+		result.StartCommand = "claude --dangerously-load-development-channels " + claudeChannelSpec
 	case "pi":
 		if installed := EnsurePiChannelExtension(); installed.Error != nil {
 			return result, installed.Error

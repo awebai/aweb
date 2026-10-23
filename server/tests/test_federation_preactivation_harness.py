@@ -867,9 +867,10 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
     await receiver_db.execute(
         """
         INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, inbound_mode, identity_scope
+            team_id, did_key, did_aw, address, alias, inbound_mode, identity_scope,
+            did_aw_verified_key
         ) VALUES (
-            'receiver:beta.test', $1, $2, 'beta.test/Bob', 'Bob', 'open', 'global'
+            'receiver:beta.test', $1, $2, 'beta.test/Bob', 'Bob', 'open', 'global', $1
         )
         """,
         target_did_key,
