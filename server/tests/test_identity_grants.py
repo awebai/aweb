@@ -1318,8 +1318,7 @@ def unrelated(request):
 
 def test_direct_team_identity_calls_are_reviewed_root_only_sites():
     assert _direct_team_identity_calls() == [
-        ("server/src/aweb/routes/apps.py", "_authorized_team_id"),
-        ("server/src/aweb/routes/apps.py", "install_app_route"),
+        ("server/src/aweb/routes/apps.py", "_caller"),
         ("server/src/aweb/routes/connect.py", "get_team_info"),
         ("server/src/aweb/routes/events.py", "_subscription_read_identity"),
         ("server/src/aweb/routes/events.py", "delete_app_event_subscription_route"),

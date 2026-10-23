@@ -133,6 +133,8 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "032_app_hook_bindings.sql",
         "033_typed_chat_participants.sql",
         "034_agent_identity_binding.sql",
+        "035_team_app_installation_identity.sql",
+        "036_app_installation_management.sql",
     ]
 
 

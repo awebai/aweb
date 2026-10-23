@@ -3786,6 +3786,7 @@ Subcommands:
 - `install` Install a plugin into the trusted aw plugin directory
 - `list` List installed plugins
 - `remove` Remove an installed plugin
+- `request` Ask a team administrator to install an app; grants no tools or scopes
 - `reserved-names` Emit reserved top-level aw app ids
 - `update` Update an installed manifest plugin
 
@@ -3802,6 +3803,7 @@ Flags:
 - `--app-id string App id to record in plugin provenance`
 - `--app-version string App version to record in plugin provenance`
 - `--dev-origin string Override the app origin to this base URL for a self-hosted or dev service; the request base URL becomes this, bypassing the manifest origin self-consistency check`
+- `--grant-scope strings Grant only these requested scopes (repeat or comma-separate; default: all requested scopes)`
 - `-h, --help help for install`
 - `--manifest-version string Manifest version to record in plugin provenance`
 - `--origin string App origin to record in plugin provenance`
@@ -3824,6 +3826,15 @@ Remove an installed plugin
 Flags:
 - `-h, --help help for remove`
 
+## `plugin request`
+
+### `plugin request`
+
+Ask a team administrator to install an app; grants no tools or scopes
+
+Flags:
+- `-h, --help help for request`
+
 ## `plugin reserved-names`
 
 ### `plugin reserved-names`
@@ -3840,6 +3851,7 @@ Flags:
 Update an installed manifest plugin
 
 Flags:
+- `--grant-scope strings Explicitly select granted scopes (default: preserve existing grants, dropping removed scopes)`
 - `-h, --help help for update`
 
 ## `upgrade`

@@ -14,13 +14,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-from nacl.signing import SigningKey
-
-from awid.did import did_from_public_key
-from awid.signing import canonical_json_bytes, sign_message
 from aweb.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, PURPOSES
-from aweb.app_registry import install_app
 from aweb.hook_bindings import (
     PRODUCTION,
     REGISTRATION,
@@ -29,7 +23,16 @@ from aweb.hook_bindings import (
     write_pending_bindings,
 )
 from aweb.routes.app_hooks import router as app_hooks_router
-from tests.test_app_events_http import _build_events_app, _make_app_keypair, _seed_team_and_agent
+from awid.did import did_from_public_key
+from awid.signing import canonical_json_bytes, sign_message
+from httpx import ASGITransport, AsyncClient
+from nacl.signing import SigningKey
+from tests.installation_fixtures import seed_hook_installation
+from tests.test_app_events_http import (
+    _build_events_app,
+    _make_app_keypair,
+    _seed_team_and_agent,
+)
 from tests.test_events_http import _encode_certificate, _make_certificate
 
 TEAM = "backend:acme.com"
@@ -47,10 +50,7 @@ SECRET_USE = HookBindingDeclaration(kind=PRODUCTION, catalog_id="aweb.hooks", ca
 
 
 async def _install(db, app: dict, *, team_id: str = TEAM, installation_id: str, declarations) -> dict:
-    await install_app(
-        db, team_id=team_id, app_id=app["app_id"], origin=app["origin"], app_version="1.0.0",
-        manifest_version=2, digest=app["digest"], granted_scopes=[],
-    )
+    await seed_hook_installation(db, app, team_id=team_id, installation_id=installation_id)
     async with db.transaction() as tx:
         written = await write_pending_bindings(
             tx, team_id=team_id, app_id=app["app_id"], origin=app["origin"], digest=app["digest"],
