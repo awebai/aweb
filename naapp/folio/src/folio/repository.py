@@ -547,7 +547,7 @@ def _asset_ids_referenced_by_body(body: str) -> set[UUID]:
     return asset_ids
 
 
-async def _allowed_assets_for_body(db: AsyncDatabaseManager, *, team_id: str, body: str) -> dict[UUID, dict[str, Any]]:
+async def _allowed_assets_for_body(db: AsyncDatabaseManager | TransactionManager, *, team_id: str, body: str) -> dict[UUID, dict[str, Any]]:
     referenced = _asset_ids_referenced_by_body(body)
     if not referenced:
         return {}
