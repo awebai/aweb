@@ -229,8 +229,13 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 		var installed atomic.Bool
 		var probes atomic.Int32
 		stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if serveUnadvertisedHealth(w, r) {
+				return
+			}
 			if installation(w, r) {
-				installed.Store(true)
+				if r.Method == http.MethodPost {
+					installed.Store(true)
+				}
 				return
 			}
 			if !installed.Load() && r.Method == http.MethodGet && r.URL.Path == "/v1/agents/heartbeat" {
