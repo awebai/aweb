@@ -425,6 +425,7 @@ test-a2a:
 
 test-e2e:
 	python3 scripts/test_controller_key_absence_guard.py
+	AWEB_TEST_DOCKER_PORTS=1 python3 scripts/test_oss_user_journey.py
 	./scripts/e2e-oss-user-journey.sh
 	./scripts/test-e2e-controller-key-absence-guard.sh
 

@@ -41,14 +41,12 @@ self-hosted projects.
 
 3. Start Claude Code with this exact line:
    ```bash
-   claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+   claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
    ```
 
-Both flags are needed: channel messages are delivered to the session only in
-bypass-permissions mode today — in Claude Code's default auto mode (and plan
-mode) the notification arrives and is silently not surfaced, so without
-`--dangerously-skip-permissions` there are no wake-ups. Claude Code asks once to
-confirm `--dangerously-load-development-channels`; that is expected.
+Channel delivery works in any permission mode, including auto and plan. Choose
+the permission mode that suits your workflow. Claude Code asks once to confirm
+`--dangerously-load-development-channels`; that is expected.
 
 To update the plugin later:
 ```
