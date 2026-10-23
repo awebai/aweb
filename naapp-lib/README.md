@@ -378,6 +378,49 @@ apps share. An agent proposes an exact request; any one of the owner-designated
 humans eligible for it approves or rejects it; a trusted dispatcher then admits
 exactly one dispatch of that exact request.
 
+An app that publishes or sends after awaited dispatch/outbox work can use a
+check-only final fence. Call `prepare_dispatches(tx, bindings, authority=...)`
+before taking dispatch locks; `DispatchBinding` names each original approval,
+exact request and consumed operation. The single-item `prepare_dispatch` takes
+the same fields directly. Preparation first calls the app's
+`DispatchAuthority.prepare(tx, approvals)` once with the whole batch. That
+adapter must prepare the complete authority, forest, grant and covering union
+in the app's established lock order, idempotently if already prepared. B2 then
+locks the complete approval row union in approval-ID order, followed by the
+request advisory lock union in digest order. `lock_many` alone holds rows,
+not the request advisory locks. Do not interleave single-item preparation with
+new app authority locks for another item. Include all relevant approvals,
+including confirming and slot approvals, in the whole-run preparation.
+
+Immediately before the original send/publication, call
+`check_dispatch(tx, prepared)` for each returned `PreparedDispatch`, using the
+original outer caller transaction supplied to preparation. It reads B2 and
+`DispatchAuthority.read(tx, approval)` in that transaction, validates the
+original request/operation, consumed `dispatching` state, current policy,
+decider, minimum assurance, revocation and expiry, and returns `None`. The
+adapter returns `DispatchAuthorityState(policy=..., decider_current=...)` from
+the authority prepared above, without new locks, network calls or refreshes.
+There is no fallback to the older policy/directory adapters, which need not be
+transaction-bound. Preparation and checking make no consumption, outcome or
+audit writes. The final check acquires no new row or advisory locks and samples
+the live clock after its last awaited read.
+
+A handle's immutable `expires_at` is the original prepared deadline. After the
+last awaited check of a multi-approval run, the app must synchronously compare
+all these deadlines with its live clock along with its own forest/window
+deadlines; an earlier successful slot check cannot cover later awaited work.
+Handles refuse another caller transaction, ended/reused connections and a
+rollback that releases their preparation locks. Prepare again after such a
+rollback. Use a live PostgreSQL READ COMMITTED transaction, and keep preparation
+and publication within the same transaction lifetime. The app still owns its
+installation/forest/source checks and sole publication association.
+
+This fence grants no new dispatch admission. Keep the original `may_send`
+decision and business idempotency association: `admit`/`retrieve` still return
+stable consumed history without permission to send again. `not_sent` needs
+the existing transport-retry admission; unknown or final outcomes cannot pass
+the final fence. Do not expose prepared handles through model-visible tools.
+
 - **Frozen request.** `request_sha256` is SHA-256 over
   `aweb.approval-request/1\n` plus the canonical JSON of the request and its
   policy reference and version. Changing any covered value needs a new approval.
