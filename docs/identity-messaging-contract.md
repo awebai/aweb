@@ -175,6 +175,14 @@ This context validates only the signature: delivery keeps the stored participant
 agent ID, and neither routing facts nor verification markers are populated from
 it. A mismatch refuses delivery; unavailable evidence returns 503.
 
+Federation first-contact target validation checks the cached address binding
+against the envelope's stable DID, current key and exact delivery origin. If
+those facts do not validate, it reads the address once fresh and repeats the
+same checks before refusing. Successful cached validation requires no extra
+registry read. The refresh happens before database locks; unavailable evidence
+returns retryable 503, while a fresh mismatch retains its specific refusal.
+Local recipient selection still requires the verified projection marker.
+
 ## Receiver-Wide Replay And Contact Compatibility
 
 Every accepted mail or chat message—local or federated, plaintext or encrypted—

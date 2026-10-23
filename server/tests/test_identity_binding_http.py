@@ -802,3 +802,67 @@ async def test_signed_continuation_after_rotation_keeps_stored_route(
         })
         assert new_mail.status_code == 422, new_mail.text
         assert "Bare did:aw first-contact is unsupported" in new_mail.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["publish", "origin", "key", "wrong_stable", "wrong_key", "wrong_origin", "missing", "unavailable"])
+async def test_federation_target_refreshes_stale_binding_before_refusal(privacy_app, change):
+    from contextlib import AsyncExitStack
+    from aweb.federation.envelope import FederationEnvelope
+    from aweb.routes.federation import _resolve_target_identity
+    from awid.federation_errors import FederationAuthorityError
+
+    env = privacy_app
+    bob = env.actors["bob"]
+    origin = "https://receiver.identity.test"
+    async with AsyncExitStack() as stack:
+        listener = await stack.enter_async_context(AsyncExitStack())
+        registry, registry_origin = await listener.enter_async_context(registry_listener(env))
+        stable, address = await register(env, registry, bob)
+        if change == "origin":
+            await registry.update_namespace_delivery_origin("identity.test", env.team_sk, "https://previous.identity.test")
+        cached = CachedRegistryClient(registry_origin, env.redis)
+        stack.push_async_callback(cached.aclose)
+        env.app.state.awid_registry_client = cached
+        bob.certificate = certificate(env, bob, stable, address)
+        connected = await request(env, bob, "POST", "/v1/connect", {})
+        assert connected.status_code == 200, connected.text
+        row = await env.db.fetch_one("SELECT did_key,did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1", bob.id)
+        assert row["did_aw_verified_key"] == row["did_key"]
+        old = await cached.resolve_address("identity.test", "bob")
+        assert old.delivery.origin == ("https://previous.identity.test" if change == "origin" else None)
+        if change not in {"missing", "unavailable"}:
+            await registry.update_namespace_delivery_origin("identity.test", env.team_sk, origin)
+        current_key = bob.did
+        if change == "key":
+            new_sk, _, current_key = _make_keypair()
+            await registry.rotate_key(stable, current_key, bob.sk, new_sk)
+        envelope = FederationEnvelope(
+            type="mail", sender_did_aw=env.actors["alice"].did,
+            sender_current_did_key=env.actors["alice"].did,
+            target_did_aw=stable_id_from_did_key(env.actors["alice"].did) if change == "wrong_stable" else stable,
+            target_current_did_key=env.actors["alice"].did if change == "wrong_key" else current_key,
+            target_address=address,
+            target_delivery_origin="https://different.identity.test" if change == "wrong_origin" else origin,
+            message_id=str(uuid4()), conversation_id=str(uuid4()),
+            timestamp=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            subject="route refresh", body="route refresh", signed_payload="{}",
+        )
+        if change == "unavailable":
+            await listener.aclose()
+        reasons = dict(wrong_stable="recipient_address_did_mismatch", wrong_key="recipient_current_key_mismatch",
+                       wrong_origin="recipient_route_mismatch", missing="recipient_route_missing",
+                       unavailable="federation_authority_coordination_unavailable")
+        if change in reasons:
+            with pytest.raises(FederationAuthorityError) as refused:
+                await _resolve_target_identity(cached, envelope, stored_route_continuation=False)
+            assert refused.value.reason == reasons[change]
+            if change == "unavailable":
+                assert refused.value.http_status == 503
+        else:
+            await _resolve_target_identity(cached, envelope, stored_route_continuation=False)
+            # The fresh observation updates the real shared cache. The same hot
+            # path remains usable with the actual AWID listener stopped.
+            await listener.aclose()
+            await _resolve_target_identity(cached, envelope, stored_route_continuation=False)
+        assert row == await env.db.fetch_one("SELECT did_key,did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1", bob.id)
