@@ -152,7 +152,9 @@ async def uninstall_installation_on(tx, *, team_id: str, app_id: str, expected_g
         "origin_verification_error=NULL, updated_at=NOW() WHERE team_id=$1 AND app_id=$2",
         team_id, app_id, generation,
     )
-    return await get_installation_on(tx, team_id=team_id, app_id=app_id)
+    retired = await get_installation_on(tx, team_id=team_id, app_id=app_id)
+    assert retired is not None  # The same transaction still holds this row lock.
+    return retired
 
 
 async def _write_verified_registrations(tx, *, team_id, app_id, fetched, registration):

@@ -157,7 +157,9 @@ async def test_real_uninstall_revokes_signed_grant_and_hook_reads_without_losing
         signer = AppCredentialSigner(app_id="fixture", key=signer_key, purpose=purpose)
         return await client.get(path, headers=signer.sign(method="GET", target="http://test" + path, team_id=http_fixture.TEAM).headers)
 
-    grant_path, hook_path = "/api/v1/apps/self/grant", "/api/v1/apps/self/hooks/bindings"
+    binding_id = await db.fetch_value("SELECT binding_id FROM {{tables.app_hook_bindings}} LIMIT 1")
+    grant_path = "/api/v1/apps/self/grant"
+    hook_path = "/api/v1/apps/self/hooks/bindings?binding_id=" + str(binding_id)
     grant = await read("app-grant-read", grant_path)
     assert grant.status_code == 200 and grant.json()["state"] == "active", grant.text
     hooks = await read("hook-resolve", hook_path)
