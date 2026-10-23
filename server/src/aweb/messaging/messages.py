@@ -12,7 +12,7 @@ from aweb.inbound_modes import (
     INBOUND_MODE_CONTACTS_ONLY,
     INBOUND_MODE_OPEN,
     INBOUND_MODE_TEAM_AND_CONTACTS,
-    INBOUND_MODES,
+    effective_inbound_mode,
 )
 from aweb.messaging.contacts import has_exact_active_identity_contact, normalize_owner_dids
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
@@ -129,12 +129,8 @@ def _is_global_recipient(recipient_agent: dict) -> bool:
     )
 
 
-def _effective_inbound_mode(recipient_agent: dict) -> str:
-    mode = str(recipient_agent.get("inbound_mode") or "").strip().lower()
-    if mode in INBOUND_MODES:
-        return mode
-
-    raise ForbiddenError("Recipient inbound_mode migration required")
+async def _effective_inbound_mode(db, recipient_agent: dict) -> str:
+    return await effective_inbound_mode(db.get_manager("aweb"), str(recipient_agent.get("did_aw") or ""))
 
 
 def _identity_dids_from_agent(agent: dict) -> list[str]:
@@ -236,7 +232,7 @@ async def authorize_message_delivery(
     )
 
     if _is_global_recipient(recipient_agent):
-        mode = _effective_inbound_mode(recipient_agent)
+        mode = await _effective_inbound_mode(db, recipient_agent)
         if mode == INBOUND_MODE_OPEN:
             return
         if mode == INBOUND_MODE_TEAM_AND_CONTACTS and await _has_verified_same_team_membership(

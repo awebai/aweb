@@ -23,3 +23,93 @@ def test_normalize_inbound_mode_rejects_unknown_wire_value(value):
 def test_default_must_be_canonical():
     with pytest.raises(ValueError):
         normalize_inbound_mode(None, default="unknown")
+
+
+async def _memberships(manager, modes):
+    from test_messages import _insert_team, _insert_agent, _make_did_key
+    key = _make_did_key()
+    ids = []
+    for index, mode in enumerate(modes):
+        team = f"team{index}:policy.example"
+        await _insert_team(manager, team)
+        ids.append(await _insert_agent(manager, team_id=team, alias=f"member{index}", did_key=key,
+                                       did_aw="did:aw:policy", address="policy.example/member", inbound_mode=mode))
+    return ids, key
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("modes,want", [
+    (["open", "contacts_only"], "contacts_only"),
+    (["team_and_contacts", "open"], "team_and_contacts"),
+    (["contacts_only", "team_and_contacts", "open"], "contacts_only"),
+])
+async def test_effective_identity_policy(aweb_cloud_db, modes, want):
+    from aweb.inbound_modes import effective_inbound_mode
+    manager = aweb_cloud_db.aweb_db
+    ids, _ = await _memberships(manager, modes)
+    await manager.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", ids[0])
+    assert await effective_inbound_mode(manager, "did:aw:policy") == want
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [None, "unknown"])
+async def test_identity_policy_rejects_null_but_ignores_deleted_rows(aweb_cloud_db, invalid):
+    from aweb.inbound_modes import effective_inbound_mode
+    from aweb.service_errors import ForbiddenError
+    manager = aweb_cloud_db.aweb_db
+    if invalid is not None:
+        await manager.execute("ALTER TABLE {{tables.agents}} DROP CONSTRAINT agents_inbound_mode_valid")
+    ids, _ = await _memberships(manager, ["open", invalid])
+    with pytest.raises(ForbiddenError, match="inbound_mode migration required"):
+        await effective_inbound_mode(manager, "did:aw:policy")
+    await manager.execute("UPDATE {{tables.agents}} SET deleted_at=clock_timestamp() WHERE agent_id=$1", ids[1])
+    assert await effective_inbound_mode(manager, "did:aw:policy") == "open"
+    with pytest.raises(ForbiddenError, match="inbound_mode migration required"):
+        await effective_inbound_mode(manager, "did:aw:unknown")
+    assert await effective_inbound_mode(manager, "did:aw:new", default="open") == "open"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["team_and_contacts", "contacts_only"])
+async def test_identity_writer_unifies_rows_and_connect_inherits(aweb_cloud_db, mode):
+    from aweb.inbound_modes import effective_inbound_mode, set_identity_inbound_mode
+    from aweb.routes.connect import _ensure_agent
+    from test_messages import _insert_team
+    manager = aweb_cloud_db.aweb_db
+    ids, key = await _memberships(manager, ["contacts_only", "open"])
+    async with manager.transaction() as tx:
+        await set_identity_inbound_mode(tx, "did:aw:policy", mode)
+    assert await effective_inbound_mode(manager, "did:aw:policy") == mode
+    rows = await manager.fetch_all("SELECT inbound_mode FROM {{tables.agents}} WHERE did_aw='did:aw:policy'")
+    assert [row["inbound_mode"] for row in rows] == [mode] * 2
+    await _insert_team(manager, "third:policy.example")
+    async with manager.transaction() as tx:
+        agent_id = await _ensure_agent(tx, "third:policy.example", key, "did:aw:policy", "policy.example/member",
+                                       "third", "global", "", "agent", "developer", "third-certificate")
+    assert await manager.fetch_value("SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id=$1", agent_id) == mode
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lock", ["for_share", "for_update"])
+async def test_identity_policy_locks_every_membership(aweb_cloud_db, lock):
+    import asyncio
+    from aweb.inbound_modes import effective_inbound_mode
+    manager = aweb_cloud_db.aweb_db
+    ids, _ = await _memberships(manager, ["open", "contacts_only"])
+    tasks = []
+    try:
+        async with manager.transaction() as tx:
+            assert await effective_inbound_mode(tx, "did:aw:policy", **{lock: True}) == "contacts_only"
+            for agent_id in ids:
+                tasks.append(asyncio.create_task(manager.execute(
+                    "UPDATE {{tables.agents}} SET inbound_mode='open' WHERE agent_id=$1", agent_id,
+                )))
+            await asyncio.sleep(0.05)
+            assert all(not task.done() for task in tasks), "every identity membership must remain locked"
+        await asyncio.wait_for(asyncio.gather(*tasks), 5)
+        assert await effective_inbound_mode(manager, "did:aw:policy") == "open"
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

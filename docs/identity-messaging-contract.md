@@ -46,7 +46,16 @@ Team certificates remain valid for team membership, local ACLs, and certificate
 verification flows. They are not an address reachability or message routing
 oracle.
 
-Global recipients expose an explicit delivery-time `inbound_mode`:
+Global recipients expose an explicit delivery-time `inbound_mode`. It is an
+identity property across every non-deleted row for the exact `did:aw`, including
+retired or inactive memberships. The effective policy is the strictest valid
+mode present: `contacts_only`, then `team_and_contacts`, then `open`. Any missing
+or invalid row policy fails closed with the migration-required refusal. A mode
+change by the identity updates all those rows; a new membership inherits the
+current effective mode. Team ownership alone does not authorize a policy change.
+The existing identity-signed "my inbound mode" route provides that authority.
+
+The modes are:
 
 - `open`: accept valid senders after address route and identity binding
   validation. User-facing label: **All**.

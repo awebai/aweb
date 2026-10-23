@@ -18,7 +18,8 @@ from awid.federation_errors import FederationAuthorityError
 from pgdbm.errors import AsyncDBError
 from awid.signing import canonical_json_bytes
 
-from aweb.inbound_modes import INBOUND_MODES
+from aweb.inbound_modes import INBOUND_MODES, effective_inbound_mode
+from aweb.service_errors import ForbiddenError
 from aweb.e2ee_messages import encrypted_message_storage_metadata
 from aweb.federation.authority_state import AuthoritySecurityToken
 from aweb.federation.envelope import FederationEnvelope
@@ -245,19 +246,36 @@ async def _lock_current_recipient(
     agent_id = recipient.get("agent_id")
     if agent_id is None:
         raise FederationAuthorityError("recipient_identity_not_found")
+    # Lock the whole identity in stable order before touching the selected row.
+    # SHARE suffices for the selected row too; upgrading to UPDATE would deadlock
+    # concurrent deliveries that address different memberships of this identity.
+    identity_did = str(await tx.fetch_value(
+        "SELECT did_aw FROM {{tables.agents}} WHERE agent_id=$1 AND deleted_at IS NULL",
+        agent_id,
+    ) or "")
+    identity_mode = None
+    if identity_did.startswith("did:aw:"):
+        try:
+            identity_mode = await effective_inbound_mode(tx, identity_did, for_share=True)
+        except ForbiddenError as exc:
+            raise FederationAuthorityError("recipient_policy_rejected") from exc
     row = await tx.fetch_one(
         """
         SELECT agent_id, team_id, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, alias,
                inbound_mode, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw
         FROM {{tables.agents}}
         WHERE agent_id = $1 AND deleted_at IS NULL
-        FOR UPDATE
+        FOR SHARE
         """,
         agent_id,
     )
     if row is None:
         raise FederationAuthorityError("recipient_identity_not_found")
     current = dict(row)
+    if str(current.get("did_aw") or "") != identity_did:
+        raise FederationAuthorityError("recipient_identity_not_found")
+    if identity_mode is not None:
+        current["inbound_mode"] = identity_mode
     target_did = str(envelope.target_did_aw or "").strip()
     if target_did.startswith("did:aw:"):
         if str(current.get("did_aw") or "").strip() != target_did:
@@ -348,7 +366,7 @@ async def _authorize_policy(
             WHERE team_id = $1 AND deleted_at IS NULL
               AND ((did_aw = $2 AND did_aw_verified_key = did_key) OR did_key = $2)
             LIMIT 1
-            FOR UPDATE
+            FOR SHARE
             """,
             recipient_team,
             envelope.sender_did_aw,

@@ -591,11 +591,9 @@ async def test_contacts_only_rejects_verified_teammate_before_contact(aweb_cloud
     await _insert_team(manager, "backend:acme.com")
     recipient_id = await _insert_agent(
         manager, team_id="backend:acme.com", alias="strict", did_key=_make_did_key(),
-        did_aw="did:aw:strict", address="acme.com/strict",
+        did_aw="did:aw:strict", address="acme.com/strict", inbound_mode="contacts_only",
     )
     recipient = await get_agent_by_id(_DbShim(manager), agent_id=recipient_id)
-    # Exercise the policy independently of the schema migration.
-    recipient["inbound_mode"] = "contacts_only"
     with pytest.raises(ForbiddenError, match="Recipient only accepts messages from exact active contacts"):
         await authorize_message_delivery(
             _DbShim(manager), recipient_agent=recipient,

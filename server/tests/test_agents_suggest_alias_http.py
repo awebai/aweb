@@ -786,8 +786,8 @@ async def test_patch_my_inbound_mode_updates_global_agent_policy(aweb_cloud_db, 
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
-        VALUES ($1, $2, $3, $4, 'global', 'active', 'open')
+            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode, did_aw)
+        VALUES ($1, $2, $3, $4, 'global', 'active', 'open', 'did:aw:alice')
         """,
         agent_id,
         "backend:acme.com",

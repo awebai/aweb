@@ -20,8 +20,13 @@ from test_messages_http import _make_certificate, _encode_certificate, _signed_t
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("source_cli_binary")
-@pytest.mark.parametrize("outside", [False, True], ids=["verified-teammate", "outside-team"])
-async def test_contacts_only_real_delivery(privacy_app, tmp_path, outside):
+@pytest.mark.parametrize("mode,outside,multiple", [
+    ("contacts_only", False, ""), ("contacts_only", True, ""),
+    ("contacts_only", False, "initial"), ("contacts_only", True, "initial"),
+    ("team_and_contacts", True, "initial"),
+    ("contacts_only", True, "after_removal"), ("team_and_contacts", True, "after_removal"),
+])
+async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside, multiple):
     env = privacy_app
     sender, recipient = env.actors["alice"], env.actors["bob"]
     sender_team = "outside:example.test" if outside else TEAM
@@ -73,13 +78,27 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, outside):
                          AWID_REGISTRY_URL=registry_origin, AW_NO_UPDATE_CHECK="1")
         command = await asyncio.create_subprocess_exec(
             os.environ["AW_TEST_CLI_BINARY"], "--identity-home", str(home),
-            "inbound-mode", "contacts-only", "--json", cwd=tmp_path, env=child_env,
+            "inbound-mode", mode.replace("_", "-"), "--json", cwd=tmp_path, env=child_env,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         output, error = await asyncio.wait_for(command.communicate(), 30)
         assert command.returncode == 0, error.decode()
-        assert json.loads(output)["inbound_mode"] == "contacts_only"
-        assert json.loads(output)["label"] == "Contacts only"
+        assert json.loads(output)["inbound_mode"] == mode
+        assert json.loads(output)["label"] == {"contacts_only": "Contacts only", "team_and_contacts": "Team and contacts"}[mode]
+
+        async def add_membership(name):
+            team = f"{name}:example.test"
+            await env.db.execute("""
+                INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+                VALUES ($1, 'example.test', $2, $3)
+            """, team, name, env.team_did)
+            await env.db.execute("""
+                INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode)
+                VALUES ($1, $2, $3, $4, 'example.test/bob', 'global', 'open')
+            """, team, name, recipient.did, identities["bob"])
+
+        if multiple == "initial":
+            await add_membership("second")
 
         async def request(actor, team, method, path, payload=None):
             body = json.dumps(payload).encode() if payload is not None else b""
@@ -93,10 +112,10 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, outside):
             chat = await request(sender, sender_team, "POST", "/v1/chat/sessions", {
                 "to_dids": [recipient.did], "message": "contact test",
             })
+            assert (mail.status_code, chat.status_code) == (expected, expected), (mail.text, chat.text)
             for response in (mail, chat):
-                assert response.status_code == expected, response.text
                 if expected == 403:
-                    assert "Recipient only accepts messages from exact active contacts" in response.text
+                    assert "exact active contacts" in response.text
             return mail, chat
 
         await send_both(403)
@@ -122,16 +141,40 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, outside):
         removed = await request(recipient, TEAM, "DELETE", f"/v1/contacts/{row['contact_id']}")
         assert removed.status_code in (200, 204), removed.text
         await send_both(403)
+        if multiple:
+            await add_membership("third")
         continuation = await request(sender, sender_team, "POST", f"/v1/chat/sessions/{session_id}/messages", {"body": "after removal"})
-        assert continuation.status_code == 403, continuation.text
-        assert "exact active contacts" in continuation.text
         mail_continuation = await request(sender, sender_team, "POST", "/v1/messages", {
             "conversation_id": mail.json()["conversation_id"], "subject": "after removal", "body": "after removal",
         })
-        assert mail_continuation.status_code == 403, mail_continuation.text
+        assert (continuation.status_code, mail_continuation.status_code) == (403, 403), (continuation.text, mail_continuation.text)
+        assert "exact active contacts" in continuation.text
         assert "exact active contacts" in mail_continuation.text
         assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id=$1", UUID(mail_id)) == 1
         if not outside:
             neighbor = await request(recipient, TEAM, "PATCH", "/v1/agents/me/inbound-mode", {"inbound_mode": "team_and_contacts"})
             assert neighbor.status_code == 200, neighbor.text
             await send_both(200)
+
+        if multiple:
+            unified = await request(recipient, TEAM, "PATCH", "/v1/agents/me/inbound-mode", {"inbound_mode": mode})
+            assert unified.status_code == 200, unified.text
+            modes = await env.db.fetch_all("SELECT inbound_mode FROM {{tables.agents}} WHERE did_aw=$1 AND deleted_at IS NULL", identities["bob"])
+            assert len(modes) == (3 if multiple == "initial" else 2)
+            assert all(row["inbound_mode"] == mode for row in modes)
+            # A fresh signed connect joins another team AFTER the mode is set.
+            # The production membership INSERT must inherit policy, not open it.
+            joined_team = "newjoin:example.test"
+            await env.registry_db.execute("""
+                INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility)
+                VALUES ('example.test', 'newjoin', $1, 'public')
+            """, env.team_did)
+            from types import SimpleNamespace
+            joined = SimpleNamespace(sk=recipient.sk, did=recipient.did, certificate=_encode_certificate(_make_certificate(
+                env.team_sk, env.team_did, recipient.did, team_id=joined_team, alias="bob",
+                identity_scope="global", member_did_aw=identities["bob"], member_address="example.test/bob",
+                certificate_id="newjoin-bob",
+            )))
+            connected = await request(joined, joined_team, "POST", "/v1/connect", {"hostname": "policy-test", "workspace_path": str(tmp_path / "joined")})
+            assert connected.status_code == 200, connected.text
+            assert await env.db.fetch_value("SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id=$1", UUID(connected.json()["agent_id"])) == mode
