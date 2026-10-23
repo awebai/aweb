@@ -665,6 +665,7 @@ async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
     native_send, monkeypatch, kind
 ):
     import httpx
+    from identity_binding_support import seed_verified_bindings
     from aweb.internal_auth import build_internal_auth_header_value
     from aweb.mcp.server import create_mcp_app
     from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
@@ -703,6 +704,14 @@ async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
         human_channels_service=env["service"],
     )
     app = env["app"]
+    # This port test supplies host identity preconditions, as the native MCP
+    # parity fixture does. The CLI journey separately uses the real AWID app.
+    app.state.awid_registry_client = object()
+    seed_verified_bindings(
+        app,
+        ("did:aw:agent", env["auth"].did_key, ""),
+        ("did:aw:human", env["recipient_did"], ""),
+    )
     app.mount("/mcp", mcp)
     user = str(uuid4())
     headers = {
