@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import textwrap
 import unittest
 import zipfile
 from pathlib import Path
@@ -125,6 +126,21 @@ class TagContractTest(unittest.TestCase):
                     "server-v01.2.3rc1", "aw-v1.2.3-beta.1", "channel-v1.2.3-rc.1"):
             with self.subTest(tag=tag), self.assertRaisesRegex(VERSIONS.VersionRefusal, "unsupported"):
                 VERSIONS.tag_parts(tag)
+
+    def test_final_without_prior_rc_refuses_candidate_and_publisher(self):
+        for tag in ("server-v1.2.3", "awid-service-v2.3.4", "aweb-naapp-v0.1.0", "aw-v1.2.3"):
+            with self.subTest(tag=tag):
+                temporary, root = self.repository()
+                self.addCleanup(temporary.cleanup)
+                for rc_tag in command(root, "git", "tag", "--list", "*rc*").splitlines():
+                    command(root, "git", "tag", "-d", rc_tag)
+                with self.subTest(entry="candidate"):
+                    with self.assertRaisesRegex(CANDIDATE.CandidateRefusal, "final requires a prior RC"):
+                        CANDIDATE.validate_tags(root, [tag])
+                command(root, "git", "tag", tag)
+                with self.subTest(entry="publisher"):
+                    with self.assertRaisesRegex(PUBLISH.PublishRefusal, "final requires a prior RC"):
+                        PUBLISH.tag_identity(root, tag)
 
     def test_pi_publisher_requires_its_declared_aw_floor_to_be_public(self):
         temporary, root = self.repository()
@@ -537,6 +553,57 @@ class NpmRcContractTest(unittest.TestCase):
         for version, accepted in (("1.2.3-rc.1", True), ("1.2.3", True), ("1.2.3rc1", False), ("1.2.3-rc.0", False)):
             result = subprocess.run(["bash", "-c", 'version="$1"\n' + guard, "guard", version])
             self.assertEqual(result.returncode == 0, accepted, version)
+
+    def test_aw_workflow_refuses_source_changed_final_before_downstream_clone(self):
+        # Execute the actual workflow step. Only the first external side effect
+        # (downstream clone) is intercepted; local Git inspection stays real.
+        workflow = (ROOT / ".github/workflows/aw-release.yml").read_text()
+        shell = textwrap.dedent(workflow.split("        run: |\n", 1)[1])
+        for case in ("rc", "version-only-final", "source-changed-final", "final-without-rc"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                command(root, "git", "init", "-q")
+                command(root, "git", "config", "user.name", "test")
+                command(root, "git", "config", "user.email", "test@example.com")
+                (root / "scripts").mkdir()
+                for script in ("release_versions.py", "publish_release.py"):
+                    shutil.copyfile(ROOT / "scripts" / script, root / "scripts" / script)
+                (root / "cli/go/npm/aw").mkdir(parents=True)
+                manifest = root / "cli/go/npm/aw/package.json"
+                manifest.write_text(json.dumps({"name": "@awebai/aw", "version": "1.36.48-rc.1"}))
+                (root / "implementation.go").write_text("package main\n")
+                command(root, "git", "add", ".")
+                command(root, "git", "commit", "-qm", "RC")
+                if case != "final-without-rc":
+                    command(root, "git", "tag", "aw-v1.36.48-rc.1")
+                if case != "rc":
+                    manifest.write_text(json.dumps({"name": "@awebai/aw", "version": "1.36.48"}))
+                    if case == "source-changed-final":
+                        (root / "implementation.go").write_text("package main\n// changed after RC\n")
+                    command(root, "git", "commit", "-qam", "final")
+                    command(root, "git", "tag", "aw-v1.36.48")
+                side_effect = root / "downstream-side-effect"
+                with tempfile.TemporaryDirectory() as binaries:
+                    spy = Path(binaries) / "git"
+                    spy.write_text('#!/bin/sh\nif [ "$1" = clone ]; then\n'
+                                   '  printf "clone\\n" > "$SIDE_EFFECT"\n  exit 86\nfi\n'
+                                   'exec "$REAL_GIT" "$@"\n')
+                    spy.chmod(0o755)
+                    environment = {**os.environ, "REAL_GIT": shutil.which("git"),
+                                   "PATH": binaries + os.pathsep + os.environ["PATH"],
+                                   "SIDE_EFFECT": str(side_effect), "RUNNER_TEMP": str(root / "runner"),
+                                   "AW_REPO_TOKEN": "test-boundary-not-a-secret",
+                                   "GITHUB_REF_NAME": "aw-v1.36.48-rc.1" if case == "rc" else "aw-v1.36.48"}
+                    result = subprocess.run(["bash", "-c", shell], cwd=root, env=environment,
+                                            text=True, capture_output=True)
+                if case in {"source-changed-final", "final-without-rc"}:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(side_effect.exists(), "workflow reached downstream clone before refusing the changed final")
+                    diagnostic = "non-version file" if case == "source-changed-final" else "final requires a prior RC"
+                    self.assertIn(diagnostic, result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 86, result.stderr)
+                    self.assertEqual(side_effect.read_text(), "clone\n")
 
     def test_dispatch_refuses_bad_rc_spellings(self):
         for version in ("1.2.3rc1", "1.2.3-rc.0", "1.2.3-rc.01", "01.2.3", "1.2.3-beta.1"):
