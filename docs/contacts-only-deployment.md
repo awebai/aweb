@@ -14,6 +14,9 @@ exact `did:aw`. Retired rows still count. The next identity-authorized PATCH
 sets every live row uniformly. New memberships inherit the effective policy.
 Any missing or invalid row policy refuses delivery with migration-required;
 confirm the deployment's read-only mixed-policy inventory before release.
+Connecting a global identity into a new team also refuses with migration-required
+while any live membership has a missing or invalid policy. Support must resolve
+that migration state before retrying the new-team connection.
 
 Cloud must use the public `aweb.inbound_modes` services rather than a second
 mode table or locking algorithm. `effective_inbound_mode(db, did_aw)` reads the
