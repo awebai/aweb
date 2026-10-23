@@ -10,7 +10,7 @@ from aweb.messaging.conversations import (
 )
 from aweb.messaging.messages import get_agent_by_id, resolve_agent_by_did
 from aweb.messaging.verification import require_conversation_not_legacy_bound
-from aweb.service_errors import ConflictError, ServiceError, ValidationError
+from aweb.service_errors import ConflictError, ValidationError
 
 
 @dataclass(frozen=True)
