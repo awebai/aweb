@@ -1356,6 +1356,7 @@ async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_d
     stream_registry = AsyncMock()
     stream_registry.get_team_revocations = AsyncMock(return_value=set())
     stream_app.state.awid_registry_client = stream_registry
+    _verified_subject_fixture(stream_app)
 
     # Advance only this route's clock at polling; DB/auth work cannot consume
     # the short deadline. Each request gets an independent deadline; expired
@@ -1761,6 +1762,7 @@ async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
     deny_registry = AsyncMock()
     deny_registry.get_team_revocations = AsyncMock(return_value=set())
     deny_app.state.awid_registry_client = deny_registry
+    _verified_subject_fixture(deny_app)
 
     @deny_app.middleware("http")
     async def cache_body_middleware(request, call_next):
@@ -1973,6 +1975,7 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
     deny_registry = AsyncMock()
     deny_registry.get_team_revocations = AsyncMock(return_value=set())
     deny_app.state.awid_registry_client = deny_registry
+    _verified_subject_fixture(deny_app)
 
     @deny_app.middleware("http")
     async def cache_body_middleware(request, call_next):
