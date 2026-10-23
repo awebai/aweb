@@ -512,6 +512,11 @@ async def test_operator_verification_restores_only_bound_projections(privacy_app
                 "UPDATE {{tables.agents}} SET identity_scope='global',did_aw=$2,address=$3,did_aw_verified_key=NULL WHERE agent_id=$1",
                 actor.id,claim,claimed_address,
             )
+        _,_,claimless_key = _make_keypair()
+        await env.db.execute(
+            "INSERT INTO {{tables.agents}} (team_id,did_key,alias,identity_scope) "
+            "VALUES ($1,$2,'claimless','global')",TEAM,claimless_key,
+        )
         db_name = await env.db.fetch_value("SELECT current_database()")
         child_env = dict(os.environ)
         user = quote(os.environ.get("TEST_DB_USER", "postgres"), safe="")

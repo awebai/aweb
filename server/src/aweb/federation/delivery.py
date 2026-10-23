@@ -247,7 +247,7 @@ async def _lock_current_recipient(
     row = await tx.fetch_one(
         """
         SELECT agent_id, team_id, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, alias,
-               inbound_mode, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim
+               inbound_mode, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw
         FROM {{tables.agents}}
         WHERE agent_id = $1 AND deleted_at IS NULL
         FOR UPDATE

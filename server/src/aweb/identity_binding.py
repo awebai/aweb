@@ -174,8 +174,7 @@ async def verify_pending_identity_bindings(db, registry_client, *, dry_run: bool
         """
         SELECT agent_id, did_key, did_aw, address FROM {{tables.agents}}
         WHERE deleted_at IS NULL AND did_aw_verified_key IS NULL
-          AND (identity_scope='global' OR NULLIF(did_aw,'') IS NOT NULL
-               OR NULLIF(address,'') IS NOT NULL)
+          AND (NULLIF(did_aw,'') IS NOT NULL OR NULLIF(address,'') IS NOT NULL)
         ORDER BY agent_id
         """
     )
