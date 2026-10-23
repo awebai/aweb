@@ -17,6 +17,7 @@ in [the logs chain](../../docs/logs-chain.md).
 logs reads its settings from `LOGS_`-prefixed environment variables:
 
 - `LOGS_DATABASE_URL` and `LOGS_PUBLIC_ORIGIN`;
+- `LOGS_AWID_REGISTRY_URL` and, for private team facts, `LOGS_AWID_SERVICE_TOKEN`;
 - `LOGS_APP_ID`, the deployment's own app id. The hosted id `logs` is refused at
   any other origin a team can reach. Keep it for the deployment's lifetime:
   changing it orphans every team's installation;
@@ -39,6 +40,34 @@ The image takes the same environment; mount the key files, never build them in.
 
 While logs runs, each team whose chain has new events gets a signed checkpoint
 every `LOGS_CHECKPOINT_INTERVAL_SECONDS` (default 300); an idle team gets none.
+
+## Ingestion
+
+`POST /v1/hooks/ingest` accepts the shared `AWEB-Hook DIDKey` delivery
+credential, not ordinary team-auth requests. Admission checks transport,
+logs' active registration, the producer's registered authority, then the
+packaged catalog's payload schema before deduplication and append. Unavailable
+binding or producer authority returns 503 so the sender can retry.
+
+Client certificates are verified against a fresh controller-key read and the
+runtime's shared certificate publication/revocation policy. Client quotas are
+per member certificate in fixed UTC minute windows:
+
+- `LOGS_CLIENT_EVENTS_PER_MINUTE` defaults to **30**;
+- `LOGS_CLIENT_BYTES_PER_MINUTE` defaults to **131072** (128 KiB), counted from
+  the canonical delivery body.
+
+Both limits are configurable. The quota charge and append share one
+transaction. Identical redelivery returns the original receipt without
+spending quota; conflicting bytes return `409 event_conflict` and record a
+fault without replacing the original event. Successful responses include
+`event_id`, `disposition` (`appended` or `duplicate`), and `receipt`, whose
+`signing_bytes` are unpadded base64url and whose `signature` is the chain
+signer's detached signature.
+
+The receiver requires an active binding. Terminal revocation delivery remains
+subject to the paired producer/receiver contract amendment; it has no special
+admission exception here.
 
 ## Development
 

@@ -5,11 +5,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 from aweb_naapp.hooks import envelope as hook_envelope
-from aweb_naapp.hooks.catalog import load_catalog
+from aweb_naapp.hooks.catalog import packaged_catalog
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH
@@ -17,8 +16,7 @@ from aweb_logs.ingest import ClientQuota, IngestRefused, charge_client_quota, ch
 
 from .fixtures import TEAM_ID, signed_event
 
-AWEB_ROOT = Path(__file__).resolve().parents[3]
-CATALOG = load_catalog((AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json").read_bytes())
+CATALOG = packaged_catalog()
 RECEIVED = datetime(2026, 10, 20, 12, 0, 5, tzinfo=UTC)
 
 

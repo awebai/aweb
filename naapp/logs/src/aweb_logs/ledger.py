@@ -11,7 +11,7 @@ import hashlib
 import json
 import os
 import uuid
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -96,12 +96,16 @@ async def append(
     signature: str,
     key_evidence: Mapping[str, Any],
     received_at: datetime,
+    before_append: Callable[[Any], Awaitable[None]] | None = None,
 ) -> Appended | Conflicted:
     """Append a verified event to its team's chain and sign its receipt, in one
     transaction. A redelivery of the same bytes returns the original receipt.
 
     A purged event's bytes are gone, so its redelivery is compared only on what
-    the skeleton keeps, its hook and producer origin."""
+    the skeleton keeps, its hook and producer origin. ``before_append`` runs
+    after dedup, under the head lock, in this transaction: admission charges
+    client quotas there, so duplicates/conflicts spend nothing and a refusal
+    rolls back both the charge and the append."""
     event_id = uuid.UUID(event.event_id)
     async with db.transaction() as tx:
         head = await _locked_head(tx, signer, event.team_id, received_at)
@@ -136,6 +140,9 @@ async def append(
                 json.dumps(dict(key_evidence), sort_keys=True),
             )
             return Conflicted(event_id=event_id)
+
+        if before_append is not None:
+            await before_append(tx)
 
         salt = os.urandom(SALT_BYTES)
         link = link_for(
