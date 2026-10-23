@@ -63,7 +63,7 @@ func TestDIDKeyRequestHeadersForAudienceRefuseMissingAuthority(t *testing.T) {
 	if _, err := DIDKeyRequestHeadersForAudience("POST", "/api/v1/cli/identities", "https://cloud.example", nil, nil); err == nil {
 		t.Error("accepted missing signing key")
 	}
-	for _, aud := range []string{"", "https://cloud.example/other", "https://user@cloud.example", "https://cloud.example?other=true"} {
+	for _, aud := range []string{"", "https://cloud.example/other", "https://user@cloud.example", "https://cloud.example?other=true", "https://cloud.example?"} {
 		if _, err := DIDKeyRequestHeadersForAudience("POST", "/api/v1/cli/identities", aud, nil, key); err == nil {
 			t.Error("accepted a non-origin audience")
 		}

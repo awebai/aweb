@@ -435,18 +435,21 @@ Create a self-custodial global identity in .aw/ by claiming DOMAIN/NAME
 in a namespace you control. This mints a did:aw, stores the local signing
 key material, and atomically claims the global address in AWID.
 
-With --org and --team-id, an authorized human creates an ordinary hosted member
+With --org and --team-id, create an ordinary hosted member
 in an explicit fresh --identity-home root. The local key stays in that root;
 the hosted operator authorizes the address and certificate. Retry with the
 same root and parameters after a lost response. No namespace controller key
-or API key is used for that path.
+or API key is used for that path. With --owner-identity-home, the existing
+organization owner's native key authorizes creation using its bound service;
+otherwise the host's human CLI login authorizes it.
 
 Flags:
 - `--domain string Namespace domain for the global identity address`
 - `-h, --help help for create`
 - `--inbound-mode string Hosted inbound delivery mode (default team-and-contacts; requires --org)`
 - `--name string Global identity name (address name under --domain)`
-- `--org string Hosted organization slug or ID (uses human CLI authorization)`
+- `--org string Hosted organization slug or ID (human CLI login or explicit owner principal)`
+- `--owner-identity-home string Authorize --org creation with this owner's absolute native credential directory`
 - `--registry string Registry origin override (default: api.awid.ai)`
 - `--skip-dns-verify Skip the DNS TXT verification prompt and lookup`
 - `--team-id string Chosen hosted team service UUID (requires --org)`

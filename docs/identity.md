@@ -295,6 +295,48 @@ match the requested mode; a service downgrade is an error. Existing global
 creation paths also verify an explicitly selected mode after connecting.
 Unspecified modes keep their existing defaults.
 
+
+A CLI-signup organization's owner principal can authorize this hosted creation
+with its existing native key. Select that authority explicitly, separately from
+the new member's fresh credential directory:
+
+```bash
+aw --identity-home /team-root/.aw inbound-mode --json
+aw --identity-home /steward-root/.aw id create \
+  --owner-identity-home /team-root/.aw --org alice \
+  --team-id SERVICE_TEAM_UUID --name steward \
+  --inbound-mode contacts-only --json
+```
+
+The read-only first command returns the Cloud service UUID in `team_id`, even
+for a local signup identity. This UUID is distinct from the canonical team ID,
+such as `default:alice.aweb.ai`. `--org` takes the organization slug (`alice`) or
+ID, rather than its namespace domain. A newly created signup flow can retain its
+original username as that slug; `whoami.domain` is namespace information rather
+than proof of organization ownership.
+
+Both root flags name the credential directory itself: they append no `.aw` and
+the directory may have another name. The owner root must differ from the fresh
+destination. Its native key signs the authorization request; the hosted service
+checks the principal's live owner authority for the selected organization and
+team. Ordinary team membership and organization administrator status do not
+authorize this path. The service still verifies the new member's separate intent
+proof and returns an ordinary self-custodial global certificate.
+
+This owner path uses the Cloud base from the owner's own workspace binding,
+leaves that root unchanged, and creates no human device session. It does not use
+an API key or grant and does not switch to human login after a refusal. Omitting
+`--owner-identity-home` retains the human `cli.org_create` flow above. Signup and
+claim-human alone do not mint that human device authorization.
+
+The owner-request DIDKey signature covers canonical JSON with `aud` (the
+service's external origin), `body_sha256` (the exact transmitted request bytes),
+`method`, `path` and `timestamp`. The service checks the audience and timestamp
+before looking up authority. This is the audience-bound variant for hosted
+identity creation; existing signup, claim-human and bootstrap-redeem signature
+bytes remain unchanged. Recovery pins the original authorizing principal as
+well as the new member key, and success still requires the exact mode readback.
+
 ## Command-to-verb mapping
 
 | Verb | Canonical model action | Current command surface | Notes |

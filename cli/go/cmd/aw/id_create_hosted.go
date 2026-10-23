@@ -26,6 +26,7 @@ const cliIdentityCreatePath = "/api/v1/cli/identities"
 type hostedIdentityContext struct {
 	Issuer      string `json:"issuer"`
 	AccountID   string `json:"account_id"`
+	OwnerDIDKey string `json:"owner_did_key,omitempty"`
 	Org         string `json:"org"`
 	TeamID      string `json:"team_id"`
 	Name        string `json:"name"`
@@ -89,13 +90,32 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 	}
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
-	cfg, account, err := requireOrgCLIAuth(ctx)
-	if err != nil {
-		return orgCommandError(cmd, err)
+	var cfg cliAuthConfig
+	var account cliAuthAccount
+	var owner *hostedOwnerAuthority
+	if cmd.Flags().Changed("owner-identity-home") {
+		if strings.TrimSpace(serverFlag) != "" {
+			return usageError("the owner root's workspace binding selects the service; omit --server-name")
+		}
+		rawOwner, _ := cmd.Flags().GetString("owner-identity-home")
+		owner, err = loadHostedOwnerAuthority(wd, home, rawOwner)
+		if err != nil {
+			return err
+		}
+		cfg.Issuer = owner.issuer
+	} else {
+		cfg, account, err = requireOrgCLIAuth(ctx)
+		if err != nil {
+			return orgCommandError(cmd, err)
+		}
 	}
 	// The human OAuth issuer names the site origin; ordinary identity APIs
 	// may be mounted below it. Save the resolved API base in the new root.
-	apiBase, err := resolveWorkingBaseURLContext(ctx, cfg.Issuer)
+	rawAPI := cfg.Issuer
+	if owner != nil {
+		rawAPI = owner.apiURL
+	}
+	apiBase, err := resolveWorkingBaseURLContext(ctx, rawAPI)
 	if err != nil {
 		return err
 	}
@@ -109,6 +129,9 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 		}
 	}
 	association := hostedIdentityContext{Issuer: cfg.Issuer, AccountID: account.ID, Org: org, TeamID: teamID, Name: name, InboundMode: mode, RegistryURL: registry.DefaultRegistryURL}
+	if owner != nil {
+		association.OwnerDIDKey = owner.did
+	}
 	statePath := filepath.Join(home.Root, "hosted-identity-create.json")
 	if err := pathpreflight.PreflightDir(home.Root, "hosted identity credential root", pathpreflight.Options{}); err != nil {
 		return err
@@ -146,7 +169,12 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 	}
 	request := map[string]any{"org": org, "team_id": teamID, "name": name, "did": material.DIDKey, "inbound_mode": mode, "proof": workspaceTeamEnrollProof{Type: "didkey-intent-v1", Timestamp: timestamp, Signature: base64.RawStdEncoding.EncodeToString(ed25519.Sign(material.SigningKey, []byte(canonical)))}}
 	var response hostedIdentityResponse
-	if err := postCLIAuthJSON(ctx, cfg.Issuer, cliIdentityCreatePath, cfg.AccessToken, request, &response); err != nil {
+	if owner != nil {
+		err = postHostedOwnerIdentity(ctx, owner, request, &response)
+	} else {
+		err = postCLIAuthJSON(ctx, cfg.Issuer, cliIdentityCreatePath, cfg.AccessToken, request, &response)
+	}
+	if err != nil {
 		return orgCommandError(cmd, err)
 	}
 	cert, err := validateHostedIdentityResponse(response, association, material)

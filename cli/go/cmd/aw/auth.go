@@ -482,6 +482,12 @@ func getCLIAuthJSON(ctx context.Context, issuer, path, bearer string, out any) e
 }
 
 func doCLIAuthJSON(req *http.Request, out any, issuer string) error {
+	return doCLIJSON(req, out, issuer, false)
+}
+
+// Owner-principal requests retain their HTTP status; a failed DIDKey proof is
+// not an expired human device authorization.
+func doCLIJSON(req *http.Request, out any, issuer string, preserveHTTPStatus bool) error {
 	client := &http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}
 	resp, err := awid.DoServerRequestWithTimeout(client, req, issuer, awid.APITimeout())
 	if err != nil {
@@ -491,13 +497,13 @@ func doCLIAuthJSON(req *http.Request, out any, issuer string) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, awid.MaxResponseSize))
 		var oauthErr cliOAuthError
-		if json.Unmarshal(data, &oauthErr) == nil && strings.TrimSpace(oauthErr.ErrorCode) != "" {
+		if !preserveHTTPStatus && json.Unmarshal(data, &oauthErr) == nil && strings.TrimSpace(oauthErr.ErrorCode) != "" {
 			if resp.StatusCode == http.StatusUnauthorized && oauthErr.ErrorCode == "" {
 				oauthErr.ErrorCode = "expired"
 			}
 			return &oauthErr
 		}
-		if resp.StatusCode == http.StatusUnauthorized {
+		if !preserveHTTPStatus && resp.StatusCode == http.StatusUnauthorized {
 			return &cliOAuthError{ErrorCode: "expired", ErrorDescription: "stored CLI access token is not authorized"}
 		}
 		return cliAuthHTTPStatusErrorFromResponse(resp.StatusCode, data)

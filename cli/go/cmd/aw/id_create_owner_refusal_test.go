@@ -4,6 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"strconv"
+	"strings"
+
+	"github.com/awebai/aw/awid"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,7 +24,7 @@ func TestOwnerPrincipalHostedIdentityRejectsUnavailableAuthorityBeforeNetwork(t 
 	defer cancel()
 	bin := filepath.Join(t.TempDir(), "aw")
 	buildAwBinary(t, ctx, bin)
-	for _, kind := range []string{"missing-key", "grant", "no-binding", "same-root", "relative-root", "without-org"} {
+	for _, kind := range []string{"missing-key", "missing-key-no-login", "grant", "no-binding", "same-root", "relative-root", "without-org"} {
 		t.Run(kind, func(t *testing.T) {
 			var requests atomic.Int64
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.WriteHeader(500) }))
@@ -35,7 +40,7 @@ func TestOwnerPrincipalHostedIdentityRejectsUnavailableAuthorityBeforeNetwork(t 
 				t.Fatal(err)
 			}
 			switch kind {
-			case "missing-key":
+			case "missing-key", "missing-key-no-login":
 				if err := os.Remove(filepath.Join(owner, "signing.key")); err != nil {
 					t.Fatal(err)
 				}
@@ -52,15 +57,18 @@ func TestOwnerPrincipalHostedIdentityRejectsUnavailableAuthorityBeforeNetwork(t 
 			}
 			keyBefore, _ := os.ReadFile(filepath.Join(owner, "signing.key"))
 			bindingBefore, _ := os.ReadFile(filepath.Join(owner, "workspace.yaml"))
-			cfg := cliAuthConfig{Issuer: server.URL, Resource: server.URL + "/cli", ClientID: cliAuthClientID, Scope: cliAuthDefaultScopes, AccessToken: "test-unused-human", ExpiresAt: time.Now().Add(time.Hour)}
-			encoded, _ := json.Marshal(cfg)
-			dir := filepath.Join(host, ".config", "aw")
-			if err := os.MkdirAll(dir, 0700); err != nil {
-				t.Fatal(err)
+			if kind != "missing-key-no-login" {
+				cfg := cliAuthConfig{Issuer: server.URL, Resource: server.URL + "/cli", ClientID: cliAuthClientID, Scope: cliAuthDefaultScopes, AccessToken: "test-unused-human", ExpiresAt: time.Now().Add(time.Hour)}
+				encoded, _ := json.Marshal(cfg)
+				dir := filepath.Join(host, ".config", "aw")
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "auth.json"), encoded, 0600); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if err := os.WriteFile(filepath.Join(dir, "auth.json"), encoded, 0600); err != nil {
-				t.Fatal(err)
-			}
+
 			selected := owner
 			if kind == "relative-root" {
 				selected = ".aw"
@@ -85,6 +93,36 @@ func TestOwnerPrincipalHostedIdentityRejectsUnavailableAuthorityBeforeNetwork(t 
 			bindingAfter, _ := os.ReadFile(filepath.Join(owner, "workspace.yaml"))
 			if !bytes.Equal(keyBefore, keyAfter) || !bytes.Equal(bindingBefore, bindingAfter) {
 				t.Error("authority refusal modified the owner root")
+			}
+		})
+	}
+}
+
+func TestOwnerPrincipalErrorsPreserveHTTPStatus(t *testing.T) {
+	_, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []int{401, 404, 409, 503} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if !strings.HasPrefix(r.Header.Get("Authorization"), "DIDKey ") {
+					t.Error("owner request used another credential")
+				}
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"detail":{"code":"owner_request_refused","message":"Request refused"}}`))
+			}))
+			defer server.Close()
+			owner := &hostedOwnerAuthority{issuer: server.URL, key: key}
+			err := postHostedOwnerIdentity(t.Context(), owner, map[string]string{"name": "steward"}, nil)
+			var result *cliAuthHTTPStatusError
+			if !errors.As(err, &result) || result.StatusCode != status || result.ErrorCode != "owner_request_refused" {
+				t.Errorf("owner error lost HTTP status/code: %v", err)
+			}
+			if calls != 1 {
+				t.Error("owner refusal retried with another authority")
 			}
 		})
 	}
