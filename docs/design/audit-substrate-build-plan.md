@@ -188,10 +188,11 @@ or producer enables a terminal exception ahead of acceptance.
 - **Signing/verification:** Go-generated public terminal-authorization and
   terminal-credential and binding-seal vectors, with a Python consumer in the
   shared hooks kit.
-  Proposed paths are `docs/vectors/hook-terminal-authorization-v1.json`,
-  `docs/vectors/hook-terminal-credential-v1.json`, and
-  `docs/vectors/hook-binding-seal-v1.json`; create and register them with
-  their implementations, not as unconsumed placeholder bytes. Preserve all
+  The three vector files remain to-be-created implementation deliverables:
+  terminal authorization, terminal request credentials, and binding-seal
+  acknowledgements. Create them in the shared vector directory and register
+  their Go generator and Python consumers with their implementations, rather
+  than adding unconsumed placeholder bytes. Preserve all
   existing ordinary event/delivery cases. A current core transport key can
   retry a historically signed event/capsule; each uses its specified window.
 - **S2:** atomically commit lifecycle state, local backlog accounting,
