@@ -40,6 +40,11 @@ class DatabaseAuthority:
             "ORDER BY policy_ref FOR SHARE",
             sorted({a.policy_ref for a in approvals}),
         )
+        # FOR SHARE holds RowShare relation locks; the final plain SELECT also
+        # needs AccessShare on the table/index. Prepare those reads in this
+        # phase so the adapter honors its no-new-lock read contract.
+        for approval in approvals:
+            await self.read(tx, approval)
 
     async def read(self, tx, approval):
         from aweb_naapp.runtime.approvals import DispatchAuthorityState
