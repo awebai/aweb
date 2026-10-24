@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from test_app_manifest_fetch import digest
 
 from aweb.internal_auth import build_internal_auth_header_value
+from aweb.routes.app_hooks import router as hooks_router
 from aweb.routes.apps import router
 
 origin = store_fixture.origin
@@ -42,7 +43,7 @@ async def client(db, origin, monkeypatch):
         def get_manager(self, name="aweb"):
             return db
 
-    async def policy(tx, subject, *, action, app_id):
+    async def policy(tx, subject, *, action, app_id, verified_origin=None):
         return bool(await tx.fetch_value(
             "SELECT EXISTS(SELECT 1 FROM aweb.test_install_admins WHERE team_id=$1 AND subject_id=$2)",
             subject.team_id, subject.principal_id,
@@ -50,9 +51,11 @@ async def client(db, origin, monkeypatch):
 
     inner = FastAPI()
     inner.state.db = Managers()
+    inner.state.public_origin = "http://test"
     inner.state.install_admin_policy = policy
     inner.state.manifest_fetcher = origin.fetcher
     inner.include_router(router)
+    inner.include_router(hooks_router)
     outer = FastAPI()
     outer.mount("/api", inner)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=outer), base_url="http://test") as caller:

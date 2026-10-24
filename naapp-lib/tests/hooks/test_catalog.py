@@ -115,6 +115,56 @@ def test_audit_critical_follows_the_catalog() -> None:
     assert not CATALOG.is_audit_critical("post-command-hook", {})
 
 
+@pytest.mark.parametrize(
+    ("action", "decision", "critical"),
+    [
+        ("refused", None, True),
+        ("approval_requested", None, True),
+        ("approval_decided", "approved", True),
+        ("approval_decided", "denied", False),
+        ("approval_decided", "expired", False),
+        ("approval_decided", "revoked", False),
+        ("admitted", None, True),
+        ("dispatching", None, True),
+        ("completed", None, False),
+        ("not_sent", None, False),
+        ("outcome_unknown", None, False),
+        ("reconciled", None, False),
+        ("unknown", None, True),
+        ("approval_decided", "unknown", True),
+        ("approval_decided", None, True),
+    ],
+)
+def test_secret_use_criticality_is_fixed_per_action_and_decision(action, decision, critical):
+    payload = {"action": action}
+    if decision is not None:
+        payload["approval_decision"] = decision
+    assert CATALOG.is_audit_critical("post-secret-use-hook", payload) is critical
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda h: h.pop("action_audit_critical"),
+        lambda h: h.update(audit_critical="always"),
+        lambda h: h["action_audit_critical"].pop("dispatching"),
+        lambda h: h["action_audit_critical"].update(unknown=False),
+        lambda h: h["action_audit_critical"].update(admitted=0),
+        lambda h: h["action_audit_critical"]["approval_decided"].update(extra=False),
+        lambda h: h["action_audit_critical"]["approval_decided"].update(field="unknown"),
+        lambda h: h["action_audit_critical"]["approval_decided"]["values"].pop("approved"),
+        lambda h: h["action_audit_critical"]["approval_decided"]["values"].update(unknown=False),
+        lambda h: h["action_audit_critical"]["approval_decided"]["values"].update(approved=1),
+    ],
+)
+def test_action_classification_metadata_is_strict_and_complete(change):
+    def mutate(document):
+        change(document["hooks"]["post-secret-use-hook"])
+
+    with pytest.raises(CatalogError):
+        load_catalog(_mutated(mutate))
+
+
 def test_mutation_types_include_key_revocation_and_exclude_operational_events() -> None:
     hook = CATALOG.hooks["post-mutation-hook"]
     assert "app_key.revoked" in hook.types

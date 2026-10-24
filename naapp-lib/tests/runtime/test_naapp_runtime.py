@@ -12,9 +12,10 @@ from typing import Annotated
 
 import httpx
 import pytest
-from aweb_naapp_testing import REGISTRY_URL, Member, attested, did_key
+from aweb_naapp_testing import Member, attested, did_key
 from awid.attestation_records import ATTESTATION_HEADER
 from awid.did import stable_id_from_did_key
+from awid_service.testing import REGISTRY_URL
 from fastapi import Depends, FastAPI, Request
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
@@ -66,7 +67,7 @@ class InstalledTeams:
     def __init__(self, scopes_by_team: dict[str, frozenset[str]]) -> None:
         self.scopes_by_team = scopes_by_team
 
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         scopes = self.scopes_by_team.get(team_id)
         if scopes is None:
             return None

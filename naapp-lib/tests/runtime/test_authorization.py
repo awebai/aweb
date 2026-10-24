@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 
 import httpx
 import pytest
-from aweb_naapp_testing import REGISTRY_URL, Member
+from aweb_naapp_testing import Member
+from awid_service.testing import REGISTRY_URL
 from fastapi import FastAPI, HTTPException, Request
 
 from aweb_naapp.manifest import canonical_bytes, load_manifest
@@ -65,7 +66,7 @@ class InstalledGrants:
     unavailable: bool = False
     asked: list[str] = field(default_factory=list)
 
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         self.asked.append(team_id)
         if self.unavailable:
             raise GrantUnavailable("grant authority unreachable")

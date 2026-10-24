@@ -14,8 +14,9 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member
+from aweb_naapp_testing import Member
 from awid.pagination import decode_cursor, encode_cursor
+from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from fastapi import HTTPException
 
 from aweb_naapp.runtime.team_auth import AWIDTeamCache

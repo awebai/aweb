@@ -177,7 +177,7 @@ class GrantUnavailable(Exception):
 
 
 class GrantSource(Protocol):
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         """The team's current grant, ``None`` when the app is not installed.
 
         Raises :class:`GrantUnavailable` when the authority cannot be read.
@@ -263,7 +263,7 @@ async def authorize_request(
         raise _refuse(403, "tool_context_denied", "This operation is not available to this caller")
 
     try:
-        grant = await grants.grant_for(principal.team_id)
+        grant = await grants.grant_for(principal.team_id, certificate_id=principal.certificate_id)
     except GrantUnavailable:
         logger.exception("Grant authority unavailable for team %s", principal.team_id)
         raise _refuse(503, "authority_unavailable", "The app's installation grant cannot be verified") from None

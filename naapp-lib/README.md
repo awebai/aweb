@@ -303,6 +303,11 @@ digest=...)` for the exact manifest bytes the app serves, an
 `TeamServerDirectory` as `discovery`. It reads only the team's controller-signed
 server URL; it creates no directory or resolver of its own.
 
+Grant-source implementations accept `grant_for(team_id, certificate_id=None)`.
+Member authorization passes the verified principal's certificate ID;
+`TeamGrantSource` forwards it to discovery so private-team members can use
+AWID's per-certificate status without an AWID service token.
+
 `runtime.team_cache()` and `runtime.team_server_directory()` return the same
 configuration-only objects before, during and after the lifespan; constructing
 them makes no network requests. This permits wiring the grant source and

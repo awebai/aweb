@@ -21,8 +21,9 @@ from aweb_naapp.runtime.app_keys import AppKeyError
 from aweb_naapp.runtime.authorization import DeclaredTool, Grant
 from aweb_naapp.runtime.health import CheckResult, HealthCheck
 from aweb_naapp.runtime.team_auth import Principal
-from aweb_naapp_testing import REGISTRY_URL, Member, attested
+from aweb_naapp_testing import Member, attested
 from awid.did import did_from_public_key
+from awid_service.testing import REGISTRY_URL
 from fastapi import Request
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
@@ -49,7 +50,7 @@ class InstalledTeams:
     def __init__(self, scopes_by_team: dict[str, frozenset[str]]) -> None:
         self.scopes_by_team = scopes_by_team
 
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         scopes = self.scopes_by_team.get(team_id)
         if scopes is None:
             return None
