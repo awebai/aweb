@@ -126,6 +126,7 @@ class ConsoleUseApprovals:
             approved = await self.approvals.decide(
                 approval_id, decision, Assurance.PASSKEY, proof, link_token=token, tx=tx
             )
+            await self.console.fence.check(tx, admitted)
             if current.expires_at <= datetime.now(UTC):
                 raise HTTPException(401, "console_session_required")
         return {"approval_id": approval_id, "state": approved.state.value}

@@ -186,3 +186,57 @@ async def test_run_view_uses_immutable_slot_plan_after_b2_authentication(uses):
         assert job["frozen_plan"] == plan.body
         assert job["credential_delivery"] == "durable"
         assert (await uses.approvals.get(approval_id)).consumed_operation_id is None
+
+
+async def test_f6_expiring_during_decision_lock_wait_rolls_back_decision(uses):
+    import asyncio
+
+    approval_id, token, scope = await pending_use(uses)
+    w = uses.world
+    async with clients(uses) as (human, _):
+        headers = await sign_in(w, human, scope, "finance@acme.com")
+        options = await human.post(
+            "/use-approvals/decision-options",
+            json={"token": token, "decision": "approve"},
+            headers=headers,
+        )
+        proof = w.devices["finance@acme.com"].get(options.json())
+        await w.db.execute(
+            "UPDATE {{tables.installation_fences}} SET fresh_until=clock_timestamp()+interval '2 seconds'"
+        )
+        posting = None
+        try:
+            async with w.db.transaction() as gate:
+                pid = await gate.fetch_value("SELECT pg_backend_pid()")
+                await gate.fetch_value(
+                    "SELECT approval_id FROM {{tables.approvals}} WHERE approval_id=$1 FOR UPDATE",
+                    approval_id,
+                )
+                posting = asyncio.create_task(
+                    human.post(
+                        "/use-approvals/decide",
+                        json={"token": token, "decision": "approve", "assertion": proof},
+                        headers=headers,
+                    )
+                )
+                async with asyncio.timeout(5):
+                    while not await w.db.fetch_value(
+                        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))",
+                        pid,
+                    ):
+                        if posting.done():
+                            await posting
+                            pytest.fail("decision did not reach its approval lock")
+                        await asyncio.sleep(0.01)
+                    while await w.db.fetch_value(
+                        "SELECT fresh_until>clock_timestamp() FROM {{tables.installation_fences}}"
+                    ):
+                        await asyncio.sleep(0.02)
+            response = await asyncio.wait_for(posting, 5)
+            assert response.status_code == 503
+        finally:
+            if posting is not None:
+                if not posting.done():
+                    posting.cancel()
+                await asyncio.gather(posting, return_exceptions=True)
+        assert (await uses.approvals.get(approval_id)).state is ApprovalState.PENDING
