@@ -194,3 +194,47 @@ def test_change_item_governance_examples_use_actual_approval_and_resource_identi
         assert payload["act"] == "policy.changed"
         assert payload["resource_type"] == "change_set_policy"
         assert payload["resource_ref"] == "inst_5d2a9c31"
+
+
+@pytest.mark.parametrize("row", TABLE["job_current_revisions"], ids=lambda row: row["name"])
+def test_job_current_receipts_are_widening_and_cite_actual_approval(row):
+    payload = row["example"]
+    CATALOG.validate(GOVERNANCE, payload)
+    assert CATALOG.is_audit_critical(GOVERNANCE, payload)
+    assert payload["act"] == (
+        "resource.created" if row["op"] == "create" else "resource.version_added"
+    )
+    assert payload["resource_type"] == "job"
+    assert payload["resource_ref"] == "nightly-backup"
+    assert payload["authority"] == "passkey_session"
+    assert payload["approval_id"] and payload["approval_evidence_sha256"]
+    if row["op"] == "update":
+        assert payload["before_ref"] != payload["after_ref"]
+
+
+def test_a_stored_body_restore_gets_a_new_current_revision_and_approval():
+    rows = {row["name"]: row for row in TABLE["job_current_revisions"]}
+    assert set(rows) == {"create", "update_new_definition", "restore_stored_definition"}
+    created, updated, restored = (
+        rows[name] for name in ("create", "update_new_definition", "restore_stored_definition")
+    )
+    assert created["definition_fixture"] == restored["definition_fixture"]
+    assert updated["definition_fixture"] != restored["definition_fixture"]
+    assert updated["example"]["before_ref"] == created["example"]["after_ref"]
+    assert restored["example"]["before_ref"] == updated["example"]["after_ref"]
+    for field in ("after_ref", "approval_id", "approval_evidence_sha256"):
+        assert len({row["example"][field] for row in rows.values()}) == 3
+
+
+@pytest.mark.parametrize("case", TABLE["job_payload_refusals"], ids=lambda case: case["name"])
+def test_invalid_job_receipt_payloads_are_refused(case):
+    row = next(
+        row for row in TABLE["job_current_revisions"] if row["name"] == "update_new_definition"
+    )
+    payload = dict(row["example"])
+    payload.update(case["set"])
+    for field in case["remove"]:
+        payload.pop(field)
+    with pytest.raises(PayloadRefused) as refused:
+        CATALOG.validate(GOVERNANCE, payload)
+    assert (refused.value.code, refused.value.field) == (case["error"], case["field"])
