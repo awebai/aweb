@@ -1,6 +1,6 @@
-"""B2 use lifecycle recording through retained B3 proof and the shared outbox.
+"""B2 broker-use lifecycle recording through retained B3 proof and the shared outbox.
 
-The root's composite sink routes use/run policy events here. Minting supplies
+The root's composite sink routes secrets.use policy events here. Minting supplies
 an internal original-dispatch association; later decisions read that frozen
 association. A prepared registration view is request-local and obtained before
 authority locks. Neither context confers admission or send authority.
@@ -42,10 +42,10 @@ _KINDS = frozenset(
 
 
 def is_use_approval(event: AuditEvent) -> bool:
-    return event.kind in _KINDS and event.details.get("policy_ref", "").split("|", 1)[0] in {
-        "secrets.use",
-        "secrets.run",
-    }
+    return (
+        event.kind in _KINDS
+        and event.details.get("policy_ref", "").split("|", 1)[0] == "secrets.use"
+    )
 
 
 class UseAuditUnavailable(RuntimeError):

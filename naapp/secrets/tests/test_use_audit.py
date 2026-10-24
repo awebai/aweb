@@ -6,12 +6,13 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from aweb_naapp.dispatch import Dispatches, apply_dispatch_migrations
+from aweb_naapp.dispatch import Dispatches, State, apply_dispatch_migrations
 from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.hooks.commitment import CommitmentContext, CommitmentKey, Purpose, RequestBytes
 from aweb_naapp.hooks.producer import HookProducer, Registration, RegistrationView, ServerProducer
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.runtime.approvals import Approvals, ApprovalState, Decision, PgApprovalStore
+from aweb_naapp.runtime.audit import AuditEvent, AuditKind
 from aweb_naapp.runtime.passkeys import PasskeyInstallationContext
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 
@@ -21,7 +22,7 @@ from aweb_secrets.broker_audit import BrokerAudit, freeze_broker_audit
 from aweb_secrets.broker_fence import BrokerFence
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.use_approvals import UseApprovers, UsePolicies, request_use_approval
-from aweb_secrets.use_audit import UseApprovalAudit
+from aweb_secrets.use_audit import UseApprovalAudit, UseAuditUnavailable, is_use_approval
 from aweb_secrets.use_context import UseCommitter, apply_use_context_migrations, store_use_context
 from tests.test_broker_audit import envelopes
 from tests.test_use_approvals import (
@@ -57,7 +58,7 @@ def targets(now):
     )
 
 
-async def composition(uses):
+async def composition(uses, *, awaiting=True):
     await designate(uses, "finance", "finance@acme.com")
     await install(uses)
     db = uses.world.db
@@ -191,14 +192,15 @@ async def composition(uses):
                 reason="refund",
             )
             await machine.create(tx, dispatch_id=dispatch_id, subject="use-audit", action="broker")
-            await machine.await_approval(tx, dispatch_id)
+            if awaiting:
+                await machine.await_approval(tx, dispatch_id)
             await fence.check_authority(tx, await machine.get(tx, dispatch_id))
     await uses.approvals.deliver(pending.pending)
-    return audit, view, pending
+    return audit, view, pending, machine, dispatch_id
 
 
 async def test_approved_records_original_requester_and_sole_retained_proof_commitment(uses):
-    audit, view, pending = await composition(uses)
+    audit, view, pending, _, _ = await composition(uses)
     with audit.prepared_view(view):
         await approve(uses, pending, "finance@acme.com")
     events = await envelopes(uses.world.db)
@@ -228,7 +230,7 @@ async def test_approved_records_original_requester_and_sole_retained_proof_commi
 
 
 async def test_positive_decision_rolls_back_without_a_target_but_rejection_records(uses):
-    audit, view, pending = await composition(uses)
+    audit, view, pending, _, _ = await composition(uses)
     with audit.prepared_view(replace(view, registrations=())):
         with pytest.raises(Refused) as refused:
             await approve(uses, pending, "finance@acme.com")
@@ -246,7 +248,7 @@ async def test_positive_decision_rolls_back_without_a_target_but_rejection_recor
 
 
 async def test_revocation_records_without_prepared_targets_and_does_not_replace_proof(uses):
-    audit, view, pending = await composition(uses)
+    audit, view, pending, _, _ = await composition(uses)
     with audit.prepared_view(view):
         await approve(uses, pending, "finance@acme.com")
     before = await uses.world.db.fetch_one("SELECT * FROM {{tables.use_approval_audit_proofs}}")
@@ -257,3 +259,88 @@ async def test_revocation_records_without_prepared_targets_and_does_not_replace_
     assert before == await uses.world.db.fetch_one(
         "SELECT * FROM {{tables.use_approval_audit_proofs}}"
     )
+
+
+def test_run_slot_events_do_not_claim_the_broker_audit_branch():
+    event = AuditEvent(
+        AuditKind.APPROVAL_REQUESTED,
+        "requester",
+        "approval",
+        datetime.now(UTC),
+        approval_id="approval",
+        details={"policy_ref": "secrets.run|installation|team|grant|digest|-|-|-"},
+    )
+    assert not is_use_approval(event)
+    assert is_use_approval(
+        replace(event, details={"policy_ref": "secrets.use|installation|team|grant|digest"})
+    )
+
+
+@pytest.mark.parametrize(
+    "decision,state",
+    [
+        ("denied", State.APPROVAL_DENIED),
+        ("expired", State.APPROVAL_EXPIRED),
+        ("revoked", State.CANCELLED),
+    ],
+)
+async def test_s3_closes_after_the_actual_matching_use_lifecycle_record(uses, decision, state):
+    audit, _, pending, machine, dispatch_id = await composition(uses)
+    approval_id = pending.pending.approval.approval_id
+    async with uses.world.db.transaction() as tx:
+        assert (await machine.get(tx, dispatch_id)).state is State.AWAITING_APPROVAL
+    if decision == "denied":
+        await approve(uses, pending, "finance@acme.com", decision=Decision.REJECT)
+    elif decision == "revoked":
+        await uses.approvals.revoke_many([approval_id], revoked_by="test", reason="grant_revoked")
+    else:
+        uses.clock.now += timedelta(seconds=901)
+    before = await uses.world.db.fetch_one(
+        "SELECT * FROM {{tables.approvals}} WHERE approval_id=$1", approval_id
+    )
+    async with uses.world.db.transaction() as tx:
+        await uses.world.fence.check(tx, uses.world.admitted)
+        await uses.approvals.lock_many(tx, [approval_id])
+        if decision == "expired":
+            await audit.expired(tx, approval_id)
+        await machine.close(tx, dispatch_id, state)
+        assert (await machine.get(tx, dispatch_id)).state is state
+    assert before == await uses.world.db.fetch_one(
+        "SELECT * FROM {{tables.approvals}} WHERE approval_id=$1", approval_id
+    )
+    assert [e["payload"].get("approval_decision") for e in await envelopes(uses.world.db)] == [
+        None,
+        decision,
+    ]
+
+
+@pytest.mark.parametrize("state", [State.APPROVAL_DENIED, State.APPROVAL_EXPIRED, State.CANCELLED])
+async def test_s3_cannot_close_without_the_matching_lifecycle_receipt(uses, state):
+    _, _, _, machine, dispatch_id = await composition(uses)
+    with pytest.raises(ValueError):
+        async with uses.world.db.transaction() as tx:
+            await machine.close(tx, dispatch_id, state)
+    async with uses.world.db.transaction() as tx:
+        assert (await machine.get(tx, dispatch_id)).state is State.AWAITING_APPROVAL
+
+
+async def test_s3_cannot_start_waiting_when_the_requested_receipt_is_missing(uses):
+    _, _, _, machine, dispatch_id = await composition(uses, awaiting=False)
+    # Remove the operational receipt from an actual mint. The signed outbox
+    # remains; a missing original receipt must still refuse this transition.
+    await uses.world.db.execute(
+        "DELETE FROM {{tables.broker_use_events}} WHERE dispatch_id=$1", dispatch_id
+    )
+    with pytest.raises(ValueError):
+        async with uses.world.db.transaction() as tx:
+            await machine.await_approval(tx, dispatch_id)
+    async with uses.world.db.transaction() as tx:
+        assert (await machine.get(tx, dispatch_id)).state is State.RECEIVED
+
+
+async def test_expiry_cannot_be_recorded_before_the_live_b2_deadline(uses):
+    audit, _, pending, _, _ = await composition(uses)
+    with pytest.raises(UseAuditUnavailable):
+        async with uses.world.db.transaction() as tx:
+            await audit.expired(tx, pending.pending.approval.approval_id)
+    assert len(await envelopes(uses.world.db)) == 1
