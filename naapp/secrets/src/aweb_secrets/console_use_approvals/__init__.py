@@ -9,6 +9,8 @@ console session and tab CSRF checks as the rest of the human console.
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,6 +19,8 @@ from urllib.parse import urlsplit
 
 import idna
 from aweb_naapp.console import ConsoleRoute, ConsoleSession
+from aweb_naapp.hooks.producer import RegistrationView
+from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.runtime.approvals import Approvals, Assurance, Decision
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
@@ -27,14 +31,23 @@ from aweb_secrets.console_ui import _page, console_page
 from aweb_secrets.run_approvals import run_approval_view
 from aweb_secrets.run_plan import RunPlanRefused
 from aweb_secrets.use_approval import UseApprovalRefused, UseApprovalView, use_approval_view
+from aweb_secrets.use_audit import UseApprovalAudit, UseAuditUnavailable
 
 Kind = Literal["use", "run"]
 _ASSETS = Path(__file__).parent
 
 
 class ConsoleUseApprovals:
-    def __init__(self, *, console: OwnerConsole, approvals: Approvals) -> None:
+    def __init__(
+        self,
+        *,
+        console: OwnerConsole,
+        approvals: Approvals,
+        use_audit: UseApprovalAudit,
+        registration_view: Callable[[str], Awaitable[RegistrationView | None]],
+    ) -> None:
         self.console, self.approvals = console, approvals
+        self.use_audit, self.registration_view = use_audit, registration_view
 
     async def _linked(self, token: str, kind: Kind):
         linked = await self.approvals.open_link(token)
@@ -121,17 +134,33 @@ class ConsoleUseApprovals:
         self, current: ConsoleSession, token: str, proof: dict, *, kind: Kind, decision: Decision
     ):
         approval_id, admitted, _ = await self._candidate(current, token, kind)
-        # No LOGIN credential lock spans B3 verification (its separate tx updates
-        # that credential). The final decision uses B2's caller-tx seam so F6
-        # stays held through the decision and its audit, never through dispatch.
-        async with self.console.db.transaction() as tx:
-            await self.console.fence.check(tx, admitted)
-            approved = await self.approvals.decide(
-                approval_id, decision, Assurance.PASSKEY, proof, link_token=token, tx=tx
+        # Original run/slot audit association is not composed yet. Never let
+        # a reserved run decision fall through to the governance sink.
+        if kind == "run":
+            raise HTTPException(503, "release_context_unavailable")
+        try:
+            # Network lookup precedes the effect transaction. Only APPROVE
+            # requires fresh targets; rejection uses the lifecycle path.
+            prepared = (
+                self.use_audit.prepared_view(await self.registration_view(admitted.team_id))
+                if decision is Decision.APPROVE
+                else nullcontext()
             )
-            await self.console.fence.check(tx, admitted)
-            if current.expires_at <= datetime.now(UTC):
-                raise HTTPException(401, "console_session_required")
+            # No LOGIN credential lock spans B3 verification (its separate tx
+            # updates that credential). B2 decides/audits in this caller tx.
+            async with self.console.db.transaction() as tx:
+                await self.console.fence.check(tx, admitted)
+                with prepared:
+                    approved = await self.approvals.decide(
+                        approval_id, decision, Assurance.PASSKEY, proof, link_token=token, tx=tx
+                    )
+                await self.console.fence.check(tx, admitted)
+                if current.expires_at <= datetime.now(UTC):
+                    raise HTTPException(401, "console_session_required")
+        except (UseAuditUnavailable, Refused) as refused:
+            # The transaction has rolled back; submitted details never become
+            # an error message. Database failures propagate without conversion.
+            raise HTTPException(503, refused.code) from None
         return {"approval_id": approval_id, "state": approved.state.value}
 
 

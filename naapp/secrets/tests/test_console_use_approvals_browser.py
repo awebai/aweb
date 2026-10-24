@@ -13,12 +13,13 @@ from playwright.async_api import Error as BrowserError
 from playwright.async_api import expect
 
 from aweb_secrets.use_approvals import UseApprovers, UsePolicies
+from tests.console_use_world import mint
 from tests.test_change_sets import ALICE, Installations
 from tests.test_change_sets import world as _world
 from tests.test_console_forms import enrolled_page
 from tests.test_console_ui_browser import browser as _browser
 from tests.test_console_use_approvals import application
-from tests.test_use_approvals import Clock, Uses, install, request
+from tests.test_use_approvals import Clock, Uses, install
 
 world = _world
 browser = _browser
@@ -44,6 +45,7 @@ async def service(world):
     port = sock.getsockname()[1]
     origin = f"http://localhost:{port}"
     world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
+    # The same real branch is injected before serving. Mint uses it below.
     app = await application(context, origin=origin, agent_origin=f"http://127.0.0.1:{port}")
     server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
     task = asyncio.create_task(server.serve(sockets=[sock]))
@@ -68,7 +70,7 @@ async def test_browser_frozen_review_fresh_decision_and_no_dispatch(
     async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
         page, cdp, authenticator = await enrolled_page(world, context, origin)
         await install(uses, approvers=["owner:" + ALICE.principal_did])
-        _, _, pending = await request(uses, reason='</pre><img src=x onerror="alert(1)">')
+        pending = await mint(uses, reason='</pre><img src=x onerror="alert(1)">')
         approval_id = pending.pending.approval.approval_id
         token = next(t for a, t in world.inbox.links["alice@acme.com"] if a == approval_id)
         # Include signed-out login in the real page; no token goes into diagnostics.

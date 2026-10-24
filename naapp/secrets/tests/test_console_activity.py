@@ -11,9 +11,9 @@ from aweb_naapp.dispatch import apply_dispatch_migrations
 from aweb_naapp.hooks.commitment import CommitmentContext
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
-from aweb_secrets.activity_service import ActivityReads
 from fastapi import FastAPI
 
+from aweb_secrets.activity_service import ActivityReads
 from aweb_secrets.broker_audit import record_broker_refusal
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_activity import ConsoleActivity, console_activity_router
