@@ -178,6 +178,11 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	if err != nil {
 		return nil, err
 	}
+	if req.Global && strings.TrimSpace(req.InboundMode) != "" {
+		if err := requireCreatedIdentityInboundMode(nil, req.WorkingDir, "", serviceURLs.AwebURL, provisioned.Certificate.Team, req.InboundMode); err != nil {
+			return nil, err
+		}
+	}
 	printOutput(result, formatConnect)
 
 	if err := runGuidedPostInitSetup(req); err != nil {

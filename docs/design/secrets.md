@@ -1728,6 +1728,24 @@ SOT §2), reached through the hook.
   refused or stays in its previous state, and nothing is dispatched.
 - A dispatch therefore never happens without durably enqueued `admitted` and
   `dispatching` events.
+- **Per-action availability.** The catalog gates `approval_requested`,
+  `approval_decided: approved`, `admitted` and `dispatching`.
+  `approval_decided: denied|expired|revoked` (including requester withdrawal
+  and B2 containment cancellation), `completed`, `not_sent`,
+  `outcome_unknown` and `reconciled` record decisions/consequences without
+  target/backlog gating, through the shared `enqueue_lifecycle` seam or
+  ordinary catalog-classified `enqueue`. `refused` keeps `enqueue_refusal`.
+  All retain catalog/envelope/key checks and local transaction atomicity.
+  The actor stays the original requester, with the frozen use scope/trace.
+  Recording never authorizes child/grant creation (including
+  `stored_as_secret`), result/runner-credential release, an upstream
+  reconciliation call or retry; independent scope/lineage/policy/fence checks
+  still apply. No new availability gate is imposed on storing an observed
+  result. Every new send, including after `not_sent`, repeats its gated
+  dispatch transition. A failed post-dispatch local commit leaves the prior
+  durable state for reconciliation. The
+  [normative hook contract](../hook-events.md#the-audit-critical-gate)
+  specifies the exact catalog classification and decision-93 re-freeze.
 - **No active target.** secrets resolves targets through aweb-acgh.7, using the
   hooks design's freshness bound of 60 s at most. The rule counts only a
   registration whose `active_from` is at or before the event's `occurred_at`.
@@ -1870,7 +1888,13 @@ secrets fills `authority` with one of:
 - `owner_act`, with `owner_act_sha256`;
 - `passkey_session`, with `approval_evidence_sha256`;
 - `team_cert`, for narrowing acts through the agent API;
-- `backend_observation`, exclusively for `resource.version_observed` (§5.3).
+- `backend_observation`, exclusively for `resource.version_observed` (§5.3);
+- `outbox_state`, exclusively for the shared kit's producer-local
+  `hook_delivery.cancelled` accounting under the
+  [terminal contract](../hook-terminal-delivery.md#each-app-producers-cancellation-evidence).
+  It uses the system actor and only this producer's persisted cancellation
+  facts. It authorizes no human governance act and no change to secrets' grants
+  or policy.
 
 That observation act requires `direction: narrowing`, `resource_type: secret`
 and `reason_code: external_version_changed`. Its `resource_ref` is the minted

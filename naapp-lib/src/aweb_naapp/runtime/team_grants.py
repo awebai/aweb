@@ -59,6 +59,7 @@ class GrantStatus:
     installation_id: str | None
     generation: int | None
     origin_verified: bool | None
+    installed_at: datetime
     as_of: datetime
     max_age_seconds: int
     fresh_until: float
@@ -90,8 +91,8 @@ class TeamGrantSource:
             monotonic=monotonic,
         )
 
-    async def grant_for(self, team_id: str) -> Grant | None:
-        status = await self.status_for(team_id)
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
+        status = await self.status_for(team_id, certificate_id)
         if status is None or status.state != "active":
             return None
         return Grant(
@@ -102,14 +103,15 @@ class TeamGrantSource:
             generation=status.generation,
         )
 
-    async def status_for(self, team_id: str) -> GrantStatus | None:
+    async def status_for(self, team_id: str, certificate_id: str | None = None) -> GrantStatus | None:
         """Fresh status or no registered key; unavailable authority raises GrantUnavailable.
 
         The total caller deadline includes discovery. Cancellation never
         cancels a shared grant refresh that another caller is waiting on.
+        Member calls pass their verified certificate ID for AWID discovery.
         """
         try:
-            return await asyncio.wait_for(self._status_for(team_id), self._timeout)
+            return await asyncio.wait_for(self._status_for(team_id, certificate_id), self._timeout)
         except TeamServerUnavailable as exc:
             raise GrantUnavailable(exc.code) from exc
         except (TimeoutError, RefreshTimedOut) as exc:
@@ -119,8 +121,8 @@ class TeamGrantSource:
         except (KeyError, TypeError, ValueError, RecursionError) as exc:
             raise GrantUnavailable("grant_answer_malformed") from exc
 
-    async def _status_for(self, team_id: str) -> GrantStatus | None:
-        server = await self._directory.resolve(team_id)
+    async def _status_for(self, team_id: str, certificate_id: str | None = None) -> GrantStatus | None:
+        server = await self._directory.resolve(team_id, certificate_id)
         # A move or controller-key change cannot reuse the old server's answer.
         key = (team_id, server.server_url, server.audience, server.team_did_key)
 
@@ -178,6 +180,9 @@ class TeamGrantSource:
         if not _AS_OF.fullmatch(body["as_of"]):
             raise ValueError("invalid grant as_of")
         as_of = datetime.fromisoformat(body["as_of"])
+        if not isinstance(body["installed_at"], str) or not _AS_OF.fullmatch(body["installed_at"]):
+            raise ValueError("invalid grant installed_at")
+        installed_at = datetime.fromisoformat(body["installed_at"])
         scopes = body["granted_scopes"]
         if not isinstance(scopes, list) or not all(isinstance(s, str) and s for s in scopes):
             raise ValueError("invalid granted_scopes")
@@ -207,6 +212,7 @@ class TeamGrantSource:
             installation_id=installation_id,
             generation=generation,
             origin_verified=origin_verified,
+            installed_at=installed_at,
             as_of=as_of,
             max_age_seconds=body["max_age_seconds"],
             fresh_until=0.0,

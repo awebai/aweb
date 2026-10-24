@@ -11,11 +11,11 @@ from __future__ import annotations
 import ipaddress
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
 from awid.did import public_key_from_did
-from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_with_public_key
+from awid.signing import VerifyResult, canonical_json_bytes, sign_message, verify_signature_with_public_key
 from awid.utc_timestamps import parse_utc_seconds
 
 SIGNING_PREFIX = b"aweb.team-server/1\n"
@@ -47,8 +47,27 @@ class TeamServerRecord:
     issued_at: datetime
 
 
+def build_team_server_record(
+    team_id: str, team_did_key: str, server_url: str, issued_at: datetime,
+) -> dict:
+    """Build the record the team key signs, formatting issued_at as UTC seconds."""
+    return {
+        "v": RECORD_VERSION,
+        "type": RECORD_TYPE,
+        "team_id": team_id,
+        "team_did_key": team_did_key,
+        "server_url": server_url,
+        "issued_at": issued_at.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    }
+
+
 def record_signing_bytes(record: dict) -> bytes:
     return SIGNING_PREFIX + canonical_json_bytes(record)
+
+
+def sign_team_server_record(seed: bytes, record: dict) -> str:
+    """Sign with the team key's Ed25519 seed, returning unpadded standard base64."""
+    return sign_message(seed, record_signing_bytes(record))
 
 
 def _is_loopback_host(host: str) -> bool:

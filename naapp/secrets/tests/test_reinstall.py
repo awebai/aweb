@@ -45,7 +45,7 @@ class TeamServer:
         self.grant: Grant | None = _grant("inst_old", 1)
         self.state = "active"
 
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         return self.grant if self.grant is not None and self.grant.team_id == team_id else None
 
     async def status_for(self, team_id: str):

@@ -10,15 +10,23 @@ import (
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/appmanifest"
 	"github.com/awebai/aw/internal/pathpreflight"
 )
 
 // The shared manifest store is discovery, not delegation. Only this resident's
-// catalog supplies the default authority for a newly minted grant.
+// team/installation bindings supply the default authority for a newly minted grant.
+// Origin-only consent is retained for diagnostics and never adopted as authority.
+type appInstallationApproval struct {
+	Origin         string `json:"origin"`
+	InstallationID string `json:"installation_id"`
+}
+
 type appApprovalCatalog struct {
-	Version int               `json:"version"`
-	Apps    map[string]string `json:"apps"`
+	Version       int                                           `json:"version"`
+	Apps          map[string]string                             `json:"apps"`
+	Installations map[string]map[string]appInstallationApproval `json:"installations"`
 }
 
 func appApprovalsPath(home string) string { return filepath.Join(home, "app-approvals.json") }
@@ -52,10 +60,22 @@ func loadAppApprovals(home string) (*appApprovalCatalog, error) {
 			return nil, fmt.Errorf("app_approval_invalid: invalid origin for %s", name)
 		}
 	}
+	for team, apps := range catalog.Installations {
+		if strings.TrimSpace(team) == "" {
+			return nil, fmt.Errorf("app_approval_invalid: missing team")
+		}
+		for name, approval := range apps {
+			normalized, err := normalizePluginName(name)
+			origin, originErr := canonicalAppOrigin(approval.Origin)
+			if err != nil || normalized != name || originErr != nil || origin != approval.Origin || strings.TrimSpace(approval.InstallationID) == "" {
+				return nil, fmt.Errorf("app_approval_invalid: invalid installation binding")
+			}
+		}
+	}
 	return &catalog, nil
 }
 
-func changeAppApproval(home, name, origin string) error {
+func changeAppApproval(home, name, origin, teamID, installationID string) error {
 	lockPath := appApprovalsPath(home) + ".lock"
 	if err := pathpreflight.PreflightFile(lockPath, "app approval lock", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
 		return err
@@ -69,10 +89,23 @@ func changeAppApproval(home, name, origin string) error {
 	if err != nil {
 		return err
 	}
+	if catalog.Installations == nil {
+		catalog.Installations = map[string]map[string]appInstallationApproval{}
+	}
 	if origin == "" {
 		delete(catalog.Apps, name)
+		for _, apps := range catalog.Installations {
+			delete(apps, name)
+		}
 	} else {
+		if strings.TrimSpace(teamID) == "" || strings.TrimSpace(installationID) == "" {
+			return fmt.Errorf("app_installation_approval_required: explicit install requires a team installation identity")
+		}
 		catalog.Apps[name] = origin
+		if catalog.Installations[teamID] == nil {
+			catalog.Installations[teamID] = map[string]appInstallationApproval{}
+		}
+		catalog.Installations[teamID][name] = appInstallationApproval{Origin: origin, InstallationID: installationID}
 	}
 	data, err := json.MarshalIndent(catalog, "", "  ")
 	if err != nil {
@@ -106,8 +139,27 @@ func pluginManagementHome() (awconfig.IdentityHome, bool, error) {
 		return home, false, err
 	}
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(home.Root, "identity.yaml"))
-	if errors.Is(err, os.ErrNotExist) && !home.External() {
-		return home, false, nil
+	if errors.Is(err, os.ErrNotExist) {
+		// Local API-key bootstrap stores a signing key and team membership,
+		// without global identity metadata. Management still uses the existing
+		// selected team's certificate-signed client for all server operations.
+		keyPath, pathErr := awconfig.IdentityHomePath(home, "signing.key")
+		if pathErr != nil {
+			return home, false, pathErr
+		}
+		_, keyErr := awid.LoadSigningKey(keyPath)
+		teams, teamErr := awconfig.LoadTeamStateFromIdentityHome(home.Root)
+		if keyErr == nil && teamErr == nil && teams.ActiveMembership() != nil {
+			return home, true, nil
+		}
+		for _, localErr := range []error{keyErr, teamErr} {
+			if localErr != nil && !errors.Is(localErr, os.ErrNotExist) {
+				return home, false, fmt.Errorf("app_resident_required: %w", localErr)
+			}
+		}
+		if !home.External() {
+			return home, false, nil
+		}
 	}
 	if err != nil {
 		return home, false, fmt.Errorf("app_resident_required: %w", err)
@@ -142,18 +194,20 @@ func grantAppInventory(apps map[string]grantAppSnapshot) []grantAppInventoryItem
 }
 
 type skippedGrantApp struct {
-	AppID string `json:"app_id"`
-	Code  string `json:"code"`
+	AppID           string   `json:"app_id"`
+	Code            string   `json:"code"`
+	Origin          string   `json:"origin,omitempty"`
+	RecoveryCommand []string `json:"recovery_command,omitempty"`
 }
 
-func selectGrantAppSnapshots(home string, explicit bool, values, deniedOrigins []string) (map[string]grantAppSnapshot, error) {
-	apps, _, err := prepareGrantAppSnapshots(home, explicit, values, deniedOrigins)
+func selectGrantAppSnapshots(home, teamID string, explicit bool, values, deniedOrigins []string) (map[string]grantAppSnapshot, error) {
+	apps, _, err := prepareGrantAppSnapshots(home, teamID, explicit, values, deniedOrigins)
 	return apps, err
 }
 
 // Catalog failures narrow this mint's authority without preventing unrelated
 // communication. Explicit legacy selections and corrupt resident state fail.
-func prepareGrantAppSnapshots(home string, explicit bool, values, deniedOrigins []string) (map[string]grantAppSnapshot, []skippedGrantApp, error) {
+func prepareGrantAppSnapshots(home, teamID string, explicit bool, values, deniedOrigins []string) (map[string]grantAppSnapshot, []skippedGrantApp, error) {
 	skipped := []skippedGrantApp{}
 	if explicit {
 		specs, err := parseGrantAppToolSpecs(values)
@@ -164,20 +218,52 @@ func prepareGrantAppSnapshots(home string, explicit bool, values, deniedOrigins 
 			return nil, nil, usageError("--app-tool requires a nonempty app:verb selection")
 		}
 		apps, err := buildGrantAppSnapshots(specs, deniedOrigins)
-		return apps, skipped, err
+		if err != nil {
+			return nil, nil, err
+		}
+		catalog, err := loadAppApprovals(home)
+		if err != nil {
+			return nil, nil, err
+		}
+		for name, app := range apps {
+			approval := catalog.Installations[teamID][name]
+			if approval.InstallationID == "" {
+				return nil, nil, installationApprovalError("app_installation_approval_required", app.App.Origin, home, teamID)
+			}
+			if approval.Origin != app.App.Origin {
+				return nil, nil, installationApprovalError("app_origin_mismatch", app.App.Origin, home, teamID)
+			}
+			app.InstallationID = approval.InstallationID
+			apps[name] = app
+		}
+		return apps, skipped, nil
 	}
 	catalog, err := loadAppApprovals(home)
 	if err != nil {
 		return nil, nil, err
+	}
+	approvals := map[string]string{}
+	for name, approval := range catalog.Installations[teamID] {
+		approvals[name] = approval.Origin
 	}
 	apps := map[string]grantAppSnapshot{}
 	names := make([]string, 0, len(catalog.Apps))
 	for name := range catalog.Apps {
 		names = append(names, name)
 	}
+	for name := range approvals {
+		if _, ok := catalog.Apps[name]; !ok {
+			names = append(names, name)
+		}
+	}
 	sort.Strings(names)
 	for _, name := range names {
-		selected, err := buildGrantAppSnapshotsWithApprovals(map[string][]string{name: nil}, deniedOrigins, catalog.Apps)
+		approval, bound := catalog.Installations[teamID][name]
+		if !bound {
+			skipped = append(skipped, skippedGrantApp{AppID: name, Code: "app_installation_approval_required", Origin: catalog.Apps[name]})
+			continue
+		}
+		selected, err := buildGrantAppSnapshotsWithApprovals(map[string][]string{name: nil}, deniedOrigins, approvals)
 		if err != nil {
 			code := "app_manifest_invalid"
 			var failure *appSnapshotFailure
@@ -187,7 +273,9 @@ func prepareGrantAppSnapshots(home string, explicit bool, values, deniedOrigins 
 			skipped = append(skipped, skippedGrantApp{AppID: name, Code: code})
 			continue
 		}
-		apps[name] = selected[name]
+		snapshot := selected[name]
+		snapshot.InstallationID = approval.InstallationID
+		apps[name] = snapshot
 	}
 	return apps, skipped, nil
 }

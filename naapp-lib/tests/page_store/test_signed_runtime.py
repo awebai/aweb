@@ -6,7 +6,8 @@ from typing import Annotated
 
 import httpx
 import pytest
-from aweb_naapp_testing import REGISTRY_URL, Member
+from aweb_naapp_testing import Member
+from awid_service.testing import REGISTRY_URL
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -49,7 +50,7 @@ class InstalledGrant:
     def __init__(self, team):
         self.team, self.active = team, True
 
-    async def grant_for(self, team_id):
+    async def grant_for(self, team_id, certificate_id=None):
         if self.active and team_id == self.team:
             return Grant(
                 team_id=team_id,

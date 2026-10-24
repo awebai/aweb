@@ -21,10 +21,12 @@ from typing import Any
 
 from awid.did import did_from_public_key, public_key_from_did
 from awid.log import require_canonical_server_origin
-from awid.signing import canonical_json_bytes, sign_message
+from awid.signing import canonical_json_bytes
 from awid.team_ids import parse_team_id
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
+
+from aweb_naapp.runtime.app_credentials import APP_REQUEST, sign_app_credential
 
 AUTHORIZATION_PREFIX = b"aweb.app-task-authorization/1\n"
 AUTHORIZATION_TYPE = "aweb.app-task-authorization"
@@ -652,32 +654,19 @@ def app_request_credential(
     timestamp: str,
 ) -> dict[str, str]:
     """Headers for one request under the app credential family's app-request purpose."""
-    did_key = did_from_public_key(bytes(signing_key.verify_key))
-    payload = {
-        "v": 1,
-        "auth": "app-request",
-        "aud": aud,
-        "method": method.upper(),
-        "path": path,
-        "team_id": team_id,
-        "app_id": app_id,
-        "kid": kid,
-        "did_key": did_key,
-        "installation_id": installation_id,
-        "installation_generation": installation_generation,
-        "body_sha256": hashlib.sha256(body).hexdigest(),
-        "timestamp": timestamp,
-    }
-    canonical = canonical_json_bytes(payload)
-    signature = sign_message(bytes(signing_key), canonical)
-    return {
-        "Authorization": f"AWEB-App-Request DIDKey {did_key} {signature}",
-        "X-AWEB-App-ID": app_id,
-        "X-AWEB-App-Key-ID": kid,
-        "X-AWEB-Team-ID": team_id,
-        "X-AWEB-Timestamp": timestamp,
-        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(canonical).rstrip(b"=").decode("ascii"),
-    }
+    return sign_app_credential(
+        purpose=APP_REQUEST,
+        private_key=bytes(signing_key),
+        method=method,
+        target=aud + path,
+        team_id=team_id,
+        app_id=app_id,
+        key_id=kid,
+        body=body,
+        timestamp=timestamp,
+        installation_id=installation_id,
+        installation_generation=installation_generation,
+    ).headers
 
 
 # ---------------------------------------------------------------- answers

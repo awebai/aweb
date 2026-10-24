@@ -190,6 +190,20 @@ async def _hard_delete_scope(aweb_db, *, team_id) -> None:
             team_id,
         )
         await tx.execute(
+            "DELETE FROM {{tables.task_answer_stage_nonces}} WHERE team_id = $1",
+            team_id,
+        )
+        await tx.execute(
+            """DELETE FROM {{tables.task_answers}} WHERE task_id IN (
+                SELECT task_id FROM {{tables.tasks}} WHERE team_id = $1
+            )""",
+            team_id,
+        )
+        await tx.execute(
+            "DELETE FROM {{tables.task_app_requests}} WHERE team_id = $1",
+            team_id,
+        )
+        await tx.execute(
             "DELETE FROM {{tables.tasks}} WHERE team_id = $1",
             team_id,
         )

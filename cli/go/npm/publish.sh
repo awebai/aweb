@@ -3,10 +3,12 @@ set -euo pipefail
 
 # Get version from git tag (v0.10.0 -> 0.10.0)
 VERSION="${GITHUB_REF_NAME#v}"
-if [ -z "$VERSION" ]; then
-  echo "Error: GITHUB_REF_NAME not set or has no version" >&2
+if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]]; then
+  echo "Error: expected vX.Y.Z or vX.Y.Z-rc.N (N >= 1)" >&2
   exit 1
 fi
+DIST_TAG=latest
+[[ "$VERSION" != *-rc.* ]] || DIST_TAG=next
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -62,14 +64,14 @@ sed -i "s/\"@awebai\/aw-\([^\"]*\)\": \"[^\"]*\"/\"@awebai\/aw-\1\": \"$VERSION\
 for pkg_dir in aw-linux-x64 aw-linux-arm64 aw-darwin-x64 aw-darwin-arm64 aw-windows-x64 aw-windows-arm64; do
   echo "  Publishing @awebai/$pkg_dir@$VERSION..."
   cd "$SCRIPT_DIR/$pkg_dir"
-  npm publish --access public
+  npm publish --access public --tag "$DIST_TAG"
   cd "$REPO_ROOT"
 done
 
 # Step 4: Publish the main wrapper package last
 echo "  Publishing @awebai/aw@$VERSION..."
 cd "$SCRIPT_DIR/aw"
-npm publish --access public
+npm publish --access public --tag "$DIST_TAG"
 cd "$REPO_ROOT"
 
 echo "Done! All packages published at version $VERSION."

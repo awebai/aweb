@@ -250,6 +250,11 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		return connectOutput{}, fmt.Errorf("%w\n(local state from this attempt was rolled back; rerun the same command to resume)", err)
 	}
 	resumable = false // Connected state must not be retried as an incomplete init.
+	if global && strings.TrimSpace(req.InboundMode) != "" {
+		if err := requireCreatedIdentityInboundMode(nil, req.WorkingDir, req.IdentityHome, serverURL, cert.Team, req.InboundMode); err != nil {
+			return connectOutput{}, err
+		}
+	}
 	if global {
 		if err := removeAPIKeyPartialInit(req.WorkingDir, req.IdentityHome); err != nil {
 			return connectOutput{}, fmt.Errorf("remove partial API-key init state: %w", err)
