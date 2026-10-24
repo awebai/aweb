@@ -95,6 +95,17 @@
 
 ## Release preparations
 
+### Release preparation: aw 1.36.49
+
+CLI changes are since `aw-v1.36.48`.
+
+- `aw plugin install`, update and remove register the installation with the
+  team's server when they run in a team member's home that holds a signing key
+  and a team certificate but no `identity.yaml`, such as a member set up with
+  an API key. Before, such a home reported a local-only install and the server
+  never saw it. Grant homes, an `identity.yaml` with an empty DID, and homes
+  with no key or team keep their earlier behaviour.
+
 ### Release preparation: aw 1.36.48
 
 CLI changes are since `aw-v1.36.47`. The organization, hosted identity and
