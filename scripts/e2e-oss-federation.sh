@@ -491,8 +491,8 @@ case "$SERVER_MODE" in
         || { echo "wheel sha256 must be 64 lowercase hex, got $digest" >&2; exit 1; }
     done
     for version in "$AWEB_ALPHA_VERSION" "$AWEB_BETA_VERSION"; do
-      [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] \
-        || { echo "wheel version must be dotted numeric, got $version" >&2; exit 1; }
+      [[ "$version" =~ ^[0-9]+(\.[0-9]+)+(rc[1-9][0-9]*)?$ ]] \
+        || { echo "wheel version must be dotted numeric with optional rcN, got $version" >&2; exit 1; }
     done
     ALPHA_WHEEL_NAME="$(basename "$AWEB_ALPHA_WHEEL")"
     BETA_WHEEL_NAME="$(basename "$AWEB_BETA_WHEEL")"

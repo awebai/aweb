@@ -13,10 +13,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/awebai/aw/internal/releaseversion"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -61,33 +61,11 @@ var upgradeCmd = &cobra.Command{
 	},
 }
 
-// compareVersions compares two version strings (X.Y.Z format).
-// Returns -1 if a < b, 0 if a == b, 1 if a > b.
+// compareVersions compares final and RC releases. Unknown versions do not
+// establish that an update is newer.
 func compareVersions(a, b string) int {
-	partsA := strings.Split(a, ".")
-	partsB := strings.Split(b, ".")
-
-	maxLen := len(partsA)
-	if len(partsB) > maxLen {
-		maxLen = len(partsB)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		var na, nb int
-		if i < len(partsA) {
-			na, _ = strconv.Atoi(partsA[i])
-		}
-		if i < len(partsB) {
-			nb, _ = strconv.Atoi(partsB[i])
-		}
-		if na < nb {
-			return -1
-		}
-		if na > nb {
-			return 1
-		}
-	}
-	return 0
+	order, _ := releaseversion.Compare(a, b)
+	return order
 }
 
 // fetchLatestRelease fetches the latest release info from GitHub.

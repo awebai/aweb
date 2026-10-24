@@ -22,6 +22,7 @@ import (
 	"github.com/awebai/aw/a2agw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/releaseversion"
 	"gopkg.in/yaml.v3"
 )
 
@@ -394,57 +395,8 @@ func checkRegistryHealth(registryURL string) runtimeRegistryHealth {
 }
 
 func versionAtLeast(got, minimum string) bool {
-	gotParts, ok := parseDottedVersion(got)
-	if !ok {
-		return false
-	}
-	minParts, ok := parseDottedVersion(minimum)
-	if !ok {
-		return false
-	}
-	n := len(gotParts)
-	if len(minParts) > n {
-		n = len(minParts)
-	}
-	for i := 0; i < n; i++ {
-		var gotValue, minValue int
-		if i < len(gotParts) {
-			gotValue = gotParts[i]
-		}
-		if i < len(minParts) {
-			minValue = minParts[i]
-		}
-		if gotValue > minValue {
-			return true
-		}
-		if gotValue < minValue {
-			return false
-		}
-	}
-	return true
-}
-
-func parseDottedVersion(raw string) ([]int, bool) {
-	raw = strings.TrimSpace(strings.TrimPrefix(raw, "v"))
-	if raw == "" {
-		return nil, false
-	}
-	if idx := strings.IndexAny(raw, "-+"); idx >= 0 {
-		raw = raw[:idx]
-	}
-	parts := strings.Split(raw, ".")
-	out := make([]int, 0, len(parts))
-	for _, part := range parts {
-		if part == "" {
-			return nil, false
-		}
-		value, err := strconv.Atoi(part)
-		if err != nil || value < 0 {
-			return nil, false
-		}
-		out = append(out, value)
-	}
-	return out, true
+	order, valid := releaseversion.Compare(got, minimum)
+	return valid && order >= 0
 }
 
 func stringField(payload map[string]interface{}, key string) string {
