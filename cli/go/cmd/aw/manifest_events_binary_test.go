@@ -153,7 +153,9 @@ func TestDeployedManifestBinaryInstallAndAllVerbs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		apps[name] = snap[name]
+		bound := snap[name]
+		bound.InstallationID = "fixture-" + name
+		apps[name] = bound
 		snapshot := &grantAppToolsSnapshot{Version: grantAppToolsSnapshotVersion, GrantID: appTestGrantID, TeamID: f.grant.TeamID, Apps: apps}
 		path, _ := grantAppToolsPath(f.residentHome, appTestGrantID)
 		data, _ := json.Marshal(snapshot)

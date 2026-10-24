@@ -17,7 +17,7 @@ from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
 from tests.runtime.conftest import relying_app
 from tests.runtime.test_naapp_runtime import allow_all
 from tests.runtime.test_served_manifest import ExampleSettings, _key_file, _v2_template
-from tests.runtime.test_team_server_directory import SERVER_URL, TEAM_ID, _publish, _record
+from tests.runtime.test_team_server_directory import SERVER_URL, TEAM_ID
 
 
 def _runtime(tmp_path, *, keys=(), registry=None, team_server_transport=None, **settings):
@@ -79,7 +79,12 @@ async def test_one_directory_can_be_wired_before_startup_and_resolves_real_awid(
     assert not registry.transport.calls
     team_key = SigningKey.generate()
     await registry.add_team(TEAM_ID, did_key(team_key))
-    await _publish(registry, _record(team_key, issued_at=datetime.now(UTC) - timedelta(minutes=1)))
+    await registry.publish_team_server(
+        TEAM_ID,
+        team_key,
+        server_url=SERVER_URL,
+        issued_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
 
     async def no_dns_override(domain):
         return None

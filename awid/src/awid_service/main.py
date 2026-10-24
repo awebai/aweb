@@ -113,19 +113,23 @@ def create_app(
         assert redis is not None
         lifespan = _make_library_lifespan(db_infra, redis, rate_limiter)
 
+    app = FastAPI(title="awid.ai registry", version=_service_version(), lifespan=lifespan)
+    mount_registry(app)
+    return app
+
+
+def _service_version() -> str:
     try:
-        service_version = pkg_version("awid-service")
+        return pkg_version("awid-service")
     except Exception:
-        service_version = "dev"
+        return "dev"
 
-    app = FastAPI(title="awid.ai registry", version=service_version, lifespan=lifespan)
 
-    app.state.rotate_max_body_bytes = rotate_max_body_bytes_from_env()
-
-    # Covering controller signatures use configuration, never Host/forwarded headers.
-    app.state.awid_public_origins = tuple(
-        value.strip() for value in os.getenv("AWID_PUBLIC_ORIGINS", "").split(",") if value.strip()
-    )
+def mount_registry(app: FastAPI) -> None:
+    """AWID's routes on ``app``, its ops routes and its registry, with the
+    configuration they read. The ops routes include ``/`` and ``/health``, so
+    a host that embeds AWID in its own app mounts it under a prefix."""
+    service_version = _service_version()
 
     @app.get("/", tags=["ops"])
     async def root() -> dict:
@@ -163,13 +167,19 @@ def create_app(
     async def ops_health(request: Request) -> dict:
         return await _health_payload(request)
 
+    app.state.rotate_max_body_bytes = rotate_max_body_bytes_from_env()
+
+    # Covering controller signatures use configuration, never Host/forwarded headers.
+    app.state.awid_public_origins = tuple(
+        value.strip() for value in os.getenv("AWID_PUBLIC_ORIGINS", "").split(",") if value.strip()
+    )
+
     app.include_router(did_router)
     app.include_router(dns_namespaces_router)
     app.include_router(dns_addresses_router)
     app.include_router(a2a_publications_router)
     app.include_router(teams_router)
     app.include_router(attestation_records_router)
-    return app
 
 
 app = create_app()

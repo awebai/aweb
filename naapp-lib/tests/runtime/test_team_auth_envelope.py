@@ -239,7 +239,7 @@ async def test_raw_percent_encoding_is_what_is_signed(registry, member):
     ("/v1/caf\u00e9".encode(), b""), (b"/v1/items", "q=caf\u00e9".encode()),
 ])
 async def test_non_ascii_request_target_is_a_client_error(registry, member, raw_path, query_string):
-    from aweb_naapp_testing import REGISTRY_URL
+    from awid_service.testing import REGISTRY_URL
     from fastapi import HTTPException
     from starlette.requests import Request
 

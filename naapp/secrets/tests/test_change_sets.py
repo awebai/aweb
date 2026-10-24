@@ -45,7 +45,6 @@ from aweb_naapp.runtime.installation import (
     apply_installation_migrations,
 )
 from aweb_naapp.runtime.passkeys import Notice, Passkeys, RelyingParty
-from aweb_naapp_testing import awid_registry
 from aweb_naapp_testing.owner_acts import (
     INSTALLATION_ID,
     TeamOwner,
@@ -53,6 +52,7 @@ from aweb_naapp_testing.owner_acts import (
     team_owner,
 )
 from aweb_naapp_testing.webauthn import SoftAuthenticator
+from awid_service.testing import running_registry
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME
@@ -117,7 +117,7 @@ class Installations:
             fresh_until=time.monotonic() + 55,
         )
 
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         return self.grant if team_id == self.team_id else None
 
     async def status_for(self, team_id: str) -> SimpleNamespace | None:
@@ -264,7 +264,7 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
         draft_limit=DraftLimit(count=2, window=timedelta(hours=1)),
         internal_destinations=InternalDestinations.DISABLED,
     )
-    async with awid_registry(registry_db.config.get_dsn()) as registry:
+    async with running_registry(registry_db.config.get_dsn()) as registry:
         yield World(
             db,
             passkeys,

@@ -24,6 +24,8 @@ const (
 	// Retired scope (renamed to cli.workspace_team); kept only to tell users to re-login.
 	cliAuthRetiredWorkspaceScope = "cli.personal_workspace"
 	cliAuthScopeTeamAdmission    = "cli.team_admission"
+	cliAuthScopeOrgCreate        = "cli.org_create"
+	cliAuthDefaultScopes         = "cli.workspace_team cli.org_create"
 	cliAuthDeviceGrant           = "urn:ietf:params:oauth:grant-type:device_code"
 	cliAuthTokenType             = "bearer"
 	cliAuthDefaultTimeout        = 10 * time.Minute
@@ -73,7 +75,7 @@ var authLogoutCmd = &cobra.Command{
 
 func init() {
 	authLoginCmd.Flags().DurationVar(&cliAuthLoginTimeout, "timeout", cliAuthDefaultTimeout, "Maximum time to wait for browser approval")
-	authLoginCmd.Flags().StringVar(&cliAuthScopeFlag, "scope", cliAuthScope, "CLI authorization scope (cli.workspace_team|cli.team_admission)")
+	authLoginCmd.Flags().StringVar(&cliAuthScopeFlag, "scope", cliAuthDefaultScopes, "CLI authorization scopes (cli.workspace_team cli.org_create by default; cli.team_admission is separate)")
 	authStatusCmd.Flags().StringVar(&cliAuthScopeFlag, "scope", cliAuthScope, "CLI authorization scope to inspect")
 	authLogoutCmd.Flags().StringVar(&cliAuthScopeFlag, "scope", cliAuthScope, "CLI authorization scope to revoke")
 	authCmd.AddCommand(authLoginCmd)
@@ -124,13 +126,15 @@ type cliOAuthError struct {
 }
 
 type cliAuthAudienceError struct {
-	Message string
+	Message       string
+	RequiredScope string
 }
 
 type cliAuthHTTPStatusError struct {
 	StatusCode int
 	ErrorCode  string
 	Detail     string
+	Suggestion string
 }
 
 func (e *cliAuthAudienceError) Error() string {
@@ -179,7 +183,14 @@ type cliAuthStatusOutput struct {
 
 func runAuthLogin(ctx context.Context, cmd *cobra.Command) error {
 	loadDotenvBestEffort()
-	scope, err := selectedCLIAuthScope()
+	rawScope := cliAuthScopeFlag
+	// Login, status and logout share a flag destination, but login requests a
+	// bundle by default. Read this command's default rather than the last flag
+	// registration's default when the user omitted --scope.
+	if flag := cmd.Flags().Lookup("scope"); flag != nil && !flag.Changed {
+		rawScope = flag.DefValue
+	}
+	scope, err := selectedCLIAuthScopeValue(rawScope)
 	if err != nil {
 		return err
 	}
@@ -471,6 +482,12 @@ func getCLIAuthJSON(ctx context.Context, issuer, path, bearer string, out any) e
 }
 
 func doCLIAuthJSON(req *http.Request, out any, issuer string) error {
+	return doCLIJSON(req, out, issuer, false)
+}
+
+// Owner-principal requests retain their HTTP status; a failed DIDKey proof is
+// not an expired human device authorization.
+func doCLIJSON(req *http.Request, out any, issuer string, preserveHTTPStatus bool) error {
 	client := &http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}
 	resp, err := awid.DoServerRequestWithTimeout(client, req, issuer, awid.APITimeout())
 	if err != nil {
@@ -480,13 +497,13 @@ func doCLIAuthJSON(req *http.Request, out any, issuer string) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, awid.MaxResponseSize))
 		var oauthErr cliOAuthError
-		if json.Unmarshal(data, &oauthErr) == nil && strings.TrimSpace(oauthErr.ErrorCode) != "" {
+		if !preserveHTTPStatus && json.Unmarshal(data, &oauthErr) == nil && strings.TrimSpace(oauthErr.ErrorCode) != "" {
 			if resp.StatusCode == http.StatusUnauthorized && oauthErr.ErrorCode == "" {
 				oauthErr.ErrorCode = "expired"
 			}
 			return &oauthErr
 		}
-		if resp.StatusCode == http.StatusUnauthorized {
+		if !preserveHTTPStatus && resp.StatusCode == http.StatusUnauthorized {
 			return &cliOAuthError{ErrorCode: "expired", ErrorDescription: "stored CLI access token is not authorized"}
 		}
 		return cliAuthHTTPStatusErrorFromResponse(resp.StatusCode, data)
@@ -508,12 +525,14 @@ func doCLIAuthJSON(req *http.Request, out any, issuer string) error {
 func cliAuthHTTPStatusErrorFromResponse(statusCode int, data []byte) error {
 	httpErr := &cliAuthHTTPStatusError{StatusCode: statusCode}
 	var doc struct {
-		Code   string          `json:"code"`
-		Error  string          `json:"error"`
-		Detail json.RawMessage `json:"detail"`
+		Code       string          `json:"code"`
+		Error      string          `json:"error"`
+		Suggestion string          `json:"suggestion"`
+		Detail     json.RawMessage `json:"detail"`
 	}
 	if json.Unmarshal(data, &doc) == nil {
 		httpErr.ErrorCode = firstNonEmptyString(doc.Code, doc.Error)
+		httpErr.Suggestion = doc.Suggestion
 		if len(doc.Detail) > 0 {
 			var detailString string
 			if json.Unmarshal(doc.Detail, &detailString) == nil {
@@ -566,7 +585,7 @@ func validateCLIAuthTokenResponse(token *cliTokenResponse, expectedResource, exp
 	if got := strings.TrimSpace(token.Resource); got != "" && got != expectedResource {
 		return &cliAuthAudienceError{Message: fmt.Sprintf("auth token response resource %q does not match CLI resource %q", got, expectedResource)}
 	}
-	if got := strings.TrimSpace(token.Scope); got != "" && got != expectedScope {
+	if got := strings.TrimSpace(token.Scope); got != "" && !cliAuthSameScopes(got, expectedScope) {
 		return &cliAuthAudienceError{Message: fmt.Sprintf("auth token response scope %q does not match CLI scope %q", got, expectedScope)}
 	}
 	return nil
@@ -577,11 +596,11 @@ func validateStoredCLIAuthAudience(cfg cliAuthConfig, expectedScope string) erro
 	if got := strings.TrimSpace(cfg.Resource); got != "" && got != expectedResource {
 		return &cliAuthAudienceError{Message: fmt.Sprintf("stored CLI auth resource %q does not match expected CLI resource %q", got, expectedResource)}
 	}
-	if got := strings.TrimSpace(cfg.Scope); got != "" && got != expectedScope {
+	if got := strings.TrimSpace(cfg.Scope); got != "" && !cliAuthContainsScopes(got, expectedScope) {
 		if expectedScope == cliAuthScope && got == cliAuthRetiredWorkspaceScope {
 			return &cliAuthAudienceError{Message: fmt.Sprintf("stored CLI auth uses the retired default-team scope; run `aw auth login --scope %s` again", cliAuthScope)}
 		}
-		return &cliAuthAudienceError{Message: fmt.Sprintf("stored CLI auth scope %q does not match expected CLI scope %q", got, expectedScope)}
+		return &cliAuthAudienceError{Message: fmt.Sprintf("stored CLI auth scope %q does not match expected CLI scope %q", got, expectedScope), RequiredScope: expectedScope}
 	}
 	return nil
 }
@@ -636,12 +655,19 @@ func resolveCLIAuthIssuer(existing string) (string, error) {
 }
 
 func selectedCLIAuthScope() (string, error) {
-	scope := strings.TrimSpace(cliAuthScopeFlag)
+	return selectedCLIAuthScopeValue(cliAuthScopeFlag)
+}
+
+func selectedCLIAuthScopeValue(raw string) (string, error) {
+	scope := strings.TrimSpace(raw)
 	if scope == "" {
 		scope = cliAuthScope
 	}
+	if cliAuthSameScopes(scope, cliAuthDefaultScopes) {
+		return cliAuthDefaultScopes, nil
+	}
 	switch scope {
-	case cliAuthScope, cliAuthScopeTeamAdmission:
+	case cliAuthScope, cliAuthScopeTeamAdmission, cliAuthScopeOrgCreate:
 		return scope, nil
 	default:
 		if scope == cliAuthRetiredWorkspaceScope {
@@ -661,13 +687,32 @@ func cliAuthConfigPath() (string, error) {
 
 func cliAuthConfigPathForScope(scope string) (string, error) {
 	scope = strings.TrimSpace(scope)
-	if scope == "" || scope == cliAuthScope {
+	if scope == "" || scope == cliAuthScope || scope == cliAuthScopeOrgCreate || cliAuthSameScopes(scope, cliAuthDefaultScopes) {
 		return awconfig.PathInUserState("auth.json")
 	}
 	if scope == cliAuthScopeTeamAdmission {
 		return awconfig.PathInUserState("auth.cli_team_admission.json")
 	}
 	return "", fmt.Errorf("unsupported CLI auth scope %q", scope)
+}
+
+// Scope order is insignificant. Stored bundles may satisfy an existing endpoint
+// requiring one member scope; token issuance/refresh must retain the exact set.
+func cliAuthContainsScopes(got, required string) bool {
+	set := make(map[string]bool)
+	for _, scope := range strings.Fields(got) {
+		set[scope] = true
+	}
+	for _, scope := range strings.Fields(required) {
+		if !set[scope] {
+			return false
+		}
+	}
+	return true
+}
+
+func cliAuthSameScopes(a, b string) bool {
+	return cliAuthContainsScopes(a, b) && cliAuthContainsScopes(b, a)
 }
 
 func loadCLIAuthConfig() (cliAuthConfig, bool, error) {

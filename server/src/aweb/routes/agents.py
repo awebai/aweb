@@ -374,7 +374,7 @@ async def list_agents(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT a.agent_id, a.alias, a.did_key, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address,
+        SELECT a.agent_id, a.alias, a.did_key, projected.did_aw, projected.address,
                a.human_name, a.agent_type, a.role, a.identity_scope,
                a.inbound_mode, a.status,
                e.encryption_key_id,
@@ -389,6 +389,10 @@ async def list_agents(
                e.previous_encryption_key_id,
                e.assertion_signature AS encryption_key_signature
         FROM {{tables.agents}} a
+        CROSS JOIN LATERAL (
+            SELECT CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw,
+                   CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address
+        ) projected
         LEFT JOIN LATERAL (
             SELECT encryption_key_id, encryption_public_key, algorithm,
                    identity_did, identity_stable_id, assertion_custody, created_at_text,
@@ -399,9 +403,9 @@ async def list_agents(
               AND team_id = a.team_id
               AND identity_did = a.did_key
               AND (
-                  (NULLIF(BTRIM(COALESCE(a.did_aw, '')), '') IS NULL
+                  (NULLIF(BTRIM(COALESCE(projected.did_aw, '')), '') IS NULL
                    AND identity_stable_id IS NULL)
-                  OR identity_stable_id = a.did_aw
+                  OR identity_stable_id = projected.did_aw
               )
               AND revoked_at IS NULL
               AND not_before_at <= NOW()

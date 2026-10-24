@@ -150,7 +150,7 @@ wheels = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "../../naapp-lib" }
 
 [package.optional-dependencies]
@@ -210,7 +210,7 @@ provides-extras = ["crypto", "nonces", "runtime", "outbox", "signing-key", "disp
 dev = [
     { name = "aweb-naapp", extras = ["egress"] },
     { name = "aweb-naapp", extras = ["runtime", "pages"] },
-    { name = "aweb-naapp-testing", editable = "../../naapp-lib/testing" },
+    { name = "aweb-naapp-testing", extras = ["server"], editable = "../../naapp-lib/testing" },
     { name = "cryptography", specifier = ">=44.0.0" },
     { name = "hatchling", specifier = ">=1.32.4" },
     { name = "httpx2", specifier = ">=2.9.1" },
@@ -224,7 +224,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp-testing"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "../../naapp-lib/testing" }
 dependencies = [
     { name = "aiosmtpd" },
@@ -238,16 +238,20 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiosmtpd", specifier = ">=1.4.6" },
+    { name = "aweb", marker = "extra == 'server'", editable = "../../server" },
     { name = "aweb-naapp", extras = ["hooks", "runtime"], editable = "../../naapp-lib" },
     { name = "awid-service", editable = "../../awid" },
     { name = "cbor2", specifier = ">=5.6.0" },
     { name = "cryptography", specifier = ">=46.0.0" },
     { name = "dnspython", specifier = ">=2.7.0" },
+    { name = "pytest-asyncio", marker = "extra == 'server'", specifier = ">=1.2.0" },
+    { name = "redis", marker = "extra == 'server'", specifier = ">=6.4.0" },
 ]
+provides-extras = ["server"]
 
 [[package]]
 name = "awid-service"
-version = "0.5.31"
+version = "0.5.32"
 source = { editable = "../../awid" }
 dependencies = [
     { name = "base58" },

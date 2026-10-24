@@ -545,7 +545,7 @@ async def test_uninstall_then_reinstall_does_not_restore_former_owner_role(uses)
         installation_id = INSTALLATION_ID
         generation = 1
 
-        async def grant_for(self, team_id):
+        async def grant_for(self, team_id, certificate_id=None):
             if team_id != TEAM or self.state != "active":
                 return None
             return Grant(

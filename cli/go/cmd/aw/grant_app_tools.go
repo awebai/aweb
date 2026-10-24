@@ -20,7 +20,8 @@ import (
 // Installed-app tool authority for session grants.
 //
 // A grant can call an installed app tool only from the resident-approved catalog
-// or the legacy explicit app:verb selection at mint. The tool definition is snapshotted into the resident home
+// for the selected team and installation. Explicit app:verb selections only
+// narrow that approved catalog. The tool definition is snapshotted into the resident home
 // at mint and custody signs only from that snapshot, so an edited or updated
 // manifest in the worker's plugin directory can never widen or redirect a
 // grant. The snapshot is stable authority, not a sandbox: it does not defend
@@ -38,6 +39,7 @@ type grantAppToolsSnapshot struct {
 }
 
 type grantAppSnapshot struct {
+	InstallationID  string             `json:"installation_id"`
 	ManifestVersion int                `json:"manifest_version"`
 	ManifestSHA256  string             `json:"manifest_sha256"`
 	App             appmanifest.App    `json:"app"`

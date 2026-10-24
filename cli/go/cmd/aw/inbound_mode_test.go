@@ -130,6 +130,48 @@ func TestAwInboundModeRejectsUnknownValue(t *testing.T) {
 	}
 }
 
+func TestAwInboundModeRefusesServerDowngrade(t *testing.T) {
+	for _, mode := range []string{"team_and_contacts", "contacts_only"} {
+		t.Run(mode, func(t *testing.T) { testInboundModeRefusesServerDowngrade(t, mode) })
+	}
+}
+func testInboundModeRefusesServerDowngrade(t *testing.T, mode string) {
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/agents/me/inbound-mode" || r.Method != "PATCH" {
+			t.Errorf("unexpected mode request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+		requireCertificateAuthForTest(t, r)
+		var request map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		if request["inbound_mode"] != mode {
+			t.Error("request did not preserve selected mode")
+		}
+		actual := "open"
+		if mode == "contacts_only" {
+			actual = "team_and_contacts"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "agent-1", "team_id": "backend:demo", "identity_scope": "global", "inbound_mode": actual, "configurable": true})
+	}))
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeDefaultWorkspaceBindingForTest(t, root, server.URL)
+	cmd := exec.CommandContext(ctx, bin, "inbound-mode", strings.ReplaceAll(mode, "_", "-"), "--json")
+	cmd.Dir = root
+	cmd.Env = testCommandEnv(root)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("accepted server downgrade: %s", output)
+	}
+	if strings.Contains(string(output), `"inbound_mode": "open"`) {
+		t.Error("printed a successful downgraded result")
+	}
+}
+
 func TestContactsOnlyCanonicalMode(t *testing.T) {
 	for _, value := range []string{"contacts-only", "contacts_only"} {
 		got, err := normalizeInboundModeCLIValue(value)

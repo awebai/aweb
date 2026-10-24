@@ -80,7 +80,9 @@ and receipt states below added by S13. The client reads `state` independently
 of HTTP status. `request_id` is the original caller ID; `request_ref` is an
 opaque persisted intent locator, never a token. Status lookup by request ID is
 scoped to the caller; owner inspection uses a scoped opaque locator. Unknown
-and inaccessible locators return the same `404` refusal. Retrieval checks
+and inaccessible locators return the same `404` refusal. Owners inspecting
+another member's receipt see its state/code and references, without its
+projected result entity (secrets §11.2). Retrieval checks
 current read authority and installation generation, including after certificate
 renewal; it never rewrites original certificate/plan/audit provenance.
 

@@ -300,11 +300,20 @@ func TestProvisionHostedIdentityOmitsInboundModeWhenUnset(t *testing.T) {
 
 func TestRunAPIKeyBootstrapInitForwardsInboundMode(t *testing.T) {
 	for _, mode := range []string{"open", "team_and_contacts", "contacts_only"} {
-		t.Run(mode, func(t *testing.T) { testRunAPIKeyBootstrapInitForwardsInboundMode(t, mode) })
+		t.Run(mode, func(t *testing.T) {
+			t.Run("matching", func(t *testing.T) { testAPIKeyExplicitModeReadback(t, mode, mode, false) })
+			wrong := "open"
+			if mode == "open" {
+				wrong = "team_and_contacts"
+			}
+			if mode == "contacts_only" {
+				wrong = "team_and_contacts"
+			}
+			t.Run("mismatched", func(t *testing.T) { testAPIKeyExplicitModeReadback(t, mode, wrong, true) })
+		})
 	}
 }
-
-func testRunAPIKeyBootstrapInitForwardsInboundMode(t *testing.T, mode string) {
+func testAPIKeyExplicitModeReadback(t *testing.T, mode, actual string, wantFailure bool) {
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
 
 	const apiKey = "aw_sk_test_inbound_mode"
@@ -314,6 +323,7 @@ func testRunAPIKeyBootstrapInitForwardsInboundMode(t *testing.T, mode string) {
 	}
 	teamDIDKey := awid.ComputeDIDKey(teamPub)
 
+	readSeen := false
 	var initBody map[string]any
 	var registeredDIDKey string
 	var server *httptest.Server
@@ -380,6 +390,10 @@ func testRunAPIKeyBootstrapInitForwardsInboundMode(t *testing.T, mode string) {
 				"repo_id":      "repo-1",
 				"team_did_key": teamDIDKey,
 			})
+		case r.URL.Path == "/v1/agents/me/inbound-mode":
+			requireCertificateAuthForTest(t, r)
+			readSeen = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "agent-1", "team_id": "default:alice.aweb.ai", "identity_scope": "global", "inbound_mode": actual, "configurable": true})
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
@@ -404,8 +418,11 @@ func testRunAPIKeyBootstrapInitForwardsInboundMode(t *testing.T, mode string) {
 		Global:      true,
 		InboundMode: mode, // canonical wire form post-validation
 	})
-	if err != nil {
-		t.Fatalf("runAPIKeyBootstrapInit: %v", err)
+	if (err != nil) != wantFailure {
+		t.Fatalf("explicit mode result: %v, want failure=%t", err, wantFailure)
+	}
+	if !readSeen {
+		t.Error("explicit mode creation did not read back effective policy")
 	}
 	wire, ok := initBody["inbound_mode"].(string)
 	if !ok {
