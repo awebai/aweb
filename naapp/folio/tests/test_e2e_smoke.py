@@ -723,6 +723,41 @@ def test_real_aw_team_auth_smoke(folio: RunningFolio, aw_workspace: AWWorkspace)
     assert _assert_aw_success(result, context="list documents smoke").strip() == "[]"
 
 
+def test_local_member_installs_folio_without_global_identity_metadata(
+    folio: RunningFolio, aw_workspace: AWWorkspace, tmp_path: Path,
+) -> None:
+    controller = _provision_team(aw_workspace)
+    assert folio.server_origin is not None and folio.server_env is not None
+    aw_workspace.env["AWEB_URL"] = folio.server_origin
+    invite = _run_aw_json(
+        aw_workspace, "id", "team", "invite", "--namespace", controller.namespace,
+        "--team", controller.team, "--member-local",
+    )
+    member_path = tmp_path / "local-member"
+    member_path.mkdir()
+    # A same-machine controller invite uses the real controller and AWID. The
+    # member owns a fresh signing key and certificate, with no global metadata.
+    workspace = AWWorkspace(path=member_path, env=dict(aw_workspace.env))
+    _configure_folio_client(workspace, folio)
+    joined = _run_aw_json(workspace, "id", "team", "accept-invite", invite["token"], "--local", "--name", "bob")
+    assert not (member_path / ".aw" / "identity.yaml").exists()
+    assert (member_path / ".aw" / "signing.key").is_file()
+    _run_aw(workspace, "workspace", "connect", "--service", folio.server_origin, "--team", controller.team_id)
+    cert = _run_aw_json(workspace, "id", "cert", "show")
+    member = replace(controller, workspace=workspace, alias="bob", address="",
+                     did_key=str(cert["member_did_key"]), certificate_id=str(joined["certificate_id"]))
+    _publish_team_server(controller, folio.server_origin)
+    _grant_install_admin(member, folio.server_env)
+    installed = _run_aw_json(workspace, "plugin", "install", folio.origin)
+    assert installed["approved"], installed
+    receipt = _aw_json(_aw_request(member, "GET", folio.server_origin + "/v1/apps/installed?team_id=" + member.team_id), context="local member installation")
+    assert any(app["app_id"] == folio.app_id and app["state"] == "active"
+               and app["installation_id"] and app["digest"] and app["origin_verified"]
+               for app in receipt["apps"]), receipt
+    result = _aw_request(member, "GET", folio.origin + "/v1/documents")
+    assert _assert_aw_success(result, context="local member Folio tools").strip() == "[]"
+
+
 def test_private_team_member_authenticates_without_the_awid_service_token(
     folio_without_awid_service_token: RunningFolio, aw_workspace: AWWorkspace
 ) -> None:

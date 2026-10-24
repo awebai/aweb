@@ -1,19 +1,23 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -62,6 +66,19 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 
 	const apiKey = "aw_sk_test_ephemeral"
 
+	// Exercise plugin management on the actual local bootstrap state, rather
+	// than a resident fixture that supplies a global identity.yaml.
+	var manifest []byte
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !serveNoManifestCatalog(w, r) {
+			_, _ = w.Write(manifest)
+		}
+	}))
+	defer app.Close()
+	manifest = []byte(appTestManifest(app.URL, "/v1/things/{thing_id}"))
+	installation := installationWireFixture(t, func() []byte { return manifest })
+	var installPosts atomic.Int32
+
 	teamPub, teamKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
@@ -76,6 +93,43 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/apps/") {
+			cert := requireCertificateAuthForTest(t, r)
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			payload := requestSigningPayloadForTest(t, r, body)
+			auth := strings.Fields(r.Header.Get("Authorization"))
+			var signature []byte
+			if len(auth) == 3 {
+				signature, _ = base64.RawStdEncoding.DecodeString(auth[2])
+			}
+			publicKey, _ := base64.StdEncoding.DecodeString(initBody["public_key"].(string))
+			if len(auth) != 3 || auth[1] != cert.MemberDIDKey || cert.Team != "backend:acme.com" || cert.IdentityScope != awid.IdentityModeLocal || !ed25519.Verify(publicKey, payload, signature) {
+				t.Error("installation did not use the bootstrapped local member's certificate and signing key")
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			if r.Method == http.MethodPost {
+				installPosts.Add(1)
+			}
+			// The wire fixture is mounted beneath the bootstrap service's /api.
+			mounted := r.Clone(r.Context())
+			mounted.URL.Path = strings.TrimPrefix(r.URL.Path, "/api")
+			if installation(w, mounted) {
+				return
+			}
+		}
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/identity/grants" {
+			http.NotFound(w, r)
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/workspaces/init":
 			initAuthHeader = strings.TrimSpace(r.Header.Get("Authorization"))
@@ -217,6 +271,40 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 	}
 	if containsStringUnderTree(t, filepath.Join(tmp, ".aw"), apiKey) {
 		t.Fatal("AWEB_API_KEY was written to disk")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	bin := filepath.Join(t.TempDir(), awBinaryNameForTest())
+	buildAwBinary(t, ctx, bin)
+	invoke := func(args ...string) []byte {
+		t.Helper()
+		command := exec.CommandContext(ctx, bin, append([]string{"--json"}, args...)...)
+		command.Dir = tmp
+		command.Env = append(testCommandEnv(tmp), "AW_HOME="+filepath.Join(tmp, "host"), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AW_NO_UPDATE_CHECK=1")
+		out, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+		return out
+	}
+	out := invoke("plugin", "install", app.URL)
+	if installPosts.Load() != 1 {
+		t.Fatalf("local member install reported success without server registration: POSTs=%d output=%s", installPosts.Load(), out)
+	}
+	catalog, err := loadAppApprovals(filepath.Join(tmp, ".aw"))
+	if err != nil || catalog.Installations["backend:acme.com"]["testapp"].InstallationID != "fixture-testapp" {
+		t.Fatalf("missing local member installation approval: %v %s", err, out)
+	}
+	// A selected external local home uses the same principal for management.
+	invoke("--identity-home", filepath.Join(tmp, ".aw"), "plugin", "update", "testapp")
+	invoke("--identity-home", filepath.Join(tmp, ".aw"), "plugin", "remove", "testapp")
+	catalog, err = loadAppApprovals(filepath.Join(tmp, ".aw"))
+	if err != nil || len(catalog.Installations["backend:acme.com"]) != 0 {
+		t.Fatalf("remove retained approval: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("management must not promote the local identity: %v", err)
 	}
 }
 
