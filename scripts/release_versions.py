@@ -228,7 +228,7 @@ def require_final_promotion(root: Path, tag: str, final_commit: str) -> str | No
     for path, old, new in changes:
         normalized = _normalize_manifest(old, path, promotions) if _manifest(path) else _normalize_lock(old, new, path, promotions)
         if normalized != new:
-            raise VersionRefusal(f"{path}: changes beyond version promotion or promoted dependency pins/floors")
+            raise VersionRefusal(f"{path}: changes beyond version promotion or exact promoted pins or floors")
     print(f"Source identity matches {rc_tag} plus version promotion only; "
           "the coordinator must separately verify the Cloud green receipt for that exact RC before final tagging.")
     return rc_tag
