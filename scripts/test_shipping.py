@@ -43,6 +43,14 @@ def command(root: Path, *argv: str) -> str:
 
 
 class TagContractTest(unittest.TestCase):
+    def test_next_patch_version_ignores_rc_tags(self):
+        temporary, root = self.repository()
+        self.addCleanup(temporary.cleanup)
+        command(root, "git", "tag", "server-v1.2.3")
+        command(root, "git", "tag", "server-v99.0.0rc10")
+        self.assertEqual(command(root, sys.executable, str(ROOT / "scripts/next_tag_version.py"),
+                                 "server-v"), "1.2.4")
+
     def repository(self):
         temporary = tempfile.TemporaryDirectory()
         root = Path(temporary.name)
