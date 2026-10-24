@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -43,6 +44,41 @@ def command(root: Path, *argv: str) -> str:
 
 
 class TagContractTest(unittest.TestCase):
+    def test_federation_wheel_mode_accepts_rc_before_docker_build(self):
+        # Execute the real journey's input checks; intercept only Docker so no
+        # service, network or registry is used by this focused regression.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bind = root / "bind"
+            bind.mkdir()
+            binary = root / "docker"
+            reached = root / "build-reached"
+            binary.write_text('#!/bin/bash\nif [[ "$1" == compose && " $* " == *" build "* ]]; then\n'
+                              '  echo build > "$BUILD_REACHED"; exit 86\nfi\nexit 0\n')
+            binary.chmod(0o755)
+            for version in ("1.27.34rc1", "1.27.34", "1.27.34rc0", "1.27.34rcbad", "1.27.34-rc.1"):
+                with self.subTest(version=version):
+                    wheel = root / f"aweb-{version}-py3-none-any.whl"
+                    wheel.write_bytes(b"validation-only fixture; Docker build is intercepted")
+                    reached.unlink(missing_ok=True)
+                    env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
+                               BUILD_REACHED=str(reached), AWEB_DOCKER_BIND_ROOT=str(bind),
+                               AWEB_FED_E2E_SERVER_MODE="wheel", AWEB_FED_E2E_KEEP="0",
+                               AWEB_FED_E2E_BUILD="1", AWEB_FED_E2E_MCP_VERSION="1.0.0")
+                    for side in ("ALPHA", "BETA"):
+                        env[f"AWEB_{side}_WHEEL"] = str(wheel)
+                        env[f"AWEB_{side}_WHEEL_SHA256"] = hashlib.sha256(wheel.read_bytes()).hexdigest()
+                        env[f"AWEB_{side}_VERSION"] = version
+                    result = subprocess.run(["bash", str(ROOT / "scripts/e2e-oss-federation.sh")],
+                                            env=env, text=True, capture_output=True)
+                    if version in ("1.27.34rc1", "1.27.34"):
+                        self.assertTrue(reached.exists(), result.stdout + result.stderr)
+                        self.assertEqual(result.returncode, 86, result.stdout + result.stderr)
+                    else:
+                        self.assertFalse(reached.exists(), result.stdout + result.stderr)
+                        self.assertIn("wheel version", result.stderr)
+                        self.assertNotEqual(result.returncode, 0)
+
     def test_next_patch_version_ignores_rc_tags(self):
         temporary, root = self.repository()
         self.addCleanup(temporary.cleanup)
