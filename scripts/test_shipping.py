@@ -411,6 +411,78 @@ sdist = { url = "https://files.example/unrelated.tar.gz", hash = "sha256:unchang
             command(root, "git", "tag", tag)
             self.assertEqual(PUBLISH.tag_identity(root, tag)[2], source)
 
+    def floor_repository(self):
+        root = self.repository()
+        for directory in ("server", "naapp-lib/testing"):
+            path = root / directory / "pyproject.toml"
+            path.write_text(path.read_text().replace("==", ">="))
+        path = root / "server/pyproject.toml"
+        path.write_text(path.read_text() + '\n[project.optional-dependencies]\n'
+                        'testing = [\'Awid_Service[testing]  >=  0.5.32rc1 ; python_version >= "3.12"\']\n'
+                        '[dependency-groups]\n'
+                        'dev = ["aweb-naapp[egress,hooks]>=0.4.1rc1", "unrelated>=1.0.0rc1"]\n')
+        lock = root / "server/uv.lock"
+        lock.write_text(lock.read_text().replace('specifier = "==0.5.32rc1"',
+                                                'specifier = ">=0.5.32rc1"'))
+        self.commit(root)
+        command(root, "git", "tag", "-f", "server-v1.27.34rc1")
+        return root
+
+    def assert_both_accept(self, root):
+        self.commit(root)
+        source, _ = CANDIDATE.validate_tags(root, ["server-v1.27.34"])
+        command(root, "git", "tag", "server-v1.27.34")
+        self.assertEqual(PUBLISH.tag_identity(root, "server-v1.27.34")[2], source)
+
+    def test_promotes_floors_in_project_optional_and_group_dependencies(self):
+        root = self.floor_repository()
+        self.promote(root)
+        self.assert_both_accept(root)
+
+    def test_promotes_uv_lock_requires_dist_floor_specifiers(self):
+        root = self.repository()
+        lock = root / "server/uv.lock"
+        lock.write_text(lock.read_text().replace('specifier = "==0.5.32rc1"',
+                                                'specifier = ">=0.5.32rc1"'))
+        self.commit(root)
+        command(root, "git", "tag", "-f", "server-v1.27.34rc1")
+        self.promote(root)
+        self.assert_both_accept(root)
+
+    def test_floor_promotion_does_not_allow_other_dependency_or_metadata_changes(self):
+        for change in ("different-final", "unpromoted", "metadata", "spacing", "marker", "extras"):
+            with self.subTest(change=change):
+                root = self.floor_repository()
+                self.promote(root)
+                path = root / "server/pyproject.toml"
+                value = path.read_text()
+                before, after = {
+                    "different-final": ("awid-service>=0.5.32", "awid-service>=0.5.33"),
+                    "unpromoted": ("unrelated>=1.0.0rc1", "unrelated>=1.0.0"),
+                    "metadata": ('entry = "aweb:main"', 'entry = "aweb:other"'),
+                    "spacing": ("  >=  0.5.32", ">=0.5.32"),
+                    "marker": ('python_version >= "3.12"', 'python_version >= "3.13"'),
+                    "extras": ("[egress,hooks]", "[egress]"),
+                }[change]
+                self.assertIn(before, value)
+                path.write_text(value.replace(before, after))
+                self.assert_both_refuse(root, "beyond version promotion")
+
+    def test_other_operators_or_another_rc_floor_refuse(self):
+        for operator, rc in ((">", "0.5.32rc1"), ("~=", "0.5.32rc1"),
+                             ("<=", "0.5.32rc1"), (">=", "0.5.32rc2")):
+            with self.subTest(operator=operator, rc=rc):
+                root = self.repository()
+                path = root / "server/pyproject.toml"
+                path.write_text(path.read_text().replace("awid-service==0.5.32rc1",
+                                                        "awid-service" + operator + rc))
+                self.commit(root)
+                command(root, "git", "tag", "-f", "server-v1.27.34rc1")
+                self.promote(root)
+                path.write_text(path.read_text().replace("awid-service" + operator + rc,
+                                                        "awid-service" + operator + "0.5.32"))
+                self.assert_both_refuse(root, "beyond version promotion")
+
     def test_source_diff_uses_the_whole_tree_not_just_the_final_commit(self):
         root = self.repository()
         (root / "implementation.py").write_text("value = 2\n")
