@@ -194,6 +194,7 @@ def _wait_http_ok(
 ) -> None:
     deadline = time.monotonic() + timeout_seconds
     last_error: Exception | None = None
+    last_response: tuple[int, str] | None = None
     while time.monotonic() < deadline:
         try:
             response = httpx.get(
@@ -202,10 +203,11 @@ def _wait_http_ok(
             )
             if response.status_code < 500:
                 return
+            last_response = (response.status_code, response.text[:512])
         except Exception as exc:  # pragma: no cover - only used for diagnostics
             last_error = exc
         time.sleep(0.25)
-    raise RuntimeError(f"timed out waiting for {url}: {last_error}")
+    raise RuntimeError(f"timed out waiting for {url}: error={last_error}, response={last_response}")
 
 
 def _compose(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
@@ -364,6 +366,7 @@ def _running_folio(
         proxy.socket = tls.wrap_socket(proxy.socket, server_side=True)
     thread = threading.Thread(target=proxy.serve_forever, name="folio-e2e-proxy", daemon=True)
     thread.start()
+    setup_error: Exception | None = None
     try:
         ca_file = certificates.ca_file if certificates else None
         with pytest.MonkeyPatch.context() as patch:
@@ -378,7 +381,11 @@ def _running_folio(
                 bundle.write_bytes((Path(previous).read_bytes() if previous else b"") + ca_file.read_bytes())
                 patch.setenv("SSL_CERT_FILE", str(bundle))
                 patch.setenv("GODEBUG", "x509sslcertoverrideplatform=1")
-            _wait_http_ok(f"{proxy_origin}/health", ca_file=ca_file)
+            try:
+                _wait_http_ok(f"{proxy_origin}/health", ca_file=ca_file)
+            except Exception as exc:
+                setup_error = exc
+                raise
             yield RunningFolio(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy, ca_file=ca_file, app_id=app_id)
     finally:
         proxy.shutdown()
@@ -391,14 +398,18 @@ def _running_folio(
             proc.kill()
             proc.wait(timeout=10)
         failed = proc.returncode not in (0, -15, -9, None)
-        stdout = proc.stdout.read() if failed and proc.stdout else ""
-        stderr = proc.stderr.read() if failed and proc.stderr else ""
+        show_logs = failed or setup_error is not None
+        stdout = proc.stdout.read() if show_logs and proc.stdout else ""
+        stderr = proc.stderr.read() if show_logs and proc.stderr else ""
         if proc.stdout:
             proc.stdout.close()
         if proc.stderr:
             proc.stderr.close()
-        if failed:
-            raise RuntimeError(f"uvicorn exited with {proc.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}")
+        if show_logs:
+            raise RuntimeError(
+                f"uvicorn exited with {proc.returncode}; setup error: {setup_error}\n"
+                f"stdout:\n{stdout}\nstderr:\n{stderr}"
+            ) from setup_error
 
 
 @pytest.fixture(scope="module")
