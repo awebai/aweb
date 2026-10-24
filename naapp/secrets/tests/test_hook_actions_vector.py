@@ -12,7 +12,8 @@ import json
 from pathlib import Path
 
 import pytest
-from aweb_naapp.hooks.catalog import load_catalog
+from aweb_naapp.hooks.catalog import PayloadRefused, load_catalog
+from aweb_naapp.runtime.audit import AuditKind
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 CATALOG_BYTES = (AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json").read_bytes()
@@ -90,6 +91,12 @@ def test_authorities_equal_the_catalog_enum():
     assert set(TABLE["authorities"]) == set(GOVERNANCE_HOOK["fields"]["authority"]["enum"])
 
 
+def test_governance_acts_cover_the_complete_catalog_enum():
+    acts = [row["act"] for row in TABLE["governance_acts"]]
+    assert len(acts) == len(set(acts))
+    assert set(acts) == set(GOVERNANCE_HOOK["fields"]["act"]["enum"])
+
+
 def test_example_secret_kinds_are_use_approval_kinds():
     kinds = {
         example["secret_kind"]
@@ -98,3 +105,92 @@ def test_example_secret_kinds_are_use_approval_kinds():
         if "secret_kind" in example
     }
     assert kinds and kinds <= set(USE_APPROVAL["secret_kinds"])
+
+
+def test_b3_lifecycle_maps_every_approver_kind_once():
+    kinds = [row["audit_kind"] for row in TABLE["b3_lifecycle"]]
+    assert len(kinds) == len(set(kinds))
+    assert set(kinds) == {kind.value for kind in AuditKind if kind.name.startswith("APPROVER_")}
+    assert {row["audit_kind"] for row in TABLE["b3_lifecycle"] if row["hook"] is None} == {
+        "approver_logged_in",
+        "approver_enrolment_reissued",
+    }
+    for row in TABLE["b3_lifecycle"]:
+        if row["hook"] is None:
+            assert row["exclusion"] and "example" not in row
+
+
+@pytest.mark.parametrize("row", TABLE["b3_lifecycle"], ids=lambda row: row["audit_kind"])
+def test_b3_governance_payloads_follow_the_catalog_and_availability_rule(row):
+    if row["hook"] is None:
+        return
+    assert row["hook"] == GOVERNANCE
+    payload = row["example"]
+    CATALOG.validate(GOVERNANCE, payload)
+    assert CATALOG.is_audit_critical(GOVERNANCE, payload) is (payload["direction"] == "widening")
+
+
+def test_b3_completion_examples_preserve_original_authority_and_candidate_states():
+    rows = {row["audit_kind"]: row["example"] for row in TABLE["b3_lifecycle"] if row["hook"]}
+    assert rows["approver_redesignated"]["act"] == "credential.recovered"
+    assert rows["approver_enrolled"]["act"] == "credential.enrolled"
+    assert (
+        rows["approver_enrolled"]["owner_act_sha256"]
+        == rows["approver_designated"]["owner_act_sha256"]
+    )
+    scheduled = rows["approver_contact_change_by_owner_scheduled"]
+    proven = rows["approver_contact_proven"]
+    cancelled = rows["approver_contact_change_cancelled"]
+    assert scheduled["approval_evidence_sha256"] == proven["approval_evidence_sha256"]
+    assert scheduled["approval_id"] == proven["approval_id"]
+    assert cancelled["approval_evidence_sha256"] != proven["approval_evidence_sha256"]
+    assert "approval_id" not in cancelled
+    contacts = [
+        payload for payload in rows.values() if payload.get("resource_type") == "pending_contact"
+    ]
+    assert len(contacts) == 4
+    assert len({payload["resource_ref"] for payload in contacts}) == 1
+    assert proven["before_ref"] == scheduled["after_ref"]
+    assert cancelled["before_ref"] == proven["after_ref"]
+    assert len({scheduled["after_ref"], proven["after_ref"], cancelled["after_ref"]}) == 3
+    assert {payload["reason_code"] for payload in contacts} == {
+        "contact_change_scheduled",
+        "contact_proven",
+        "contact_change_cancelled",
+    }
+
+
+@pytest.mark.parametrize("case", TABLE["b3_payload_refusals"], ids=lambda case: case["name"])
+def test_b3_invalid_payload_variants_are_refused(case):
+    row = next(row for row in TABLE["b3_lifecycle"] if row["audit_kind"] == case["audit_kind"])
+    payload = dict(row["example"])
+    payload.update(case["set"])
+    for field in case["remove"]:
+        payload.pop(field)
+    with pytest.raises(PayloadRefused):
+        CATALOG.validate(GOVERNANCE, payload)
+
+
+@pytest.mark.parametrize(
+    "row", TABLE["change_governance"], ids=lambda row: row["kind"] + "/" + row["op"]
+)
+def test_change_item_governance_examples_use_actual_approval_and_resource_identity(row):
+    payload = row["example"]
+    CATALOG.validate(GOVERNANCE, payload)
+    assert CATALOG.is_audit_critical(GOVERNANCE, payload)
+    assert payload["authority"] == "passkey_session"
+    assert payload["approval_id"] and payload["approval_evidence_sha256"]
+    assert "policy_digest" not in payload
+    if row["kind"] == "secret":
+        assert payload["act"] == "resource.changed"
+        assert payload["resource_type"] == "secret"
+        assert payload["before_ref"] != payload["after_ref"]
+    elif row["kind"] == "grant_template":
+        assert payload["act"] == ("grant.created" if row["op"] == "create" else "grant.changed")
+        assert payload["resource_type"] == "grant_template"
+        assert payload["resource_ref"] == "gtp_sts-derived"
+    else:
+        assert row["kind"] == "change_set_policy"
+        assert payload["act"] == "policy.changed"
+        assert payload["resource_type"] == "change_set_policy"
+        assert payload["resource_ref"] == "inst_5d2a9c31"

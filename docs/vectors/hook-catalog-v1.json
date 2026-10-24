@@ -594,6 +594,7 @@
             "grant.changed",
             "grant.revoked",
             "resource.created",
+            "resource.changed",
             "resource.version_added",
             "resource.version_observed",
             "resource.disabled",
@@ -699,6 +700,29 @@
           "when": {
             "field": "act",
             "in": [
+              "resource.changed"
+            ]
+          },
+          "require": [
+            "resource_type",
+            "resource_ref",
+            "before_ref",
+            "after_ref"
+          ],
+          "require_equals": {
+            "resource_type": "secret"
+          },
+          "require_in": {
+            "authority": [
+              "owner_act",
+              "passkey_session"
+            ]
+          }
+        },
+        {
+          "when": {
+            "field": "act",
+            "in": [
               "hook_delivery.cancelled"
             ]
           },
@@ -751,6 +775,7 @@
               "grant.changed",
               "grant.revoked",
               "resource.created",
+              "resource.changed",
               "resource.version_added",
               "resource.version_observed",
               "resource.disabled",
@@ -891,7 +916,8 @@
         "installation.disabled": "narrowing",
         "installation.enabled": "widening",
         "resource.version_observed": "narrowing",
-        "hook_delivery.cancelled": "narrowing"
+        "hook_delivery.cancelled": "narrowing",
+        "resource.changed": "widening"
       }
     },
     "post-manifest-command-hook": {
@@ -2464,6 +2490,35 @@
         "dispatch_state": "reconciled_unknown",
         "dispatch_id": "dsp_240bbWTk7JDOszX8Q0TnVw"
       }
+    },
+    {
+      "name": "secret_metadata_revision",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.changed",
+        "direction": "widening",
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "4b949c130904506119a31ad2ca94bc9a97f56be914676fe08a5de594ea4c96bd",
+        "approval_id": "apr_c2",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sm_437266890cda4a479baf146073c83dc5",
+        "after_ref": "sm_c36d958a06f34b3a8af72b1694ef5f22"
+      }
+    },
+    {
+      "name": "secret_metadata_revision_owner_act",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.changed",
+        "direction": "widening",
+        "authority": "owner_act",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sm_437266890cda4a479baf146073c83dc5",
+        "after_ref": "sm_c36d958a06f34b3a8af72b1694ef5f22",
+        "owner_act_sha256": "9e370f6b0fccdcc94713687057c72f6a9818bb99400247f262feea1ff19d44e9"
+      }
     }
   ],
   "negative_cases": [
@@ -3735,6 +3790,152 @@
       },
       "error": "rule_violation",
       "field": "cancelled_seq_first"
+    },
+    {
+      "name": "secret_metadata_revision_wrong_direction",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.changed",
+        "direction": "narrowing",
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "4b949c130904506119a31ad2ca94bc9a97f56be914676fe08a5de594ea4c96bd",
+        "approval_id": "apr_c2",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sm_437266890cda4a479baf146073c83dc5",
+        "after_ref": "sm_c36d958a06f34b3a8af72b1694ef5f22"
+      },
+      "error": "direction_mismatch",
+      "field": "direction"
+    },
+    {
+      "name": "secret_metadata_revision_missing_before",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.changed",
+        "direction": "widening",
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "4b949c130904506119a31ad2ca94bc9a97f56be914676fe08a5de594ea4c96bd",
+        "approval_id": "apr_c2",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "after_ref": "sm_c36d958a06f34b3a8af72b1694ef5f22"
+      },
+      "error": "rule_violation",
+      "field": "before_ref"
+    },
+    {
+      "name": "secret_metadata_revision_missing_after",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.changed",
+        "direction": "widening",
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "4b949c130904506119a31ad2ca94bc9a97f56be914676fe08a5de594ea4c96bd",
+        "approval_id": "apr_c2",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sm_437266890cda4a479baf146073c83dc5"
+      },
+      "error": "rule_violation",
+      "field": "after_ref"
+    },
+    {
+      "name": "secret_metadata_revision_equal_states",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.changed",
+        "direction": "widening",
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "4b949c130904506119a31ad2ca94bc9a97f56be914676fe08a5de594ea4c96bd",
+        "approval_id": "apr_c2",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sm_437266890cda4a479baf146073c83dc5",
+        "after_ref": "sm_437266890cda4a479baf146073c83dc5"
+      },
+      "error": "rule_violation",
+      "field": "after_ref"
+    },
+    {
+      "name": "secret_metadata_revision_wrong_resource_type",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.changed",
+        "direction": "widening",
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "4b949c130904506119a31ad2ca94bc9a97f56be914676fe08a5de594ea4c96bd",
+        "approval_id": "apr_c2",
+        "resource_type": "grant",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sm_437266890cda4a479baf146073c83dc5",
+        "after_ref": "sm_c36d958a06f34b3a8af72b1694ef5f22"
+      },
+      "error": "rule_violation",
+      "field": "resource_type"
+    },
+    {
+      "name": "secret_metadata_revision_team_cert",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.changed",
+        "direction": "widening",
+        "authority": "team_cert",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sm_437266890cda4a479baf146073c83dc5",
+        "after_ref": "sm_c36d958a06f34b3a8af72b1694ef5f22"
+      },
+      "error": "rule_violation",
+      "field": "authority"
+    },
+    {
+      "name": "secret_metadata_revision_backend_observation",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.changed",
+        "direction": "widening",
+        "authority": "backend_observation",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sm_437266890cda4a479baf146073c83dc5",
+        "after_ref": "sm_c36d958a06f34b3a8af72b1694ef5f22"
+      },
+      "error": "rule_violation",
+      "field": "authority"
+    },
+    {
+      "name": "secret_metadata_revision_outbox_state",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.changed",
+        "direction": "widening",
+        "authority": "outbox_state",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sm_437266890cda4a479baf146073c83dc5",
+        "after_ref": "sm_c36d958a06f34b3a8af72b1694ef5f22"
+      },
+      "error": "rule_violation",
+      "field": "authority"
+    },
+    {
+      "name": "secret_metadata_revision_cancellation_fields",
+      "hook": "post-governance-hook",
+      "payload": {
+        "act": "resource.changed",
+        "direction": "widening",
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "4b949c130904506119a31ad2ca94bc9a97f56be914676fe08a5de594ea4c96bd",
+        "approval_id": "apr_c2",
+        "resource_type": "secret",
+        "resource_ref": "sec_19ab42",
+        "before_ref": "sm_437266890cda4a479baf146073c83dc5",
+        "after_ref": "sm_c36d958a06f34b3a8af72b1694ef5f22",
+        "source_seq_first": 1
+      },
+      "error": "rule_violation",
+      "field": "source_seq_first"
     }
   ]
 }

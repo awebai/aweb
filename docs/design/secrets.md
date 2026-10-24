@@ -1867,12 +1867,91 @@ The catalog fixes its act enum and fixes each act's direction:
 | --- | --- |
 | owner and approver designation and revocation (B3's audit interface) | `role.designated`, `role.revoked` |
 | passkey and contact enrolment, recovery and revocation | `credential.enrolled`, `credential.recovered`, `credential.revoked` |
-| grant lifecycle | `grant.created`, `grant.changed`, `grant.revoked` |
-| secret, destination, operation and job lifecycle | `resource.created`, `resource.version_added`, `resource.replaced`, `resource.disabled`, `resource.enabled` |
+| grant lifecycle; grant-template creation/update | `grant.created`, `grant.changed`, `grant.revoked` (templates use creation/change only) |
+| secret, destination, operation and job lifecycle | `resource.created`, `resource.changed`, `resource.version_added`, `resource.replaced`, `resource.disabled`, `resource.enabled` |
 | validated same-reference backend version observation (§5.3) | `resource.version_observed` |
-| policy changes | `policy.changed` |
+| policy changes; relaxation of change-set four-eyes | `policy.changed` |
 | runners | `runner.registered`, `runner.deregistered` |
 | kill switch | `installation.disabled`, `installation.enabled` |
+
+The following change/1 cases refine those families. Every row is fixed
+widening and uses the actually admitted owner APPROVE proof/approval
+association with the identity-free system actor. The hook's general
+`owner_act` authority does not bypass change/1's passkey-confirmed admission.
+
+| Change item | Hook receipt and identity |
+| --- | --- |
+| `secret` / `update` | `resource.changed`, `resource_type: secret`, `resource_ref: secret_id`; distinct persisted opaque `before_ref`/`after_ref` bind the locked metadata states, including descriptive-only or `approve_only` edits. Never a value addition or value-version increment. |
+| `grant_template` / `create` | `grant.created`, `resource_type: grant_template`, `resource_ref: grant_template_id`; records a template, not issuance of a live grant. |
+| `grant_template` / `update` | `grant.changed`, same template type/identity, including a tightening; no fabricated `policy_digest`. |
+| `change_set_policy` / `update` | `policy.changed`, `resource_type: change_set_policy`, `resource_ref: installation_id`; relaxes four-eyes and has no `policy_digest`, because it is not a content-addressed dispatch Policy. |
+
+These effects and their signed enqueue commit atomically under the widening
+gate. Existing `resource.version_added` remains reserved for the native-value
+version path; metadata-state references never encode a value fingerprint,
+provider version or raw metadata. The consumer vector's `change_governance`
+rows make the four cases explicit.
+
+**B3 stages.** The following is exhaustive for B3's `APPROVER_*` audit kinds.
+It refines the credential families above; a sink must not infer a hook from
+the family alone. Approval and dispatch audit kinds follow the use/change
+mapping for their actual effect, not this credential table.
+
+| B3 audit kind | Governance receipt | Recorded effect and authority |
+| --- | --- | --- |
+| `APPROVER_DESIGNATED` | `role.designated`, widening | First designation, using its consumed owner act or actually admitted owner APPROVE evidence. |
+| `APPROVER_REDESIGNATED` | `credential.recovered`, widening | Recovery by re-designation, using the consumed recovery owner act. Retain the new subject and recovery effective time. |
+| `APPROVER_ENROLLED` | `credential.enrolled`, widening | Actual new key, including one enrolled after recovery, under the immutable original designation/recovery authorization. State TOFU honestly; registration is not an existing-key assertion. |
+| `APPROVER_ENROLMENT_REISSUED` | No governance hook; retain local operational audit | Replaces an unused enrolment link for the same current designation/contact; grants no new designation or credential. |
+| `APPROVER_RETIRED` | `role.revoked`, narrowing | Ends the affected designation, under the actual authorized containment actor/evidence. |
+| `APPROVER_PASSKEY_REVOKED` | `credential.revoked`, narrowing | Ends the affected key, under the actual authorized containment actor/evidence. If losing the last key also emits `APPROVER_RETIRED`, that distinct receipt records the ended designation. |
+| `APPROVER_CONTACT_CHANGE_SCHEDULED` | `credential.enrolled`, widening | Creates the pending contact candidate, using the actual retained `contact_change` assertion. |
+| `APPROVER_CONTACT_CHANGE_BY_OWNER_SCHEDULED` | `credential.enrolled`, widening | Creates the pending contact candidate, using the actually admitted owner's APPROVE evidence. |
+| `APPROVER_CONTACT_PROVEN` | `credential.enrolled`, widening | Makes that candidate eligible to take effect at its retained effective time, under its immutable original scheduling authorization. The proof token establishes reachability, not fresh owner/passkey authority. |
+| `APPROVER_CONTACT_CHANGE_CANCELLED` | `credential.revoked`, narrowing | Cancels only that pending candidate, using the actual retained `contact_cancel` assertion; never describes revocation of the current contact, an existing key or the role. |
+| `APPROVER_LOGGED_IN` | No governance hook; retain local operational audit | Authentication to the existing scope, not a new designation or credential. Later governance can reference its retained assertion only under the existing session authorization rules. |
+
+Recovery re-designation and the later key enrolment are different effects:
+emit `credential.recovered` only for `APPROVER_REDESIGNATED`, and
+`credential.enrolled` for `APPROVER_ENROLLED`, including after recovery.
+Do not emit a second recovery receipt for that enrolment.
+
+Every pending-contact receipt has `resource_type: pending_contact` and the
+same persisted random opaque `resource_ref` for that candidate. Scheduling
+uses `reason_code: contact_change_scheduled`; proof uses `contact_proven`;
+cancellation uses `contact_change_cancelled`. Each transition has a distinct
+opaque `after_ref` for its resulting state, with `before_ref` naming the prior
+state when present. Neither reference derives from a contact, token, key or
+credential identifier. Retain the candidate, its contact binding, state and
+`effective_at` privately. Proof cannot shorten the delay, and an unproven
+candidate never takes effect. A later candidate receives a different reference;
+proof or cancellation for a stale, superseded or different candidate refuses.
+
+Enrolment and contact proof follow the shared
+[completion-association rule](../hook-events.md#post-governance-hook).
+Persist the original consumed owner act, admitted owner APPROVE proof or
+verified self-contact-change assertion, and its exact app/team/installation,
+subject/scope/contact and one-use completion
+binding before the ceremony begins. Reuse its original commitment and frozen
+context, never an actor string, evidence-ref hash, new-key assertion, live
+authorization lookup or a second nonce consumption. An original APPROVE
+commitment proves authorization of designation or the contact change; the
+signed producer attests the subsequent completion. Its envelope actor is
+exactly `{"authority_mode":"system","attestations":[]}`. Direct owner-act
+designation/recovery still records the verified owner-act actor; app-local
+passkey scheduling/cancellation uses the system actor and its real proof.
+Containment retains its actual authorized actor and evidence. Raw contacts,
+contact hashes, tokens and credential IDs stay out of every hook payload.
+
+Scheduling, proof and key enrolment are widening and each gates at its own
+commit. Prepare the registration view before entering B3's transaction; a
+stale view refuses enqueue without network under locks. State transition,
+one-use consumption and event insertion are atomic; any local failure rolls
+the transition back. A successful earlier audit receipt grants no bypass.
+Cancellation is narrowing and retains the ungated availability rule below.
+The consumer vector records these stages in `b3_lifecycle`; catalog acceptance
+checks payload syntax, while the sink must enforce the retained associations
+and authorization described here.
 
 How audit availability applies to governance acts:
 
