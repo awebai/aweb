@@ -47,7 +47,7 @@ class FixtureSettings(NaappSettings):
 
 
 class AllGranted:
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         return Grant(team_id=team_id, scopes=SCOPES, fresh_until=time.monotonic() + 60,
                      installation_id=None, generation=None)
 

@@ -129,6 +129,7 @@ func init() {
 	initCmd.Flags().StringVar(&initJoinFrom, "join-from", "", "Add an agent to a team by minting one invite from this existing workspace or identity home")
 	initCmd.Flags().StringVar(&initJoinTeam, "join-team", "", "Team ID to use with --join-from when the source has more than one membership")
 	initCmd.Flags().StringVar(&initAdmissionTeamID, "admission-team-id", "", "Add an agent through host human admission for this explicit team ID")
+	initCmd.Flags().String("org", "", "Organization slug or ID for --workspace-team")
 	initCmd.Flags().BoolVar(&initWorkspaceTeam, "workspace-team", false, "Ensure a workspace's default team using explicit --identity-home and --workspace-key")
 	initCmd.Flags().StringVar(&initWorkspaceKey, "workspace-key", "", "OATS canonical format-1 workspace key for --workspace-team")
 	initCmd.Flags().StringVar(&initExpectedAccountID, "expect-account", "", "Expected hosted account ID for workspace-team or admission init")
@@ -510,6 +511,9 @@ func filepathAbs(path string) (string, error) {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	if cmd.Flags().Changed("org") && !initWorkspaceTeam {
+		return usageError("--org requires --workspace-team")
+	}
 	if initRemoveNotifyHook {
 		if len(args) != 0 {
 			return usageError("--remove-notify-hook takes no positional arguments")

@@ -98,6 +98,7 @@ async def test_reads_only_its_own_grant_and_shares_status_cache(installed):
     assert status.digest == IDENTITY.digest
     assert status.origin == IDENTITY.origin
     assert status.state == "active"
+    assert status.installed_at == await stack.aweb_db.fetch_value("SELECT installed_at FROM {{tables.team_app_installs}} WHERE team_id=$1", TEAM)
     assert status.granted_scopes == grant.scopes == frozenset({"notebook:read"})
     assert status.installation_id == grant.installation_id
     assert status.installation_id
@@ -427,3 +428,11 @@ async def test_server_move_discards_cached_grant_and_signs_the_mount_prefix(inst
         json.loads(base64.urlsafe_b64decode(signed + "=" * (-len(signed) % 4)))["path"]
         == "/api/v1/apps/self/grant"
     )
+
+
+@pytest.mark.parametrize("value", [None, "", "not-a-time", "2026-10-23T12:00:00", 123])
+async def test_installed_at_requires_a_typed_utc_timestamp(installed, value):
+    stack, source, _, _ = installed
+    change_answer(stack, installed_at=value)
+    with pytest.raises(GrantUnavailable):
+        await source.status_for(TEAM)

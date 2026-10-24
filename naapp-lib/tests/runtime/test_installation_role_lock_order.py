@@ -21,7 +21,7 @@ PRINCIPAL = roles.PrincipalKey(team_id=TEAM, principal_did="did:aw:member")
 
 
 class AuthorityOutsideTransaction:
-    async def grant_for(self, team_id):
+    async def grant_for(self, team_id, certificate_id=None):
         raise AssertionError("authority reads must precede the transaction")
 
     async def status_for(self, team_id):

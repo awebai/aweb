@@ -136,6 +136,9 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "035_team_app_installation_identity.sql",
         "036_app_installation_management.sql",
         "037_contacts_only.sql",
+        "038_task_revisions.sql",
+        "039_app_task_requests.sql",
+        "040_task_answer_stages.sql",
     ]
 
 

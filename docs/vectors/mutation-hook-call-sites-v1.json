@@ -2,6 +2,21 @@
   "schema": "aweb.mutation-hook-call-sites.v1",
   "call_sites": [
     {
+      "source": "server/src/aweb/coordination/routes/app_tasks.py",
+      "function": "cancel_app_request",
+      "event": "task.comment_added"
+    },
+    {
+      "source": "server/src/aweb/coordination/routes/app_tasks.py",
+      "function": "cancel_app_request",
+      "event": "task.status_changed"
+    },
+    {
+      "source": "server/src/aweb/coordination/routes/app_tasks.py",
+      "function": "create_app_request",
+      "event": "task.created"
+    },
+    {
       "source": "server/src/aweb/coordination/routes/tasks.py",
       "function": "add_comment_route",
       "event": "task.comment_added"
@@ -10,6 +25,16 @@
       "source": "server/src/aweb/coordination/routes/tasks.py",
       "function": "add_dependency_route",
       "event": "task.dependency_added"
+    },
+    {
+      "source": "server/src/aweb/coordination/routes/tasks.py",
+      "function": "answer_task_route",
+      "event": "task.comment_added"
+    },
+    {
+      "source": "server/src/aweb/coordination/routes/tasks.py",
+      "function": "answer_task_route",
+      "event": "task.status_changed"
     },
     {
       "source": "server/src/aweb/coordination/routes/tasks.py",

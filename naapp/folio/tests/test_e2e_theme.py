@@ -57,8 +57,8 @@ def test_theme_wraps_present_page_and_body_team_cannot_cross_scope(
     folio: RunningFolio,
     aw_workspace_factory: Callable[[str], AWWorkspace],
 ) -> None:
-    team_a = _provision_team(aw_workspace_factory("theme-a"), alias="alice")
-    team_b = _provision_team(aw_workspace_factory("theme-b"), alias="bob")
+    team_a = _provision_team(aw_workspace_factory("theme-a"), folio=folio, alias="alice")
+    team_b = _provision_team(aw_workspace_factory("theme-b"), folio=folio, alias="bob")
 
     _create_document(folio, team_a, slug="memo", title="Memo", body="# Plain\n\nA table:\n\n| A | B |\n| - | - |\n| 1 | 2 |")
     no_theme = _mint_present(folio, team_a, slug="memo")
@@ -176,7 +176,7 @@ def test_builtin_aweb_preset_themes_present_page_per_scheme(
     folio: RunningFolio,
     aw_workspace_factory: Callable[[str], AWWorkspace],
 ) -> None:
-    team = _provision_team(aw_workspace_factory("preset"), alias="dev")
+    team = _provision_team(aw_workspace_factory("preset"), folio=folio, alias="dev")
     _create_document(folio, team, slug="brand", title="Brand", body="# Hi\n\nBody")
 
     saved = _put_theme(folio, team, {"preset": "aweb"})

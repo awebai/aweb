@@ -53,7 +53,7 @@ agent-reported, never as mediated fact.
 
 | Hook | Class | Producer | Audit-critical | Fires for |
 | --- | --- | --- | --- | --- |
-| `post-secret-use-hook` | server | an app with an active production | always | Every brokered use of a secret: refusal, approval request and decision, admission, the durable dispatch intent, the result, and an unknown outcome and its reconciliation. |
+| `post-secret-use-hook` | server | an app with an active production | per action/decision (below) | Every brokered use of a secret: refusal, approval request and decision, admission, the durable dispatch intent, the result, and an unknown outcome and its reconciliation. |
 | `post-governance-hook` | server | an app with an active production | widening acts only | App-side governance: roles, credentials, grants, resources, policy, runners and the installation-wide switch. The catalog fixes each act as widening or narrowing. |
 | `post-manifest-command-hook` | server | an app with an active production, for its own tools | never | Every admitted mutation tool call and every attributable refusal. Reads fire only for tools the production lists in `reads`. |
 | `post-mutation-hook` | server | the core server | never | The core mutations listed under [`post-mutation-hook`](#post-mutation-hook). |
@@ -68,7 +68,9 @@ catalog records this in `precedence`.
 **Versioning.** A binding names `(catalog id, catalog version, hook)`. Any change
 to a payload, an addition included, is a new catalog version. A binding that
 names an unknown catalog id, version or hook cannot be activated, and a consumer
-refuses its events. Blocking `pre-*` hooks do not exist in version 1.
+refuses its events. Decision 93 permits the explicitly reviewed pre-deployment
+re-freeze documented in [the terminal amendment](hook-terminal-delivery.md#deliberate-catalog-re-freeze-and-implementation-evidence); it is not a general versioning exception.
+Blocking `pre-*` hooks do not exist in version 1.
 
 ## Payloads
 
@@ -227,7 +229,7 @@ direction, and a consumer refuses an event whose `direction` differs:
 
 | Widening | Narrowing |
 | --- | --- |
-| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled` |
+| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled`, `hook_delivery.cancelled` |
 
 `grant.changed` is widening whatever the change, so a change that only narrows
 a grant is still gated. A producer that must contain without waiting uses
@@ -245,7 +247,12 @@ strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
 - `backend_observation` is allowed exactly for `resource.version_observed`,
   which requires that authority. It records the producer's validated backend
   observation under the already-authorized immutable reference, without a new
-  owner act or passkey confirmation.
+  owner act or passkey confirmation;
+- `outbox_state` is allowed exactly for `hook_delivery.cancelled`, which requires
+  it. The [cancellation evidence contract](hook-terminal-delivery.md#each-app-producers-cancellation-evidence)
+  fixes its source binding/hook/count/contiguous-sequence fields, system actor,
+  arithmetic and per-producer attribution. It is narrowing and never authorizes
+  delivery to the ended binding.
 
 ### Observed backend versions (decision 92)
 
@@ -661,7 +668,7 @@ Every event has `mutation_type` and `target_ref`, and optional `before_ref` and
 | `app.installed` | `app_id`, `origin`, `digest`, `scopes`; optional `installation_id`, `generation` |
 | `app.updated` | as `app.installed`, plus `previous_digest` |
 | `hook_binding.activated` | the binding's identity (`binding_id`, `kind`, `app_id`, `installation_id`, `generation`, `catalog_id`, `catalog_version`, `hook`), `active_from`, `owner_act_sha256` |
-| `hook_binding.revoked` | the binding's identity, `reason` (`owner_act`, `uninstalled` or `superseded`); `owner_act_sha256` when an owner revoked it; optional `cancelled_count` with the cancelled `seq` range |
+| `hook_binding.revoked` | the binding's identity, `reason` (`owner_act`, `uninstalled` or `superseded`); `owner_act_sha256` when an owner revoked it; optional `cancelled_count` with exact `cancelled_seq_ranges` (canonical `first:last` strings, including sparse sets); legacy contiguous first/last stays parseable |
 | `app_key.revoked` | `app_id`, `kid`, `purposes` |
 | `membership.connected` | `member_alias`, `member_did_key`; optional `member_did_aw`, `workspace_ref` |
 | `membership.workspace_retired` | `member_alias`, `workspace_ref` |
@@ -720,6 +727,15 @@ installation and its generation.
   signing deployment's obligation. Activation
   compares the act's subject, including the manifest digest the owner's client
   fetched, with the stored pending row.
+  Ordinary activation remains valid without a `hook-terminal-receipt` key.
+  Under the [terminal contract](hook-terminal-delivery.md), that optional
+  pinned-manifest purpose authorizes only the target's signed completion
+  evidence. Missing key authority leaves terminal completion outstanding;
+  it neither refuses ordinary activation nor delays ending the binding.
+  A registration for `post-mutation-hook` also follows the separate
+  [core-signer readiness rule](hook-signer-unavailable.md#authority-and-failure-policy):
+  no currently valid core signer gives `409 core_hook_producer_unconfigured`
+  without consuming the nonce or activating the row.
 - **A new generation supersedes.** Every binding of the old generation becomes
   `superseded`, and the new generation's bindings start `pending`. Activation is
   never inherited, however similar the new bytes are.
@@ -733,15 +749,30 @@ installation and its generation.
 
 **Revocation** is the exfiltration remedy:
 
-1. the revoked target receives `hook_binding.revoked` as its final entry,
-   whatever hook it was registered for, so its record ends with an explanation;
-2. its other undelivered events are cancelled;
-3. every other `post-mutation-hook` registration owed that event receives it
-   with the cancelled count and `seq` range, so its `verify` explains the gap.
+1. A previously active registration is owed one final `hook_binding.revoked`,
+   whatever its original hook, through the separately authenticated
+   [terminal delivery](hook-terminal-delivery.md). This deliberately permits
+   only its own final record inside the `active_from` pad. Pending registrations
+   and productions receive no terminal delivery. The obligation survives
+   uninstall/supersession; an unavailable or unanchorable target remains
+   outstanding and surfaced for reconciliation, never silently complete.
+2. Its other undelivered events are cancelled, including explicit per-target
+   tombstones for unmaterialized owed events. Core records its own exact count
+   and exact source-sequence range list inside the one core event, not a
+   global atomic count or an enclosing span that swallows acknowledged events.
+3. Other eligible `post-mutation-hook` registrations receive that unchanged
+   core event. Each other app producer cancels locally within the freshness
+   bound and emits its own `hook_delivery.cancelled` governance records to
+   remaining governance registrations. `verify` explains a gap only from its
+   own producer’s matching record; otherwise the gap is unexplained. The
+   amendment specifies the shared-kit fence, accounting and receiver seal.
 
 Producers stop delivering within the freshness bound, so the revoked target may
 receive redacted activity for up to 60 seconds after revocation. Owner-facing
-copy says so. Uninstall revokes every binding of the installation the same way.
+copy says so. A committed receiver seal refuses further ordinary delivery even
+from a still-fresh cached view. Uninstall and generation supersession apply the
+terminal rule to each previously active registration; new-generation activation
+is never inherited. Revocation never waits for a receiver acknowledgement.
 
 **Switching targets** follows a fixed order: activate the new target, wait for
 its `active_from`, then revoke the old one. Audit-critical effects then always
@@ -764,6 +795,9 @@ bytes.
 **Transport.** Each delivery is an HTTPS `POST` to the binding's origin and
 path, authenticated by the `hook-delivery` credential, which binds the request
 to that binding and event (see [The delivery credential](#the-delivery-credential)).
+Only the final lifecycle record uses the distinct `hook-terminal-delivery`
+credential and wrapper specified by [the terminal amendment](hook-terminal-delivery.md);
+ordinary v1 signer equality, body shape and active admission are unchanged.
 Egress takes
 the destination only from the activated binding. It uses HTTPS only and follows
 no redirects. Private and internal destinations are refused unless a
@@ -777,13 +811,13 @@ self-hosted operator allows them; a hosted deployment always refuses them.
 | `409 event_conflict` (same id, different bytes) | `conflict`: never retried, surfaced as a fault. |
 | A schema or authorization refusal | Retried with bounded backoff, in case a registry view is stale, then `rejected` and surfaced. |
 | A network error or 5xx | Retried with capped exponential backoff and never dropped. After the operator's disclosed delivery horizon it is `stalled` and surfaced to the owner. |
-| The binding is no longer active when the producer sends | `cancelled`, with its reason. |
+| The binding is no longer active when the producer sends | Ordinary delivery is `cancelled`, with its reason. The durably authorized terminal obligation retries independently; inactive state never cancels it. |
 
 Delivery is at least once. Consumers deduplicate on `(team_id, event_id)`.
 
 ## The audit-critical gate
 
-For an audit-critical effect (secret uses and widening `post-governance-hook`
+For an audit-critical effect (authorizing secret-use steps and widening `post-governance-hook`
 acts), the producer refuses the effect, with
 `audit_target_unavailable` and the real error logged, unless:
 
@@ -810,6 +844,58 @@ The ordinary outbox lifecycle and fault reporting remain in force; the
 producer's operational record is not a claim that logs received the event.
 Ordinary `enqueue` retains its gate, so an effect cannot obtain this exception
 by passing a caller-selected bypass flag.
+
+**Secret-use lifecycle recording (aweb-acgh.18.41).** The catalog fixes the
+complete action/decision classification, through `audit_critical: action_rules`
+and `action_audit_critical`. Each action has a boolean, or a `field` naming
+an enum and `values` classifying every value of that enum. Missing/extra
+actions, missing/extra enum values, non-booleans and unknown metadata refuse
+the catalog; payload validation precedes classification and sequence allocation.
+
+| Action | Target/backlog availability |
+| --- | --- |
+| `approval_requested`, `approval_decided: approved`, `admitted`, `dispatching` | gated; fresh dispatch and every retry still require their admission/fence checks |
+| `approval_decided: denied`, `expired` or `revoked` | recorded without availability gating; requester withdrawal and containment cancellation map to `revoked` |
+| `completed`, `not_sent`, `outcome_unknown`, `reconciled` | recorded consequences, without availability gating |
+| `refused` | retains its existing critical classification and exclusive `enqueue_refusal` exception above |
+
+`HookProducer.enqueue_lifecycle(tx, ...)` fixes `post-secret-use-hook` and
+accepts only the two recording rows. It has no view or bypass input and calls
+the same internal enqueue/signing/outbox implementation. Ordinary `enqueue`
+also follows the catalog's per-action classification. Approved decisions and
+every other action refuse on the lifecycle method before any sequence/outbox
+write; catalog, full envelope, producer kind/key, timestamps, result status and
+atomic storage checks still apply. The actor remains the original requesting
+member, with the frozen use scope and signed trace; a deciding or revoking
+human does not replace that actor. Actual passkey decisions retain the sole
+B3 evidence commitment contract.
+
+This records an already decided or attempted effect. It cannot authorize
+child/grant creation (including a `completed: stored_as_secret` receipt),
+result or runner-credential release, a new upstream reconciliation call or a
+retry. Those effects keep their independent scope, lineage, policy and fence
+checks. No new availability gate is placed on storing an already observed
+result. A `not_sent` record does not authorize another send; the fresh
+`dispatching` transition is gated again. Local outbox failure rolls back the
+recorded transition; an already dispatched request remains available for
+reconciliation, never silently resent. No record is represented as delivered
+until it is acknowledged. These events still count in an eligible target's
+backlog, and eligibility never becomes retroactive.
+
+The v1 metadata/vector re-freeze is deliberate under decision 93:
+coordinator applicability ruling `e93f7f7f-c437-40ea-8d9a-8b360dbe5ed3`
+uses the dated, scoped first-party deployment evidence and third-party
+limitation in [the terminal contract](hook-terminal-delivery.md#deliberate-catalog-re-freeze-and-implementation-evidence)
+(`c00d8528-4b9d-457e-8c53-e2e3e8d2f0cb`,
+`e09dce11-f2dc-4baa-8a3b-3fdcbb9790ed`). This is not a fresh universal
+inventory of secret-use consumers. A discovered deployed v1 consumer stops
+this re-freeze and requires the next version and Juan's decision. No accepted
+payload, enum, envelope/signature format or existing signed vector changes.
+Both public/packaged catalogs and their strict reader change together; an
+older strict reader cannot load the new metadata. Producer and receiver
+package publication/deployment must include that reader/catalog pair before
+activation; a source merge alone establishes neither receiver support nor
+production activation.
 
 **Admission backlog (decisions 11 and 94).** The shared
 `HookProducer.require_admission(tx, *, team_id, hook, occurred_at, view,
@@ -842,9 +928,16 @@ must not wait. Revocation can still race the drain, so an audit-critical event
 whose deliveries all end `cancelled` or `rejected` is a **surfaced fault**: the
 owner learns that an effect happened with no surviving audit record.
 
-`post-mutation-hook` is not audit-critical. Core enqueues it in the mutation's
-transaction whenever its fresh view shows an active registration, and never
-refuses a mutation for want of one.
+`post-mutation-hook` is not audit-critical. With a valid core signer, core
+signs/enqueues its owed event in the mutation's transaction whenever its fresh
+view shows an eligible active registration. It never requires a target before
+a mutation. If the signer is unavailable, the mutation and a typed local
+[missing-production sequence reservation](hook-signer-unavailable.md) commit
+together. A later authenticated higher sequence can expose an unexplained
+hole; an absent trailing event alone cannot prove loss remotely. No unsigned
+event or fabricated terminal completion is delivered. The separate registration
+readiness refusal, terminal obligation and operator diagnostics are specified
+in that correction.
 
 ## Event envelope
 
@@ -911,7 +1004,11 @@ describe.
   - `client`: `did_key` and `certificate_id`, with no `seq`, because a client's
     events are bypassable and their gaps prove nothing.
 
-  `seq` counts the producer's events per team and hook, without gaps, from 1.
+  `seq` counts the producer's logical firings per team and hook from 1.
+  An unavailable core signer reserves an owed firing's sequence under the
+  [missing-production rule](hook-signer-unavailable.md); no signed event is
+  emitted for that number, so authenticated later evidence can expose a gap.
+  Other producers' ordinary gap-free enqueue semantics are unchanged.
 - `actor` always carries `authority_mode` (`team_cert`, `identity_grant`,
   `app_key`, `link_capability`, `owner_act` or `system`) and `attestations`.
   - Every authority but `system` names the actor's `did_key`, and may add
@@ -1039,5 +1136,10 @@ without the team key. It checks, in this order:
     certificate id (`certificate_mismatch`), and is signed by the team's current
     key (`certificate_invalid`).
 
-The target then checks that the binding is its own active registration, and
-that the producer holds an active production for the hook (aweb-acgh.7).
+The ordinary target then checks that the binding is its own active registration,
+and that an app producer holds an active production for the hook (aweb-acgh.7).
+It also checks the durable per-binding seal in its append transaction. The
+[terminal credential](hook-terminal-delivery.md#separate-terminal-request-credential)
+has a separate exact verifier dispatch and permits only the capsule-bound core
+revocation event. It never weakens this v1 verifier. Until that amendment and
+its shared implementation are accepted, active-only admission remains in force.
