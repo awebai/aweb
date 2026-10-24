@@ -91,6 +91,40 @@
 
 ## Release preparations
 
+### Release preparation: aw 1.36.48
+
+CLI changes are since `aw-v1.36.47`. The organization, hosted identity and
+team commands need the matching aweb Cloud release.
+
+- `aw org create <slug> [--name]`, `aw org list` and
+  `aw org availability <slug>` manage the organizations you own or admin,
+  under this host's human login. `aw auth login` requests the
+  `cli.org_create` scope by default; an older login is told to sign in again.
+  A taken name is refused with an available suggestion and is never suffixed
+  silently.
+- `--org` selects the organization on `aw init --workspace-team`, workspace
+  team ensure and enroll, and hosted team creation. Team creation also takes
+  `--request-id` to replay a create and `--show-token` to print the invite
+  token.
+- `aw id create --org <org>` creates a hosted global identity in a chosen
+  team (`--team-id`, the team's service UUID or canonical `name:namespace`)
+  with an explicit `--inbound-mode`. `--owner-identity-home` authorizes it
+  with the organization owner's own key instead of a human login, so an
+  account created with `aw init --new-account` can create its steward
+  unattended.
+- `aw inbound-mode contacts-only` (and `aw init --global --inbound-mode`)
+  accepts mail and chat only from saved contacts.
+- `aw plugin uninstall <app-id>` uninstalls an app from the selected team's
+  server installation (team admins). `aw plugin request <origin>` asks a team
+  administrator to install an app and grants nothing itself. Removing a local
+  plugin keeps the team installation.
+- App approvals and delegated tools are bound to the team's installation.
+  After upgrading, run `aw plugin install <origin>` for each team and identity
+  home, mint a fresh grant, and restart custody and workers. Install and grant
+  refusals name the exact approve, re-mint and restart steps.
+- `aw mail send` to a team member by alias keeps working when one of the
+  roster's encryption key assertions is rejected.
+
 ### Release preparation: awid-service 0.5.32
 
 `awid_service.testing` runs one AWID registry in-process for tests: a
@@ -122,10 +156,6 @@ since `aweb-naapp-v0.4.0`:
   through its `aweb.team-server/1` AWID record and refuses a team without one.
 - Hooks: terminal delivery authority and cancellation evidence, and
   non-authorizing secret-use lifecycle events.
-- `GrantSource` takes an optional `certificate_id` and forwards the verified
-  member's certificate through team-server discovery, so private-team members
-  work without an AWID service token. Custom grant providers must accept the
-  optional argument.
 - `aweb-naapp-testing` takes its AWID fixtures from `awid_service.testing`
   (`awid-service>=0.5.32`). Its new `server` extra (`aweb>=1.27.34`) runs a
   team's coordination server in-process, which a naapp finds through the
