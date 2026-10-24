@@ -136,7 +136,21 @@ async def test_limits_must_be_positive(db: AsyncDatabaseManager) -> None:
             _limiter(db, **changes)
 
 
-async def test_volume_older_than_its_retention_is_pruned(db: AsyncDatabaseManager) -> None:
+@pytest.mark.parametrize("slow_database", [False, True], ids=["normal", "slow-write"])
+async def test_volume_older_than_its_retention_is_pruned(
+    db: AsyncDatabaseManager, slow_database: bool
+) -> None:
+    if slow_database:
+        # Real PostgreSQL latency: the bucket is stamped at transaction start,
+        # while pruning runs in another statement after the write commits.
+        await db.execute(
+            "CREATE FUNCTION {{tables.slow_volume_write}}() RETURNS trigger LANGUAGE plpgsql AS "
+            "$$ BEGIN PERFORM pg_sleep(1.1); RETURN NEW; END $$"
+        )
+        await db.execute(
+            "CREATE TRIGGER slow_volume_write AFTER INSERT ON {{tables.console_login_volume}} "
+            "FOR EACH ROW EXECUTE FUNCTION {{tables.slow_volume_write}}()"
+        )
     limiter = _limiter(db, window=timedelta(seconds=1), volume_retention=timedelta(seconds=1))
     async with _client(limiter, "203.0.113.7") as client:
         await _codes(client, 1)
