@@ -122,6 +122,10 @@ since `aweb-naapp-v0.4.0`:
   through its `aweb.team-server/1` AWID record and refuses a team without one.
 - Hooks: terminal delivery authority and cancellation evidence, and
   non-authorizing secret-use lifecycle events.
+- `GrantSource` takes an optional `certificate_id` and forwards the verified
+  member's certificate through team-server discovery, so private-team members
+  work without an AWID service token. Custom grant providers must accept the
+  optional argument.
 - `aweb-naapp-testing` takes its AWID fixtures from `awid_service.testing`
   (`awid-service>=0.5.32`). Its new `server` extra (`aweb>=1.27.34`) runs a
   team's coordination server in-process, which a naapp finds through the
