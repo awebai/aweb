@@ -9,6 +9,7 @@ from aweb_naapp.idempotency import apply_idempotency_migrations
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.runtime.approvals import Approvals, ApprovalState, PgApprovalStore
 from aweb_naapp.runtime.passkeys import RelyingParty
+from playwright.async_api import Error as BrowserError
 from playwright.async_api import expect
 
 from aweb_secrets.use_approvals import UseApprovers, UsePolicies
@@ -72,8 +73,12 @@ async def test_browser_frozen_review_fresh_decision_and_no_dispatch(
         token = next(t for a, t in world.inbox.links["alice@acme.com"] if a == approval_id)
         # Include signed-out login in the real page; no token goes into diagnostics.
         await context.clear_cookies()
-        await page.goto(origin + "/use-approvals#token=" + token)
-        await page.get_by_role("button", name="Sign in with your passkey", exact=True).click()
+        try:
+            await page.goto(origin + "/use-approvals#token=" + token)
+            await page.get_by_role("button", name="Sign in with your passkey", exact=True).click()
+        except BrowserError:
+            # Browser navigation diagnostics can include the personal fragment.
+            raise AssertionError("approval page sign-in did not complete") from None
         await expect(page.get_by_role("button", name="Review with your passkey")).to_be_enabled()
         await page.get_by_role("button", name="Review with your passkey").click()
         await expect(page.locator("#request-review")).to_be_visible()
