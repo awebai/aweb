@@ -53,7 +53,7 @@ class OperationRequest:
     bounds: Bounds
     max_bytes: int
     projection: list[str] | None
-    content_types: list[str]
+    content_types: list[str] | None
     token_issuing: bool
     result_handling: str
     amz_allowed: list[str]

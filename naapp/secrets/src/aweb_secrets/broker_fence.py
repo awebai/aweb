@@ -231,7 +231,7 @@ class BrokerFence:
                 Bounds(max_response_bytes=maximum),
                 maximum,
                 None,
-                [],
+                None,
                 False,
                 "deny",
                 [],
