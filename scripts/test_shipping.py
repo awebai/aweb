@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import tempfile
 import textwrap
 import unittest
 import zipfile
+from email.message import Message
 from pathlib import Path
 
 
@@ -33,6 +35,7 @@ def load(name: str, path: str):
 CANDIDATE = load("release_candidate", "scripts/release_candidate.py")
 PUBLISH = load("publish_release", "scripts/publish_release.py")
 VERSIONS = sys.modules["release_versions"]
+NAAPP_PACKAGE = load("check_naapp_lib_package", "scripts/check-naapp-lib-package.py")
 
 
 def command(root: Path, *argv: str) -> str:
@@ -284,6 +287,87 @@ class PypiLaneContractTest(unittest.TestCase):
         command(root, "git", "tag", "-a", "aweb-naapp-v0.1.0", "-m", "tested")
         with self.assertRaisesRegex(PUBLISH.PublishRefusal, "naapp-lib/testing"):
             PUBLISH.tag_identity(root, "aweb-naapp-v0.1.0")
+
+
+class NaappPackageRcContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        temporary = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        cls.wheels = []
+        for directory in ("naapp-lib", "naapp-lib/testing"):
+            source, project = ROOT / directory, root / directory
+            project.mkdir(parents=True)
+            shutil.copytree(source / "src", project / "src", ignore=shutil.ignore_patterns("__pycache__"))
+            if (source / "README.md").exists():
+                shutil.copy2(source / "README.md", project / "README.md")
+            value = (source / "pyproject.toml").read_text()
+            value = re.sub(r'(?m)^version = "[^"]+"', 'version = "0.5.0rc1"', value)
+            value = re.sub(r'(aweb-naapp\[[^\]]+\]==)[^"\s]+', r'\g<1>0.5.0rc1', value)
+            value = re.sub(r'(awid-service>=)[^"\s]+', r'\g<1>0.5.32rc1', value)
+            (project / "pyproject.toml").write_text(value)
+            wheel = NAAPP_PACKAGE._build(project, root / "dist" / project.name)
+            cls.wheels.append((project, wheel, NAAPP_PACKAGE._metadata(wheel)))
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.awid = Path(temporary.name)
+        original = NAAPP_PACKAGE.AWID
+        NAAPP_PACKAGE.AWID = self.awid
+        self.addCleanup(setattr, NAAPP_PACKAGE, "AWID", original)
+        self.set_awid_version("0.5.32rc1")
+
+    def set_awid_version(self, version):
+        (self.awid / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n')
+
+    def test_real_rc_wheels_pass_contents_and_dependency_checks(self):
+        for project, wheel, metadata in self.wheels:
+            with self.subTest(package=metadata["Name"]):
+                self.assertEqual(metadata["Version"], "0.5.0rc1")
+                NAAPP_PACKAGE._check_contents(project, wheel)
+                NAAPP_PACKAGE._check_requirements(
+                    wheel, metadata,
+                    aweb_naapp_version="0.5.0rc1" if metadata["Name"] == "aweb-naapp-testing" else None,
+                )
+
+    def test_rc_exact_pin_is_checked_with_a_final_awid_neighbor(self):
+        self.set_awid_version("0.5.32")
+        _project, wheel, metadata = self.wheels[1]
+        NAAPP_PACKAGE._check_requirements(wheel, metadata, aweb_naapp_version="0.5.0rc1")
+        with self.assertRaisesRegex(NAAPP_PACKAGE.PackageRefusal, "must require exactly"):
+            NAAPP_PACKAGE._check_requirements(wheel, metadata, aweb_naapp_version="0.5.0rc2")
+
+    def test_awid_floor_uses_rc_before_final_and_numeric_rc_order(self):
+        for available, floor, accepted in (
+            ("0.5.32rc1", "0.5.32rc1", True),
+            ("0.5.32rc10", "0.5.32rc2", True),
+            ("0.5.32rc1", "0.5.32rc2", False),
+            ("0.5.32rc1", "0.5.32", False),
+            ("0.5.32", "0.5.32rc1", True),
+            ("0.5.32", "0.5.32", True),
+            ("0.5.31", "0.5.32rc1", False),
+        ):
+            with self.subTest(available=available, floor=floor):
+                self.set_awid_version(available)
+                metadata = Message()
+                metadata["Requires-Dist"] = "awid-service>=" + floor
+                if accepted:
+                    NAAPP_PACKAGE._check_requirements(Path("fixture.whl"), metadata, aweb_naapp_version=None)
+                else:
+                    with self.assertRaisesRegex(NAAPP_PACKAGE.PackageRefusal, "newer than"):
+                        NAAPP_PACKAGE._check_requirements(Path("fixture.whl"), metadata, aweb_naapp_version=None)
+
+    def test_missing_floor_direct_reference_and_malformed_rc_still_refuse(self):
+        self.set_awid_version("0.5.32")
+        for requirement in ("awid-service==0.5.32rc1", "awid-service>=0.5.32rc1junk",
+                            "awid-service @ file:///tmp/awid", "awid-service>=0.5.32rc01"):
+            with self.subTest(requirement=requirement):
+                metadata = Message()
+                metadata["Requires-Dist"] = requirement
+                with self.assertRaises(NAAPP_PACKAGE.PackageRefusal):
+                    NAAPP_PACKAGE._check_requirements(Path("fixture.whl"), metadata, aweb_naapp_version=None)
 
 
 class CandidateBrowserImageContractTest(unittest.TestCase):
