@@ -229,13 +229,39 @@ direction, and a consumer refuses an event whose `direction` differs:
 
 | Widening | Narrowing |
 | --- | --- |
-| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled`, `hook_delivery.cancelled` |
+| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.changed`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled`, `hook_delivery.cancelled` |
 
 `grant.changed` is widening whatever the change, so a change that only narrows
 a grant is still gated. A producer that must contain without waiting uses
 `grant.revoked`. `resource.replaced` is narrowing: replacing a compromised value
 is containment and must not wait on audit availability. It still takes the
 strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
+
+`resource.changed` records a revision of an existing secret's metadata or
+`approve_only` setting, including descriptive edits. Like `grant.changed`, it
+is always widening and audit-critical, even for an edit that tightens control.
+It requires `resource_type: secret`, `resource_ref` equal to the secret ID,
+and distinct opaque `before_ref` and `after_ref` bound durably to the locked
+before/after metadata states. These are metadata-state handles, not value
+versions, value fingerprints, raw metadata or provider identifiers. It adds
+no custody value and increments no credential/value version;
+`resource.version_added` remains the actual value/backend-version addition
+path, including owner-confirmed backend credential/reference versions. Only `owner_act` or
+`passkey_session` with the actual existing artifact/proof commitment can
+authorize it; no owner-act verb or privilege is added. In secrets' change/1
+path, the actually admitted owner APPROVE evidence, approval association and
+system actor remain mandatory; an owner act cannot bypass that path.
+The metadata revision and signed event enqueue are one gated transaction.
+Ship the reader's distinct-state validation with the paired public/packaged
+catalog before a producer or receiver activates this act.
+
+This act is an in-place v1 addition under decision 93, applying the same dated,
+scoped pre-deployment evidence and stop/version-bump trigger in the
+[terminal amendment](hook-terminal-delivery.md#deliberate-catalog-re-freeze-and-implementation-evidence).
+Coordinator applicability/encoding ruling:
+`17b3d3be-5a5c-4940-bc89-aa7d3e890db7` (2026-10-24); semantic fit:
+`e67ffe8b-1b24-48aa-958a-09a126432753`. These rulings do not broaden that
+inventory into independent evidence about third-party deployments.
 
 `authority` is how the act was authorized:
 
@@ -253,6 +279,45 @@ strongest authority: `owner_act` or `passkey_session`, never `team_cert`.
   fixes its source binding/hook/count/contiguous-sequence fields, system actor,
   arithmetic and per-producer attribution. It is narrowing and never authorizes
   delivery to the ended binding.
+
+**Contact-bound credential completions.** A designated contact's one-use TOFU
+enrolment, or proof of an already-authorized pending contact, completes the
+original authorization; it is not a fresh passkey assertion. Before issuing
+the enrolment or contact-proof capability, retain an immutable association
+between the original authorization and its app, team, installation, designated
+subject, role/scope, contact binding and one-use completion. The authorization
+is the exact consumed owner act, actually admitted owner APPROVE proof, or
+verified `contact_change` assertion for the holder's own contact change.
+For a pending contact, also bind the candidate's opaque
+resource reference, state and effective time. Keep the signed artifact, its
+original proof/context and commitment in restricted storage; an actor string,
+evidence locator or lookup of today's designation is not that association.
+
+The completion receipt uses the original `authority: owner_act` and
+`owner_act_sha256`, or `authority: passkey_session` and the original
+`approval_evidence_sha256` (with its approval association where applicable).
+Do not re-label or reconstruct that proof. The original signer authorized
+designation or the contact change, not a new assertion over its completion.
+The producer attests the later completion, whose envelope actor is the
+identity-free system actor. This does not impersonate the original signer or
+claim the newly registered key supplied APPROVE evidence. A contact-proof
+token proves reachability of that candidate, never independent owner authority.
+
+In the completion transaction, require the retained association, current
+unsuperseded designation, correct contact/candidate, unspent capability and
+the original recovery/effectiveness constraints. Never re-admit an expired
+owner act or consume its nonce again. A missing or mismatched association
+refuses the completion. Widening completion still requires a fresh eligible
+audit target and acceptable backlog, and its state, capability consumption
+and signed outbox event commit or roll back together. Obtain any network
+registration view before entering the transaction; check its freshness at
+enqueue without network under the locks. A prior successful designation or
+scheduling receipt cannot substitute for the completion's audit gate.
+
+The exhaustive B3 consumer stage mapping is in
+[secrets §11.5](design/secrets.md#115-operational-record-and-the-post-secret-use-hook-outbox).
+It uses the existing acts, directions and authority values; operational B3
+audit notifications are not automatically governance effects.
 
 ### Observed backend versions (decision 92)
 
