@@ -262,3 +262,87 @@ async def test_job_definition_refuses_fields_from_another_credential_family_befo
         assert refused.json() == {"detail": "job_source_invalid"}
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.change_sets}}") == 0
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.secrets}}") == 0
+
+
+async def test_runner_result_wait_crossing_session_expiry_returns_only_applied_receipt(world):
+    import asyncio
+
+    from aweb_secrets.runners import apply_runner_migrations, mint_runner_id
+    from tests.test_change_set_runners import runner_item
+
+    w = world
+    await apply_runner_migrations(w.db)
+    scope = await enrol_owner(w, ALICE, "alice@acme.com")
+    committed = asyncio.Event()
+    continue_result = asyncio.Event()
+
+    async def cleanup(*args):
+        # This existing after-commit seam observes a real committed mutation.
+        assert await w.db.fetch_value("SELECT state='applied' FROM {{tables.change_sets}}")
+        committed.set()
+        await continue_result.wait()
+
+    async with clients(w, cleanup=cleanup) as (human, _):
+        headers = await sign_in(w, human, scope)
+        drafted = await human.post(
+            ROOT,
+            headers=headers,
+            json={
+                "changes": [runner_item(mint_runner_id())],
+                "sealed": [],
+                "reason": "Register runner",
+            },
+        )
+        assert drafted.status_code == 201
+        change = drafted.json()
+        path = await approve(w, human, headers, change)
+        posting = asyncio.create_task(human.post(path + "/confirm", json={}, headers=headers))
+        try:
+            await asyncio.wait_for(committed.wait(), 5)
+            async with w.db.transaction() as gate:
+                holder = await gate.fetch_value("SELECT pg_backend_pid()")
+                # S4's postcommit check and owner lookup do not read change_sets.
+                # This blocks the protected result's final applied-state SELECT.
+                await gate.execute("LOCK TABLE {{tables.change_sets}} IN ACCESS EXCLUSIVE MODE")
+                await w.db.execute(
+                    "UPDATE {{tables.console_sessions}} SET expires_at=clock_timestamp()+interval '3 seconds'"
+                )
+                continue_result.set()
+                async with asyncio.timeout(10):
+                    while not await w.db.fetch_value(
+                        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))"
+                        " AND position('SELECT state =' in query)>0)",
+                        holder,
+                    ):
+                        if posting.done():
+                            await posting
+                            pytest.fail(
+                                "runner result did not wait on its postcommit applied-state read"
+                            )
+                        await asyncio.sleep(0.01)
+                    while await w.db.fetch_value(
+                        "SELECT expires_at>clock_timestamp() FROM {{tables.console_sessions}}"
+                    ):
+                        await asyncio.sleep(0.02)
+            response = await asyncio.wait_for(posting, 5)
+            assert response.status_code == 200
+            projection = response.json()
+            if "runner_registrations" in projection:
+                raise AssertionError(
+                    "expired postcommit session received protected runner material"
+                )
+            assert projection == {
+                "change_id": change["change_id"],
+                "revision": 1,
+                "state": "applied",
+                "reauth_required": True,
+            }
+            assert "Max-Age=0" in response.headers["set-cookie"]
+            assert await w.db.fetch_value("SELECT state FROM {{tables.change_sets}}") == "applied"
+            assert (await w.approvals.get(change["approval_id"])).state is ApprovalState.CONSUMED
+            assert await w.db.fetch_value("SELECT count(*) FROM {{tables.runners}}") == 1
+        finally:
+            continue_result.set()
+            if not posting.done():
+                posting.cancel()
+            await asyncio.gather(posting, return_exceptions=True)
