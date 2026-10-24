@@ -99,12 +99,13 @@
 
 CLI changes are since `aw-v1.36.48`.
 
-- `aw plugin install`, update and remove register the installation with the
-  team's server when they run in a team member's home that holds a signing key
-  and a team certificate but no `identity.yaml`, such as a member set up with
-  an API key. Before, such a home reported a local-only install and the server
-  never saw it. Grant homes, an `identity.yaml` with an empty DID, and homes
-  with no key or team keep their earlier behaviour.
+- In a team member's home that holds a signing key and a team certificate but
+  no `identity.yaml`, such as a member set up with an API key, `aw plugin
+  install` and update register or confirm the team's installation on the
+  server, and `aw plugin remove` clears the member's local approval while the
+  server installation stays. Before, such a home reported a local-only install
+  and the server never saw it. Grant homes, an `identity.yaml` with an empty
+  DID, and homes with no key or team keep their earlier behaviour.
 
 ### Release preparation: aw 1.36.48
 
