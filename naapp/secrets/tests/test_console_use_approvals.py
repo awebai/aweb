@@ -1,6 +1,7 @@
 """Use/run console decisions through real PostgreSQL, S4, B2 and B3."""
 
 from contextlib import asynccontextmanager
+from copy import deepcopy
 
 import httpx
 import pytest
@@ -247,7 +248,7 @@ def test_open_request_projection_keeps_unicode_and_alabel_host_and_full_body():
     from aweb_secrets.use_approval import use_approval_view
     from tests.test_use_approval_view import _request
 
-    request = _request("broker-open-request")
+    request = deepcopy(_request("broker-open-request"))
     request["broker"]["canonical_url"] = "https://xn--bcher-kva.example/v1/refunds"
     projected = _projection(use_approval_view(request))
     assert projected["open_request"]["host"] == "xn--bcher-kva.example"
