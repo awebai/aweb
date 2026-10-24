@@ -27,8 +27,8 @@ def test_cross_team_document_isolation_and_body_named_team_is_ignored(
     folio: RunningFolio,
     aw_workspace_factory: Callable[[str], AWWorkspace],
 ) -> None:
-    team_a = _provision_team(aw_workspace_factory("team-a"), alias="alice")
-    team_b = _provision_team(aw_workspace_factory("team-b"), alias="bob")
+    team_a = _provision_team(aw_workspace_factory("team-a"), folio=folio, alias="alice")
+    team_b = _provision_team(aw_workspace_factory("team-b"), folio=folio, alias="bob")
 
     created = _create_document(folio, team_a, slug="team-a-secret", title="Secret", body="team A only")
     assert created["slug"] == "team-a-secret"

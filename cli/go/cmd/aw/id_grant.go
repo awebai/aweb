@@ -348,7 +348,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	explicitApps := cmd.Flags().Changed("app-tool") || len(grantMintAppTools) > 0
-	appSnapshots, skippedApps, err := prepareGrantAppSnapshots(residentIdentityHome.Root, explicitApps, grantMintAppTools, grantAppDeniedOrigins(sel.BaseURL, sel.RegistryURL))
+	appSnapshots, skippedApps, err := prepareGrantAppSnapshots(residentIdentityHome.Root, sel.TeamID, explicitApps, grantMintAppTools, grantAppDeniedOrigins(sel.BaseURL, sel.RegistryURL))
 	if err != nil {
 		return err
 	}
@@ -365,6 +365,15 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
+	skippedApps, err = bindGrantInstallations(ctx, client, sel.TeamID, residentIdentityHome.Root, explicitApps, appSnapshots, skippedApps)
+	if err != nil {
+		return err
+	}
+	for _, skipped := range skippedApps {
+		if len(skipped.RecoveryCommand) > 0 {
+			fmt.Fprintf(os.Stderr, "App %s excluded: %s. Re-approve for this team's installation: %s\n", skipped.AppID, skipped.Code, formatShellCommand(skipped.RecoveryCommand))
+		}
+	}
 	view, err := client.MintIdentityGrant(ctx, &aweb.IdentityGrantMintRequest{
 		GrantDIDKey:  grantDIDKey,
 		Scopes:       scopes,
@@ -575,7 +584,7 @@ func init() {
 	}
 	mintCmd.Flags().StringArrayVar(&grantMintScopes, "scope", nil, "Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send, events.read, coord.read, coord.write, presence.write, contacts.read, contacts.write)")
 	mintCmd.Flags().StringArrayVar(&grantMintBundles, "bundle", nil, "Grant scope bundle, repeatable or comma-separated (normal-agent)")
-	mintCmd.Flags().StringArrayVar(&grantMintAppTools, "app-tool", nil, "Legacy one-mint app:verb selection; replaces the resident approval catalog for this mint only")
+	mintCmd.Flags().StringArrayVar(&grantMintAppTools, "app-tool", nil, "Select app:verb tools for this grant; requires plugin install approval for this team's current installation")
 	mintCmd.Flags().StringVar(&grantMintCustodySocket, "custody-socket", "", "Resident custody Unix socket path to write into grant.yaml, or auto for the resident identity home's default custody socket")
 	grantMintTTL = identityGrantNeverTTL
 	mintCmd.Flags().Var(grantTTLFlag{}, "ttl", "Grant duration: never (revocation-only) or a duration from 60s to 720h")

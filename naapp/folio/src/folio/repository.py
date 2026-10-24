@@ -242,6 +242,7 @@ async def list_versions(db: AsyncDatabaseManager, *, principal: Principal, slug:
 async def mint_presentation_link(
     db: AsyncDatabaseManager,
     *,
+    installation_id: str,
     principal: Principal,
     settings: Settings,
     slug: str,
@@ -297,8 +298,8 @@ async def mint_presentation_link(
         """
         INSERT INTO {{tables.presentation_links}}
           (token, document_id, version_number, expires_at, created_by_did_key,
-           created_by_did_aw, created_by_alias, certificate_id, editable, opener_sha256, creator_team_did_key)
-        VALUES ($1, $2, $3, NOW() + $4::integer * interval '1 second', $5, $6, $7, $8, $9, $10, $11)
+           created_by_did_aw, created_by_alias, certificate_id, editable, opener_sha256, creator_team_did_key, installation_id)
+        VALUES ($1, $2, $3, NOW() + $4::integer * interval '1 second', $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING expires_at
         """,
         token,
@@ -312,6 +313,7 @@ async def mint_presentation_link(
         editable,
         hashlib.sha256(opener.encode()).digest() if opener else None,
         principal.team_did_key,
+        installation_id,
     )
     assert minted is not None
     return {
@@ -346,7 +348,7 @@ async def revoke_presentation_link(
     )
 
 
-async def get_presented_document(db: AsyncDatabaseManager, *, token: str) -> dict[str, Any]:
+async def get_presented_document(db: AsyncDatabaseManager | TransactionManager, *, token: str) -> dict[str, Any]:
     row = await db.fetch_one(
         """
         SELECT p.editable, p.expires_at, d.team_id, t.tokens, t.logo_asset_id, t.header, t.footer,
@@ -545,7 +547,7 @@ def _asset_ids_referenced_by_body(body: str) -> set[UUID]:
     return asset_ids
 
 
-async def _allowed_assets_for_body(db: AsyncDatabaseManager, *, team_id: str, body: str) -> dict[UUID, dict[str, Any]]:
+async def _allowed_assets_for_body(db: AsyncDatabaseManager | TransactionManager, *, team_id: str, body: str) -> dict[UUID, dict[str, Any]]:
     referenced = _asset_ids_referenced_by_body(body)
     if not referenced:
         return {}

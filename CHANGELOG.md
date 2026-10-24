@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- aw: local members initialized with an API key now register and approve app
+  installations on their team server through `aw plugin install`, even without
+  global identity metadata. Local members can also update and remove approvals.
+
+- Server install/update and request approval serialize the final host-policy
+  check with the installation write. Concurrent same-app re-pins return a
+  generation conflict instead of a database deadlock; first-install policy
+  checks are serialized too.
+- The shared app credential signer supports `app-request`, signing the required
+  installation id and positive generation. Its bytes match the C2 transport
+  vector; existing app-event, grant-read and hook-resolve credentials are unchanged.
+
 - aw app installation names the resident credential directory and gives an
   explicit replacement-grant action. Existing grants retain their original
   app-tool snapshots; denied tools explain the approve/re-mint/restart remedy.
@@ -60,6 +72,10 @@
 
 ### Folio
 
+- Folio now serves manifest v2 through `/.well-known/aweb-app-versions.json`
+  and `/manifests/v2.json`; `/aweb-app.json` serves the same filled bytes.
+  The legacy `/.well-known/aweb-app.json` endpoint is no longer served.
+  Install or update Folio with aw 1.36.46 or newer; older clients need an upgrade.
 - Folio runs on the shared `aweb-naapp` runtime: its settings, database,
   manifest serving, public surface (landing, reference, llms.txt, robots, skills,
   fonts) and health routes are naapp-lib's, and `/health` reports the deployed
@@ -78,6 +94,145 @@
   boot applies the shared naapp migrations (observed principals, outbox).
 
 ## Release preparations
+
+### Release preparation: aw 1.36.49
+
+CLI changes are since `aw-v1.36.48`.
+
+- In a team member's home that holds a signing key and a team certificate but
+  no `identity.yaml`, such as a member set up with an API key, `aw plugin
+  install` and update register or confirm the team's installation on the
+  server, and `aw plugin remove` clears the member's local approval while the
+  server installation stays. Before, such a home reported a local-only install
+  and the server never saw it. Grant homes, an `identity.yaml` with an empty
+  DID, and homes with no key or team keep their earlier behaviour.
+
+### Release preparation: aw 1.36.48
+
+CLI changes are since `aw-v1.36.47`. The organization, hosted identity and
+team commands need the matching aweb Cloud release.
+
+- `aw org create <slug> [--name]`, `aw org list` and
+  `aw org availability <slug>` manage the organizations you own or admin,
+  under this host's human login. `aw auth login` requests the
+  `cli.org_create` scope by default; an older login is told to sign in again.
+  A taken name is refused with an available suggestion and is never suffixed
+  silently.
+- `--org` selects the organization on `aw init --workspace-team`, workspace
+  team ensure and enroll, and hosted team creation. Team creation also takes
+  `--request-id` to replay a create and `--show-token` to print the invite
+  token.
+- `aw id create --org <org>` creates a hosted global identity in a chosen
+  team (`--team-id`, the team's service UUID or canonical `name:namespace`)
+  with an explicit `--inbound-mode`. `--owner-identity-home` authorizes it
+  with the organization owner's own key instead of a human login, so an
+  account created with `aw init --new-account` can create its steward
+  unattended.
+- `aw inbound-mode contacts-only` (and `aw init --global --inbound-mode`)
+  accepts mail and chat only from saved contacts.
+- `aw plugin uninstall <app-id>` uninstalls an app from the selected team's
+  server installation (team admins). `aw plugin request <origin>` asks a team
+  administrator to install an app and grants nothing itself. Removing a local
+  plugin keeps the team installation.
+- App approvals and delegated tools are bound to the team's installation.
+  After upgrading, run `aw plugin install <origin>` for each team and identity
+  home, mint a fresh grant, and restart custody and workers. Install and grant
+  refusals name the exact approve, re-mint and restart steps.
+- `aw mail send` to a team member by alias keeps working when one of the
+  roster's encryption key assertions is rejected.
+
+### Release preparation: awid-service 0.5.32
+
+`awid_service.testing` runs one AWID registry in-process for tests: a
+`Registry` with signed team-server records, `running_registry`, and
+`ServiceTransport`, which routes a registry client's requests to the in-process
+app. `mount_registry` says that an embedding host mounts the registry under a
+prefix.
+
+`RegistryClient` can publish and read team-server records through its existing
+registry resolution and request path. Shared `build_team_server_record` and
+`sign_team_server_record` helpers match the Go signing vectors.
+
+Trusted-service team-server publication is exempt from the public-IP rate
+limit. Every publication still requires the current team-key signature.
+
+### Release preparation: aweb-naapp 0.5.0
+
+`aweb-naapp` and `aweb-naapp-testing` 0.5.0 are released together. Changes
+since `aweb-naapp-v0.4.0`:
+
+- `GrantSource.grant_for` accepts an optional `certificate_id`; custom sources
+  must accept this argument. Grant reads carry the verified member's certificate
+  through discovery, so private-team members work without an AWID service token.
+- App-request credentials (the C2 transport) are bound to the installation id
+  and positive generation, and the shared signer signs them.
+- Installation-aware runtime: tools, capabilities and member SQL are fenced by
+  the team's current installation; verified grant status includes
+  `installed_at`. A naapp that uses installation grants finds the team server
+  through its `aweb.team-server/1` AWID record and refuses a team without one.
+- Hooks: terminal delivery authority and cancellation evidence, and
+  non-authorizing secret-use lifecycle events.
+- `aweb-naapp-testing` takes its AWID fixtures from `awid_service.testing`
+  (`awid-service>=0.5.32`). Its new `server` extra (`aweb>=1.27.34`) runs a
+  team's coordination server in-process, which a naapp finds through the
+  team's AWID record. It needs Redis at `REDIS_URL`.
+
+### Release preparation: server 1.27.34
+
+Server changes are since `server-v1.27.33`.
+
+- App installation has two policy phases. Before fetching, the optional
+  `app.state.install_admission_policy(tx, subject, *, action, app_id,
+  unverified_origin)` permits only the fetch. After the server verifies the
+  fetched manifest, the final `install_admin_policy` receives
+  `verified_origin=fetched.origin` inside the writing transaction.
+  **Host contract change:** an `InstallAdminPolicy` must accept the
+  `verified_origin` keyword (`docs/app-registry.md`, "Host installation policy
+  interface").
+- `aw plugin uninstall <app-id>` lets a team admin uninstall an app,
+  conditional on its current generation. Uninstall revokes app access within
+  the documented freshness bounds. Approvals and delegated app tools are now
+  bound to each team's installation: after upgrading, run
+  `aw plugin install <origin>` for each selected team and identity home, mint a
+  fresh grant, and restart custody and workers with the upgraded CLI and new
+  grant. Old approvals are never adopted automatically. Grant status now
+  includes `installed_at`, the installation's creation time; a re-pin
+  preserves it.
+- Folio links and edit sessions are bound to the installation that created
+  them. Uninstall ends their access; reinstall never revives them, while a
+  re-pin keeps them working. A legacy link or session is adopted only after a
+  fresh authority check proves that the current installation predates it.
+  Folio now uses manifest v2 and requires the separate `folio:grant-read-1`
+  key configured through `FOLIO_APP_KEY_FILES`. Folio migration
+  `003_installation_capabilities.sql`. Deploy the server first, then Folio,
+  then re-pin each Folio installation.
+- `aweb.testing` runs the coordination server in-process for tests. A
+  library-mode host gives the AWID registry client its transport.
+- Apps can raise task requests to a team, with conditional member answers and
+  signed receipts; uninstalling an app cancels its open requests.
+- Fixed: MCP saved-contact mail and chat sends (`send_message_to_contact`)
+  failed with unexpected federation transport arguments.
+- `GET /v1/agents` returns an encryption key only for the identity it shows: a
+  row whose `did_aw` is masked (binding not yet verified) no longer carries a
+  key assertion bound to that hidden `did_aw`. This removes the 409 on
+  `aw mail send` to existing correspondents while identity verification is
+  pending.
+- **Upgrade step for self-hosted operators:** Folio, and any naapp that uses
+  installation grants, refuses a team with no `aweb.team-server/1` record.
+  Before relying on Folio, run once per team:
+  `aw id team set-server --team <team> --namespace <domain> --url <server origin>`.
+  Hosted aweb.ai teams are published and backfilled by aweb Cloud.
+- **Dependency floors:** `awid-service>=0.5.32` (`aweb.testing` imports
+  `awid_service.testing`) and `aweb-naapp[egress,hooks]>=0.5.0` (the release
+  baseline this server is qualified with; the server and aweb-naapp ship
+  together).
+- **Migrations (aweb schema):** `038_task_revisions.sql`,
+  `039_app_task_requests.sql`, `040_task_answer_stages.sql`. Folio:
+  `003_installation_capabilities.sql` (`002_edit_sessions.sql` is already live
+  with Folio `71f68028b`).
+- **Publish order:** `awid-service` 0.5.32, then `aweb-naapp` 0.5.0, then this
+  server, then `aweb-naapp-testing` 0.5.0 (its `server` extra needs this
+  server on PyPI).
 
 ### Release preparation: aweb-naapp 0.4.0
 

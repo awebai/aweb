@@ -1,6 +1,9 @@
 services:
   postgres:
     image: postgres:16-alpine
+    networks:
+      default:
+        aliases: ["${NAAPP_E2E_PROJECT:-folio-e2e}-postgres.test"]
     environment:
       POSTGRES_USER: folio
       POSTGRES_PASSWORD: folio
@@ -17,6 +20,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    networks:
+      default:
+        aliases: ["${NAAPP_E2E_PROJECT:-folio-e2e}-redis.test"]
     ports:
       - "6379"
     healthcheck:
@@ -26,6 +32,9 @@ services:
       retries: 30
 
   awid:
+    networks:
+      default:
+        aliases: ["${NAAPP_E2E_PROJECT:-folio-e2e}-awid.test"]
     build:
       context: ${FOLIO_E2E_AWEB_CONTEXT:-../..}
       dockerfile: awid/Dockerfile
@@ -39,6 +48,8 @@ services:
       AWID_RATE_LIMIT_BACKEND: redis
       AWID_RATE_LIMIT_DISABLED: "true"
       AWID_SKIP_DNS_VERIFY: "1"
+      APP_ENV: test
+      AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "true"
       AWID_SERVICE_TOKEN: ${FOLIO_E2E_AWID_SERVICE_TOKEN:-folio-e2e-awid-service-token-0123456789abcdef}
     ports:
       - "${NAAPP_E2E_AWID_PORT:-18010}:8010"

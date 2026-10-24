@@ -100,7 +100,7 @@ def _grant_source_grant(
 
 
 class InstalledSecrets:
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         return _grant_source_grant() if team_id == TEAM else None
 
 

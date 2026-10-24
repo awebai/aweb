@@ -105,8 +105,9 @@ func registerTeamAdminCommand(cmd *cobra.Command, groupID string) {
 }
 
 var teamHumanCreateCmd = &cobra.Command{
-	Use:   "create <name>",
-	Short: "Create a local empty-profile team workspace",
+	Annotations: map[string]string{hostHumanOrgAnnotation: "true"},
+	Use:         "create <name>",
+	Short:       "Create a local empty-profile team workspace",
 	Long: "Create a local empty-profile team workspace.\n\n" +
 		"This wraps aw init for the aw-local path. No --agent/--profile means no Library call\n" +
 		"and no profile materialization. --agent accepts [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]\n" +
@@ -114,7 +115,9 @@ var teamHumanCreateCmd = &cobra.Command{
 		"server-authoritative next classic name; omitted scope comes from profile.yaml.\n" +
 		"All --agent/--profile specs populate agents/instances for aw team admin up; only\n" +
 		"--home with a single spec uses that spec for the root workspace profile.\n" +
-		"Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.",
+		"Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.\n\n" +
+		"With --org, create a hosted team using human CLI authorization and return an invite.\n" +
+		"This explicit mode creates no local identity or profile; accept the invite separately.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanCreate,
 }
@@ -261,6 +264,9 @@ func init() {
 		&cobra.Group{ID: teamAdminGroupOperations, Title: "Team Administration"},
 	)
 
+	teamHumanCreateCmd.Flags().String("org", "", "Hosted organization slug or ID (requires aw auth login)")
+	teamHumanCreateCmd.Flags().String("request-id", "", "Hosted create UUID (reuse to replay)")
+	teamHumanCreateCmd.Flags().Bool("show-token", false, "Print the hosted invite token in text output")
 	teamHumanCreateCmd.Flags().BoolVar(&teamHumanCreateBYOT, "byot", false, "Create a customer-controlled AWID team with local namespace controller authority")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateName, "name", "", "Team name")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateNamespace, "namespace", "", "Namespace domain for --byot")
@@ -508,6 +514,9 @@ type teamHumanCreateFoundingResult struct {
 }
 
 func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
+	if cmd != nil && cmd.Flags().Changed("org") {
+		return runOrgTeamCreate(cmd, args[0])
+	}
 	teamName := strings.TrimSpace(args[0])
 	if teamName == "" {
 		return usageError("team name is required")

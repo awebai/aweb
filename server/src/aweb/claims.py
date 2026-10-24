@@ -280,74 +280,79 @@ async def release_task_claims(
     """
     aweb_db = db_infra.get_manager("aweb")
     async with aweb_db.transaction() as tx:
-        released_focus_by_workspace: dict[str, str] = {}
-        if workspace_id:
-            released_rows = await tx.fetch_all(
-                """
-                DELETE FROM {{tables.task_claims}}
-                WHERE team_id = $1 AND workspace_id = $2 AND task_ref = $3
-                RETURNING workspace_id, task_ref, apex_task_ref
-                """,
-                team_id,
-                UUID(workspace_id),
-                task_ref,
-            )
-            affected_ws_ids = [row["workspace_id"] for row in released_rows]
+        return await release_task_claims_on(tx, team_id=team_id, task_ref=task_ref, workspace_id=workspace_id)
+
+
+async def release_task_claims_on(tx, *, team_id: str, task_ref: str, workspace_id: str | None = None) -> list[str]:
+    """Release task claims/focus in an existing lifecycle transaction."""
+    released_focus_by_workspace: dict[str, str] = {}
+    if workspace_id:
+        released_rows = await tx.fetch_all(
+            """
+            DELETE FROM {{tables.task_claims}}
+            WHERE team_id = $1 AND workspace_id = $2 AND task_ref = $3
+            RETURNING workspace_id, task_ref, apex_task_ref
+            """,
+            team_id,
+            UUID(workspace_id),
+            task_ref,
+        )
+        affected_ws_ids = [row["workspace_id"] for row in released_rows]
+    else:
+        released_rows = await tx.fetch_all(
+            """
+            DELETE FROM {{tables.task_claims}}
+            WHERE team_id = $1 AND task_ref = $2
+            RETURNING workspace_id, task_ref, apex_task_ref
+            """,
+            team_id,
+            task_ref,
+        )
+        affected_ws_ids = [row["workspace_id"] for row in released_rows]
+
+    for row in released_rows:
+        released_focus_by_workspace[str(row["workspace_id"])] = claim_focus_task_ref(
+            row["task_ref"],
+            row["apex_task_ref"],
+        )
+
+    # Update each affected workspace's focus to its next active claim.
+    # If no claims remain, preserve the released apex/task as sticky focus
+    # while that focus task is still open.
+    for ws_id in affected_ws_ids:
+        next_claim = await tx.fetch_one(
+            """
+            SELECT task_ref, apex_task_ref
+            FROM {{tables.task_claims}}
+            WHERE team_id = $1 AND workspace_id = $2
+            ORDER BY claimed_at DESC
+            LIMIT 1
+            """,
+            team_id,
+            ws_id,
+        )
+        next_focus = None
+        if next_claim:
+            next_focus = claim_focus_task_ref(next_claim["task_ref"], next_claim["apex_task_ref"])
         else:
-            released_rows = await tx.fetch_all(
-                """
-                DELETE FROM {{tables.task_claims}}
-                WHERE team_id = $1 AND task_ref = $2
-                RETURNING workspace_id, task_ref, apex_task_ref
-                """,
-                team_id,
-                task_ref,
-            )
-            affected_ws_ids = [row["workspace_id"] for row in released_rows]
-
-        for row in released_rows:
-            released_focus_by_workspace[str(row["workspace_id"])] = claim_focus_task_ref(
-                row["task_ref"],
-                row["apex_task_ref"],
-            )
-
-        # Update each affected workspace's focus to its next active claim.
-        # If no claims remain, preserve the released apex/task as sticky focus
-        # while that focus task is still open.
-        for ws_id in affected_ws_ids:
-            next_claim = await tx.fetch_one(
-                """
-                SELECT task_ref, apex_task_ref
-                FROM {{tables.task_claims}}
-                WHERE team_id = $1 AND workspace_id = $2
-                ORDER BY claimed_at DESC
-                LIMIT 1
-                """,
-                team_id,
-                ws_id,
-            )
-            next_focus = None
-            if next_claim:
-                next_focus = claim_focus_task_ref(next_claim["task_ref"], next_claim["apex_task_ref"])
-            else:
-                released_focus = released_focus_by_workspace.get(str(ws_id))
-                if released_focus and await _is_open_task_ref(
-                    tx,
-                    team_id=team_id,
-                    task_ref=released_focus,
-                ):
-                    next_focus = released_focus
-            await tx.execute(
-                """
-                UPDATE {{tables.workspaces}}
-                SET focus_task_ref = $1,
-                    focus_updated_at = NOW(),
-                    updated_at = NOW()
-                WHERE team_id = $2 AND workspace_id = $3
-                """,
-                next_focus,
-                team_id,
-                ws_id,
-            )
+            released_focus = released_focus_by_workspace.get(str(ws_id))
+            if released_focus and await _is_open_task_ref(
+                tx,
+                team_id=team_id,
+                task_ref=released_focus,
+            ):
+                next_focus = released_focus
+        await tx.execute(
+            """
+            UPDATE {{tables.workspaces}}
+            SET focus_task_ref = $1,
+                focus_updated_at = NOW(),
+                updated_at = NOW()
+            WHERE team_id = $2 AND workspace_id = $3
+            """,
+            next_focus,
+            team_id,
+            ws_id,
+        )
 
     return [str(ws_id) for ws_id in affected_ws_ids]

@@ -72,7 +72,9 @@ and AWID status (missing prefix, non-current key, team mismatch, far-future
 `issued_at`, `issued_at` with non-ASCII digits or an impossible date, not newer
 than the stored record, plain http outside loopback).
 Seeds are public test material. The AWID real-route tests consume these
-bytes. See [the team contract](../awid-sot.md#teams).
+bytes; `awid/tests/test_registry_team_server.py` also checks the Python record
+builder and signer against the frozen Go bytes and signatures.
+See [the team contract](../awid-sot.md#teams).
 
 ### `principal-attestation-v1.json`
 
@@ -655,6 +657,9 @@ reference duplication are mutation-tested failures.
 
 | Public fixture | Actual source consumers |
 |---|---|
+| `app-task-authorization-v1.json` | naapp-lib `test_task_request_vectors.py`; Go AWID `app_task_authorization_test.go`; Python aweb `test_c2_vectors.py` |
+| `app-request-credential-v1.json` | naapp-lib `test_task_request_vectors.py`, `test_app_credential_signer.py`; Python aweb `test_c2_vectors.py` |
+| `task-answer-v1.json` | naapp-lib `test_task_request_vectors.py`; Python aweb `test_c2_vectors.py`, including the ordered signed HTTP sequence |
 | `a2a-awid-publication-v1.json` | Python AWID `test_a2a_publication_route.py`; Go AWID `a2a_publication_test.go`; Go shared `conformance_test.go` |
 | `a2a-bridge-envelope-v0.json` | Go gateway `envelope_vector_test.go` |
 | `a2a-v1.json` | Go A2A `card_test.go`; Go gateway `gateway_rpc_test.go`; Go shared `conformance_test.go` |

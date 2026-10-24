@@ -19,11 +19,14 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-
-SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-TAG_PATTERN = re.compile(
-    rf"^(server-v|awid-service-v|aweb-naapp-v|awid-v|aw-v|channel-v|pi-v|skills-v|a2a-gw-v)({SEMVER})$"
+from release_versions import (
+    SEMVER,
+    VersionRefusal as PublishRefusal,
+    require_final_promotion,
+    tag_parts,
+    valid_version,
 )
+
 MANIFESTS = {
     "server-v": "server/pyproject.toml",
     "awid-service-v": "awid/pyproject.toml",
@@ -46,10 +49,6 @@ NPM_LANES = {
     "pi-v": ("pi-extension", "@awebai/pi", "pi"),
     "skills-v": ("packages/claude-skills", "@awebai/claude-skills", "skills"),
 }
-
-
-class PublishRefusal(RuntimeError):
-    pass
 
 
 def run(
@@ -82,7 +81,7 @@ def manifest_version(root: Path, path: str) -> str:
             value = tomllib.load(handle)["project"]["version"]
     else:
         value = json.loads((root / path).read_text(encoding="utf-8"))["version"]
-    if not isinstance(value, str) or not re.fullmatch(SEMVER, value):
+    if not valid_version(path, value):
         raise PublishRefusal(f"{path} has invalid version {value!r}")
     return value
 
@@ -93,16 +92,13 @@ def manifest_version_at(root: Path, source_sha: str, path: str) -> str:
         value = tomllib.loads(raw)["project"]["version"]
     else:
         value = json.loads(raw)["version"]
-    if not isinstance(value, str) or not re.fullmatch(SEMVER, value):
+    if not valid_version(path, value):
         raise PublishRefusal(f"{path} at {source_sha} has invalid version {value!r}")
     return value
 
 
 def tag_identity(root: Path, tag: str) -> tuple[str, str, str]:
-    matched = TAG_PATTERN.fullmatch(tag)
-    if not matched:
-        raise PublishRefusal(f"unsupported release tag {tag!r}")
-    prefix, version = matched.group(1), matched.group(2)
+    prefix, version = tag_parts(tag)
     try:
         source_sha = run(root, "git", "rev-parse", f"{tag}^{{commit}}", timeout=60)
     except PublishRefusal as error:
@@ -114,6 +110,7 @@ def tag_identity(root: Path, tag: str) -> tuple[str, str, str]:
             raise PublishRefusal(
                 f"{tag} does not match {manifest} version {manifest_version_at(root, source_sha, manifest)}"
             )
+    require_final_promotion(root, tag, source_sha)
     return prefix, version, source_sha
 
 
@@ -508,10 +505,14 @@ def publish(root: Path, tag: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check-tag", action="store_true", help="validate tag/tree identity without publishing")
     parser.add_argument("tag")
     arguments = parser.parse_args(argv)
     try:
-        publish(Path.cwd().resolve(), arguments.tag)
+        if arguments.check_tag:
+            tag_identity(Path.cwd().resolve(), arguments.tag)
+        else:
+            publish(Path.cwd().resolve(), arguments.tag)
     except (
         PublishRefusal,
         OSError,

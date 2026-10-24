@@ -28,6 +28,7 @@ _ACTIONS = {
     'approve_installation_request_route': 'apps.requests.approve',
     'decline_installation_request_route': 'apps.requests.decline',
     'reverify_installation_route': 'apps.reverify',
+    'uninstall_installation_route': 'apps.uninstall',
 }
 
 

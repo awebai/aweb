@@ -21,6 +21,46 @@ that publishes two packages (`aweb-naapp-v`) requires both manifests at the tag
 version, and `aweb-naapp-testing` requires exactly that `aweb-naapp`. CLI and
 A2A gateway versions are explicit in their tags.
 
+## Release candidates and the Cloud pair
+
+Python lanes also accept strict `X.Y.ZrcN` versions, with `N >= 1`:
+`server-v1.27.34rc1`, `awid-service-v0.5.32rc1`, and
+`aweb-naapp-v0.4.1rc1`, for example. The manifest versions, including
+`aweb-naapp-testing`, must equal the tag. The aw spelling is SemVer:
+`aw-v1.36.48-rc.1`. Other artifact lanes continue to accept final versions only.
+
+The coordinator publishes these RCs first. The Cloud candidate pins the exact
+RC versions and must pass its ordinary pin gate against real services before
+OSS final publication and Cloud deployment. Python RCs publish to PyPI. Every
+aw RC npm package publishes with `--tag next`; final packages use `latest`.
+The downstream `awebai/aw` workflow accepts `v*`, uses the synced
+`npm/publish.sh`, and GoReleaser's `release.prerelease: auto` marks an RC GitHub
+release as a prerelease. Its workflow needs no separate RC syntax change.
+Runnerless npm publication remains available without GitHub; hosted binary
+assets remain resumable.
+
+Before final tagging, `release_candidate.py` selects the highest numbered
+existing RC tag for the same artifact and base version. Its commit must be an
+ancestor of the final commit. The complete RC-to-final **tree** diff may only
+promote manifest versions and exact dependency pins or lower-bound floors on promoted packages to the same final base.
+A pin may change only when its target package's manifest is promoted in that
+same tree. Parsed extras, markers, scripts and other metadata remain equal.
+Existing uv/npm lock records may promote those same versions; artifact URLs,
+hashes, sizes, integrity and upload times may change only for promoted records.
+Lock records may not be added or removed. File additions, deletions, renames,
+mode changes and source changes refuse. Commit release notes before RC1:
+docs and CHANGELOG changes after the selected RC also refuse.
+
+The same check runs in the tag publisher, including runnerless publication.
+The aw sync workflow calls the read-only `publish_release.py --check-tag`
+entry point before it clones, syncs, pushes or tags the downstream repository.
+It proves source identity plus version promotion, **not qualification**.
+The coordinator must separately hold the Cloud train's green receipt for the
+exact selected RC before final tagging. A paired-package final with no
+matching RC refuses; there is no implicit exception path. Both candidate
+creation and publication need the RC tag history: run `git fetch --tags`
+before either entry point. A missing fetch fails closed. Tags are immutable.
+
 ## 1. Test the final candidate locally
 
 Choose every artifact tag that this commit should publish, then run one command:
@@ -142,9 +182,10 @@ Skills ZIPs are likewise resumable hosted assets after the npm package is safe.
 
 ## Repository boundary
 
-This repository never changes or deploys AC. When AC needs a new OSS version,
-publish the relevant OSS tags first. AC then updates its exact dependency lock,
-runs its own complete Docker candidate gate, and publishes its own `vX.Y.Z` tag.
+This repository never changes or deploys AC. For a paired release, publish the
+relevant OSS RCs first. AC updates its exact dependency lock and runs its
+ordinary candidate pin gate. Only after that gate is green does the coordinator
+publish the version-only OSS finals and deploy the paired Cloud/Folio release.
 
 There are no release-intent tags, done tags, release branches, workflow
 monitors, or cross-repository release transactions.
