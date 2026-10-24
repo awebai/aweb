@@ -151,6 +151,7 @@ class RunningFolio:
     ca_file: Path | None = None
     server_origin: str | None = None
     server_env: dict[str, str] | None = None
+    app_id: str = "folio"
 
     @property
     def last_request(self) -> CapturedRequest:
@@ -378,7 +379,7 @@ def _running_folio(
                 patch.setenv("SSL_CERT_FILE", str(bundle))
                 patch.setenv("GODEBUG", "x509sslcertoverrideplatform=1")
             _wait_http_ok(f"{proxy_origin}/health", ca_file=ca_file)
-            yield RunningFolio(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy, ca_file=ca_file)
+            yield RunningFolio(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy, ca_file=ca_file, app_id=app_id)
     finally:
         proxy.shutdown()
         proxy.server_close()
@@ -414,7 +415,7 @@ def folio_without_awid_service_token(tmp_path_factory: pytest.TempPathFactory) -
 
 @contextmanager
 def _installed_deployment(tmp_path: Path, service_token: str | None) -> Iterator[RunningFolio]:
-    with _running_folio(awid_service_token=service_token, tls_dir=tmp_path / "tls") as running:
+    with _running_folio(awid_service_token=service_token, tls_dir=tmp_path / "tls", app_id="folio-e2e") as running:
         assert running.ca_file is not None
         with _running_coordination_server(tmp_path, app_origin=running.origin, ca_file=running.ca_file) as (origin, env):
             yield replace(running, server_origin=origin, server_env=env)
@@ -560,15 +561,24 @@ def _provision_team(
     if folio is not None:
         assert folio.server_origin is not None and folio.server_env is not None
         workspace.env["AWEB_URL"] = folio.server_origin
+        _configure_folio_client(workspace, folio)
         _run_aw(workspace, "workspace", "connect", "--service", folio.server_origin, "--team", team_id)
         _publish_team_server(result, folio.server_origin)
         _grant_install_admin(result, folio.server_env)
         installed = _run_aw_json(workspace, "plugin", "install", folio.origin)
         assert installed["approved"]
         apps = _aw_json(_aw_request(result, "GET", folio.server_origin + "/v1/apps/installed"), context="installed Folio")
-        assert any(app["state"] == "active" and app["origin"] == folio.origin
+        assert any(app["app_id"] == folio.app_id and app["state"] == "active" and app["origin"] == folio.origin
                    and app["installation_id"] for app in apps["apps"])
     return result
+
+
+def _configure_folio_client(workspace: AWWorkspace, folio: RunningFolio) -> None:
+    assert folio.ca_file is not None
+    workspace.env["SSL_CERT_FILE"] = str(folio.ca_file)
+    workspace.env["GODEBUG"] = "x509sslcertoverrideplatform=1"
+    for name in ("NO_PROXY", "no_proxy"):
+        workspace.env[name] = os.environ.get(name, "")
 
 
 def _publish_team_server(team: E2ETeam, origin: str) -> None:
@@ -661,6 +671,7 @@ def test_manifest_catalog_is_public_and_variants_byte_stable(folio: RunningFolio
     catalog = httpx.get(f"{folio.origin}/.well-known/aweb-app-versions.json", timeout=10.0)
     assert catalog.status_code == 200, catalog.text
     variant = catalog.json()["variants"][0]
+    assert catalog.json()["app_id"] == folio.app_id
     assert variant["manifest_version"] == 2
     assert variant["url"] == "/manifests/v2.json"
     response = httpx.get(f"{folio.origin}{variant['url']}", timeout=10.0)
@@ -669,7 +680,9 @@ def test_manifest_catalog_is_public_and_variants_byte_stable(folio: RunningFolio
     assert response.headers["content-type"].startswith("application/json")
     # The real server fills the declared kid from its configured key once at
     # startup, and both discovery paths serve those exact deployment bytes.
-    assert response.content == canonical_bytes(served_manifest(folio.origin))
+    expected = served_manifest(folio.origin)
+    expected["app"]["id"] = folio.app_id
+    assert response.content == canonical_bytes(expected)
     assert variant["digest"] == "sha256:" + hashlib.sha256(response.content).hexdigest()
     assert httpx.get(f"{folio.origin}/aweb-app.json", timeout=10.0).content == response.content
     again = httpx.get(f"{folio.origin}{variant['url']}", timeout=10.0)
@@ -768,8 +781,7 @@ def test_install_after_mint_uses_replacement_grant(
         assert folio.ca_file is not None
         with _running_coordination_server(tmp_path, app_origin=folio.origin, ca_file=folio.ca_file) as (origin, server_env):
             aw_workspace.env["AWEB_URL"] = origin
-            aw_workspace.env["SSL_CERT_FILE"] = str(folio.ca_file)
-            aw_workspace.env["GODEBUG"] = "x509sslcertoverrideplatform=1"
+            _configure_folio_client(aw_workspace, folio)
             _run_aw(aw_workspace, "workspace", "connect", "--service", origin, "--team", team.team_id)
             _publish_team_server(team, origin)
             _grant_install_admin(team, server_env)
