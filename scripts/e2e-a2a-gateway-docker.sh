@@ -86,7 +86,7 @@ cleanup() {
     echo "--- Gateway container state ---"
     docker inspect --format '{{json .State}}' "$GATEWAY_CONTAINER" 2>/dev/null || true
     echo "--- Gateway container logs ---"
-    docker logs "$GATEWAY_CONTAINER" 2>/dev/null || true
+    docker logs "$GATEWAY_CONTAINER" 2>&1 || true
     docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --no-color aweb awid 2>/dev/null || true
   fi
   docker rm -f "$GATEWAY_CONTAINER" >/dev/null 2>&1 || true
