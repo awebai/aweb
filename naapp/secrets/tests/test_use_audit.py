@@ -44,7 +44,7 @@ def targets(now):
     return RegistrationView(
         TEAM,
         "post-secret-use-hook",
-        datetime.now(UTC),
+        now,
         timedelta(seconds=60),
         (
             Registration(
