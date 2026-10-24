@@ -482,8 +482,8 @@ async def test_token_rotation_cleanup_uses_only_committed_scoped_affected_ids(wo
     )
 
 
-async def test_unaudited_record_kinds_remain_outside_this_http_slice(world):
-    from tests.test_change_sets import CAROL, grant_role
+async def test_unaudited_b3_record_kinds_remain_outside_this_http_slice(world):
+    from tests.test_change_sets import designate_approver
 
     w = world
     scope = await enrol_owner(w, ALICE, "alice@acme.com")
@@ -492,7 +492,7 @@ async def test_unaudited_record_kinds_remain_outside_this_http_slice(world):
         response = await human.post(
             ROOT,
             json={
-                "changes": [grant_role(CAROL)],
+                "changes": [designate_approver("finance", "finance@acme.com", ["sec_1"])],
                 "sealed": [],
                 "reason": "",
             },

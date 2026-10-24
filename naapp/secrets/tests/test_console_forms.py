@@ -406,3 +406,56 @@ async def test_customer_browser_token_draft_and_fresh_passkey_confirmation(
         await page.screenshot(path=tmp_path / "onepassword-connection-applied.png")
         if extra_context is not None:
             await extra_context.close()
+
+
+@pytest.mark.parametrize("width", [375, 1440])
+async def test_runner_confirmation_renders_code_once_in_the_deciding_document(
+    world, browser, service, width
+):
+    from aweb_secrets.runners import apply_runner_migrations, mint_runner_id
+    from tests.test_change_set_runners import runner_item
+
+    w = world
+    await apply_runner_migrations(w.db)
+    runner_id = mint_runner_id()
+    async with await browser.new_context(viewport={"width": width, "height": 900}) as context:
+        page, _, _ = await enrolled_page(w, context, service)
+        csrf = await page.evaluate("sessionStorage.getItem('aweb.secrets.console.csrf')")
+        drafted = await context.request.post(
+            service + ROOT,
+            headers={"X-CSRF-Token": csrf},
+            data={
+                "changes": [runner_item(runner_id)],
+                "sealed": [],
+                "reason": "Register the build runner",
+            },
+        )
+        assert drafted.status == 201
+        draft = await drafted.json()
+        [token] = [
+            token
+            for approval, token in w.inbox.links["alice@acme.com"]
+            if approval == draft["approval_id"]
+        ]
+        await page.goto(service + "/approvals#token=" + quote(token))
+        await wait_for_review(page, service + ROOT + "/" + draft["change_id"] + "/review")
+        await expect(page.locator("#change-facts")).to_contain_text(runner_id)
+        await expect(page.locator("#change-facts")).to_contain_text("Build runner")
+        await page.get_by_role("button", name="Confirm with your passkey").click()
+        await expect(page.locator("#form-status")).to_have_attribute("data-state", "applied")
+        code = await page.locator("#runner-registration-result code").text_content()
+        assert (
+            code and runner_id in await page.locator("#runner-registration-result").text_content()
+        )
+        if await page.evaluate(
+            "value => JSON.stringify({...sessionStorage,...localStorage}).includes(value)", code
+        ):
+            raise AssertionError("registration material persisted in browser storage")
+        assert code not in page.url
+        assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        receipt = await context.request.get(service + ROOT + "/" + draft["change_id"])
+        if code in await receipt.text():
+            raise AssertionError("registration material returned by a later read")
+        await page.reload()
+        await expect(page.locator("#runner-registration-result")).to_have_count(0)
+        await expect(page.locator("#confirm-change")).to_be_hidden()

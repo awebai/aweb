@@ -8,9 +8,8 @@ No LOGIN credential lock is acquired late in that effect transaction. S4
 checks the exact login on request entry; passkey retirement also voids its B2
 decisions. A confirmation releases protected results only to its deciding owner.
 
-This first HTTP slice exposes backend_credential changes only, whose required
-proof-bound governance recording is implemented by ChangeSets. Other record
-forms and their complete governance projection follow on this same writer.
+Creation routes expose only the kinds with proof-bound governance implemented
+by ChangeSets. Draft, decision and confirmation share the same sole writer.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ from fastapi.responses import JSONResponse
 from pgdbm import TransactionManager
 
 from aweb_secrets.change import ChangeRefused
-from aweb_secrets.change_sets import ChangeSets, Confirmation
+from aweb_secrets.change_sets import AUDITED_CREATE_KINDS, ChangeSets, Confirmation
 from aweb_secrets.console import OwnerConsole, _body, _require_json, _text
 from aweb_secrets.console_results import confirmation_receipt, owner_confirmation_result
 from aweb_secrets.custody import SealContext
@@ -79,7 +78,10 @@ class ConsoleChanges:
         if not isinstance(items, list):
             raise HTTPException(400, "request_invalid")
         if any(
-            not isinstance(item, dict) or item.get("kind") != "backend_credential" for item in items
+            not isinstance(item, dict)
+            or item.get("kind") not in AUDITED_CREATE_KINDS
+            or item.get("op") != "create"
+            for item in items
         ):
             raise HTTPException(409, "change_kind_not_applicable")
 
