@@ -99,6 +99,13 @@
 
 CLI changes are since `aw-v1.36.48`.
 
+Upgrade note: a running `aw custody serve` keeps the binary it started with.
+After upgrading `aw`, restart every resident custody service (for example
+`launchctl kickstart -k gui/$(id -u)/<label>` for a launchd agent). Otherwise
+grant seats that use apps such as Folio fail with
+`app_tool_policy_unavailable`, because the old custody reader refuses the
+installation-bound snapshot.
+
 - In a team member's home that holds a signing key and a team certificate but
   no `identity.yaml`, such as a member set up with an API key, `aw plugin
   install` and update register or confirm the team's installation on the
