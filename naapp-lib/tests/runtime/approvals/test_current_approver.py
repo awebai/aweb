@@ -2,10 +2,12 @@
 # ruff: noqa: F811 -- pw is the imported real passkey composition fixture.
 
 import asyncio
+from copy import copy
 from datetime import timedelta
 
 import asyncpg
 import pytest
+from aweb_naapp_testing.webauthn import SoftAuthenticator
 from pgdbm.core import TransactionManager
 
 from tests.runtime.approvals.support import SCOPE
@@ -84,20 +86,16 @@ async def test_check_reads_same_transaction_changes_and_samples_live_time(pw, ch
 async def test_no_credential_or_missing_pair_cannot_gain_authority_after_prepare(pw):
     designation = await designate(pw, "human@example.com")
     subject = designation.approver.subject
+    token = pw.contacts.last("human@example.com")
+    device = SoftAuthenticator(ORIGIN)
+    registration = device.create(await pw.passkeys.enrolment_options(token))
     async with pw.passkeys.db.transaction() as tx:
         prepared = await pw.passkeys.prepare_current_approvers(
             tx, [(SCOPE, subject), ("wrong-scope", subject)]
         )
         assert not await check(pw, tx, prepared, subject)
-        # A credential added after preparation was never held by that preparation.
-        await tx.execute(
-            "INSERT INTO {{tables.passkey_credentials}} "
-            "(credential_id,subject,public_key,sign_count,created_at) VALUES($1,$2,$3,0,$4)",
-            b"new-test-credential",
-            subject,
-            b"unused-by-authority-check",
-            pw.clock(),
-        )
+        # Real enrolment on another connection cannot heal the old preparation.
+        await pw.passkeys.complete_enrolment(token, registration)
         assert not await check(pw, tx, prepared, subject)
         assert not await check(pw, tx, prepared, subject, "wrong-scope")
         fresh = await pw.passkeys.prepare_current_approvers(tx, [(SCOPE, subject)])
@@ -113,6 +111,9 @@ async def test_original_wrapper_transaction_and_savepoint_lifetime(pw):
             assert await check(pw, tx, prepared, approver.subject)
         wrapper = TransactionManager(tx.connection, db)
         assert not await check(pw, wrapper, prepared, approver.subject)
+        assert not await copy(pw.passkeys).check_current_approver(
+            tx, prepared, scope=SCOPE, subject=approver.subject
+        )
         async with db.transaction() as other:
             assert not await check(pw, other, prepared, approver.subject)
     assert not await check(pw, tx, prepared, approver.subject)
@@ -138,8 +139,6 @@ async def test_prepare_rejects_repeatable_read(pw):
 
 @pytest.mark.parametrize("blocked", ["designation", "credential"])
 async def test_batch_holds_complete_designation_union_before_credentials(pw, blocked):
-    from aweb_naapp_testing.webauthn import SoftAuthenticator
-
     first, first_device = await enrol(pw)
     second = await designate(pw, "other@example.com", scope="zz-later-scope")
     second_device = SoftAuthenticator(ORIGIN)
