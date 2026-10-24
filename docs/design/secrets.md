@@ -1868,7 +1868,7 @@ The catalog fixes its act enum and fixes each act's direction:
 | owner and approver designation and revocation (B3's audit interface) | `role.designated`, `role.revoked` |
 | passkey and contact enrolment, recovery and revocation | `credential.enrolled`, `credential.recovered`, `credential.revoked` |
 | grant lifecycle; grant-template creation/update | `grant.created`, `grant.changed`, `grant.revoked` (templates use creation/change only) |
-| secret, destination, operation and job lifecycle | `resource.created`, `resource.changed`, `resource.version_added`, `resource.replaced`, `resource.disabled`, `resource.enabled` |
+| secret, destination, operation and job lifecycle | `resource.created`, `resource.changed` (secret metadata only), `resource.version_added` (including job CURRENT revisions), `resource.replaced`, `resource.disabled`, `resource.enabled` |
 | validated same-reference backend version observation (§5.3) | `resource.version_observed` |
 | policy changes; relaxation of change-set four-eyes | `policy.changed` |
 | runners | `runner.registered`, `runner.deregistered` |
@@ -1885,14 +1885,36 @@ association with the identity-free system actor. The hook's general
 | `grant_template` / `create` | `grant.created`, `resource_type: grant_template`, `resource_ref: grant_template_id`; records a template, not issuance of a live grant. |
 | `grant_template` / `update` | `grant.changed`, same template type/identity, including a tightening; no fabricated `policy_digest`. |
 | `change_set_policy` / `update` | `policy.changed`, `resource_type: change_set_policy`, `resource_ref: installation_id`; relaxes four-eyes and has no `policy_digest`, because it is not a content-addressed dispatch Policy. |
+| `job` / `create` | `resource.created`, `resource_type: job`, `resource_ref: job_id`; creates the installation's first CURRENT definition for that job. |
+| `job` / `update` | `resource.version_added`, `resource_type: job`, `resource_ref: job_id`; distinct opaque `before_ref`/`after_ref` identify the locked prior and newly admitted CURRENT revisions, not secret value versions. |
 
 These effects and their signed enqueue commit atomically under the widening
 gate. Existing `resource.version_added` remains the actual value/backend-version
 addition path, including owner-confirmed backend credential and 1Password
-reference versions. Metadata revisions do not replace those existing receipts;
+reference versions; it also records admitted job CURRENT revisions below.
+Secret metadata revisions do not replace those existing receipts;
 their state references never encode a value fingerprint, provider version or
 raw metadata. The consumer vector's `change_governance`
-rows make the four cases explicit.
+rows make the metadata/template/four-eyes cases explicit.
+
+For `job/update`, **version means a newly admitted revision of CURRENT**, not
+a newly inserted immutable definition body. Both revision handles are persisted
+and bound to the actual job ID in the event's team/installation and to the
+locked prior/new definition digests. Restoring an already-stored body, if
+admitted through the same update path, still creates a new CURRENT revision
+and a fresh `after_ref`; it neither claims a novel definition body nor reuses
+that body's old revision handle. First creation may carry its initial
+`after_ref`. The vector's `job_current_revisions` includes create, changed-body
+update and admitted stored-body restore, with catalog-level refusal variants.
+
+Each update needs its actual admitted change/1 owner APPROVE evidence and
+approval association, with the system actor, widening audit gate and atomic
+CURRENT transition/event insertion. The digest pin, run grant, runner-local
+pin and execution fences in §9.4 still apply; a known stored digest or the
+receipt itself restores none of that authority, and lookup never falls back
+to history. Keep definition bodies and revision associations restricted;
+the generic catalog checks payload syntax, while the sink enforces the
+locked CURRENT-revision association. `resource.changed` stays secret-only.
 
 **B3 stages.** The following is exhaustive for B3's `APPROVER_*` audit kinds.
 It refines the credential families above; a sink must not infer a hook from
