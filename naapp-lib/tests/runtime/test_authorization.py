@@ -66,7 +66,7 @@ class InstalledGrants:
     unavailable: bool = False
     asked: list[str] = field(default_factory=list)
 
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         self.asked.append(team_id)
         if self.unavailable:
             raise GrantUnavailable("grant authority unreachable")

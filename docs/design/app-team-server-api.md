@@ -481,7 +481,10 @@ and `httpx` (`naapp-lib/pyproject.toml` on `agents/aweb-protocol-expert-naapp-ve
     until it is measured that no deployment uses it (open question 5).
 - `TeamGrantSource`: the remote implementation of B1's `GrantSource`
   (`aweb_naapp.runtime.authorization`), using
-  `async grant_for(team_id) -> Grant | None`:
+  `async grant_for(team_id, certificate_id=None) -> Grant | None`:
+  - member admission passes the already verified principal's certificate ID
+    through to discovery, so the shared AWID cache can read per-certificate
+    status when the app has no AWID service token;
   - an active installation of this app returns
     `Grant(team_id, scopes, fresh_until, installation_id, generation)`, where
     `fresh_until` is the client's monotonic time when it asked plus

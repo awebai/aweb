@@ -50,7 +50,7 @@ class InstalledGrant:
     def __init__(self, team):
         self.team, self.active = team, True
 
-    async def grant_for(self, team_id):
+    async def grant_for(self, team_id, certificate_id=None):
         if self.active and team_id == self.team:
             return Grant(
                 team_id=team_id,

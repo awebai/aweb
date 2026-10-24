@@ -19,7 +19,7 @@ from tests.test_catalog import ROLE, SECRET, seed
 
 
 class Installed:
-    async def grant_for(self, team_id):
+    async def grant_for(self, team_id, certificate_id=None):
         return (
             replace(_grant_source_grant(), scopes=frozenset({"secrets:read"}))
             if team_id == TEAM

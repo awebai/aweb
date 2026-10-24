@@ -13,7 +13,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -149,6 +149,9 @@ class RunningFolio:
     backend_origin: str
     proxy: RecordingProxy
     ca_file: Path | None = None
+    server_origin: str | None = None
+    server_env: dict[str, str] | None = None
+    app_id: str = "folio"
 
     @property
     def last_request(self) -> CapturedRequest:
@@ -363,8 +366,20 @@ def _running_folio(
     thread.start()
     try:
         ca_file = certificates.ca_file if certificates else None
-        _wait_http_ok(f"{proxy_origin}/health", ca_file=ca_file)
-        yield RunningFolio(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy, ca_file=ca_file)
+        with pytest.MonkeyPatch.context() as patch:
+            # Only this host's own test listener bypasses the public egress proxy.
+            for name in ("NO_PROXY", "no_proxy"):
+                patch.setenv(name, ",".join(filter(None, (os.environ.get(name), address))))
+            if ca_file is not None:
+                # All resident clients trust the disposable deployment's CA.
+                # Keep earlier session deployments trusted when another starts.
+                previous = os.environ.get("SSL_CERT_FILE")
+                bundle = ca_file.with_name("client-ca-bundle.pem")
+                bundle.write_bytes((Path(previous).read_bytes() if previous else b"") + ca_file.read_bytes())
+                patch.setenv("SSL_CERT_FILE", str(bundle))
+                patch.setenv("GODEBUG", "x509sslcertoverrideplatform=1")
+            _wait_http_ok(f"{proxy_origin}/health", ca_file=ca_file)
+            yield RunningFolio(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy, ca_file=ca_file, app_id=app_id)
     finally:
         proxy.shutdown()
         proxy.server_close()
@@ -386,19 +401,27 @@ def _running_folio(
             raise RuntimeError(f"uvicorn exited with {proc.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}")
 
 
-@pytest.fixture(scope="session")
-def folio() -> Iterator[RunningFolio]:
-    with _running_folio(awid_service_token=AWID_SERVICE_TOKEN) as running:
+@pytest.fixture(scope="module")
+def folio(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningFolio]:
+    with _installed_deployment(tmp_path_factory.mktemp("folio-e2e"), AWID_SERVICE_TOKEN) as running:
         yield running
 
 
-@pytest.fixture(scope="session")
-def folio_without_awid_service_token() -> Iterator[RunningFolio]:
-    with _running_folio(awid_service_token=None) as running:
+@pytest.fixture(scope="module")
+def folio_without_awid_service_token(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningFolio]:
+    with _installed_deployment(tmp_path_factory.mktemp("folio-private-e2e"), None) as running:
         yield running
 
 
-@pytest.fixture(scope="session")
+@contextmanager
+def _installed_deployment(tmp_path: Path, service_token: str | None) -> Iterator[RunningFolio]:
+    with _running_folio(awid_service_token=service_token, tls_dir=tmp_path / "tls", app_id="folio-e2e") as running:
+        assert running.ca_file is not None
+        with _running_coordination_server(tmp_path, app_origin=running.origin, ca_file=running.ca_file) as (origin, env):
+            yield replace(running, server_origin=origin, server_env=env)
+
+
+@pytest.fixture(scope="module")
 def folio_origin(folio: RunningFolio) -> str:
     return folio.origin
 
@@ -457,7 +480,9 @@ updated_at: \"{now}\"
     )
 
 
-def _provision_team(workspace: AWWorkspace, *, alias: str = "alice") -> E2ETeam:
+def _provision_team(
+    workspace: AWWorkspace, *, alias: str = "alice", folio: RunningFolio | None = None,
+) -> E2ETeam:
     unique = uuid.uuid4().hex[:12]
     namespace = f"folio-{unique}.test"
     team = "default"
@@ -523,7 +548,7 @@ def _provision_team(workspace: AWWorkspace, *, alias: str = "alice") -> E2ETeam:
         cert_path=str(fetch_cert["cert_path"]),
     )
     cert = _run_aw_json(workspace, "id", "cert", "show")
-    return E2ETeam(
+    result = E2ETeam(
         workspace=workspace,
         namespace=namespace,
         team=team,
@@ -533,6 +558,44 @@ def _provision_team(workspace: AWWorkspace, *, alias: str = "alice") -> E2ETeam:
         did_key=str(cert["member_did_key"]),
         certificate_id=certificate_id,
     )
+    if folio is not None:
+        assert folio.server_origin is not None and folio.server_env is not None
+        workspace.env["AWEB_URL"] = folio.server_origin
+        _configure_folio_client(workspace, folio)
+        _run_aw(workspace, "workspace", "connect", "--service", folio.server_origin, "--team", team_id)
+        _publish_team_server(result, folio.server_origin)
+        _grant_install_admin(result, folio.server_env)
+        installed = _run_aw_json(workspace, "plugin", "install", folio.origin)
+        assert installed["approved"]
+        apps = _aw_json(_aw_request(result, "GET", folio.server_origin + "/v1/apps/installed?team_id=" + team_id), context="installed Folio")
+        assert any(app["app_id"] == folio.app_id and app["state"] == "active" and app["origin"] == folio.origin
+                   and app["installation_id"] for app in apps["apps"])
+    return result
+
+
+def _configure_folio_client(workspace: AWWorkspace, folio: RunningFolio) -> None:
+    assert folio.ca_file is not None
+    workspace.env["SSL_CERT_FILE"] = str(folio.ca_file)
+    workspace.env["GODEBUG"] = "x509sslcertoverrideplatform=1"
+    for name in ("NO_PROXY", "no_proxy"):
+        workspace.env[name] = os.environ.get(name, "")
+
+
+def _publish_team_server(team: E2ETeam, origin: str) -> None:
+    published = _run_aw_json(team.workspace, "id", "team", "set-server", "--team", team.team,
+                             "--namespace", team.namespace, "--url", origin, "--registry", AWID_URL)
+    assert published["status"] == "published" and published["server_url"] == origin
+
+
+def _grant_install_admin(team: E2ETeam, env: dict[str, str]) -> None:
+    project = Path(__file__).resolve().parents[3] / "server"
+    operator = subprocess.run(
+        ["uv", "run", "--offline", "--frozen", "--project", str(project),
+         "aweb", "install-admin", "grant", "--team-id", team.team_id,
+         "--principal-did", team.did_key, "--role", "owner"],
+        env=env, text=True, capture_output=True, timeout=30,
+    )
+    assert operator.returncode == 0, operator.stdout + operator.stderr
 
 
 def _provision_real_team_certificate(workspace: AWWorkspace) -> str:
@@ -589,7 +652,7 @@ def test_health_endpoints_are_public(folio: RunningFolio) -> None:
         response = httpx.get(f"{folio.origin}{path}", timeout=10.0)
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["status"] == "ok" and body["service"] == "folio", body
+        assert body["status"] == "ok" and body["service"] == folio.app_id, body
         assert "git_sha" in body["build"], body
     checks = httpx.get(f"{folio.origin}/health", timeout=10.0).json()["checks"]
     assert checks["database"]["ok"] and checks["outbox"]["ok"], checks
@@ -608,6 +671,7 @@ def test_manifest_catalog_is_public_and_variants_byte_stable(folio: RunningFolio
     catalog = httpx.get(f"{folio.origin}/.well-known/aweb-app-versions.json", timeout=10.0)
     assert catalog.status_code == 200, catalog.text
     variant = catalog.json()["variants"][0]
+    assert catalog.json()["app_id"] == folio.app_id
     assert variant["manifest_version"] == 2
     assert variant["url"] == "/manifests/v2.json"
     response = httpx.get(f"{folio.origin}{variant['url']}", timeout=10.0)
@@ -616,7 +680,9 @@ def test_manifest_catalog_is_public_and_variants_byte_stable(folio: RunningFolio
     assert response.headers["content-type"].startswith("application/json")
     # The real server fills the declared kid from its configured key once at
     # startup, and both discovery paths serve those exact deployment bytes.
-    assert response.content == canonical_bytes(served_manifest(folio.origin))
+    expected = served_manifest(folio.origin)
+    expected["app"]["id"] = folio.app_id
+    assert response.content == canonical_bytes(expected)
     assert variant["digest"] == "sha256:" + hashlib.sha256(response.content).hexdigest()
     assert httpx.get(f"{folio.origin}/aweb-app.json", timeout=10.0).content == response.content
     again = httpx.get(f"{folio.origin}{variant['url']}", timeout=10.0)
@@ -625,7 +691,7 @@ def test_manifest_catalog_is_public_and_variants_byte_stable(folio: RunningFolio
 
 
 def test_real_aw_team_auth_smoke(folio: RunningFolio, aw_workspace: AWWorkspace) -> None:
-    team = _provision_team(aw_workspace)
+    team = _provision_team(aw_workspace, folio=folio)
     result = _aw_request(team, "GET", f"{folio.origin}/v1/documents")
     assert _assert_aw_success(result, context="list documents smoke").strip() == "[]"
 
@@ -635,7 +701,7 @@ def test_private_team_member_authenticates_without_the_awid_service_token(
 ) -> None:
     # Without a service token Folio checks the member's certificate through
     # AWID's per-certificate status, which a private team's members can use too.
-    team = _provision_team(aw_workspace)
+    team = _provision_team(aw_workspace, folio=folio_without_awid_service_token)
     result = _aw_request(team, "GET", f"{folio_without_awid_service_token.origin}/v1/documents")
     assert _assert_aw_success(result, context="private team without service token").strip() == "[]"
 
@@ -715,17 +781,10 @@ def test_install_after_mint_uses_replacement_grant(
         assert folio.ca_file is not None
         with _running_coordination_server(tmp_path, app_origin=folio.origin, ca_file=folio.ca_file) as (origin, server_env):
             aw_workspace.env["AWEB_URL"] = origin
-            aw_workspace.env["SSL_CERT_FILE"] = str(folio.ca_file)
-            aw_workspace.env["GODEBUG"] = "x509sslcertoverrideplatform=1"
+            _configure_folio_client(aw_workspace, folio)
             _run_aw(aw_workspace, "workspace", "connect", "--service", origin, "--team", team.team_id)
-            project = Path(__file__).resolve().parents[3] / "server"
-            operator = subprocess.run(
-                ["uv", "run", "--offline", "--frozen", "--project", str(project),
-                 "aweb", "install-admin", "grant", "--team-id", team.team_id,
-                 "--principal-did", team.did_key, "--role", "owner"],
-                env=server_env, text=True, capture_output=True, timeout=30,
-            )
-            assert operator.returncode == 0, operator.stdout + operator.stderr
+            _publish_team_server(team, origin)
+            _grant_install_admin(team, server_env)
             with (tmp_path / "custody.log").open("w+") as log:
                 custody = subprocess.Popen(
                     ["aw", "--identity-home", str(resident_home), "custody", "serve"],
@@ -857,7 +916,7 @@ def test_document_endpoints_versions_raw_utf8_and_attribution(
     aw_workspace: AWWorkspace,
     tmp_path: Path,
 ) -> None:
-    team = _provision_team(aw_workspace)
+    team = _provision_team(aw_workspace, folio=folio)
 
     created = _create_document(folio, team, slug="handoff", title="Handoff", body="first")
     assert created["slug"] == "handoff"
@@ -902,8 +961,8 @@ def test_team_scoping_and_body_named_team_cannot_bypass_certificate_scope(
     folio: RunningFolio,
     aw_workspace_factory: Callable[[str], AWWorkspace],
 ) -> None:
-    first = _provision_team(aw_workspace_factory("first"), alias="alice")
-    second = _provision_team(aw_workspace_factory("second"), alias="bob")
+    first = _provision_team(aw_workspace_factory("first"), folio=folio, alias="alice")
+    second = _provision_team(aw_workspace_factory("second"), folio=folio, alias="bob")
     _create_document(folio, first, slug="secret", title="Secret", body="first team only")
 
     assert _list_documents(folio, second) == []
@@ -930,7 +989,7 @@ def test_revoked_certificate_fails_after_awid_revocation_cache_refresh(
     folio: RunningFolio,
     aw_workspace: AWWorkspace,
 ) -> None:
-    team = _provision_team(aw_workspace)
+    team = _provision_team(aw_workspace, folio=folio)
     assert _list_documents(folio, team) == []
 
     _run_aw(
@@ -956,7 +1015,7 @@ def test_awid_unavailable_honors_cache_then_fails_closed(
     folio: RunningFolio,
     aw_workspace: AWWorkspace,
 ) -> None:
-    team = _provision_team(aw_workspace)
+    team = _provision_team(aw_workspace, folio=folio)
     assert _list_documents(folio, team) == []
 
     # Killed rather than stopped: a graceful stop can outlast the 2 s cache TTL
@@ -986,7 +1045,7 @@ def test_replay_negatives_reject_path_method_and_audience(
     folio: RunningFolio,
     aw_workspace: AWWorkspace,
 ) -> None:
-    team = _provision_team(aw_workspace)
+    team = _provision_team(aw_workspace, folio=folio)
     original = _aw_request(team, "GET", f"{folio.origin}/v1/documents")
     assert _assert_aw_success(original, context="original signed request").strip() == "[]"
     captured = folio.last_request
@@ -1017,7 +1076,7 @@ def test_replay_negatives_reject_path_method_and_audience(
 def test_real_aw_usage_is_measured_not_capped(
     folio: RunningFolio, aw_workspace: AWWorkspace, tmp_path: Path
 ) -> None:
-    team = _provision_team(aw_workspace)
+    team = _provision_team(aw_workspace, folio=folio)
 
     for index in range(4):
         created = _create_document(

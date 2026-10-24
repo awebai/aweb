@@ -40,7 +40,7 @@ class Source:
         self.state = "active"
         self.app_id = APP
 
-    async def grant_for(self, team_id):
+    async def grant_for(self, team_id, certificate_id=None):
         self.calls += 1
         if isinstance(self.current, Exception):
             raise self.current

@@ -111,6 +111,9 @@ limit. Every publication still requires the current team-key signature.
 `aweb-naapp` and `aweb-naapp-testing` 0.5.0 are released together. Changes
 since `aweb-naapp-v0.4.0`:
 
+- `GrantSource.grant_for` accepts an optional `certificate_id`; custom sources
+  must accept this argument. Grant reads carry the verified member's certificate
+  through discovery, so private-team members work without an AWID service token.
 - App-request credentials (the C2 transport) are bound to the installation id
   and positive generation, and the shared signer signs them.
 - Installation-aware runtime: tools, capabilities and member SQL are fenced by

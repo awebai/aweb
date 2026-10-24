@@ -43,7 +43,7 @@ class Grants:
     installation_id: str | None = INSTALLATION
     generation: int = 2
 
-    async def grant_for(self, team_id):
+    async def grant_for(self, team_id, certificate_id=None):
         if not self.installed:
             return None
         return Grant(

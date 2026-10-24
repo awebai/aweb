@@ -67,7 +67,7 @@ class InstalledTeams:
     def __init__(self, scopes_by_team: dict[str, frozenset[str]]) -> None:
         self.scopes_by_team = scopes_by_team
 
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         scopes = self.scopes_by_team.get(team_id)
         if scopes is None:
             return None
