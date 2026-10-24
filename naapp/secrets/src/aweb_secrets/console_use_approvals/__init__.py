@@ -95,8 +95,6 @@ class ConsoleUseApprovals:
             raise HTTPException(409, "approval_unavailable")
         async with self.console.db.transaction() as tx:
             await self.console.fence.check(tx, admitted)
-            if current.expires_at <= datetime.now(UTC):
-                raise HTTPException(401, "console_session_required")
             if kind == "run":
                 view = await run_approval_view(
                     tx,
@@ -108,6 +106,9 @@ class ConsoleUseApprovals:
                     raise HTTPException(409, "approval_unavailable")
             else:
                 view = use_approval_view(linked.request)
+            await self.console.fence.check(tx, admitted)
+            if current.expires_at <= datetime.now(UTC):
+                raise HTTPException(401, "console_session_required")
         return {
             "approval_id": approval_id,
             "state": linked.approval.state.value,
