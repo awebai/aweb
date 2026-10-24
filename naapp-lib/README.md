@@ -378,6 +378,25 @@ before its `active_from`, which the caller compares with an event's
 
 ## Approvals and passkeys
 
+For a final authority read in the caller's transaction, use
+`Passkeys.prepare_current_approvers(tx, pairs)` with the complete `(scope,
+subject)` union. It holds all designation rows in scope/subject order, then all
+usable credential rows in subject/credential order. Prepare application,
+forest/grant and covering authority first; B3 precedes B2 and S3. The transaction
+must be READ COMMITTED. Cache the returned `PreparedCurrentApprovers` in the
+application's authority adapter, so its repeat prepare after B2 reuses the handle
+without acquiring more B3 locks.
+
+`Passkeys.check_current_approver(tx, prepared, scope=..., subject=...)` returns
+whether that held designation is current and a held credential remains usable.
+It reads live state without writes or new locks and samples time after its last
+await. Pass the identical original transaction object, including through nested
+store/savepoint wrappers. Transaction end, rollback releasing preparation,
+another Passkeys instance or an unprepared pair returns false. Newly enrolled
+credentials do not repair a handle that held none; prepare again before B2.
+This check grants no login or send authority. Original retained APPROVE evidence
+binding remains separate; `login_evidence_is_current` still requires LOGIN.
+
 `aweb_naapp.runtime.approvals` is the single-use human approval primitive that
 apps share. An agent proposes an exact request; any one of the owner-designated
 humans eligible for it approves or rejects it; a trusted dispatcher then admits

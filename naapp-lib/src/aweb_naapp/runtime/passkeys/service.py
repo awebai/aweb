@@ -35,7 +35,7 @@ import json
 import logging
 import secrets
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -79,6 +79,11 @@ from aweb_naapp.runtime.approvals import (
 from aweb_naapp.runtime.approvals.challenge import challenge_preimage
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind, AuditSink
 from aweb_naapp.runtime.links import LinkLifetime, link_verifier, new_link_token
+from aweb_naapp.runtime.passkeys.current_approver import (
+    PreparedCurrentApprovers,
+    check_current_approver,
+    prepare_current_approvers,
+)
 from aweb_naapp.runtime.passkeys.proof import (
     PasskeyInstallationContext,
     PasskeyProofUnavailable,
@@ -936,6 +941,36 @@ class Passkeys:
                 subject,
             )
         )
+
+    async def prepare_current_approvers(
+        self, tx: TransactionManager, pairs: Sequence[tuple[str, str]]
+    ) -> PreparedCurrentApprovers:
+        """Hold the complete B3 designation/credential union before B2 and S3.
+
+        The caller holds its complete application authority/covering union
+        first. Pass the original live READ COMMITTED transaction object, not a
+        temporary store/savepoint wrapper. Cache the returned whole-run handle
+        in the adapter so repeated prepare after B2 takes no new B3 locks.
+        """
+        return await prepare_current_approvers(self, tx, pairs)
+
+    async def check_current_approver(
+        self,
+        tx: TransactionManager,
+        prepared: PreparedCurrentApprovers,
+        *,
+        scope: str,
+        subject: str,
+    ) -> bool:
+        """Read held current designation/credential authority without new locks.
+
+        Requires the identical original tx object; rollback (including to a
+        savepoint releasing preparation), another tx or another Passkeys
+        instance returns false. Reads live authority and samples time after
+        its last await. No writes, refresh, LOGIN or fresh send authority;
+        original retained APPROVE binding remains a separate validation.
+        """
+        return await check_current_approver(self, tx, prepared, scope=scope, subject=subject)
 
     # Enrolment through the link
 
