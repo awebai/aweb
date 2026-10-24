@@ -401,13 +401,13 @@ def _running_folio(
             raise RuntimeError(f"uvicorn exited with {proc.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}")
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def folio(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningFolio]:
     with _installed_deployment(tmp_path_factory.mktemp("folio-e2e"), AWID_SERVICE_TOKEN) as running:
         yield running
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def folio_without_awid_service_token(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningFolio]:
     with _installed_deployment(tmp_path_factory.mktemp("folio-private-e2e"), None) as running:
         yield running
@@ -421,7 +421,7 @@ def _installed_deployment(tmp_path: Path, service_token: str | None) -> Iterator
             yield replace(running, server_origin=origin, server_env=env)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def folio_origin(folio: RunningFolio) -> str:
     return folio.origin
 
@@ -567,7 +567,7 @@ def _provision_team(
         _grant_install_admin(result, folio.server_env)
         installed = _run_aw_json(workspace, "plugin", "install", folio.origin)
         assert installed["approved"]
-        apps = _aw_json(_aw_request(result, "GET", folio.server_origin + "/v1/apps/installed"), context="installed Folio")
+        apps = _aw_json(_aw_request(result, "GET", folio.server_origin + "/v1/apps/installed?team_id=" + team_id), context="installed Folio")
         assert any(app["app_id"] == folio.app_id and app["state"] == "active" and app["origin"] == folio.origin
                    and app["installation_id"] for app in apps["apps"])
     return result
@@ -652,7 +652,7 @@ def test_health_endpoints_are_public(folio: RunningFolio) -> None:
         response = httpx.get(f"{folio.origin}{path}", timeout=10.0)
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["status"] == "ok" and body["service"] == "folio", body
+        assert body["status"] == "ok" and body["service"] == folio.app_id, body
         assert "git_sha" in body["build"], body
     checks = httpx.get(f"{folio.origin}/health", timeout=10.0).json()["checks"]
     assert checks["database"]["ok"] and checks["outbox"]["ok"], checks
