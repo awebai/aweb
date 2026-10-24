@@ -89,7 +89,9 @@ def render_operation(
     let the agent set.
     """
     if not template.params_valid(params):
-        raise EgressRefused("params_invalid", "params", "the parameters do not fill the operation's slots")
+        raise EgressRefused(
+            "params_invalid", "params", "the parameters do not fill the operation's slots"
+        )
     after = template.after
     declared = after["params"]
     method = after["method"]
@@ -98,7 +100,11 @@ def render_operation(
     for name, param in declared.items():
         if param["placement"] == "path":
             path = path.replace("{" + name + "}", quote(_text(params[name]), safe=""))
-    query = [(name, _text(params[name])) for name, param in declared.items() if param["placement"] == "query"]
+    query = [
+        (name, _text(params[name]))
+        for name, param in declared.items()
+        if param["placement"] == "query"
+    ]
     port = after["url"]["port"]
     authority = after["url"]["host"] + ("" if port == 443 else f":{port}")
     url = f"https://{authority}{path}" + (f"?{urlencode(query, quote_via=quote)}" if query else "")
