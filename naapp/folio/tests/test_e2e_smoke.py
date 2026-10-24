@@ -739,13 +739,13 @@ def test_local_member_installs_folio_without_global_identity_metadata(
     # member owns a fresh signing key and certificate, with no global metadata.
     workspace = AWWorkspace(path=member_path, env=dict(aw_workspace.env))
     _configure_folio_client(workspace, folio)
-    joined = _run_aw_json(workspace, "id", "team", "accept-invite", invite["token"], "--local", "--name", "bob")
+    _run_aw(workspace, "id", "team", "accept-invite", invite["token"], "--local", "--name", "bob")
     assert not (member_path / ".aw" / "identity.yaml").exists()
     assert (member_path / ".aw" / "signing.key").is_file()
     _run_aw(workspace, "workspace", "connect", "--service", folio.server_origin, "--team", controller.team_id)
     cert = _run_aw_json(workspace, "id", "cert", "show")
     member = replace(controller, workspace=workspace, alias="bob", address="",
-                     did_key=str(cert["member_did_key"]), certificate_id=str(joined["certificate_id"]))
+                     did_key=str(cert["member_did_key"]), certificate_id=str(cert["certificate_id"]))
     _publish_team_server(controller, folio.server_origin)
     _grant_install_admin(member, folio.server_env)
     installed = _run_aw_json(workspace, "plugin", "install", folio.origin)

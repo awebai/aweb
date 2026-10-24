@@ -126,7 +126,7 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
-		if r.URL.Path == "/api/v1/identity/grants" {
+		if r.URL.Path == "/api/v1/identity-grants" {
 			http.NotFound(w, r)
 			return
 		}
