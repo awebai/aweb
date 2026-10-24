@@ -12,7 +12,7 @@ from tests.page_store.test_store import OWNER, SCOPE, create
 
 
 class AuthorityBeforeTransaction:
-    async def grant_for(self, team_id):
+    async def grant_for(self, team_id, certificate_id=None):
         raise AssertionError("fetch authority before opening the transaction")
 
     async def status_for(self, team_id):

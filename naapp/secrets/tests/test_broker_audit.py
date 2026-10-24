@@ -41,7 +41,7 @@ INSTALLATION = "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b"
 
 
 class Installed:
-    async def grant_for(self, team_id):
+    async def grant_for(self, team_id, certificate_id=None):
         return _grant_source_grant(installation_id=INSTALLATION) if team_id == TEAM else None
 
 
