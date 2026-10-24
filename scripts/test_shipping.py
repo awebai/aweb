@@ -44,6 +44,33 @@ def command(root: Path, *argv: str) -> str:
 
 
 class TagContractTest(unittest.TestCase):
+    def test_gateway_failure_cleanup_preserves_stderr_before_removal(self):
+        source = (ROOT / "scripts/e2e-a2a-gateway-docker.sh").read_text()
+        cleanup = source[source.index("cleanup() {"):source.index("\ntrap cleanup EXIT")]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            calls = root / "docker-calls"
+            docker = root / "docker"
+            docker.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$DOCKER_CALLS"\n'
+                              'case "$1" in\ninspect) echo running;;\n'
+                              'logs) echo gateway-stdout; echo gateway-stderr >&2;;\nesac\n')
+            docker.chmod(0o755)
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
+                       DOCKER_CALLS=str(calls), TMP_ROOT=str(runtime),
+                       GATEWAY_CONTAINER="fixture-gateway", GATEWAY_IMAGE="fixture-image",
+                       PROJECT="fixture-project", ENV_FILE="fixture.env", COMPOSE_FILE="fixture.yml")
+            result = subprocess.run(["bash", "-c", "set -euo pipefail\nfail=1; pass=0\n" + cleanup + "\ncleanup"],
+                                    env=env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("gateway-stdout", result.stdout)
+            self.assertIn("gateway-stderr", result.stdout)
+            operations = calls.read_text().splitlines()
+            self.assertLess(operations.index("logs fixture-gateway"),
+                            operations.index("rm -f fixture-gateway"))
+            self.assertFalse(runtime.exists())
+
     def test_federation_wheel_mode_accepts_rc_before_docker_build(self):
         # Execute the real journey's input checks; intercept only Docker so no
         # service, network or registry is used by this focused regression.
