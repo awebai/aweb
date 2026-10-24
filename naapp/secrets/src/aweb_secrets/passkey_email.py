@@ -79,7 +79,9 @@ class PasskeyEmailDelivery:
                 "The pending change to your Secrets contact has been cancelled.",
             ),
         }[notice.kind]
-        text = f"{explanation}\nEffective time: {notice.effective_at.isoformat()}\n"
+        text = f"{explanation}\n"
+        if notice.kind is not NoticeKind.CONTACT_CHANGE_CANCELLED:
+            text += f"Effective time: {notice.effective_at.isoformat()}\n"
         return await self._send(
             Message(to=contact, subject=subject, text=text, html=f"<p>{escape(text)}</p>")
         )

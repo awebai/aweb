@@ -53,10 +53,12 @@ async def test_services_start_before_router_factories_and_cleanup_between_lifesp
             ) as client:
                 assert (await client.get("/")).json() == {"connected": True}
                 assert (await client.get(API + "/")).status_code == 404
-            assert len([r for r in service.console_app.routes if r.path == "/"]) == 1
         assert active == []
         assert service.runtime.connected_db() is None
-        assert not any(r.path == "/" for r in service.console_app.routes)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(service), base_url=CONSOLE
+        ) as client:
+            assert (await client.get("/")).status_code == 404
     assert len(closed) == 2
 
 
@@ -83,4 +85,7 @@ async def test_failed_service_startup_disconnects_runtime_and_leaves_no_console_
         async with service.api_app.router.lifespan_context(service.api_app):
             pytest.fail("A missing required service must refuse startup")
     assert service.runtime.connected_db() is None
-    assert not any(r.path == "/" for r in service.console_app.routes)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(service), base_url=CONSOLE
+    ) as client:
+        assert (await client.get("/")).status_code == 404

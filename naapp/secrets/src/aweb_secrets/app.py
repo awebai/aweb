@@ -114,8 +114,8 @@ def create_app(
     Preparation runs inside the runtime lifespan, once its database is ready.
     All router factories then receive that same runtime; tool factories also
     receive its exact B1 dependency. Composition guards every included tool;
-    unavailable declared tools retain 501. Prepared services and routes are
-    removed on startup failure and shutdown, before the database disconnects.
+    unavailable declared tools retain 501. Prepared services close before the
+    database disconnects; composed routes are removed on failure and shutdown.
     """
     runtime = NaappRuntime(
         settings,
