@@ -73,8 +73,8 @@ def _promote(value: str, name: str, promotions: dict) -> str:
 
 
 def _python_pin(value: str, promotions: dict) -> str:
-    # Keep extras, spacing, operators and markers unchanged; only exact pins.
-    match = re.fullmatch(r"([A-Za-z0-9_.-]+)(\[[^\]]+\])?(\s*==\s*)([^;\s]+)(.*)", value)
+    # Keep extras, spacing, operators and markers unchanged; only pins or floors.
+    match = re.fullmatch(r"([A-Za-z0-9_.-]+)(\[[^\]]+\])?(\s*(?:==|>=)\s*)([^;\s]+)(.*)", value)
     if not match:
         return value
     name, extras, operator, version, tail = match.groups()
@@ -127,8 +127,9 @@ def _lock_pins(value: object, promotions: dict) -> object:
         result["version"] = _promote(result["version"], name, promotions)
     if "specifier" in result:
         old, new = promotions.get(_name(name), (None, None))
-        if old and result["specifier"] == "==" + old:
-            result["specifier"] = "==" + new
+        for operator in ("==", ">="):
+            if old and result["specifier"] == operator + old:
+                result["specifier"] = operator + new
     return result
 
 
@@ -227,7 +228,7 @@ def require_final_promotion(root: Path, tag: str, final_commit: str) -> str | No
     for path, old, new in changes:
         normalized = _normalize_manifest(old, path, promotions) if _manifest(path) else _normalize_lock(old, new, path, promotions)
         if normalized != new:
-            raise VersionRefusal(f"{path}: changes beyond version promotion or exact promoted pins")
+            raise VersionRefusal(f"{path}: changes beyond version promotion or promoted dependency pins/floors")
     print(f"Source identity matches {rc_tag} plus version promotion only; "
           "the coordinator must separately verify the Cloud green receipt for that exact RC before final tagging.")
     return rc_tag

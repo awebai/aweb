@@ -42,7 +42,7 @@ assets remain resumable.
 Before final tagging, `release_candidate.py` selects the highest numbered
 existing RC tag for the same artifact and base version. Its commit must be an
 ancestor of the final commit. The complete RC-to-final **tree** diff may only
-promote manifest versions and exact dependency pins to the same final base.
+promote manifest versions and exact dependency pins or lower-bound floors on promoted packages to the same final base.
 A pin may change only when its target package's manifest is promoted in that
 same tree. Parsed extras, markers, scripts and other metadata remain equal.
 Existing uv/npm lock records may promote those same versions; artifact URLs,
