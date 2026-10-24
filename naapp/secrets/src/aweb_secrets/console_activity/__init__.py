@@ -116,13 +116,14 @@ def _render(page: ActivityPage, limit: int) -> str:
         parts.append('<p id="activity-empty">No activity in this page.</p>')
     for entry in page.entries:
         data: dict[str, Any] = asdict(entry)
+        label = entry.action.replace("_", " ").capitalize()
         correlation = "".join(
             f' data-{name.replace("_", "-")}="{escape(str(data[name]), quote=True)}"'
             for name in ("request_id", "job_id", "dispatch_id")
             if data.get(name) is not None
         )
         parts.append(
-            f'<article class="activity-entry" data-event-id="{escape(str(entry.event_id), quote=True)}"{correlation}><h2>{escape(entry.action)}</h2><dl>'
+            f'<article class="activity-entry" data-event-id="{escape(str(entry.event_id), quote=True)}"{correlation}><h2>{escape(label)}</h2><dl>'
         )
         for name, value in (
             ("Time", entry.occurred_at.isoformat()),
