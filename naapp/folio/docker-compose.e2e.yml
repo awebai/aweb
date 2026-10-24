@@ -1,6 +1,9 @@
 services:
   postgres:
     image: postgres:16-alpine
+    networks:
+      default:
+        aliases: ["${NAAPP_E2E_PROJECT:-folio-e2e}-postgres.test"]
     environment:
       POSTGRES_USER: folio
       POSTGRES_PASSWORD: folio
@@ -17,6 +20,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    networks:
+      default:
+        aliases: ["${NAAPP_E2E_PROJECT:-folio-e2e}-redis.test"]
     ports:
       - "6379"
     healthcheck:
@@ -26,6 +32,9 @@ services:
       retries: 30
 
   awid:
+    networks:
+      default:
+        aliases: ["${NAAPP_E2E_PROJECT:-folio-e2e}-awid.test"]
     build:
       context: ${FOLIO_E2E_AWEB_CONTEXT:-../..}
       dockerfile: awid/Dockerfile
