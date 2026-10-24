@@ -18,7 +18,7 @@ from aweb_secrets.console_use_approvals import (
     console_run_approvals_router,
     console_use_approvals_router,
 )
-from tests.console_use_world import audit_for, mint
+from tests.console_use_world import audit_for, mint, targets
 from tests.test_change_sets import ORIGIN, TEAM, world  # noqa: F401
 from tests.test_console import API
 from tests.test_console_changes import sign_in
@@ -26,7 +26,6 @@ from tests.test_run_approvals import plan_for
 from tests.test_run_approvals import request as request_run
 from tests.test_use_approvals import designate, install
 from tests.test_use_approvals import uses as _uses
-from tests.test_use_audit import targets
 
 uses = _uses
 

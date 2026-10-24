@@ -1,6 +1,7 @@
 """Real use-audit composition for HTTP/browser console tests."""
 
 import os
+from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
 
@@ -20,7 +21,13 @@ from aweb_secrets.use_approvals import UseApprovers, UsePolicies, request_use_ap
 from aweb_secrets.use_audit import UseApprovalAudit
 from aweb_secrets.use_context import UseCommitter, apply_use_context_migrations, store_use_context
 from tests.test_use_approvals import BODY, REQUESTER, SECRET, TEAM, open_action, use_request
-from tests.test_use_audit import targets
+from tests.test_use_audit import targets as audit_targets
+
+
+def targets(now):
+    # Registration freshness uses the producer's clock, including its frozen
+    # clock in these tests, rather than a later wall-clock read.
+    return replace(audit_targets(now), as_of=now)
 
 
 def audit_for(uses):
