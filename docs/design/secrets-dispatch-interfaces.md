@@ -180,10 +180,19 @@ status=get_status), authorized=...)` in `aweb_secrets.use_routes`, with request-
 getters because runtime DB/services exist after startup. The app owner passes
 both factories through `create_app(tool_routers=...)` and uses the exact
 `authorized` supplied by that factory. S16 owns client rendering/tests and can
-supply its metadata factory; S13 owns `app.py`, the use router and final root
-mounting. Human routers use the one shared OwnerConsole separately.
+supply its metadata factory. The secrets-app seat owns the use router and the
+broker/run services; secrets-root owns `app.py`, configuration, final root
+mounting and S19. The root constructs one shared set of dependencies and injects
+it into the services; all admission, dispatch and release transactions and final
+fences remain in those services. Human routers use the one shared OwnerConsole
+separately.
 
 ## Runner adapter boundary
+
+The concrete immutable `RunnerSubmission` and `RunnerReply` DTOs and structural
+`RunDispatchAPI` protocol live in `aweb_secrets.runner_types`. The actual service
+implementation remains `aweb_secrets.run_service.RunDispatch`; publishing the
+transport types does not implement or activate its transactions.
 
 S15a implements bounded HTTP framing and maps `RunnerRefused` using the existing
 runner protocol §4.5. S13's service owns all database transactions. The adapter
