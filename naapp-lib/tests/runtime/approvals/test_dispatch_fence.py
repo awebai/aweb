@@ -332,7 +332,19 @@ async def test_final_check_acquires_no_new_locks_and_does_not_write(world):
         locks = await held_locks(tx)
         for _ in range(2):
             await world.approvals.check_dispatch(tx, prepared)
-        assert await held_locks(tx) == locks
+        after = await held_locks(tx)
+        added = [lock for lock in after if lock not in locks]
+        removed = [lock for lock in locks if lock not in after]
+        relations = []
+        if added:
+            # Resolve names only after capturing the result, so diagnostics
+            # cannot create a lock included in the observed delta.
+            relations = await tx.fetch_all(
+                "SELECT oid::bigint AS oid,relname,relkind FROM pg_catalog.pg_class "
+                "WHERE oid=ANY($1::oid[]) ORDER BY oid",
+                sorted({lock["relation"] for lock in added if lock["relation"] is not None}),
+            )
+        assert after == locks, {"added": added, "removed": removed, "relations": relations}
         assert await rows(world, tx) == before
 
 
