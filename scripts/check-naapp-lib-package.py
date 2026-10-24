@@ -25,6 +25,8 @@ from email import message_from_bytes
 from email.message import Message
 from pathlib import Path
 
+from release_versions import PYTHON_VERSION, VersionRefusal, python_version_key
+
 ROOT = Path(__file__).resolve().parents[1]
 NAAPP_LIB = ROOT / "naapp-lib"
 NAAPP_TESTING = NAAPP_LIB / "testing"
@@ -42,7 +44,10 @@ def _version_text(pyproject: Path) -> str:
 
 
 def _version(pyproject: Path) -> tuple[int, ...]:
-    return tuple(int(part) for part in _version_text(pyproject).split("."))
+    try:
+        return python_version_key(_version_text(pyproject))
+    except VersionRefusal as error:
+        raise PackageRefusal(str(error)) from error
 
 
 def _build(project: Path, out_dir: Path) -> Path:
@@ -84,7 +89,7 @@ def _check_requirements(wheel: Path, metadata: Message, *, aweb_naapp_version: s
             raise PackageRefusal(f"{wheel.name} requires a direct reference: {requirement}")
         name = re.split(r"[\s<>=!~;\[(]", requirement, maxsplit=1)[0]
         if name == "aweb-naapp" and aweb_naapp_version is not None:
-            pinned = re.search(r"==\s*([0-9]+(?:\.[0-9]+)*)\s*($|;)", requirement)
+            pinned = re.search(rf"==\s*({PYTHON_VERSION})\s*($|;)", requirement)
             if pinned is None or pinned.group(1) != aweb_naapp_version:
                 raise PackageRefusal(
                     f"{wheel.name} must require exactly aweb-naapp=={aweb_naapp_version}: {requirement}"
@@ -92,13 +97,17 @@ def _check_requirements(wheel: Path, metadata: Message, *, aweb_naapp_version: s
             required_aweb_naapp = True
         if name != "awid-service":
             continue
-        floor = re.search(r">=\s*([0-9]+(?:\.[0-9]+)*)", requirement)
+        floor = re.search(r">=\s*([^,;\s)]+)", requirement)
         if floor is None:
             raise PackageRefusal(f"{wheel.name}: awid-service needs a floor: {requirement}")
-        if tuple(int(part) for part in floor.group(1).split(".")) > awid_version:
+        try:
+            floor_version = python_version_key(floor.group(1))
+        except VersionRefusal as error:
+            raise PackageRefusal(f"{wheel.name}: {error}: {requirement}") from error
+        if floor_version > awid_version:
             raise PackageRefusal(
                 f"{wheel.name}: awid-service floor {floor.group(1)} is newer than the in-repo awid "
-                f"{'.'.join(map(str, awid_version))}: {requirement}"
+                f"{_version_text(AWID / 'pyproject.toml')}: {requirement}"
             )
     if aweb_naapp_version is not None and not required_aweb_naapp:
         raise PackageRefusal(f"{wheel.name} must require aweb-naapp=={aweb_naapp_version}")

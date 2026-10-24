@@ -24,6 +24,15 @@ class VersionRefusal(RuntimeError):
     pass
 
 
+def python_version_key(version: str) -> tuple[int, int, int, int, int]:
+    """PEP 440 ordering for our strict X.Y.Z[rcN] release subset."""
+    if re.fullmatch(PYTHON_VERSION, version) is None:
+        raise VersionRefusal(f"unsupported Python release version {version!r}")
+    base, separator, serial = version.partition("rc")
+    major, minor, patch = map(int, base.split("."))
+    return major, minor, patch, 0 if separator else 1, int(serial) if separator else 0
+
+
 def tag_parts(tag: str) -> tuple[str, str]:
     matched = TAG_PATTERN.fullmatch(tag)
     if not matched:
