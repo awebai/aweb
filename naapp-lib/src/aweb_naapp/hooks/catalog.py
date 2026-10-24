@@ -240,6 +240,11 @@ class Catalog:
         if spec.act_directions is not None:
             if spec.act_directions[payload["act"]] != payload["direction"]:
                 raise PayloadRefused("direction_mismatch", "direction")
+            if (
+                payload["act"] == "resource.changed"
+                and payload["before_ref"] == payload["after_ref"]
+            ):
+                raise PayloadRefused("rule_violation", "after_ref")
         if spec.command_classes is not None:
             allowed = spec.command_classes[payload["command_class"]]
             if any(effect not in allowed for effect in payload["local_effects"]):

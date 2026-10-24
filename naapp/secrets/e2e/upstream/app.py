@@ -25,6 +25,7 @@ service.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -40,6 +41,7 @@ from botocore.awsrequest import AWSRequest
 from botocore.credentials import Credentials
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from starlette.types import Receive, Scope, Send
 
 SIGV4_MAX_SKEW = timedelta(minutes=15)
 TOKEN_LIFETIME_SECONDS = 3600
@@ -48,6 +50,20 @@ _SIGV4_AUTHORIZATION = re.compile(
     r"(?P<service>[^/]+)/aws4_request, ?SignedHeaders=(?P<signed>[a-z0-9;-]+), ?"
     r"Signature=(?P<signature>[0-9a-f]{64})"
 )
+
+
+class _ResetResponse(Response):
+    """End the ASGI call with an incomplete entity; uvicorn closes the socket.
+
+    Returning an HTTP error or raising in a test transport does not exercise
+    a broker's uncertain-write path. No credential bytes enter this response.
+    """
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        await send(
+            {"type": "http.response.start", "status": 200, "headers": [(b"content-length", b"32")]}
+        )
+        await send({"type": "http.response.body", "body": b"{", "more_body": True})
 
 
 @dataclass(frozen=True, repr=False)
@@ -93,9 +109,7 @@ def _url(request: Request) -> str:
     return f"https://{host}{raw_path}" + (f"?{query}" if query else "")
 
 
-def _sigv4_valid(
-    request: Request, body: bytes, creds: UpstreamCredentials, now: datetime
-) -> bool:
+def _sigv4_valid(request: Request, body: bytes, creds: UpstreamCredentials, now: datetime) -> bool:
     match = _SIGV4_AUTHORIZATION.fullmatch(request.headers.get("authorization", ""))
     if match is None:
         return False
@@ -141,6 +155,8 @@ def create_upstream(
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     token_lifetime_seconds: int = TOKEN_LIFETIME_SECONDS,
+    redirect_target: str = "https://other.secrets.test/target",
+    slow_seconds: float = 1,
 ) -> FastAPI:
     """The upstream. ``now`` is its clock, against which SigV4 dates are
     checked; ``token_lifetime_seconds`` is the ``expires_in`` it issues."""
@@ -148,18 +164,23 @@ def create_upstream(
     issued: set[str] = set()
     stats = {"issued": 0}
     app.state.stats = stats
+    effects: dict[tuple[str, str], tuple[bytes, dict[str, object]]] = {}
 
     async def bearer(request: Request, body: bytes) -> bool:
         return _equal(request.headers.get("authorization"), f"Bearer {creds.bearer}")
 
     async def basic(request: Request, body: bytes) -> bool:
         pair = _basic(request.headers.get("authorization"))
-        return pair is not None and _equal(pair[0], creds.basic_username) and _equal(
-            pair[1], creds.basic_password
+        return (
+            pair is not None
+            and _equal(pair[0], creds.basic_username)
+            and _equal(pair[1], creds.basic_password)
         )
 
     async def header(request: Request, body: bytes) -> bool:
-        return _equal(request.headers.get(creds.header_name), creds.header_prefix + creds.header_value)
+        return _equal(
+            request.headers.get(creds.header_name), creds.header_prefix + creds.header_value
+        )
 
     async def query(request: Request, body: bytes) -> bool:
         return _equal(request.query_params.get(creds.query_param), creds.query_value)
@@ -188,7 +209,10 @@ def create_upstream(
         client = _basic(request.headers.get("authorization"))
         if client is None:
             client = (form.get("client_id", ""), form.get("client_secret", ""))
-        if not (_equal(client[0], creds.oauth_client_id) and _equal(client[1], creds.oauth_client_secret)):
+        if not (
+            _equal(client[0], creds.oauth_client_id)
+            and _equal(client[1], creds.oauth_client_secret)
+        ):
             return JSONResponse({"error": "invalid_client"}, status_code=401)
         if form.get("grant_type") != "client_credentials":
             return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
@@ -198,13 +222,75 @@ def create_upstream(
         issued.add(access_token)
         stats["issued"] += 1
         return JSONResponse(
-            {"access_token": access_token, "token_type": "Bearer", "expires_in": token_lifetime_seconds},
+            {
+                "access_token": access_token,
+                "token_type": "Bearer",
+                "expires_in": token_lifetime_seconds,
+            },
             headers={"Cache-Control": "no-store"},
         )
 
     @app.get("/oauth2/stats")
     async def oauth2_stats() -> dict[str, int]:
         return dict(stats)
+
+    async def authenticated(scheme: str, request: Request, body: bytes) -> Response | None:
+        if scheme not in schemes:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        if not await schemes[scheme][1](request, body):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return None
+
+    @app.get("/{scheme}/redirect")
+    async def redirect(scheme: str, request: Request) -> Response:
+        refused = await authenticated(scheme, request, b"")
+        if refused is not None:
+            return refused
+        return Response(status_code=307, headers={"Location": redirect_target})
+
+    @app.get("/{scheme}/status/{key}")
+    async def status(scheme: str, key: str, request: Request) -> Response:
+        refused = await authenticated(scheme, request, b"")
+        if refused is not None:
+            return refused
+        found = effects.get((scheme, key))
+        if found is None:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        return JSONResponse(found[1])
+
+    @app.post("/{scheme}/effects")
+    @app.post("/{scheme}/slow")
+    @app.post("/{scheme}/reset")
+    async def effect(scheme: str, request: Request) -> Response:
+        body = await request.body()
+        refused = await authenticated(scheme, request, body)
+        if refused is not None:
+            return refused
+        key = request.headers.get("idempotency-key", "")
+        if not key or len(key) > 255:
+            return JSONResponse({"error": "idempotency_key_required"}, status_code=400)
+        digest = hashlib.sha256(body).hexdigest()
+        commitment = request.url.path.encode() + b"\n" + digest.encode()
+        found = effects.get((scheme, key))
+        if found is not None:
+            if found[0] != commitment:
+                return JSONResponse({"error": "idempotency_conflict"}, status_code=409)
+            result = found[1]
+        else:
+            result = {
+                "state": "completed",
+                "idempotency_key": key,
+                "body_sha256": digest,
+                "effects": 1,
+            }
+            effects[scheme, key] = (commitment, result)
+        # Record the effect before delaying or truncating the response. A
+        # status read never executes it, including after the client timed out.
+        if request.url.path.endswith("/slow"):
+            await asyncio.sleep(slow_seconds)
+        if request.url.path.endswith("/reset"):
+            return _ResetResponse()
+        return JSONResponse(result)
 
     @app.post("/{scheme}/issue")
     async def issue(scheme: str, request: Request) -> Response:
