@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/appmanifest"
 	"github.com/awebai/aw/internal/pathpreflight"
 )
@@ -138,8 +139,27 @@ func pluginManagementHome() (awconfig.IdentityHome, bool, error) {
 		return home, false, err
 	}
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(home.Root, "identity.yaml"))
-	if errors.Is(err, os.ErrNotExist) && !home.External() {
-		return home, false, nil
+	if errors.Is(err, os.ErrNotExist) {
+		// Local API-key bootstrap stores a signing key and team membership,
+		// without global identity metadata. Management still uses the existing
+		// selected team's certificate-signed client for all server operations.
+		keyPath, pathErr := awconfig.IdentityHomePath(home, "signing.key")
+		if pathErr != nil {
+			return home, false, pathErr
+		}
+		_, keyErr := awid.LoadSigningKey(keyPath)
+		teams, teamErr := awconfig.LoadTeamStateFromIdentityHome(home.Root)
+		if keyErr == nil && teamErr == nil && teams.ActiveMembership() != nil {
+			return home, true, nil
+		}
+		for _, localErr := range []error{keyErr, teamErr} {
+			if localErr != nil && !errors.Is(localErr, os.ErrNotExist) {
+				return home, false, fmt.Errorf("app_resident_required: %w", localErr)
+			}
+		}
+		if !home.External() {
+			return home, false, nil
+		}
 	}
 	if err != nil {
 		return home, false, fmt.Errorf("app_resident_required: %w", err)

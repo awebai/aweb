@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- aw: local members initialized with an API key now register and approve app
+  installations on their team server through `aw plugin install`, even without
+  global identity metadata. Local members can also update and remove approvals.
+
 - Server install/update and request approval serialize the final host-policy
   check with the installation write. Concurrent same-app re-pins return a
   generation conflict instead of a database deadlock; first-install policy

@@ -192,7 +192,10 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 		}
 	})
 
-	tmp := t.TempDir()
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
 		WorkingDir: tmp,
 		AwebURL:    externalLikeTestURL(t, server.URL),
