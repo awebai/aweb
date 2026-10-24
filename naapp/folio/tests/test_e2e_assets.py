@@ -51,8 +51,8 @@ def test_image_asset_upload_embed_render_and_team_scoped_sanitizer(
     folio: RunningFolio,
     aw_workspace_factory: Callable[[str], AWWorkspace],
 ) -> None:
-    team_a = _provision_team(aw_workspace_factory("assets-a"), alias="alice")
-    team_b = _provision_team(aw_workspace_factory("assets-b"), alias="bob")
+    team_a = _provision_team(aw_workspace_factory("assets-a"), folio=folio, alias="alice")
+    team_b = _provision_team(aw_workspace_factory("assets-b"), folio=folio, alias="bob")
 
     invalid_svg = _aw_request(
         team_a,
