@@ -240,3 +240,16 @@ async def test_f6_expiring_during_decision_lock_wait_rolls_back_decision(uses):
                     posting.cancel()
                 await asyncio.gather(posting, return_exceptions=True)
         assert (await uses.approvals.get(approval_id)).state is ApprovalState.PENDING
+
+
+def test_open_request_projection_keeps_unicode_and_alabel_host_and_full_body():
+    from aweb_secrets.console_use_approvals import _projection
+    from aweb_secrets.use_approval import use_approval_view
+    from tests.test_use_approval_view import _request
+
+    request = _request("broker-open-request")
+    request["broker"]["canonical_url"] = "https://xn--bcher-kva.example/v1/refunds"
+    projected = _projection(use_approval_view(request))
+    assert projected["open_request"]["host"] == "xn--bcher-kva.example"
+    assert projected["open_request"]["host_unicode"] == "bücher.example"
+    assert projected["open_request"]["body_text"] == request["broker"]["body_preview"]

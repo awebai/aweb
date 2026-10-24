@@ -13,7 +13,9 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
+import idna
 from aweb_naapp.console import ConsoleRoute, ConsoleSession
 from aweb_naapp.runtime.approvals import Approvals, Assurance, Decision
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -24,7 +26,7 @@ from aweb_secrets.console_changes import _errors
 from aweb_secrets.console_ui import _page, console_page
 from aweb_secrets.run_approvals import run_approval_view
 from aweb_secrets.run_plan import RunPlanRefused
-from aweb_secrets.use_approval import UseApprovalRefused, use_approval_view
+from aweb_secrets.use_approval import UseApprovalRefused, UseApprovalView, use_approval_view
 
 Kind = Literal["use", "run"]
 _ASSETS = Path(__file__).parent
@@ -112,7 +114,7 @@ class ConsoleUseApprovals:
         return {
             "approval_id": approval_id,
             "state": linked.approval.state.value,
-            "view": asdict(view),
+            "view": _projection(view),
         }
 
     async def decide(
@@ -133,6 +135,19 @@ class ConsoleUseApprovals:
         return {"approval_id": approval_id, "state": approved.state.value}
 
 
+def _projection(view: UseApprovalView) -> dict[str, Any]:
+    projected = asdict(view)
+    if view.open_request is not None:
+        request = view.open_request
+        host = urlsplit(request.url_before_host + request.host + request.url_after_host).hostname
+        try:
+            projected["open_request"]["host_unicode"] = idna.decode(host) if host else request.host
+        except idna.IDNAError:
+            # IP literals and non-IDNA names retain the exact frozen host.
+            projected["open_request"]["host_unicode"] = request.host
+    return projected
+
+
 def _decision(body: dict[str, Any]) -> Decision:
     try:
         return Decision(_text(body, "decision"))
@@ -150,7 +165,10 @@ def _router(services: ConsoleUseApprovals, kind: Kind) -> APIRouter:
     router = APIRouter(route_class=ConsoleRoute)
     root = "/use-approvals" if kind == "use" else "/run-approvals"
     title = "Review a secret use" if kind == "use" else "Review a job credential"
-    script = '<script src="/console-use-approvals/approvals.js" defer></script>'
+    script = (
+        '<link rel="stylesheet" href="/console-use-approvals/approvals.css">'
+        '<script src="/console-use-approvals/approvals.js" defer></script>'
+    )
     content = (
         f'<div id="use-approval" data-root="{root}"><h1>{title}</h1>'
         '<p id="approval-status" role="status" aria-live="polite">'
@@ -229,6 +247,10 @@ def _router(services: ConsoleUseApprovals, kind: Kind) -> APIRouter:
             )
 
     if kind == "use":
+
+        @router.get("/console-use-approvals/approvals.css")
+        async def style_asset() -> Response:
+            return Response((_ASSETS / "approvals.css").read_text(), media_type="text/css")
 
         @router.get("/console-use-approvals/approvals.js")
         async def script_asset() -> Response:

@@ -46,6 +46,8 @@
     if (v.open_request) {
       const r = v.open_request;
       fact(facts, "Method", r.method);
+      fact(facts, "Host (Unicode)", r.host_unicode);
+      fact(facts, "Host (A-label)", r.host);
       const url = document.createElement("p");
       const host = document.createElement("strong");
       host.textContent = r.host;
