@@ -165,14 +165,25 @@ async def freeze_broker_audit(
         payload["params_sha256"] = stored.commitments.params_mac
     packaged_catalog().validate(_HOOK, {**payload, "action": "admitted"})
     await tx.execute(
-        "INSERT INTO {{tables.broker_audit_contexts}} (dispatch_id,actor,payload,signed_trace_id)"
+        "INSERT INTO {{tables.broker_audit_contexts}} (dispatch_id,actor,payload,signed_trace_id,correlation)"
         " VALUES ($1,$2::jsonb,$3::jsonb,CASE WHEN $4::text ~ '^[0-9a-f]{32}$'"
-        " AND $4 <> repeat('0',32) THEN $4 ELSE NULL END)"
+        " AND $4 <> repeat('0',32) THEN $4 ELSE NULL END,$5::jsonb)"
         " ON CONFLICT (dispatch_id) DO NOTHING",
         dispatch_id,
         json.dumps(_actor(principal)),
         json.dumps(payload),
         signed_trace_id,
+        json.dumps(
+            {
+                "principal_did": intent["principal_did"],
+                "secret_id": record.secret_id,
+                "secret_ref": record.ref,
+                "request_id": intent["request_id"],
+                "request_ref": admission.intent_id,
+                "operation_id": intent["operation_id"],
+                "operation_digest": intent["operation_digest"],
+            }
+        ),
     )
 
 
@@ -181,8 +192,8 @@ class BrokerAudit:
 
     producer is the runtime's authoritative installation-scoped factory. Details
     are already-verified internal transition metadata, never raw agent input.
-    Approval lifecycle transitions deliberately refuse until their retained B3
-    proof composition is supplied; this callback does not synthesize evidence.
+    Approval lifecycle transitions require their matching B2 use-audit receipt;
+    that sink owns the sole lifecycle hook and retained B3 proof commitment.
     Response MACs MUST be producer-keyed over the actual response bytes. Missing
     required details refuse the transition rather than invent a commitment. Snapshot target/authority/actor/MAC fields cannot be overridden.
     """
@@ -205,7 +216,7 @@ class BrokerAudit:
     async def __call__(self, tx: TransactionManager, event: Transition) -> None:
         stored = await use_context(tx, event.dispatch_id)
         row = await tx.fetch_one(
-            "SELECT actor,payload,signed_trace_id FROM {{tables.broker_audit_contexts}}"
+            "SELECT actor,payload,signed_trace_id,correlation FROM {{tables.broker_audit_contexts}}"
             " WHERE dispatch_id=$1",
             event.dispatch_id,
         )
@@ -213,6 +224,31 @@ class BrokerAudit:
             raise ValueError("broker transition has no frozen request audit context")
         if event.to_state is State.RECEIVED:
             return  # No received action exists in the catalog.
+        if event.to_state in {
+            State.AWAITING_APPROVAL,
+            State.APPROVAL_DENIED,
+            State.APPROVAL_EXPIRED,
+            State.CANCELLED,
+        }:
+            decision = {
+                State.AWAITING_APPROVAL: None,
+                State.APPROVAL_DENIED: "denied",
+                State.APPROVAL_EXPIRED: "expired",
+                State.CANCELLED: "revoked",
+            }[event.to_state]
+            recorded = await tx.fetch_value(
+                "SELECT 1 FROM {{tables.use_approval_audits}} a"
+                " JOIN {{tables.broker_use_events}} e ON e.dispatch_id=a.dispatch_id"
+                " AND e.correlation->>'approval_id'=a.approval_id"
+                " WHERE a.dispatch_id=$1 AND e.action=$2"
+                " AND ($3::text IS NULL OR e.payload->>'approval_decision'=$3) LIMIT 1",
+                event.dispatch_id,
+                "approval_requested" if decision is None else "approval_decided",
+                decision,
+            )
+            if recorded is None:
+                raise ValueError("approval transition requires its original B2 use-audit receipt")
+            return
         context = stored.commitments.context
         producer = self._producer(
             installation_id=context.installation_id,
@@ -222,6 +258,32 @@ class BrokerAudit:
         if event.to_state not in _ACTIONS:
             raise ValueError("approval transitions require their retained-proof composition")
         payload = json.loads(row["payload"])
+        correlation = json.loads(row["correlation"])
+        required = await tx.fetch_value(
+            "SELECT i.approval_required FROM {{tables.use_contexts}} c"
+            " JOIN {{tables.intents}} i USING(intent_id,installation_id,team_id,install_generation)"
+            " WHERE c.dispatch_id=$1",
+            event.dispatch_id,
+        )
+        if required:
+            approval = await tx.fetch_one(
+                "SELECT a.approval_id,a.request_ref,p.commitment FROM {{tables.use_approval_audits}} a"
+                " JOIN {{tables.use_approval_audit_proofs}} p USING(approval_id)"
+                " WHERE a.dispatch_id=$1 AND p.purpose='approve'",
+                event.dispatch_id,
+            )
+            if approval is None:
+                raise ValueError(
+                    "approved broker use requires its persisted original proof commitment"
+                )
+            payload.update(
+                approval_id=approval["approval_id"],
+                approval_assurance="passkey",
+                approval_evidence_sha256=approval["commitment"],
+            )
+            correlation.update(
+                approval_id=approval["approval_id"], approval_ref=approval["request_ref"]
+            )
         payload.update(
             action=_ACTIONS[event.to_state],
             dispatch_id=str(event.dispatch_id),
@@ -268,6 +330,7 @@ class BrokerAudit:
             occurred_at=event.occurred_at,
             payload=payload,
             actor=json.loads(row["actor"]),
+            correlation=correlation,
         )
 
 
@@ -306,11 +369,12 @@ async def _activity(
     occurred_at: datetime,
     payload: Mapping[str, Any],
     actor: Mapping[str, Any],
+    correlation: Mapping[str, Any] | None = None,
 ) -> None:
     await tx.execute(
         "INSERT INTO {{tables.broker_use_events}}"
-        " (event_id,installation_id,team_id,install_generation,dispatch_id,occurred_at,action,payload,actor)"
-        " VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)",
+        " (event_id,installation_id,team_id,install_generation,dispatch_id,occurred_at,action,payload,actor,correlation)"
+        " VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb)",
         event_id,
         context.installation_id,
         context.team_id,
@@ -320,6 +384,7 @@ async def _activity(
         payload["action"],
         json.dumps(payload),
         json.dumps(actor),
+        json.dumps(dict(correlation or {})),
     )
 
 
@@ -332,6 +397,8 @@ async def record_broker_refusal(
     code: str,
     occurred_at: datetime,
     signed_trace_id: str | None = None,
+    request_id: str | None = None,
+    secret_ref: str | None = None,
 ) -> UUID:
     """Outer admission transaction, after the failed inner savepoint rolls back.
 
@@ -367,5 +434,10 @@ async def record_broker_refusal(
         occurred_at=occurred_at,
         payload=payload,
         actor=actor,
+        correlation={
+            "principal_did": principal_key(principal).principal_did,
+            "request_id": request_id,
+            "secret_ref": secret_ref,
+        },
     )
     return event_id
