@@ -1887,9 +1887,11 @@ association with the identity-free system actor. The hook's general
 | `change_set_policy` / `update` | `policy.changed`, `resource_type: change_set_policy`, `resource_ref: installation_id`; relaxes four-eyes and has no `policy_digest`, because it is not a content-addressed dispatch Policy. |
 
 These effects and their signed enqueue commit atomically under the widening
-gate. Existing `resource.version_added` remains reserved for the native-value
-version path; metadata-state references never encode a value fingerprint,
-provider version or raw metadata. The consumer vector's `change_governance`
+gate. Existing `resource.version_added` remains the actual value/backend-version
+addition path, including owner-confirmed backend credential and 1Password
+reference versions. Metadata revisions do not replace those existing receipts;
+their state references never encode a value fingerprint, provider version or
+raw metadata. The consumer vector's `change_governance`
 rows make the four cases explicit.
 
 **B3 stages.** The following is exhaustive for B3's `APPROVER_*` audit kinds.

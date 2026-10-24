@@ -245,7 +245,8 @@ and distinct opaque `before_ref` and `after_ref` bound durably to the locked
 before/after metadata states. These are metadata-state handles, not value
 versions, value fingerprints, raw metadata or provider identifiers. It adds
 no custody value and increments no credential/value version;
-`resource.version_added` remains the value-addition path. Only `owner_act` or
+`resource.version_added` remains the actual value/backend-version addition
+path, including owner-confirmed backend credential/reference versions. Only `owner_act` or
 `passkey_session` with the actual existing artifact/proof commitment can
 authorize it; no owner-act verb or privilege is added. In secrets' change/1
 path, the actually admitted owner APPROVE evidence, approval association and
