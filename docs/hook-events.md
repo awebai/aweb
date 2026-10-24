@@ -263,6 +263,18 @@ Coordinator applicability/encoding ruling:
 `e67ffe8b-1b24-48aa-958a-09a126432753`. These rulings do not broaden that
 inventory into independent evidence about third-party deployments.
 
+For a job resource, `resource.created` records first creation;
+`resource.version_added` records a newly admitted revision of its CURRENT
+definition. Use `resource_type: job` and the actual `job_id` as `resource_ref`
+in the event's team/installation. An update requires distinct opaque
+`before_ref`/`after_ref` durably bound to the locked CURRENT revisions and their
+definition digests. A new revision may select an immutable body already
+stored: its receipt and state handle are new, without claiming a newly
+inserted body or a secret-value version. The actual admitted approval,
+system actor, widening gate and atomic transition/enqueue remain mandatory;
+the receipt grants no execution or historical-fallback authority. See the
+[job consumer mapping](design/secrets.md#115-operational-record-and-the-post-secret-use-hook-outbox).
+
 `authority` is how the act was authorized:
 
 - `owner_act` requires `owner_act_sha256`;
