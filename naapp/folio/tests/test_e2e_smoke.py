@@ -600,12 +600,23 @@ def _publish_team_server(team: E2ETeam, origin: str) -> None:
 
 def _grant_install_admin(team: E2ETeam, env: dict[str, str]) -> None:
     project = Path(__file__).resolve().parents[3] / "server"
-    operator = subprocess.run(
-        ["uv", "run", "--offline", "--frozen", "--project", str(project),
-         "aweb", "install-admin", "grant", "--team-id", team.team_id,
-         "--principal-did", team.did_key, "--role", "owner"],
-        env=env, text=True, capture_output=True, timeout=30,
-    )
+    started = time.monotonic()
+    try:
+        operator = subprocess.run(
+            ["uv", "run", "--offline", "--frozen", "--project", str(project),
+             "aweb", "install-admin", "grant", "--team-id", team.team_id,
+             "--principal-did", team.did_key, "--role", "owner"],
+            env=env, text=True, capture_output=True, timeout=30,
+        )
+    except subprocess.TimeoutExpired as exc:
+        elapsed = time.monotonic() - started
+        # TimeoutExpired retains bytes even when run uses text=True.
+        stdout = (exc.stdout or b"").decode(errors="replace")
+        stderr = (exc.stderr or b"").decode(errors="replace")
+        raise AssertionError(
+            f"install-admin grant timed out after {elapsed:.2f}s\n"
+            f"stdout:\n{stdout}\nstderr:\n{stderr}"
+        ) from exc
     assert operator.returncode == 0, operator.stdout + operator.stderr
 
 
