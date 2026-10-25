@@ -124,13 +124,15 @@ email links, SDK items, browser traces or screenshots of value entry. Missing
 root mounting, bootstrap/delivery, HO6, reference ingress or supported
 secret/binding confirmation is a failed prerequisite, never a skip or a pass.
 
-The reference route is held outside the 2026-10-23 combined release. This
-scenario requires the provisioned HO6 environment. Its agreed source contract
-has no reference form, and
-the current HTTP ConsoleChanges guard supports backend-credential changes
-only. Reference forms and complete secret/binding confirmation remain
-unfinished acceptance. Write and review the journey now; run it once those
-prerequisites and the actual S19/root fixture are available.
+Train-naapp 16 landed the custody create-only confirmation writer and console
+page/router factories on main `dc25f6532` (custody `8ea36caae`, console
+`3d72b8e49`). The HTTP guard now permits the audited creation kinds, including
+secret and 1Password binding creation; other change operations remain outside
+this slice. These components are unmounted. Configuration/reference forms,
+the shared B3 fence (`aweb-acgh.18.45`) and root preparation, mounting and the
+actual S19 startup/browser fixture remain prerequisites. Run this scenario once those
+interfaces and the provisioned HO6 environment are available; component proof
+does not establish the real draft-confirm/vault journey.
 
 ## Execution and evidence
 
