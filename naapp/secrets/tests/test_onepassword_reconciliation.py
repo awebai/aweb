@@ -14,6 +14,7 @@ from aweb_secrets.custody.opening import BackendObservation, active_binding
 from aweb_secrets.onepassword_reconciliation import BackendReconciler
 from aweb_secrets.revisions import config_revision
 from tests.custody.test_onepassword import field, sdk_item
+from tests.governance import view
 from tests.test_change_set_onepassword import apply, initial, pending, staged, token_item
 from tests.test_change_sets import TEAM
 from tests.test_change_sets import world as _world
@@ -393,6 +394,7 @@ async def test_unsealed_parent_record_confirmation_and_reconciliation_share_lock
                 operation_id="parent-edit-" + change["change_id"],
                 fence=w.fence,
                 admitted=w.admitted,
+                governance_view=view(),
             )
 
     confirming = rotating = None

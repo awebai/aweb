@@ -31,7 +31,7 @@ PATH = f"/installations/{INSTALLATION_ID}/backend-credentials/onepassword/versio
 async def clients(w, *, lookup_ready=None, resume=None):
     await apply_console_migrations(w.db)
 
-    async def installation(installation_id):
+    async def installation(installation_id, *, team_id: str | None = None):
         if installation_id != INSTALLATION_ID:
             raise LookupError(installation_id)
         if lookup_ready is not None:

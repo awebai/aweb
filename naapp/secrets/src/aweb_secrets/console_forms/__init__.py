@@ -1,4 +1,4 @@
-"""Human token-entry and frozen change review pages on the shared console shell."""
+"""Human configuration entry and frozen change review pages on the shared console shell."""
 
 import json
 from html import escape
@@ -18,11 +18,11 @@ _SCRIPT = (
 )
 _STATUS = '<p id="form-status" role="status" aria-live="polite"></p>'
 _REVIEW = (
-    "<h1>Review the 1Password connection</h1>"
+    "<h1>Review changes</h1>"
     '<p id="approval-instructions">Open the approval link sent to your registered contact.</p>'
     '<section id="change-summary" hidden><h2>Frozen change</h2>'
     '<dl id="change-facts"></dl>'
-    "<p><strong>Activating a new service-account token invalidates existing 1Password item bindings. "
+    '<p id="backend-replacement-notice" hidden><strong>Activating a new service-account token invalidates existing 1Password item bindings. '
     "Those items need to be linked and confirmed again. Disabled secrets stay disabled.</strong></p>"
     '<h2>Reason supplied by the drafter (untrusted)</h2><pre id="change-reason"></pre>'
     '<button id="confirm-change" type="button" disabled>Confirm with your passkey</button></section>'

@@ -5,11 +5,9 @@ The registration view is catalog input; logs ingest remains release E2E proof.
 """
 
 import os
-from datetime import UTC, datetime, timedelta
 
 import pytest
 from aweb_naapp.hooks.envelope import verify
-from aweb_naapp.hooks.producer import Registration, RegistrationView
 from aweb_naapp.roles import hold_role
 from aweb_naapp.runtime.approvals import ApprovalState
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
@@ -22,29 +20,11 @@ from aweb_secrets.owners import OWNER_ROLE
 from aweb_secrets.revisions import config_revision
 from tests.custody.test_onepassword import field, reference, sdk_item
 from tests.custody.test_onepassword_staging import candidate
+from tests.governance import view
 from tests.test_change_sets import ALICE, TEAM, change_set, decide, draft, enrol_owner, on_console
 from tests.test_change_sets import world as _world
 
 world = _world
-
-
-def view():
-    now = datetime.now(UTC)
-    return RegistrationView(
-        TEAM,
-        "post-governance-hook",
-        now,
-        timedelta(seconds=60),
-        (
-            Registration(
-                "local-logs-binding",
-                "https://logs.example",
-                "POST",
-                "/hooks/ingest",
-                now - timedelta(hours=1),
-            ),
-        ),
-    )
 
 
 async def staged(w, *, token=None, create=True):
@@ -154,7 +134,7 @@ async def test_create_draft_is_inert_and_confirmation_uses_retained_approve_audi
     rows = await w.db.fetch_all(
         "SELECT payload, signature FROM {{tables.outbox_events}} WHERE kind='post-governance-hook'"
     )
-    assert len(rows) == 2
+    assert len(rows) == 3
     for row in rows:
         event = verify(bytes(row["payload"]), row["signature"], team_id=TEAM).fields
         assert event["actor"] == {"authority_mode": "system", "attestations": []}
