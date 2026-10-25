@@ -1,6 +1,9 @@
 """B2 broker-use lifecycle recording through retained B3 proof and the shared outbox.
 
-The root's composite sink routes secrets.use policy events here. Minting supplies
+The root's composite sink routes secrets.use policy events here. After run
+association migrations, an explicitly enabled instance also records secrets.run
+through its original ordered S12 slot. Both reuse this retained B3 proof and
+lifecycle implementation. Minting supplies
 an internal original-dispatch association; later decisions read that frozen
 association. A prepared registration view is request-local and obtained before
 authority locks. Neither context confers admission or send authority.
@@ -48,6 +51,13 @@ def is_use_approval(event: AuditEvent) -> bool:
     )
 
 
+def is_run_approval(event: AuditEvent) -> bool:
+    return (
+        event.kind in _KINDS
+        and event.details.get("policy_ref", "").split("|", 1)[0] == "secrets.run"
+    )
+
+
 class UseAuditUnavailable(RuntimeError):
     code = "release_context_unavailable"
     status = 503
@@ -69,12 +79,14 @@ class UseApprovalAudit:
         approval: Callable[[TransactionManager, str], Awaitable[Approval | None]],
         max_backlog_age: timedelta,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        enable_runs: bool = False,
     ) -> None:
         self._producer, self._passkeys, self._approval = producer, passkeys, approval
         if max_backlog_age <= timedelta(0):
             raise ValueError("the use audit backlog bound must be positive")
         self._max_backlog_age = max_backlog_age
         self._clock = clock
+        self._enable_runs = enable_runs
         self._view: ContextVar[RegistrationView | None] = ContextVar("use_audit_view", default=None)
         self._mint: ContextVar[UUID | None] = ContextVar("use_audit_mint", default=None)
 
@@ -105,6 +117,15 @@ class UseApprovalAudit:
             " WHERE dispatch_id=$1 ORDER BY approval_id",
             dispatch_id,
         )
+        if self._enable_runs:
+            rows = [
+                *rows,
+                *await tx.fetch_all(
+                    "SELECT approval_id,request_ref,request_sha256 FROM {{tables.run_approval_audits}}"
+                    " WHERE dispatch_id=$1 ORDER BY approval_id",
+                    dispatch_id,
+                ),
+            ]
         found = []
         for row in rows:
             approval = await self._approval(tx, row["approval_id"])
@@ -118,7 +139,10 @@ class UseApprovalAudit:
 
     async def emit(self, event: AuditEvent, transaction: TransactionManager) -> None:
         tx = transaction
-        if not is_use_approval(event) or event.approval_id is None:
+        if (
+            not (is_use_approval(event) or self._enable_runs and is_run_approval(event))
+            or event.approval_id is None
+        ):
             raise UseAuditUnavailable()
         approval = await self._approval(tx, event.approval_id)
         if approval is None or (
@@ -193,6 +217,10 @@ class UseApprovalAudit:
         await self._record(tx, approval, row, context, payload, "expired", now)
 
     async def _original(self, tx, approval):
+        if self._enable_runs and approval.policy_ref.split("|", 1)[0] == "secrets.run":
+            from aweb_secrets.run_audit import original_run_approval
+
+            return await original_run_approval(tx, approval)
         row = await tx.fetch_one(
             "SELECT c.*,b.actor,b.payload,b.correlation,b.signed_trace_id FROM {{tables.use_approval_audits}} a"
             " JOIN {{tables.broker_audit_contexts}} b USING(dispatch_id)"
@@ -253,6 +281,11 @@ class UseApprovalAudit:
         dispatch_id = self._mint.get()
         if dispatch_id is None:
             raise UseAuditUnavailable()
+        if self._enable_runs and approval.policy_ref.split("|", 1)[0] == "secrets.run":
+            from aweb_secrets.run_audit import associate_run_approval
+
+            await associate_run_approval(tx, approval, dispatch_id)
+            return
         raw = await tx.fetch_value(
             "SELECT canonical FROM {{tables.approval_requests}} WHERE request_ref=$1",
             approval.request_ref,
@@ -352,8 +385,13 @@ class UseApprovalAudit:
             )
         except PasskeyProofUnavailable:
             raise UseAuditUnavailable() from None
+        proof_table = (
+            "run_approval_audit_proofs"
+            if self._enable_runs and approval.policy_ref.split("|", 1)[0] == "secrets.run"
+            else "use_approval_audit_proofs"
+        )
         await tx.execute(
-            "INSERT INTO {{tables.use_approval_audit_proofs}}"
+            f"INSERT INTO {{{{tables.{proof_table}}}}}"
             " (approval_id,evidence_ref,scope,subject,purpose,commitment) VALUES ($1,$2,$3,$4,$5,$6)",
             approval.approval_id,
             decided.evidence_ref,
