@@ -378,6 +378,25 @@ before its `active_from`, which the caller compares with an event's
 
 ## Approvals and passkeys
 
+`Passkeys.complete_enrolment(token, credential, fence=...)` and
+`Passkeys.prove_contact(token, fence=...)` accept an optional `PasskeyEffectFence`
+for the app's completion authority. Prefetch network/registration context first.
+B3 calls `await fence.prepare(tx)` before its first effect statement, then
+performs the effect and audit in that same transaction, then calls
+`await fence.check(tx)` immediately before commit. The app holds its installation
+authority in prepare; check reads without new locks/network and samples live
+time last. Original completion association, current designation/contact/recovery
+and capability expiry are the app's checks. A required app sink must refuse a
+positive completion if its expected fence was omitted or unprepared.
+
+Expected fence refusals use `EnrolmentRefused` or `ContactChangeRefused` for the
+operation. Refusal rolls back link/proof-token consumption, credential/contact
+state and audit together. Enrolment's pre-effect WebAuthn challenge stays spent:
+retry requests new enrolment options and a new registration response with the
+still-valid unused link. Contact-proof retry requires fresh authority/expiry
+checks. There is no token release or automatic replay. These callbacks change
+neither LOGIN/APPROVE evidence nor the current-approver API below.
+
 For a final authority read in the caller's transaction, use
 `Passkeys.prepare_current_approvers(tx, pairs)` with the complete `(scope,
 subject)` union. It holds all designation rows in scope/subject order, then all
