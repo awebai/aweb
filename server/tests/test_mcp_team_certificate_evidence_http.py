@@ -10,11 +10,12 @@ overridden, and no AuthContext is supplied by the test.
 from __future__ import annotations
 
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
 from aweb.config import require_registered_certificates
+from aweb.internal_auth import build_internal_auth_header_value
 from aweb.mcp.server import create_mcp_app
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _signed_identity_headers, _signed_team_headers
@@ -137,5 +138,65 @@ async def test_identity_only_mcp_cannot_use_projection_as_team_evidence(
         # projection is unique and the staged existence check is disabled.
         actual = {tool: await call(tool) for tool in TEAM_TOOLS}
         assert actual == {tool: TEAM_TOOL_REFUSAL for tool in TEAM_TOOLS}
+    finally:
+        await mcp.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_trusted_proxy_mcp_keeps_team_tools_without_certificate(
+    privacy_app, monkeypatch,
+):
+    env = privacy_app
+    alice = env.actors["alice"]
+    secret = "certificate-evidence-test-proxy-secret"
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
+    user_id = str(uuid4())
+    headers = {
+        "X-Team-ID": TEAM,
+        "X-User-ID": user_id,
+        "X-AWEB-Actor-ID": str(alice.id),
+        "X-AWEB-Auth": build_internal_auth_header_value(
+            secret=secret, team_id=TEAM, principal_type="u",
+            principal_id=user_id, actor_id=str(alice.id),
+        ),
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    mcp = create_mcp_app(
+        db_infra=env.infra, redis=env.redis,
+        registry_client=env.app.state.awid_registry_client,
+        public_origin=str(env.client.base_url).rstrip("/"),
+    )
+    env.app.mount("/proxy-evidence-mcp", mcp)
+    await mcp.startup()
+    try:
+        body = json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {
+                "name": "task_create",
+                "arguments": {"title": "Trusted proxy task"},
+            },
+        }).encode()
+        invalid = await env.client.post(
+            "/proxy-evidence-mcp/", content=body,
+            headers={**headers, "X-AWEB-Auth": headers["X-AWEB-Auth"] + "bad"},
+        )
+        assert invalid.status_code == 401, invalid.text
+
+        response = await env.client.post(
+            "/proxy-evidence-mcp/", content=body, headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert "error" not in result, result
+        tool_result = result["result"]
+        assert not tool_result.get("isError"), tool_result
+        task = json.loads(tool_result["content"][0]["text"])
+        assert "error" not in task, task
+        assert await env.db.fetch_value(
+            "SELECT title FROM {{tables.tasks}} WHERE task_id=$1",
+            UUID(task["task_id"]),
+        ) == "Trusted proxy task"
     finally:
         await mcp.shutdown()

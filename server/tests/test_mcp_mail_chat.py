@@ -246,6 +246,7 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
     assert ctx is not None
     assert ctx.did_aw == "did:aw:alice"
     assert ctx.address == "acme.com/alice"
+    assert ctx.certificate_id == "cert-1"
     assert ctx.workspace_id == str(workspace_id)
 
 
@@ -340,6 +341,7 @@ async def test_mcp_auth_enriches_identity_auth_from_agent_row(aweb_cloud_db, mon
     assert ctx.team_id == team_id
     assert ctx.agent_id == str(agent_id)
     assert ctx.alias == "gsk"
+    assert ctx.certificate_id is None
 
 
 @pytest.mark.asyncio
