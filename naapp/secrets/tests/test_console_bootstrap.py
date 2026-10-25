@@ -2,9 +2,12 @@
 
 import asyncio
 import base64
+import email
+import email.policy
 import secrets
 import socket
 from collections.abc import AsyncIterator
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -22,7 +25,7 @@ from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_bootstrap import console_bootstrap_router
 from aweb_secrets.owners import owner_scope
 from aweb_secrets.passkey_email import PasskeyEmailDelivery
-from tests.test_approval_email import contents, mailer
+from tests.test_approval_email import Links, mailer
 from tests.test_change_sets import ALICE, ORIGIN, TEAM, World
 from tests.test_change_sets import world as _world
 from tests.test_console_ui import Elements
@@ -123,36 +126,32 @@ async def designate_owner(world: World, service: str, contact: str):
             },
         )
     assert response.status_code == 200
-    return scope, world.inbox.enrolments[contact][-1]
+    return scope
 
 
-async def mailed_url(world, origin, tmp_path, *, scope, contact, token, ceremony):
-    with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
-        delivery = PasskeyEmailDelivery(mailer=mailer(smtp, tmp_path), console_origin=origin)
-        if ceremony == "enrolment":
-            await delivery.deliver_enrolment_link(
-                await world.passkeys.designated_approver(scope), token
-            )
-        else:
-            await delivery.deliver_contact_proof(contact, token)
-        [received] = smtp.received
-        _, _, _, url = contents(received)
-        return url
+def delivered_url(messages, *, contact, path):
+    urls = []
+    for received in messages:
+        if received.rcpt_tos != [contact]:
+            continue
+        message = email.message_from_bytes(received.content, policy=email.policy.default)
+        html = message.get_body(("html",)).get_content()
+        urls.extend(url for url in Links(html).urls if urlsplit(url).path == path)
+    [url] = urls
+    return url
 
 
 async def test_enrolment_page_uses_the_delivered_fragment_and_real_registration(
     world: World, browser, service: str, tmp_path
 ):
-    scope, token = await designate_owner(world, service, "owner@example.com")
-    url = await mailed_url(
-        world,
-        service,
-        tmp_path,
-        scope=scope,
-        contact="owner@example.com",
-        token=token,
-        ceremony="enrolment",
-    )
+    contact = "owner@example.com"
+    with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
+        world.passkeys._delivery = PasskeyEmailDelivery(
+            mailer=mailer(smtp, tmp_path), console_origin=service
+        )
+        scope = await designate_owner(world, service, contact)
+        url = delivered_url(smtp.received, contact=contact, path="/enrolment")
+    [token] = parse_qs(urlsplit(url).fragment)["token"]
     async with await browser.new_context() as context:
         page = await context.new_page()
         cdp = await context.new_cdp_session(page)
@@ -201,23 +200,19 @@ async def test_contact_page_confirms_only_the_delivered_candidate(
     world: World, browser, service: str, tmp_path
 ):
     contact, candidate = "owner@example.com", "candidate@example.com"
-    scope, enrolment = await designate_owner(world, service, contact)
+    scope = await designate_owner(world, service, contact)
+    [enrolment] = world.inbox.enrolments[contact]
     device = SoftAuthenticator(service)
     await world.passkeys.complete_enrolment(
         enrolment, device.create(await world.passkeys.enrolment_options(enrolment))
     )
-    options = await world.passkeys.contact_change_options(scope, candidate)
-    effective_at = await world.passkeys.change_contact(scope, candidate, device.get(options))
-    [token] = world.inbox.proofs[candidate]
-    url = await mailed_url(
-        world,
-        service,
-        tmp_path,
-        scope=scope,
-        contact=candidate,
-        token=token,
-        ceremony="contact-proof",
-    )
+    with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
+        world.passkeys._delivery = PasskeyEmailDelivery(
+            mailer=mailer(smtp, tmp_path), console_origin=service
+        )
+        options = await world.passkeys.contact_change_options(scope, candidate)
+        effective_at = await world.passkeys.change_contact(scope, candidate, device.get(options))
+        url = delivered_url(smtp.received, contact=candidate, path="/contact-proof")
     async with await browser.new_context() as context:
         page = await context.new_page()
         await page.goto(url)
