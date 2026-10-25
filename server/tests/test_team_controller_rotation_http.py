@@ -10,7 +10,10 @@ from datetime import datetime, timezone
 
 import httpx
 import pytest
+import pytest_asyncio
 
+import awid.registry as registry_module
+from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair
@@ -62,10 +65,29 @@ async def _controller_action(env, operation, sk, did):
     return response, stored, next_key
 
 
+@pytest_asyncio.fixture
+async def rotation_app(privacy_app):
+    env = privacy_app
+    registry = CachedRegistryClient(
+        registry_url="http://registry.test", redis_client=env.redis,
+        transport=httpx.ASGITransport(app=env.registry_app),
+    )
+    original = env.app.state.awid_registry_client
+    env.app.state.awid_registry_client = registry
+    try:
+        yield env
+    finally:
+        env.app.state.awid_registry_client = original
+        await registry.aclose()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["replace_key", "status_host"])
-async def test_awid_rotation_replaces_oss_controller_authority(privacy_app, operation):
-    env = privacy_app
+@pytest.mark.parametrize("age", [59, 61])
+async def test_awid_rotation_replaces_oss_controller_authority(rotation_app, monkeypatch, operation, age):
+    env = rotation_app
+    clock = [1_000_000]
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0])
     namespace_sk, _, namespace_did = _make_keypair()
     next_sk, _, next_did = _make_keypair()
     await env.registry_db.execute(
@@ -80,6 +102,9 @@ async def test_awid_rotation_replaces_oss_controller_authority(privacy_app, oper
     before, stored, expected = await _controller_action(env, operation, env.team_sk, env.team_did)
     assert before.status_code == 200, before.text
     assert stored == expected
+    # Warm the real SDK cache even on the unfixed server, whose controller
+    # routes currently bypass it. The fix must honor its freshness bound.
+    assert await env.app.state.awid_registry_client.get_team_public_key("example.test", TEAM_NAME) == env.team_did
 
     # Rotate through the actual namespace-controller-authorized AWID endpoint.
     # The OSS database deliberately keeps its original, now stale key hint.
@@ -102,14 +127,20 @@ async def test_awid_rotation_replaces_oss_controller_authority(privacy_app, oper
     assert await env.db.fetch_value(
         "SELECT team_did_key FROM {{tables.teams}} WHERE team_id=$1", TEAM,
     ) == env.team_did
+    clock[0] += age
 
     # Both requests have valid signatures and live mutation preconditions.
     # Read the current precondition for each, so acceptance of the old key
     # cannot cause a neighboring conflict to mask the new controller's result.
-    old, _, _ = await _controller_action(env, operation, env.team_sk, env.team_did)
+    old, old_stored, old_expected = await _controller_action(env, operation, env.team_sk, env.team_did)
     new, stored, expected = await _controller_action(env, operation, next_sk, next_did)
-    assert (old.status_code, new.status_code) == (403, 200), {
+    expected_statuses = (200, 403) if age < 60 else (403, 200)
+    assert (old.status_code, new.status_code) == expected_statuses, {
         "former_controller": {"status": old.status_code, "body": old.json()},
         "current_controller": {"status": new.status_code, "body": new.json()},
     }
-    assert stored == expected
+    if age < 60:
+        assert old_stored == old_expected == stored
+    else:
+        assert old_stored != old_expected
+        assert stored == expected
