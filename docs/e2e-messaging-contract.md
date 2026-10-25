@@ -381,6 +381,19 @@ The server-visible v2 envelope has this shape:
 
 Rules:
 
+- Python builders can guard their output with the public
+  `aweb.e2ee_messages.validate_strict_e2ee_message_envelope`. It accepts mail
+  and chat with the same expected binding arguments as
+  `validate_e2ee_message_envelope`, rejects unknown fields at every object
+  level and wrong JSON types without coercion, then applies the normal
+  cryptographic and binding checks. Expected identities and message identifiers
+  must come from trusted resolved inputs, not from the envelope being checked.
+  Optional fields can be omitted; optional string fields emitted as empty
+  strings by the builder are accepted, while `null` is refused. The input is
+  not changed. Binary encodings remain opaque to this structural check:
+  message text that happens to occur in a valid nonce or ciphertext is accepted.
+  The existing validator retains its compatibility behavior; the strict helper
+  is an additive construction guard, not a new default ingestion requirement.
 - `kind` is `mail` or `chat`.
 - `subject`, `body`, and chat plaintext are absent from the outer envelope.
 - `reply_to_message_id` is omitted when absent.
