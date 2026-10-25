@@ -139,7 +139,9 @@ async def test_mounted_runner_authority_is_api_only_and_distinct_from_member_b1(
         response = await client.post(
             CONSOLE + signed.raw_target, content=signed.body, headers=headers(signed)
         )
-        assert response.status_code == 404
+        assert response.status_code == 403
+        assert response.json()["code"] == "team_auth_refused"
+        assert (await client.post(CONSOLE + signed.raw_target, json={})).status_code == 404
         member = await client.post(f"/v1/jobs/{context.job.job_id}/runs", json={})
         assert member.status_code == 401
         missing = await client.post("/runner/v1/claim", json={})
