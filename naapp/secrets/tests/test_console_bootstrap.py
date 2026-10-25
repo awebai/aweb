@@ -2,9 +2,9 @@
 
 import asyncio
 import base64
+import secrets
 import socket
 from collections.abc import AsyncIterator
-from urllib.parse import quote
 
 import httpx
 import pytest
@@ -13,13 +13,16 @@ from aweb_naapp.console import CONSOLE_HEADERS
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.passkeys import RelyingParty, contact_sha256
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
+from aweb_naapp_testing.smtp import SmtpServer
 from aweb_naapp_testing.webauthn import SoftAuthenticator
-from aweb_secrets.console_bootstrap import console_bootstrap_router
 from fastapi import FastAPI
 from playwright.async_api import expect
 
 from aweb_secrets.console import OwnerConsole, owner_console_router
+from aweb_secrets.console_bootstrap import console_bootstrap_router
 from aweb_secrets.owners import owner_scope
+from aweb_secrets.passkey_email import PasskeyEmailDelivery
+from tests.test_approval_email import contents, mailer
 from tests.test_change_sets import ALICE, ORIGIN, TEAM, World
 from tests.test_change_sets import world as _world
 from tests.test_console_ui import Elements
@@ -123,10 +126,33 @@ async def designate_owner(world: World, service: str, contact: str):
     return scope, world.inbox.enrolments[contact][-1]
 
 
+async def mailed_url(world, origin, tmp_path, *, scope, contact, token, ceremony):
+    with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
+        delivery = PasskeyEmailDelivery(mailer=mailer(smtp, tmp_path), console_origin=origin)
+        if ceremony == "enrolment":
+            await delivery.deliver_enrolment_link(
+                await world.passkeys.designated_approver(scope), token
+            )
+        else:
+            await delivery.deliver_contact_proof(contact, token)
+        [received] = smtp.received
+        _, _, _, url = contents(received)
+        return url
+
+
 async def test_enrolment_page_uses_the_delivered_fragment_and_real_registration(
-    world: World, browser, service: str
+    world: World, browser, service: str, tmp_path
 ):
     scope, token = await designate_owner(world, service, "owner@example.com")
+    url = await mailed_url(
+        world,
+        service,
+        tmp_path,
+        scope=scope,
+        contact="owner@example.com",
+        token=token,
+        ceremony="enrolment",
+    )
     async with await browser.new_context() as context:
         page = await context.new_page()
         cdp = await context.new_cdp_session(page)
@@ -146,7 +172,7 @@ async def test_enrolment_page_uses_the_delivered_fragment_and_real_registration(
         )
         requests = []
         page.on("request", lambda request: requests.append(request.url))
-        await page.goto(service + "/enrolment#" + quote(token, safe=""))
+        await page.goto(url)
         await expect(page.get_by_role("button", name="Set up passkey")).to_be_enabled()
         assert "#" not in page.url
         async with page.expect_response(
@@ -154,7 +180,14 @@ async def test_enrolment_page_uses_the_delivered_fragment_and_real_registration(
                 response.url == service + "/enrolment" and response.request.method == "POST"
             )
         ) as completed:
-            await page.get_by_role("button", name="Set up passkey").click()
+            async with page.expect_response(
+                lambda response: (
+                    response.url == service + "/enrolment/options"
+                    and response.request.method == "POST"
+                )
+            ) as options_loaded:
+                await page.get_by_role("button", name="Set up passkey").click()
+            assert (await options_loaded.value).status == 200
         assert (await completed.value).status == 200
         await expect(page.get_by_role("status")).to_be_visible()
         await expect(page.get_by_role("button", name="Set up passkey")).to_be_disabled()
@@ -165,7 +198,7 @@ async def test_enrolment_page_uses_the_delivered_fragment_and_real_registration(
 
 
 async def test_contact_page_confirms_only_the_delivered_candidate(
-    world: World, browser, service: str
+    world: World, browser, service: str, tmp_path
 ):
     contact, candidate = "owner@example.com", "candidate@example.com"
     scope, enrolment = await designate_owner(world, service, contact)
@@ -176,9 +209,18 @@ async def test_contact_page_confirms_only_the_delivered_candidate(
     options = await world.passkeys.contact_change_options(scope, candidate)
     effective_at = await world.passkeys.change_contact(scope, candidate, device.get(options))
     [token] = world.inbox.proofs[candidate]
+    url = await mailed_url(
+        world,
+        service,
+        tmp_path,
+        scope=scope,
+        contact=candidate,
+        token=token,
+        ceremony="contact-proof",
+    )
     async with await browser.new_context() as context:
         page = await context.new_page()
-        await page.goto(service + "/contact-proof#" + quote(token, safe=""))
+        await page.goto(url)
         await expect(page.get_by_role("button", name="Confirm email address")).to_be_enabled()
         assert "#" not in page.url
         async with page.expect_response(
@@ -203,9 +245,12 @@ async def test_contact_page_confirms_only_the_delivered_candidate(
 
 
 @pytest.mark.parametrize("path", ["/enrolment", "/contact-proof"])
-async def test_missing_fragment_cannot_start_a_ceremony(browser, service: str, path: str):
+@pytest.mark.parametrize("fragment", ["", "#token=", "#other=value"])
+async def test_missing_fragment_cannot_start_a_ceremony(
+    browser, service: str, path: str, fragment: str
+):
     async with await browser.new_context() as context:
         page = await context.new_page()
-        await page.goto(service + path)
-        assert not await page.get_by_role("button").is_enabled()
+        await page.goto(service + path + fragment)
+        await expect(page.get_by_role("button")).to_be_disabled()
         await expect(page.get_by_role("status")).to_be_visible()
