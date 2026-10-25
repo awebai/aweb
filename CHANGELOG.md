@@ -63,6 +63,9 @@
 
 ### Breaking changes
 
+- MCP team tools now require a team certificate (or a hosted proxy context);
+  identity-only MCP auth keeps mail/chat/contacts.
+
 - aw refuses a tool path parameter value that is blank, is `.` or `..`
   once surrounding whitespace is trimmed, or contains `/`, `\`, `%`, `?`,
   `#`, `;` or an ASCII control character, in manifest versions 1 and 2. Each value fills exactly one path segment, even
