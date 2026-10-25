@@ -7,6 +7,7 @@ from asyncpg.exceptions import LockNotAvailableError
 
 from aweb_naapp.page_store import StoreError
 from aweb_naapp.runtime.authorization import Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.installation import InstallationFence, apply_installation_migrations
 from tests.page_store.test_store import OWNER, SCOPE, create
 
@@ -40,7 +41,7 @@ async def test_joined_record_and_query_roll_back_with_the_installation_fence(sto
         installation_id=SCOPE.installation_id,
         generation=1,
         scopes=frozenset({"records:write"}),
-        fresh_until=time.monotonic() + 60,
+        fresh_until=time.monotonic_ns() + seconds_to_ns(60),
     )
     method = getattr(store, operation + "_record_on")
     kwargs = request(operation)

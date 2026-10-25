@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 from aweb_naapp.runtime.app import NaappRuntime
+from aweb_naapp.runtime.clock import seconds_to_ns
 from playwright.async_api import expect
 from test_live_refresh import live_browser, live_world
 from test_present_privacy import OWNER, assert_private, mint, present_world
@@ -94,7 +95,7 @@ async def test_session_outlives_opener_and_revoke_still_ends_it(present_world, s
     ).status_code == 404
 
 
-@pytest.mark.parametrize("checked_at", [452.090299787, 964.597241499])
+@pytest.mark.parametrize("checked_at", [452_090_299_787, 964_597_241_499])
 async def test_session_keeps_valid_full_ttl_membership_at_ci_clock_values(
     present_world, session_http, monkeypatch, checked_at
 ):
@@ -107,11 +108,11 @@ async def test_session_keeps_valid_full_ttl_membership_at_ci_clock_values(
 
     async def current(self, *args, **kwargs):
         proof = await original(self, *args, **kwargs)
-        return replace(proof, checked_at=checked_at, fresh_until=checked_at + 60)
+        return replace(proof, checked_at=checked_at, fresh_until=checked_at + seconds_to_ns(60))
 
     monkeypatch.setattr(NaappRuntime, "check_current_member", current)
     monkeypatch.setattr(
-        edit_sessions, "time", SimpleNamespace(monotonic=lambda: checked_at + 1)
+        edit_sessions, "time", SimpleNamespace(monotonic_ns=lambda: checked_at + seconds_to_ns(1))
     )
     link = await mint(present_world)
     path, secret = await exchange(session_http, link)

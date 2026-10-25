@@ -3,6 +3,7 @@
 import pytest
 
 from aweb_naapp.runtime.capability_links import LinkRefused, read
+from aweb_naapp.runtime.clock import seconds_to_ns
 
 from .conftest import SCOPE, T0
 from .test_lifecycle import holder
@@ -54,14 +55,14 @@ async def test_locked_use_requires_the_exact_original_runtime_proof(
 
     caller = await holder(db, authority)
     proof = await proof_for_link(db, caller.link_id)
-    proof = replace(proof, checked_at=10.0, fresh_until=70.0)
+    proof = replace(proof, checked_at=seconds_to_ns(10), fresh_until=seconds_to_ns(70))
     changes = {
         "team": {"team_id": "other:acme.com"},
         "certificate": {"certificate_id": "other-cert"},
         "key": {"team_did_key": "other-key"},
-        "expired": {"fresh_until": 39.0},
-        "future": {"checked_at": 41.0},
-        "unbounded": {"fresh_until": 71.0},
+        "expired": {"fresh_until": seconds_to_ns(39)},
+        "future": {"checked_at": seconds_to_ns(41)},
+        "unbounded": {"fresh_until": seconds_to_ns(71)},
         "nan": {"fresh_until": float("nan")},
     }
     proof = asdict(proof) if fault == "serialized" else replace(proof, **changes[fault])
@@ -84,7 +85,7 @@ async def test_locked_use_requires_the_exact_original_runtime_proof(
                 client="203.0.113.7",
                 now=T0,
                 proof=proof,
-                proof_clock=lambda: 40.0,
+                proof_clock=lambda: seconds_to_ns(40),
             )
         else:
             async with db.transaction() as tx:
@@ -96,7 +97,7 @@ async def test_locked_use_requires_the_exact_original_runtime_proof(
                         page_id=SCOPE.page_id,
                         now=T0,
                         proof=proof,
-                        proof_clock=lambda: 40.0,
+                        proof_clock=lambda: seconds_to_ns(40),
                     )
                 else:
                     await admit(
@@ -109,7 +110,7 @@ async def test_locked_use_requires_the_exact_original_runtime_proof(
                         client="203.0.113.7",
                         now=T0,
                         proof=proof,
-                        proof_clock=lambda: 40.0,
+                        proof_clock=lambda: seconds_to_ns(40),
                     )
         assert (refused.value.code, refused.value.status) == ("current_member_required", 403)
 
@@ -125,8 +126,8 @@ async def test_real_link_lock_wait_cannot_extend_proof_expiry(db, authority, ope
     from .test_lifecycle import action_body
 
     caller = await holder(db, authority)
-    proof = replace(await proof_for_link(db, caller.link_id), checked_at=10.0, fresh_until=70.0)
-    clock_value = [40.0]
+    proof = replace(await proof_for_link(db, caller.link_id), checked_at=seconds_to_ns(10), fresh_until=seconds_to_ns(70))
+    clock_value = [seconds_to_ns(40)]
     clock_reads = []
     backend = asyncio.Future()
 
@@ -160,7 +161,7 @@ async def test_real_link_lock_wait_cannot_extend_proof_expiry(db, authority, ope
             else:
                 pytest.fail("holder query did not wait on the real link row lock")
             assert not pending.done() and clock_reads == []
-            clock_value[0] = 80.0
+            clock_value[0] = seconds_to_ns(80)
         except BaseException:
             pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
@@ -168,7 +169,7 @@ async def test_real_link_lock_wait_cannot_extend_proof_expiry(db, authority, ope
     with pytest.raises(LinkRefused) as refused:
         await asyncio.wait_for(pending, 2)
     assert (refused.value.code, refused.value.status) == ("current_member_required", 403)
-    assert clock_reads == [80.0]
+    assert clock_reads == [seconds_to_ns(80)]
 
 
 async def test_scope_and_stored_creator_team_must_both_match(db, authority):
@@ -191,7 +192,7 @@ async def test_freshness_boundary_accepts_original_expiry_without_refresh(db, au
     from .conftest import proof_for_link
 
     caller = await holder(db, authority)
-    proof = replace(await proof_for_link(db, caller.link_id), checked_at=10.0, fresh_until=70.0)
+    proof = replace(await proof_for_link(db, caller.link_id), checked_at=seconds_to_ns(10), fresh_until=seconds_to_ns(70))
     observed = []
 
     async def local(tx, *, creator, proof):
@@ -206,13 +207,13 @@ async def test_freshness_boundary_accepts_original_expiry_without_refresh(db, au
             page_id=SCOPE.page_id,
             now=T0,
             proof=proof,
-            proof_clock=lambda: 70.0,
+            proof_clock=lambda: seconds_to_ns(70),
         )
     assert observed == [proof]
     assert observed[0] is proof  # No replacement or freshness extension under the lock.
 
 
-@pytest.mark.parametrize("checked_at", [452.090299787, 964.597241499])
+@pytest.mark.parametrize("checked_at", [452_090_299_787, 964_597_241_499])
 async def test_full_ttl_proof_opens_a_session_at_ci_clock_values(db, authority, checked_at):
     """The exact proof timestamps rejected by Folio CI are valid 60-second proofs."""
     from dataclasses import replace
@@ -226,7 +227,7 @@ async def test_full_ttl_proof_opens_a_session_at_ci_clock_values(db, authority, 
     proof = replace(
         await proof_for_link(db, minted.link_id),
         checked_at=checked_at,
-        fresh_until=checked_at + 60,
+        fresh_until=checked_at + seconds_to_ns(60),
     )
     session = await exchange(
         db,
@@ -236,7 +237,7 @@ async def test_full_ttl_proof_opens_a_session_at_ci_clock_values(db, authority, 
         client="203.0.113.7",
         now=T0,
         proof=proof,
-        proof_clock=lambda: checked_at + 1,
+        proof_clock=lambda: checked_at + seconds_to_ns(1),
     )
     assert session.link["page_id"] == SCOPE.page_id
 
