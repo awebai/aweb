@@ -425,6 +425,11 @@ class RunDispatch:
                 if previous is not None
                 else self._candidate_digest(candidate),
             )
+            # Derived credentials remain outside the first-release surface.
+            # Keep the typed selector's validation, but never claim or prepare
+            # a child run until its service/runner substitution path is enabled.
+            if inputs.secret_ref is not None:
+                raise AdmissionRefused("job_not_allowed")
             intent_id = mint_intent_id()
             receipt = await claim(
                 tx,

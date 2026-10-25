@@ -12,6 +12,9 @@ Sources: [secrets](secrets.md) §§4.1, 7, 9–11, 13; the
 `run_approvals.py`, `runners.py` and `runner_results.py` in `naapp/secrets`.
 Short-lived issuance remains parked. The first runner implementation accepts
 durable slots; it does not silently convert a short-lived slot to durable.
+The first release uses the job's own fixed durable slots. Ordinary-child
+selection remains guarded: a valid `secret` selector refuses with
+`job_not_allowed` before an idempotency claim, run preparation or release.
 
 ## Member tools: inputs and replay
 

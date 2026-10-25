@@ -138,19 +138,21 @@ class RunStatus:
                     return ToolReply(200, {"state": "refused", **identity, "code": code})
             if states <= {ApprovalState.APPROVED, ApprovalState.CONSUMED}:
                 return ToolReply(200, {"state": "approved", **identity, "next": "resubmit"})
-            pending = next(
-                (
-                    row
+            pending_refs = list(
+                dict.fromkeys(
+                    row["approval_ref"]
                     for row, slot_state in zip(rows, slot_states, strict=True)
                     if slot_state is ApprovalState.PENDING
-                ),
-                None,
+                )
             )
-            if pending is None:
+            if not pending_refs:
                 raise UseAuditUnavailable()
             return ToolReply(
                 200,
-                tool_results.awaiting_approval(**identity, approval_ref=pending["approval_ref"]),
+                {
+                    **tool_results.awaiting_approval(**identity, approval_ref=pending_refs[0]),
+                    "approval_refs": pending_refs,
+                },
             )
         if state in {
             State.COMPLETED,
