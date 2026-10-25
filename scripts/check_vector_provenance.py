@@ -215,6 +215,10 @@ ROOT_CONSUMERS = {
         "e2ee-v2-cross-language.json",
         '_CROSS_LANGUAGE_VECTOR = _ROOT / "docs" / "vectors" / "e2ee-v2-cross-language.json"',
     ),
+    PurePosixPath("server/tests/test_e2ee_strict_envelope.py"): _consumer(
+        "e2ee-v2-cross-language.json",
+        'Path(__file__).resolve().parents[2] / "docs/vectors/e2ee-v2-cross-language.json"',
+    ),
     SERVER_CONSUMER: _consumer(
         {
             "dns-txt-v1.json",
