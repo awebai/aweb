@@ -53,6 +53,7 @@ from aweb_secrets.use_approvals import (
     use_approval_status,
     void_use_approvals,
 )
+from tests.governance import view
 from tests.test_change_sets import (
     ALICE,
     ORIGIN,
@@ -134,6 +135,7 @@ async def designate(uses: Uses, ref: str, contact: str, *, principal: str | None
             operation_id=f"apply-{change['change_id']}",
             fence=w.fence,
             admitted=w.admitted,
+            governance_view=view(),
         )
     await w.change_sets.deliver(confirmation)
     token = w.inbox.enrolments[contact][-1]
