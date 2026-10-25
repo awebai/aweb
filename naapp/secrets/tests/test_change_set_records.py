@@ -26,6 +26,7 @@ from aweb_secrets.custody import CustodyUnavailable, ValueInvalid, encode_value
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
+from tests.governance import view
 from tests.test_change_sets import (  # noqa: F401
     ALICE,
     BOB,
@@ -575,6 +576,7 @@ async def test_first_ingest_commits_before_reshape_checks_history(world: World) 
                 operation_id="concurrent-reshape",
                 fence=world.fence,
                 admitted=world.admitted,
+                governance_view=view(),
             )
 
     task = None
@@ -639,6 +641,7 @@ async def test_ingest_rechecks_the_record_after_waiting_for_reshape(world: World
                 operation_id="reshape-first",
                 fence=world.fence,
                 admitted=world.admitted,
+                governance_view=view(),
             )
             task = asyncio.create_task(ingest())
             waiter = await asyncio.wait_for(ready, 5)
@@ -755,6 +758,7 @@ async def test_initial_ingest_and_creation_serialize_their_shape_binding(
             operation_id="initial-create-race",
             fence=world.fence,
             admitted=world.admitted,
+            governance_view=view(),
         )
 
     async def ingest(tx):
@@ -833,6 +837,7 @@ async def test_an_absent_parent_ingest_prevents_reshape_after_creation_pins_zero
                 operation_id="reshape-after-zero-pin",
                 fence=world.fence,
                 admitted=world.admitted,
+                governance_view=view(),
             )
 
     ingest_task = reshape_task = None
@@ -851,6 +856,7 @@ async def test_an_absent_parent_ingest_prevents_reshape_after_creation_pins_zero
                 operation_id="create-zero-pin",
                 fence=world.fence,
                 admitted=world.admitted,
+                governance_view=view(),
             )
             assert await tx.fetch_value("SELECT last_version FROM {{tables.custody_secrets}}") == 0
         await asyncio.wait_for(allocated.wait(), 5)

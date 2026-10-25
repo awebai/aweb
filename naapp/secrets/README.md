@@ -129,6 +129,21 @@ origin; entered bytes and response bodies must never be logged or stored in
 browser storage. Customers enter their own team's token; composition provides
 no operator token loader.
 
+`POST /installations/{installation_id}/onepassword/references` accepts
+`secret` (the complete secret record v1 with backend `onepassword`), `reference`
+(`vault_id`, `item_id`, and logical-field-to-field-ID `fields`), and a positive
+integer `credential_version`, with the same owner session and tab CSRF. After
+owner authorization, it opens the scoped staged or active token and reads the
+item through the official SDK outside authority transactions. A new transaction
+rechecks F6, the owner role, the exact LOGIN evidence, the open session and the
+scoped token/actual secret shape before staging metadata. The no-store response
+is the inert `onepassword_binding/1` after record; it never includes item values
+or the token. Staging creates no active secret or binding. Secret/binding
+confirmation shares the canonical change-set routes: create the secret record,
+activate the staged binding and, when needed, activate its staged backend token
+in one owner-confirmed change. Reference entry forms remain separate work. Successful external vault
+access still requires the HO6 fixture and release proof.
+
 `aweb_secrets.approval_email.ApprovalEmailDelivery` implements B2 delivery for
 both use and change approvals. Composition supplies a shared
 `aweb_naapp.email.Mailer` and the trusted absolute console endpoint:
@@ -170,7 +185,13 @@ the intent in the same installation/team; direct approvals under other grants
 remain untouched. Omit it for the existing exact-secret, all-version selection.
 `void_use_approvals` remains the version-replacement operation.
 
-The first fresh-confirmation HTTP slice supports `backend_credential` items.
+The fresh-confirmation HTTP routes support `create` items for backend credentials,
+1Password bindings, secret metadata/native values, destinations, operations,
+grants, policies, plain roles, jobs and runners. Every such effect requires the
+actual retained APPROVE commitment and atomic signed governance recording.
+Job credentials must name same-installation/team secrets and compatible structured
+fields; this slice supports durable slots. Job updates, mint slots and B3
+approver/contact changes retain their integration guards.
 Mount it only on the human application, sharing the same services:
 
 ```python
@@ -250,8 +271,10 @@ text. `/installations/{installation_id}/change-sets/{change_id}/review` also
 lets a deciding owner resume an approved change after a page reload, without
 approving again. Browser actions use the sole shared `post` and `assertion`
 helpers; no automatic mutation retry occurs. New tabs without tab CSRF retain
-the shared scoped re-authentication guard. Other record kinds, reference
-staging and the root application mount remain separate integration work.
+the shared scoped re-authentication guard. Frozen review shows every proposed
+field. A runner registration code appears once in that deciding document after
+commit; it is never stored for a later read, navigation or retry. Configuration
+entry forms and the real root application mount remain separate integration work.
 
 Run-slot approvals use the same B2 service and `apply_use_approval_migrations`.
 `run_approvals.request_run_approvals(tx, approvals, prepared=..., principal=...,

@@ -76,7 +76,7 @@ class World:
         self.directory = OwnerDirectory(passkeys, db)
         self.admitted = admitted
 
-        async def installation(installation_id):
+        async def installation(installation_id, *, team_id: str | None = None):
             assert installation_id == admitted.installation_id
             return admitted
 
