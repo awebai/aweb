@@ -1149,12 +1149,8 @@ class ChangeSets:
                     f"approver {after['approver_ref']} already exists", code="approver_exists"
                 )
             scope = approver_scope(installation_id, team_id, after["approver_ref"])
-            try:
-                designation = await self._passkeys.designate(
-                    tx, scope=scope, contact=after["contact"], evidence=evidence
-                )
-            except DesignationRefused as refused:
-                raise ChangeRefused(str(refused), code="approver_designation_refused") from None
+            # B3's audit resolves this scoped binding in the same transaction.
+            # A refused designation rolls the binding back with the effect.
             await record_approver(
                 tx,
                 installation_id=installation_id,
@@ -1165,6 +1161,12 @@ class ChangeSets:
                 principal_did=after["principal"],
                 change_id=change["change_id"],
             )
+            try:
+                designation = await self._passkeys.designate(
+                    tx, scope=scope, contact=after["contact"], evidence=evidence
+                )
+            except DesignationRefused as refused:
+                raise ChangeRefused(str(refused), code="approver_designation_refused") from None
             return [designation]
         if item["kind"] == "approver_contact":
             # The scope and contact come from the item of the request the owner's
