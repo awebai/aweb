@@ -129,7 +129,7 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "run",
-            "description": "Run a pinned job on a runner, with the credentials its definition names. Supply request_id. Check aggregate status using request_ref: one approved slot does not approve the run. After approved with next:resubmit, explicitly re-submit the identical ID and body. Admitted means waiting for the runner, not completed. The agent never receives credentials.",
+            "description": "Run a pinned job on a runner, with the credentials its definition names. The first release uses fixed durable slots; omit secret. Supply request_id. Check aggregate status using request_ref: one approved slot does not approve the run. After approved with next:resubmit, explicitly re-submit the identical ID and body. Admitted means waiting for the runner, not completed. The agent never receives credentials.",
             "method": "POST",
             "path": "/v1/jobs/{job}/runs",
             "scopes": ["secrets:run"],
@@ -149,7 +149,7 @@ MANIFEST: dict[str, Any] = {
                     },
                     "secret": {
                         "type": "string",
-                        "description": "An ordinary derived child's ref for the unique durable slot; omit to use the job's fixed selectors.",
+                        "description": "Reserved ordinary-child selector. The first release refuses a supplied selector with job_not_allowed; omit it to use the job's fixed durable slots.",
                     },
                 },
                 "required": ["job", "request_id", "runner"],
