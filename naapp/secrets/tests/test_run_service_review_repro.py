@@ -178,6 +178,7 @@ class DelayedFence(InstallationFence):
 
 async def test_policy_window_crossed_during_final_f6_tail_cannot_publish(uses):
     context = await setup(uses)
+    context.arguments["assignment_ttl"] = timedelta(seconds=120)
     async with uses.world.db.transaction() as tx:
         digest = await tx.fetch_value(
             "SELECT policy_digest FROM {{tables.grants}} WHERE grant_id='grt_durable001'"
