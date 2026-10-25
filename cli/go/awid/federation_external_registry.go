@@ -83,6 +83,15 @@ type strictKeyResponse struct {
 }
 
 func (r *StrictFederationExternalResolver) FetchEvidence(ctx context.Context, address string, generation int64, checkpoint *StrictFederationCheckpoint) (*StrictFederationExternalEvidence, error) {
+	return r.fetchEvidence(ctx, address, generation, checkpoint, "sender_identity_not_found")
+}
+
+// FetchContactEvidence resolves a contact target, preserving sender semantics for log evidence.
+func (r *StrictFederationExternalResolver) FetchContactEvidence(ctx context.Context, address string, generation int64, checkpoint *StrictFederationCheckpoint) (*StrictFederationExternalEvidence, error) {
+	return r.fetchEvidence(ctx, address, generation, checkpoint, "recipient_identity_not_found")
+}
+
+func (r *StrictFederationExternalResolver) fetchEvidence(ctx context.Context, address string, generation int64, checkpoint *StrictFederationCheckpoint, notFoundReason string) (*StrictFederationExternalEvidence, error) {
 	canonical, err := CanonicalFederationAddress(address)
 	if err != nil {
 		return nil, err
@@ -147,7 +156,7 @@ func (r *StrictFederationExternalResolver) FetchEvidence(ctx context.Context, ad
 	defer client.CloseIdleConnections()
 
 	var namespace strictNamespaceResponse
-	if err := strictFederationGetJSON(ctx, client, authority.RegistryOrigin, "/v1/namespaces/"+url.PathEscape(domain), &namespace); err != nil {
+	if err := strictFederationGetJSON(ctx, client, authority.RegistryOrigin, "/v1/namespaces/"+url.PathEscape(domain), &namespace, notFoundReason); err != nil {
 		return nil, err
 	}
 	namespaceDomain, domainErr := canonicalFederationDomain(namespace.Domain)
@@ -173,7 +182,7 @@ func (r *StrictFederationExternalResolver) FetchEvidence(ctx context.Context, ad
 
 	var addressRow strictAddressResponse
 	addressPath := "/v1/namespaces/" + url.PathEscape(domain) + "/addresses/" + url.PathEscape(name)
-	if err := strictFederationGetJSON(ctx, client, authority.RegistryOrigin, addressPath, &addressRow); err != nil {
+	if err := strictFederationGetJSON(ctx, client, authority.RegistryOrigin, addressPath, &addressRow, notFoundReason); err != nil {
 		return nil, err
 	}
 	addressDomain, domainErr := canonicalFederationDomain(addressRow.Domain)
@@ -190,7 +199,7 @@ func (r *StrictFederationExternalResolver) FetchEvidence(ctx context.Context, ad
 
 	var keyRow strictKeyResponse
 	keyPath := "/v1/did/" + url.PathEscape(addressRow.DIDAW) + "/key"
-	if err := strictFederationGetJSON(ctx, client, authority.RegistryOrigin, keyPath, &keyRow); err != nil {
+	if err := strictFederationGetJSON(ctx, client, authority.RegistryOrigin, keyPath, &keyRow, notFoundReason); err != nil {
 		return nil, err
 	}
 	if keyRow.DIDAW != addressRow.DIDAW {
@@ -234,7 +243,7 @@ func (r *StrictFederationExternalResolver) FetchEvidence(ctx context.Context, ad
 	if verified == nil {
 		var entries []DidKeyEvidence
 		logPath := "/v1/did/" + url.PathEscape(addressRow.DIDAW) + "/log"
-		if err := strictFederationGetJSON(ctx, client, authority.RegistryOrigin, logPath, &entries); err != nil {
+		if err := strictFederationGetJSON(ctx, client, authority.RegistryOrigin, logPath, &entries, "sender_identity_not_found"); err != nil {
 			if IsFederationReason(err, "sender_identity_not_found") || IsFederationReason(err, "sender_registry_unavailable") {
 				return nil, federationReason("sender_identity_unverifiable")
 			}
@@ -266,7 +275,7 @@ func (r *StrictFederationExternalResolver) FetchEvidence(ctx context.Context, ad
 	}, nil
 }
 
-func strictFederationGetJSON(ctx context.Context, client *http.Client, origin, path string, out interface{}) error {
+func strictFederationGetJSON(ctx context.Context, client *http.Client, origin, path string, out interface{}, notFoundReason string) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(origin, "/")+path, nil)
 	if err != nil {
 		return federationReason("sender_registry_protocol_invalid")
@@ -286,7 +295,7 @@ func strictFederationGetJSON(ctx context.Context, client *http.Client, origin, p
 		return federationReason("sender_registry_protocol_invalid")
 	}
 	if response.StatusCode == http.StatusNotFound {
-		return federationReason("sender_identity_not_found")
+		return federationReason(notFoundReason)
 	}
 	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
 		return federationReason("sender_registry_unavailable")

@@ -58,12 +58,19 @@ class FederationAuthorityActivation:
         )
 
     @staticmethod
-    def _raise_published_failure(result: AuthorityWorkResult | None) -> None:
+    def _raise_published_failure(
+        result: AuthorityWorkResult | None,
+        *,
+        not_found_reason: str = "sender_identity_not_found",
+    ) -> None:
         if result is None or result.status != "failed":
             return
         reason = str(result.evidence.get("reason") or "").strip()
         if not reason:
             raise FederationAuthorityError("federation_authority_cas_conflict")
+        # Discovery/evidence results are shared by sender and contact lookups.
+        if reason in {"sender_identity_not_found", "recipient_identity_not_found"}:
+            reason = not_found_reason
         raise FederationAuthorityError(
             reason,
             did_aw=str(result.evidence.get("did_aw") or "").strip() or None,
@@ -139,7 +146,9 @@ class FederationAuthorityActivation:
         canonical_address: str,
         result: AuthorityWorkResult | None,
     ) -> ResolvedContactIdentity | None:
-        self._raise_published_failure(result)
+        self._raise_published_failure(
+            result, not_found_reason="recipient_identity_not_found"
+        )
         if result is None or result.status != "verified":
             return None
         evidence = result.evidence
@@ -420,6 +429,7 @@ class FederationAuthorityActivation:
                 canonical,
                 authority_generation=evidence_lease.fence,
                 discovered_authority=authority,
+                not_found_reason="recipient_identity_not_found",
             )
             checkpoint = await self.core.repository.get_checkpoint(evidence.did_aw)
             if checkpoint is not None:
@@ -429,6 +439,7 @@ class FederationAuthorityActivation:
                     checkpoint=checkpoint,
                     bypass_cache=True,
                     discovered_authority=authority,
+                    not_found_reason="recipient_identity_not_found",
                 )
             claim = AuthorityClaim(
                 canonical_address=canonical,
@@ -453,6 +464,7 @@ class FederationAuthorityActivation:
                     checkpoint=checkpoint,
                     bypass_cache=True,
                     discovered_authority=authority,
+                    not_found_reason="recipient_identity_not_found",
                 )
                 claim = AuthorityClaim(
                     canonical_address=canonical,

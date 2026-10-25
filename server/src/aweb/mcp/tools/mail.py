@@ -478,7 +478,7 @@ async def send_mail(
                         source_ip="mcp:" + str(auth.did_key or auth.did_aw or "unknown"),
                     )
                 except FederationAuthorityError as exc:
-                    if exc.reason != "sender_identity_not_found":
+                    if exc.reason != "recipient_identity_not_found":
                         return json.dumps({"error": exc.reason})
             elif registry_client is not None:
                 resolved = await registry_client.resolve_address(
