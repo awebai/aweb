@@ -8,9 +8,11 @@ No credential file is opened here and no supplied value appears in errors.
 from __future__ import annotations
 
 import os
+import re
 import stat
 import sys
 from collections.abc import Mapping
+from ipaddress import ip_address
 from pathlib import Path
 from types import MappingProxyType
 from urllib.parse import urlsplit
@@ -27,6 +29,7 @@ _METADATA = (
     "TEAM_ID",
     "AGENT_A_ID",
     "AGENT_B_ID",
+    "PRIVATE_DNS_NAME",
 )
 _CREDENTIAL_FILES = (
     "KMS_CREDENTIALS_FILE",
@@ -64,6 +67,24 @@ def _https(value: str, *, origin: bool) -> bool:
         return False
 
 
+def _dns_name(value: str) -> bool:
+    name = value.removesuffix(".")
+    if (
+        not name
+        or len(name) > 253
+        or any(
+            re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label) is None
+            for label in name.split(".")
+        )
+    ):
+        return False
+    try:
+        ip_address(name)
+    except ValueError:
+        return True
+    return False
+
+
 def load_environment(environ: Mapping[str, str] | None = None) -> Mapping[str, str]:
     """Validate named references, returning only the selected configuration.
 
@@ -74,6 +95,8 @@ def load_environment(environ: Mapping[str, str] | None = None) -> Mapping[str, s
     source = os.environ if environ is None else environ
     selected = {name: source.get(name, "").strip() for name in REQUIRED_NAMES}
     invalid = {name for name, value in selected.items() if not value}
+    if not _dns_name(selected[PREFIX + "PRIVATE_DNS_NAME"]):
+        invalid.add(PREFIX + "PRIVATE_DNS_NAME")
     for suffix in (*_ORIGINS, "MCP_URL"):
         name = PREFIX + suffix
         if not _https(selected[name], origin=suffix in _ORIGINS):

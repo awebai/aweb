@@ -35,7 +35,7 @@ import json
 import logging
 import secrets
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -79,6 +79,11 @@ from aweb_naapp.runtime.approvals import (
 from aweb_naapp.runtime.approvals.challenge import challenge_preimage
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind, AuditSink
 from aweb_naapp.runtime.links import LinkLifetime, link_verifier, new_link_token
+from aweb_naapp.runtime.passkeys.current_approver import (
+    PreparedCurrentApprovers,
+    check_current_approver,
+    prepare_current_approvers,
+)
 from aweb_naapp.runtime.passkeys.proof import (
     PasskeyInstallationContext,
     PasskeyProofUnavailable,
@@ -145,6 +150,26 @@ class RetirementProtection(Protocol):
         The app holds its installation/role/coverage fences before B3 and
         enforces its own enrolled-owner population here."""
         ...
+
+
+class PasskeyEffectFence(Protocol):
+    """Caller-owned authority in B3's one completion effect transaction.
+
+    Prefetch network/registration context before invoking B3. prepare holds
+    application authority before B3's first effect statement. check runs after
+    effect/audit, immediately before commit: read-only, no new locks or network,
+    with live time sampled after its final await. The caller validates the
+    original completion association, current authority and capability expiry.
+
+    Expected authority refusal raises EnrolmentRefused or ContactChangeRefused
+    for the operation. Effect/token consumption and audit roll back together;
+    enrolment's pre-effect WebAuthn challenge stays spent. No LOGIN/APPROVE or
+    fresh send authority is granted by these callbacks.
+    """
+
+    async def prepare(self, tx: TransactionManager) -> None: ...
+
+    async def check(self, tx: TransactionManager) -> None: ...
 
 
 DESIGNATE_ACT = "app-role.designate"
@@ -937,6 +962,36 @@ class Passkeys:
             )
         )
 
+    async def prepare_current_approvers(
+        self, tx: TransactionManager, pairs: Sequence[tuple[str, str]]
+    ) -> PreparedCurrentApprovers:
+        """Hold the complete B3 designation/credential union before B2 and S3.
+
+        The caller holds its complete application authority/covering union
+        first. Pass the original live READ COMMITTED transaction object, not a
+        temporary store/savepoint wrapper. Cache the returned whole-run handle
+        in the adapter so repeated prepare after B2 takes no new B3 locks.
+        """
+        return await prepare_current_approvers(self, tx, pairs)
+
+    async def check_current_approver(
+        self,
+        tx: TransactionManager,
+        prepared: PreparedCurrentApprovers,
+        *,
+        scope: str,
+        subject: str,
+    ) -> bool:
+        """Read held current designation/credential authority without new locks.
+
+        Requires the identical original tx object; rollback (including to a
+        savepoint releasing preparation), another tx or another Passkeys
+        instance returns false. Reads live authority and samples time after
+        its last await. No writes, refresh, LOGIN or fresh send authority;
+        original retained APPROVE binding remains a separate validation.
+        """
+        return await check_current_approver(self, tx, prepared, scope=scope, subject=subject)
+
     # Enrolment through the link
 
     async def _usable_enrolment(self, link_token: str) -> dict[str, Any]:
@@ -1080,9 +1135,20 @@ class Passkeys:
         )
         return options_to_json_dict(options)
 
-    async def complete_enrolment(self, link_token: str, credential: Mapping[str, Any]) -> Approver:
+    async def complete_enrolment(
+        self,
+        link_token: str,
+        credential: Mapping[str, Any],
+        *,
+        fence: PasskeyEffectFence | None = None,
+    ) -> Approver:
         """Verify the registration answering this enrolment's challenge and
-        register the passkey. The enrolment link is then used up."""
+        register the passkey. The enrolment link is then used up.
+
+        fence prepares authority in the effect tx before B3, and checks it
+        after audit before commit. A refused effect leaves the link unused;
+        its WebAuthn challenge stays spent, so retry needs fresh options.
+        """
         enrolment = await self._usable_enrolment(link_token)
         try:
             challenge = _client_challenge(credential)
@@ -1105,6 +1171,8 @@ class Passkeys:
 
         now = self._clock()
         async with self.db.transaction() as tx:
+            if fence is not None:
+                await fence.prepare(tx)
             used = await tx.fetch_value(
                 "UPDATE {{tables.passkey_enrolments}} e SET used_at = $2 "
                 "FROM {{tables.passkey_approvers}} a "
@@ -1138,6 +1206,8 @@ class Passkeys:
                 ),
                 tx,
             )
+            if fence is not None:
+                await fence.check(tx)
         return Approver(
             scope=enrolment["scope"],
             subject=enrolment["subject"],
@@ -1635,13 +1705,20 @@ class Passkeys:
             now,
         )
 
-    async def prove_contact(self, proof_token: str) -> datetime:
+    async def prove_contact(
+        self, proof_token: str, *, fence: PasskeyEffectFence | None = None
+    ) -> datetime:
         """The new contact's holder confirms it with the proof sent there. The
         pending contact then takes effect at its time; unproven, it lapses.
-        Returns when it takes effect."""
+        Returns when it takes effect. fence holds caller authority before B3
+        and checks it after audit in the same effect tx. Refusal rolls back
+        proof consumption, contact state and audit; retry needs fresh checks.
+        """
         now = self._clock()
         verifier = link_verifier(proof_token)
         async with self.db.transaction() as tx:
+            if fence is not None:
+                await fence.prepare(tx)
             # The approver row first, then the proof: the order every contact
             # change and cancel takes, so they serialise instead of deadlocking.
             subject = await tx.fetch_value(
@@ -1693,6 +1770,8 @@ class Passkeys:
                 ),
                 tx,
             )
+            if fence is not None:
+                await fence.check(tx)
         return approver["pending_contact_at"]
 
     async def _pending_contact(self, scope: str) -> dict[str, Any]:

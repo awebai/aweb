@@ -9,7 +9,7 @@ import hashlib
 import json
 import logging
 import secrets
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -653,6 +653,7 @@ class Containment:
         team_id: str,
         secret_ids: tuple[str, ...],
         approval_ids: tuple[str, ...] = (),
+        job_ids: Sequence[str] = (),
     ) -> None:
         """Lock the complete replacement/reenable forest before B2 consumption.
 
@@ -705,6 +706,16 @@ class Containment:
             team_id,
             list(locked),
         )
+        # Run admission resolves CURRENT after forest/grants. Replacements take
+        # the same order, before B2, including job-only changes without a forest.
+        if job_ids:
+            await tx.fetch_all(
+                "SELECT job_id FROM {{tables.current_jobs}}"
+                " WHERE installation_id=$1 AND job_id=ANY($2::text[])"
+                " ORDER BY job_id FOR UPDATE",
+                installation_id,
+                sorted(set(job_ids)),
+            )
         # Prelock a conservative superset across the FULL forest before S10
         # consumes its own confirmation or invokes any per-root callback.
         # Revocation later retains the root's version filter.

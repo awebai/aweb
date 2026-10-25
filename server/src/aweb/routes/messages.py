@@ -1718,7 +1718,7 @@ async def send_message(
                     source_ip=str(request.client.host if request.client else "unknown"),
                 )
             except FederationAuthorityError as exc:
-                if exc.reason != "sender_identity_not_found":
+                if exc.reason != "recipient_identity_not_found":
                     raise
                 resolved = None
             if resolved is not None and resolved.did_aw:

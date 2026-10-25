@@ -1264,6 +1264,56 @@ func TestA2AGatewayRuntimeHealthReportsBuildAndRegistry(t *testing.T) {
 	}
 }
 
+// Matches the real RC-stamped Docker journey: AWID is reachable and reports
+// 0.5.32rc1, which is newer than the gateway's 0.5.11 floor.
+func TestA2AGatewayRuntimeHealthWithRegistryRC(t *testing.T) {
+	for _, tc := range []struct {
+		version    string
+		compatible bool
+	}{
+		{"0.5.32rc1", true},
+		{"0.5.32", true},
+		{"0.5.11rc1", false},
+		{"0.5.10rc2", false},
+		{"malformed", false},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/health" {
+					t.Fatalf("unexpected request %s", r.URL.Path)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "healthy", "version": tc.version})
+			}))
+			defer registry.Close()
+			tmp := t.TempDir()
+			writeGatewayWorkspace(t, tmp, "http://aweb.invalid")
+			cfgPath := filepath.Join(tmp, "a2a-gw.yaml")
+			writeConfig(t, cfgPath, tmp, registry.URL)
+			cfg := mustLoadConfig(t, cfgPath)
+			gateway, err := buildGateway(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp := httptest.NewRecorder()
+			runtimeHandler(gateway, cfg).ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/health", nil))
+			wantStatus := http.StatusServiceUnavailable
+			if tc.compatible {
+				wantStatus = http.StatusOK
+			}
+			if resp.Code != wantStatus {
+				t.Errorf("health status=%d want=%d body=%s", resp.Code, wantStatus, resp.Body.String())
+			}
+			var health runtimeHealth
+			if err := json.Unmarshal(resp.Body.Bytes(), &health); err != nil {
+				t.Fatal(err)
+			}
+			if !health.AWIDRegistry.Reachable || health.AWIDRegistry.Version != tc.version || health.AWIDRegistry.Compatible != tc.compatible {
+				t.Errorf("registry health=%+v", health.AWIDRegistry)
+			}
+		})
+	}
+}
+
 func TestA2AGatewayRuntimeHealthRejectsOldRegistryVersion(t *testing.T) {
 	tmp := t.TempDir()
 	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1333,6 +1383,11 @@ func TestA2AGatewayVersionAtLeast(t *testing.T) {
 	}{
 		{got: "0.5.11", minimum: "0.5.11", want: true},
 		{got: "0.5.12", minimum: "0.5.11", want: true},
+		{got: "0.5.32rc1", minimum: "0.5.11", want: true},
+		{got: "0.5.11rc1", minimum: "0.5.11", want: false},
+		{got: "0.5.11", minimum: "0.5.11rc1", want: true},
+		{got: "0.5.32rc10", minimum: "0.5.32rc2", want: true},
+		{got: "0.5.32rc2", minimum: "0.5.32rc10", want: false},
 		{got: "0.6.0", minimum: "0.5.11", want: true},
 		{got: "v0.5.11", minimum: "0.5.11", want: true},
 		{got: "0.5.11+build", minimum: "0.5.11", want: true},

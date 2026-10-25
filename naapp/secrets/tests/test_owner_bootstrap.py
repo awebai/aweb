@@ -30,7 +30,7 @@ from aweb_naapp.runtime.installation import (
     apply_installation_migrations,
 )
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty, contact_sha256
-from aweb_naapp_testing import awid_registry, did_key
+from aweb_naapp_testing import did_key
 from aweb_naapp_testing.owner_acts import (
     APP_ID,
     AUDIENCE,
@@ -39,6 +39,7 @@ from aweb_naapp_testing.owner_acts import (
     team_owner,
 )
 from aweb_naapp_testing.webauthn import SoftAuthenticator
+from awid_service.testing import running_registry
 from nacl.signing import SigningKey
 
 from aweb_secrets.change import ChangeRefused
@@ -75,7 +76,7 @@ class World:
         self.directory = OwnerDirectory(passkeys, db)
         self.admitted = admitted
 
-        async def installation(installation_id):
+        async def installation(installation_id, *, team_id: str | None = None):
             assert installation_id == admitted.installation_id
             return admitted
 
@@ -124,7 +125,7 @@ async def world(test_db_factory) -> AsyncIterator[World]:
     await fence.refresh(TEAM)
     async with db.transaction() as tx:
         admitted = await fence.admit(tx, installations.grant)
-    async with awid_registry(registry_db.config.get_dsn()) as registry:
+    async with running_registry(registry_db.config.get_dsn()) as registry:
         yield World(db, passkeys, await team_owner(registry), contacts, registry, fence, admitted)
 
 

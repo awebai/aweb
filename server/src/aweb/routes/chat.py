@@ -1008,7 +1008,7 @@ async def _resolve_chat_targets(
                     source_ip=str(request.client.host if request.client else "unknown"),
                 )
             except FederationAuthorityError as exc:
-                if exc.reason != "sender_identity_not_found":
+                if exc.reason != "recipient_identity_not_found":
                     raise
         elif registry_client is not None:
             resolution = await registry_client.resolve_address(domain, name, did_key=auth.did_key)

@@ -487,7 +487,7 @@ async def test_a_refused_manifest_is_a_422_whose_detail_carries_the_readers_code
     origin.publish(manifest)
     app = _build_apps_app(db)
     app.state.manifest_fetcher = origin.fetcher
-    async def policy(tx, subject, *, action, app_id):
+    async def policy(tx, subject, *, action, app_id, verified_origin=None):
         return True
     app.state.install_admin_policy = policy
     response = await _install_over_http(app, {

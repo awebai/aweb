@@ -13,6 +13,7 @@ accepts team-auth. It serves no tool.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 import httpx
@@ -42,6 +43,8 @@ MODULE_NAME = "aweb_secrets"
 
 Authorized = Callable[..., Awaitable[Authorization]]
 ToolRouter = Callable[[NaappRuntime, Authorized], APIRouter]
+ConsoleRouter = Callable[[NaappRuntime], APIRouter]
+Prepare = Callable[[NaappRuntime], AbstractAsyncContextManager[None]]
 
 
 class SecretsService:
@@ -102,13 +105,17 @@ def create_app(
     kms: HealthCheck,
     awid_transport: httpx.AsyncBaseTransport | None = None,
     tool_routers: Sequence[ToolRouter] = (),
+    prepare: Prepare | None = None,
+    console_routers: Sequence[ConsoleRouter] = (),
 ) -> SecretsService:
     """The secrets service. ``grants`` is the team-server grant authority,
     ``policy`` secrets' admission policy and ``kms`` its KMS canary.
 
-    Tool router factories receive the runtime and its exact B1 dependency.
-    Use a getter for runtime.db, which is available after startup. Composition
-    guards every included route; unavailable declared tools retain 501.
+    Preparation runs inside the runtime lifespan, once its database is ready.
+    All router factories then receive that same runtime; tool factories also
+    receive its exact B1 dependency. Composition guards every included tool;
+    unavailable declared tools retain 501. Prepared services close before the
+    database disconnects; composed routes are removed on failure and shutdown.
     """
     runtime = NaappRuntime(
         settings,
@@ -120,33 +127,52 @@ def create_app(
     )
     checks = {**runtime.health_checks(), "kms": kms}
 
-    api = FastAPI(lifespan=runtime.lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-    mount_manifest_routes(api, runtime=runtime)
-    mount_health(api, settings, checks=checks)
     authorized = runtime.authorized(grants=grants, policy=policy)
-    implemented = set()
-    for factory in tool_routers:
-        router = factory(runtime, authorized)
-        for route in router.routes:
-            if not isinstance(route, APIRoute) or not route.methods:
-                raise ValueError("tool routers contain only HTTP tool routes")
-            for method in route.methods:
-                key = (method, route.path)
-                if key in implemented:
-                    raise ValueError("a tool route is composed more than once")
-                implemented.add(key)
-        api.include_router(router, dependencies=[Depends(authorized)])
-    for tool in runtime.declared_tools:
-        if (tool.method, tool.path) in implemented:
-            continue
-        api.add_api_route(
-            tool.path,
-            not_implemented,
-            methods=[tool.method],
-            name=tool.name,
-            dependencies=[Depends(authorized)],
-        )
 
     console = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     mount_health(console, settings, checks=checks)
+
+    @asynccontextmanager
+    async def lifespan(api: FastAPI):
+        api_routes, console_routes = list(api.routes), list(console.routes)
+        try:
+            async with runtime.lifespan(api):
+                async with AsyncExitStack() as services:
+                    if prepare is not None:
+                        await services.enter_async_context(prepare(runtime))
+                    implemented = set()
+                    for factory in tool_routers:
+                        router = factory(runtime, authorized)
+                        for route in router.routes:
+                            if not isinstance(route, APIRoute) or not route.methods:
+                                raise ValueError("tool routers contain only HTTP tool routes")
+                            for method in route.methods:
+                                key = (method, route.path)
+                                if key in implemented:
+                                    raise ValueError("a tool route is composed more than once")
+                                implemented.add(key)
+                        api.include_router(router, dependencies=[Depends(authorized)])
+                    for tool in runtime.declared_tools:
+                        if (tool.method, tool.path) in implemented:
+                            continue
+                        api.add_api_route(
+                            tool.path,
+                            not_implemented,
+                            methods=[tool.method],
+                            name=tool.name,
+                            dependencies=[Depends(authorized)],
+                        )
+                    for console_factory in console_routers:
+                        console.include_router(console_factory(runtime))
+                    # The runtime validates its static routes before opening
+                    # the database; validate the final composed routes too.
+                    runtime.check_authorized_routes(api)
+                    yield
+        finally:
+            api.router.routes[:] = api_routes
+            console.router.routes[:] = console_routes
+
+    api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    mount_manifest_routes(api, runtime=runtime)
+    mount_health(api, settings, checks=checks)
     return SecretsService(runtime, api, console)

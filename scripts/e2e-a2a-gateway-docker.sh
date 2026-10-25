@@ -83,7 +83,10 @@ cleanup() {
       echo "--- A2A gateway audit ---"
       cat "$TMP_ROOT/audit/a2a.jsonl" || true
     fi
-    docker logs "$GATEWAY_CONTAINER" 2>/dev/null || true
+    echo "--- Gateway container state ---"
+    docker inspect --format '{{json .State}}' "$GATEWAY_CONTAINER" 2>/dev/null || true
+    echo "--- Gateway container logs ---"
+    docker logs "$GATEWAY_CONTAINER" 2>&1 || true
     docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --no-color aweb awid 2>/dev/null || true
   fi
   docker rm -f "$GATEWAY_CONTAINER" >/dev/null 2>&1 || true
@@ -198,6 +201,8 @@ wait_for_http() {
     sleep 1
   done
   echo "  FAIL: $label (timed out waiting for $url)"
+  curl --silent --show-error --max-time 5 "$url" || true
+  echo ""
   fail=$((fail + 1))
   return 1
 }
@@ -401,7 +406,7 @@ capture_success gateway_check "gateway config/workspace check" docker run --rm \
   -v "$TMP_ROOT/audit:/audit" \
   "$GATEWAY_IMAGE" /aweb-a2a-gw -config /config/gateway.yaml -workspace-dir /workspace -check
 
-docker run -d --rm \
+docker run -d \
   --name "$GATEWAY_CONTAINER" \
   --user "$(id -u):$(id -g)" \
   --add-host=host.docker.internal:host-gateway \

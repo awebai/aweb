@@ -45,7 +45,6 @@ from aweb_naapp.runtime.installation import (
     apply_installation_migrations,
 )
 from aweb_naapp.runtime.passkeys import Notice, Passkeys, RelyingParty
-from aweb_naapp_testing import awid_registry
 from aweb_naapp_testing.owner_acts import (
     INSTALLATION_ID,
     TeamOwner,
@@ -53,6 +52,7 @@ from aweb_naapp_testing.owner_acts import (
     team_owner,
 )
 from aweb_naapp_testing.webauthn import SoftAuthenticator
+from awid_service.testing import running_registry
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME
@@ -87,6 +87,7 @@ from aweb_secrets.passkey_context import PasskeyContexts
 from aweb_secrets.revisions import apply_revision_migrations, bump_config_revision, config_revision
 from aweb_secrets.tokens import ProcessTokenCache
 from aweb_secrets.use_approvals import apply_use_approval_migrations
+from tests.governance import view
 from tests.test_owner_directory import Audit
 
 ORIGIN = "https://secrets.example.com"
@@ -117,7 +118,7 @@ class Installations:
             fresh_until=time.monotonic() + 55,
         )
 
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         return self.grant if team_id == self.team_id else None
 
     async def status_for(self, team_id: str) -> SimpleNamespace | None:
@@ -264,7 +265,7 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
         draft_limit=DraftLimit(count=2, window=timedelta(hours=1)),
         internal_destinations=InternalDestinations.DISABLED,
     )
-    async with awid_registry(registry_db.config.get_dsn()) as registry:
+    async with running_registry(registry_db.config.get_dsn()) as registry:
         yield World(
             db,
             passkeys,
@@ -388,6 +389,7 @@ async def confirm(world: World, change: dict[str, Any]) -> None:
             operation_id=f"apply-{change['change_id']}",
             fence=world.fence,
             admitted=world.admitted,
+            governance_view=view(),
         )
 
 
@@ -703,6 +705,7 @@ async def test_a_confirmed_approver_is_designated_and_recorded(world: World) -> 
             operation_id="apply-1",
             fence=world.fence,
             admitted=world.admitted,
+            governance_view=view(),
         )
         assert "finance@acme.com" not in world.inbox.enrolments
     await world.change_sets.deliver(confirmation)
@@ -902,6 +905,7 @@ async def _confirm_and_deliver(world: World, change: dict[str, Any]):
             operation_id=f"apply-{change['change_id']}",
             fence=world.fence,
             admitted=world.admitted,
+            governance_view=view(),
         )
         assert world.inbox.notices == {}
     await world.change_sets.deliver(confirmation)
@@ -955,7 +959,7 @@ async def test_a_contact_change_for_an_unknown_approver_is_refused(world: World)
 
 
 @pytest.mark.parametrize("delivery", ["durable", "short_lived"])
-async def test_job_definitions_cannot_apply_before_source_validation_is_wired(world, delivery):
+async def test_job_definitions_refuse_unavailable_sources_or_unwired_minting(world, delivery):
     from tests.test_jobs import after as job_after
 
     await enrol_owner(world, ALICE, "alice@acme.com")
@@ -970,4 +974,6 @@ async def test_job_definitions_cannot_apply_before_source_validation_is_wired(wo
     item = {"kind": "job", "op": "create", "ref": body["job_id"], "after": body}
     with pytest.raises(ChangeRefused) as refused:
         await draft(world, change_set(drafter=by_member(CAROL), changes=[item]))
-    assert refused.value.code == "change_kind_not_applicable"
+    assert refused.value.code == (
+        "job_source_unknown" if delivery == "durable" else "change_kind_not_applicable"
+    )

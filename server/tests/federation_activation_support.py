@@ -78,10 +78,10 @@ class TestFederationAuthority:
         del source_ip
         domain, name = address.split("/", 1)
         if self.registry is None:
-            raise FederationAuthorityError("sender_identity_not_found")
+            raise FederationAuthorityError("recipient_identity_not_found")
         resolution = await self.registry.resolve_address(domain, name)
         if resolution is None:
-            raise FederationAuthorityError("sender_identity_not_found")
+            raise FederationAuthorityError("recipient_identity_not_found")
         delivery = getattr(resolution, "delivery", None)
         return ResolvedContactIdentity(
             token=AuthoritySecurityToken(address, resolution.did_aw, 1, 1),
