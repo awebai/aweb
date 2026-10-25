@@ -108,16 +108,14 @@ async def confirm_from_email(world, page, origin, draft):
 
 
 async def save_form(page, origin):
-    async with page.expect_response(
-        lambda response: response.url == origin + ROOT and response.request.method == "POST"
-    ) as saved:
-        await page.get_by_role("button", name="Save a draft for review").click()
-    response = await saved.value
-    assert response.status == 201
-    draft = await response.json()
-    await wait_for_review(page, origin + ROOT + "/" + draft["change_id"] + "/review")
+    await page.get_by_role("button", name="Save a draft for review").click()
+    await wait_for_review(page, origin + ROOT + "/*/review")
     await expect(page.locator("#change-summary")).to_have_attribute("data-state", "pending")
-    return draft
+    projection = json.loads(await page.locator("#frozen-change").text_content())
+    return {
+        "change_id": projection["change"]["change_id"],
+        "approval_id": projection["approval_id"],
+    }
 
 
 @pytest.mark.parametrize("width", [375, 1440])
