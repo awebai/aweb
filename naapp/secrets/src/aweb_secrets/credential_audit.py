@@ -28,6 +28,7 @@ from aweb_naapp.runtime.installation import (
 )
 from aweb_naapp.runtime.links import link_verifier
 from aweb_naapp.runtime.passkeys import (
+    ContactChangeRefused,
     EnrolmentRefused,
     OwnerApproval,
     PasskeyInstallationContext,
@@ -159,6 +160,54 @@ class PreparedEnrolment:
             raise EnrolmentRefused("enrolment authority unavailable") from None
 
 
+@dataclass(repr=False)
+class PreparedContactProof:
+    """Reachability completion of one historically authorized candidate."""
+
+    owner: CredentialAudit
+    admitted: AdmittedInstallation
+    view: RegistrationView | None
+    proof_id: str
+    subject: str
+    _fence: InstallationDispatchFence = field(init=False)
+    _tx: TransactionManager | None = field(init=False, default=None)
+    _event: AuditEvent | None = field(init=False, default=None)
+
+    def __post_init__(self) -> None:
+        self._fence = self.owner.fence.for_installation(self.admitted)
+
+    async def prepare(self, tx: TransactionManager) -> None:
+        if self._tx is not None:
+            raise GovernanceUnavailable()
+        try:
+            await self._fence.prepare(tx)
+            # B3 also takes the approver before its contact-proof row.
+            await tx.fetch_one(
+                "SELECT subject FROM {{tables.passkey_approvers}} WHERE subject=$1 FOR UPDATE",
+                self.subject,
+            )
+            await tx.fetch_one(
+                "SELECT proof_id FROM {{tables.passkey_contact_proofs}} WHERE proof_id=$1 FOR UPDATE",
+                self.proof_id,
+            )
+            row = await self.owner._contact_completion(tx, self)
+            await self._fence.check(tx, None)
+            self.owner._valid_contact_completion(row, self, after=False)
+        except InstallationRefused:
+            raise ContactChangeRefused("contact_proof_unavailable") from None
+        self._tx = tx
+
+    async def check(self, tx: TransactionManager) -> None:
+        if self._tx is not tx or self._event is None:
+            raise GovernanceUnavailable()
+        try:
+            row = await self.owner._contact_completion(tx, self)
+            await self._fence.check(tx, None)
+            self.owner._valid_contact_completion(row, self, after=True)
+        except InstallationRefused:
+            raise ContactChangeRefused("contact_proof_unavailable") from None
+
+
 class CredentialAudit:
     def __init__(
         self,
@@ -188,7 +237,7 @@ class CredentialAudit:
         self._producer, self._passkeys, self._approval = producer, passkeys, approval
         self._view, self._max_backlog_age = registration_view, max_backlog_age
         self._prepared: ContextVar[
-            _OwnerActContext | _ApprovalContext | PreparedEnrolment | None
+            _OwnerActContext | _ApprovalContext | PreparedEnrolment | PreparedContactProof | None
         ] = ContextVar("credential_governance", default=None)
 
     async def migrate(self) -> None:
@@ -200,7 +249,12 @@ class CredentialAudit:
 
     @contextmanager
     def prepared(
-        self, context: _OwnerActContext | _ApprovalContext | PreparedEnrolment | None
+        self,
+        context: _OwnerActContext
+        | _ApprovalContext
+        | PreparedEnrolment
+        | PreparedContactProof
+        | None,
     ) -> Iterator[None]:
         if context is not None and context.owner is not self:
             raise GovernanceUnavailable()
@@ -251,6 +305,23 @@ class CredentialAudit:
             self, current, await self._view(current.team_id), row["enrolment_id"], row["subject"]
         )
 
+    async def prepare_contact_proof(self, token: str) -> PreparedContactProof:
+        row = await self.db.fetch_one(
+            "SELECT * FROM {{tables.credential_contact_candidates}} WHERE verifier_sha256=$1",
+            link_verifier(token),
+        )
+        if row is None:
+            raise ContactChangeRefused("contact_proof_unavailable")
+        try:
+            current = (await self.fence.permit(row["team_id"])).admitted
+        except InstallationRefused:
+            raise ContactChangeRefused("contact_proof_unavailable") from None
+        if current != self._admitted(row):
+            raise ContactChangeRefused("contact_proof_unavailable")
+        return PreparedContactProof(
+            self, current, await self._view(current.team_id), row["proof_id"], row["subject"]
+        )
+
     @staticmethod
     def _admitted(row) -> AdmittedInstallation:
         return AdmittedInstallation(
@@ -276,6 +347,10 @@ class CredentialAudit:
             await self._designated(event, tx)
         elif event.kind is AuditKind.APPROVER_ENROLLED:
             await self._enrolled(event, tx)
+        elif event.kind is AuditKind.APPROVER_CONTACT_CHANGE_BY_OWNER_SCHEDULED:
+            await self._contact_scheduled(event, tx)
+        elif event.kind is AuditKind.APPROVER_CONTACT_PROVEN:
+            await self._contact_proven(event, tx)
         elif event.kind not in _LOCAL:
             # No kind is silently dropped or allowed through another producer.
             raise GovernanceUnavailable()
@@ -299,17 +374,7 @@ class CredentialAudit:
         scope = event.details.get("scope")
         if not isinstance(scope, str) or not scope:
             raise GovernanceUnavailable()
-        try:
-            resolved = await self._contexts(scope, tx=tx)
-        except ProofContextUnavailable:
-            raise GovernanceUnavailable() from None
-        if resolved.fields() != {
-            "app_id": context.admitted.app_id,
-            "team_id": context.admitted.team_id,
-            "installation_id": context.admitted.installation_id,
-            "generation": context.admitted.generation,
-        }:
-            raise GovernanceUnavailable()
+        await self._require_scope(tx, scope, context.admitted)
         holder = await tx.fetch_one(
             "SELECT * FROM {{tables.passkey_approvers}} WHERE subject=$1 AND scope=$2 AND superseded_at IS NULL",
             event.subject,
@@ -382,12 +447,19 @@ class CredentialAudit:
 
     async def _approved_proof(self, tx, context, event, scope):
         evidence = context.evidence
+        if event.kind is AuditKind.APPROVER_DESIGNATED:
+            bound = (
+                event.details.get("owner_act_id") == f"approval:{evidence.approval_id}:{scope}"
+                and event.details.get("owner_act_kind") == "app-role.designate"
+            )
+        elif event.kind is AuditKind.APPROVER_CONTACT_CHANGE_BY_OWNER_SCHEDULED:
+            bound = event.details.get("owner_approval_id") == evidence.approval_id
+        else:
+            bound = False
         if (
-            event.kind is not AuditKind.APPROVER_DESIGNATED
+            not bound
             or evidence.transaction_id != await tx.fetch_value("SELECT txid_current()")
             or event.actor != evidence.approver_subject
-            or event.details.get("owner_act_id") != f"approval:{evidence.approval_id}:{scope}"
-            or event.details.get("owner_act_kind") != "app-role.designate"
         ):
             raise GovernanceUnavailable()
         # This is the shared store's non-locking reader on the original tx.
@@ -438,6 +510,19 @@ class CredentialAudit:
         except PasskeyProofUnavailable:
             raise GovernanceUnavailable() from None
         return commitment, json.dumps(proof.export())
+
+    async def _require_scope(self, tx, scope, admitted) -> None:
+        try:
+            resolved = await self._contexts(scope, tx=tx)
+        except ProofContextUnavailable:
+            raise GovernanceUnavailable() from None
+        if resolved.fields() != {
+            "app_id": admitted.app_id,
+            "team_id": admitted.team_id,
+            "installation_id": admitted.installation_id,
+            "generation": admitted.generation,
+        }:
+            raise GovernanceUnavailable()
 
     @staticmethod
     def _authority_payload(row):
@@ -565,6 +650,167 @@ class CredentialAudit:
             resource_type="passkey",
             resource_ref=credential_ref,
             **self._authority_payload(row),
+        )
+        await self._enqueue(tx, context.admitted, payload, _SYSTEM, event.occurred_at, context.view)
+
+    async def _contact_scheduled(self, event, tx):
+        context = self._prepared.get()
+        scope = event.details.get("scope")
+        if not isinstance(context, _ApprovalContext) or not isinstance(scope, str) or not scope:
+            raise GovernanceUnavailable()
+        await self._require_scope(tx, scope, context.admitted)
+        row = await tx.fetch_one(
+            "SELECT p.pending_contact,p.pending_contact_at,e.* "
+            "FROM {{tables.passkey_approvers}} p JOIN {{tables.passkey_contact_proofs}} e "
+            "ON e.subject=p.subject WHERE p.subject=$1 AND p.scope=$2 AND p.superseded_at IS NULL "
+            "AND e.created_at=$3 AND e.revoked_at IS NULL AND e.used_at IS NULL",
+            event.subject,
+            scope,
+            event.occurred_at,
+        )
+        if (
+            row is None
+            or not isinstance(row["pending_contact"], str)
+            or contact_sha256(row["pending_contact"]) != row["contact_sha256"]
+            or row["pending_contact_at"] != row["expires_at"]
+            or row["expires_at"] <= datetime.now(UTC)
+            or event.details.get("effective_at") != row["pending_contact_at"].isoformat()
+        ):
+            raise GovernanceUnavailable()
+        commitment, retained = await self._approved_proof(tx, context, event, scope)
+        role = await self._role(tx, scope, context.admitted)
+        resource_ref, state_ref = "contact_" + uuid4().hex, "state_" + uuid4().hex
+        await tx.execute(
+            "INSERT INTO {{tables.credential_contact_candidates}} "
+            "(proof_id,subject,scope,app_id,team_id,installation_id,generation,role,contact_sha256,"
+            "effective_at,verifier_sha256,expires_at,resource_ref,scheduled_ref,approval_id,"
+            "commitment,retained_proof,created_at) "
+            "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18)",
+            row["proof_id"],
+            event.subject,
+            scope,
+            context.admitted.app_id,
+            context.admitted.team_id,
+            context.admitted.installation_id,
+            context.admitted.generation,
+            role,
+            row["contact_sha256"],
+            row["pending_contact_at"],
+            row["verifier_sha256"],
+            row["expires_at"],
+            resource_ref,
+            state_ref,
+            context.evidence.approval_id,
+            commitment,
+            retained,
+            event.occurred_at,
+        )
+        payload = dict(
+            act="credential.enrolled",
+            direction="widening",
+            subject_ref=event.subject,
+            role=role,
+            resource_type="pending_contact",
+            resource_ref=resource_ref,
+            after_ref=state_ref,
+            reason_code="contact_change_scheduled",
+            authority="passkey_session",
+            approval_id=context.evidence.approval_id,
+            approval_evidence_sha256=commitment,
+        )
+        await self._enqueue(tx, context.admitted, payload, _SYSTEM, event.occurred_at, context.view)
+
+    async def _contact_completion(self, tx, context):
+        return await tx.fetch_one(
+            "SELECT c.*,e.used_at,e.revoked_at,e.verifier_sha256 AS actual_verifier,"
+            "e.expires_at AS actual_expiry,e.contact_sha256 AS actual_proof_contact,"
+            "p.scope AS actual_scope,p.pending_contact AS actual_contact,"
+            "p.pending_contact_at AS actual_effective_at,p.pending_contact_proven_at,p.superseded_at "
+            "FROM {{tables.credential_contact_candidates}} c "
+            "JOIN {{tables.passkey_contact_proofs}} e ON e.proof_id=c.proof_id AND e.subject=c.subject "
+            "JOIN {{tables.passkey_approvers}} p ON p.subject=c.subject "
+            "WHERE c.proof_id=$1 AND c.subject=$2",
+            context.proof_id,
+            context.subject,
+        )
+
+    def _valid_contact_completion(self, row, context, *, after):
+        now = datetime.now(UTC)
+        if (
+            row is None
+            or self._admitted(row) != context.admitted
+            or row["actual_scope"] != row["scope"]
+            or row["superseded_at"] is not None
+            or not isinstance(row["actual_contact"], str)
+            or contact_sha256(row["actual_contact"]) != row["contact_sha256"]
+            or row["actual_proof_contact"] != row["contact_sha256"]
+            or row["actual_effective_at"] != row["effective_at"]
+            or row["actual_verifier"] != row["verifier_sha256"]
+            or row["actual_expiry"] != row["expires_at"]
+            or row["expires_at"] <= now
+            or row["effective_at"] <= now
+            or row["revoked_at"] is not None
+            or (
+                not after
+                and any(
+                    row[name] is not None
+                    for name in ("used_at", "completed_at", "pending_contact_proven_at")
+                )
+            )
+            or (
+                after
+                and (
+                    context._event is None
+                    or row["used_at"] != context._event.occurred_at
+                    or row["completed_at"] != context._event.occurred_at
+                    or row["pending_contact_proven_at"] != context._event.occurred_at
+                    or row["proven_ref"] is None
+                )
+            )
+        ):
+            raise ContactChangeRefused("contact_proof_unavailable")
+
+    async def _contact_proven(self, event, tx):
+        context = self._prepared.get()
+        if (
+            not isinstance(context, PreparedContactProof)
+            or context._tx is not tx
+            or context._event is not None
+            or event.subject != context.subject
+        ):
+            raise GovernanceUnavailable()
+        row = await self._contact_completion(tx, context)
+        if (
+            row is None
+            or row["used_at"] != event.occurred_at
+            or row["pending_contact_proven_at"] != event.occurred_at
+            or row["completed_at"] is not None
+            or event.details.get("scope") != row["scope"]
+            or event.details.get("effective_at") != row["effective_at"].isoformat()
+        ):
+            raise GovernanceUnavailable()
+        context._event = event
+        state_ref = "state_" + uuid4().hex
+        await tx.execute(
+            "UPDATE {{tables.credential_contact_candidates}} SET completed_at=$2,proven_ref=$3 "
+            "WHERE proof_id=$1",
+            context.proof_id,
+            event.occurred_at,
+            state_ref,
+        )
+        payload = dict(
+            act="credential.enrolled",
+            direction="widening",
+            subject_ref=event.subject,
+            role=row["role"],
+            resource_type="pending_contact",
+            resource_ref=row["resource_ref"],
+            before_ref=row["scheduled_ref"],
+            after_ref=state_ref,
+            reason_code="contact_proven",
+            authority="passkey_session",
+            approval_id=row["approval_id"],
+            approval_evidence_sha256=row["commitment"],
         )
         await self._enqueue(tx, context.admitted, payload, _SYSTEM, event.occurred_at, context.view)
 
