@@ -7,6 +7,7 @@ and mutations use the real apps with PostgreSQL, Redis and the AWID client.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -69,7 +70,7 @@ async def _controller_action(env, operation, sk, did):
 async def rotation_app(privacy_app):
     env = privacy_app
     registry = CachedRegistryClient(
-        registry_url="http://registry.test", redis_client=env.redis,
+        registry_url=f"http://registry-{uuid4().hex}.test", redis_client=env.redis,
         transport=httpx.ASGITransport(app=env.registry_app),
     )
     original = env.app.state.awid_registry_client
