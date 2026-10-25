@@ -241,8 +241,8 @@ async def test_history_team_lookup_refusals_map_to_distinct_outcomes(registry, t
 
 
 @pytest.fixture
-def history_clock(monkeypatch):
-    clock = [time.monotonic()]
+def history_clock(monkeypatch, request):
+    clock = [getattr(request, "param", time.monotonic())]
     # Replace this module's clock reference, leaving asyncio/AWID clocks alone.
     monkeypatch.setattr(
         "aweb_naapp.runtime.team_auth.time", SimpleNamespace(monotonic=lambda: clock[0])
@@ -284,6 +284,7 @@ async def test_history_new_member_refreshes_before_the_cached_team_expires(regis
 
 
 @pytest.mark.parametrize("warm", [False, True])
+@pytest.mark.parametrize("history_clock", [1000.0, 1021.1], indirect=True)
 async def test_history_unknown_id_flood_coalesces_one_refresh_per_window(registry, team, history_clock, warm):
     cache = history_cache(registry)
     ghosts = [

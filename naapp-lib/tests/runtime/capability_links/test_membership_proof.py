@@ -212,6 +212,35 @@ async def test_freshness_boundary_accepts_original_expiry_without_refresh(db, au
     assert observed[0] is proof  # No replacement or freshness extension under the lock.
 
 
+@pytest.mark.parametrize("checked_at", [452.090299787, 964.597241499])
+async def test_full_ttl_proof_opens_a_session_at_ci_clock_values(db, authority, checked_at):
+    """The exact proof timestamps rejected by Folio CI are valid 60-second proofs."""
+    from dataclasses import replace
+
+    from aweb_naapp.runtime.capability_links import exchange
+
+    from .conftest import mint_link, proof_for_link
+    from .test_exchange import body
+
+    minted = await mint_link(db, authority)
+    proof = replace(
+        await proof_for_link(db, minted.link_id),
+        checked_at=checked_at,
+        fresh_until=checked_at + 60,
+    )
+    session = await exchange(
+        db,
+        authority,
+        link_id=minted.link_id,
+        body=body(minted.secret),
+        client="203.0.113.7",
+        now=T0,
+        proof=proof,
+        proof_clock=lambda: checked_at + 1,
+    )
+    assert session.link["page_id"] == SCOPE.page_id
+
+
 @pytest.mark.parametrize(
     "status,code", [(403, "current_member_required"), (503, "current_membership_unavailable")]
 )

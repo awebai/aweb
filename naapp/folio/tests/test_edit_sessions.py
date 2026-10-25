@@ -94,6 +94,37 @@ async def test_session_outlives_opener_and_revoke_still_ends_it(present_world, s
     ).status_code == 404
 
 
+@pytest.mark.parametrize("checked_at", [452.090299787, 964.597241499])
+async def test_session_keeps_valid_full_ttl_membership_at_ci_clock_values(
+    present_world, session_http, monkeypatch, checked_at
+):
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from folio import edit_sessions
+
+    original = NaappRuntime.check_current_member
+
+    async def current(self, *args, **kwargs):
+        proof = await original(self, *args, **kwargs)
+        return replace(proof, checked_at=checked_at, fresh_until=checked_at + 60)
+
+    monkeypatch.setattr(NaappRuntime, "check_current_member", current)
+    monkeypatch.setattr(
+        edit_sessions, "time", SimpleNamespace(monotonic=lambda: checked_at + 1)
+    )
+    link = await mint(present_world)
+    path, secret = await exchange(session_http, link)
+    headers = {HEADER: secret}
+    state = await session_http.get(path + "/state", headers=headers)
+    assert state.status_code == 200
+    assert state.json()["body"] == "Original"
+    saved = await session_http.post(
+        path + "/edit", headers=headers, json={"body": "Still editable", "base_version": 1}
+    )
+    assert saved.status_code == 200
+
+
 async def test_session_is_header_only_and_bound_to_document(present_world, session_http):
     link = await mint(present_world)
     path, secret = await exchange(session_http, link)
