@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Release preparation: server 1.27.35. Update the server test fixtures for
+  the shared naapp runtime's integer nanosecond freshness deadlines.
+
 - aw: local members initialized with an API key now register and approve app
   installations on their team server through `aw plugin install`, even without
   global identity metadata. Local members can also update and remove approvals.
