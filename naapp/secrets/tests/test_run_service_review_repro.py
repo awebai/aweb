@@ -134,7 +134,7 @@ async def test_delayed_start_cannot_be_swept_before_its_full_execution_window(us
     ).status == 204
     receipt = await context.service.submit(job=context.job.job_id, submission=context.submission)
     assert receipt.body["state"] == "completed"
-    assert receipt.body["result"]["body"] == {"stdout": "safe", "stderr": ""}
+    assert receipt.body["result"]["body"] == {"/exit_code": 0, "/stdout": "safe", "/stderr": ""}
 
 
 async def test_reused_nonce_precedes_a_conflicting_result_without_writes(uses):
