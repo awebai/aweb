@@ -18,13 +18,11 @@ from pathlib import Path
 import pytest
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
-    ApprovalRefused,
     Approvals,
     Approver,
     Assurance,
     DeliveryStatus,
     PgApprovalStore,
-    Refusal,
     RequestNotCanonical,
     canonical_request,
 )
@@ -71,17 +69,13 @@ def test_secret_kinds_are_the_auth_schemes():
 @pytest.mark.parametrize("case", POSITIVE, ids=lambda case: case["name"])
 def test_use_policy_reference_binds_the_installation_team_grant_and_digest(case):
     request = case["request"]
-    parts = (
-        "secrets.use",
-        request["installation_id"],
-        request["team_id"],
-        request["grant_id"],
-        request["policy_digest"],
-    )
-    if "frozen_plan" in case:
-        assert request["action"] == "run_job"
-        parts = ("secrets.run", *parts[1:], "-", "-", "-")
-    assert case["policy"] == {"ref": "|".join(parts), "version": 1}
+    assert case["policy"] == {
+        "ref": "|".join((
+            "secrets.use", request["installation_id"], request["team_id"],
+            request["grant_id"], request["policy_digest"],
+        )),
+        "version": 1,
+    }
 
 
 @pytest.mark.parametrize("case", POSITIVE, ids=lambda case: case["name"])
@@ -228,15 +222,3 @@ async def test_b2_mint_records_the_vector_digest(test_db_factory):
         approval = await store.get_by_request(view.request_id)
         assert approval is not None
         assert approval.request_sha256 == case["request_sha256"], case["name"]
-        if case["name"] == "run-job-durable-ordinary-child":
-            changed = next(
-                case for case in NEGATIVE if case["name"] == "changed-ordinary-child-binding"
-            )
-            covered = _bytes(changed["bytes_b64url"])
-            assert covered.startswith(DOMAIN_PREFIX)
-            changed_request = parse_request_json(covered[len(DOMAIN_PREFIX) :])["request"]
-            before = await store.get(approval.approval_id)
-            with pytest.raises(ApprovalRefused) as refused:
-                await approvals.admit(approval.approval_id, changed_request, "changed-child")
-            assert refused.value.reason is Refusal.REQUEST_MISMATCH
-            assert await store.get(approval.approval_id) == before

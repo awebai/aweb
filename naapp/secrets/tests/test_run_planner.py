@@ -28,12 +28,10 @@ from tests.test_admission import fence as fence
 from tests.test_jobs import after
 
 
-async def _setup(db, *, subject=None, runner_id=None):
+async def _setup(db, *, subject=None):
     await jobs.apply_job_migrations(db)
     await runners.apply_runner_migrations(db)
     body = after()
-    if runner_id is not None:
-        body["runner_ids"] = [runner_id]
     body["credentials"][0]["secret_ref"] = SECRET["ref"]
     body["env"] = {"DB_ADMIN": {"$credential": SECRET["ref"], "field": "value"}}
     job = jobs.JobDefinition.from_after(body)

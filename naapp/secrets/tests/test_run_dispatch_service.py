@@ -568,7 +568,7 @@ async def test_invalid_member_value_field_records_only_a_commitment_without_admi
         raise AssertionError("caller-supplied credential escaped the refusal commitment")
 
 
-async def test_optional_child_selector_signs_the_actual_delivered_ref_for_its_fixed_slot(uses):
+async def test_ordinary_child_selector_stays_guarded_before_admission_or_release(uses):
     import secrets
     from dataclasses import replace
 
@@ -645,21 +645,17 @@ async def test_optional_child_selector_signs_the_actual_delivered_ref_for_its_fi
     selected = replace(
         context.submission, inbound=replace(context.submission.inbound, body=canonical(body))
     )
-    admitted = await context.service.submit(job=context.job.job_id, submission=selected)
-    assert admitted.status == 202 and admitted.body["state"] == "admitted"
-    conflict = await context.service.submit(job=context.job.job_id, submission=context.submission)
-    assert conflict.status == 409 and conflict.body["code"] == "idempotency_conflict"
-    assignment = await context.service.claim(context.signed("/runner/v1/claim"))
-    wire = json.loads(assignment.body)
-    [slot] = wire["credentials"]
-    # The wire identifies the actual child. Only the job's fixed ordinal label
-    # controls its environment mapping (secrets §9.5), never the wire ref.
-    assert slot["secret_ref"] == child.ref
-    plaintext = open_sealed(
-        context.encryption_key.private_bytes_raw(),
-        decode_base64url(slot["sealed"], "sealed"),
-        info=wire["assignment"]["dispatch_id"].encode(),
-    )
-    if decode_value("bearer", plaintext) != {"value": child_value}:
-        raise AssertionError("selected run released another source value")
-    assert await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.dispatches}}") == 1
+    refused = await context.service.submit(job=context.job.job_id, submission=selected)
+    assert refused.status == 403 and refused.body["code"] == "job_not_allowed"
+    for table in (
+        "dispatches",
+        "run_contexts",
+        "run_deliveries",
+        "run_approval_plans",
+        "run_approval_admissions",
+        "idempotency_keys",
+        "rate_buckets",
+        "scoped_nonces",
+    ):
+        assert await uses.world.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
+    assert (await context.service.claim(context.signed("/runner/v1/claim"))).status == 204
