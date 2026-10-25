@@ -34,6 +34,7 @@ from aweb_naapp.runtime.passkeys import (
     PasskeyProofUnavailable,
     Passkeys,
     ProofContextResolver,
+    ProofContextUnavailable,
     contact_sha256,
 )
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
@@ -298,7 +299,10 @@ class CredentialAudit:
         scope = event.details.get("scope")
         if not isinstance(scope, str) or not scope:
             raise GovernanceUnavailable()
-        resolved = await self._contexts(scope, tx=tx)
+        try:
+            resolved = await self._contexts(scope, tx=tx)
+        except ProofContextUnavailable:
+            raise GovernanceUnavailable() from None
         if resolved.fields() != {
             "app_id": context.admitted.app_id,
             "team_id": context.admitted.team_id,
