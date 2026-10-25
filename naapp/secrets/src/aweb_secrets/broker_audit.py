@@ -388,7 +388,7 @@ async def _activity(
     )
 
 
-async def record_broker_refusal(
+async def record_use_refusal(
     tx: TransactionManager,
     *,
     producer: HookProducer,
@@ -399,6 +399,7 @@ async def record_broker_refusal(
     signed_trace_id: str | None = None,
     request_id: str | None = None,
     secret_ref: str | None = None,
+    job_id: str | None = None,
 ) -> UUID:
     """Outer admission transaction, after the failed inner savepoint rolls back.
 
@@ -409,10 +410,14 @@ async def record_broker_refusal(
     are absent from the shared refusal catalog. Failure rolls back both records.
     """
     context = commitments.context
-    if context.tool != "request" or context.team_id != principal.team_id:
-        raise ValueError("broker refusal requires its authenticated team and matched tool")
+    if context.tool not in {"request", "run"} or context.team_id != principal.team_id:
+        raise ValueError("use refusal requires its authenticated team and matched tool")
     _same_producer(producer, context)
-    payload: dict[str, Any] = {"action": "refused", "op_kind": "broker", "refusal_code": code}
+    payload: dict[str, Any] = {
+        "action": "refused",
+        "op_kind": {"request": "broker", "run": "run_job"}[context.tool],
+        "refusal_code": code,
+    }
     if commitments.request_mac is not None:
         payload["request_sha256"] = commitments.request_mac
     if commitments.params_mac is not None:
@@ -438,6 +443,35 @@ async def record_broker_refusal(
             "principal_did": principal_key(principal).principal_did,
             "request_id": request_id,
             "secret_ref": secret_ref,
+            **({} if job_id is None else {"job_id": job_id}),
         },
     )
     return event_id
+
+
+async def record_broker_refusal(
+    tx: TransactionManager,
+    *,
+    producer: HookProducer,
+    principal: Principal,
+    commitments: UseCommitments,
+    code: str,
+    occurred_at: datetime,
+    signed_trace_id: str | None = None,
+    request_id: str | None = None,
+    secret_ref: str | None = None,
+) -> UUID:
+    """Retain the broker-only public boundary over the shared use recorder."""
+    if commitments.context.tool != "request":
+        raise ValueError("broker refusal requires its matched tool")
+    return await record_use_refusal(
+        tx,
+        producer=producer,
+        principal=principal,
+        commitments=commitments,
+        code=code,
+        occurred_at=occurred_at,
+        signed_trace_id=signed_trace_id,
+        request_id=request_id,
+        secret_ref=secret_ref,
+    )
