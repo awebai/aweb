@@ -382,7 +382,7 @@ async def _resolve_contact_target(
                     + str(auth.did_key or auth.did_aw or "unknown"),
                 )
             except FederationAuthorityError as exc:
-                if exc.reason != "sender_identity_not_found":
+                if exc.reason != "recipient_identity_not_found":
                     raise ServiceError(exc.reason) from exc
         elif registry_client is not None:
             resolved = await registry_client.resolve_address(

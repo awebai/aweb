@@ -1060,7 +1060,7 @@ async def test_consumer_mcp_read_messages_from_contact_returns_encrypted_mail_me
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("name", ["add_contact", "contacts_add"])
-@pytest.mark.parametrize("failure", ["missing", "sender_identity_not_found", "sender_registry_unavailable"])
+@pytest.mark.parametrize("failure", ["missing", "recipient_identity_not_found", "sender_registry_unavailable"])
 async def test_contact_creation_refuses_without_authority_evidence(aweb_cloud_db, monkeypatch, name, failure):
     from awid.federation_errors import FederationAuthorityError
     _patch_auth(monkeypatch, _auth())
