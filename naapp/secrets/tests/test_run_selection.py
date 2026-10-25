@@ -74,14 +74,14 @@ async def child_for(db, job, *, grant=True):
     return child
 
 
-async def selected(tx, fence, job, ref):
+async def selected(tx, fence, job, ref, *, dispatch_id=None):
     return await _planner(fence).prepare(
         tx,
         grant=_grant_source_grant(),
         principal=ALICE,
         run_id="run_selected001",
         intent_id="int_selected001",
-        dispatch_id=uuid4(),
+        dispatch_id=dispatch_id or uuid4(),
         candidate_job=job,
         runner_id=job.after["runner_ids"][0],
         params={"database": "orders"},
@@ -137,3 +137,62 @@ async def test_exact_child_and_ancestor_slots_are_ambiguous_without_priority(db,
         with pytest.raises(RunPlanRefused) as refused:
             await selected(tx, fence, changed, child.ref)
         assert refused.value.code == "job_not_allowed"
+
+
+async def test_ordinary_child_vector_freezes_the_authoritative_slot_plan(db, fence):
+    import json
+    from pathlib import Path
+    from uuid import UUID
+
+    from aweb_secrets.run_plan import FrozenRunPlan
+    from aweb_secrets.runner_protocol import canonical
+    from aweb_secrets.use_approval import RunJob, use_approval_request
+
+    vector = json.loads(
+        (Path(__file__).parents[1] / "vectors" / "use-approval-v1.json").read_text()
+    )
+    case = next(
+        case
+        for case in vector["positive_cases"]
+        if case["name"] == "run-job-durable-ordinary-child"
+    )
+    expected = case["frozen_plan"]
+    job = await _setup(db, runner_id=expected["runner_id"])
+    child = await child_for(db, job)
+    async with db.transaction() as tx:
+        prepared = await selected(
+            tx, fence, job, child.ref, dispatch_id=UUID(expected["dispatch_id"])
+        )
+        assert prepared.plan.body == expected
+        assert prepared.plan.digest == case["plan_digest"]
+        slot = prepared.slots[0]
+        request = use_approval_request(
+            installation_id=INSTALLATION,
+            install_generation=prepared.installation.generation,
+            team_id=TEAM,
+            requester=ALICE,
+            secret=SecretRecord.from_after(slot.body["source"]["record"]),
+            secret_version=slot.source_version,
+            policy_digest=slot.parent_policy.digest,
+            grant_id=slot.parent_grant.grant_id,
+            request_id=prepared.plan.body["run_id"],
+            reason=case["request"]["reason"],
+            issued_at=NOW,
+            ttl=timedelta(minutes=15),
+            action=RunJob(
+                runner_id=expected["runner_id"],
+                job_id=job.job_id,
+                job_digest=job.digest,
+                params=expected["params"],
+                credential_delivery=slot.body["delivery"],
+            ),
+        )
+        assert request == case["request"]
+        await prepared.recheck(tx)
+    frozen = FrozenRunPlan.from_bytes(canonical(expected))
+    async with db.transaction() as tx:
+        restored = await _planner(fence).prepare_frozen(
+            tx, grant=_grant_source_grant(), principal=ALICE, plan=frozen
+        )
+        await restored.recheck(tx)
+        assert restored.plan.canonical == frozen.canonical

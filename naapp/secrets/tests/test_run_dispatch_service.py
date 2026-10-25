@@ -496,10 +496,19 @@ async def test_two_distinct_slots_wait_for_all_approvals_and_release_in_original
     context.job = job
     pending = await context.service.submit(job=job.job_id, submission=context.submission)
     assert pending.body["state"] == "awaiting_approval"
+    refs = [
+        row["approval_ref"]
+        for row in await uses.world.db.fetch_all(
+            "SELECT approval_ref FROM {{tables.run_slot_approvals}} ORDER BY ordinal"
+        )
+    ]
+    assert pending.body["approval_ref"] == refs[0]
+    assert pending.body["approval_refs"] == refs
     first_id = await decide(context, pending, Decision.APPROVE)
     another = await context.service.submit(job=job.job_id, submission=context.submission)
     assert another.body["state"] == "awaiting_approval"
     assert another.body["approval_ref"] != pending.body["approval_ref"]
+    assert another.body["approval_refs"] == refs[1:]
     assert (await context.service.claim(context.signed("/runner/v1/claim"))).status == 204
     assert (await context.arguments["approvals"].get(first_id)).consumed_operation_id is None
     second_id = await decide(context, another, Decision.APPROVE)
