@@ -5,12 +5,7 @@
   const ceremony = document.body.dataset.ceremony;
   const fragment = window.location.hash.slice(1);
   window.history.replaceState(null, '', window.location.pathname);
-  let token;
-  try {
-    token = decodeURIComponent(fragment);
-  } catch {
-    token = '';
-  }
+  let token = new URLSearchParams(fragment).get('token');
   if (!token) {
     notice.textContent = 'Open the link from your email to continue.';
     return;

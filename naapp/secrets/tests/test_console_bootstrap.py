@@ -36,7 +36,8 @@ browser = _browser
 
 
 async def application(world: World, *, human_origin: str, agent_origin: str):
-    async def installation(installation_id: str):
+    async def installation(installation_id: str, *, team_id: str | None = None):
+        assert team_id in (None, world.admitted.team_id)
         assert installation_id == world.admitted.installation_id
         return world.admitted
 
