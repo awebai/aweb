@@ -329,3 +329,110 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             )
             assert stale.status_code == 409, stale.text
             assert stale.json()["detail"]["code"] == "stale"
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("registry_failure", ["mismatch", "unavailable"])
+async def test_cli_human_alias_requires_independent_global_key(
+    privacy_app, tmp_path, kind, registry_failure  # noqa: F811
+):
+    import socket
+
+    from test_messages_http import _make_keypair
+
+    env = privacy_app
+    async with _local_sender_mail(env, tmp_path, False, False, False, human=True) as (
+        _, _, binary, cwd, child_env, _,
+    ):
+        await env.db.execute("DELETE FROM {{tables.conversations}}")
+        await env.db.execute("DELETE FROM {{tables.messages}}")
+        actor = env.actors["alice"]
+        row = await env.db.fetch_one(
+            "SELECT did_aw FROM {{tables.agents}} WHERE agent_id=$1", actor.id
+        )
+        _, public = generate_x25519_keypair()
+        assertion = build_encryption_key_assertion(
+            signing_key=actor.sk, identity_did=actor.did,
+            identity_stable_id=row["did_aw"], encryption_public_key=public,
+            custody="self", now=datetime.now(UTC),
+        )
+        await _insert_agent_encryption_assertion(
+            env.db, agent_id=actor.id, team_id=TEAM, assertion=assertion
+        )
+        attacker_sk, _, attacker_did = _make_keypair()
+        _, attacker_public = generate_x25519_keypair()
+        forged_assertion = build_encryption_key_assertion(
+            signing_key=attacker_sk, identity_did=attacker_did,
+            identity_stable_id=row["did_aw"], encryption_public_key=attacker_public,
+            custody="self", now=datetime.now(UTC),
+        )
+        upstream = env.app.middleware_stack
+        participant_reads = []
+        send_attempts = []
+
+        async def untrusted_participant_response(scope, receive, send):
+            # Deliberately corrupt this HTTP trust boundary; all discovery,
+            # registry, authorization and persistence underneath remain real.
+            if scope["type"] == "http" and scope["path"] == "/v1/messaging/participants/alice":
+                events = []
+
+                async def capture(event):
+                    events.append(event)
+
+                await upstream(scope, receive, capture)
+                start = next(e for e in events if e["type"] == "http.response.start")
+                assert start["status"] == 200
+                participant_reads.append(scope["path"])
+                payload = json.loads(b"".join(
+                    e.get("body", b"") for e in events if e["type"] == "http.response.body"
+                ))
+                if registry_failure == "mismatch":
+                    payload.update(did_key=attacker_did, encryption_key=forged_assertion)
+                body = json.dumps(payload).encode()
+                start = {**start, "headers": [
+                    (k, v) for k, v in start["headers"] if k.lower() != b"content-length"
+                ] + [(b"content-length", str(len(body)).encode())]}
+                await send(start)
+                await send({"type": "http.response.body", "body": body})
+                return
+            if scope["type"] == "http" and scope["method"] == "POST" and scope["path"] in (
+                "/v1/messages", "/v1/chat/sessions",
+            ):
+                send_attempts.append(scope["path"])
+            await upstream(scope, receive, send)
+
+        body_file = tmp_path / "global-human-key.txt"
+        body_file.write_text("Only the registry-authorized human may decrypt this")
+        command = (
+            ["mail", "send", "--to", "alice"] if kind == "mail" else
+            ["chat", "send-and-leave", "alice", "--start-conversation"]
+        )
+        # A bound, non-listening socket makes the CLI registry unreachable;
+        # the real server's registry client keeps its original configuration.
+        with socket.socket() as unavailable:
+            unavailable.bind(("127.0.0.1", 0))
+            if registry_failure == "unavailable":
+                child_env = {**child_env, "AWID_REGISTRY_URL":
+                             f"http://127.0.0.1:{unavailable.getsockname()[1]}"}
+            env.app.middleware_stack = untrusted_participant_response
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    str(binary), "--team", TEAM, *command, "--e2ee",
+                    "--body-file", str(body_file), cwd=cwd, env=child_env,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(process.communicate(), 30)
+            finally:
+                env.app.middleware_stack = upstream
+        assert participant_reads
+        # Server-side rejection after receiving ciphertext cannot substitute for
+        # the client's independent check; neither encrypted nor plaintext send
+        # may be attempted, even if the real receiver would defend itself.
+        assert send_attempts == []
+        assert process.returncode != 0
+        for table in ("messages", "conversations", "chat_messages", "chat_sessions"):
+            assert (await env.db.fetch_one(
+                "SELECT count(*) AS n FROM {{tables." + table + "}}"
+            ))["n"] == 0

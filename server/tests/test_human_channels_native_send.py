@@ -660,9 +660,20 @@ async def test_uow_host_lock_lasts_through_caller_result_commit(native_send):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("kind,options,expected_error", [
+    ("mail", {}, None), ("chat", {}, None),
+    ("mail", {"plaintext": False}, None),
+    ("chat", {"plaintext": False}, None),
+    ("mail", {"plaintext": False, "priority": "urgent"}, "unsupported"),
+    ("chat", {"plaintext": False, "leaving": True}, "unsupported"),
+    ("chat", {"plaintext": False, "hang_on": True}, "unsupported"),
+    ("chat", {"plaintext": False, "wait": True, "wait_seconds": 1}, "unsupported"),
+    ("chat", {"plaintext": False, "wait_seconds": 1}, "unsupported"),
+    ("chat", {"to_did": "did:aw:agent"}, "invalid"),
+    ("chat", {"plaintext": False, "to_did": "did:aw:agent"}, "invalid"),
+])
 async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
-    native_send, monkeypatch, kind
+    native_send, monkeypatch, kind, options, expected_error
 ):
     import httpx
     from identity_binding_support import seed_verified_bindings
@@ -684,6 +695,38 @@ async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "native-mcp-test-secret")
     signatures = []
+    encryptions = []
+    from aweb.e2ee_messages import encrypt_e2ee_chat, encrypt_e2ee_mail, generate_x25519_keypair
+    from awid.e2ee_keys import build_encryption_key_assertion
+    from aweb.mcp.signing import HostedMessageEncryptionResult
+
+    identities = []
+    for actor, did, principal, sk in (
+        (env["a"], env["auth"].did_key, "did:aw:agent", env["signing_key"]),
+        (env["b"], env["recipient_did"], "did:aw:human", env["recipient_key"]),
+    ):
+        private, public = generate_x25519_keypair()
+        assertion = build_encryption_key_assertion(
+            signing_key=sk, identity_did=did, identity_stable_id=principal,
+            encryption_public_key=public, custody="hosted_custodial", now=datetime.now(UTC),
+        )
+        await env["db"].execute(
+            "UPDATE public.host_authority SET encryption_assertion=$1::jsonb WHERE actor_id=$2",
+            json.dumps(assertion), UUID(actor),
+        )
+        identities.append(dict(did=did, stable_id=principal, signing_key=sk,
+                               private_key=private, encryption_key=assertion))
+
+    async def encryptor(**kwargs):
+        payload = kwargs["payload"]
+        encryptions.append(payload)
+        inputs = dict(sender=identities[0], recipients=[identities[1]],
+                      body=payload["body"], message_id=payload["message_id"],
+                      conversation_id=payload["conversation_id"],
+                      created_at=datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00")))
+        envelope = (encrypt_e2ee_mail(**inputs, subject=payload["subject"])
+                    if kind == "mail" else encrypt_e2ee_chat(**inputs))
+        return HostedMessageEncryptionResult(encrypted_envelope=envelope)
 
     async def signer(**kwargs):
         from aweb.mcp.auth import get_auth
@@ -701,6 +744,7 @@ async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
     mcp = create_mcp_app(
         db_infra=env["service"].db,
         hosted_signer=signer,
+        hosted_encryptor=encryptor,
         human_channels_service=env["service"],
     )
     app = env["app"]
@@ -735,6 +779,7 @@ async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
         if kind == "mail"
         else {"to_alias": "human", "message": "from real MCP", "plaintext": True}
     )
+    arguments.update(options)
     tool = "send_mail" if kind == "mail" else "chat_send"
     await mcp.startup()
     try:
@@ -760,10 +805,22 @@ async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
                 return json.loads(reply["result"]["content"][0]["text"])
 
             first = await call(arguments)
+            if expected_error:
+                assert first.get("error") == expected_error, first
+                assert signatures == []
+                assert encryptions == []
+                assert env["service"]._preparations == {}
+                for table in ("messages", "conversations", "chat_messages", "chat_sessions",
+                              "human_channel_sends", "human_channel_ingress", "human_channel_mutations"):
+                    assert (await env["db"].fetch_one(
+                        "SELECT count(*) n FROM {{tables." + table + "}}"
+                    ))["n"] == 0
+                return
             assert "error" not in first, first
             again = await call(arguments)
             assert again == first
-            assert len(signatures) == 1
+            assert len(signatures) == (1 if arguments["plaintext"] else 0)
+            assert len(encryptions) == (0 if arguments["plaintext"] else 1)
             changed = await call(
                 {
                     **arguments,
