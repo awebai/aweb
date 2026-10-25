@@ -568,7 +568,7 @@ async def test_invalid_member_value_field_records_only_a_commitment_without_admi
         raise AssertionError("caller-supplied credential escaped the refusal commitment")
 
 
-async def test_optional_child_selector_releases_its_own_value_under_the_fixed_slot_label(uses):
+async def test_optional_child_selector_signs_the_actual_delivered_ref_for_its_fixed_slot(uses):
     import secrets
     from dataclasses import replace
 
@@ -652,7 +652,9 @@ async def test_optional_child_selector_releases_its_own_value_under_the_fixed_sl
     assignment = await context.service.claim(context.signed("/runner/v1/claim"))
     wire = json.loads(assignment.body)
     [slot] = wire["credentials"]
-    assert slot["secret_ref"] == SECRET["ref"]
+    # The wire identifies the actual child. Only the job's fixed ordinal label
+    # controls its environment mapping (secrets §9.5), never the wire ref.
+    assert slot["secret_ref"] == child.ref
     plaintext = open_sealed(
         context.encryption_key.private_bytes_raw(),
         decode_base64url(slot["sealed"], "sealed"),
