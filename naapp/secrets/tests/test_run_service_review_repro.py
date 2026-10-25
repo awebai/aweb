@@ -123,6 +123,18 @@ async def test_delayed_start_cannot_be_swept_before_its_full_execution_window(us
     assert (
         await uses.world.db.fetch_value("SELECT sweep_after FROM {{tables.dispatches}}") == before
     )
+    assert before >= expires + timedelta(seconds=2)
+    # Output still uses the original redaction context after the old premature
+    # sweep threshold; extending recovery alone must not lose that context.
+    assert (
+        await context.service.result(
+            dispatch_ref,
+            context.signed(f"/runner/v1/dispatches/{dispatch_ref}/result", report()),
+        )
+    ).status == 204
+    receipt = await context.service.submit(job=context.job.job_id, submission=context.submission)
+    assert receipt.body["state"] == "completed"
+    assert receipt.body["result"]["body"] == {"stdout": "safe", "stderr": ""}
 
 
 async def test_reused_nonce_precedes_a_conflicting_result_without_writes(uses):

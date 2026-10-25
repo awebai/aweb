@@ -19,7 +19,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from aweb_naapp import ratelimit
-from aweb_naapp.dispatch import Dispatch, Dispatches, State
+from aweb_naapp.dispatch import Dispatch, Dispatches, DispatchInFlight, ReconciliationPending, State
 from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.hooks.commitment import CommitmentContext
 from aweb_naapp.hooks.producer import RegistrationView
@@ -197,8 +197,10 @@ class _RunFence:
                 self.opened.contexts, self.opened.observations, strict=True
             ):
                 await self.service._opener.check_observation(tx, context, observation)
-        await self.authority.prepared.recheck(tx)
         await self.authority.installation_fence.check(tx, dispatch)
+        # The planner finishes with F6 and pure live forest/window checks. No
+        # awaited authority read may follow those deadline samples.
+        await self.authority.prepared.recheck(tx)
         now = self.service._clock()
         if any(item.expires_at <= now for item in self._checks):
             raise AdmissionRefused("approval_expired")
@@ -247,7 +249,7 @@ class RunDispatch:
         )
         self._origin, self._producer, self._registration_view = origin, producer, registration_view
         self._approvals, self._use_audit, self._passkeys = approvals, use_audit, passkeys
-        self.status = RunStatus(approvals=approvals)
+        self.status = RunStatus(approvals=approvals, use_audit=use_audit)
         self._max_backlog_age, self._assignment_ttl = max_backlog_age, assignment_ttl
         self._sweep_margin, self._claim_wait, self._clock = sweep_margin, claim_wait, clock
         self._planner = RunPlanner(
@@ -261,11 +263,20 @@ class RunDispatch:
         self._release_context: dict[UUID, _ReleaseContext] = {}
 
     def _machine(
-        self, original: OriginalRun, view: RegistrationView | None = None, **details: Any
+        self,
+        original: OriginalRun,
+        view: RegistrationView | None = None,
+        *,
+        max_dispatch: timedelta | None = None,
+        **details: Any,
     ) -> Dispatches:
         return Dispatches(
             on_transition=RunAudit(producer=self._producer, view=view, **details),
-            max_dispatch=timedelta(seconds=_job(original).after["timeout_s"]),
+            max_dispatch=(
+                timedelta(seconds=_job(original).after["timeout_s"])
+                if max_dispatch is None
+                else max_dispatch
+            ),
             sweep_margin=self._sweep_margin,
         )
 
@@ -308,6 +319,8 @@ class RunDispatch:
             return await self._refusal(
                 submission, job, request_id, refused.code, refused.status, headers
             )
+        except (DispatchInFlight, ReconciliationPending) as refused:
+            return await self._refusal(submission, job, request_id, refused.code, 409)
         except (UseAuditUnavailable, HookRefused) as refused:
             return await self._refusal(submission, job, request_id, refused.code, 503)
         except RunPlanRefused as refused:
@@ -881,8 +894,6 @@ class RunDispatch:
             fence = _RunFence(self, original, grant, view, opened=opened)
             await fence.prepare(tx)
             await self._verify(tx, submission, grant)
-            machine = self._machine(original, view)
-            current = await machine.begin_dispatch(tx, original.dispatch_id, fence=fence)
             credentials = []
             for slot, value in zip(original.plan.slots, opened.values, strict=True):
                 credentials.append(
@@ -913,6 +924,22 @@ class RunDispatch:
                     expires_at=expires,
                 )
             )
+            # A valid assignment may start just before its signed expiry and
+            # then run for the entire job timeout. Base S3 recovery on that
+            # absolute bound, using its own database clock. Publication and
+            # replay never move this persisted deadline.
+            database_now = await tx.fetch_value("SELECT clock_timestamp()")
+            machine = self._machine(
+                original,
+                view,
+                max_dispatch=timedelta(seconds=_job(original).after["timeout_s"])
+                + max(expires - database_now, timedelta(0)),
+            )
+            current = await machine.begin_dispatch(tx, original.dispatch_id, fence=fence)
+            recovery_deadline = await tx.fetch_value(
+                "SELECT sweep_after FROM {{tables.dispatches}} WHERE dispatch_id=$1",
+                original.dispatch_id,
+            )
             await tx.execute(
                 "UPDATE {{tables.run_deliveries}} SET assignment=$2,issued_at=$3,expires_at=$4 WHERE dispatch_id=$1",
                 original.dispatch_id,
@@ -929,7 +956,7 @@ class RunDispatch:
         self._prune_contexts()
         self._release_context[original.dispatch_id] = _ReleaseContext(
             opened.known,
-            issued + timedelta(seconds=_job(original).after["timeout_s"]) + self._sweep_margin,
+            recovery_deadline,
         )
         return RunnerReply(200, wire)
 
@@ -1102,7 +1129,7 @@ class RunDispatch:
         grant = await self._runner_grant(parsed)
         async with self._db.transaction() as tx:
             scope = await self._fence.admit(tx, grant)
-            await self._verify(tx, submission, grant)
+            await self._consume(tx, submission, grant)
             original = await self._assigned(tx, dispatch_ref, parsed.runner_id, grant)
             if len(submission.body) > 6 * _job(original).after["output"]["max_bytes"] + 1024:
                 raise RunnerRefused("runner_result_invalid")
@@ -1191,7 +1218,9 @@ class RunDispatch:
                     original.dispatch_id,
                     digest,
                 )
-            await self._consume(tx, submission, grant)
+            # Recheck exact bytes/time/current held key after the report work.
+            # The nonce inserted above rolls back with any refusal or effect.
+            await self._verify(tx, submission, grant)
             await self._fence.check(tx, scope)
         self._release_context.pop(original.dispatch_id, None)
         return RunnerReply(204)

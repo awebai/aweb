@@ -19,12 +19,12 @@ from aweb_secrets import records, tool_results
 from aweb_secrets.member_types import ToolReply
 from aweb_secrets.owners import OWNER_ROLE
 from aweb_secrets.run_context import OriginalRun, original_run
-from aweb_secrets.use_audit import UseAuditUnavailable
+from aweb_secrets.use_audit import UseApprovalAudit, UseAuditUnavailable
 
 
 class RunStatus:
-    def __init__(self, *, approvals: Approvals) -> None:
-        self._approvals = approvals
+    def __init__(self, *, approvals: Approvals, use_audit: UseApprovalAudit) -> None:
+        self._approvals, self._use_audit = approvals, use_audit
 
     async def get_in(
         self,
@@ -113,10 +113,22 @@ class RunStatus:
             if not rows:
                 raise UseAuditUnavailable()
             requester = original.plan.body["requester"]["principal_did"]
-            views = [
-                await self._approvals.requester_view(row["approval_ref"], requester) for row in rows
-            ]
-            states = {view.approval_state for view in views}
+            # The initial mint is still uncommitted. Read the original B2
+            # objects through the same non-locking caller-tx association reader,
+            # never a second transaction that cannot see the new approvals.
+            approvals = {
+                approval.request_ref: approval
+                for approval in await self._use_audit.dispatch_approvals(tx, original.dispatch_id)
+            }
+            if any(
+                row["approval_ref"] not in approvals
+                or approvals[row["approval_ref"]].requested_by != requester
+                for row in rows
+            ):
+                raise UseAuditUnavailable()
+            now = self._approvals.now()
+            slot_states = [approvals[row["approval_ref"]].state_at(now) for row in rows]
+            states = set(slot_states)
             for terminal, code in (
                 (ApprovalState.REJECTED, "approval_denied"),
                 (ApprovalState.EXPIRED, "approval_expired"),
@@ -129,8 +141,8 @@ class RunStatus:
             pending = next(
                 (
                     row
-                    for row, view in zip(rows, views, strict=True)
-                    if view.approval_state is ApprovalState.PENDING
+                    for row, slot_state in zip(rows, slot_states, strict=True)
+                    if slot_state is ApprovalState.PENDING
                 ),
                 None,
             )

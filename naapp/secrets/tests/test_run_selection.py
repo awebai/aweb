@@ -130,6 +130,7 @@ async def test_exact_child_and_ancestor_slots_are_ambiguous_without_priority(db,
     child = await child_for(db, job)
     body = job.after
     body["credentials"].append({"secret_ref": child.ref, "delivery": "durable", "mint": None})
+    body["env"]["CHILD_TOKEN"] = {"$credential": child.ref, "field": "value"}
     changed = jobs.JobDefinition.from_after(body)
     async with db.transaction() as tx:
         await jobs.create_job(tx, INSTALLATION, TEAM, changed)
