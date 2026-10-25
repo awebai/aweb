@@ -11,7 +11,7 @@ from __future__ import annotations
 import base64
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from aweb_naapp.hooks.commitment import RequestBytes
 from aweb_naapp.runtime.authorization import Authorization
@@ -32,6 +32,10 @@ class ToolReply:
     status: int
     body: Mapping[str, Any]
     headers: Mapping[str, str] = field(default_factory=dict)
+
+
+class JobRunRequests(Protocol):
+    async def submit(self, *, job: str, submission: MemberSubmission) -> ToolReply: ...
 
 
 def broker_result_reply(result: BrokeredResult, *, request_id: str, request_ref: str) -> ToolReply:
