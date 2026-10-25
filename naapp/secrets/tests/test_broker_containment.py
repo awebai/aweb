@@ -126,6 +126,7 @@ async def test_disable_worker_a_stops_worker_b_while_its_actual_token_remains_ca
             member_key=SigningKey(bytes([7]) * 32),
             extra_cert_fields={"member_did_aw": REQUESTER.did_aw},
         )
+        assert await registry.register_did(member.member_key) == REQUESTER.did_aw
         await registry.add_team(TEAM, member.team_did_key)
         await registry.add_certificate(member.certificate())
 

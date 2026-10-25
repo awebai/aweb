@@ -260,7 +260,7 @@ async def test_real_transport_deadline_records_unknown_and_never_resends(
     async with running_upstream(tmp_path) as upstream:
         entered, release = asyncio.Event(), asyncio.Event()
 
-        @upstream.app.post("/bearer/slow")
+        @upstream.app.post("/bearer/blocked-response")
         async def slow(request: Request):
             if request.headers.get("authorization") != "Bearer " + upstream.creds.bearer:
                 return Response(status_code=403)
@@ -270,14 +270,14 @@ async def test_real_transport_deadline_records_unknown_and_never_resends(
             return Response(status_code=204)
 
         service = await setup(db, fence, tmp_path, upstream, max_dispatch=timedelta(seconds=3))
-        original = submission(upstream, url=upstream.url("/bearer/slow"))
+        original = submission(upstream, url=upstream.url("/bearer/blocked-response"))
         try:
             first = await service.submit(secret=SECRET["ref"], submission=original)
-            assert entered.is_set()
+            assert entered.is_set(), (first.status, first.body.get("state"), first.body.get("code"))
             assert first.status == 200 and first.body["state"] == "outcome_unknown"
             second = await service.submit(secret=SECRET["ref"], submission=original)
             assert second == first
-            assert upstream.paths == ["/bearer/slow"]
+            assert upstream.paths == ["/bearer/blocked-response"]
             assert (
                 await db.fetch_value("SELECT state FROM {{tables.dispatches}}") == "outcome_unknown"
             )
@@ -290,7 +290,7 @@ async def test_real_transport_deadline_records_unknown_and_never_resends(
                 upstream,
                 request_id="after-unknown",
                 url=upstream.url(
-                    "/bearer/echo" if next_call == "different-url" else "/bearer/slow"
+                    "/bearer/echo" if next_call == "different-url" else "/bearer/blocked-response"
                 ),
             )
             if next_call == "different-principal":
@@ -306,7 +306,7 @@ async def test_real_transport_deadline_records_unknown_and_never_resends(
             after = await service.submit(secret=SECRET["ref"], submission=followup)
             if next_call == "same-pair":
                 assert after.status == 409 and after.body["code"] == "reconciliation_pending"
-                assert upstream.paths == ["/bearer/slow"]
+                assert upstream.paths == ["/bearer/blocked-response"]
             else:
                 assert after.status == 200 and after.body["state"] == "completed", (
                     after.status,
