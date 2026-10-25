@@ -35,7 +35,7 @@ async def application(uses, *, origin=ORIGIN, agent_origin=API, registration_vie
     w = uses.world
     await apply_console_migrations(w.db)
 
-    async def installation(installation_id):
+    async def installation(installation_id, *, team_id: str | None = None):
         if installation_id != INSTALLATION_ID:
             raise LookupError(installation_id)
         return w.admitted
