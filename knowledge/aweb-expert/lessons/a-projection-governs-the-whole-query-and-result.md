@@ -22,6 +22,9 @@ Two defects of the same shape, both reviewed before they were found.
   expert ACK had checked the value projection "and not the rest of the returned
   record"; the independent reviewer found it.
 
+Both are fixed: the envelope since aweb-naapp 0.3.0 and the roster join since
+server 1.27.34.
+
 # How to apply
 
 - Compute a projection once (for example a lateral `projected` row) and use it

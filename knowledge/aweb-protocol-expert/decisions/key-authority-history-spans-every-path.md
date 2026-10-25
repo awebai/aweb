@@ -17,7 +17,7 @@ from member-supplied install fields, upserted with revocation cleared, and
 looked up without a team filter. A fallback lookup also reached keys through a
 second, older table that the revocation check did not consult. The independent
 review had ACKed "revocation carried across digests" and missed the two-table
-path.
+path. The fix shipped in server 1.27.31.
 
 # Decision
 

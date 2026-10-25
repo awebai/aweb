@@ -1,26 +1,23 @@
 ---
 type: Lesson
 title: Unauthenticated input must not drive remote work
-description: Order checks so cheap local verification and admission controls run before per-request remote lookups; moving a remote check earlier can create exits that skip the rate limit, and uncached remote lookups keyed by caller-chosen ids let anyone exhaust a shared registry quota.
+description: Order checks so cheap local verification and admission controls run before per-request remote lookups; a remote check moved earlier must not create exits that skip existing admission controls, and lookups driven by caller-chosen input cache their negative answers.
 tags: [lesson, security, rate-limits, awid, review]
 timestamp: 2026-10-21
 ---
 
-Two findings from independent reviews in October 2026.
+Two review findings in October 2026, both caught in review before release.
 
-- **A preflight that bypassed admission.** To avoid network work under a row
-  lock, remote membership verification was moved ahead of the lifecycle
-  transaction, and so ahead of an existing committed per-client attempt
-  counter. Refusals in the new preflight never reached the counter: a caller
-  with any public link id could keep triggering registry calls without ever
-  reaching the rate limit, and refusals revealed authority state before
-  possession of the capability was checked. The flood test used a callback that
-  always succeeded, so it exercised the neighbouring path.
-- **Remote lookups before the cheap check.** A certificate verifier looked up
-  each certificate's status in the identity registry before checking the team
-  signature, with uncached not-found results. Random certificate ids, or more
-  than sixty certificates a minute, could exhaust the registry rate limit and
-  refuse every member of a self-hosted server.
+- **A new exit ahead of an existing guard.** To avoid network work under a row
+  lock, a remote verification step was moved earlier in a request path. Its
+  refusals returned before an existing admission control had counted the
+  attempt, and they revealed authority state before the caller's capability was
+  checked. The test for that control used a callback that always succeeded, so
+  it exercised only the neighbouring path.
+- **A remote lookup before the cheap check.** A verifier queried the identity
+  registry for each presented credential before checking the signature it
+  could verify locally, and did not cache negative answers. Caller-chosen input
+  could therefore spend a shared registry quota.
 
 # How to apply
 
