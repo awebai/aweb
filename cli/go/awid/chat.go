@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
