@@ -71,6 +71,24 @@ func (c *Client) e2eeRecipientFromAgent(ctx context.Context, agent AgentView) (E
 		if err != nil {
 			return E2EERecipientKey{}, err
 		}
+		if stableID := strings.TrimSpace(agent.DIDAW); stableID != "" {
+			chain, ok := c.resolver.(*ChainResolver)
+			if !ok || chain.DeliveryTeamRegistry == nil || chain.Team == nil {
+				return E2EERecipientKey{}, errors.New("recipient current key requires a configured team registry")
+			}
+			registryURL, registry, err := chain.DeliveryTeamRegistry.receivedRegistry(ctx, chain.Team.TeamID)
+			if err != nil {
+				return E2EERecipientKey{}, fmt.Errorf("recipient registry discovery failed: %w", err)
+			}
+			// Registry authority comes from the selected membership, never the participant response.
+			binding, err := registry.resolveKeyFresh(ctx, registryURL, stableID, true)
+			if err != nil {
+				return E2EERecipientKey{}, fmt.Errorf("recipient current key lookup failed: %w", err)
+			}
+			if binding.DIDAW != stableID || binding.CurrentDIDKey != strings.TrimSpace(agent.DIDKey) {
+				return E2EERecipientKey{}, errors.New("recipient current registry key does not match participant")
+			}
+		}
 		return E2EERecipientKey{DID: strings.TrimSpace(agent.DIDKey), StableID: strings.TrimSpace(agent.DIDAW),
 			Address: strings.TrimSpace(agent.Address), EncryptionKey: assertion,
 			InboundMode: strings.TrimSpace(agent.InboundMode)}, nil

@@ -33,6 +33,8 @@ func TestHumanAliasScopedEncryptionDiscovery(t *testing.T) {
 						_ = json.NewEncoder(w).Encode(ListAgentsResponse{TeamID: team, Agents: []AgentView{}})
 					case "/v1/messaging/participants/juan":
 						_ = json.NewEncoder(w).Encode(map[string]any{"alias": "juan", "team_id": returnedTeam, "did_key": did, "did_aw": stable, "agent_type": "human", "status": "active", "encryption_key": assertion})
+					case "/v1/did/" + stable + "/key":
+						_ = json.NewEncoder(w).Encode(map[string]any{"did_aw": stable, "current_did_key": did})
 					default:
 						t.Errorf("unexpected path %s", r.URL.Path)
 						http.NotFound(w, r)
@@ -44,6 +46,14 @@ func TestHumanAliasScopedEncryptionDiscovery(t *testing.T) {
 					t.Fatal(err)
 				}
 				client.teamID = team
+				registry := NewRegistryResolver(server.Client(), nil)
+				if err := registry.SetFallbackRegistryURL(server.URL); err != nil {
+					t.Fatal(err)
+				}
+				client.SetResolver(&ChainResolver{
+					DeliveryTeamRegistry: registry,
+					Team:                 &TeamRosterResolver{Client: client, TeamID: team},
+				})
 				var recipient E2EERecipientKey
 				if kind == "mail" {
 					recipient, err = client.e2eeMailRecipient(context.Background(), &SendMessageRequest{ToAlias: "juan"})

@@ -30,6 +30,21 @@ async def send_mcp_native(
         raise ContractError(
             "authority_unavailable", "configured native messaging service"
         )
+    if kind == "chat":
+        selectors = sum(
+            bool((arguments.get(name) or "").strip())
+            for name in ("to_alias", "to_did", "to_address")
+        )
+        if selectors != (0 if arguments.get("session_id") else 1):
+            raise ContractError("invalid", "exactly one recipient or session")
+    if not arguments.get("plaintext", False) and (
+        arguments.get("priority", "normal") != "normal"
+        or arguments.get("wait", False)
+        or arguments.get("wait_seconds", 120) != 120
+        or arguments.get("leaving", False)
+        or arguments.get("hang_on", False)
+    ):
+        raise ContractError("unsupported", "encrypted ingress control metadata")
     caller = mcp_messaging_auth(auth)
     key = _dto(
         "IngressKey",

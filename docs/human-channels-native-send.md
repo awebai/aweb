@@ -24,7 +24,10 @@ public team ID, alias, current DID projections, status and optional original
 identity-signed encryption assertion. It is participant/key discovery, not
 signing-custody proof. The server checks the assertion against the current
 identity key, including fresh AWID resolution for a global identity; the Go
-reader independently verifies its signature and binding. The result cannot
+reader independently verifies its signature and, for a global human, requires
+its signing key to match a fresh AWID key lookup through the selected team's
+configured registry. Registry failure or a different key refuses encryption;
+local humans retain server-roster trust. The result cannot
 create a global address or remote route. A missing key permits plaintext alias
 delivery but explicitly selected encryption refuses; it never retries plaintext.
 
@@ -128,6 +131,12 @@ issuer comes from authentication. Replays compare the protected ID, kind and
 envelope hash before returning the original acceptance. This is remote stable-ID
 recovery, not atomicity with a caller's remote database. The caller persists its
 own remote intent first and reconciles a timeout through the result read.
+
+Opted-in MCP chat requires exactly one recipient selector, or a session ID
+without a recipient selector, before discovery or signing. Encrypted MCP
+supports normal priority and the default non-waiting controls; non-normal
+priority, leaving, hang-on, waiting or a non-default wait duration refuse before
+custody signing/encryption or persistence.
 
 For encrypted HTTP ingress the outer timestamp and reply ID, when supplied,
 must match the preserved envelope. Non-default priority, wait, leaving and
