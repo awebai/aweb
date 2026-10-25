@@ -128,7 +128,6 @@ async def completion(pw, kind):
 async def test_prepare_holds_authority_before_b3_and_check_follows_audit(pw, kind):
     invoke, subject = await completion(pw, kind)
     db = pw.passkeys.db
-    fence = CompletionFence(pw, kind)
     started = asyncio.get_running_loop().create_future()
 
     class ObservedFence(CompletionFence):
