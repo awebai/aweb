@@ -44,7 +44,7 @@ async def pages(world: World) -> AsyncIterator[tuple[httpx.AsyncClient, httpx.As
 async def application(world: World, *, human_origin: str = ORIGIN, agent_origin: str = API):
     await apply_console_migrations(world.db)
 
-    async def installation(installation_id: str):
+    async def installation(installation_id: str, *, team_id: str | None = None):
         assert installation_id == world.admitted.installation_id
         return world.admitted
 
