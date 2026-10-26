@@ -22,6 +22,7 @@ from aweb_naapp.runtime.capability_links import (
     apply_capability_link_migrations,
     mint,
 )
+from aweb_naapp.runtime.clock import seconds_to_ns
 
 AWEB_ROOT = Path(__file__).resolve().parents[4]
 CAPABILITY = json.loads((AWEB_ROOT / "docs" / "vectors" / "link-capability-v1.json").read_text())
@@ -161,8 +162,8 @@ def proof_for(*, certificate_id="0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11"):
 
     from aweb_naapp.runtime.team_auth import MembershipProof
 
-    checked = time.monotonic()
-    return MembershipProof(SCOPE.team_id, certificate_id, TEAM_KEY, checked, checked + 60)
+    checked = time.monotonic_ns()
+    return MembershipProof(SCOPE.team_id, certificate_id, TEAM_KEY, checked, checked + seconds_to_ns(60))
 
 
 async def proof_for_link(db, link_id):

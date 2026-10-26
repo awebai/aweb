@@ -1,6 +1,12 @@
 """Single-use human approval of an exact request, shared by naapps."""
 
 from aweb_naapp.runtime.approvals.challenge import challenge_binding
+from aweb_naapp.runtime.approvals.dispatch_fence import (
+    DispatchAuthority,
+    DispatchAuthorityState,
+    DispatchBinding,
+    PreparedDispatch,
+)
 from aweb_naapp.runtime.approvals.model import (
     ActionPolicy,
     Admission,
@@ -62,6 +68,10 @@ __all__ = [
     "Decision",
     "DeliveryStatus",
     "DispatchOutcome",
+    "DispatchAuthority",
+    "DispatchAuthorityState",
+    "DispatchBinding",
+    "PreparedDispatch",
     "Evidence",
     "LinkAlreadyUsed",
     "LinkedApproval",

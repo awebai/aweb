@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from datetime import datetime, timezone
@@ -12,12 +13,43 @@ from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
+from awid.external_authority import OriginContext
+from awid.external_registry import StrictExternalRegistry
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import Address, AddressDelivery, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
+from aweb.api import create_app
+from aweb.federation.activation import FederationAuthorityActivation
+from aweb.federation.authority import FederationAuthorityCore
+from aweb.federation.authority_state import AuthorityRepository
+from aweb.federation.authority_work import AuthorityWorkRepository, AuthorityWorkResult
 from aweb.identity_auth_deps import IDENTITY_DID_AW_HEADER
 from aweb.routes.contacts import router as contacts_router
 from federation_activation_support import TestFederationAuthority
+from test_federation_preactivation_harness import (
+    _LoopbackHosts,
+    _RecordedDNS,
+    _TLSRegistry,
+    _identity_registry_responses,
+)
+from test_messages_http import _encode_certificate, _make_certificate
+
+
+class _ContactRegistry(_TLSRegistry):
+    async def _handle(self, reader, writer):
+        request = await reader.readuntil(b"\r\n\r\n")
+        self.requests.append(request)
+        path = request.split(b" ", 2)[1].decode()
+        status = b"200 OK" if path in self.responses else b"404 Not Found"
+        body = json.dumps(self.responses.get(path, {"detail": "target.not_found"})).encode()
+        writer.write(
+            b"HTTP/1.1 " + status + b"\r\nContent-Type: application/json\r\n"
+            + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+            + body
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
 
 
 def _make_keypair():
@@ -87,6 +119,92 @@ def _build_test_app(aweb_db, registry):
     app.state.awid_registry_client = registry
     app.state.federation_authority = TestFederationAuthority(aweb_db, registry)
     return app
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["namespace", "address", "key", "log"])
+async def test_contact_add_unregistered_cross_namespace_target(aweb_cloud_db, missing):
+    owner_sk, _, owner_key = _make_keypair()
+    registry = AsyncMock()
+    team_sk, _, team_key = _make_keypair()
+    registry.get_team_public_key.return_value = team_key
+    registry.get_team_revocations.return_value = set()
+    registry.list_team_certificates.return_value = [{"certificate_id": "cert-001"}]
+    db = aweb_cloud_db.aweb_db
+    team_id = "aweb:jro.aweb.ai"
+    alias = "oats-operator-portfolio-ops"
+    await db.execute(
+        "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) VALUES ($1, 'jro.aweb.ai', 'aweb', $2)",
+        team_id, team_key,
+    )
+    await db.execute(
+        "INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope) VALUES ($1, $2, $3, 'local')",
+        team_id, owner_key, alias,
+    )
+    certificate = _make_certificate(
+        team_sk, team_key, owner_key, team_id=team_id, alias=alias, identity_scope="local",
+    )
+    app = create_app(public_origin="https://jro.aweb.ai")
+    app.state.db = SimpleNamespace(get_manager=lambda name="aweb": db)
+    app.state.redis = None
+    app.state.rate_limiter = None
+    app.state.awid_registry_client = registry
+    target = "juan.aweb.ai/aweb-expert-secrets-root"
+    mapping, responses = _identity_registry_responses(
+        "juan.aweb.ai", "aweb-expert-secrets-root", "https://target.test"
+    )
+    controller_key = mapping["initial_did_key"]
+    missing_path = next(
+        path for path in responses
+        if (missing == "namespace" and path == "/v1/namespaces/juan.aweb.ai")
+        or (missing == "address" and "/addresses/" in path)
+        or (missing in {"key", "log"} and path.endswith("/" + missing))
+    )
+    del responses[missing_path]
+    if missing == "log":
+        key_row = next(value for path, value in responses.items() if path.endswith("/key"))
+        key_row["status"] = "OK_DEGRADED"
+    async with _ContactRegistry("registry.test", responses) as external:
+        dns = _RecordedDNS("juan.aweb.ai", controller_key, external.origin)
+        resolver = StrictExternalRegistry(
+            txt_resolver=dns, host_resolver=_LoopbackHosts(),
+            origin_context=OriginContext(
+                app_env="development", federation_test_enabled=True,
+                listener_origin="https://jro.test",
+            ),
+            ssl_context=external.client_context,
+        )
+        app.state.federation_authority = FederationAuthorityActivation(
+            core=FederationAuthorityCore(AuthorityRepository(db)),
+            work=AuthorityWorkRepository(db), resolver=resolver, txt_resolver=dns,
+        )
+        body = json.dumps({"contact_address": target, "label": "ho6-secrets-root"}).encode()
+        timestamp = datetime.now(timezone.utc).isoformat()
+        signed_payload = canonical_json_bytes({
+            "v": 2, "aud": "https://jro.aweb.ai", "method": "POST", "path": "/v1/contacts",
+            "team_id": team_id, "timestamp": timestamp,
+            "body_sha256": hashlib.sha256(body).hexdigest(),
+        })
+        headers = {
+            "Authorization": f"DIDKey {owner_key} {sign_message(owner_sk, signed_payload)}",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(signed_payload).rstrip(b"=").decode(),
+            "X-AWID-Team-Certificate": _encode_certificate(certificate),
+            "Content-Type": "application/json",
+        }
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="https://jro.aweb.ai") as client:
+                response = await client.post("/v1/contacts", content=body, headers=headers)
+        finally:
+            await resolver.aclose()
+        assert any(missing_path.encode() + b" " in request for request in external.requests), response.text
+    assert response.status_code == (503 if missing == "log" else 404), response.text
+    expected_reason = (
+        "sender_identity_unverifiable" if missing == "log" else "recipient_identity_not_found"
+    )
+    assert response.json()["reason"] == expected_reason
+    assert response.json()["retryable"] is (missing == "log")
+    assert await db.fetch_val("SELECT COUNT(*) FROM {{tables.contacts}}") == 0
 
 
 @pytest.mark.asyncio
@@ -242,3 +360,24 @@ async def test_contact_reassignment_requires_signed_explicit_acceptance(aweb_clo
     assert rejected.value.reason == "contact_identity_binding_required"
     assert response.status_code == 200, response.text
     assert response.json()["contact_did_aw"] == "did:aw:alice-reassigned"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("published_reason", ["sender_identity_not_found", "recipient_identity_not_found"])
+@pytest.mark.parametrize("contact", [False, True])
+async def test_shared_not_found_result_uses_current_lookup_role(published_reason, contact):
+    # Sender authorization and contact resolution share the same singleflight key.
+    activation = FederationAuthorityActivation(
+        core=None, work=None, resolver=None, txt_resolver=None
+    )
+    result = AuthorityWorkResult(
+        scope_key="discovery:juan.aweb.ai/missing", fence=1, status="failed",
+        evidence={"reason": published_reason}, expires_at=datetime.now(timezone.utc),
+    )
+    with pytest.raises(FederationAuthorityError) as raised:
+        if contact:
+            await activation._contact_from_result("juan.aweb.ai/missing", result)
+        else:
+            await activation._authorize_from_result(None, result)
+    expected_reason = "recipient_identity_not_found" if contact else "sender_identity_not_found"
+    assert raised.value.reason == expected_reason

@@ -127,6 +127,9 @@ async def send_message_to_contact(
     priority: str = "normal",
     wait: bool = False,
     wait_seconds: int = 120,
+    federation_mail_transport=None,
+    federation_chat_transport=None,
+    public_origin: str | None = None,
 ) -> str:
     """Send mail or chat to a saved contact, reusing existing 1:1 conversations."""
     if not message.strip():
@@ -158,6 +161,8 @@ async def send_message_to_contact(
                 federation_authority=federation_authority,
                 hosted_signer=hosted_signer,
                 hosted_encryptor=hosted_encryptor,
+                federation_transport=federation_mail_transport,
+                public_origin=public_origin,
                 conversation_id=existing["conversation_id"],
                 subject=subject,
                 body=message,
@@ -169,6 +174,8 @@ async def send_message_to_contact(
             federation_authority=federation_authority,
             hosted_signer=hosted_signer,
             hosted_encryptor=hosted_encryptor,
+            federation_transport=federation_mail_transport,
+            public_origin=public_origin,
             to=target["address"],
             subject=subject,
             body=message,
@@ -183,6 +190,8 @@ async def send_message_to_contact(
             federation_authority=federation_authority,
             hosted_signer=hosted_signer,
             hosted_encryptor=hosted_encryptor,
+            federation_transport=federation_chat_transport,
+            public_origin=public_origin,
             session_id=existing["conversation_id"],
             message=message,
             wait=wait,
@@ -195,6 +204,8 @@ async def send_message_to_contact(
         federation_authority=federation_authority,
         hosted_signer=hosted_signer,
         hosted_encryptor=hosted_encryptor,
+        federation_transport=federation_chat_transport,
+        public_origin=public_origin,
         to_address=target["address"],
         message=message,
         wait=wait,
@@ -371,7 +382,7 @@ async def _resolve_contact_target(
                     + str(auth.did_key or auth.did_aw or "unknown"),
                 )
             except FederationAuthorityError as exc:
-                if exc.reason != "sender_identity_not_found":
+                if exc.reason != "recipient_identity_not_found":
                     raise ServiceError(exc.reason) from exc
         elif registry_client is not None:
             resolved = await registry_client.resolve_address(

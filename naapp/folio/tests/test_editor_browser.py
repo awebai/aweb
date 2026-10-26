@@ -55,10 +55,17 @@ async def test_unavailable_save_preserves_copyable_draft_and_reopen_path(present
                     await expect(page.locator("#body")).to_have_value("Original")
                     draft = "Unsaved text — keep this exactly.\nSecond line."
                     await page.locator("#body").fill(draft)
-                    if failure == "membership":
-                        await db.execute("UPDATE {{tables.edit_sessions}} SET revoked_at=NOW() WHERE link_id=$1", link["token"])
-                    else:
-                        await db.execute("UPDATE {{tables.presentation_links}} SET revoked_at=NOW() WHERE token=$1", link["token"])
+                    async def revoke_before_save(route):
+                        # Revoke after the real save is issued, before it reaches SQL.
+                        # Otherwise the background state poll can disable Save first.
+                        assert route.request.method == "POST"
+                        if failure == "membership":
+                            await db.execute("UPDATE {{tables.edit_sessions}} SET revoked_at=NOW() WHERE link_id=$1", link["token"])
+                        else:
+                            await db.execute("UPDATE {{tables.presentation_links}} SET revoked_at=NOW() WHERE token=$1", link["token"])
+                        await route.continue_()
+
+                    await page.route("**/edit", revoke_before_save)
                     saves = []
                     page.on(
                         "request",

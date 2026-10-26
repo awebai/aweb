@@ -190,3 +190,23 @@ Docker CLI/AWID journey covers actual member signing. The paired Cloud test
 starts at Documents Edit and proves the fragment survives backend validation and
 popup navigation before the Folio shell scrubs it. Exact tested heads and results
 belong to the review and landing receipts, not a production claim.
+
+
+## Installation grant key cutover
+
+Before deploying this build, mount an owner-readable signing-key file for
+`folio:grant-read-1` in `FOLIO_APP_KEY_FILES`. Its purpose is `app-grant-read`
+only, separate from `folio:emit-1` and its existing emit seed/file. A missing
+grant key refuses startup; an emit seed cannot substitute for it.
+
+Folio uses manifest v2. Install by origin so discovery follows the variant
+catalog to `/manifests/v2.json`; `/aweb-app.json` serves the same filled bytes.
+There is no v1 deployment-manifest fallback. The grant key changes the manifest
+digest: deploy the server with installation creation-time grant status first,
+then Folio, then explicitly re-pin every existing team installation. A team
+whose pin cannot authenticate G1 remains refused until its re-pin. Existing
+resident identities and their keys remain unchanged.
+
+The shared TeamGrantSource uses Folio's filled manifest digest and the runtime's
+one TeamServerDirectory. No deploy, key provisioning or pin update is performed
+by landing this code; those are separately authorized operator actions.

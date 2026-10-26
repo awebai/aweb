@@ -1275,6 +1275,7 @@ def test_route_grant_scope_declarations_are_known_and_reviewable():
         ("GET", "/v1/tasks/blocked", "coord.read"),
         ("GET", "/v1/tasks/ready", "coord.read"),
         ("GET", "/v1/tasks/{ref}", "coord.read"),
+        ("GET", "/v1/tasks/{ref}/answer", "coord.read"),
         ("GET", "/v1/tasks/{ref}/comments", "coord.read"),
         ("GET", "/v1/workspaces", "coord.read"),
         ("GET", "/v1/workspaces/online", "coord.read"),

@@ -12,6 +12,9 @@ Sources: [secrets](secrets.md) §§4.1, 7, 9–11, 13; the
 `run_approvals.py`, `runners.py` and `runner_results.py` in `naapp/secrets`.
 Short-lived issuance remains parked. The first runner implementation accepts
 durable slots; it does not silently convert a short-lived slot to durable.
+The first release uses the job's own fixed durable slots. Ordinary-child
+selection remains guarded: a valid `secret` selector refuses with
+`job_not_allowed` before an idempotency claim, run preparation or release.
 
 ## Member tools: inputs and replay
 
@@ -80,7 +83,9 @@ and receipt states below added by S13. The client reads `state` independently
 of HTTP status. `request_id` is the original caller ID; `request_ref` is an
 opaque persisted intent locator, never a token. Status lookup by request ID is
 scoped to the caller; owner inspection uses a scoped opaque locator. Unknown
-and inaccessible locators return the same `404` refusal. Retrieval checks
+and inaccessible locators return the same `404` refusal. Owners inspecting
+another member's receipt see its state/code and references, without its
+projected result entity (secrets §11.2). Retrieval checks
 current read authority and installation generation, including after certificate
 renewal; it never rewrites original certificate/plan/audit provenance.
 
@@ -92,7 +97,7 @@ renewal; it never rewrites original certificate/plan/audit provenance.
 | `completed` | 200 | `request_ref`, `result` (sanitized/projected result). |
 | `result_withheld` | 200 | `request_ref`, `code`, `result` (safe status/count metadata, no body). |
 | `not_sent` | 503 | `request_ref`, `next: "resubmit"`; fresh-send checks may still refuse a retry. |
-| `outcome_unknown` | 200 | `request_ref`; no automatic retry. |
+| `outcome_unknown` | 200 | `request_ref` and `reconcile_ref` name the same original opaque association. Reading either never sends or retries; §11.4 governs reconciliation. |
 | `refused` | refusal HTTP below | `code`; `request_ref` only if an intent exists. |
 | `cancelled`, `reconciled_completed`, `reconciled_failed`, `reconciled_unknown` | 200 on retrieval | `request_ref`; sanitized `result` if one exists. No new execution. |
 
@@ -178,10 +183,51 @@ status=get_status), authorized=...)` in `aweb_secrets.use_routes`, with request-
 getters because runtime DB/services exist after startup. The app owner passes
 both factories through `create_app(tool_routers=...)` and uses the exact
 `authorized` supplied by that factory. S16 owns client rendering/tests and can
-supply its metadata factory; S13 owns `app.py`, the use router and final root
-mounting. Human routers use the one shared OwnerConsole separately.
+supply its metadata factory. The secrets-app seat owns the use router and the
+broker/run services; secrets-root owns `app.py`, configuration, final root
+mounting and S19. The root constructs one shared set of dependencies and injects
+it into the services; all admission, dispatch and release transactions and final
+fences remain in those services. Human routers use the one shared OwnerConsole
+separately.
+
+### Concrete durable-run construction
+
+`RunDispatch(db, *, fence, opener, committer, response_key, service_key, origin,
+producer, registration_view, approvals, use_audit, passkeys, max_backlog_age,
+assignment_ttl, sweep_margin, claim_wait, derived_max_ttl_s,
+internal_destinations, clock)` implements both `JobRunRequests` and
+`RunDispatchAPI`. Root injects the SAME shared installation fence, B2/B3,
+producer and use opener as the broker. `service_key` is the runner-pinned
+service signing key; `response_key` remains independently provisioned private
+material. Assignment TTL is 1–300 seconds; idle claim wait is 0–30 seconds.
+The S3 execution bound uses each original job timeout plus `sweep_margin`,
+independently of assignment expiry. Root schedules `RunDispatch.sweep`, which
+selects only original run contexts and locks the B2 union before S3.
+
+`RunDispatch.status` is its inert `RunStatus` reader. Construct the ONE shared
+`UseStatus(db, fence=shared_fence, approvals=shared_approvals,
+runs=run_dispatch.status)`, pass that status getter to `UseServices`, and use
+the run instance itself for the member-run and runner-adapter getters. Status
+never dispatches or consumes; another principal's held owner inspection
+receives state/code/refs without result contents. `runs=None` preserves the
+existing broker-only status path without querying run tables.
+
+Root applies `apply_run_dispatch_migrations` after app records, shared S3,
+S12/run approvals, jobs/runners and use-context migrations, BEFORE constructing
+`UseApprovalAudit(enable_runs=True)`. The same use-audit branch then routes
+`is_use_approval` and `is_run_approval`; root does not implement either policy
+or proof grammar. This replaces the reserved run failure branch only when the
+actual service is composed. Mount `runner_dispatch_router(service=get_runs)`
+on the API origin outside B1, while `use_router` stays under its exact B1
+dependency. These constructors and routers alone do not establish the final
+root/S19 journey proof. Short-lived/internal issuance remains unavailable.
 
 ## Runner adapter boundary
+
+The concrete immutable `RunnerSubmission` and `RunnerReply` DTOs and structural
+`RunDispatchAPI` protocol live in `aweb_secrets.runner_types`. The actual service
+implementation remains `aweb_secrets.run_service.RunDispatch`; publishing the
+transport types does not implement or activate its transactions.
 
 S15a implements bounded HTTP framing and maps `RunnerRefused` using the existing
 runner protocol §4.5. S13's service owns all database transactions. The adapter
@@ -290,3 +336,122 @@ sweeping, not assignment expiry. Original redaction values stay transient;
 restart/context loss withholds output, never reopens custody. Exact HTTP
 errors, replay/late-report rules and proof obligations remain the runner
 protocol's, without a second lifecycle in an adapter.
+
+## Owner reconciliation control boundary (§11.4)
+
+The frozen types live in `reconciliation_types.py`. `ReconciliationOriginal`
+names the original installation/team/generation, opaque `reconcile_ref`, caller
+request ID, S3 dispatch UUID, original requester and value-free resource/job or
+operation pins. `ReconciliationView` adds the current S3 state. It contains no
+request parameters, response entity, proof or personal link.
+
+`ReconciliationControl` freezes the original association, chosen
+`completed|failed|unknown-closed` outcome, control UUID, actual B2 approval ID,
+approval reference and covered-request hash/policy identity, exact owner
+scope/subject and expiry. The control uses a real owner-only B2 request.
+`ReconciliationControlStatus` exposes its bounded state/delivery metadata;
+`ReconciliationReceipt` exposes the persisted original settlement and control
+identities. Only `ReconciliationPresentation` has a transient personal token,
+excluded from its representation. Status and read DTOs never contain it.
+
+The original-association reader is
+`ReconciliationReads(enable_runs=False).get(tx, *, scope, reconcile_ref)`.
+`scope` is the authoritative `AdmittedInstallation`; the caller holds current
+OWNER, S4 and F6 in this original transaction and performs final F6/session/expiry
+checks after the read. The reader returns an immutable `ReconciliationView` or
+`None`, and refuses a superseded generation. It accepts only the original
+opaque locator. `enable_runs=True` requires the run-dispatch migrations first;
+root composes it with the same enabled run path. Reading grants no mutation
+authority and takes no row locks.
+
+The control flow uses the same Approvals/Passkeys services and B3 APPROVE.
+An explicit S4 POST mints the frozen owner-only B2 LINK control request in the
+caller's transaction; ordinary `Approvals.deliver` follows commit and reports
+its actual result. The exact owner's token may continue in that current S4
+browser, after a postcommit exact-current-owner/F6/session check. The console
+keeps it transient, outside logs and browser storage. Custody's common approval
+entry dispatches from the actual immutable control association; pre-login it
+returns only the personal candidate's scoped sign-in hint. The token is never
+authentication.
+
+Fresh APPROVE records the control decision. A subsequent explicit S4 POST
+settles in one caller transaction, consuming only that control approval and
+atomically reconciling the original S3/B2. The original send approval stays
+consumed. OWNER/designation/credential/F6 preparation precedes downstream
+approval locks; final live authority and expiry checks follow all waits and
+audit writes. The control uses its own provider/audit branch; settlement does
+not acquire the positive-use target/backlog availability gate. GET, reload and
+status never mint, decide or settle, and a lost reply never triggers automatic
+mutation retry. The DTO/read checkpoint precedes the concrete control
+association, provider/audit and mutation-service implementation. Root will
+inject the same branch into the composite and console when that source is
+reviewed; these types alone do not mount it.
+
+
+The concrete control policy and local audit branch are
+`ReconciliationPolicies(db, *, owners=shared_directory)`,
+`ReconciliationApprovers(*, owners=shared_directory)` and
+`ReconciliationAudit(*, reads=shared_reads, approval=plain_original_tx_reader,
+passkeys=request_time_shared_passkeys_getter)`. The classifier is
+`is_reconciliation_control(event)`. Root routes that classifier before any
+fallback and requires the branch. Its `approval(tx, id)` callback must use the
+same shared B2 store's plain `get_in(id, tx)`, never a locking read.
+
+`reconciliation_request(original, *, control_id, outcome, owner_scope,
+owner_subject)` and `reconciliation_policy_ref(request)` freeze the original
+pins, chosen outcome and exact owner into B2's canonical covered request.
+The owner-only policy expires within five minutes. Candidate selection returns
+only that exact current owner; an empty set remains final. Existing
+OwnerDirectory/UseApprovers current-holder routing still supplies B2's
+`is_current`, with no new authority interpreter in root.
+
+Apply `apply_reconciliation_migrations(db)` after shared B2/S3, records and
+use-context/audit migrations, before composing the control branch. Enable run
+reads only after run-dispatch migrations. `ReconciliationAudit.control(tx, *,
+scope, approval_id)` returns the frozen association without tokens or effects.
+Control associations, local events and retained-proof commitments are immutable.
+No hook producer is injected into this branch. Actual settlement retains the
+original S3 reconciled hook. These providers and audit do not themselves mint,
+consume or settle; the caller-owned mutation/final-fence service remains the
+next composition step.
+
+
+`OwnerReconciliationFence` is the frozen console-owned protocol in
+`reconciliation_types.py`. Its readonly `scope`, `owner_scope`, `owner_subject`
+and `expires_at` bind the authoritative installation and exact current S4
+owner. `prepare(tx)` prepares/caches the complete F6/OWNER/B3 union, then exact
+LOGIN and S4 holds, and returns the shared `PreparedCurrentApprovers` handle.
+S13 only checks that handle; it does not prepare another B3 union. `check(tx)`
+is a plain read under those holds, ending with live F6 and pure session expiry.
+Both methods use the identical original caller transaction. A new postcommit
+presentation transaction takes a new fence. This credential-holding fence must
+never span the separate fresh `Approvals.decide` ceremony.
+
+The frozen `ReconciliationControls(*, reads, audit, approvals, passkeys,
+use_audit, broker, runs, clock)` consumes the same shared services. A missing
+broker/run backend refuses before any control write. Its methods are:
+
+- `mint(tx, *, reconcile_ref, outcome, fence) -> PendingApproval`. The pending
+  is internal, never a reply DTO; expiry clamps to the exact S4 expiry and the
+  five-minute policy. Call ordinary `Approvals.deliver` once after commit.
+- `status(tx, *, scope, approval_id) -> ReconciliationControlStatus | None`.
+  The caller authorizes the read. This inert method has no token and uses no
+  credential-holding preparation.
+- `present(tx, *, pending, fence) -> ReconciliationPresentation`. A fresh
+  postcommit transaction checks the exact owner, persisted B2/link identity and
+  live authority; release its token only after that transaction commits.
+- `settle(tx, *, approval_id, fence) -> ReconciliationReceipt`. Outcome comes
+  only from the frozen control. All tentative consumption, original B2/S3
+  consequences and audit records share a savepoint, so a caught refusal cannot
+  leave a partial settlement. The complete B2 union precedes S3; final caller
+  and shared-handle checks and pure control/session deadlines follow all audit
+  waits. A repeated explicit POST may read its identical persisted receipt,
+  never replace another settlement or rearm anything.
+
+`ReconciliationRefused` exposes fixed `.code`/`.status` pairs:
+`reconciliation_not_found`/404, `owner_required`/403,
+`reconciliation_invalid`/400 and `reconciliation_conflict`/409. Shared
+`ApprovalRefused` maps to existing 409 `approval_refused`;
+`InstallationRefused` retains its fixed code/status; `UseAuditUnavailable`
+remains 503 `release_context_unavailable`. Caller 401 session and 403 owner
+refusals pass through; other database failures propagate and roll back.

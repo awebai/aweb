@@ -9,6 +9,7 @@ import pytest
 
 from aweb_naapp import roles
 from aweb_naapp.runtime.authorization import Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.installation import (
     InstallationFence,
     InstallationRefused,
@@ -21,7 +22,7 @@ PRINCIPAL = roles.PrincipalKey(team_id=TEAM, principal_did="did:aw:member")
 
 
 class AuthorityOutsideTransaction:
-    async def grant_for(self, team_id):
+    async def grant_for(self, team_id, certificate_id=None):
         raise AssertionError("authority reads must precede the transaction")
 
     async def status_for(self, team_id):
@@ -31,7 +32,7 @@ class AuthorityOutsideTransaction:
 def grant(installation_id, generation):
     return Grant(
         team_id=TEAM, installation_id=installation_id, generation=generation,
-        scopes=frozenset({"fixture:write"}), fresh_until=time.monotonic() + 60,
+        scopes=frozenset({"fixture:write"}), fresh_until=time.monotonic_ns() + seconds_to_ns(60),
     )
 
 

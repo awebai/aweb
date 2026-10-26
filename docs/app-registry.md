@@ -372,13 +372,14 @@ communication service.
 ## Host installation policy interface
 
 `aweb.install_authority.require_install_admin(tx, request, identity, team_id,
-*, action, app_id)` is the shared administration check for installation
+*, action, app_id, verified_origin=None)` is the shared administration check for installation
 mutations and team app-key revocation. Certificate ingress passes its verified
 `TeamIdentity`; authenticated internal ingress may pass `None`. Internal context
 is verified through the existing proxy trust/HMAC verifier.
 
 The serving application's `app.state.install_admin_policy` implements
-`InstallAdminPolicy`: `async __call__(tx, subject, *, action, app_id) -> bool`.
+`InstallAdminPolicy`:
+`async __call__(tx, subject, *, action, app_id, verified_origin: str | None = None) -> bool`.
 It reads current authority inside the passed mutation transaction. A standalone
 operator configures authority rooted in its team controller and explicit
 delegations; an embedding host supplies its authoritative policy. A configured
@@ -406,6 +407,32 @@ check. Installation confirmation, request approval and queued re-verification
 use it on both certificate and internal ingress; uninstall uses it in the
 lifecycle service. Ordinary members can submit installation requests without
 granting authority. See [the installation API](app-installation-api.md).
+
+Installation confirmation (including update/re-pin through `/v1/apps/install`)
+and request approval have two separate policy phases:
+
+- Before fetching, `require_install_admission` checks the optional serving app's
+  `app.state.install_admission_policy`, implementing `InstallAdmissionPolicy`:
+  `async __call__(tx, subject, *, action, app_id, unverified_origin: str) -> bool`.
+  The origin is an explicitly unverified request hint. A `True` result permits
+  only the network fetch, never an installation write. Without this hook,
+  admission uses the current install-admin check, preserving standalone refusal
+  before network work. A configured admission denial never falls back.
+- After fetching and checking the manifest identity and digest, the final
+  `install_admin_policy` receives `verified_origin=fetched.origin` inside the
+  writing transaction. This is the canonical origin checked by the server's
+  guarded fetch and manifest reader, never the submitted `origin` string.
+  Authority is read again; an admission decision is not reused. Final refusal
+  leaves no installation mutation or success audit record.
+
+Both phases use the same verified subject and require exactly `True` to permit.
+Unexpected policy exceptions return `503 install_policy_unavailable` without
+exposing exception text; policy service errors retain their existing responses.
+The standalone policy accepts and ignores `verified_origin`: only its existing
+operator grants confer authority. Other actions retain their existing policy
+calls without an origin keyword. Hosts upgrading must update their final policy
+to accept the new keyword alongside the server upgrade; there is no signature
+compatibility fallback.
 
 ## Standalone installation administrators
 

@@ -13,11 +13,13 @@ from dataclasses import replace
 
 import httpx
 import pytest
-from aweb_naapp_testing import REGISTRY_URL, Member, did_key
+from aweb_naapp_testing import Member, did_key
 from awid.did import stable_id_from_did_key
 from awid.log import canonical_server_origin
+from awid_service.testing import REGISTRY_URL
 from nacl.signing import SigningKey
 
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.team_auth import AWIDTeamCache, DidAwProfile
 from tests.runtime.conftest import relying_app
 
@@ -152,7 +154,7 @@ async def test_a_resolution_is_keyed_by_registry_origin_and_did_and_reused_for_a
         assert (await client.get("/v1/items", headers=get_items(global_member))).status_code == 200
     did_aw = global_member.extra_cert_fields["member_did_aw"]
     assert list(cache._did_keys) == [(canonical_server_origin(REGISTRY_URL), did_aw)]
-    assert 0 < cache._did_keys[(canonical_server_origin(REGISTRY_URL), did_aw)].expires_at - time.monotonic() <= 60
+    assert 0 < cache._did_keys[(canonical_server_origin(REGISTRY_URL), did_aw)].expires_at - time.monotonic_ns() <= seconds_to_ns(60)
     assert len(did_lookups(registry)) == 1
 
 
@@ -179,7 +181,7 @@ async def test_an_unregistered_answer_is_reused_until_it_expires_then_a_new_regi
         assert (await client.get("/v1/items", headers=get_items(member))).status_code == 401
         assert len(did_lookups(registry)) == lookups
         cache_key = (canonical_server_origin(REGISTRY_URL), did_aw)
-        assert 0 < cache._did_keys[cache_key].expires_at - time.monotonic() <= 60
+        assert 0 < cache._did_keys[cache_key].expires_at - time.monotonic_ns() <= seconds_to_ns(60)
         cache._did_keys[cache_key] = replace(cache._did_keys[cache_key], expires_at=-1)
         response = await client.get("/v1/items", headers=get_items(member))
     assert response.status_code == 200, response.text

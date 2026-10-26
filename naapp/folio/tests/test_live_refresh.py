@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 import uvicorn
+from fastapi import Request
 from playwright.async_api import async_playwright, expect
 from test_present_privacy import OWNER, present_world
 
@@ -19,17 +20,20 @@ __all__ = ["present_world"]
 @pytest.fixture
 async def live_world(present_world):
     app, db, settings = present_world
+    async def owner(request: Request):
+        request.state.folio_installation = await app.state.folio_runtime.installation_fence().permit(OWNER.team_id)
+        return OWNER
     for route in app.routes:
         for dep in getattr(getattr(route, "dependant", None), "dependencies", ()):
             if dep.name == "actor":
-                app.dependency_overrides[dep.call] = lambda: OWNER
+                app.dependency_overrides[dep.call] = owner
     return app, db, settings
 
 
 async def link(world, *, editable=False, version=None):
     _, db, settings = world
     return await mint_presentation_link(
-        db, principal=OWNER, settings=settings, slug="draft", version=version,
+        db, installation_id="test-installation", principal=OWNER, settings=settings, slug="draft", version=version,
         editable=editable, ttl_seconds=300,
     )
 

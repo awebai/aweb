@@ -23,7 +23,7 @@ from aweb.deps import get_db, get_redis
 from aweb.grant_liveness import grant_liveness_expiry, cleanup_expired_grant_liveness, valid_grant_liveness_by_workspace
 from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from aweb.auth_context import GRANT_SCOPE_ANY
-from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
+from aweb.team_auth_deps import TeamIdentity, _resolve_team_key, get_team_identity, team_identity_with_grant_scope
 
 from ..presence import list_agent_presences_by_workspace_ids, update_agent_presence
 
@@ -374,7 +374,7 @@ async def list_agents(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT a.agent_id, a.alias, a.did_key, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address,
+        SELECT a.agent_id, a.alias, a.did_key, projected.did_aw, projected.address,
                a.human_name, a.agent_type, a.role, a.identity_scope,
                a.inbound_mode, a.status,
                e.encryption_key_id,
@@ -389,6 +389,10 @@ async def list_agents(
                e.previous_encryption_key_id,
                e.assertion_signature AS encryption_key_signature
         FROM {{tables.agents}} a
+        CROSS JOIN LATERAL (
+            SELECT CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw,
+                   CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address
+        ) projected
         LEFT JOIN LATERAL (
             SELECT encryption_key_id, encryption_public_key, algorithm,
                    identity_did, identity_stable_id, assertion_custody, created_at_text,
@@ -399,9 +403,9 @@ async def list_agents(
               AND team_id = a.team_id
               AND identity_did = a.did_key
               AND (
-                  (NULLIF(BTRIM(COALESCE(a.did_aw, '')), '') IS NULL
+                  (NULLIF(BTRIM(COALESCE(projected.did_aw, '')), '') IS NULL
                    AND identity_stable_id IS NULL)
-                  OR identity_stable_id = a.did_aw
+                  OR identity_stable_id = projected.did_aw
               )
               AND revoked_at IS NULL
               AND not_before_at <= NOW()
@@ -894,7 +898,7 @@ async def replace_local_identity_key(
 
     aweb_db = db.get_manager("aweb")
     team = await aweb_db.fetch_one(
-        "SELECT team_did_key FROM {{tables.teams}} WHERE team_id = $1",
+        "SELECT team_id FROM {{tables.teams}} WHERE team_id = $1",
         team_id,
     )
     if team is None:
@@ -912,7 +916,7 @@ async def replace_local_identity_key(
             "new_certificate_id": payload.new_certificate_id,
         },
     )
-    if authorizer_did != str(team["team_did_key"]):
+    if authorizer_did != await _resolve_team_key(request, team_id):
         raise HTTPException(
             status_code=403,
             detail="Team controller authorization is required for local identity key replacement",

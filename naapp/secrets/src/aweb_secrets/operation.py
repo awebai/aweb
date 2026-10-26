@@ -54,6 +54,7 @@ FIELDS = frozenset(
         "timeout_s",
     }
 )
+OPTIONAL_FIELDS = frozenset({"outcome_unknown_retry"})
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 PLACEMENTS = ("path", "query", "body")
@@ -297,8 +298,35 @@ def _check_store_as_secret(store: Any) -> None:
     )
 
 
+def _check_outcome_unknown_retry(after: Mapping[str, Any]) -> None:
+    retry = after.get("outcome_unknown_retry")
+    if retry is None:
+        return
+    retry = _exact(
+        retry, frozenset({"delay_s", "upstream_honours_idempotency_key"}), "outcome_unknown_retry"
+    )
+    _require(
+        type(retry["delay_s"]) is int and 1 <= retry["delay_s"] <= 60,
+        "retry delay_s is 1 to 60 seconds",
+    )
+    honours = retry["upstream_honours_idempotency_key"]
+    _require(type(honours) is bool, "upstream_honours_idempotency_key is a boolean")
+    _require(after["reconcile"] is None, "a reconcile lookup requires manual settlement")
+    _require(
+        not honours or after["idempotency"] is not None,
+        "the upstream guarantee needs an idempotency header",
+    )
+    _require(
+        after["side_effect"] == "none" or (honours and after["idempotency"] is not None),
+        "an automatic repeat needs side_effect none or an upstream-honoured idempotency header",
+    )
+
+
 def _check(after: Any) -> None:
-    _exact(after, FIELDS, "an operation")
+    _require(
+        isinstance(after, Mapping) and FIELDS <= set(after) <= FIELDS | OPTIONAL_FIELDS,
+        "an operation needs its required fields and only known optional fields",
+    )
     _require(type(after["v"]) is int and after["v"] == 1, "this is operation template v1")
     _require(_matches(IDENTIFIER, after["operation_id"]), "the operation id is a lowercase slug")
     _require(_matches(SECRET_ID, after["secret_id"]), "secret_id is a minted secret id")
@@ -364,6 +392,7 @@ def _check(after: Any) -> None:
         or (_matches(IDENTIFIER, reconcile) and reconcile != after["operation_id"]),
         "reconcile names another operation",
     )
+    _check_outcome_unknown_retry(after)
     timeout = after["timeout_s"]
     _require(type(timeout) is int and 1 <= timeout <= MAX_TIMEOUT_S, "timeout_s is 1 to 30 seconds")
     if handling == "store_as_secret":

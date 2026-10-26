@@ -119,7 +119,7 @@ wheels = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.4.0"
+version = "0.5.1rc1"
 source = { editable = "../../naapp-lib" }
 
 [package.metadata]
@@ -158,7 +158,7 @@ provides-extras = ["crypto", "nonces", "runtime", "outbox", "signing-key", "disp
 dev = [
     { name = "aweb-naapp", extras = ["egress"] },
     { name = "aweb-naapp", extras = ["runtime", "pages"] },
-    { name = "aweb-naapp-testing", editable = "../../naapp-lib/testing" },
+    { name = "aweb-naapp-testing", extras = ["server"], editable = "../../naapp-lib/testing" },
     { name = "cryptography", specifier = ">=44.0.0" },
     { name = "hatchling", specifier = ">=1.32.4" },
     { name = "httpx2", specifier = ">=2.9.1" },
@@ -172,7 +172,7 @@ dev = [
 
 [[package]]
 name = "awid-service"
-version = "0.5.31"
+version = "0.5.33rc1"
 source = { editable = "../../awid" }
 dependencies = [
     { name = "base58" },

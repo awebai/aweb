@@ -14,9 +14,11 @@ from aweb.app_registry import (
     get_installation_on,
     manifest_registration,
     next_installation_generation_on,
+    normalize_app_id,
     normalize_scopes,
     validate_team_id,
 )
+from aweb.hook_bindings import revoke_uninstalled_bindings
 from aweb.installation_hooks import write_manifest_bindings_on
 from aweb.hook_producer import MutationHookContext, enqueue_mutation_hook
 from aweb.service_errors import ServiceError
@@ -27,6 +29,21 @@ class InstallationError(ServiceError):
         super().__init__(message)
         self.code = code
         self.status_code = status_code
+
+
+async def _lock_installation_on(tx, *, team_id: str, app_id: str) -> dict | None:
+    """Serialize final policy reads and writes, including an absent row.
+
+    Routes take this before final authorization; the writer retakes the same
+    transaction locks. Always acquire the advisory lock before the row lock.
+    """
+    team_id = validate_team_id(team_id)
+    app_id = normalize_app_id(app_id)
+    await tx.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        "aweb.installation:" + team_id + ":" + app_id,
+    )
+    return await get_installation_on(tx, team_id=team_id, app_id=app_id, for_update=True)
 
 
 async def install_verified_manifest_on(
@@ -58,11 +75,7 @@ async def install_verified_manifest_on(
     ):
         raise InstallationError("generation_invalid", "Expected generation must be a positive BIGINT")
 
-    await tx.execute(
-        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-        "aweb.installation:" + team_id + ":" + app_id,
-    )
-    current = await get_installation_on(tx, team_id=team_id, app_id=app_id, for_update=True)
+    current = await _lock_installation_on(tx, team_id=team_id, app_id=app_id)
     if current is not None:
         if expected_generation is None:
             raise InstallationError("generation_required", "Supply the current installation generation")
@@ -90,7 +103,7 @@ async def install_verified_manifest_on(
         app_id, fetched.origin, fetched.digest, registration.app_version, registration.manifest_version,
     )
     await tx.execute(
-        """INSERT INTO {{tables.team_app_installs}}
+        """INSERT INTO {{tables.team_app_installs}} AS previous
            (team_id, app_id, origin, digest, app_version, manifest_version,
             granted_scopes, installed_by_agent_id, registered_from_manifest_bytes,
             installation_id, generation, state, origin_verified, manifest_bytes, updated_at)
@@ -103,6 +116,8 @@ async def install_verified_manifest_on(
                installed_by_agent_id = EXCLUDED.installed_by_agent_id,
                registered_from_manifest_bytes = TRUE,
                installation_id = EXCLUDED.installation_id, generation = EXCLUDED.generation,
+               installed_at = CASE WHEN previous.installation_id = EXCLUDED.installation_id
+                   THEN previous.installed_at ELSE EXCLUDED.installed_at END,
                state = 'active', origin_verified = TRUE,
                origin_verification_error = NULL, manifest_bytes = EXCLUDED.manifest_bytes,
                updated_at = NOW()""",
@@ -122,6 +137,53 @@ async def install_verified_manifest_on(
         payload["previous_digest"] = current["digest"]
     await enqueue_mutation_hook(tx, team_id=team_id, payload=payload, hook_context=hook_context)
     return await get_installation_on(tx, team_id=team_id, app_id=app_id)
+
+
+async def cleanup_installation_on(tx, *, installation: dict) -> None:
+    """Run cleanups under the current installation row lock, in its transaction.
+
+    This is the single seam for installation-scoped retirement. Do not commit,
+    open a separate transaction or suppress a cleanup failure.
+    """
+    from aweb.coordination.app_tasks import cancel_installation_requests_on
+
+    await revoke_uninstalled_bindings(tx, team_id=installation["team_id"], app_id=installation["app_id"])
+    await cancel_installation_requests_on(
+        tx, team_id=installation["team_id"], app_id=installation["app_id"],
+        installation_id=installation["installation_id"],
+    )
+
+
+async def uninstall_installation_on(tx, *, team_id: str, app_id: str, expected_generation: int) -> dict:
+    """Retire authority without fetching or deleting the retained installation.
+
+    The route checks current admin policy in this transaction. Keep the pin,
+    keys and identity so an authenticated app can observe confirmed uninstall
+    even when its origin is unavailable. App content remains with its owner.
+    """
+    team_id = validate_team_id(team_id)
+    app_id = normalize_app_id(app_id)
+    if type(expected_generation) is not int or not 1 <= expected_generation <= 9223372036854775807:
+        raise InstallationError("generation_invalid", "Expected generation must be a positive BIGINT")
+    current = await get_installation_on(tx, team_id=team_id, app_id=app_id, for_update=True)
+    if current is None:
+        raise InstallationError("installation_not_found", "Installation not found", 404)
+    if current["generation"] != expected_generation:
+        raise InstallationError("generation_conflict", "Installation changed; read it again", 409)
+    if current["state"] == "uninstalled":
+        return current
+    await cleanup_installation_on(tx, installation=current)
+    # A confirmation prepared before uninstall must conflict rather than
+    # silently reinstalling after the administrator removed the app.
+    generation = await next_installation_generation_on(tx, team_id=team_id, app_id=app_id)
+    await tx.execute(
+        "UPDATE {{tables.team_app_installs}} SET state='uninstalled', generation=$3, "
+        "origin_verification_error=NULL, updated_at=NOW() WHERE team_id=$1 AND app_id=$2",
+        team_id, app_id, generation,
+    )
+    retired = await get_installation_on(tx, team_id=team_id, app_id=app_id)
+    assert retired is not None  # The same transaction still holds this row lock.
+    return retired
 
 
 async def _write_verified_registrations(tx, *, team_id, app_id, fetched, registration):
