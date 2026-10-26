@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from aweb_naapp.hooks.catalog import load_catalog
-from aweb_naapp.manifest import load_manifest
+from aweb_naapp.manifest import load_manifest, tool_params
 from aweb_naapp.runtime.app_keys import load_app_key
 
 from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE
@@ -32,11 +32,15 @@ def test_the_template_commits_no_keys() -> None:
     assert all(set(entry) == {"kid", "purposes"} for entry in template()["app_keys"])
 
 
-def test_ingest_is_logs_only_tool_and_takes_hook_deliveries_only(tmp_path: Path) -> None:
+def test_only_ingest_takes_hooks_and_only_delegation_tools_are_agent_invocable(tmp_path: Path) -> None:
     manifest = _filled(tmp_path)
     assert manifest.manifest_version == 2
     assert manifest.hook_tools == ("ingest",)
-    assert manifest.agent_tools == () and manifest.surface_tools == ()
+    assert set(manifest.agent_tools) == {"verify", "reader-slot"}
+    assert manifest.surface_tools == ()
+    assert manifest.tool_contexts("ingest") == frozenset({"hook"})
+    for name in manifest.agent_tools:
+        assert manifest.tool_contexts(name) == frozenset({"agent"})
 
 
 def test_ingest_is_registered_on_every_hook_of_the_catalog(tmp_path: Path) -> None:
@@ -86,3 +90,30 @@ def test_kids_and_purposes_come_from_the_file_and_keys_from_configuration(
         key = load_app_key(settings, manifest, purpose)
         assert purpose in template_keys[key.kid]
         assert key.did_key == did_key_of(key_files[key.kid])
+
+
+def test_delegated_verify_exposes_only_the_optional_epoch_selector(tmp_path: Path) -> None:
+    manifest = _filled(tmp_path)
+    verify = manifest.tools_by_name()["verify"]
+    assert (verify["method"], verify["path"], verify["mutation"]) == ("POST", "/v1/integrity", False)
+    assert list(verify["scopes"]) == ["logs.verify"]
+    assert verify["body"]["mode"] == "json"
+    assert tool_params(verify) == ([], ["chain_epoch"])
+    assert set(verify["input_schema"]["properties"]) == {"chain_epoch"}
+    epoch = verify["input_schema"]["properties"]["chain_epoch"]
+    assert epoch["type"] == "integer" and epoch["minimum"] == 1
+    assert verify["input_schema"]["additionalProperties"] is False
+    assert list(verify["params"]) == [{"name": "chain_epoch", "in": "body"}]
+    assert verify.get("auth") != "none"
+
+
+def test_reader_slot_takes_only_the_required_contact_commitment(tmp_path: Path) -> None:
+    slot = _filled(tmp_path).tools_by_name()["reader-slot"]
+    assert (slot["method"], slot["path"], slot["mutation"]) == ("POST", "/v1/reader-slots", True)
+    assert list(slot["scopes"]) == ["logs.readers"]
+    assert slot["body"]["mode"] == "json"
+    assert tool_params(slot) == (["contact_sha256"], [])
+    assert set(slot["input_schema"]["properties"]) == {"contact_sha256"}
+    assert slot["input_schema"]["additionalProperties"] is False
+    assert list(slot["params"]) == [{"name": "contact_sha256", "in": "body"}]
+    assert slot.get("auth") != "none"
