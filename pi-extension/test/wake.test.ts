@@ -292,3 +292,51 @@ test("dispatcher awaits async sendMessage rejection without relying on global un
   assert.equal(logs.some((entry) => entry.fields?.message === "async pi rejection"), true);
   assert.equal(logs.some((entry) => entry.event === "wake_delivered"), false);
 });
+
+for (const mode of [undefined, "line"] as const) {
+  for (const kind of ["mail", "chat"] as const) {
+    test(`${kind} ${mode ?? "default"} presentation keeps the acceptance/read boundary`, async (t) => {
+      const previous = process.env.AWEB_WAKE_PRESENTATION;
+      if (mode === undefined) delete process.env.AWEB_WAKE_PRESENTATION;
+      else process.env.AWEB_WAKE_PRESENTATION = mode;
+      t.after(() => {
+        if (previous === undefined) delete process.env.AWEB_WAKE_PRESENTATION;
+        else process.env.AWEB_WAKE_PRESENTATION = previous;
+      });
+      const id = "12345678-1234-1234-1234-123456789abc";
+      const session = "87654321-4321-4321-4321-cba987654321";
+      const sends: Array<Parameters<ExtensionAPI["sendMessage"]>> = [];
+      let accept!: () => void;
+      const accepted = new Promise<void>((resolve) => { accept = resolve; });
+      const dispatcher = createWakeDispatcher(fakePi((message, options) => {
+        sends.push([message, options]);
+        return accepted;
+      }), () => {});
+      const posts: Array<[string, unknown]> = [];
+      const client = {
+        get: async () => ({ messages: [{ message_id: id, from_alias: "alice", from_agent: "alice", subject: "hello", body: "private body", created_at: "2026-01-01T00:00:00Z", timestamp: "2026-01-01T00:00:00Z" }] }),
+        post: async (path: string, body?: unknown) => { posts.push([path, body]); },
+      };
+      const pending = dispatchAgentEvent({
+        client: client as never, pinStore: new PinStore(),
+        trust: { normalizeResolvedTrust: async () => ({ status: "verified", stored: false }) } as unknown as SenderTrustManager,
+        self: { alias: "eve", address: "", did: "did:key:eve", stableID: "" },
+        onAwakening: (event) => dispatcher.enqueue(event),
+      }, new Set(), { type: kind === "mail" ? "mail_message" : "chat_message", message_id: id, session_id: session });
+      try {
+        for (let attempt = 0; attempt < 20 && sends.length === 0; attempt += 1) await waitForDrain();
+        assert.equal(sends.length, 1);
+        const content = sends[0][0].content;
+        if (mode === "line") {
+          assert.equal(content, kind === "mail"
+            ? `aweb mail waiting: "hello" from alice — read: aw mail show --message-id ${id}; reply: aw mail reply ${id}`
+            : `aweb chat waiting: from alice — read: aw chat history --session-id ${session} --message-id ${id}; reply: aw chat send --session-id ${session}`);
+        } else {
+          assert.ok(typeof content === "string" && content.includes("private body") && content.includes(`aweb ${kind} event received.`));
+        }
+        assert.deepEqual(posts, []);
+      } finally { accept(); await pending; dispatcher.close(); }
+      assert.deepEqual(posts, kind === "mail" ? [[`/v1/messages/${id}/ack`, undefined]] : [[`/v1/chat/sessions/${session}/read`, { message_ids: [id] }]]);
+    });
+  }
+}

@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   createTerminalAwakeningHandler, consumeAgentEvents, dispatchAgentEvent, PinStore,
   type SenderTrustManager,
@@ -7,11 +7,11 @@ import {
 const messageID = "12345678-1234-1234-1234-123456789abc";
 const sessionID = "87654321-4321-4321-4321-cba987654321";
 
-function fixture(kind: "mail" | "chat", state: string | (() => string), input: (home: string, text: string) => Promise<void>) {
+function fixture(kind: "mail" | "chat", state: string | (() => string), input: (home: string, text: string) => Promise<void>, subject = "full message") {
   const client = {
     get: vi.fn().mockResolvedValue({ messages: [{
       message_id: messageID, from_alias: "alice", from_agent: "alice", from_address: "acme.com/alice",
-      subject: "full message", body: "hello\x1b[31m\r\nactual\x07\x9b body\tend",
+      subject, body: "hello\x1b[31m\r\nactual\x07\x9b body\tend",
       created_at: "2026-01-01T00:00:00Z", timestamp: "2026-01-01T00:00:00Z",
     }] }),
     post: vi.fn().mockResolvedValue(undefined),
@@ -94,6 +94,66 @@ describe.each(["mail", "chat"] as const)("terminal %s presentation acknowledgmen
     await expect(deliver()).rejects.toThrow("terminal");
     expect(input).not.toHaveBeenCalled();
     expect(client.post).not.toHaveBeenCalled();
+  });
+});
+
+describe("opt-in one-line terminal presentation", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test.each(["mail", "chat"] as const)("%s keeps the exact fetch command and acknowledges only accepted input", async (kind) => {
+    vi.stubEnv("AWEB_WAKE_PRESENTATION", "line");
+    let accept!: () => void;
+    const accepted = new Promise<void>((resolve) => { accept = resolve; });
+    const input = vi.fn(async () => accepted);
+    const { client, deliver } = fixture(kind, "idle", input);
+    const pending = deliver();
+    try {
+      await vi.waitFor(() => expect(input).toHaveBeenCalledOnce());
+      const text = input.mock.calls[0][1];
+      const expected = kind === "mail"
+        ? `aweb mail waiting: "full message" from acme.com/alice — read: aw mail show --message-id ${messageID}; reply: aw mail reply ${messageID}`
+        : `aweb chat waiting: from acme.com/alice — read: aw chat history --session-id ${sessionID} --message-id ${messageID}; reply: aw chat send --session-id ${sessionID}`;
+      expect(text).toBe(expected);
+      expect(text).not.toContain("actual");
+      expect(text).not.toContain("\n");
+      expect(client.post).not.toHaveBeenCalled();
+    } finally { accept(); await pending; }
+    expect(client.post).toHaveBeenCalledOnce();
+    if (kind === "mail") expect(client.post).toHaveBeenCalledWith(`/v1/messages/${messageID}/ack`);
+    else expect(client.post).toHaveBeenCalledWith(`/v1/chat/sessions/${sessionID}/read`, { message_ids: [messageID] });
+  });
+
+  test.each(["", "unknown"])("%s preserves full presentation", async (mode) => {
+    vi.stubEnv("AWEB_WAKE_PRESENTATION", mode);
+    const input = vi.fn(async () => {});
+    await fixture("mail", "idle", input).deliver();
+    expect(input.mock.calls[0][1]).toContain("aweb mail event received.");
+    expect(input.mock.calls[0][1]).toContain("actual body");
+  });
+
+  test.each([
+    ["one\n\x00two\t", "one two"],
+    ["x".repeat(170), "x".repeat(157) + "..."],
+  ])("sanitizes and bounds the subject", async (subject, displayed) => {
+    vi.stubEnv("AWEB_WAKE_PRESENTATION", "line");
+    const input = vi.fn(async () => {});
+    await fixture("mail", "idle", input, subject).deliver();
+    expect(input.mock.calls[0][1]).toContain(`waiting: "${displayed}" from`);
+  });
+
+  test("a rejected line still leaves source unread", async () => {
+    vi.stubEnv("AWEB_WAKE_PRESENTATION", "line");
+    const { client, deliver } = fixture("mail", "idle", async () => { throw new Error("input refused"); });
+    await expect(deliver()).rejects.toThrow("input refused");
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  test("keeps the receiving identity and literal fetch command on one line", async () => {
+    vi.stubEnv("AWEB_WAKE_PRESENTATION", "line");
+    const input = vi.fn(async () => {});
+    const handler = createTerminalAwakeningHandler({ home: "/agent", session: { inspect: async () => ({ state: "idle" }), input } });
+    await handler({ kind: "mail", content: "private body", deliveryIntent: "wake", meta: { from: "alice", subject: "hello", message_id: messageID, trust_status: "verified" } }, "/joined team");
+    expect(input.mock.calls[0][1]).toBe(`aweb mail waiting: "hello" from alice — read: AWEB_IDENTITY_HOME='/joined team' aw mail show --message-id ${messageID}; reply: AWEB_IDENTITY_HOME='/joined team' aw mail reply ${messageID}`);
   });
 });
 

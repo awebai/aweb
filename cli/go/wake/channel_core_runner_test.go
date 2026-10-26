@@ -663,3 +663,79 @@ func TestFreshChildStatusIncludesZeroRestartCount(t *testing.T) {
 		t.Fatalf("restart_count=%q, want explicit 0 in fresh child status: %s", got, data)
 	}
 }
+
+func TestBundledWakePresentationMode(t *testing.T) {
+	for _, mode := range []string{"", "line"} {
+		for _, kind := range []string{"mail", "chat"} {
+			t.Run(mode+"/"+kind, func(t *testing.T) {
+				t.Setenv("AWEB_WAKE_PRESENTATION", mode)
+				root := t.TempDir()
+				store, err := NewStore(filepath.Join(root, "state"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				inputPath := filepath.Join(root, "input.txt")
+				messageID := "12345678-1234-1234-1234-123456789abc"
+				sessionID := "87654321-4321-4321-4321-cba987654321"
+				var mu sync.Mutex
+				var marked []string
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodPost {
+						mu.Lock()
+						marked = append(marked, r.URL.Path)
+						mu.Unlock()
+						_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+						return
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{{
+						"message_id": messageID, "from_alias": "bob", "from_agent": "bob", "subject": "hello", "body": "private body", "created_at": "2026-01-01T00:00:00Z", "timestamp": "2026-01-01T00:00:00Z",
+					}}})
+				}))
+				defer server.Close()
+				home := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read", "mail.send", "chat.read"})
+				reg := Registration{Home: filepath.Join(root, "terminal"), IdentityHome: home, Delivery: DeliverySession}
+				_ = os.MkdirAll(reg.Home, 0o700)
+				child := NewChannelCoreRunner(store).StartChild(context.Background(), reg, channelCoreChildConfig{OatsBin: writeFakeOATS(t, root, inputPath), AWCommand: writeFakeAW(t, root, "")})
+				defer child.Stop()
+				waitForStatus(t, child, func(st ChannelCoreStatus) bool { return st.Running && st.LastError == "" })
+				event := awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: messageID}
+				if kind == "chat" {
+					event.Type = awid.AgentEventActionableChat
+					event.SessionID = sessionID
+				}
+				child.Offer(reg.ReceiveBindings()[0], event)
+				waitForFileContains(t, inputPath, messageID)
+				data, err := os.ReadFile(inputPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				text := string(data)
+				if mode == "line" {
+					canonicalHome, _ := filepath.EvalSymlinks(home)
+					prefix := "AWEB_IDENTITY_HOME=" + shellQuoteForTest(canonicalHome) + " aw "
+					read, reply := "mail show --message-id "+messageID, "mail reply "+messageID
+					if kind == "chat" {
+						read = "chat history --session-id " + sessionID + " --message-id " + messageID
+						reply = "chat send --session-id " + sessionID
+					}
+					if !strings.HasPrefix(text, "aweb "+kind+" waiting:") || !strings.Contains(text, "read: "+prefix+read+"; reply: "+prefix+reply) || strings.Contains(text, "private body") || strings.ContainsAny(text, "\r\n") {
+						t.Fatalf("incorrect one-line presentation: %s", data)
+					}
+				} else if !strings.Contains(text, "private body") || !strings.Contains(text, "aweb "+kind+" event received.") {
+					t.Fatalf("default full presentation changed: %s", data)
+				}
+				waitForCond(t, "accepted presentation marked read", func() bool { mu.Lock(); defer mu.Unlock(); return len(marked) == 1 })
+				want := "/v1/messages/" + messageID + "/ack"
+				if kind == "chat" {
+					want = "/v1/chat/sessions/" + sessionID + "/read"
+				}
+				mu.Lock()
+				got := append([]string(nil), marked...)
+				mu.Unlock()
+				if len(got) != 1 || got[0] != want {
+					t.Fatalf("read marks = %v, want %s", got, want)
+				}
+			})
+		}
+	}
+}

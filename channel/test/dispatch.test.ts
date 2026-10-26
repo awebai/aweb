@@ -431,14 +431,16 @@ describe("dispatchEvent", () => {
     expect(client.post).toHaveBeenCalledWith("/v1/messages/msg-windowed/ack");
   });
 
-  test("acks mail only after the Claude notification (presentation) resolves", async () => {
+  test.each(["", "line"])("%s acks mail only after the Claude notification (presentation) resolves", async (mode) => {
+    const previousMode = process.env.AWEB_WAKE_PRESENTATION;
+    process.env.AWEB_WAKE_PRESENTATION = mode;
     let finishNotification: (() => void) | undefined;
     const notification = vi.fn(() => new Promise<void>((resolve) => {
       finishNotification = resolve;
     }));
     const mcp = { notification } as unknown as { notification: typeof notification };
     const client = {
-      get: vi.fn().mockResolvedValue({ messages: [await signedInboxMail("msg-claude-pending")] }),
+      get: vi.fn().mockResolvedValue({ messages: [await signedInboxMail("12345678-1234-1234-1234-123456789abc")] }),
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
@@ -452,16 +454,29 @@ describe("dispatchEvent", () => {
       trust,
       self,
       new Set(),
-      { type: "mail_message", message_id: "msg-claude-pending" } satisfies AgentEvent,
+      { type: "mail_message", message_id: "12345678-1234-1234-1234-123456789abc" } satisfies AgentEvent,
     );
     await vi.waitFor(() => expect(notification).toHaveBeenCalledTimes(1));
 
-    // Not acked while presentation (the notification) is still pending...
-    expect(client.post).not.toHaveBeenCalled();
-    finishNotification?.();
-    await dispatch;
+    try {
+      const content = notification.mock.calls[0][0].params.content;
+      if (mode === "line") {
+        expect(content).toContain("aweb mail waiting:");
+        expect(content).toContain("read: aw mail show --message-id 12345678-1234-1234-1234-123456789abc; reply: aw mail reply 12345678-1234-1234-1234-123456789abc");
+        expect(content).not.toContain("\n");
+      } else {
+        expect(content).toBe((await signedInboxMail("12345678-1234-1234-1234-123456789abc")).body);
+      }
+      // Not acked while presentation (the notification) is still pending...
+      expect(client.post).not.toHaveBeenCalled();
+    } finally {
+      finishNotification?.();
+      await dispatch;
+      if (previousMode === undefined) delete process.env.AWEB_WAKE_PRESENTATION;
+      else process.env.AWEB_WAKE_PRESENTATION = previousMode;
+    }
     // ...acked once presentation completes.
-    expect(client.post).toHaveBeenCalledWith("/v1/messages/msg-claude-pending/ack");
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/12345678-1234-1234-1234-123456789abc/ack");
   });
 
   test("deduplicates Claude notification replay and acks the delivered mail", async () => {
