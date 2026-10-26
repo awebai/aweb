@@ -345,6 +345,19 @@ request ID, S3 dispatch UUID, original requester and value-free resource/job or
 operation pins. `ReconciliationView` adds the current S3 state. It contains no
 request parameters, response entity, proof or personal link.
 
+`ReconciliationView` and `ReconciliationControlStatus` append
+`repeat_state: State | None = None`. After authorizing the original scope and
+generation, the reader observes its unique broker continuation in the same
+caller transaction with a plain SELECT. No continuation means `None`; a
+mismatched or multiple association refuses. Run originals retain `None`.
+Shared S3 migrations, including 002 continuations, must be applied before
+constructing or serving this reader. The observation adds no authority and
+never changes `ReconciliationOriginal` or the covered control request/hash.
+The page can show an admitted/dispatching repeat in flight, an unknown repeat
+as uncertain, and a settled original whose unknown repeat no longer blocks
+the pair while retaining its result as evidence. The owner may still settle
+an uncertain original while the repeat is in flight; status grants no action.
+
 `ReconciliationControl` freezes the original association, chosen
 `completed|failed|unknown-closed` outcome, control UUID, actual B2 approval ID,
 approval reference and covered-request hash/policy identity, exact owner
