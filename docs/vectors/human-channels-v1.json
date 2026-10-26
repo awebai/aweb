@@ -1566,6 +1566,123 @@
       "canonical": "{\"audience\":\"café <>& ☃\",\"authorization\":\"subject\",\"expected_generation\":0,\"expires_at\":\"0001-10-21T01:00:00Z\",\"issued_at\":\"0001-10-21T00:00:00Z\",\"mode\":\"native\",\"operation\":\"register\",\"platform\":\"telegram\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"kind\":\"platform\"},\"signer\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"subject\":{\"did\":\"did:aw:human-channels-vector\",\"kind\":\"native\"},\"version\":\"aweb-presence-intent-v1\"}",
       "sha256": "sha256:1cea4a2212f1b8d321a9f32d63ada8bd4bc60af17a865480610c1ee71f7349d2",
       "signature": "e/OX7PKNgR7J+vi8PUWJKp7ZQkox0YODuaQUE+WV6RTfGi/Nl1nFTYFjipx+BTujbAWSlsv4KLAFa6xTLHTCDQ"
+    },
+    {
+      "name": "ResolveRequest_public_team_aweb:juan.aweb.ai",
+      "schema": "ResolveRequest",
+      "value": {
+        "version": "aweb-human-resolve-v1",
+        "team_id": "aweb:juan.aweb.ai",
+        "selector": "juan"
+      },
+      "canonical": "{\"selector\":\"juan\",\"team_id\":\"aweb:juan.aweb.ai\",\"version\":\"aweb-human-resolve-v1\"}",
+      "sha256": "sha256:bf4adc944eda8546401da5253bf4dff28a7b24f715ea3bd9428dc0871c911ebb",
+      "signature": "AKziT/swNlPN3ZQao6XXFpM1TadttxhdAIu3ySdsuEvwecPrbkwefNGvLEnuxeLdiM6s2P5PyfPxdDFCnVQbDg"
+    },
+    {
+      "name": "ResolveRequest_public_team_ops:localhost",
+      "schema": "ResolveRequest",
+      "value": {
+        "version": "aweb-human-resolve-v1",
+        "team_id": "ops:localhost",
+        "selector": "juan"
+      },
+      "canonical": "{\"selector\":\"juan\",\"team_id\":\"ops:localhost\",\"version\":\"aweb-human-resolve-v1\"}",
+      "sha256": "sha256:8b331b706a403d037e01e151ac786e74f57eeead1784c93939ffb4cf89dd7baf",
+      "signature": "D0n2gCZxHT45h1pGOEwNpgMIU5abDpdMwAIXBF2r/c4bIyyzXZw/JZnZgtqwyhPDuM5tYxw4+ejFdDY26TdpDQ"
+    },
+    {
+      "name": "ResolveRequest_public_team_backend:example.test",
+      "schema": "ResolveRequest",
+      "value": {
+        "version": "aweb-human-resolve-v1",
+        "team_id": "backend:example.test",
+        "selector": "juan"
+      },
+      "canonical": "{\"selector\":\"juan\",\"team_id\":\"backend:example.test\",\"version\":\"aweb-human-resolve-v1\"}",
+      "sha256": "sha256:592ff0ecbd28ded1c89988540378bb7fe5ad65c6f050c9fdef188fce075bbb21",
+      "signature": "fOjMluW5Ge14e4DUZDJ+AAyj0RKr8fTbdHaj+CRb5za+H6FXGaxXoIABpn9EEEZjiL2HbHT49D4/9caZI2TJDQ"
+    },
+    {
+      "name": "AuthorityFacts_public_team_aweb:juan.aweb.ai",
+      "schema": "AuthorityFacts",
+      "value": {
+        "principal": {
+          "kind": "native",
+          "did": "did:aw:human-channels-vector"
+        },
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "route": {
+          "service": "did:aw:human-channels-vector",
+          "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "audience": "café <>& ☃"
+        },
+        "custody": "self_custodial",
+        "active": true,
+        "access": "allowed",
+        "inbound": "allowed",
+        "confidentiality": "end_to_end",
+        "capabilities": [],
+        "authorization_revision": "vector",
+        "team_id": "aweb:juan.aweb.ai"
+      },
+      "canonical": "{\"access\":\"allowed\",\"active\":true,\"authorization_revision\":\"vector\",\"capabilities\":[],\"confidentiality\":\"end_to_end\",\"custody\":\"self_custodial\",\"inbound\":\"allowed\",\"principal\":{\"did\":\"did:aw:human-channels-vector\",\"kind\":\"native\"},\"route\":{\"audience\":\"café <>& ☃\",\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"aweb:juan.aweb.ai\"}",
+      "sha256": "sha256:1560c550830e9cff13cd6999f82c2dbc2b6501efe3bd122a9d92f6fcf883323a",
+      "signature": "VQKGSOD6xhCnO8nf6qj4GVJuln0KH0i1K+LZzJh8Om7+1sUCxN9EP4ryRAj0KRRyixuyXwxZqiRiCcpiC+irBA"
+    },
+    {
+      "name": "AuthorityFacts_public_team_ops:localhost",
+      "schema": "AuthorityFacts",
+      "value": {
+        "principal": {
+          "kind": "native",
+          "did": "did:aw:human-channels-vector"
+        },
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "route": {
+          "service": "did:aw:human-channels-vector",
+          "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "audience": "café <>& ☃"
+        },
+        "custody": "self_custodial",
+        "active": true,
+        "access": "allowed",
+        "inbound": "allowed",
+        "confidentiality": "end_to_end",
+        "capabilities": [],
+        "authorization_revision": "vector",
+        "team_id": "ops:localhost"
+      },
+      "canonical": "{\"access\":\"allowed\",\"active\":true,\"authorization_revision\":\"vector\",\"capabilities\":[],\"confidentiality\":\"end_to_end\",\"custody\":\"self_custodial\",\"inbound\":\"allowed\",\"principal\":{\"did\":\"did:aw:human-channels-vector\",\"kind\":\"native\"},\"route\":{\"audience\":\"café <>& ☃\",\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:localhost\"}",
+      "sha256": "sha256:02041766c07e57e4ad959984316e982ed58a491f6c60ec8b5cc89e93d28f71ef",
+      "signature": "dLmwpSZhGWKd9wADvD8gXsiHDy+zRaMYEOJDP0+N7D/mB8i7xC9vpWWATp52VZcwib6TvxGONyyj3b/9Ll+4Ag"
+    },
+    {
+      "name": "AuthorityFacts_public_team_backend:example.test",
+      "schema": "AuthorityFacts",
+      "value": {
+        "principal": {
+          "kind": "native",
+          "did": "did:aw:human-channels-vector"
+        },
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "route": {
+          "service": "did:aw:human-channels-vector",
+          "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "audience": "café <>& ☃"
+        },
+        "custody": "self_custodial",
+        "active": true,
+        "access": "allowed",
+        "inbound": "allowed",
+        "confidentiality": "end_to_end",
+        "capabilities": [],
+        "authorization_revision": "vector",
+        "team_id": "backend:example.test"
+      },
+      "canonical": "{\"access\":\"allowed\",\"active\":true,\"authorization_revision\":\"vector\",\"capabilities\":[],\"confidentiality\":\"end_to_end\",\"custody\":\"self_custodial\",\"inbound\":\"allowed\",\"principal\":{\"did\":\"did:aw:human-channels-vector\",\"kind\":\"native\"},\"route\":{\"audience\":\"café <>& ☃\",\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"backend:example.test\"}",
+      "sha256": "sha256:d7d3aac9e83b1cc59e2a1a81555c7641bb0b0c9b7d8322dd5aef45d052fb72af",
+      "signature": "gqINoGF8ZsKOIWeWmxP/be5ceWVnSHwlcKWVKjqf2qJ/YAgSr9GRksBPB7GG48gByN4tA9XkYqUBhmsGOh9bDw"
     }
   ],
   "invalid": [
@@ -2485,6 +2602,138 @@
       "name": "noncanonical_signed_payload",
       "schema": "SignedArtifact",
       "json": "{\"signed_payload\":\"{ }\",\"signature\":\"bfoRmG4FVndNsVHvLjOg5n/EbSS2XEcUrT7EgKOspqJt2eW+gGQUqsCj0kUiKid2VSj276sm1x9HWbQx9/7gAQ\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "ResolveRequest_invalid_team_''",
+      "schema": "ResolveRequest",
+      "json": "{\"version\":\"aweb-human-resolve-v1\",\"team_id\":\"\",\"selector\":\"juan\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "AuthorityFacts_invalid_team_''",
+      "schema": "AuthorityFacts",
+      "json": "{\"principal\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"route\":{\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"audience\":\"café <>& ☃\"},\"custody\":\"self_custodial\",\"active\":true,\"access\":\"allowed\",\"inbound\":\"allowed\",\"confidentiality\":\"end_to_end\",\"capabilities\":[],\"authorization_revision\":\"vector\",\"team_id\":\"\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "ResolveRequest_invalid_team_'aweb'",
+      "schema": "ResolveRequest",
+      "json": "{\"version\":\"aweb-human-resolve-v1\",\"team_id\":\"aweb\",\"selector\":\"juan\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "AuthorityFacts_invalid_team_'aweb'",
+      "schema": "AuthorityFacts",
+      "json": "{\"principal\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"route\":{\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"audience\":\"café <>& ☃\"},\"custody\":\"self_custodial\",\"active\":true,\"access\":\"allowed\",\"inbound\":\"allowed\",\"confidentiality\":\"end_to_end\",\"capabilities\":[],\"authorization_revision\":\"vector\",\"team_id\":\"aweb\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "ResolveRequest_invalid_team_':example.test'",
+      "schema": "ResolveRequest",
+      "json": "{\"version\":\"aweb-human-resolve-v1\",\"team_id\":\":example.test\",\"selector\":\"juan\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "AuthorityFacts_invalid_team_':example.test'",
+      "schema": "AuthorityFacts",
+      "json": "{\"principal\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"route\":{\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"audience\":\"café <>& ☃\"},\"custody\":\"self_custodial\",\"active\":true,\"access\":\"allowed\",\"inbound\":\"allowed\",\"confidentiality\":\"end_to_end\",\"capabilities\":[],\"authorization_revision\":\"vector\",\"team_id\":\":example.test\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "ResolveRequest_invalid_team_'aweb:'",
+      "schema": "ResolveRequest",
+      "json": "{\"version\":\"aweb-human-resolve-v1\",\"team_id\":\"aweb:\",\"selector\":\"juan\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "AuthorityFacts_invalid_team_'aweb:'",
+      "schema": "AuthorityFacts",
+      "json": "{\"principal\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"route\":{\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"audience\":\"café <>& ☃\"},\"custody\":\"self_custodial\",\"active\":true,\"access\":\"allowed\",\"inbound\":\"allowed\",\"confidentiality\":\"end_to_end\",\"capabilities\":[],\"authorization_revision\":\"vector\",\"team_id\":\"aweb:\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "ResolveRequest_invalid_team_'Aweb:example.test'",
+      "schema": "ResolveRequest",
+      "json": "{\"version\":\"aweb-human-resolve-v1\",\"team_id\":\"Aweb:example.test\",\"selector\":\"juan\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "AuthorityFacts_invalid_team_'Aweb:example.test'",
+      "schema": "AuthorityFacts",
+      "json": "{\"principal\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"route\":{\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"audience\":\"café <>& ☃\"},\"custody\":\"self_custodial\",\"active\":true,\"access\":\"allowed\",\"inbound\":\"allowed\",\"confidentiality\":\"end_to_end\",\"capabilities\":[],\"authorization_revision\":\"vector\",\"team_id\":\"Aweb:example.test\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "ResolveRequest_invalid_team_'aweb:EXAMPLE.test'",
+      "schema": "ResolveRequest",
+      "json": "{\"version\":\"aweb-human-resolve-v1\",\"team_id\":\"aweb:EXAMPLE.test\",\"selector\":\"juan\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "AuthorityFacts_invalid_team_'aweb:EXAMPLE.test'",
+      "schema": "AuthorityFacts",
+      "json": "{\"principal\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"route\":{\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"audience\":\"café <>& ☃\"},\"custody\":\"self_custodial\",\"active\":true,\"access\":\"allowed\",\"inbound\":\"allowed\",\"confidentiality\":\"end_to_end\",\"capabilities\":[],\"authorization_revision\":\"vector\",\"team_id\":\"aweb:EXAMPLE.test\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "ResolveRequest_invalid_team_'aweb:example.test.'",
+      "schema": "ResolveRequest",
+      "json": "{\"version\":\"aweb-human-resolve-v1\",\"team_id\":\"aweb:example.test.\",\"selector\":\"juan\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "AuthorityFacts_invalid_team_'aweb:example.test.'",
+      "schema": "AuthorityFacts",
+      "json": "{\"principal\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"route\":{\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"audience\":\"café <>& ☃\"},\"custody\":\"self_custodial\",\"active\":true,\"access\":\"allowed\",\"inbound\":\"allowed\",\"confidentiality\":\"end_to_end\",\"capabilities\":[],\"authorization_revision\":\"vector\",\"team_id\":\"aweb:example.test.\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "ResolveRequest_invalid_team_' aweb:example.test'",
+      "schema": "ResolveRequest",
+      "json": "{\"version\":\"aweb-human-resolve-v1\",\"team_id\":\" aweb:example.test\",\"selector\":\"juan\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "AuthorityFacts_invalid_team_' aweb:example.test'",
+      "schema": "AuthorityFacts",
+      "json": "{\"principal\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"route\":{\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"audience\":\"café <>& ☃\"},\"custody\":\"self_custodial\",\"active\":true,\"access\":\"allowed\",\"inbound\":\"allowed\",\"confidentiality\":\"end_to_end\",\"capabilities\":[],\"authorization_revision\":\"vector\",\"team_id\":\" aweb:example.test\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "ResolveRequest_invalid_team_'aweb:example.test\\n'",
+      "schema": "ResolveRequest",
+      "json": "{\"version\":\"aweb-human-resolve-v1\",\"team_id\":\"aweb:example.test\\n\",\"selector\":\"juan\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "AuthorityFacts_invalid_team_'aweb:example.test\\n'",
+      "schema": "AuthorityFacts",
+      "json": "{\"principal\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"route\":{\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"audience\":\"café <>& ☃\"},\"custody\":\"self_custodial\",\"active\":true,\"access\":\"allowed\",\"inbound\":\"allowed\",\"confidentiality\":\"end_to_end\",\"capabilities\":[],\"authorization_revision\":\"vector\",\"team_id\":\"aweb:example.test\\n\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "ResolveRequest_invalid_team_'aweb:example:test'",
+      "schema": "ResolveRequest",
+      "json": "{\"version\":\"aweb-human-resolve-v1\",\"team_id\":\"aweb:example:test\",\"selector\":\"juan\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "AuthorityFacts_invalid_team_'aweb:example:test'",
+      "schema": "AuthorityFacts",
+      "json": "{\"principal\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"route\":{\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"audience\":\"café <>& ☃\"},\"custody\":\"self_custodial\",\"active\":true,\"access\":\"allowed\",\"inbound\":\"allowed\",\"confidentiality\":\"end_to_end\",\"capabilities\":[],\"authorization_revision\":\"vector\",\"team_id\":\"aweb:example:test\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "ResolveRequest_invalid_team_'a web:example.test'",
+      "schema": "ResolveRequest",
+      "json": "{\"version\":\"aweb-human-resolve-v1\",\"team_id\":\"a web:example.test\",\"selector\":\"juan\"}",
+      "code": "invalid"
+    },
+    {
+      "name": "AuthorityFacts_invalid_team_'a web:example.test'",
+      "schema": "AuthorityFacts",
+      "json": "{\"principal\":{\"kind\":\"native\",\"did\":\"did:aw:human-channels-vector\"},\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"route\":{\"service\":\"did:aw:human-channels-vector\",\"signing_key_id\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"audience\":\"café <>& ☃\"},\"custody\":\"self_custodial\",\"active\":true,\"access\":\"allowed\",\"inbound\":\"allowed\",\"confidentiality\":\"end_to_end\",\"capabilities\":[],\"authorization_revision\":\"vector\",\"team_id\":\"a web:example.test\"}",
       "code": "invalid"
     },
     {

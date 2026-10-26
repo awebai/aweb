@@ -42,6 +42,7 @@ from fastapi import HTTPException, Request
 
 from aweb_naapp.manifest import Manifest, ManifestError
 from aweb_naapp.runtime.attestation import VerifiedAttestation
+from aweb_naapp.runtime.clock import MonotonicClock
 from aweb_naapp.runtime.team_auth import Principal, raw_request_target
 
 logger = logging.getLogger(__name__)
@@ -160,14 +161,14 @@ class Grant:
     """The team's installed grant for this app, as its authority reports it.
 
     A source returns a grant only for an active installation of its own app.
-    ``fresh_until`` is a :func:`time.monotonic` deadline after which the grant
+    ``fresh_until`` is a :func:`time.monotonic_ns` deadline after which the grant
     must not be used. ``installation_id`` and ``generation`` are ``None`` when
     the authority does not supply them; they are never derived from other fields.
     """
 
     team_id: str
     scopes: frozenset[str]
-    fresh_until: float
+    fresh_until: int
     installation_id: str | None
     generation: int | None
 
@@ -237,7 +238,7 @@ async def authorize_request(
     grants: GrantSource,
     policy: ActionPolicy,
     action_kind: ActionKind | None = None,
-    monotonic: Callable[[], float] = time.monotonic,
+    monotonic: MonotonicClock = time.monotonic_ns,
     on_resolved: Callable[[DeclaredTool, Grant], None] | None = None,
 ) -> Authorization:
     """Admit one authenticated request, or raise the refusal.

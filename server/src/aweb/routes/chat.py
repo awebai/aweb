@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
 
+from aweb.messaging.participants import messaging_participant_by_alias, messaging_participants_by_aliases
 from aweb.messaging.sender_membership import sender_memberships
 from aweb.identity_metadata import native_participant_reference
 
@@ -67,8 +68,6 @@ from aweb.messaging.chat import (
     ensure_session,
     validate_session_id,
     find_session_between,
-    get_agent_by_alias,
-    get_agents_by_aliases,
     get_message_history,
     get_pending_conversations,
     mark_messages_read,
@@ -946,12 +945,12 @@ async def _resolve_chat_targets(
             target = resolve_alias_target(auth.team_id, alias, field="to_aliases")
             if not await team_exists(db, target.team_id):
                 raise HTTPException(status_code=404, detail=f"Unknown team: {target.team_id}")
-            row = await get_agent_by_alias(db, team_id=target.team_id, alias=target.alias)
+            row = await messaging_participant_by_alias(db, team_id=target.team_id, alias=target.alias, selected_team_id=auth.team_id, request=request)
             if row is None:
                 raise HTTPException(status_code=404, detail=f"Unknown aliases: {alias}")
             target_rows.append(row)
         if local_aliases:
-            local_rows = await get_agents_by_aliases(db, team_id=auth.team_id, aliases=local_aliases)
+            local_rows = await messaging_participants_by_aliases(db, team_id=auth.team_id, aliases=local_aliases, selected_team_id=auth.team_id, request=request)
             resolved_aliases = {row["alias"] for row in local_rows}
             missing = [alias for alias in local_aliases if alias not in resolved_aliases]
             if missing:
@@ -1335,6 +1334,19 @@ async def create_or_send(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ):
+    from aweb.human_channels.http import ingress_requested, accept_native_http
+
+    if ingress_requested(request):
+        accepted = await accept_native_http(
+            request, payload, auth=auth, db=db, kind="chat"
+        )
+        return await _create_session_response(
+            db,
+            redis,
+            session_id=UUID(accepted["conversation_id"]),
+            message_id=accepted["message_id"],
+            target_dids=[],
+        )
     attachment_context = prepare_attachment_send(request, payload, auth)
     if attachment_context is not None:
         with attachment_context:
@@ -2584,6 +2596,13 @@ async def send_message(
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SendMessageResponse:
+    from aweb.human_channels.http import ingress_requested, accept_native_http
+
+    if ingress_requested(request):
+        accepted = await accept_native_http(
+            request, payload, auth=auth, db=db, kind="chat", session_id=session_id
+        )
+        return SendMessageResponse(message_id=accepted['message_id'],conversation_id=accepted['conversation_id'],delivered=True)
     attachment_context = prepare_attachment_send(request, payload, auth)
     if attachment_context is not None:
         with attachment_context:

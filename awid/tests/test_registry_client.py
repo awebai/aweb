@@ -1135,9 +1135,9 @@ async def test_cached_revocations_refresh_failure_beyond_grace_fails_closed(monk
 
 
 @pytest.mark.asyncio
-async def test_grace_retention_applies_only_to_revocation_entries():
-    """The grace lengthens Redis retention for the revocations tier only; a
-    non-revocation cached read keeps the shared ttl * stale-multiplier."""
+async def test_revocation_grace_does_not_extend_metadata_retention():
+    """Team metadata keeps its ttl * stale-multiplier retention even though
+    revocations and controller keys have a longer outage grace."""
     from awid.registry import (
         _STALE_MULTIPLIER,
         _TEAM_METADATA_CACHE_TTL_SECONDS,

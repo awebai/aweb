@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -301,6 +302,7 @@ func TestExternalMultiTeamAliasEnumeratesPrincipalMemberships(t *testing.T) {
 	}
 	did := awid.ComputeDIDKey(pub)
 	terminalTeam := ""
+	var registryReads atomic.Int32
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cert, _ := awid.DecodeTeamCertificateHeader(r.Header.Get("X-AWID-Team-Certificate"))
 		teamID := ""
@@ -308,6 +310,9 @@ func TestExternalMultiTeamAliasEnumeratesPrincipalMemberships(t *testing.T) {
 			teamID = cert.Team
 		}
 		switch r.URL.Path {
+		case "/v1/namespaces/aweb.test/teams/runtime/members/recipient":
+			registryReads.Add(1)
+			http.NotFound(w, r)
 		case "/v1/agents":
 			agents := []awid.AgentView{}
 			if teamID == "ops:aweb.test" {
@@ -346,12 +351,15 @@ func TestExternalMultiTeamAliasEnumeratesPrincipalMemberships(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	command := exec.CommandContext(ctx, bin, "--identity-home", filepath.Join(principalRoot, ".aw"), "mail", "send", "--to", "recipient", "--body", "hello")
 	command.Dir = instance
-	command.Env = testCommandEnv(filepath.Join(root, "home"))
+	command.Env = append(testCommandEnv(filepath.Join(root, "home")), "AWID_REGISTRY_URL="+server.URL)
 	if out, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("multi-team mail failed: %v\n%s", err, out)
 	}
 	if terminalTeam != "ops:aweb.test" {
 		t.Fatalf("message signed for team %q, want ops:aweb.test", terminalTeam)
+	}
+	if got := registryReads.Load(); got != 1 {
+		t.Fatalf("local registry reads=%d, want 1", got)
 	}
 }
 

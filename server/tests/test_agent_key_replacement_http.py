@@ -22,7 +22,7 @@ def _keypair() -> tuple[bytes, str]:
     return bytes(signing_key), did_from_public_key(bytes(signing_key.verify_key))
 
 
-def _app(aweb_db) -> FastAPI:
+def _app(aweb_db, controller_did_key: str) -> FastAPI:
     app = FastAPI()
     app.include_router(agents_router)
 
@@ -30,6 +30,12 @@ def _app(aweb_db) -> FastAPI:
         def get_manager(self, name="aweb"):
             return aweb_db
 
+    class _Registry:
+        async def get_team_public_key(self, domain, name):
+            assert (domain, name) == ("acme.com", "backend")
+            return controller_did_key
+
+    app.state.awid_registry_client = _Registry()
     app.state.db = _DB()
     app.state.redis = None
     app.state.rate_limiter = None
@@ -108,7 +114,7 @@ async def test_controller_replaces_local_agent_key_and_writes_audit(aweb_cloud_d
     )
     payload = _payload(old_did_key=old_did, new_did_key=new_did)
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db)), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
         response = await client.post(
             "/v1/agents/alice/replace-key",
             json=payload,
@@ -166,7 +172,7 @@ async def test_exact_controller_replay_returns_the_original_audit_result(aweb_cl
     await _seed_local_agent(aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did)
     payload = _payload(old_did_key=old_did, new_did_key=new_did)
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db)), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
         first = await client.post(
             "/v1/agents/alice/replace-key",
             json=payload,
@@ -195,7 +201,7 @@ async def test_new_key_with_different_certificate_ids_is_not_treated_as_replay(a
     await _seed_local_agent(aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did)
     payload = _payload(old_did_key=old_did, new_did_key=new_did)
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db)), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
         first = await client.post(
             "/v1/agents/alice/replace-key",
             json=payload,
@@ -226,7 +232,7 @@ async def test_member_key_cannot_authorize_local_key_replacement(aweb_cloud_db):
     await _seed_local_agent(aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did)
     payload = _payload(old_did_key=old_did, new_did_key=new_did)
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db)), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
         response = await client.post(
             "/v1/agents/alice/replace-key",
             json=payload,
@@ -257,7 +263,7 @@ async def test_controller_signature_binds_the_exact_replacement(aweb_cloud_db):
     tampered = dict(signed)
     tampered["new_certificate_id"] = "attacker-certificate"
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db)), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
         response = await client.post(
             "/v1/agents/alice/replace-key",
             json=tampered,
@@ -306,7 +312,7 @@ async def test_replacement_preconditions_fail_without_audit(aweb_cloud_db, case:
             new_did,
         )
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db)), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
         response = await client.post(
             "/v1/agents/alice/replace-key",
             json=payload,
@@ -326,7 +332,7 @@ async def test_replacement_rejects_same_or_invalid_did_keys(aweb_cloud_db):
     _, old_did = _keypair()
     await _seed_local_agent(aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did)
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db)), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
         same = _payload(old_did_key=old_did, new_did_key=old_did)
         response = await client.post(
             "/v1/agents/alice/replace-key",
