@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from awid.signing import canonical_payload
+from awid.signing import canonical_payload, sign_message, verify_signature, VerifyResult
 from aweb.e2ee_messages import (
     E2EEEnvelopeError, _inner_header_hash, decrypt_e2ee_message,
     encrypt_e2ee_message,
@@ -15,18 +15,24 @@ from test_e2ee_crypto_helpers import _identity, _recipient, _decrypt_identity
 
 ROOT = Path(__file__).resolve().parents[2]
 VECTORS = json.loads((ROOT / "docs/vectors/human-channels-v1.json").read_text())
-NATIVE = [c for c in VECTORS["valid"] if c["name"].startswith("NativePlaintext_")]
+NATIVE = [c for c in VECTORS["valid"] if c["name"].startswith(("NativePlaintext_", "native_existing_"))]
 
 
 @pytest.mark.parametrize("case", NATIVE, ids=lambda c: c["name"])
 def test_native_composer_preserves_frozen_via_bytes(case):
-    assert canonical_payload(case["value"]).decode() == case["canonical"]
+    payload = canonical_payload(case["value"])
+    assert payload.decode() == case["canonical"]
+    signature = sign_message(bytes.fromhex(VECTORS["public_test_seed_hex"]), payload)
+    assert signature == case["signature"]
+    assert verify_signature(case["value"]["from_did"], payload, signature) == VerifyResult.VERIFIED
+    changed = dict(case["value"], via="msteams" if case["value"].get("via") != "msteams" else "telegram")
+    assert verify_signature(case["value"]["from_did"], canonical_payload(changed), signature) == VerifyResult.FAILED
 
 
 @pytest.mark.parametrize("via", ["", None, "Telegram", "telegram:user", "a" * 33, {}, "telegram\n"])
 def test_native_composer_refuses_malformed_supplied_via(via):
     with pytest.raises(ValueError):
-        canonical_payload({"type": "mail", "via": via})
+        sign_message(bytes.fromhex(VECTORS["public_test_seed_hex"]), canonical_payload({"type": "mail", "via": via}))
 
 
 @pytest.mark.parametrize("kind", ["mail", "chat"])

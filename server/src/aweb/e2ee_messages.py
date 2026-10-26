@@ -14,11 +14,13 @@ from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
 from awid.e2ee_keys import encryption_key_id, validate_encryption_key_assertion
-from awid.signing import VerifyResult, canonical_json_bytes, sign_message, verify_signature
+from awid.signing import VerifyResult, canonical_json_bytes, sign_message, verify_signature, validate_message_via
 from aweb.messaging.signatures import (
     MessageSignatureShapeError,
     validate_ed25519_message_signature,
 )
+
+_VIA_ABSENT = object()
 
 
 E2EE_MESSAGE_VERSION = 2
@@ -230,6 +232,11 @@ def _inner_payload_map(inner: dict[str, Any], *, include_content: bool) -> dict[
     }
     _add_non_empty(out, "reply_to_message_id", inner.get("reply_to_message_id"))
     if include_content:
+        if "via" in inner:
+            try:
+                out["via"] = validate_message_via(inner["via"])
+            except ValueError as exc:
+                raise E2EEEnvelopeError(str(exc)) from exc
         if _non_empty(inner.get("kind")) == "mail":
             out["subject"] = str(inner.get("subject") or "")
         out["body"] = str(inner.get("body") or "")
@@ -477,6 +484,7 @@ def encrypt_e2ee_message(
     created_at: datetime | None = None,
     delivery_origin: str = "",
     observed_inbound_mode: str = "",
+    via: Any = _VIA_ABSENT,
 ) -> dict[str, Any]:
     kind = _non_empty(kind) or "mail"
     if kind not in {"mail", "chat"}:
@@ -546,6 +554,11 @@ def encrypt_e2ee_message(
         "subject": subject if kind == "mail" else "",
         "body": body,
     }
+    if via is not _VIA_ABSENT:
+        try:
+            inner["via"] = validate_message_via(via)
+        except ValueError as exc:
+            raise E2EEEnvelopeError(str(exc)) from exc
     if attachments is not None:
         from aweb.attachments import descriptors
         validated = descriptors(attachments)
@@ -758,6 +771,11 @@ def decrypt_e2ee_message(envelope: dict[str, Any], identity: dict[str, Any]) -> 
     import json
 
     inner = json.loads(plain)
+    if "via" in inner:
+        try:
+            validate_message_via(inner["via"])
+        except ValueError as exc:
+            raise E2EEEnvelopeError(str(exc)) from exc
     if _inner_header_hash(inner) != _non_empty(crypto.get("inner_header_hash")):
         raise E2EEEnvelopeError("inner header hash mismatch")
     _verify_inner_header(envelope, inner)

@@ -4,7 +4,7 @@ The signer asserts optional `via` provenance. It is display metadata, not proof
 of platform authentication, custody, membership, routing or controller authority.
 Authoritative sending-presence or channel-ingress facts determine whether a
 message is bridge/host readable. Omitting `via` cannot change those facts or
-remove a **not E2EE** label. Cloud D-UI/C3 owns that label.
+remove a **not E2EE** label. Cloud D-UI/C3 and OSS D-OSS-label own its presentation.
 
 P0's [native placement and grammar](human-channels-contract-v1.md#compatibility-bytes-and-signatures)
 and [frozen vectors](vectors/human-channels-v1.json) remain unchanged. Plaintext
@@ -42,6 +42,9 @@ inventory is source evidence; released-reader/server matrix runs are pending.
 | Channel mail event-then-fetch | `channel-core/src/channel.ts:683`, `:690`; `channel-core/src/api/mail.ts:46`, `:129` | Fetch exact inbox row, then verify original payload. |
 | Channel chat event-then-fetch | `channel-core/src/channel.ts:782`, `:790`; `channel-core/src/api/chat.ts:39`, `:152` | Fetch exact history row, then verify original payload. |
 | Pending chat / conversation list | `server/src/aweb/routes/chat.py:1766`; `server/src/aweb/routes/conversations.py:65` | Preview/discovery, no author-signature verification. Full-message read uses history/conversation hop above. No verified via derives from preview. |
+| MCP chat pending | `server/src/aweb/mcp/tools/chat.py:958` | Discovery preview; full read is MCP chat_history / retained-row history. No verified via derives from preview. |
+| REST session listing | `server/src/aweb/routes/chat.py:2914` | Session discovery only; full-message read is REST session history / exact-message endpoint above. |
+| P2 hosted MCP ingress composition | `server/src/aweb/human_channels/mcp.py:141`, `:173` | Hosted producer composes before signing, then wraps original signed_payload into prepared-send/retained ingress. Never reconstructs a received signature. |
 | MCP mail inbox | `server/src/aweb/mcp/tools/mail.py:768`, `:136` | Retains original payload/signature through row projection. |
 | MCP chat history | `server/src/aweb/mcp/tools/chat.py:1011`, `:1059` | GAP: drops payload/signature while projecting full message; fix within P1 projection scope. |
 | MCP chat send-and-wait replies | `server/src/aweb/mcp/tools/chat.py:298`, `:324` | GAP: selects payload/signature then drops them in reply object; fix within P1. |

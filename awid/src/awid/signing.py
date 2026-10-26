@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import enum
 import json
+import re
 
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
@@ -30,6 +31,7 @@ SIGNED_FIELDS = frozenset(
         "to_stable_id",
         "type",
         "wait_seconds",
+        "via",
     }
 )
 
@@ -48,8 +50,17 @@ def canonical_json_bytes(fields: dict) -> bytes:
 
 
 def canonical_payload(fields: dict) -> bytes:
+    if "via" in fields:
+        validate_message_via(fields["via"])
     filtered = {k: v for k, v in fields.items() if k in SIGNED_FIELDS}
     return canonical_json_bytes(filtered)
+
+
+def validate_message_via(value: object) -> str:
+    """Validate the optional, author-asserted channel kind without normalizing it."""
+    if not isinstance(value, str) or re.fullmatch(r"[a-z][a-z0-9_]{0,31}", value, re.ASCII) is None:
+        raise ValueError("via must be an ASCII channel kind")
+    return value
 
 
 def sign_message(private_key: bytes, payload: bytes) -> str:
