@@ -35,3 +35,16 @@ CREATE INDEX IF NOT EXISTS idx_read_events_dispatch ON {{tables.read_events}} (t
 CREATE INDEX IF NOT EXISTS idx_read_events_operation ON {{tables.read_events}} (team_id, operation_id);
 CREATE INDEX IF NOT EXISTS idx_read_events_actor ON {{tables.read_events}} (team_id, actor_did_key);
 CREATE INDEX IF NOT EXISTS idx_read_events_occurred ON {{tables.read_events}} (team_id, occurred_at);
+
+-- Each reader an owner act designated: the installation and team it reads, and
+-- the contact the act committed to by hash. Whether the reader holds the scope
+-- now, and with which passkey, is B3's record of the scope.
+CREATE TABLE IF NOT EXISTS {{tables.readers}} (
+    scope           TEXT PRIMARY KEY,
+    installation_id TEXT NOT NULL,
+    team_id         TEXT NOT NULL,
+    contact_sha256  TEXT NOT NULL,
+    recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_readers_installation ON {{tables.readers}} (installation_id, team_id);
