@@ -37,6 +37,7 @@ from tests.test_change_sets import (
     ORIGIN,
     TEAM,
     Installations,
+    World,
     by_member,
     change_set,
     draft,
@@ -127,9 +128,9 @@ OPEN = grant(
 )
 
 
-@pytest.fixture
-async def access(uses: Uses) -> Uses:
-    db = uses.world.db
+async def seed(w: World) -> None:
+    """The confirmed records of the DB-write scenario, and the runtime's observed names."""
+    db = w.db
     await AsyncMigrationManager(
         db, migrations_path=str(RUNTIME_MIGRATIONS), module_name="aweb_naapp"
     ).apply_pending_migrations()
@@ -148,11 +149,15 @@ async def access(uses: Uses) -> Uses:
     # OPEN_AGENT was never observed, so it has no name to show.
     for member, alias in ((DB_AGENT, "db-agent"), (READER, "report-bot")):
         await record_observed_principal(db, replace(member, alias=alias))
+
+
+@pytest.fixture
+async def access(uses: Uses) -> Uses:
+    await seed(uses.world)
     return uses
 
 
-@asynccontextmanager
-async def clients(context: Uses):
+async def application(context: Uses, *, origin: str = ORIGIN, agent_origin: str = API):
     w = context.world
     await apply_console_migrations(w.db)
 
@@ -175,7 +180,12 @@ async def clients(context: Uses):
     app.include_router(console_ui_router(sessions=console.sessions))
     app.include_router(console_access_router(services=ConsoleAccess(console=console)))
     app.include_router(containment_console_router(await service(context), console=console))
-    composed = split_origins(FastAPI(), app, human_origin=ORIGIN, agent_origin=API)
+    return split_origins(FastAPI(), app, human_origin=origin, agent_origin=agent_origin)
+
+
+@asynccontextmanager
+async def clients(context: Uses):
+    composed = await application(context)
     async with (
         httpx.AsyncClient(transport=httpx.ASGITransport(app=composed), base_url=ORIGIN) as human,
         httpx.AsyncClient(transport=httpx.ASGITransport(app=composed), base_url=API) as agent,
