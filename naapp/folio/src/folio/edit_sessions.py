@@ -8,10 +8,11 @@ import secrets
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
 from aweb_naapp.runtime.app import NaappRuntime
-from aweb_naapp.runtime.installation import InstallationRefused
+from aweb_naapp.runtime.installation import InstallationPermit, InstallationRefused
 from aweb_naapp.runtime.team_auth import MembershipProof
 from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
@@ -118,7 +119,8 @@ async def exchange(
     return credential, row
 
 
-_SESSION = """SELECT p.*, d.team_id, d.slug, s.installation_id AS session_installation_id,
+_SESSION = """SELECT p.*, d.team_id, d.slug, s.record_session_id,
+    s.installation_id AS session_installation_id,
     s.installation_refused AS session_installation_refused, s.created_at AS session_created_at
     FROM {{tables.edit_sessions}} s
     JOIN {{tables.presentation_links}} p ON p.token=s.link_id AND p.document_id=s.document_id
@@ -136,6 +138,51 @@ async def access(
     credential: str | None,
     write: bool = False,
 ) -> AsyncIterator[tuple[TransactionManager, dict[str, Any]]]:
+    async with checked_access(
+        db, runtime, link_id=link_id, credential=credential, write=write
+    ) as checked:
+        yield checked.tx, checked.row
+
+
+@dataclass(frozen=True)
+class CheckedEditSession:
+    tx: TransactionManager
+    row: dict[str, Any] = field(repr=False)
+    permit: InstallationPermit
+    proof: MembershipProof
+    digest: bytes = field(repr=False)
+
+    async def revalidate(self, tx):
+        """Local evidence only, after a potentially waiting PageStore lock."""
+        await self.permit.check(tx)
+        selected = await tx.fetch_one(_SESSION, self.digest, self.row["token"])
+        if selected is None:
+            raise unavailable()
+        row = dict(selected)
+        for name in (
+            "document_id",
+            "team_id",
+            "certificate_id",
+            "creator_team_did_key",
+            "records_creator_id",
+            "record_session_id",
+        ):
+            if row[name] != self.row[name]:
+                raise unavailable()
+        require_proof(row, self.proof)
+        require_binding(self.permit, row)
+        require_binding(self.permit, row, session=True)
+
+
+@asynccontextmanager
+async def checked_access(
+    db: AsyncDatabaseManager,
+    runtime: NaappRuntime,
+    *,
+    link_id: str,
+    credential: str | None,
+    write: bool = False,
+) -> AsyncIterator[CheckedEditSession]:
     digest = secret_hash(credential)
     evidence = await db.fetch_one(_SESSION, digest, link_id)
     if evidence is None:
@@ -161,7 +208,7 @@ async def access(
         require_proof(row, proof)
         require_binding(permit, row)
         require_binding(permit, row, session=True)
-        yield tx, row
+        yield CheckedEditSession(tx, row, permit, proof, digest)
 
 
 @asynccontextmanager

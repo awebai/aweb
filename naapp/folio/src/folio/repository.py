@@ -105,7 +105,9 @@ async def create_document(
             )
     except Exception as exc:
         if "unique" in str(exc).lower():
-            raise HTTPException(status_code=409, detail="Document slug already exists for this team") from exc
+            raise HTTPException(
+                status_code=409, detail="Document slug already exists for this team"
+            ) from exc
         raise
     return await get_document(db, principal=principal, slug=slug)
 
@@ -253,6 +255,7 @@ async def mint_presentation_link(
     version: int | None,
     ttl_seconds: int | None,
     editable: bool = False,
+    record_authority=None,
 ) -> dict[str, Any]:
     selected = await db.fetch_one(
         """
@@ -298,12 +301,23 @@ async def mint_presentation_link(
     token = secrets.token_urlsafe(16) if editable else secrets.token_urlsafe(32)
     # Use the same database clock for expiry and the row's default created_at.
     # That makes the stored editable lifetime exactly bounded across hosts.
+    creator_id, write_grants = (
+        await record_authority(
+            db,
+            principal=principal,
+            document_id=document_id,
+            version_number=version_number,
+            editable=editable,
+        )
+        if record_authority is not None
+        else (None, {})
+    )
     minted = await db.fetch_one(
         """
         INSERT INTO {{tables.presentation_links}}
           (token, document_id, version_number, expires_at, created_by_did_key,
-           created_by_did_aw, created_by_alias, certificate_id, editable, opener_sha256, creator_team_did_key, installation_id)
-        VALUES ($1, $2, $3, NOW() + $4::integer * interval '1 second', $5, $6, $7, $8, $9, $10, $11, $12)
+           created_by_did_aw, created_by_alias, certificate_id, editable, opener_sha256, creator_team_did_key, installation_id, records_creator_id, record_write_grants)
+        VALUES ($1, $2, $3, NOW() + $4::integer * interval '1 second', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
         RETURNING expires_at
         """,
         token,
@@ -318,12 +332,17 @@ async def mint_presentation_link(
         hashlib.sha256(opener.encode()).digest() if opener else None,
         principal.team_did_key,
         installation_id,
+        creator_id,
+        json.dumps(write_grants),
     )
     assert minted is not None
     return {
         "token": token,
-        "url": (f"{settings.public_origin.rstrip('/')}/present/edit/{token}#k={opener}"
-                if editable else f"{settings.public_origin.rstrip('/')}/present/{token}"),
+        "url": (
+            f"{settings.public_origin.rstrip('/')}/present/edit/{token}#k={opener}"
+            if editable
+            else f"{settings.public_origin.rstrip('/')}/present/{token}"
+        ),
         "expires_at": minted["expires_at"],
     }
 
@@ -352,7 +371,9 @@ async def revoke_presentation_link(
     )
 
 
-async def get_presented_document(db: AsyncDatabaseManager | TransactionManager, *, token: str) -> dict[str, Any]:
+async def get_presented_document(
+    db: AsyncDatabaseManager | TransactionManager, *, token: str
+) -> dict[str, Any]:
     row = await db.fetch_one(
         """
         SELECT p.editable, p.expires_at, d.team_id, t.tokens, t.logo_asset_id, t.header, t.footer,
@@ -386,7 +407,9 @@ async def get_presented_document(db: AsyncDatabaseManager | TransactionManager, 
         "editable": editable,
         "expires_at": row["expires_at"],
         "theme": _theme_from_row(row, public_origin=None),
-        "allowed_assets": await _allowed_assets_for_body(db, team_id=str(row["team_id"]), body=body),
+        "allowed_assets": await _allowed_assets_for_body(
+            db, team_id=str(row["team_id"]), body=body
+        ),
     }
 
 
@@ -398,8 +421,13 @@ def _clean_editor_name(editor_name: str | None) -> str | None:
 
 
 async def append_presented_version(
-    tx: TransactionManager, *, events: AppEvents, link: dict[str, Any],
-    body: str, base_version: int, editor_name: str | None,
+    tx: TransactionManager,
+    *,
+    events: AppEvents,
+    link: dict[str, Any],
+    body: str,
+    base_version: int,
+    editor_name: str | None,
 ) -> dict[str, Any]:
     """Append under the caller's session/link/document locks."""
     clean_editor_name = _clean_editor_name(editor_name)
@@ -510,7 +538,9 @@ def _asset_response(row: Any) -> dict[str, Any]:
 
 _SAFE_IMAGE_CONTENT_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 _SAFE_VIDEO_CONTENT_TYPES = {"video/mp4", "video/quicktime", "video/webm"}
-_ASSET_REFERENCE_RE = re.compile(r"/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})")
+_ASSET_REFERENCE_RE = re.compile(
+    r"/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
 
 
 def _image_magic_matches(payload: bytes, content_type: str) -> bool:
@@ -528,11 +558,16 @@ def _image_magic_matches(payload: bytes, content_type: str) -> bool:
 def _decode_image_asset(image: Any, *, label: str = "Image") -> tuple[bytes, str]:
     content_type = str(image.content_type).strip().lower()
     if content_type not in _SAFE_IMAGE_CONTENT_TYPES:
-        raise HTTPException(status_code=400, detail=f"{label} content_type must be image/png, image/jpeg, image/gif, or image/webp")
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} content_type must be image/png, image/jpeg, image/gif, or image/webp",
+        )
     try:
         payload = base64.b64decode(str(image.data_base64), validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=f"{label} data_base64 must be valid base64") from exc
+        raise HTTPException(
+            status_code=400, detail=f"{label} data_base64 must be valid base64"
+        ) from exc
     if not payload:
         raise HTTPException(status_code=400, detail=f"{label} must not be empty")
     if len(payload) > 256 * 1024:
@@ -556,7 +591,9 @@ def _asset_ids_referenced_by_body(body: str) -> set[UUID]:
     return asset_ids
 
 
-async def _allowed_assets_for_body(db: AsyncDatabaseManager | TransactionManager, *, team_id: str, body: str) -> dict[UUID, dict[str, Any]]:
+async def _allowed_assets_for_body(
+    db: AsyncDatabaseManager | TransactionManager, *, team_id: str, body: str
+) -> dict[UUID, dict[str, Any]]:
     referenced = _asset_ids_referenced_by_body(body)
     if not referenced:
         return {}
@@ -602,8 +639,13 @@ async def upload_image_asset(
 def _validate_video_request(video: Any, *, settings: Settings) -> tuple[str, int]:
     content_type = str(video.content_type).strip().lower()
     if content_type not in _SAFE_VIDEO_CONTENT_TYPES:
-        raise HTTPException(status_code=400, detail="Video content_type must be video/mp4, video/quicktime, or video/webm")
-    requested_duration = video.max_duration_seconds or settings.cloudflare_stream_max_duration_seconds
+        raise HTTPException(
+            status_code=400,
+            detail="Video content_type must be video/mp4, video/quicktime, or video/webm",
+        )
+    requested_duration = (
+        video.max_duration_seconds or settings.cloudflare_stream_max_duration_seconds
+    )
     max_duration = min(requested_duration, settings.cloudflare_stream_max_duration_seconds)
     return content_type, max_duration
 
@@ -667,7 +709,9 @@ async def get_asset_metadata(
     data = dict(row)
     if data.get("kind") == "video" and data.get("stream_uid"):
         try:
-            status = await CloudflareStreamClient(settings).get_video_status(stream_uid=str(data["stream_uid"]))
+            status = await CloudflareStreamClient(settings).get_video_status(
+                stream_uid=str(data["stream_uid"])
+            )
         except HTTPException as exc:
             if exc.status_code != 503:
                 raise
@@ -744,7 +788,9 @@ async def upsert_theme(
             "SELECT logo_asset_id FROM {{tables.themes}} WHERE team_id = $1",
             principal.team_id,
         )
-        logo_asset_id = None if clear_logo else (current["logo_asset_id"] if current is not None else None)
+        logo_asset_id = (
+            None if clear_logo else (current["logo_asset_id"] if current is not None else None)
+        )
         if logo is not None:
             logo_bytes, content_type = _decode_logo(logo)
             logo_asset_id = uuid4()

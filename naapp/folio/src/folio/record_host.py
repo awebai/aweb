@@ -61,8 +61,12 @@ class CollectionAuthority:
         self.scope = scope
 
     async def require_current_creator(self, tx, *, creator, proof):
-        checked = Scope(creator.scope.installation_id, creator.scope.team_id,
-                        self.host.runtime.manifest.app_id, creator.scope.page_id)
+        checked = Scope(
+            creator.scope.installation_id,
+            creator.scope.team_id,
+            self.host.runtime.manifest.app_id,
+            creator.scope.page_id,
+        )
         if self.scope is not None and self.scope != checked:
             raise LinkRefused("action_denied", 403)
         # N5 has already checked the in-process proof under its link lock.
@@ -73,8 +77,12 @@ class CollectionAuthority:
         if self.scope is None or self.scope.page_id != page_id:
             raise LinkRefused("action_denied", 403)
         metadata = await self.host.storage.require_store().collection_access_on(
-            tx, self.scope, creator_id=creator, collection=collection,
-            link_mode=link_mode, record_ids=record_ids,
+            tx,
+            self.scope,
+            creator_id=creator,
+            collection=collection,
+            link_mode=link_mode,
+            record_ids=record_ids,
         )
         if metadata is None:
             return None
@@ -96,7 +104,10 @@ class CollectionAuthority:
 
 class RecordHost:
     def __init__(
-        self, runtime: NaappRuntime, storage: RecordStorage, *,
+        self,
+        runtime: NaappRuntime,
+        storage: RecordStorage,
+        *,
         team_server_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.runtime, self.storage = runtime, storage
@@ -105,13 +116,23 @@ class RecordHost:
 
         async def policy(request, principal, tool):
             # Record-level and field-level authority is decided inside PageStore.
-            return tool.name in {"collection-define", "record-add", "record-update", "record-delete",
-                                 "record-query", "list", "present", "revoke"}
+            return tool.name in {
+                "collection-define",
+                "record-add",
+                "record-update",
+                "record-delete",
+                "record-query",
+                "list",
+                "present",
+                "revoke",
+            }
 
         self.guard = runtime.authorized(grants=self.grants, policy=policy)
 
     def fence(self) -> InstallationFence:
-        return InstallationFence(self.runtime.db(), app_id=self.runtime.manifest.app_id, grants=self.grants)
+        return InstallationFence(
+            self.runtime.db(), app_id=self.runtime.manifest.app_id, grants=self.grants
+        )
 
     def service(self) -> RecordService:
         return RecordService(self.storage.require_store())
@@ -120,9 +141,20 @@ class RecordHost:
         """Join author admission and collection read locks to the version write."""
         try:
             async with database.transaction() as tx:
+                # Keep document -> collection lock order shared with edit sessions.
+                await tx.fetch_one(
+                    "SELECT document_id FROM {{tables.documents}} "
+                    "WHERE team_id=$1 AND slug=$2 FOR UPDATE",
+                    principal.team_id,
+                    kwargs["slug"],
+                )
                 await validate_saved_widgets_on(tx, installation, principal, body, self.storage)
                 return await operation(
-                    tx, principal=principal, events=self.runtime.app_events, body=body, **kwargs,
+                    tx,
+                    principal=principal,
+                    events=self.runtime.app_events,
+                    body=body,
+                    **kwargs,
                 )
         except (StoreError, InstallationRefused) as error:
             raise store_http(error) from None
@@ -134,9 +166,16 @@ class RecordHost:
                 service = self.service()
                 if method == "define_on":
                     scope = collection_scope(admitted, payload.collection_id)
-                    return await service.define_on(tx, admitted, authorization.principal, payload,
-                                                   owner_id=principal_id(authorization.principal, scope))
-                return await getattr(service, method)(tx, admitted, authorization.principal, payload)
+                    return await service.define_on(
+                        tx,
+                        admitted,
+                        authorization.principal,
+                        payload,
+                        owner_id=principal_id(authorization.principal, scope),
+                    )
+                return await getattr(service, method)(
+                    tx, admitted, authorization.principal, payload
+                )
         except (StoreError, InstallationRefused) as error:
             raise store_http(error) from None
 
@@ -163,27 +202,54 @@ class RecordHost:
                 owner = principal_id(authorization.principal, scope)
                 store = self.storage.require_store()
                 metadata = await store.collection_access_on(
-                    tx, scope, creator_id=owner, collection=entry["collection_id"], link_mode="live",
+                    tx,
+                    scope,
+                    creator_id=owner,
+                    collection=entry["collection_id"],
+                    link_mode="live",
                 )
                 if metadata is None:
                     raise HTTPException(404, detail={"code": "resource_not_found"})
                 # Dashboard clicks mint a short-lived read-only self-view.
                 ttl = min(payload.ttl_seconds or 900, 900, self.settings.max_present_ttl_seconds)
                 link = await mint(
-                    tx, CollectionAuthority(self, scope),
+                    tx,
+                    CollectionAuthority(self, scope),
                     scope=LinkScope(scope.team_id, scope.installation_id, scope.page_id),
-                    creator=owner, creator_certificate_id=authorization.principal.certificate_id,
+                    creator=owner,
+                    creator_certificate_id=authorization.principal.certificate_id,
                     creator_team_did_key=authorization.principal.team_did_key,
-                    request={"mode": "live", "page_rev": None,
-                             "projection": {"collections": [{"collection": entry["collection_id"],
-                                                              "record_ids": "*", "fields": metadata["fields"]}],
-                                            "assets": []},
-                             "actions": [], "intent_sponsor_did": None, "one_use": False,
-                             "expires_at": (now() + timedelta(seconds=ttl)).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                    request={
+                        "mode": "live",
+                        "page_rev": None,
+                        "projection": {
+                            "collections": [
+                                {
+                                    "collection": entry["collection_id"],
+                                    "record_ids": "*",
+                                    "fields": metadata["fields"],
+                                }
+                            ],
+                            "assets": [],
+                        },
+                        "actions": [],
+                        "intent_sponsor_did": None,
+                        "one_use": False,
+                        "expires_at": (now() + timedelta(seconds=ttl)).strftime(
+                            "%Y-%m-%dT%H:%M:%SZ"
+                        ),
+                    },
                     now=now(),
                 )
-                return {"token": link.link_id, "expires_at": link.expires_at,
-                        "url": self.settings.public_origin.rstrip("/") + "/present/links/" + link.link_id + "#k=" + link.secret}
+                return {
+                    "token": link.link_id,
+                    "expires_at": link.expires_at,
+                    "url": self.settings.public_origin.rstrip("/")
+                    + "/present/links/"
+                    + link.link_id
+                    + "#k="
+                    + link.secret,
+                }
         except (StoreError, InstallationRefused) as error:
             raise store_http(error) from None
 
@@ -192,26 +258,44 @@ class RecordHost:
             creator = await load_link_creator(self.runtime.db(), link_id=link_id)
             if creator.scope.team_id != authorization.principal.team_id:
                 raise HTTPException(404, detail={"code": "link_unavailable"})
-            scope = Scope(creator.scope.installation_id, creator.scope.team_id,
-                          self.runtime.manifest.app_id, creator.scope.page_id)
+            scope = Scope(
+                creator.scope.installation_id,
+                creator.scope.team_id,
+                self.runtime.manifest.app_id,
+                creator.scope.page_id,
+            )
             # Management is independent of the mint creator's later membership loss.
             async with self.runtime.db().transaction() as tx:
-                await revoke(tx, scope=creator.scope, link_id=link_id,
-                             actor=principal_id(authorization.principal, scope), is_owner=False, now=now())
+                await revoke(
+                    tx,
+                    scope=creator.scope,
+                    link_id=link_id,
+                    actor=principal_id(authorization.principal, scope),
+                    is_owner=False,
+                    now=now(),
+                )
         except LinkRefused as error:
             raise HTTPException(error.status, detail={"code": error.code}) from None
 
     async def membership(self, creator: LinkCreator) -> MembershipProof:
         return await self.runtime.check_current_member(
-            creator.scope.team_id, certificate_id=creator.certificate_id, team_did_key=creator.team_did_key,
+            creator.scope.team_id,
+            certificate_id=creator.certificate_id,
+            team_did_key=creator.team_did_key,
         )
 
     async def holder(self, request, link_id):
         caller = await authenticate(
-            self.runtime.db(), authorization=request.headers.get("Authorization"),
-            signed_payload=request.headers.get("X-AWEB-Signed-Payload"), method=request.method,
-            target=raw_request_target(request), body=await request.body(), origin=request.headers.get("Origin"),
-            csrf=request.headers.get("X-AWEB-CSRF"), app_origin=self.settings.public_origin, now=now(),
+            self.runtime.db(),
+            authorization=request.headers.get("Authorization"),
+            signed_payload=request.headers.get("X-AWEB-Signed-Payload"),
+            method=request.method,
+            target=raw_request_target(request),
+            body=await request.body(),
+            origin=request.headers.get("Origin"),
+            csrf=request.headers.get("X-AWEB-CSRF"),
+            app_origin=self.settings.public_origin,
+            now=now(),
         )
         if caller.link_id != link_id:
             raise LinkRefused("action_denied", 403)
@@ -230,13 +314,23 @@ class RecordHost:
 
     async def holder_read(self, request, link_id, *, query=False):
         caller, creator, proof, grant = await self.holder(request, link_id)
-        scope = Scope(creator.scope.installation_id, creator.scope.team_id,
-                      self.runtime.manifest.app_id, creator.scope.page_id)
+        scope = Scope(
+            creator.scope.installation_id,
+            creator.scope.team_id,
+            self.runtime.manifest.app_id,
+            creator.scope.page_id,
+        )
         async with self.runtime.db().transaction() as tx:
             # Lock order is installation fence -> link -> page; everything local.
             await self.fence().admit(tx, grant)
-            checked = await read(tx, CollectionAuthority(self, scope), caller=caller,
-                                 page_id=scope.page_id, now=now(), proof=proof)
+            checked = await read(
+                tx,
+                CollectionAuthority(self, scope),
+                caller=caller,
+                page_id=scope.page_id,
+                now=now(),
+                proof=proof,
+            )
             store = self.storage.require_store()
             if request.method == "POST":
                 raise LinkRefused("action_denied", 403)  # No table action is minted.
@@ -244,8 +338,12 @@ class RecordHost:
                 if query:
                     raise LinkRefused("action_denied", 403)
                 return await store.project_link_snapshot_on(
-                    tx, scope, creator_id=checked.creator, projection=checked.projection,
-                    allowed_action_ids=[], source_snapshot=checked.source_snapshot,
+                    tx,
+                    scope,
+                    creator_id=checked.creator,
+                    projection=checked.projection,
+                    allowed_action_ids=[],
+                    source_snapshot=checked.source_snapshot,
                     expected_page_rev=checked.page_rev,
                 )
             entries = checked.projection["collections"]
@@ -264,18 +362,33 @@ class RecordHost:
             result = None
             if bind is not None:
                 result = await store.query_widget_on(
-                    tx, scope, creator_id=checked.creator, widget_id=TABLE_WIDGET_ID, bind=bind,
-                    link_id=caller.link_id, expected_page_rev=revision, projection=checked.projection,
+                    tx,
+                    scope,
+                    creator_id=checked.creator,
+                    widget_id=TABLE_WIDGET_ID,
+                    bind=bind,
+                    link_id=caller.link_id,
+                    expected_page_rev=revision,
+                    projection=checked.projection,
                 )
             if query:
                 return result
-            projection = {"collections": [{**entry, "record_ids": [r["id"] for r in result["records"]]}
-                                           for entry in entries], "assets": []}
+            projection = {
+                "collections": [
+                    {**entry, "record_ids": [r["id"] for r in result["records"]]}
+                    for entry in entries
+                ],
+                "assets": [],
+            }
             # Capture only the already authorized first page's named IDs. This
             # returns the stored/redacted layout and schema; the live wildcard
             # never enters a bounded snapshot API or becomes a frozen link.
             page = await store.capture_link_snapshot_on(
-                tx, scope, creator_id=checked.creator, projection=projection, allowed_action_ids=[],
+                tx,
+                scope,
+                creator_id=checked.creator,
+                projection=projection,
+                allowed_action_ids=[],
                 expected_page_rev=result["page_rev"] if result else None,
             )
             if not validate_page(page).valid:
@@ -286,61 +399,100 @@ class RecordHost:
         guard = self.guard
 
         @app.post("/v1/collections")
-        async def define(payload: CollectionDefineRequest, authorization: Annotated[Authorization, Depends(guard)]):
+        async def define(
+            payload: CollectionDefineRequest,
+            authorization: Annotated[Authorization, Depends(guard)],
+        ):
             return await self.member_operation(authorization, "define_on", payload)
 
         @app.post("/v1/records/add")
-        async def add(payload: RecordAddRequest, authorization: Annotated[Authorization, Depends(guard)]):
+        async def add(
+            payload: RecordAddRequest, authorization: Annotated[Authorization, Depends(guard)]
+        ):
             return await self.member_operation(authorization, "add_on", payload)
 
         @app.post("/v1/records/update")
-        async def update(payload: RecordUpdateRequest, authorization: Annotated[Authorization, Depends(guard)]):
+        async def update(
+            payload: RecordUpdateRequest, authorization: Annotated[Authorization, Depends(guard)]
+        ):
             return await self.member_operation(authorization, "update_on", payload)
 
         @app.post("/v1/records/delete")
-        async def delete(payload: RecordDeleteRequest, authorization: Annotated[Authorization, Depends(guard)]):
+        async def delete(
+            payload: RecordDeleteRequest, authorization: Annotated[Authorization, Depends(guard)]
+        ):
             return await self.member_operation(authorization, "delete_on", payload)
 
         @app.post("/v1/records/query")
-        async def query(payload: RecordQueryRequest, authorization: Annotated[Authorization, Depends(guard)]):
+        async def query(
+            payload: RecordQueryRequest, authorization: Annotated[Authorization, Depends(guard)]
+        ):
             return await self.member_operation(authorization, "query_on", payload)
 
         # Fixed packaged routes precede Folio's legacy /assets/{asset_id} route.
         @app.get("/assets/page-renderer.js", include_in_schema=False)
         async def renderer_js():
-            return Response(files("aweb_naapp.pages").joinpath("assets/page-renderer.js").read_bytes(), media_type="text/javascript")
+            return Response(
+                files("aweb_naapp.pages").joinpath("assets/page-renderer.js").read_bytes(),
+                media_type="text/javascript",
+            )
 
         @app.get("/assets/page-link-client.js", include_in_schema=False)
         async def client_js():
-            return Response(files("aweb_naapp.pages").joinpath("assets/page-link-client.js").read_bytes(), media_type="text/javascript")
+            return Response(
+                files("aweb_naapp.pages").joinpath("assets/page-link-client.js").read_bytes(),
+                media_type="text/javascript",
+            )
 
         @app.get("/assets/page-renderer.css", include_in_schema=False)
         async def renderer_css():
-            return Response(files("aweb_naapp.pages").joinpath("assets/page-renderer.css").read_bytes(), media_type="text/css")
+            return Response(
+                files("aweb_naapp.pages").joinpath("assets/page-renderer.css").read_bytes(),
+                media_type="text/css",
+            )
 
         @app.get("/assets/folio-record-table.mjs", include_in_schema=False)
         async def host_js():
-            return Response(files("folio").joinpath("assets/record-table-host.mjs").read_bytes(), media_type="text/javascript")
+            return Response(
+                files("folio").joinpath("assets/record-table-host.mjs").read_bytes(),
+                media_type="text/javascript",
+            )
 
         @app.get("/present/links/{link_id}", include_in_schema=False)
         async def table_shell(link_id: str):
             # Table links grant no media; use the configured HTTPS asset ceiling
             # even for loopback HTTP development. No request chooses this origin.
             origin = urlsplit(self.settings.public_origin)
-            shell = page_shell(script_path="/assets/folio-record-table.mjs", asset_origin="https://" + origin.netloc)
-            return HTMLResponse(shell.html, headers={**shell.headers, "X-Robots-Tag": "noindex, nofollow, noarchive"})
+            shell = page_shell(
+                script_path="/assets/folio-record-table.mjs",
+                asset_origin="https://" + origin.netloc,
+            )
+            return HTMLResponse(
+                shell.html,
+                headers={**shell.headers, "X-Robots-Tag": "noindex, nofollow, noarchive"},
+            )
 
         @app.post("/v1/links/{link_id}/session", include_in_schema=False)
         async def session(link_id: str, request: Request):
             try:
                 result = await exchange(
-                    self.runtime.db(), CollectionAuthority(self), link_id=link_id, body=await request.body(),
-                    client=request.client.host if request.client else "unknown", now=now(),
+                    self.runtime.db(),
+                    CollectionAuthority(self),
+                    link_id=link_id,
+                    body=await request.body(),
+                    client=request.client.host if request.client else "unknown",
+                    now=now(),
                     check_current_member=self.membership,
                 )
-                return JSONResponse({"session_id": result.session_id, "csrf_token": result.csrf_token,
-                                     "expires_at": result.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                     "link": dict(result.link)}, headers=LINK_RESPONSE_HEADERS)
+                return JSONResponse(
+                    {
+                        "session_id": result.session_id,
+                        "csrf_token": result.csrf_token,
+                        "expires_at": result.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "link": dict(result.link),
+                    },
+                    headers=LINK_RESPONSE_HEADERS,
+                )
             except LinkRefused as error:
                 return refusal_response(error)
             except HTTPException as error:
@@ -350,7 +502,9 @@ class RecordHost:
 
         async def view(link_id: str, request: Request):
             try:
-                result = await self.holder_read(request, link_id, query=request.url.path.endswith("/query"))
+                result = await self.holder_read(
+                    request, link_id, query=request.url.path.endswith("/query")
+                )
                 return JSONResponse(result, headers=LINK_RESPONSE_HEADERS)
             except LinkRefused as error:
                 return refusal_response(error)
@@ -359,6 +513,12 @@ class RecordHost:
             except (StoreError, InstallationRefused) as error:
                 return link_http_refusal(store_http(error))
 
-        app.add_api_route("/v1/links/{link_id}/page", view, methods=["GET"], include_in_schema=False)
-        app.add_api_route("/v1/links/{link_id}/query", view, methods=["GET"], include_in_schema=False)
-        app.add_api_route("/v1/links/{link_id}/admit", view, methods=["POST"], include_in_schema=False)
+        app.add_api_route(
+            "/v1/links/{link_id}/page", view, methods=["GET"], include_in_schema=False
+        )
+        app.add_api_route(
+            "/v1/links/{link_id}/query", view, methods=["GET"], include_in_schema=False
+        )
+        app.add_api_route(
+            "/v1/links/{link_id}/admit", view, methods=["POST"], include_in_schema=False
+        )

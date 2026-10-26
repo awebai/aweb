@@ -21,33 +21,39 @@ async def validate_saved_widgets_on(tx, installation, principal, body, storage):
         raise StoreError(error.code, 422) from None
     if not definitions:
         return
-    store = storage.require_store()
     for widget in sorted(definitions.values(), key=lambda w: (w["bind"]["collection"], w["id"])):
-        collection = widget["bind"]["collection"]
-        scope = collection_scope(installation, collection)
-        actor = principal_id(principal, scope)
-        metadata = await store.collection_access_on(
-            tx,
-            scope,
-            creator_id=actor,
-            collection=collection,
-            link_mode="live",
-        )
-        if metadata is None:
-            raise StoreError("resource_not_found", 404)
-        referenced = {column["field"] for column in widget["props"]["columns"]}
-        referenced.update(field["field"] for field in widget["bind"].get("all", []))
-        referenced.update(field["field"] for field in widget["bind"].get("sort", []))
-        if referenced - set(metadata["fields"]):
-            raise StoreError("resource_not_found", 404)
-        probe = build_collection_page(
-            page_id=scope.page_id,
-            collection_id=collection,
-            title="Records",
-            schema=metadata["schema"],
-            owner=actor,
-        )
-        probe["layout"] = [widget]
-        if not validate_page(probe).valid:
-            # Do not return the collection schema or submitted values in errors.
-            raise StoreError("invalid_widget", 422)
+        scope = collection_scope(installation, widget["bind"]["collection"])
+        await resolve_widget_on(tx, installation, principal_id(principal, scope), widget, storage)
+
+
+async def resolve_widget_on(tx, installation, creator_id, widget, storage, *, write=False):
+    """Resolve a structurally checked saved widget through shared store policy."""
+    collection = widget["bind"]["collection"]
+    scope = collection_scope(installation, collection)
+    metadata = await storage.require_store().collection_access_on(
+        tx,
+        scope,
+        creator_id=creator_id,
+        collection=collection,
+        link_mode="live",
+        write=write,
+        exclusive=write,
+    )
+    if metadata is None:
+        raise StoreError("resource_not_found", 404)
+    referenced = {column["field"] for column in widget["props"]["columns"]}
+    referenced.update(field["field"] for field in widget["bind"].get("all", []))
+    referenced.update(field["field"] for field in widget["bind"].get("sort", []))
+    if referenced - set(metadata["fields"]):
+        raise StoreError("resource_not_found", 404)
+    probe = build_collection_page(
+        page_id=scope.page_id,
+        collection_id=collection,
+        title="Records",
+        schema=metadata["schema"],
+        owner=metadata["owner"],
+    )
+    probe["layout"] = [widget]
+    if not validate_page(probe).valid:
+        raise StoreError("invalid_widget", 422)
+    return scope, metadata, probe

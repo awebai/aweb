@@ -97,6 +97,8 @@ class PresentationEditResponse(BaseModel):
 
 
 class PresentationStateResponse(BaseModel):
+    segments: list[dict] | None = None
+    widgets: dict | None = None
     version_number: int
     body: str | None = None
     html: str | None = None

@@ -1266,7 +1266,7 @@ class PageStore(LifecycleMixin):
         return entries
 
     async def collection_access_on(
-        self, tx, scope, *, creator_id, collection, link_mode, record_ids="*"
+        self, tx, scope, *, creator_id, collection, link_mode, record_ids="*", write=False, exclusive=False
     ):
         """Current collection authority after the host checks its creator proof.
 
@@ -1284,9 +1284,11 @@ class PageStore(LifecycleMixin):
             raise StoreError("schema_invalid")
         if record_ids != "*":
             _projection_names(record_ids, minimum=0, maximum=200)
-        document, access, actor = await self._load_actor(tx, scope, creator_id, shared=True)
+        document, access, actor = await self._load_actor(
+            tx, scope, creator_id, "write" if write else "read", shared=not exclusive
+        )
         definition = next((c for c in document["collections"] if c["id"] == collection), None)
-        if definition is None:
+        if definition is None or (write and definition["mode"] != "owned"):
             return None
         fields = access.visible_fields(actor, definition)
         if not fields:
@@ -1309,6 +1311,7 @@ class PageStore(LifecycleMixin):
             selected = sorted(row["id"] for row in rows)
         await self._fence(scope)
         return {
+            "owner": document["owner"],
             "page_rev": document["rev"],
             "id": definition["id"],
             "mode": definition["mode"],

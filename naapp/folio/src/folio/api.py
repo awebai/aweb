@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
+from aweb_naapp.page_store import StoreError
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.runtime.app import NOINDEX_ROBOTS_HEADER, NaappRuntime, mount_naapp_routes
 from aweb_naapp.runtime.authorization import Authorization
@@ -18,6 +19,8 @@ from folio import edit_sessions
 from folio.aweb_manifest import MANIFEST_PATH
 from folio.cloudflare_stream import stream_iframe_url
 from folio.config import Settings, get_settings
+from folio.document_record_host import DocumentRecordHost
+from folio.document_widgets import document_segments
 from folio.installation_access import presented_document
 from folio.models import (
     AppendTemplateVersionRequest,
@@ -51,7 +54,7 @@ from folio.presentation import (
     theme_contrast_error,
 )
 from folio.privacy import PresentationPrivacy, install_access_filter
-from folio.record_host import RecordHost
+from folio.record_host import RecordHost, store_http
 from folio.record_storage import RecordStorage
 from folio.repository import (
     _allowed_assets_for_body,
@@ -89,7 +92,9 @@ _MIGRATIONS_DIR = _PACKAGE_DIR / "migrations"
 _USER_CONTENT_PATHS = ("/present/", "/assets/")
 
 
-def create_app(settings: Settings | None = None, *, awid_transport=None, team_server_transport=None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None, *, awid_transport=None, team_server_transport=None
+) -> FastAPI:
     install_access_filter()
     resolved = settings or get_settings()
     record_storage = RecordStorage(resolved)
@@ -100,10 +105,16 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
         manifest_path=MANIFEST_PATH,
         awid_transport=awid_transport,
         team_server_transport=team_server_transport,
-        stores=(apply_installation_migrations, apply_ratelimit_migrations,
-                apply_capability_link_migrations, record_storage.connect),
+        stores=(
+            apply_installation_migrations,
+            apply_ratelimit_migrations,
+            apply_capability_link_migrations,
+            record_storage.connect,
+        ),
     )
     records = RecordHost(runtime, record_storage, team_server_transport=team_server_transport)
+
+    document_records = DocumentRecordHost(runtime, record_storage)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -121,24 +132,36 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
     @app.exception_handler(InstallationRefused)
     async def installation_refused(request: Request, error: InstallationRefused):
         from fastapi.responses import JSONResponse
+
         return JSONResponse(status_code=error.status, content={"detail": {"code": error.code}})
 
     def db(request: Request):
         permit = getattr(request.state, "folio_installation", None)
         return permit.database() if permit is not None else runtime.db()
 
+    document_records.mount(app, db)
+
     # Folio's domain policy admits current members; the shared guard separately
     # enforces exact manifest tools, invocation contexts and installed scopes.
     async def member_policy(request, member, tool):
         return True
 
-    member_authorized = runtime.authorized(grants=runtime.installation_grants(), policy=member_policy)
+    member_authorized = runtime.authorized(
+        grants=runtime.installation_grants(), policy=member_policy
+    )
 
-    async def principal(request: Request, authorization: Annotated[Authorization, Depends(member_authorized)]) -> Principal:
+    async def principal(
+        request: Request, authorization: Annotated[Authorization, Depends(member_authorized)]
+    ) -> Principal:
         try:
             permit = await runtime.installation_fence().permit(authorization.principal.team_id)
-            if (authorization.grant.installation_id, authorization.grant.generation) != (permit.admitted.installation_id, permit.admitted.generation):
-                raise InstallationRefused("generation_superseded", 409, "Installation changed during admission")
+            if (authorization.grant.installation_id, authorization.grant.generation) != (
+                permit.admitted.installation_id,
+                permit.admitted.generation,
+            ):
+                raise InstallationRefused(
+                    "generation_superseded", 409, "Installation changed during admission"
+                )
         except InstallationRefused as error:
             raise HTTPException(error.status, detail={"code": error.code}) from None
         request.state.folio_installation = permit
@@ -197,8 +220,9 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
         authorization: Annotated[Authorization, Depends(member_authorized)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> list[dict]:
-        return (await list_documents(database, principal=authorization.principal)
-                + await records.documents(authorization))
+        return await list_documents(
+            database, principal=authorization.principal
+        ) + await records.documents(authorization)
 
     @app.get("/v1/documents/{slug}", response_model=DocumentResponse)
     async def get_document_route(
@@ -220,8 +244,12 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
         except UnicodeDecodeError as exc:
             raise HTTPException(status_code=400, detail="Version body must be valid UTF-8") from exc
         result = await records.save_document(
-            database, request.state.folio_installation.admitted, actor,
-            operation=append_version, slug=slug, body=body,
+            database,
+            request.state.folio_installation.admitted,
+            actor,
+            operation=append_version,
+            slug=slug,
+            body=body,
         )
         return result
 
@@ -235,8 +263,12 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
     ) -> dict:
         body = render_declarative_template(payload.model_dump())
         result = await records.save_document(
-            database, request.state.folio_installation.admitted, actor,
-            operation=append_version, slug=slug, body=body,
+            database,
+            request.state.folio_installation.admitted,
+            actor,
+            operation=append_version,
+            slug=slug,
+            body=body,
         )
         return result
 
@@ -266,16 +298,29 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
         structured = await records.present(authorization, payload)
         if structured is not None:
             return structured
-        return await mint_presentation_link(
-            database,
-            installation_id=request.state.folio_installation.admitted.installation_id,
-            principal=actor,
-            settings=resolved,
-            slug=payload.slug,
-            version=payload.version,
-            ttl_seconds=payload.ttl_seconds,
-            editable=payload.editable,
-        )
+
+        async def authority(tx, **kwargs):
+            return await document_records.mint_authority_on(
+                tx,
+                installation=request.state.folio_installation.admitted,
+                **kwargs,
+            )
+
+        try:
+            async with database.transaction() as tx:
+                return await mint_presentation_link(
+                    tx,
+                    installation_id=request.state.folio_installation.admitted.installation_id,
+                    principal=actor,
+                    settings=resolved,
+                    slug=payload.slug,
+                    version=payload.version,
+                    ttl_seconds=payload.ttl_seconds,
+                    editable=payload.editable,
+                    record_authority=authority,
+                )
+        except StoreError as error:
+            raise store_http(error) from None
 
     @app.post("/v1/present/{token}/revoke")
     async def revoke_presentation_route(
@@ -309,7 +354,9 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
                 stream_uid = str(raw.get("stream_uid") or "").strip()
                 if status == "ready" and stream_uid:
                     try:
-                        embed["iframe_url"] = stream_iframe_url(settings=resolved, stream_uid=stream_uid)
+                        embed["iframe_url"] = stream_iframe_url(
+                            settings=resolved, stream_uid=stream_uid
+                        )
                     except HTTPException:
                         embed["status"] = "unavailable"
                 embeds[asset_id] = embed
@@ -329,7 +376,9 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        return await create_video_direct_upload(database, principal=actor, settings=resolved, video=payload)
+        return await create_video_direct_upload(
+            database, principal=actor, settings=resolved, video=payload
+        )
 
     @app.get("/v1/assets/{asset_id}", response_model=AssetMetadataResponse)
     async def get_asset_route(
@@ -337,7 +386,9 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        return await get_asset_metadata(database, principal=actor, settings=resolved, asset_id=asset_id)
+        return await get_asset_metadata(
+            database, principal=actor, settings=resolved, asset_id=asset_id
+        )
 
     @app.get("/v1/theme", response_model=ThemeResponse)
     async def get_theme_route(
@@ -387,27 +438,47 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
             },
         )
 
-    async def edit_snapshot(database: AsyncDatabaseManager, team_id: str, body: str, version_number: int, assets: dict) -> dict:
-        row = await database.fetch_one("SELECT tokens,logo_asset_id,header,footer FROM {{tables.themes}} WHERE team_id=$1", team_id)
+    async def edit_snapshot(context, body: str, version_number: int) -> dict:
+        database, team_id = context.tx, context.row["team_id"]
+        assets = await _allowed_assets_for_body(database, team_id=team_id, body=body)
+        tables = await document_records.snapshot(context)
+        row = await database.fetch_one(
+            "SELECT tokens,logo_asset_id,header,footer FROM {{tables.themes}} WHERE team_id=$1",
+            team_id,
+        )
         theme = _theme_from_row(row, public_origin=resolved.public_origin) if row else None
-        return {"body": body, "version_number": version_number,
-                "theme": {"css": _theme_css(sanitize_theme_tokens((theme or {}).get("tokens"))),
-                          "header": (theme or {}).get("header"), "footer": (theme or {}).get("footer"),
-                          "logo_url": (theme or {}).get("logo_url")},
-                "html": render_presented_markdown(body, public_origin=resolved.public_origin,
-                    asset_embeds=presentation_asset_embeds(assets))}
+        return {
+            "body": body,
+            "version_number": version_number,
+            "segments": document_segments(body),
+            "widgets": tables["widgets"],
+            "theme": {
+                "css": _theme_css(sanitize_theme_tokens((theme or {}).get("tokens"))),
+                "header": (theme or {}).get("header"),
+                "footer": (theme or {}).get("footer"),
+                "logo_url": (theme or {}).get("logo_url"),
+            },
+            "html": render_presented_markdown(
+                body,
+                public_origin=resolved.public_origin,
+                asset_embeds=presentation_asset_embeds(assets),
+            ),
+        }
 
     @app.get("/present/edit/{link_id}", response_class=HTMLResponse)
     async def editor_shell(link_id: str) -> HTMLResponse:
         nonce = secrets.token_urlsafe(16)
         return HTMLResponse(
             render_editor_page(token=link_id, body="", version_number=1, nonce=nonce),
-            headers={"Content-Security-Policy": f"default-src 'self'; img-src 'self'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline' 'self'; base-uri 'none'; frame-ancestors 'none'"},
+            headers={
+                "Content-Security-Policy": f"default-src 'self'; img-src 'self'; script-src 'nonce-{nonce}' 'strict-dynamic'; connect-src 'self'; style-src 'unsafe-inline' 'self'; base-uri 'none'; frame-ancestors 'none'"
+            },
         )
 
     @app.post("/present/edit/{link_id}/session")
-    async def editor_exchange(link_id: str, request: Request,
-        database: Annotated[AsyncDatabaseManager, Depends(db)]) -> dict:
+    async def editor_exchange(
+        link_id: str, request: Request, database: Annotated[AsyncDatabaseManager, Depends(db)]
+    ) -> dict:
         # Fixed refusals, without validation errors echoing secret input.
         try:
             payload = await request.json()
@@ -416,44 +487,91 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
         if not isinstance(payload, dict) or set(payload) != {"opener"}:
             raise edit_sessions.unavailable()
         credential, current = await edit_sessions.exchange(
-            database, runtime, link_id=link_id, opener=payload["opener"],
+            database,
+            runtime,
+            link_id=link_id,
+            opener=payload["opener"],
         )
-        assets = await _allowed_assets_for_body(database, team_id=current["team_id"], body=current["body"])
-        return {"session_secret": credential, **await edit_snapshot(database, current["team_id"], current["body"], current["version_number"], assets)}
+        async with edit_sessions.checked_access(
+            database, runtime, link_id=link_id, credential=credential
+        ) as context:
+            current = await document_records.source(context)
+            return {
+                "session_secret": credential,
+                **await edit_snapshot(context, current["body"], current["version_number"]),
+            }
 
-    @app.get("/present/edit/{link_id}/state", response_model=PresentationStateResponse, response_model_exclude_none=True)
-    async def editor_state(link_id: str, request: Request,
+    @app.get(
+        "/present/edit/{link_id}/state",
+        response_model=PresentationStateResponse,
+        response_model_exclude_none=True,
+    )
+    async def editor_state(
+        link_id: str,
+        request: Request,
         database: Annotated[AsyncDatabaseManager, Depends(db)],
-        after_version: Annotated[int | None, Query(ge=1)] = None) -> dict:
-        async with edit_sessions.access(database, runtime, link_id=link_id,
-            credential=request.headers.get(edit_sessions.SESSION_HEADER)) as (tx, link):
-            current = await tx.fetch_one("SELECT body,version_number FROM {{tables.document_versions}} WHERE document_id=$1 ORDER BY version_number DESC LIMIT 1", link["document_id"])
-            if current is None:
-                raise edit_sessions.unavailable()
-            state = dict(current)
-        if after_version == state["version_number"]:
-            return {"version_number": state["version_number"]}
-        assets = await _allowed_assets_for_body(database, team_id=link["team_id"], body=state["body"])
-        return await edit_snapshot(database, link["team_id"], state["body"], state["version_number"], assets)
+        after_version: Annotated[int | None, Query(ge=1)] = None,
+    ) -> dict:
+        async with edit_sessions.checked_access(
+            database,
+            runtime,
+            link_id=link_id,
+            credential=request.headers.get(edit_sessions.SESSION_HEADER),
+        ) as context:
+            current = await document_records.source(context)
+            if after_version == current["version_number"]:
+                return {"version_number": current["version_number"]}
+            return await edit_snapshot(context, current["body"], current["version_number"])
 
     @app.post("/present/edit/{link_id}/edit", response_model=PresentationEditResponse)
-    async def editor_save(link_id: str, request: Request, payload: PresentationEditRequest,
-        database: Annotated[AsyncDatabaseManager, Depends(db)]) -> dict:
-        async with edit_sessions.access(database, runtime, link_id=link_id,
-            credential=request.headers.get(edit_sessions.SESSION_HEADER), write=True) as (tx, link):
-            return await append_presented_version(tx, events=runtime.app_events, link=link,
-                body=payload.body, base_version=payload.base_version, editor_name=payload.editor_name)
+    async def editor_save(
+        link_id: str,
+        request: Request,
+        payload: PresentationEditRequest,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        async with edit_sessions.access(
+            database,
+            runtime,
+            link_id=link_id,
+            credential=request.headers.get(edit_sessions.SESSION_HEADER),
+            write=True,
+        ) as (tx, link):
+            return await append_presented_version(
+                tx,
+                events=runtime.app_events,
+                link=link,
+                body=payload.body,
+                base_version=payload.base_version,
+                editor_name=payload.editor_name,
+            )
 
     @app.post("/present/edit/{link_id}/preview", response_class=HTMLResponse)
-    async def editor_preview(link_id: str, request: Request, payload: PresentationPreviewRequest,
-        database: Annotated[AsyncDatabaseManager, Depends(db)]) -> HTMLResponse:
-        async with edit_sessions.access(database, runtime, link_id=link_id,
-            credential=request.headers.get(edit_sessions.SESSION_HEADER)) as (_, link):
+    async def editor_preview(
+        link_id: str,
+        request: Request,
+        payload: PresentationPreviewRequest,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> HTMLResponse:
+        async with edit_sessions.access(
+            database,
+            runtime,
+            link_id=link_id,
+            credential=request.headers.get(edit_sessions.SESSION_HEADER),
+        ) as (_, link):
             team_id = link["team_id"]
         assets = await _allowed_assets_for_body(database, team_id=team_id, body=payload.body)
-        html = render_presented_markdown(payload.body, public_origin=resolved.public_origin,
-            asset_embeds=presentation_asset_embeds(assets))
-        return HTMLResponse(html, headers={"Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'"})
+        html = render_presented_markdown(
+            payload.body,
+            public_origin=resolved.public_origin,
+            asset_embeds=presentation_asset_embeds(assets),
+        )
+        return HTMLResponse(
+            html,
+            headers={
+                "Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'"
+            },
+        )
 
     @app.get("/present/{token}", response_class=HTMLResponse)
     async def present_route(
@@ -463,11 +581,15 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
         presented = await presented_document(database, runtime=runtime, token=token)
         theme = presented.get("theme")
         if isinstance(theme, dict) and theme.get("logo_asset_id") is not None:
-            theme["logo_url"] = f"{resolved.public_origin.rstrip('/')}/assets/{theme['logo_asset_id']}"
+            theme["logo_url"] = (
+                f"{resolved.public_origin.rstrip('/')}/assets/{theme['logo_asset_id']}"
+            )
         if bool(presented.get("editable")):
             raise edit_sessions.unavailable()
         nonce = secrets.token_urlsafe(16)
-        mode = sanitize_layout_tokens(theme.get("tokens") if isinstance(theme, dict) else None)["mode"]
+        mode = sanitize_layout_tokens(theme.get("tokens") if isinstance(theme, dict) else None)[
+            "mode"
+        ]
         return HTMLResponse(
             render_presented_page(
                 body=str(presented["body"]),
