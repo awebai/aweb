@@ -48,53 +48,58 @@ async def service(uses):
         sock.close()
 
 
+async def signed_in_page(uses, context, origin, current):
+    page = await context.new_page()
+    cdp = await context.new_cdp_session(page)
+    await cdp.send("WebAuthn.enable")
+    auth = await cdp.send(
+        "WebAuthn.addVirtualAuthenticator",
+        {
+            "options": {
+                "protocol": "ctap2",
+                "transport": "internal",
+                "hasResidentKey": True,
+                "hasUserVerification": True,
+                "isUserVerified": True,
+                "automaticPresenceSimulation": True,
+            }
+        },
+    )
+    [credential] = uses.world.devices["alice@acme.com"].credentials.values()
+    try:
+        await cdp.send(
+            "WebAuthn.addCredential",
+            {
+                "authenticatorId": auth["authenticatorId"],
+                "credential": {
+                    "credentialId": base64.b64encode(credential.credential_id).decode(),
+                    "isResidentCredential": True,
+                    "rpId": "localhost",
+                    "privateKey": base64.b64encode(
+                        credential.key.private_bytes(
+                            Encoding.DER, PrivateFormat.PKCS8, NoEncryption()
+                        )
+                    ).decode(),
+                    "userHandle": base64.b64encode(credential.user_handle).decode(),
+                    "signCount": credential.sign_count,
+                },
+            },
+        )
+    except BrowserError:
+        raise AssertionError("generated browser authenticator could not be prepared") from None
+    await page.goto(origin + "/login?" + urlencode({"scope": current.scope}))
+    await page.get_by_role("button", name="Sign in with a passkey", exact=True).click()
+    await page.wait_for_url(origin + "/")
+    return page, cdp, auth
+
+
 @pytest.mark.parametrize("width,verified", [(375, True), (768, True), (1440, True), (375, False)])
 async def test_browser_frozen_outcome_fresh_approve_and_explicit_settlement(
     uses, browser, service, tmp_path, width, verified
 ):
     origin, run, original, current = service
     async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
-        page = await context.new_page()
-        cdp = await context.new_cdp_session(page)
-        await cdp.send("WebAuthn.enable")
-        auth = await cdp.send(
-            "WebAuthn.addVirtualAuthenticator",
-            {
-                "options": {
-                    "protocol": "ctap2",
-                    "transport": "internal",
-                    "hasResidentKey": True,
-                    "hasUserVerification": True,
-                    "isUserVerified": True,
-                    "automaticPresenceSimulation": True,
-                }
-            },
-        )
-        [credential] = uses.world.devices["alice@acme.com"].credentials.values()
-        try:
-            await cdp.send(
-                "WebAuthn.addCredential",
-                {
-                    "authenticatorId": auth["authenticatorId"],
-                    "credential": {
-                        "credentialId": base64.b64encode(credential.credential_id).decode(),
-                        "isResidentCredential": True,
-                        "rpId": "localhost",
-                        "privateKey": base64.b64encode(
-                            credential.key.private_bytes(
-                                Encoding.DER, PrivateFormat.PKCS8, NoEncryption()
-                            )
-                        ).decode(),
-                        "userHandle": base64.b64encode(credential.user_handle).decode(),
-                        "signCount": credential.sign_count,
-                    },
-                },
-            )
-        except BrowserError:
-            raise AssertionError("generated browser authenticator could not be prepared") from None
-        await page.goto(origin + "/login?" + urlencode({"scope": current.scope}))
-        await page.get_by_role("button", name="Sign in with a passkey", exact=True).click()
-        await page.wait_for_url(origin + "/")
+        page, cdp, auth = await signed_in_page(uses, context, origin, current)
         await page.goto(origin + "/activity")
         await page.get_by_role("link", name="Resolve uncertain outcome", exact=True).click()
         await expect(
@@ -155,8 +160,39 @@ async def test_browser_frozen_outcome_fresh_approve_and_explicit_settlement(
         await expect(page.locator("#reconciliation-status")).to_be_focused()
         assert (await uses.approvals.get(approval_id)).state is ApprovalState.CONSUMED
         await page.screenshot(path=tmp_path / f"settlement-recorded-{width}.png", full_page=True)
+        summary = page.locator("p").filter(has_text="Original outcome:")
+        await expect(summary).to_contain_text("reconciled_failed")
+        await expect(summary).to_contain_text("consumed")
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         before = await snapshot(uses.world.db)
         await page.reload()
         assert await snapshot(uses.world.db) == before
         assert await page.locator("#settle-outcome").count() == 0
+
+
+@pytest.mark.parametrize("width", [375, 1440])
+async def test_cookie_only_failed_passkey_reauthentication_shows_feedback(
+    uses, browser, service, tmp_path, width
+):
+    origin, _, original, current = service
+    async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
+        page, cdp, auth = await signed_in_page(uses, context, origin, current)
+        # Keep the real S4 cookie while removing this tab's CSRF token.
+        await page.evaluate("sessionStorage.clear()")
+        await page.goto(origin + "/reconciliations/" + original.original.reconcile_ref)
+        await expect(page.locator("[data-console-scope]")).to_be_hidden()
+        await expect(page.locator("#console-reauth-notice")).to_be_visible()
+        before = await snapshot(uses.world.db)
+        await cdp.send(
+            "WebAuthn.setUserVerified",
+            {"authenticatorId": auth["authenticatorId"], "isUserVerified": False},
+        )
+        login = page.get_by_role("button", name="Sign in with your passkey", exact=True)
+        await login.click()
+        await expect(login).to_be_enabled()
+        await page.screenshot(
+            path=tmp_path / f"settlement-reauth-refused-{width}.png", full_page=True
+        )
+        feedback = page.get_by_role("status").filter(has_text="Sign-in could not be completed.")
+        await expect(feedback).to_be_visible()
+        assert await snapshot(uses.world.db) == before
