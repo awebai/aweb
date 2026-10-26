@@ -57,6 +57,7 @@ async def test_child_access_read_matches_real_ancestor_operation_admission(db, f
     [candidate] = snapshot.candidates
     [selected] = candidate.operations
     assert candidate.grant.grant_id == admitted.grant_id
+    assert selected.granted_digest == operation.digest
     assert selected.current == expected
     assert candidate.grant.covers_operation(
         selected.current.operation_id, selected.current.digest
