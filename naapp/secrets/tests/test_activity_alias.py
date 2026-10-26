@@ -20,10 +20,13 @@ from tests.test_broker_audit import db as db
 from tests.test_broker_audit import fence as fence
 
 
-async def authenticated(registry, member, *, stable):
-    if stable:
-        member.extra_cert_fields["member_did_aw"] = await registry.register_did(member.member_key)
-    await registry.add_team(TEAM, member.team_did_key)
+async def authenticated(registry, member, *, stable, register=True):
+    if register:
+        if stable:
+            member.extra_cert_fields["member_did_aw"] = await registry.register_did(
+                member.member_key
+            )
+        await registry.add_team(TEAM, member.team_did_key)
     await registry.add_certificate(member.certificate())
     body = b'{"alias":"untrusted-body-name"}'
     headers = member.headers(aud="https://api.localhost", method="POST", path="/v1/use", body=body)
@@ -78,7 +81,7 @@ async def test_b1_alias_snapshot_survives_a_new_verified_certificate_without_wri
             occurred_at=NOW,
         )
     member.alias, member.certificate_id = "renamed-writer", "cert-2"
-    current = await authenticated(registry, member, stable=stable)
+    current = await authenticated(registry, member, stable=stable, register=False)
     assert current.alias == "renamed-writer" and current.did_key == first.did_key
     before = [dict(row) for row in await db.fetch_all("SELECT * FROM {{tables.broker_use_events}}")]
     async with db.transaction() as tx:
