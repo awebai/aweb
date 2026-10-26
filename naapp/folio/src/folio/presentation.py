@@ -11,6 +11,8 @@ from uuid import UUID
 import markdown
 import nh3
 
+from folio.document_widgets import WidgetDocumentError, parse_widget_blocks
+
 _ALLOWED_TAGS = {
     "a",
     "blockquote",
@@ -632,6 +634,23 @@ def render_presented_markdown(
 ) -> str:
     """Render Markdown to sanitized HTML safe for unauthenticated public pages."""
 
+    # Definitions are data for the checked host, never prose or agent markup.
+    # Insert host-owned mounts only AFTER sanitization; untrusted HTML cannot
+    # forge their data attributes. Random tokens also survive Markdown parsing
+    # without interpolating a definition into the HTML or a script.
+    try:
+        widgets = parse_widget_blocks(body)
+    except WidgetDocumentError:
+        return '<p class="folio-widget-unavailable" role="status">This table cannot be shown.</p>'
+    widget_replacements = {}
+    for widget in reversed(widgets):
+        token = "FOLIOWIDGET" + secrets.token_hex(24)
+        widget_replacements[token] = (
+            f'<section class="folio-widget" data-folio-widget="{escape(widget.definition["id"], quote=True)}" '
+            'aria-label="Table"><p role="status">Loading table…</p></section>'
+        )
+        body = body[:widget.start] + "\n\n" + token + "\n\n" + body[widget.end:]
+
     embeds = asset_embeds or {}
     image_asset_ids = {
         asset_id for asset_id, embed in embeds.items() if str(embed.get("kind") or "image") == "image"
@@ -674,6 +693,9 @@ def render_presented_markdown(
     for token, iframe_html in trusted_video_replacements.items():
         sanitized = sanitized.replace(f"<p>{token}</p>", iframe_html)
         sanitized = sanitized.replace(token, iframe_html)
+    for token, mount in widget_replacements.items():
+        sanitized = sanitized.replace(f"<p>{token}</p>", mount)
+        sanitized = sanitized.replace(token, mount)
     return sanitized
 
 
