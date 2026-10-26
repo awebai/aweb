@@ -12,6 +12,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from aweb_naapp.runtime.app import NaappRuntime
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.db import NaappDatabase
 from aweb_naapp.runtime.installation import apply_installation_migrations
 from aweb_naapp.runtime.team_auth import MembershipProof, Principal
@@ -30,8 +31,8 @@ async def present_world(test_db_factory, monkeypatch):
     # Isolate only AWID's external registry in these local PG/HTTP/browser tests.
     # Docker e2e uses the real registry and signatures.
     async def current(self, team_id, *, certificate_id, team_did_key):
-        now = time.monotonic()
-        return MembershipProof(team_id, certificate_id, team_did_key, now, now + 60)
+        now = time.monotonic_ns()
+        return MembershipProof(team_id, certificate_id, team_did_key, now, now + seconds_to_ns(60))
     monkeypatch.setattr(NaappRuntime, "check_current_member", current)
     class TestGrants:
         state = "active"
@@ -42,7 +43,7 @@ async def present_world(test_db_factory, monkeypatch):
             return SimpleNamespace(team_id=team_id, app_id=settings.app_id, state=self.state,
                 installation_id=self.installation_id, generation=self.generation,
                 installed_at=self.installed_at, granted_scopes=frozenset({"folio:read", "folio:write"}),
-                fresh_until=time.monotonic()+60)
+                fresh_until=time.monotonic_ns()+seconds_to_ns(60))
     grants = TestGrants()
     monkeypatch.setattr(NaappRuntime, "installation_grants", lambda self: grants)
     database = await test_db_factory.create_db(suffix="folio_present")

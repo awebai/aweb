@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Release preparation: server 1.27.35. Update the server test fixtures for
+  the shared naapp runtime's integer nanosecond freshness deadlines.
+
+- AWID SDK: `CachedRegistryClient.get_team_public_key` caches controller keys
+  for 60 seconds and serves them during registry failures only through 15
+  minutes of data age. Certificate-cache invalidation also clears the key.
+  OSS local key replacement and controller status-host designation now verify
+  against this AWID read instead of the stored team key hint.
+
+- Server SDK: public `validate_strict_e2ee_message_envelope` guards encrypted-v2
+  mail/chat builder output with recursive unknown-field rejection and strict
+  types before the existing crypto and binding checks. Valid binary encodings
+  containing message text and empty optional identity fields remain accepted.
+
 - aw: local members initialized with an API key now register and approve app
   installations on their team server through `aw plugin install`, even without
   global identity metadata. Local members can also update and remove approvals.
@@ -62,6 +76,9 @@
   version and passes the same vectors as aw.
 
 ### Breaking changes
+
+- MCP team tools now require a team certificate (or a hosted proxy context);
+  identity-only MCP auth keeps mail/chat/contacts.
 
 - aw refuses a tool path parameter value that is blank, is `.` or `..`
   once surrounding whitespace is trimmed, or contains `/`, `\`, `%`, `?`,

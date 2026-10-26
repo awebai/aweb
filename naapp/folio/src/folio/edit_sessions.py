@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import math
 import re
 import secrets
 import time
@@ -46,14 +45,12 @@ async def member_proof(runtime: NaappRuntime, row: dict[str, Any]) -> Membership
 
 
 def require_proof(row: dict[str, Any], proof: MembershipProof) -> None:
-    now = time.monotonic()  # Re-read after the lock, not before waiting for it.
+    now = time.monotonic_ns()  # Re-read after the lock, not before waiting for it.
     if (
         proof.team_id != row["team_id"]
         or proof.certificate_id != row["certificate_id"]
         or proof.team_did_key != row["creator_team_did_key"]
-        or not all(math.isfinite(t) for t in (proof.checked_at, proof.fresh_until, now))
-        or not 0 <= proof.fresh_until - proof.checked_at <= 60
-        or not proof.checked_at <= now <= proof.fresh_until
+        or not proof.is_fresh_at(now)
     ):
         raise unavailable()
 

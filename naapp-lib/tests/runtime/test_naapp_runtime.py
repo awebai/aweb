@@ -24,6 +24,7 @@ from pydantic_settings import SettingsConfigDict
 from aweb_naapp.manifest import ManifestError, write_manifest_file
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import Authorization, DeclaredTool, Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import Principal
 
@@ -74,7 +75,7 @@ class InstalledTeams:
         return Grant(
             team_id=team_id,
             scopes=scopes,
-            fresh_until=time.monotonic() + 60,
+            fresh_until=time.monotonic_ns() + seconds_to_ns(60),
             installation_id=None,
             generation=None,
         )

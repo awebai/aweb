@@ -24,6 +24,7 @@ from pydantic_settings import SettingsConfigDict
 from aweb_naapp.manifest import canonical_bytes, write_manifest_file
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import ActionKind, Authorization, DeclaredTool, Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import Principal
 
@@ -48,7 +49,7 @@ class FixtureSettings(NaappSettings):
 
 class AllGranted:
     async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
-        return Grant(team_id=team_id, scopes=SCOPES, fresh_until=time.monotonic() + 60,
+        return Grant(team_id=team_id, scopes=SCOPES, fresh_until=time.monotonic_ns() + seconds_to_ns(60),
                      installation_id=None, generation=None)
 
 
