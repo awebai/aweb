@@ -396,6 +396,7 @@ class ReconciliationControls:
                     approval_id,
                     str(control.control_id),
                     DispatchOutcome.COMPLETED,
+                    response_status="settled",
                     tx=tx,
                 )
                 await self._final(

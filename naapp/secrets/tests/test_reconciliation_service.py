@@ -6,7 +6,13 @@ from datetime import timedelta
 import pytest
 from aweb_naapp.dispatch import State
 from aweb_naapp.roles import unassign
-from aweb_naapp.runtime.approvals import ApprovalRefused, ApprovalState, Assurance, Decision
+from aweb_naapp.runtime.approvals import (
+    ApprovalRefused,
+    ApprovalState,
+    Assurance,
+    Decision,
+    Refusal,
+)
 from fastapi import HTTPException
 
 from aweb_secrets import records
@@ -15,9 +21,23 @@ from aweb_secrets.reconciliation_service import ReconciliationRefused
 from tests.reconciliation_world import OwnerFence, service_world
 from tests.test_broker_audit import envelopes
 from tests.test_change_sets import ALICE
-from tests.test_run_status import snapshot
+from tests.test_run_status import snapshot as run_snapshot
 from tests.test_use_approvals import uses as uses
 from tests.test_use_approvals import world as world
+
+
+async def snapshot(db):
+    result = await run_snapshot(db)
+    for table in (
+        "reconciliation_controls",
+        "reconciliation_control_events",
+        "reconciliation_control_proofs",
+    ):
+        result[table] = [
+            dict(row)
+            for row in await db.fetch_all("SELECT * FROM {{tables." + table + "}} ORDER BY 1")
+        ]
+    return result
 
 
 async def mint(uses, service, console, session, ref, outcome="completed"):
@@ -181,12 +201,13 @@ async def test_expiry_during_the_original_s3_lock_wait_rolls_back_all_settlement
 
         async def settle():
             async with db.transaction() as tx:
-                with pytest.raises(ApprovalRefused):
+                with pytest.raises(ApprovalRefused) as refused:
                     await service.settle(
                         tx,
                         approval_id=pending.approval.approval_id,
                         fence=OwnerFence(console, session, scope),
                     )
+                assert refused.value.reason is Refusal.EXPIRED
 
         task = asyncio.create_task(settle())
         for _ in range(500):
