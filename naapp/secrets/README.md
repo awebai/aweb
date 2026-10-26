@@ -205,6 +205,12 @@ and contact scheduling. Their fixed governance refusals return 503 and roll
 back the effect. Approver creation and owner-scheduled contact changes use the
 existing draft, review and confirmation routes.
 
+The frozen operation review states whether an unknown outcome requires manual
+settlement or permits one automatic repeat after the configured delay. It names
+any owner-asserted upstream idempotency-header guarantee and warns that an
+incorrect assertion can duplicate an effect. This display uses the frozen
+operation terms; it does not change dispatch or settlement authority.
+
 ```python
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 
