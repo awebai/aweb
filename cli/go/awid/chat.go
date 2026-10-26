@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -591,7 +590,10 @@ func (c *Client) e2eeChatRecipients(ctx context.Context, aliases []string, dids 
 		for _, alias := range aliases {
 			agent, ok := agentsByAlias[strings.TrimSpace(alias)]
 			if !ok {
-				return nil, fmt.Errorf("recipient agent not found: %s", alias)
+				agent, err = c.e2eeRecipientAgent(ctx, "", alias)
+				if err != nil {
+					return nil, err
+				}
 			}
 			recipient, err := c.e2eeRecipientFromAgent(ctx, agent)
 			if err != nil {

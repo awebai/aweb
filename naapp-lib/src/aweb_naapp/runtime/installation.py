@@ -21,10 +21,11 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.runtime.authorization import Grant, GrantSource, GrantUnavailable
+from aweb_naapp.runtime.clock import NANOSECONDS_PER_MICROSECOND, MonotonicClock, seconds_to_ns
 
 MIGRATIONS_PATH = Path(__file__).parent / "installation_migrations"
 MIGRATIONS_MODULE = "aweb_naapp_installation"
-MAX_FRESHNESS_SECONDS = 60.0
+MAX_FRESHNESS_SECONDS = 60
 
 
 class InstallationStatus(Protocol):
@@ -41,7 +42,7 @@ class InstallationStatus(Protocol):
     @property
     def generation(self) -> int | None: ...
     @property
-    def fresh_until(self) -> float: ...
+    def fresh_until(self) -> int: ...
     @property
     def granted_scopes(self) -> frozenset[str]: ...
     @property
@@ -195,7 +196,7 @@ class InstallationFence:
         app_id: str,
         grants: InstallationGrantSource,
         on_retire: RetirementHook | None = None,
-        monotonic: Callable[[], float] = time.monotonic,
+        monotonic: MonotonicClock = time.monotonic_ns,
     ) -> None:
         if not app_id:
             raise ValueError("an installation fence needs its app ID")
@@ -234,10 +235,10 @@ class InstallationFence:
             installation_id=grant.installation_id, generation=grant.generation,
         )
 
-    def _remaining(self, grant: Grant) -> float:
+    def _remaining(self, grant: Grant) -> int:
         self._identity(grant)
         remaining = grant.fresh_until - self.monotonic()
-        if not 0 < remaining <= MAX_FRESHNESS_SECONDS:
+        if not 0 < remaining <= seconds_to_ns(MAX_FRESHNESS_SECONDS):
             raise _unavailable()
         return remaining
 
@@ -301,10 +302,10 @@ class InstallationFence:
             """UPDATE {{tables.installation_fences}}
                SET installation_id = $3, generation = $4, state = 'active',
                    active_installation_id = $3,
-                   fresh_until = $5::timestamptz + $6 * interval '1 second'
+                   fresh_until = $5::timestamptz + $6::bigint * interval '1 microsecond'
                WHERE app_id = $1 AND team_id = $2""",
             self.app_id, grant.team_id, grant.installation_id, grant.generation,
-            observed_at, remaining,
+            observed_at, remaining // NANOSECONDS_PER_MICROSECOND,
         )
         return self._identity(grant)
 

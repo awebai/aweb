@@ -620,6 +620,9 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `task_answers`
 - `task_app_requests`
 - `task_answer_stage_nonces`
+- `human_channel_sends`
+- `human_channel_ingress`
+- `human_channel_mutations`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 Migrations `035_team_app_installation_identity` and `036_app_installation_management`
@@ -677,6 +680,7 @@ router entry.
 - `events`
 - `federation`
 - `identity_grants`
+- `messaging`
 - `messages`
 - `reservations`
 - `session_leases`

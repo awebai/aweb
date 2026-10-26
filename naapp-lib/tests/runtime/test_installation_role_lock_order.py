@@ -9,6 +9,7 @@ import pytest
 
 from aweb_naapp import roles
 from aweb_naapp.runtime.authorization import Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.installation import (
     InstallationFence,
     InstallationRefused,
@@ -31,7 +32,7 @@ class AuthorityOutsideTransaction:
 def grant(installation_id, generation):
     return Grant(
         team_id=TEAM, installation_id=installation_id, generation=generation,
-        scopes=frozenset({"fixture:write"}), fresh_until=time.monotonic() + 60,
+        scopes=frozenset({"fixture:write"}), fresh_until=time.monotonic_ns() + seconds_to_ns(60),
     )
 
 

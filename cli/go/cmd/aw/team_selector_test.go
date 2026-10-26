@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -419,8 +420,12 @@ func TestChatSendBareAliasFallsBackToUniqueLocalTeamMembership(t *testing.T) {
 
 	var postedCertHeader string
 	var postedBody map[string]any
+	var registryReads atomic.Int32
 	apiServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/teams/backend/members/randy":
+			registryReads.Add(1)
+			http.NotFound(w, r)
 		case "/v1/agents":
 			cert := requireCertificateAuthForTest(t, r)
 			agents := []map[string]any{}
@@ -478,7 +483,7 @@ func TestChatSendBareAliasFallsBackToUniqueLocalTeamMembership(t *testing.T) {
 	})
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "randy", "hello", "--json")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+apiServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -495,6 +500,9 @@ func TestChatSendBareAliasFallsBackToUniqueLocalTeamMembership(t *testing.T) {
 	if !ok || len(toAliases) != 1 || toAliases[0] != "randy" {
 		t.Fatalf("to_aliases=%#v, want [randy]", postedBody["to_aliases"])
 	}
+	if got := registryReads.Load(); got != 1 {
+		t.Fatalf("local registry reads=%d, want 1", got)
+	}
 }
 
 func TestChatSendBareAliasRequiresTeamWhenFallbackIsAmbiguous(t *testing.T) {
@@ -508,8 +516,12 @@ func TestChatSendBareAliasRequiresTeamWhenFallbackIsAmbiguous(t *testing.T) {
 	stableID := awid.ComputeStableID(memberPub)
 	var chatPosts int
 
+	var registryReads atomic.Int32
 	apiServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/teams/backend/members/randy":
+			registryReads.Add(1)
+			http.NotFound(w, r)
 		case "/v1/agents":
 			cert := requireCertificateAuthForTest(t, r)
 			agents := []map[string]any{}
@@ -562,7 +574,7 @@ func TestChatSendBareAliasRequiresTeamWhenFallbackIsAmbiguous(t *testing.T) {
 	})
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "randy", "hello")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+apiServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -573,6 +585,9 @@ func TestChatSendBareAliasRequiresTeamWhenFallbackIsAmbiguous(t *testing.T) {
 	}
 	if chatPosts != 0 {
 		t.Fatalf("chat posts=%d, want 0", chatPosts)
+	}
+	if got := registryReads.Load(); got != 1 {
+		t.Fatalf("local registry reads=%d, want 1", got)
 	}
 }
 

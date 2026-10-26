@@ -20,6 +20,7 @@ from aweb.hook_bindings import (
     HookBindingDeclaration,
     write_pending_bindings,
 )
+from aweb_naapp.runtime.clock import seconds_to_ns, NANOSECONDS_PER_SECOND
 from aweb_naapp.runtime.app_credentials import AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKey
 from aweb_naapp.runtime.hook_resolver import (
@@ -45,14 +46,14 @@ SECRET_USE = HookBindingDeclaration(kind=PRODUCTION, catalog_id="aweb.hooks", ca
 
 class Clock:
     def __init__(self) -> None:
-        self.now = 1000.0
+        self.now = seconds_to_ns(1000)
         self.wall = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 
-    def __call__(self) -> float:
+    def __call__(self) -> int:
         return self.now
 
     def advance(self, seconds: float) -> None:
-        self.now += seconds
+        self.now += int(seconds * NANOSECONDS_PER_SECOND)
         self.wall += timedelta(seconds=seconds)
 
 
@@ -145,7 +146,8 @@ async def test_a_producer_resolves_where_to_deliver(team):
     )
     assert binding.active_from == stored
     assert resolution.server_url == AWEB_URL
-    assert resolution.fresh_until == team["clock"].now + 60
+    assert resolution.fresh_until == team["clock"].now + seconds_to_ns(60)
+    assert type(resolution.fresh_until) is int
 
 
 @pytest.mark.asyncio
@@ -191,7 +193,7 @@ async def test_an_answer_is_reused_while_fresh_and_refetched_after(team):
     calls = _aweb_calls(team)
     await resolver.registrations(TEAM, *HOOK)
     assert _aweb_calls(team) == calls
-    team["clock"].now += 61
+    team["clock"].now += seconds_to_ns(61)
     await resolver.registrations(TEAM, *HOOK)
     assert _aweb_calls(team) == calls + 1
 
@@ -244,7 +246,7 @@ async def test_an_answer_carries_the_window_it_is_reused_for(team, offered, used
 async def test_an_expired_answer_is_never_served_when_the_server_is_down(team):
     resolver = await team["resolver_for"](SECRETS)
     await resolver.registrations(TEAM, *HOOK)
-    team["clock"].now += 61
+    team["clock"].now += seconds_to_ns(61)
     team["stack"].aweb.down = True
     with pytest.raises(HookResolutionUnavailable):
         await resolver.registrations(TEAM, *HOOK)
@@ -285,7 +287,7 @@ async def test_a_changed_team_server_record_is_followed_even_while_an_answer_is_
         TEAM, team["team_key"], server_url="https://aweb.moved.example",
         issued_at=datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1),
     )
-    team["clock"].now += 11
+    team["clock"].now += seconds_to_ns(11)
     with pytest.raises(HookResolutionUnavailable):
         # The moved record names a server this in-process app is not the
         # audience of, so it refuses the credential: the point is where the
