@@ -20,6 +20,8 @@ from tests.test_console_access import (
     INSERT,
     ORDERS_DB,
     READ,
+    READER,
+    READERS,
     READING,
     admission,
     application,
@@ -107,4 +109,29 @@ async def test_the_db_write_agent_is_flagged_first_and_revoked_without_a_passkey
     assert await admission(uses, DB_AGENT, ORDERS_DB, INSERT.operation_id, 1) == (
         "operation_not_allowed"
     )
+    assert await admission(uses, DB_AGENT, ORDERS_DB, READ.operation_id, 2) is None
+
+
+@pytest.mark.parametrize("width", [375, 1440])
+async def test_one_agent_is_removed_from_its_role_without_a_passkey(
+    world, browser, service, tmp_path, width
+):
+    uses, origin = service
+    async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
+        page, cdp, authenticator = await enrolled_page(world, context, origin)
+        await page.goto(origin + "/access")
+        reader = page.locator(f'.access-agent[data-principal-did="{READER.did_aw}"]')
+        remove = reader.locator(f'.access-remove-member[data-role="{READERS}"]')
+        await expect(remove).to_be_visible()
+        await page.screenshot(path=tmp_path / f"access-role-{width}.png", full_page=True)
+        await cdp.send("WebAuthn.removeVirtualAuthenticator", {"authenticatorId": authenticator})
+        page.once("dialog", lambda dialog: asyncio.ensure_future(dialog.accept()))
+        await remove.click()
+        await expect(reader).to_have_count(0)
+        survivor = page.locator(
+            f'.access-grant[data-principal-did="{DB_AGENT.did_aw}"][data-grant-id="{READING.grant_id}"]'
+        )
+        await expect(survivor).to_be_visible()
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert await admission(uses, READER, ORDERS_DB, READ.operation_id, 1) == "grant_missing"
     assert await admission(uses, DB_AGENT, ORDERS_DB, READ.operation_id, 2) is None

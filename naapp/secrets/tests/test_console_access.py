@@ -431,3 +431,38 @@ async def test_an_owner_withdrawal_committed_under_the_snapshot_refuses_without_
         refused = await asyncio.wait_for(view, 5)
     assert refused.status_code == 409 and refused.json()["detail"] == "access_changed"
     assert DB_AGENT.did_aw not in refused.text
+
+
+async def test_removing_one_member_from_a_role_ends_only_its_access_and_admission_agrees(access):
+    owners = grant(
+        "grt_owners01", PAYMENTS, {"role": OWNER_ROLE}, open_request=True, policy=OPEN_POLICY
+    )
+    async with access.world.db.transaction() as tx:
+        await records.create_grant(tx, INSTALLATION_ID, TEAM, owners)
+    async with clients(access) as (human, _):
+        csrf = await sign_in(
+            access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+        )
+        before = await owner_page(human, access)
+        # Once per agent and owner-defined role; never for direct or owner-role grants.
+        assert sorted(
+            (c["data-principal-did"], c["data-role"]) for c in before.all("access-remove-member")
+        ) == sorted([(DB_AGENT.did_aw, READERS), (READER.did_aw, READERS)])
+        assert (ALICE.principal_did, owners.grant_id) in grants(before)
+        assert await admission(access, READER, ORDERS_DB, READ.operation_id, 1) is None
+        response = await human.post(
+            f"/installations/{INSTALLATION_ID}/containment",
+            json={
+                "request_id": "access-remove-1",
+                "action": "remove-role-member",
+                "target": READERS,
+                "principal": READER.did_aw,
+            },
+            headers=csrf,
+        )
+        assert response.status_code == 200, response.text
+        after = await owner_page(human, access)
+    assert READER.did_aw not in agents(after)
+    assert (DB_AGENT.did_aw, READING.grant_id) in grants(after)
+    assert await admission(access, READER, ORDERS_DB, READ.operation_id, 2) == "grant_missing"
+    assert await admission(access, DB_AGENT, ORDERS_DB, READ.operation_id, 3) is None
