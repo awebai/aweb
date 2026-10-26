@@ -689,6 +689,8 @@ $BETA_SERVER_BUILD
     build:
       context: $REPO_ROOT
       dockerfile: scripts/federation-cli.Dockerfile
+    # Host Python reads the private replay key; both sides must own the files.
+    user: "$(id -u):$(id -g)"
     environment:
       HOME: /work/home
       AW_CONFIG_PATH: /work/home/.config/aw/config.yaml

@@ -13,7 +13,6 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 
@@ -21,6 +20,7 @@ import httpx
 
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, AppCredentialSigner
 from aweb_naapp.runtime.authorization import Grant, GrantUnavailable
+from aweb_naapp.runtime.clock import MonotonicClock
 from aweb_naapp.runtime.freshness import FreshnessCache, RefreshTimedOut
 from aweb_naapp.runtime.team_server import TeamServerDirectory, TeamServerUnavailable
 
@@ -62,7 +62,7 @@ class GrantStatus:
     installed_at: datetime
     as_of: datetime
     max_age_seconds: int
-    fresh_until: float
+    fresh_until: int
 
 
 class TeamGrantSource:
@@ -74,7 +74,7 @@ class TeamGrantSource:
         discovery: TeamServerDirectory,
         timeout: float = 5.0,
         transport: httpx.AsyncBaseTransport | None = None,
-        monotonic: Callable[[], float] = time.monotonic,
+        monotonic: MonotonicClock = time.monotonic_ns,
     ) -> None:
         if signer.purpose != APP_GRANT_READ:
             raise ValueError("grant reads require an app-grant-read signer")
@@ -215,5 +215,5 @@ class TeamGrantSource:
             installed_at=installed_at,
             as_of=as_of,
             max_age_seconds=body["max_age_seconds"],
-            fresh_until=0.0,
+            fresh_until=0,
         )
