@@ -336,3 +336,53 @@ sweeping, not assignment expiry. Original redaction values stay transient;
 restart/context loss withholds output, never reopens custody. Exact HTTP
 errors, replay/late-report rules and proof obligations remain the runner
 protocol's, without a second lifecycle in an adapter.
+
+## Owner reconciliation control boundary (§11.4)
+
+The frozen types live in `reconciliation_types.py`. `ReconciliationOriginal`
+names the original installation/team/generation, opaque `reconcile_ref`, caller
+request ID, S3 dispatch UUID, original requester and value-free resource/job or
+operation pins. `ReconciliationView` adds the current S3 state. It contains no
+request parameters, response entity, proof or personal link.
+
+`ReconciliationControl` freezes the original association, chosen
+`completed|failed|unknown-closed` outcome, control UUID, actual B2 approval ID,
+approval reference and covered-request hash/policy identity, exact owner
+scope/subject and expiry. The control uses a real owner-only B2 request.
+`ReconciliationControlStatus` exposes its bounded state/delivery metadata;
+`ReconciliationReceipt` exposes the persisted original settlement and control
+identities. Only `ReconciliationPresentation` has a transient personal token,
+excluded from its representation. Status and read DTOs never contain it.
+
+The original-association reader is
+`ReconciliationReads(enable_runs=False).get(tx, *, scope, reconcile_ref)`.
+`scope` is the authoritative `AdmittedInstallation`; the caller holds current
+OWNER, S4 and F6 in this original transaction and performs final F6/session/expiry
+checks after the read. The reader returns an immutable `ReconciliationView` or
+`None`, and refuses a superseded generation. It accepts only the original
+opaque locator. `enable_runs=True` requires the run-dispatch migrations first;
+root composes it with the same enabled run path. Reading grants no mutation
+authority and takes no row locks.
+
+The control flow uses the same Approvals/Passkeys services and B3 APPROVE.
+An explicit S4 POST mints the frozen owner-only B2 LINK control request in the
+caller's transaction; ordinary `Approvals.deliver` follows commit and reports
+its actual result. The exact owner's token may continue in that current S4
+browser, after a postcommit exact-current-owner/F6/session check. The console
+keeps it transient, outside logs and browser storage. Custody's common approval
+entry dispatches from the actual immutable control association; pre-login it
+returns only the personal candidate's scoped sign-in hint. The token is never
+authentication.
+
+Fresh APPROVE records the control decision. A subsequent explicit S4 POST
+settles in one caller transaction, consuming only that control approval and
+atomically reconciling the original S3/B2. The original send approval stays
+consumed. OWNER/designation/credential/F6 preparation precedes downstream
+approval locks; final live authority and expiry checks follow all waits and
+audit writes. The control uses its own provider/audit branch; settlement does
+not acquire the positive-use target/backlog availability gate. GET, reload and
+status never mint, decide or settle, and a lost reply never triggers automatic
+mutation retry. The DTO/read checkpoint precedes the concrete control
+association, provider/audit and mutation-service implementation. Root will
+inject the same branch into the composite and console when that source is
+reviewed; these types alone do not mount it.
