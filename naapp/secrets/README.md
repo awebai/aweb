@@ -191,8 +191,9 @@ The fresh-confirmation HTTP routes support `create` items for backend credential
 grants, policies, plain roles, jobs and runners. Every such effect requires the
 actual retained APPROVE commitment and atomic signed governance recording.
 Job credentials must name same-installation/team secrets and compatible structured
-fields; this slice supports durable slots. Job updates, mint slots and B3
-approver/contact changes retain their integration guards.
+fields; this slice supports durable slots. Job updates and mint slots retain
+their integration guards. Self-contact and contact-change cancellation remain
+unmounted.
 Mount it only on the human application, sharing the same services:
 
 `OwnerConsole` and `ChangeSets` require the same `credential_audit` instance
