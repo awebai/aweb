@@ -2,7 +2,9 @@
 
 import asyncio
 import base64
+import copy
 import os
+import re
 import socket
 from urllib.parse import quote, urlencode
 
@@ -16,6 +18,7 @@ from playwright.async_api import TimeoutError as BrowserTimeout
 from playwright.async_api import expect
 
 from aweb_secrets.owners import owner_scope
+from tests.test_change_records import ITEMS
 from tests.test_change_sets import ALICE, TEAM, enrol_owner
 from tests.test_change_sets import world as _world
 from tests.test_console_changes import ROOT, TOKEN, application, clients, sign_in
@@ -191,6 +194,9 @@ async def test_customer_browser_token_draft_and_fresh_passkey_confirmation(
     w = world
     async with await browser.new_context() as context:
         page, cdp, authenticator = await enrolled_page(w, context, service)
+        baseline_events = await w.db.fetch_value(
+            "SELECT count(*) FROM {{tables.outbox_events}} WHERE kind='post-governance-hook'"
+        )
         await page.goto(service + FORM)
         await page.screenshot(path=tmp_path / "onepassword-token-entry-empty.png")
         # A fresh tab/context with only the cookie must re-authenticate, not submit.
@@ -347,7 +353,7 @@ async def test_customer_browser_token_draft_and_fresh_passkey_confirmation(
             await second.close()
         if resume_approved:
             await w.db.execute(
-                "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT reject_confirmation CHECK(kind <> 'post-governance-hook')"
+                "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT reject_confirmation CHECK(kind <> 'post-governance-hook') NOT VALID"
             )
         await cdp.send(
             "WebAuthn.setUserVerified",
@@ -398,7 +404,7 @@ async def test_customer_browser_token_draft_and_fresh_passkey_confirmation(
             await w.db.fetch_value(
                 "SELECT count(*) FROM {{tables.outbox_events}} WHERE kind='post-governance-hook'"
             )
-            == 1
+            == baseline_events + 1
         )
         await page.reload()
         await expect(page.locator("#change-summary")).to_have_attribute("data-state", "applied")
@@ -443,6 +449,9 @@ async def test_runner_confirmation_renders_code_once_in_the_deciding_document(
         await expect(page.locator("#change-facts")).to_contain_text("Build runner")
         await page.get_by_role("button", name="Confirm with your passkey").click()
         await expect(page.locator("#form-status")).to_have_attribute("data-state", "applied")
+        await expect(page.locator("#approval-instructions")).not_to_contain_text(
+            re.compile(r"confirm|apply the approved", re.I)
+        )
         code = await page.locator("#runner-registration-result code").text_content()
         assert (
             code and runner_id in await page.locator("#runner-registration-result").text_content()
@@ -459,3 +468,67 @@ async def test_runner_confirmation_renders_code_once_in_the_deciding_document(
         await page.reload()
         await expect(page.locator("#runner-registration-result")).to_have_count(0)
         await expect(page.locator("#confirm-change")).to_be_hidden()
+
+
+@pytest.mark.parametrize("width", [375, 1440])
+@pytest.mark.parametrize("mode", ["absent", "manual", "idempotent", "side_effect_free"])
+async def test_operation_retry_terms_are_disclosed_before_fresh_confirmation(
+    world, browser, service, width, mode, tmp_path
+):
+    w = world
+    operation = copy.deepcopy(ITEMS["operation"])
+    after = operation["after"]
+    if mode == "manual":
+        after["outcome_unknown_retry"] = None
+    elif mode in {"idempotent", "side_effect_free"}:
+        after["outcome_unknown_retry"] = {
+            "delay_s": 2,
+            "upstream_honours_idempotency_key": mode == "idempotent",
+        }
+        if mode == "idempotent":
+            after["side_effect"] = "irreversible"
+            after["idempotency"] = {"header": "Idempotency-Key"}
+            after["headers"]["allowed"] = ["Idempotency-Key"]
+    async with await browser.new_context(viewport={"width": width, "height": 900}) as context:
+        page, _, _ = await enrolled_page(w, context, service)
+        csrf = await page.evaluate("sessionStorage.getItem('aweb.secrets.console.csrf')")
+        drafted = await context.request.post(
+            service + ROOT,
+            headers={"X-CSRF-Token": csrf},
+            data={
+                "changes": [copy.deepcopy(ITEMS["secret"]), operation],
+                "sealed": [],
+                "reason": "Configure the operation's uncertain-outcome handling",
+            },
+        )
+        assert drafted.status == 201
+        draft = await drafted.json()
+        [token] = [
+            token
+            for approval, token in w.inbox.links["alice@acme.com"]
+            if approval == draft["approval_id"]
+        ]
+        await page.goto(service + "/approvals#token=" + quote(token))
+        await wait_for_review(page, service + ROOT + "/" + draft["change_id"] + "/review")
+        facts = page.locator("#change-facts")
+        if mode in {"absent", "manual"}:
+            await expect(facts).to_contain_text(re.compile(r"manual settlement only", re.I))
+            await expect(facts).not_to_contain_text(re.compile(r"automatically repeat once", re.I))
+        else:
+            await expect(facts).to_contain_text(re.compile(r"automatically repeat once", re.I))
+            await expect(facts).to_contain_text("2 seconds")
+            if mode == "idempotent":
+                await expect(facts).to_contain_text(re.compile(r"owner.asserted", re.I))
+                await expect(facts).to_contain_text("Idempotency-Key")
+                await expect(facts).to_contain_text(re.compile(r"wrong.*duplicate", re.I))
+            else:
+                await expect(facts).to_contain_text(re.compile(r"no side effect", re.I))
+                await expect(facts).not_to_contain_text(re.compile(r"owner.asserted", re.I))
+        await expect(page.locator("#confirm-change")).to_be_enabled()
+        assert (await w.approvals.get(draft["approval_id"])).state is ApprovalState.PENDING
+        assert not await w.db.fetch_value("SELECT count(*) FROM {{tables.operations}}")
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        await page.screenshot(path=tmp_path / f"operation-retry-{mode}-{width}.png", full_page=True)
+        await page.locator("#confirm-change").click()
+        await expect(page.locator("#form-status")).to_have_attribute("data-state", "applied")
+        assert (await w.approvals.get(draft["approval_id"])).state is ApprovalState.CONSUMED
