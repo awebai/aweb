@@ -20,6 +20,7 @@ import httpx
 import pytest
 import uvicorn
 from aweb_naapp.runtime.authorization import Authorization, Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.link_requests import sign_link_request
 from aweb_naapp.runtime.team_auth import record_observed_principal
 from aweb_naapp_testing import Member, awid_registry, did_key
@@ -40,7 +41,7 @@ TEAM = "records:example.test"
 class GrantedInstallation:
     async def grant_for(self, team_id):
         return Grant(team_id=team_id, scopes=frozenset({"folio:read", "folio:write"}),
-                     fresh_until=time.monotonic() + 60, installation_id="inst_fixture", generation=1)
+                     fresh_until=time.monotonic_ns() + seconds_to_ns(60), installation_id="inst_fixture", generation=1)
 
 
 async def empty_body():
@@ -182,7 +183,7 @@ async def test_query_cursor_is_bound_to_its_link_and_revision(linked):
 async def test_missing_installation_identity_is_refused_before_records_are_written(linked):
     from fastapi import HTTPException
 
-    grant = Grant(team_id=TEAM, scopes=frozenset({"folio:read", "folio:write"}), fresh_until=time.monotonic() + 60, installation_id=None, generation=None)
+    grant = Grant(team_id=TEAM, scopes=frozenset({"folio:read", "folio:write"}), fresh_until=time.monotonic_ns() + seconds_to_ns(60), installation_id=None, generation=None)
     authorization = Authorization(linked.authorization.principal, linked.authorization.tool, grant)
     with pytest.raises(HTTPException) as refused:
         await linked.host.member_operation(authorization, "add_on", RecordAddRequest(
