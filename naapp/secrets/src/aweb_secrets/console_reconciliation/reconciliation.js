@@ -83,7 +83,9 @@
       facts.replaceChildren();
       for (const [label, value] of [["Chosen outcome", control.outcome], ["Request reference", original.reconcile_ref],
         ["Request ID", original.request_id], ["Agent", original.requested_by], ["Dispatch ID", original.dispatch_id],
-        ["Operation", original.operation_id], ["Job", original.job_id], ["Runner", original.runner_id],
+        ["Operation", original.operation_id], ["Operation digest", original.operation_digest],
+        ["Job", original.job_id], ["Job digest", original.job_digest], ["Runner", original.runner_id],
+        ["Installation generation", original.installation.generation],
         ["Expires", control.expires_at]]) fact(facts, label, value);
       for (const resource of original.resources) fact(facts, "Secret version", (resource.secret_ref || resource.secret_id) + " · " + resource.version);
       statusLink(control.approval_id);

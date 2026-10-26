@@ -7,7 +7,9 @@ from aweb_naapp.runtime.approvals import ApprovalState
 from aweb_naapp.runtime.origins import split_origins
 from fastapi import FastAPI
 
+from aweb_secrets.activity_service import ActivityReads
 from aweb_secrets.console import owner_console_router
+from aweb_secrets.console_activity import ConsoleActivity, console_activity_router
 from aweb_secrets.console_reconciliation import ConsoleReconciliation, console_reconciliation_router
 from aweb_secrets.console_ui import console_ui_router
 from tests.reconciliation_world import service_world
@@ -27,6 +29,9 @@ async def application(uses, *, origin=ORIGIN, agent_origin=API):
     human = FastAPI()
     human.include_router(owner_console_router(console))
     human.include_router(console_ui_router(sessions=console.sessions))
+    human.include_router(
+        console_activity_router(services=ConsoleActivity(console=console, reads=ActivityReads()))
+    )
     human.include_router(console_reconciliation_router(services=services))
     return (
         split_origins(FastAPI(), human, human_origin=origin, agent_origin=agent_origin),
@@ -71,6 +76,7 @@ async def test_read_login_and_view_never_settle_and_approve_requires_an_explicit
         headers = await sign_in(uses.world, human, current.scope)
         before = await snapshot(uses.world.db)
         assert (await human.get(path)).status_code == 200
+        assert path in (await human.get("/activity")).text
         assert (await human.get(path + "/record")).status_code == 200
         assert await snapshot(uses.world.db) == before
         assert (

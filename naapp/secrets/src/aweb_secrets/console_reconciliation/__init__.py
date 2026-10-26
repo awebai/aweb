@@ -12,6 +12,7 @@ from aweb_naapp.console import ConsoleRoute, ConsoleSession
 from aweb_naapp.dispatch import State
 from aweb_naapp.roles import hold_role
 from aweb_naapp.runtime.approvals import ApprovalRefused, Approvals, ApprovalState, Assurance
+from aweb_naapp.runtime.approvals.canonical import request_sha256
 from aweb_naapp.runtime.installation import InstallationRefused
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
@@ -21,7 +22,11 @@ from aweb_secrets.console_reconciliation.authority import ConsoleReconciliationF
 from aweb_secrets.console_ui import _login_redirect, _page, console_page
 from aweb_secrets.console_use_approvals import _decision, _proof
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
-from aweb_secrets.reconciliation_policy import reconciliation_request
+from aweb_secrets.reconciliation_policy import (
+    POLICY_VERSION,
+    reconciliation_policy_ref,
+    reconciliation_request,
+)
 from aweb_secrets.reconciliation_reads import ReconciliationReads
 from aweb_secrets.reconciliation_service import ReconciliationControls, ReconciliationRefused
 from aweb_secrets.use_audit import UseAuditUnavailable
@@ -180,6 +185,22 @@ class ConsoleReconciliation:
                 candidate.subject,
             ):
                 raise HTTPException(409, "approval_refused")
+            control = status.control
+            frozen = reconciliation_request(
+                control.original,
+                control_id=control.control_id,
+                outcome=control.outcome,
+                owner_scope=control.owner_scope,
+                owner_subject=control.owner_subject,
+            )
+            policy = {"ref": reconciliation_policy_ref(frozen), "version": POLICY_VERSION}
+            if (
+                linked.approval.policy_ref != policy["ref"]
+                or linked.approval.policy_version != POLICY_VERSION
+                or linked.approval.request_sha256
+                != request_sha256({"policy": policy, "request": frozen})
+            ):
+                raise HTTPException(409, "approval_refused")
             await self.console.fence.check(tx, admitted)
         return linked, status, admitted
 
@@ -245,8 +266,11 @@ def _facts(original, *, outcome=None):
         ("Agent", original.requested_by),
         ("Dispatch ID", original.dispatch_id),
         ("Operation", original.operation_id),
+        ("Operation digest", original.operation_digest),
         ("Job", original.job_id),
+        ("Job digest", original.job_digest),
         ("Runner", original.runner_id),
+        ("Installation generation", original.installation.generation),
         ("Chosen outcome", outcome),
     ]
     rows.extend(
