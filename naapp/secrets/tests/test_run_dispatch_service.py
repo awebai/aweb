@@ -76,7 +76,11 @@ async def test_one_admitted_run_replays_the_same_signed_sealed_assignment(uses):
     assert replay == first
     assert await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.dispatches}}") == 1
     assert await uses.world.db.fetch_value("SELECT attempts FROM {{tables.dispatches}}") == 1
-    assert [event["payload"]["action"] for event in await envelopes(uses.world.db)] == [
+    assert [
+        event["payload"]["action"]
+        for event in await envelopes(uses.world.db)
+        if event["hook"] == "post-secret-use-hook"
+    ] == [
         "admitted",
         "dispatching",
     ]
@@ -108,18 +112,24 @@ async def test_report_exact_replay_is_idempotent_and_conflicting_bytes_rollback(
         result = await context.service.result(dispatch_ref, context.signed(target + "/result", raw))
         assert result.status == 204
     before = await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.scoped_nonces}}")
+    before_events = await envelopes(uses.world.db)
     conflicting_raw = report("changed") if conflict == "changed" else b" " + raw
     with pytest.raises(RunnerRefused) as refused:
         await context.service.result(
             dispatch_ref, context.signed(target + "/result", conflicting_raw)
         )
     assert refused.value.code == "runner_result_conflict"
+    assert await envelopes(uses.world.db) == before_events
     assert (
         await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.scoped_nonces}}") == before
     )
     receipt = await context.service.submit(job=context.job.job_id, submission=context.submission)
     assert receipt.status == 200 and receipt.body["state"] == "completed"
-    assert [event["payload"]["action"] for event in await envelopes(uses.world.db)] == [
+    assert [
+        event["payload"]["action"]
+        for event in await envelopes(uses.world.db)
+        if event["hook"] == "post-secret-use-hook"
+    ] == [
         "admitted",
         "dispatching",
         "completed",
@@ -218,7 +228,11 @@ async def test_concurrent_claims_publish_one_assignment_and_two_authenticated_re
         assert first.status == 200 and first == second
         assert await uses.world.db.fetch_value("SELECT attempts FROM {{tables.dispatches}}") == 1
         assert await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.scoped_nonces}}") == 2
-        assert [event["payload"]["action"] for event in await envelopes(uses.world.db)] == [
+        assert [
+            event["payload"]["action"]
+            for event in await envelopes(uses.world.db)
+            if event["hook"] == "post-secret-use-hook"
+        ] == [
             "admitted",
             "dispatching",
         ]
@@ -282,7 +296,11 @@ async def test_real_run_approval_requires_explicit_resubmission_before_runner_re
     dispatch_id = await uses.world.db.fetch_value("SELECT dispatch_id FROM {{tables.dispatches}}")
     assert approval.consumed_operation_id == str(dispatch_id)
     assert wire["assignment"]["dispatch_id"] != str(dispatch_id)
-    assert [event["payload"]["action"] for event in await envelopes(uses.world.db)] == [
+    assert [
+        event["payload"]["action"]
+        for event in await envelopes(uses.world.db)
+        if event["hook"] == "post-secret-use-hook"
+    ] == [
         "approval_requested",
         "approval_decided",
         "admitted",
@@ -347,7 +365,11 @@ async def test_unavailable_dispatch_target_refuses_before_assignment_and_consume
     assert await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.scoped_nonces}}") == 1
     receipt = await context.service.submit(job=context.job.job_id, submission=context.submission)
     assert receipt.body["code"] == "audit_target_unavailable"
-    assert [event["payload"]["action"] for event in await envelopes(uses.world.db)] == [
+    assert [
+        event["payload"]["action"]
+        for event in await envelopes(uses.world.db)
+        if event["hook"] == "post-secret-use-hook"
+    ] == [
         "admitted",
         "refused",
     ]
@@ -400,7 +422,11 @@ async def test_late_result_records_once_without_overwriting_unknown_winner(uses)
     )
     assert row["state"] == "outcome_unknown" and row["count"] == 1
     assert await uses.world.db.fetch_value("SELECT attempts FROM {{tables.dispatches}}") == 1
-    assert [event["payload"]["action"] for event in await envelopes(uses.world.db)] == [
+    assert [
+        event["payload"]["action"]
+        for event in await envelopes(uses.world.db)
+        if event["hook"] == "post-secret-use-hook"
+    ] == [
         "admitted",
         "dispatching",
         "outcome_unknown",
@@ -489,9 +515,11 @@ async def test_two_distinct_slots_wait_for_all_approvals_and_release_in_original
     await w.change_sets.deliver(confirmation)
     token = w.inbox.enrolments["finance@acme.com"][-1]
     device = SoftAuthenticator(ORIGIN)
-    await w.passkeys.complete_enrolment(
-        token, device.create(await w.passkeys.enrolment_options(token))
-    )
+    prepared = await w.credential_audit.prepare_enrolment(token)
+    with w.credential_audit.prepared(prepared):
+        await w.passkeys.complete_enrolment(
+            token, device.create(await w.passkeys.enrolment_options(token)), fence=prepared
+        )
     w.devices["finance@acme.com"] = device
     context.job = job
     pending = await context.service.submit(job=job.job_id, submission=context.submission)
@@ -549,6 +577,7 @@ async def test_invalid_member_value_field_records_only_a_commitment_without_admi
         ]
         for table in tables
     }
+    before_events = await envelopes(uses.world.db)
     refused = await context.service.submit(job=context.job.job_id, submission=invalid)
     assert refused.status == 400 and refused.body["code"] == "params_invalid"
     after = {
@@ -559,7 +588,10 @@ async def test_invalid_member_value_field_records_only_a_commitment_without_admi
         for table in tables
     }
     assert before == after
-    [event] = await envelopes(uses.world.db)
+    all_events = await envelopes(uses.world.db)
+    assert all_events[: len(before_events)] == before_events
+    [event] = all_events[len(before_events) :]
+    assert event["hook"] == "post-secret-use-hook"
     assert event["payload"]["op_kind"] == "run_job"
     assert event["payload"]["action"] == "refused"
     assert event["payload"]["refusal_code"] == "params_invalid"
