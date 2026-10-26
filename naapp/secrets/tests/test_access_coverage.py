@@ -10,6 +10,7 @@ from aweb_secrets.admission import AdmissionRefused
 from aweb_secrets.grant import GrantRecord, is_secrets_role
 from aweb_secrets.jobs import JobDefinition
 from aweb_secrets.run_plan import RunPlanRefused
+from aweb_secrets.secret import SecretRecord
 from tests.test_admission import (
     ALICE,
     INSTALLATION,
@@ -78,21 +79,34 @@ async def test_use_coverage_matches_real_admission_at_fixed_current_inputs(
     if case.startswith("open"):
         sensitivity = "sensitive" if case == "open_sensitive" else "standard"
         policy_changes = {"open_request": False} if case == "open_policy" else {}
-        policy = await _install(
-            db,
-            secret={**SECRET, "sensitivity": sensitivity},
-            policy_body={**POLICY_BODY, **policy_changes},
-            open_request=case != "open_grant",
-        )
+        if case == "open_grant":
+            policy = await _install_operation(db, operation, policy_changes={"open_request": True})
+        else:
+            policy = await _install(
+                db,
+                secret={**SECRET, "sensitivity": sensitivity},
+                policy_body={**POLICY_BODY, **policy_changes},
+            )
         request, operation = _request(), None
     else:
         policy = await _install_operation(
             db,
             operation,
-            secret={**SECRET, "sensitivity": sensitivity},
+            secret={**SECRET, "sensitivity": "standard"},
             policy_changes={"operations": []} if case == "policy_pin" else None,
-            **({"operations": []} if case == "grant_pin" else {}),
+            **({"operations": [], "open_request": True} if case == "grant_pin" else {}),
         )
+        if case == "sensitive_projection":
+            # The real writer refuses installing an unprojected operation on
+            # an already-sensitive secret. Narrow an existing standard secret,
+            # as the admission regression does, to exercise its live guard.
+            async with db.transaction() as tx:
+                await records.update_secret(
+                    tx,
+                    INSTALLATION,
+                    TEAM,
+                    SecretRecord.from_after({**SECRET, "sensitivity": sensitivity}),
+                )
         request = _named()
         if case == "edited":
             operation = _operation(timeout_s=5)
@@ -137,7 +151,7 @@ async def test_configured_coverage_does_not_validate_a_future_requests_parameter
         is None
     )
     with pytest.raises(AdmissionRefused) as refused:
-        await _admit(db, fence, request=replace(_named(), params={"charge": "invalid"}))
+        await _admit(db, fence, request=replace(_named(), params={"charge": "ch/3Pq"}))
     assert refused.value.code == "params_invalid"
 
 
