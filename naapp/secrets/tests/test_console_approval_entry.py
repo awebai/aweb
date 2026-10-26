@@ -168,11 +168,11 @@ async def test_corrupt_app_association_is_a_fixed_service_refusal(uses, corrupti
 
 
 async def test_change_set_and_app_association_cannot_choose_a_fallback(uses):
-    source = await linked(uses, "use")
     w = uses.world
     request = change_set(drafter=by_member(ALICE), changes=[grant_role(CAROL, "secrets.role.dev")])
     approval_id = await draft(w, request)
     actual = await w.approvals.open_link(personal_token(w, approval_id))
+    source = await linked(uses, "use")
     await apply_reconciliation_migrations(w.db)
     # Corrupt the global kind association, keeping both identities exact.
     await w.db.execute(
