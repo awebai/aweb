@@ -34,7 +34,7 @@ files and must not be group- or world-writable; symlinks to regular files are
 supported. Read permissions are left to the deployment platform. For example:
 
 ```text
-SECRETS_APP_KEY_FILES={"secrets:hook-event-1":"/run/keys/hook-event","secrets:hook-delivery-1":"/run/keys/hook-delivery","secrets:grant-read-1":"/run/keys/grant-read","secrets:hook-resolve-1":"/run/keys/hook-resolve"}
+SECRETS_APP_KEY_FILES={"secrets.hook-event-1":"/run/keys/hook-event","secrets.hook-delivery-1":"/run/keys/hook-delivery","secrets:grant-read-1":"/run/keys/grant-read","secrets:hook-resolve-1":"/run/keys/hook-resolve"}
 ```
 
 The keys sign hook content, hook delivery, team grant reads and hook resolution
