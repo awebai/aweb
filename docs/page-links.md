@@ -91,7 +91,7 @@ certificate_id=creator.certificate_id, team_did_key=creator.team_did_key)`.
 It uses the request verifier's AWID facts/cache, requires an active known
 certificate and the same current team key, and returns the shared frozen
 `MembershipProof {team_id, certificate_id, team_did_key, checked_at, fresh_until}`.
-Both times are monotonic and retain the facts' original fetch-start and expiry;
+Both times are integer monotonic nanoseconds and retain the facts' original fetch-start and expiry;
 a cache hit never extends that expiry. The window is at most 60 seconds.
 The proof is an in-process object, never request JSON, stored data or a token.
 Phase 1 refuses unknown/revoked/rotated/incomplete evidence with 403
@@ -102,7 +102,7 @@ The host supplies `proof` to `exchange`, `read` or `admit`. Under its existing
 verified secret/session and link lock, N5 reloads `created_by`, requires the
 proof's team to match both scope and stored creator team, and matches the
 certificate and team key exactly. It reads its injected `proof_clock` (default
-`time.monotonic`) **after acquiring the lock**. Missing, mismatched or expired
+`time.monotonic_ns`) **after acquiring the lock**. Missing, mismatched or expired
 proofs refuse 403 `current_member_required`; a lock wait never refreshes them.
 Only then does `authority.require_current_creator(tx, *, creator, proof)` run.
 This callback performs local checks only: no AWID refresh or network operation

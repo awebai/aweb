@@ -19,6 +19,7 @@ from aweb_naapp.manifest import canonical_bytes, fill_manifest, load_manifest
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.runtime.app_keys import AppKeyError
 from aweb_naapp.runtime.authorization import DeclaredTool, Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.health import CheckResult, HealthCheck
 from aweb_naapp.runtime.team_auth import Principal
 from aweb_naapp_testing import Member, attested
@@ -57,7 +58,7 @@ class InstalledTeams:
         return Grant(
             team_id=team_id,
             scopes=scopes,
-            fresh_until=time.monotonic() + 60,
+            fresh_until=time.monotonic_ns() + seconds_to_ns(60),
             installation_id=None,
             generation=None,
         )

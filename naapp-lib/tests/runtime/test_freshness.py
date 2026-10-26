@@ -12,14 +12,15 @@ import asyncio
 
 import pytest
 
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.freshness import FRESHNESS_CEILING_SECONDS, FreshnessCache, RefreshTimedOut
 
 
 class Clock:
     def __init__(self) -> None:
-        self.now = 1000.0
+        self.now = seconds_to_ns(1000)
 
-    def __call__(self) -> float:
+    def __call__(self) -> int:
         return self.now
 
 
@@ -50,7 +51,7 @@ async def test_an_answer_is_reused_inside_its_window():
     authority = Authority(("granted", 30))
 
     first = await cache.get("team-a", authority)
-    clock.now += 29.9
+    clock.now += 29_900_000_000
     second = await cache.get("team-a", authority)
 
     assert (first.value, second.value) == ("granted", "granted")
@@ -64,12 +65,13 @@ async def test_the_window_is_the_answers_max_age_capped_at_sixty_seconds(max_age
     authority = Authority(("old", max_age), ("new", max_age))
 
     fresh = await cache.get("team-a", authority)
-    clock.now += window - 0.001
+    clock.now += seconds_to_ns(window) - 1_000_000
     inside = await cache.get("team-a", authority)
-    clock.now += 0.001
+    clock.now += 1_000_000
     at_expiry = await cache.get("team-a", authority)
 
-    assert fresh.fresh_until == 1000.0 + window
+    assert fresh.fresh_until == seconds_to_ns(1000 + window)
+    assert type(fresh.fresh_until) is int
     assert (inside.value, at_expiry.value) == ("old", "new")
     assert FRESHNESS_CEILING_SECONDS == 60
 
@@ -79,12 +81,12 @@ async def test_the_window_counts_from_the_request_not_from_receipt():
     cache = _cache(clock)
 
     async def slow_answer():
-        clock.now += 4
+        clock.now += seconds_to_ns(4)
         return ("granted", 60)
 
     fresh = await cache.get("team-a", Authority(slow_answer))
 
-    assert fresh.fresh_until == 1000.0 + 60
+    assert fresh.fresh_until == seconds_to_ns(1060)
 
 
 async def test_a_late_joiner_gets_the_deadline_of_the_refresh_it_joined():
@@ -99,12 +101,12 @@ async def test_a_late_joiner_gets_the_deadline_of_the_refresh_it_joined():
     authority = Authority(held_answer)
     first = asyncio.create_task(cache.get("team-a", authority))
     await asyncio.sleep(0)
-    clock.now += 3
+    clock.now += seconds_to_ns(3)
     late = asyncio.create_task(cache.get("team-a", authority))
     await asyncio.sleep(0)
     answered.set()
 
-    assert {(await first).fresh_until, (await late).fresh_until} == {1000.0 + 60}
+    assert {(await first).fresh_until, (await late).fresh_until} == {seconds_to_ns(1060)}
     assert authority.calls == 1
 
 
@@ -115,7 +117,7 @@ async def test_an_expired_entry_is_never_served_when_the_refresh_fails():
     authority = Authority(("granted", 60), outage)
 
     await cache.get("team-a", authority)
-    clock.now += 60
+    clock.now += seconds_to_ns(60)
     with pytest.raises(ConnectionError) as raised:
         await cache.get("team-a", authority)
 
@@ -141,7 +143,7 @@ async def test_a_definitive_negative_answer_is_cached_for_its_window():
     authority = Authority((None, 60), ("granted", 60))
 
     first = await cache.get("team-a", authority)
-    clock.now += 59
+    clock.now += seconds_to_ns(59)
     second = await cache.get("team-a", authority)
 
     assert (first.value, second.value) == (None, None)
@@ -197,7 +199,7 @@ async def test_callers_wait_for_the_refresh_of_an_expired_entry_instead_of_readi
 
     authority = Authority(("old", 60), new_answer_when_released)
     await cache.get("team-a", authority)
-    clock.now += 60
+    clock.now += seconds_to_ns(60)
     refreshing = asyncio.create_task(cache.get("team-a", authority))
     await asyncio.sleep(0)
     joining = asyncio.create_task(cache.get("team-a", authority))

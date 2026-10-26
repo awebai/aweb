@@ -15,6 +15,7 @@ from aweb_naapp.roles import (
     has_role,
 )
 from aweb_naapp.runtime.authorization import Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.installation import InstallationRefused, apply_installation_migrations
 from pgdbm import AsyncDatabaseManager
 
@@ -32,7 +33,7 @@ def _grant(installation_id: str, generation: int, team_id: str = TEAM) -> Grant:
     return Grant(
         team_id=team_id,
         scopes=frozenset({"secrets:use"}),
-        fresh_until=time.monotonic() + 30,
+        fresh_until=time.monotonic_ns() + seconds_to_ns(30),
         installation_id=installation_id,
         generation=generation,
     )

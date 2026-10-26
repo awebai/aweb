@@ -21,6 +21,7 @@ from aweb.hook_bindings import (
     HookBindingDeclaration,
     write_pending_bindings,
 )
+from aweb_naapp.runtime.clock import seconds_to_ns, NANOSECONDS_PER_SECOND
 from aweb_naapp.hooks.producer import (
     HOOKS_CHANNEL,
     HookProducer,
@@ -63,14 +64,14 @@ class Clock:
     """Monotonic time for the resolver's cache and wall time for its data, moved together."""
 
     def __init__(self) -> None:
-        self.now = 1000.0
+        self.now = seconds_to_ns(1000)
         self.wall = datetime.now(UTC).replace(microsecond=0)
 
-    def __call__(self) -> float:
+    def __call__(self) -> int:
         return self.now
 
     def advance(self, seconds: float) -> None:
-        self.now += seconds
+        self.now += int(seconds * NANOSECONDS_PER_SECOND)
         self.wall += timedelta(seconds=seconds)
 
 
