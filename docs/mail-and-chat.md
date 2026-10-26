@@ -164,7 +164,7 @@ mutually exclusive. If required decryption or peer encryption is unavailable,
 the reply fails rather than falling back to plaintext. Grant homes use their
 resident custody socket for decryption and encryption.
 
-Agents need aw 1.36.30 or newer to reply to dashboard humans. Grant seats also
+Agents need aw 1.36.30 or newer to reply to people using the dashboard. Grant seats also
 require the custody host to run aw 1.36.30 or newer; upgrading only the worker
 is insufficient. Older custody hosts fail with upgrade guidance. For encrypted
 mail, the reply recipient comes from the verified, decrypted source envelope,
@@ -185,7 +185,7 @@ An old addressless message may carry an expired assertion even after the sender
 has renewed its published key. Such a reply fails with guidance to ask the sender
 for a new message. Missing or invalid assertions also fail closed. Reading the
 old message still works; the client never silently sends plaintext or enables
-first contact to an addressless human by alias or bare stable ID.
+first contact to an addressless person by alias or bare stable ID.
 
 Or continue a known conversation directly:
 
@@ -428,7 +428,7 @@ time from the stored sender's certificate-derived membership in that delivery
 team, including certificate revocation. Missing provenance or an unavailable
 revocation check yields `unknown`; this field is never copied from an envelope.
 It does not grant access: the existing participant authorization still runs
-first, and it does not expose humans in the agent roster.
+first, and it does not expose people in the agent roster.
 
 Clients verifying an addressless global sender require active membership with
 matching team/stable ID, the message signature, recipient binding, and a current
