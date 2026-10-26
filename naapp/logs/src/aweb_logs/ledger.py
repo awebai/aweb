@@ -20,6 +20,7 @@ from aweb_naapp.hooks.envelope import Envelope
 from awid.did import did_from_public_key
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
+from pgdbm.core import TransactionManager
 
 from aweb_logs.chain import (
     SALT_BYTES,
@@ -98,103 +99,129 @@ async def append(
     received_at: datetime,
     before_append: Callable[[Any], Awaitable[None]] | None = None,
 ) -> Appended | Conflicted:
-    """Append a verified event to its team's chain and sign its receipt, in one
-    transaction. A redelivery of the same bytes returns the original receipt.
+    """Append a verified event in a new transaction.
 
-    A purged event's bytes are gone, so its redelivery is compared only on what
-    the skeleton keeps, its hook and producer origin. ``before_append`` runs
-    after dedup, under the head lock, in this transaction: admission charges
-    client quotas there, so duplicates/conflicts spend nothing and a refusal
-    rolls back both the charge and the append."""
-    event_id = uuid.UUID(event.event_id)
+    A caller committing an effect and its audit entry together uses
+    :func:`append_on` with its existing transaction instead.
+    """
     async with db.transaction() as tx:
-        head = await _locked_head(tx, signer, event.team_id, received_at)
-        head.check_signer(signer)
-        stored = await tx.fetch_one(
-            "SELECT signing_bytes, signature, hook, producer_origin, receipt_bytes,"
-            " receipt_signature FROM {{tables.chain_events}} WHERE team_id = $1 AND event_id = $2",
+        return await append_on(
+            tx, signer, event=event, signing_bytes=signing_bytes, signature=signature,
+            key_evidence=key_evidence, received_at=received_at, before_append=before_append,
+        )
+
+
+async def append_on(
+    tx: TransactionManager,
+    signer: LogsSigner,
+    *,
+    event: Envelope,
+    signing_bytes: bytes,
+    signature: str,
+    key_evidence: Mapping[str, Any],
+    received_at: datetime,
+    before_append: Callable[[Any], Awaitable[None]] | None = None,
+) -> Appended | Conflicted:
+    """Append a verified event using the caller's transaction, without committing it.
+
+    The caller commits its effect and the audit entry together, or rolls both
+    back on any failure. A redelivery returns the original receipt; a conflict
+    records a fault without replacing content. This holds the same team head
+    lock and signs the same receipt as :func:`append`.
+
+    ``before_append`` runs after dedup under that lock. Admission charges client
+    quotas there, so duplicates/conflicts spend nothing and a refusal rolls
+    back the charge with the append. Purged bytes are compared only on the
+    retained hook and producer origin.
+    """
+    event_id = uuid.UUID(event.event_id)
+    head = await _locked_head(tx, signer, event.team_id, received_at)
+    head.check_signer(signer)
+    stored = await tx.fetch_one(
+        "SELECT signing_bytes, signature, hook, producer_origin, receipt_bytes,"
+        " receipt_signature FROM {{tables.chain_events}} WHERE team_id = $1 AND event_id = $2",
+        event.team_id,
+        event_id,
+    )
+    if stored is not None:
+        receipt = (bytes(stored["receipt_bytes"]), stored["receipt_signature"])
+        if stored["signing_bytes"] is None:
+            same = (stored["hook"], stored["producer_origin"]) == (
+                event.hook,
+                producer_origin(event),
+            )
+        else:
+            same = (
+                bytes(stored["signing_bytes"]) == signing_bytes
+                and stored["signature"] == signature
+            )
+        if same:
+            return Appended(receipt=receipt, duplicate=True)
+        await tx.execute(
+            "INSERT INTO {{tables.chain_faults}}"
+            " (team_id, event_id, kind, refused_sha256, key_evidence)"
+            " VALUES ($1, $2, 'event_conflict', $3, $4::jsonb)",
             event.team_id,
             event_id,
-        )
-        if stored is not None:
-            receipt = (bytes(stored["receipt_bytes"]), stored["receipt_signature"])
-            if stored["signing_bytes"] is None:
-                same = (stored["hook"], stored["producer_origin"]) == (
-                    event.hook,
-                    producer_origin(event),
-                )
-            else:
-                same = (
-                    bytes(stored["signing_bytes"]) == signing_bytes
-                    and stored["signature"] == signature
-                )
-            if same:
-                return Appended(receipt=receipt, duplicate=True)
-            await tx.execute(
-                "INSERT INTO {{tables.chain_faults}}"
-                " (team_id, event_id, kind, refused_sha256, key_evidence)"
-                " VALUES ($1, $2, 'event_conflict', $3, $4::jsonb)",
-                event.team_id,
-                event_id,
-                hashlib.sha256(signing_bytes).hexdigest(),
-                json.dumps(dict(key_evidence), sort_keys=True),
-            )
-            return Conflicted(event_id=event_id)
-
-        if before_append is not None:
-            await before_append(tx)
-
-        salt = os.urandom(SALT_BYTES)
-        link = link_for(
-            event,
-            chain_epoch=head.chain_epoch,
-            team_seq=head.team_seq + 1,
-            prev_event_hash=head.event_hash,
-            received_at=format_time(received_at),
-            content_commitment=content_commitment(salt, signing_bytes, signature),
-        )
-        event_hash = link.event_hash()
-        receipt = sign_receipt(
-            signer.signing_key,
-            Receipt(
-                team_id=event.team_id,
-                event_id=event.event_id,
-                chain_epoch=link.chain_epoch,
-                team_seq=link.team_seq,
-                event_hash=event_hash,
-                received_at=link.received_at,
-                logs_origin=signer.logs_origin,
-                kid=signer.kid,
-                did_key=signer.did_key,
-            ),
-        )
-        await tx.execute(
-            "INSERT INTO {{tables.chain_events}}"
-            " (team_id, chain_epoch, team_seq, event_id, prev_event_hash, event_hash,"
-            "  received_at, hook, producer_origin, content_commitment, salt, signing_bytes,"
-            "  signature, key_evidence, receipt_bytes, receipt_signature)"
-            " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16)",
-            link.team_id,
-            link.chain_epoch,
-            link.team_seq,
-            event_id,
-            link.prev_event_hash,
-            event_hash,
-            link.received_at,
-            link.hook,
-            link.producer_origin,
-            link.content_commitment,
-            salt,
-            signing_bytes,
-            signature,
+            hashlib.sha256(signing_bytes).hexdigest(),
             json.dumps(dict(key_evidence), sort_keys=True),
-            receipt[0],
-            receipt[1],
         )
-        await _move_head(
-            tx, event.team_id, _Head(link.chain_epoch, link.team_seq, event_hash, head.logs_origin)
-        )
-        return Appended(receipt=receipt, duplicate=False)
+        return Conflicted(event_id=event_id)
+
+    if before_append is not None:
+        await before_append(tx)
+
+    salt = os.urandom(SALT_BYTES)
+    link = link_for(
+        event,
+        chain_epoch=head.chain_epoch,
+        team_seq=head.team_seq + 1,
+        prev_event_hash=head.event_hash,
+        received_at=format_time(received_at),
+        content_commitment=content_commitment(salt, signing_bytes, signature),
+    )
+    event_hash = link.event_hash()
+    receipt = sign_receipt(
+        signer.signing_key,
+        Receipt(
+            team_id=event.team_id,
+            event_id=event.event_id,
+            chain_epoch=link.chain_epoch,
+            team_seq=link.team_seq,
+            event_hash=event_hash,
+            received_at=link.received_at,
+            logs_origin=signer.logs_origin,
+            kid=signer.kid,
+            did_key=signer.did_key,
+        ),
+    )
+    await tx.execute(
+        "INSERT INTO {{tables.chain_events}}"
+        " (team_id, chain_epoch, team_seq, event_id, prev_event_hash, event_hash,"
+        "  received_at, hook, producer_origin, content_commitment, salt, signing_bytes,"
+        "  signature, key_evidence, receipt_bytes, receipt_signature)"
+        " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16)",
+        link.team_id,
+        link.chain_epoch,
+        link.team_seq,
+        event_id,
+        link.prev_event_hash,
+        event_hash,
+        link.received_at,
+        link.hook,
+        link.producer_origin,
+        link.content_commitment,
+        salt,
+        signing_bytes,
+        signature,
+        json.dumps(dict(key_evidence), sort_keys=True),
+        receipt[0],
+        receipt[1],
+    )
+    await _move_head(
+        tx, event.team_id, _Head(link.chain_epoch, link.team_seq, event_hash, head.logs_origin)
+    )
+    return Appended(receipt=receipt, duplicate=False)
 
 
 async def issue_checkpoint(

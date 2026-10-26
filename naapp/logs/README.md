@@ -69,6 +69,14 @@ The receiver requires an active binding. Terminal revocation delivery remains
 subject to the paired producer/receiver contract amendment; it has no special
 admission exception here.
 
+When a local governance effect and its chain entry must commit together, use
+`aweb_logs.ledger.append_on(tx, signer, ...)` with the caller's transaction.
+`append(db, signer, ...)` opens its own transaction and delegates to that same
+implementation. The caller passes the shared producer's verified immutable
+event bytes after ordinary production authorization and widening admission;
+self-append does not waive those checks or deliveries owed to other targets.
+A later delivery of those bytes returns the original receipt.
+
 ## Development
 
 ```bash
