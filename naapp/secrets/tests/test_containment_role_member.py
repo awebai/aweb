@@ -3,15 +3,17 @@
 import asyncio
 import json
 from dataclasses import replace
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from aweb_naapp.roles import PrincipalKey, assign, has_role, principal_key
+from aweb_naapp.roles import PrincipalKey, assign, has_role, hold_role, principal_key
 from aweb_naapp.runtime.installation import InstallationRefused
 from aweb_naapp_testing import Member
 
 from aweb_secrets import records
 from aweb_secrets.containment import ContainmentRefused
+from aweb_secrets.credential_audit import GovernanceUnavailable
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.revisions import config_revision
@@ -161,6 +163,63 @@ async def test_final_f6_refusal_rolls_back_membership_revision_receipt_and_event
     assert await db.fetch_value("SELECT count(*) FROM {{tables.containment_receipts}}") == 0
     assert (
         await db.fetch_value("SELECT count(*) FROM {{tables.credential_narrowing_authority}}") == 0
+    )
+
+
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "transaction",
+        "recorder",
+        "app",
+        "authorizer",
+        "empty-role",
+        "bad-role",
+        "empty-subject",
+        "bad-subject",
+    ],
+)
+async def test_shared_recorder_requires_original_context_and_nonempty_targets(uses, problem):
+    await prepare(uses)
+    w, audit = uses.world, uses.world.credential_audit
+    other = await audit_for(w) if problem == "recorder" else audit
+    before = await events(w)
+    async with w.db.transaction() as tx:
+        await w.fence.check(tx, w.admitted)
+        assert await hold_role(tx, principal_key(REQUESTER), OWNER_ROLE)
+        prepared = await audit.prepare_containment(tx, admitted=w.admitted, principal=REQUESTER)
+        if problem == "app":
+            prepared = replace(prepared, admitted=replace(prepared.admitted, app_id="other-app"))
+        elif problem == "authorizer":
+            prepared = replace(prepared, authorized_by="")
+        role = "" if problem == "empty-role" else 7 if problem == "bad-role" else ROLE
+        subject = (
+            ""
+            if problem == "empty-subject"
+            else 7
+            if problem == "bad-subject"
+            else "member:" + principal_key(MEMBER_A).principal_did
+        )
+
+        async def refused(effect_tx):
+            with pytest.raises(GovernanceUnavailable):
+                await other.record_role_revoked(
+                    effect_tx,
+                    context=prepared,
+                    role=role,
+                    subject_ref=subject,
+                    occurred_at=datetime.now(UTC),
+                )
+
+        if problem != "transaction":
+            await refused(tx)
+    if problem == "transaction":
+        async with w.db.transaction() as another:
+            await refused(another)
+    assert await events(w) == before
+    assert (
+        await w.db.fetch_value("SELECT count(*) FROM {{tables.credential_narrowing_authority}}")
+        == 0
     )
 
 
