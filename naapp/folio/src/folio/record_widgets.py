@@ -3,7 +3,7 @@
 from aweb_naapp.page_store import StoreError, principal_id
 from aweb_naapp.pages import validate_page
 
-from folio.collection_documents import collection_scope
+from folio.collection_scope import collection_scope
 from folio.document_widgets import WidgetDocumentError, table_widgets
 from folio.record_collections import build_collection_page
 

@@ -3,7 +3,7 @@
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from test_record_links import linked, listener
+from test_record_host import linked, listener
 from test_widget_authorization import authors, signed, table_body
 
 __all__ = ["authors", "linked", "listener"]

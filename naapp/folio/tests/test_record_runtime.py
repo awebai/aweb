@@ -1,7 +1,5 @@
 """The production Folio runtime declares and mounts the shared records boundary."""
 
-import json
-
 import pytest
 from aweb_naapp.runtime.app_keys import AppKeyError
 
@@ -33,12 +31,14 @@ def test_records_manifest_declares_all_callable_schemas_and_separate_grant_read_
 def test_record_routes_are_registered_before_runtime_startup_validation(tmp_path):
     app = create_app(configured(tmp_path))
     app.state.folio_runtime.check_authorized_routes(app)
-    paths = {(method, route.path) for route in app.routes for method in getattr(route, "methods", ())}
+    paths = {
+        (method, route.path) for route in app.routes for method in getattr(route, "methods", ())
+    }
     for tool in RECORD_TOOLS:
         assert (tool["method"], tool["path"]) in paths
-    assert ("GET", "/v1/links/{link_id}/page") in paths
-    assert ("GET", "/v1/links/{link_id}/query") in paths
-    assert ("POST", "/v1/links/{link_id}/session") in paths
+    assert ("GET", "/present/edit/{link_id}/widgets/{widget_id}/records") in paths
+    assert ("GET", "/present/{token}/widgets") in paths
+    assert not any(path.startswith("/v1/links/") for _, path in paths)
 
 
 def test_missing_record_grant_key_refuses_construction(tmp_path):
@@ -46,14 +46,3 @@ def test_missing_record_grant_key_refuses_construction(tmp_path):
     settings.app_key_files.pop("folio:grant-read-1")
     with pytest.raises(AppKeyError):
         create_app(settings)
-
-
-def test_collection_summary_keeps_its_table_marker():
-    from folio.models import DocumentSummary
-
-    summary = DocumentSummary.model_validate({
-        "document_id": "11111111-1111-4111-8111-111111111111", "slug": "table-example",
-        "title": "Discovery", "current_version": 1, "kind": "table",
-        "created_at": "2026-10-21T00:00:00Z", "updated_at": "2026-10-21T00:00:00Z",
-    })
-    assert json.loads(summary.model_dump_json())["kind"] == "table"

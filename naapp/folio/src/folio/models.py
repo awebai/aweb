@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -36,7 +36,6 @@ class DocumentSummary(BaseModel):
     current_version: int
     updated_at: datetime
     created_at: datetime
-    kind: Literal["document", "table"] = "document"
 
 
 class DocumentVersion(BaseModel):

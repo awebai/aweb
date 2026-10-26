@@ -7,6 +7,7 @@ from uuid import UUID
 
 from aweb_naapp.page_store import LinkRecordContext, Scope, StoreError, principal_id
 from fastapi import Depends, Query, Request
+from pgdbm import AsyncDatabaseManager
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from folio import edit_sessions
@@ -300,7 +301,7 @@ class DocumentRecordHost:
             link_id: str,
             widget_id: str,
             request: Request,
-            database: Annotated[object, Depends(database_dependency)],
+            database: Annotated[AsyncDatabaseManager, Depends(database_dependency)],
             cursor: Annotated[str | None, Query(max_length=2048)] = None,
         ):
             try:
@@ -335,7 +336,7 @@ class DocumentRecordHost:
             widget_id: str,
             request: Request,
             payload: RowAdd,
-            database: Annotated[object, Depends(database_dependency)],
+            database: Annotated[AsyncDatabaseManager, Depends(database_dependency)],
         ):
             return await perform(link_id, widget_id, request, database, "add", payload)
 
@@ -345,7 +346,7 @@ class DocumentRecordHost:
             widget_id: str,
             request: Request,
             payload: RowUpdate,
-            database: Annotated[object, Depends(database_dependency)],
+            database: Annotated[AsyncDatabaseManager, Depends(database_dependency)],
         ):
             return await perform(link_id, widget_id, request, database, "patch", payload)
 
@@ -355,13 +356,13 @@ class DocumentRecordHost:
             widget_id: str,
             request: Request,
             payload: RowDelete,
-            database: Annotated[object, Depends(database_dependency)],
+            database: Annotated[AsyncDatabaseManager, Depends(database_dependency)],
         ):
             return await perform(link_id, widget_id, request, database, "delete", payload)
 
         @app.get("/present/{token}/widgets")
         async def view_snapshot(
-            token: str, database: Annotated[object, Depends(database_dependency)]
+            token: str, database: Annotated[AsyncDatabaseManager, Depends(database_dependency)]
         ):
             try:
                 async with checked_view(database, self.runtime, token) as context:
@@ -373,7 +374,7 @@ class DocumentRecordHost:
         async def view_query(
             token: str,
             widget_id: str,
-            database: Annotated[object, Depends(database_dependency)],
+            database: Annotated[AsyncDatabaseManager, Depends(database_dependency)],
             cursor: Annotated[str | None, Query(max_length=2048)] = None,
         ):
             try:

@@ -648,7 +648,7 @@ def test_repo_keeps_initial_migration_and_adds_forward_session_migration() -> No
 
     assert [migration.name for migration in migrations] == [
         "001_initial.sql", "002_edit_sessions.sql", "003_installation_capabilities.sql",
-        "004_collection_documents.sql",
+        "005_record_sessions.sql",
     ]
 
 

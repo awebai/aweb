@@ -17,24 +17,39 @@ def query_bind(request: RecordQueryRequest) -> dict:
     return bind
 
 
-def definition_result(collection_id: str, receipt: dict, document: dict) -> dict:
-    return {"collection_id": collection_id, "schema_version": 1,
-            "snapshot_rev": receipt["page_rev"], "document_slug": document["slug"]}
+def definition_result(collection_id: str, receipt: dict) -> dict:
+    return {
+        "collection_id": collection_id,
+        "schema_version": 1,
+        "snapshot_rev": receipt["page_rev"],
+    }
 
 
 def write_result(collection_id: str, receipt: dict) -> dict:
     # Preserve the original authorized outcome on replay. Never reload a newer
     # row here, and never expose the store's internal audit/transaction receipt.
-    return {"collection_id": collection_id, "snapshot_rev": receipt["page_rev"],
-            "record": copy.deepcopy(receipt["record"])}
+    return {
+        "collection_id": collection_id,
+        "snapshot_rev": receipt["page_rev"],
+        "record": copy.deepcopy(receipt["record"]),
+    }
 
 
 def delete_result(collection_id: str, receipt: dict) -> dict:
-    return {"collection_id": collection_id, "snapshot_rev": receipt["page_rev"],
-            "record_id": receipt["record_id"], "rev": receipt["rev"], "deleted": receipt["deleted"]}
+    return {
+        "collection_id": collection_id,
+        "snapshot_rev": receipt["page_rev"],
+        "record_id": receipt["record_id"],
+        "rev": receipt["rev"],
+        "deleted": receipt["deleted"],
+    }
 
 
 def query_result(collection_id: str, result: dict) -> dict:
-    return {"collection_id": collection_id, "snapshot_rev": result["page_rev"],
-            "records": copy.deepcopy(result["records"]), "count": result["count"],
-            "next_cursor": result["next_cursor"]}
+    return {
+        "collection_id": collection_id,
+        "snapshot_rev": result["page_rev"],
+        "records": copy.deepcopy(result["records"]),
+        "count": result["count"],
+        "next_cursor": result["next_cursor"],
+    }

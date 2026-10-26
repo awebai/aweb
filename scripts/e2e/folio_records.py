@@ -9,7 +9,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 
-def exercise_records(aw, run, root, schema):
+def exercise_records(aw, run, root, schema, *, cli_binary, cli_home, cli_env):
     collection = "records-acceptance"
     title = "Synthetic discovery records"
 
@@ -25,21 +25,32 @@ def exercise_records(aw, run, root, schema):
 
     defined = result("alice", "collection-define", collection_id=collection,
                      title=title, schema=schema, request_id="records-define")
-    slug = defined["document_slug"]
+    assert "document_slug" not in defined
+    slug = "records-widget-acceptance"
+    columns = [{"field": name, "label": prop.get("title", name),
+                "format": "url" if name == "source_url" else "text"}
+               for name, prop in schema["properties"].items()]
+    widget = {"id": "research", "type": "table", "props": {"columns": columns},
+              "bind": {"collection": collection, "limit": 20}}
+    body = "Before the table\n\n:::widget\n" + json.dumps(widget) + "\n:::\n\nAfter the table"
+    result("alice", "create", slug=slug, title=title, body=body)
     assert defined["collection_id"] == collection
     assert "table_url" not in defined
 
     def query(who="alice", **arguments):
         return result(who, "record-query", collection_id=collection, **arguments)
 
-    def browser(expected):
+    def browser(expected, *, edit=False):
         documents = result("bob", "list")
         entry = next(item for item in documents if item["slug"] == slug)
-        assert entry["kind"] == "table"
+        assert entry["title"] == title
         link = result("bob", "present", slug=slug)
         # Pass capability bytes on stdin, never in retained output or process argv.
-        run(["node", str(root / "scripts/e2e/folio-records-browser.mjs")],
-            input=json.dumps({"url": link["url"], "values": expected}))
+        edit_links = [result("bob", "present", slug=slug, editable="true")["url"] for _ in range(2)] if edit else []
+        run(["node", str(root / "scripts/e2e/folio-records-browser.mjs")], env=cli_env,
+            input=json.dumps({"url": link["url"], "edit_urls": edit_links,
+                              "values": expected, "schema": schema, "collection": collection,
+                              "cli_binary": cli_binary, "cli_home": cli_home}))
 
     assert query()["records"] == []
     browser([])
@@ -100,6 +111,6 @@ def exercise_records(aw, run, root, schema):
     assert {record["id"] for record in first_page["records"] + next_page["records"]} == {
         row["id"], second["record"]["id"],
     }
-    browser([final_value, second_value])
+    browser([final_value, second_value], edit=True)
     print("PASS installed CLI define/add/retry/one-field update/filter and two-member CAS; same table in Chromium", flush=True)
     return {"collection_id": collection, "document_slug": slug}

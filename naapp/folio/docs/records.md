@@ -1,8 +1,8 @@
 # Typed records and collection tables
 
 A Folio collection stores typed records. Agents add, patch, delete and query
-records; people open the same authorized rows as a read-only table from the
-team's Documents view. Status describes a recorded fact. It does not gate reading
+records; people view and edit the same rows through table widgets inside ordinary
+Folio documents, opened from Documents or a shared link. Status describes a recorded fact. It does not gate reading
 or create an approval workflow.
 
 The team installs Folio with `aw plugin install https://folio.aweb.ai`. An
@@ -26,7 +26,7 @@ validation, without changing the shared C1 schema contract.
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
-| `collection-define` | `collection_id`, `title`, `schema`, `request_id` | `collection_id`, `schema_version`, `snapshot_rev`, `document_slug` |
+| `collection-define` | `collection_id`, `title`, `schema`, `request_id` | `collection_id`, `schema_version`, `snapshot_rev` |
 | `record-add` | `collection_id`, `values`, `request_id`, optional `record_id` | `collection_id`, `record: {id, rev, value}`, `snapshot_rev` |
 | `record-update` | `collection_id`, `record_id`, `expected_rev`, `patch`, `request_id` | Same shape as add |
 | `record-delete` | `collection_id`, `record_id`, `expected_rev`, `request_id` | `collection_id`, `record_id`, `rev`, `deleted: true`, `snapshot_rev` |
@@ -104,23 +104,46 @@ For example, save an add body as `add.json`:
 Call `aw folio record-add --body-file add.json`, then keep the returned record
 ID/revision. A one-field update supplies only the changed field in `patch`.
 
-## Opening the table
+## Tables inside ordinary documents
 
-`collection-define` returns a stable `document_slug`. The collection appears as
-a table entry in the existing Documents list. Clicking it mints a fresh,
-short-lived, read-only live link through the existing `present` tool. Agents can
-also call `aw folio present --slug <document_slug>` for a usable URL.
+`collection-define` returns `{collection_id, schema_version, snapshot_rev}`. It
+creates no synthetic document or `document_slug`. Agents embed the collection in
+an ordinary document's Markdown, for example:
 
-The table view is labelled **Live**: its holders can see later-added rows within
-the creator's current access until the link expires or is revoked. Current
-creator membership, page/row/field access and deletion are checked on every use.
-The table cannot edit records. Pagination stays within the link's collection and
-field ceiling, with at most 200 rows per page and a cursor bound to that link
-and creator. Empty collections open as empty tables.
+```text
+:::widget
+{"id":"research","type":"table","props":{"columns":[{"field":"finding","label":"Finding","format":"text"},{"field":"status","label":"Status","format":"text"}]},"bind":{"collection":"discovery","limit":20}}
+:::
+```
 
-A usable capability URL is never stored in an operation receipt. Deliberately
-pinned snapshots retain their separate frozen semantics; the dashboard table
-click is a live self-view, with no share-mode chooser.
+The actual saving member must currently read the collection and each referenced
+column, filter and sort field. Multiple documents bind the same stored rows.
+Documents lists only ordinary documents. Present opens the ordinary document;
+its table shows current rows under the link creator's current rights, including
+when the Markdown version is older. A Markdown version pin does not pin rows.
 
-After reloading a table page, open it again from the dashboard Documents entry
-or the original link. The page explains this when its link is unavailable.
+Dashboard Edit and editable links use the same checked, non-expiring document
+edit session. The editor shows tables between prose inputs; people never need
+to edit widget JSON. A prose save preserves each original widget block exactly.
+People edit cells and add/delete rows; agents create collections, choose columns
+and author widget definitions. Row Save and text Save are separate commits;
+row saves preserve unsaved prose and discarding prose cannot undo saved rows.
+
+Only displayed columns cross the link boundary as values, schema or receipts.
+Frozen mint grants also restrict writes; saved filters/sorts run only on the
+server under the saving author's and current minter's field authority. Add is
+unavailable when required fields are not displayed. Delete is unavailable when
+it would affect hidden fields. A later-added table is live read-only in an older
+records-aware session, with guidance to reopen Edit for write access.
+
+Row edits/deletes check the observed row revision. A conflict keeps the input,
+shows the checked current row, and requires an explicit choice before another
+save. An unconfirmed save retries the same request ID and bytes. Link writes
+record link creator/certificate and public session/document/widget provenance;
+member tool writes keep their authenticated member origin.
+
+Legacy links without a stored canonical records identity keep prose behavior
+but disclose no rows, schemas, counts or receipts. Edit holders reopen Edit;
+read-only holders ask the person who shared the document for a new link.
+Revocation, deletion, installation and current creator membership/ACL are checked
+on every operation. Cursor pagination stays bound to the checked link and query.

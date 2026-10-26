@@ -390,7 +390,7 @@ except urllib.error.HTTPError as exc:
     print('PASS v2 manifest registers from server-fetched bytes, grants only agent and surface scopes, emits through its app-event key, refuses its hook-only verb', flush=True)
     schema = json.loads(run(COMPOSE + ['exec', '-T', 'folio', '/app/.venv/bin/python', '-c',
                                      'import json; from folio.record_collections import DISCOVERY_SCHEMA; print(json.dumps(DISCOVERY_SCHEMA))']))
-    exercise_records(aw, run, ROOT, schema)
+    exercise_records(aw, run, ROOT, schema, cli_binary=str(AW), cli_home=str(homes["alice"]), cli_env=env)
 
     if os.environ.get('FOLIO_UNINSTALL_PROOF') == '1':
         from folio_uninstall import prove_uninstall

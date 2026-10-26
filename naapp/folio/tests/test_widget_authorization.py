@@ -10,9 +10,9 @@ from aweb_naapp.page_store import Access
 from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from aweb_naapp_testing import Member
-from test_record_links import TEAM, linked, listener
+from test_record_host import TEAM, linked, listener
 
-from folio.collection_documents import collection_scope
+from folio.collection_scope import collection_scope
 
 __all__ = ["linked", "listener"]
 

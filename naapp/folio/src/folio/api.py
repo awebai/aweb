@@ -113,7 +113,7 @@ def create_app(
             record_storage.connect,
         ),
     )
-    records = RecordHost(runtime, record_storage, team_server_transport=team_server_transport)
+    records = RecordHost(runtime, record_storage)
 
     document_records = DocumentRecordHost(runtime, record_storage)
 
@@ -234,12 +234,9 @@ def create_app(
     @app.get("/v1/documents", response_model=list[DocumentSummary])
     async def list_documents_route(
         actor: Annotated[Principal, Depends(principal)],
-        authorization: Annotated[Authorization, Depends(member_authorized)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> list[dict]:
-        return await list_documents(
-            database, principal=authorization.principal
-        ) + await records.documents(authorization)
+        return await list_documents(database, principal=actor)
 
     @app.get("/v1/documents/{slug}", response_model=DocumentResponse)
     async def get_document_route(
@@ -309,12 +306,8 @@ def create_app(
         request: Request,
         payload: CreatePresentationRequest,
         actor: Annotated[Principal, Depends(principal)],
-        authorization: Annotated[Authorization, Depends(member_authorized)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        structured = await records.present(authorization, payload)
-        if structured is not None:
-            return structured
 
         async def authority(tx, **kwargs):
             return await document_records.mint_authority_on(
@@ -343,13 +336,9 @@ def create_app(
     async def revoke_presentation_route(
         token: str,
         actor: Annotated[Principal, Depends(principal)],
-        authorization: Annotated[Authorization, Depends(member_authorized)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict[str, bool]:
-        if token.startswith("lnk_"):
-            await records.revoke(authorization, token)
-        else:
-            await revoke_presentation_link(database, principal=authorization.principal, token=token)
+        await revoke_presentation_link(database, principal=actor, token=token)
         return {"revoked": True}
 
     def presentation_asset_embeds(allowed_assets: object) -> dict[UUID, dict[str, str]]:

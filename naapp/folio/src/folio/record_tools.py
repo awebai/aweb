@@ -23,7 +23,7 @@ def _tool(name: str, path: str, description: str, model: type[BaseModel], *, wri
 
 
 RECORD_TOOLS = [
-    _tool("collection-define", "/v1/collections", "Define a typed collection and its read-only table document.",
+    _tool("collection-define", "/v1/collections", "Define a typed collection for table widgets in ordinary documents.",
           CollectionDefineRequest, write=True),
     _tool("record-add", "/v1/records/add", "Add a validated record; omit record_id for a server-generated ID.",
           RecordAddRequest, write=True),

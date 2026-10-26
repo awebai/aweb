@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from test_record_links import linked, listener
+from test_record_host import linked, listener
 from test_widget_authorization import authors, signed, table_body
 from test_widget_records_session import mint, with_table
 
