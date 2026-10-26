@@ -11,8 +11,13 @@ import asyncpg
 from aweb_naapp.console import ConsoleRoute, ConsoleSession
 from aweb_naapp.dispatch import State
 from aweb_naapp.roles import hold_role
-from aweb_naapp.runtime.approvals import ApprovalRefused, Approvals, ApprovalState, Assurance
-from aweb_naapp.runtime.approvals.canonical import request_sha256
+from aweb_naapp.runtime.approvals import (
+    ApprovalRefused,
+    Approvals,
+    ApprovalState,
+    Assurance,
+    request_sha256,
+)
 from aweb_naapp.runtime.installation import InstallationRefused
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
