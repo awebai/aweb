@@ -25,6 +25,20 @@ def use_events(events):
     return [event for event in events if event["hook"] == "post-secret-use-hook"]
 
 
+def assert_scope(events, authorization):
+    """The public join includes signed producer scope and canonical actor IDs."""
+    principal, grant = authorization.principal, authorization.grant
+    for event in events:
+        assert event["team_id"] == principal.team_id
+        assert event["producer"]["installation_id"] == grant.installation_id
+        assert event["producer"]["generation"] == grant.generation
+        assert event["actor"]["did_key"] == principal.did_key
+        if principal.did_aw_registry_verified:
+            assert event["actor"]["did_aw"] == principal.did_aw
+        else:
+            assert "did_aw" not in event["actor"]
+
+
 async def snapshot(db):
     return {
         table: [
@@ -52,6 +66,7 @@ async def test_broker_public_ref_is_stable_through_send_and_stored_replay(db, fe
         assert reply.body["state"] == "completed"
         assert await service.submit(secret=SECRET["ref"], submission=original) == reply
         events = use_events(await envelopes(db))
+        assert_scope(events, original.authorization)
         assert [e["payload"]["action"] for e in events] == ["admitted", "dispatching", "completed"]
         assert all(e["payload"]["use_ref"] == reply.body["request_ref"] for e in events)
         if marker in json.dumps(events):
@@ -81,6 +96,7 @@ async def test_each_committed_pre_admission_refusal_has_a_new_public_ref(
             refs.append(ref)
         assert refs[0] != refs[1]
         events = use_events(await envelopes(db))
+        assert_scope(events, request.authorization)
         assert [e["payload"]["use_ref"] for e in events] == refs
         assert all("dispatch_id" not in e["payload"] for e in events)
         if marker in json.dumps(events) or "caller-injected" in json.dumps(events):
@@ -171,6 +187,7 @@ async def test_broker_approval_wait_decision_resubmission_and_replay_keep_one_re
         )
         assert await service.submit(secret=SECRET["ref"], submission=request) == result
         events = use_events(await envelopes(uses.world.db))
+        assert_scope(events, request.authorization)
         assert [e["payload"]["action"] for e in events] == [
             "approval_requested",
             "approval_decided",

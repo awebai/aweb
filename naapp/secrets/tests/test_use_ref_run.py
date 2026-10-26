@@ -15,7 +15,7 @@ from tests.test_broker_audit import envelopes
 from tests.test_run_dispatch_service import decide, report, setup
 from tests.test_use_approvals import uses as uses
 from tests.test_use_approvals import world as world
-from tests.test_use_ref_broker import use_events
+from tests.test_use_ref_broker import assert_scope, use_events
 
 
 def changed(context, **changes):
@@ -55,6 +55,7 @@ async def test_run_approval_assignment_result_replay_and_distinct_execution_refs
         and complete.body["request_ref"] == first.body["request_ref"]
     )
     events = use_events(await envelopes(uses.world.db))
+    assert_scope(events, request.authorization)
     assert all(e["payload"]["use_ref"] == first.body["request_ref"] for e in events)
     assert any(e["payload"]["action"] == "completed" for e in events)
     if marker in json.dumps(events) or context.credential in json.dumps(events):
@@ -105,6 +106,7 @@ async def test_run_pre_admission_refusal_refs_are_fresh_and_caller_input_is_reje
     refs = [r.body["use_ref"] for r in replies]
     assert all(re.fullmatch(r"use_[A-Za-z0-9_-]{22}", ref) for ref in refs) and refs[0] != refs[1]
     events = use_events(await envelopes(uses.world.db))
+    assert_scope(events, request.authorization)
     assert [e["payload"]["use_ref"] for e in events] == refs
     assert all("dispatch_id" not in e["payload"] for e in events)
     if marker in json.dumps(events) or "caller-injected" in json.dumps(events):

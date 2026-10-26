@@ -661,11 +661,15 @@ async def test_outer_admission_refusal_survives_rolled_back_inner_claim_without_
         "action": "refused",
         "op_kind": "broker",
         "refusal_code": "grant_missing",
+        "use_ref": event["payload"]["use_ref"],
     }
+    use_ref = event["payload"]["use_ref"]
+    assert use_ref.startswith("use_") and len(use_ref) == 26
     assert event["actor"]["did_key"] == BOB.did_key
     row = await db.fetch_one("SELECT * FROM {{tables.broker_use_events}}")
     assert row["dispatch_id"] is None and row["installation_id"] == INSTALLATION
     assert row["team_id"] == TEAM and row["install_generation"] == scope.generation
+    assert json.loads(row["correlation"])["request_ref"] == use_ref
 
 
 async def test_outer_admission_trace_input_is_not_retained_as_free_text(db, fence):
