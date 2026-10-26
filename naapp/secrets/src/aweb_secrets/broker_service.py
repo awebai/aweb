@@ -76,6 +76,8 @@ from aweb_secrets.use_context import UseCommitter, store_use_context, use_contex
 if TYPE_CHECKING:
     from aweb_naapp.runtime.approvals.dispatch_fence import DispatchAuthority, PreparedDispatch
 
+    from aweb_secrets.reconciliation_types import ReconciliationOriginal
+
 _LOG = logging.getLogger(__name__)
 _HOOK = "post-secret-use-hook"
 _PROGRESS = frozenset({State.RECEIVED, State.ADMITTED, State.DISPATCHING})
@@ -867,6 +869,29 @@ class BrokerRequests:
                 # original S3 winner and record this evidence exactly once.
                 return await record(tx, dispatch_id, dict(reply.body))
         return await record(tx, dispatch_id, dict(reply.body))
+
+    async def reconcile(
+        self,
+        tx: TransactionManager,
+        *,
+        original: ReconciliationOriginal,
+        state: State,
+        result: Mapping[str, Any],
+    ) -> None:
+        """Record a caller-authorized consequence through this service's S3 sink.
+
+        The caller prepares owner authority and the complete B2 union first.
+        This opens/sends nothing and applies no publication availability gate.
+        S3 locks the original and permits only its first UNKNOWN settlement.
+        """
+        from aweb_secrets.reconciliation_reads import ReconciliationReads
+
+        view = await ReconciliationReads().get(
+            tx, scope=original.installation, reconcile_ref=original.reconcile_ref
+        )
+        if original.op_kind != "broker" or view is None or view.original != original:
+            raise UseAuditUnavailable()
+        await self._machine(None).reconcile(tx, original.dispatch_id, state, dict(result))
 
     async def sweep(self, *, limit: int = 50) -> int:
         """Recover bounded stale broker publications through the sole S3.

@@ -70,6 +70,8 @@ async def audit_for(world, *, registration_view=None, shared_producer=None):
     world.credential_audit = audit
     world.change_sets._credential_audit = audit
     world.containment.credential_audit = audit
+    if hasattr(world, "console"):
+        world.console.credential_audit = audit
     if not hasattr(world, "audit_event_start"):
         world.audit_event_start = await world.db.fetch_value(
             "SELECT COALESCE(max(position),0) FROM {{tables.outbox_events}}"

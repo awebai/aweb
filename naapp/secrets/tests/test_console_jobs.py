@@ -10,8 +10,11 @@ from fastapi import FastAPI
 
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
+from aweb_secrets.console_forms import console_forms_router
 from aweb_secrets.console_jobs import console_jobs_router
 from aweb_secrets.console_ui import console_ui_router
+from aweb_secrets.jobs import apply_job_migrations
+from aweb_secrets.runners import apply_runner_migrations
 from tests.test_change_sets import ALICE, ORIGIN, enrol_owner
 from tests.test_change_sets import world as _world
 from tests.test_console import API
@@ -23,6 +26,8 @@ world = _world
 
 async def application(w, *, origin=ORIGIN, agent_origin=API):
     await apply_console_migrations(w.db)
+    await apply_job_migrations(w.db)
+    await apply_runner_migrations(w.db)
 
     async def installation(installation_id, *, team_id: str | None = None):
         if installation_id != INSTALLATION_ID:
@@ -49,6 +54,7 @@ async def application(w, *, origin=ORIGIN, agent_origin=API):
     app.include_router(owner_console_router(console))
     app.include_router(console_ui_router(sessions=console.sessions))
     app.include_router(console_changes_router(changes))
+    app.include_router(console_forms_router(changes=changes))
     app.include_router(console_jobs_router(changes=changes))
     return split_origins(FastAPI(), app, human_origin=origin, agent_origin=agent_origin)
 

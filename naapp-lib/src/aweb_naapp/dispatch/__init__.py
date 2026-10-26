@@ -18,6 +18,18 @@ dispatch being admitted or dispatched was declared exempt. The check runs under
 a transaction-scoped advisory lock on the (subject, action) pair, so two
 dispatches of one pair cannot both begin.
 
+An ``outcome_unknown`` dispatch may be repeated once, by a continuation: a
+new dispatch of the same subject and action that names the original.
+:meth:`Dispatches.continue_dispatch` claims the repeat, and a second claim is
+refused with :class:`RepeatClaimed`. A continuation is sent at most once, and
+only while its original is still ``outcome_unknown``: admitting or dispatching
+it locks the original after the continuation and refuses if the original was
+settled. Its own original does not block it. A continuation of unknown outcome
+blocks nothing, because its original still blocks until it is settled. A
+definite repeat settles the original with :meth:`Dispatches.resolve_original`,
+unless the owner settled it first. A continuation's row is locked before its
+original's, and owner settlement locks only the original.
+
 A dispatch left ``admitted`` by a crash stays there until its caller closes it;
 the caller (secrets' S13 wiring) owns that cleanup.
 
@@ -102,6 +114,12 @@ class DispatchInFlight(Exception):
     code = "dispatch_in_flight"
 
 
+class RepeatClaimed(Exception):
+    """The outcome_unknown dispatch already has its one repeat."""
+
+    code = "repeat_claimed"
+
+
 @dataclass(frozen=True)
 class Dispatch:
     dispatch_id: UUID
@@ -112,6 +130,7 @@ class Dispatch:
     attempts: int
     result: Any
     late_results: list[Any] = field(default_factory=list)
+    continues: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -205,6 +224,47 @@ class Dispatches:
         await self._notify(tx, dispatch, None, row["occurred_at"])
         return dispatch
 
+    async def continue_dispatch(
+        self, tx: TransactionManager, original_id: UUID, *, dispatch_id: UUID, fence: Fence
+    ) -> Dispatch:
+        """Claim the one repeat of an outcome_unknown dispatch, as a received
+        dispatch of the same subject and action.
+
+        A fence that raises leaves no claim, so the repeat may be claimed again.
+        """
+        await fence.prepare(tx)
+        original = await self._lock(tx, original_id)
+        if original.state is not State.OUTCOME_UNKNOWN or original.continues is not None:
+            raise InvalidTransition(f"{original_id} is {original.state} and cannot be repeated")
+        # Every claim holds the original's lock, so this read is authoritative.
+        # Inserting over an existing continuation would wait on its row while
+        # holding the original, against the continuation-first lock order.
+        if await tx.fetch_value(
+            "SELECT 1 FROM {{tables.dispatches}} WHERE continues = $1", original_id
+        ):
+            raise RepeatClaimed(f"{original_id} has already been repeated")
+        async with tx.transaction() as claim_tx:
+            row = await claim_tx.fetch_one(
+                """
+                INSERT INTO {{tables.dispatches}}
+                    (dispatch_id, subject, action, retry_exempt, state, continues)
+                VALUES ($1, $2, $3, $4, 'received', $5)
+                RETURNING *, clock_timestamp() AS occurred_at
+                """,
+                dispatch_id,
+                original.subject,
+                original.action,
+                original.retry_exempt,
+                original_id,
+            )
+            if row is None:
+                raise LookupError("the dispatch row was not returned")
+            continuation = _dispatch(row)
+            # The fence checks the caller's transaction; the savepoint shares it.
+            await _checked(fence, tx, continuation)
+        await self._notify(tx, continuation, None, row["occurred_at"])
+        return continuation
+
     async def find(self, tx: TransactionManager, dispatch_id: UUID) -> Dispatch | None:
         row = await tx.fetch_one(
             "SELECT * FROM {{tables.dispatches}} WHERE dispatch_id = $1", dispatch_id
@@ -234,6 +294,7 @@ class Dispatches:
         or ``fence`` refuses. A fence that raises leaves the dispatch where it was."""
         await fence.prepare(tx)
         current = await self._lock(tx, dispatch_id)
+        await self._lock_unsettled_original(tx, current)
         _check(current, State.ADMITTED)
         await self._check_pair(tx, current)
         await _checked(fence, tx, current)
@@ -245,10 +306,14 @@ class Dispatches:
         """Prepare ``fence``, check it under the row lock, then write ``dispatching``.
 
         Commit before sending the first byte. A fence that raises leaves the
-        dispatch where it was.
+        dispatch where it was. A continuation is sent once: one that was not
+        sent is closed, never sent again.
         """
         await fence.prepare(tx)
         current = await self._lock(tx, dispatch_id)
+        await self._lock_unsettled_original(tx, current)
+        if current.continues is not None and current.attempts > 0:
+            raise InvalidTransition(f"{dispatch_id} repeats {current.continues} and was sent")
         _check(current, State.DISPATCHING)
         await self._check_pair(tx, current)
         await _checked(fence, tx, current)
@@ -283,6 +348,24 @@ class Dispatches:
             raise ValueError(f"{state} does not reconcile a dispatch")
         current = await self._lock(tx, dispatch_id)
         return await self._write(tx, current, state, "result = $3::jsonb", json.dumps(result))
+
+    async def resolve_original(
+        self, tx: TransactionManager, continuation_id: UUID, state: State, result: Any
+    ) -> Dispatch | None:
+        """Settle the original of a completed continuation as ``state``.
+
+        The caller maps the continuation's response to a definite state. None,
+        with nothing written, if the original was already settled.
+        """
+        if state not in (State.RECONCILED_COMPLETED, State.RECONCILED_FAILED):
+            raise ValueError(f"{state} does not settle a repeated dispatch")
+        continuation = await self._lock(tx, continuation_id)
+        if continuation.continues is None or continuation.state is not State.COMPLETED:
+            raise InvalidTransition(f"{continuation_id} is not a completed continuation")
+        original = await self._lock(tx, continuation.continues)
+        if original.state in RECONCILED_STATES:
+            return None
+        return await self._write(tx, original, state, "result = $3::jsonb", json.dumps(result))
 
     async def sweep(self, db: AsyncDatabaseManager) -> int:
         """Declare every dispatch past its bound ``outcome_unknown``, one per transaction.
@@ -341,8 +424,22 @@ class Dispatches:
             return False
         raise InvalidTransition(f"{dispatch_id} is {current.state}, not dispatching")
 
+    async def _lock_unsettled_original(self, tx: TransactionManager, current: Dispatch) -> None:
+        """Lock a continuation's original, refusing if it is no longer outcome_unknown."""
+        if current.continues is None:
+            return
+        original = await self._lock(tx, current.continues)
+        if original.state is not State.OUTCOME_UNKNOWN:
+            raise InvalidTransition(
+                f"{current.dispatch_id} repeats {original.dispatch_id}, which is {original.state}"
+            )
+
     async def _check_pair(self, tx: TransactionManager, current: Dispatch) -> None:
-        """Refuse a non-exempt dispatch whose pair is in flight or of unknown outcome."""
+        """Refuse a non-exempt dispatch whose pair is in flight or of unknown outcome.
+
+        A continuation is not blocked by its own original, and a continuation
+        of unknown outcome blocks nothing.
+        """
         if current.retry_exempt:
             return
         await tx.execute(
@@ -353,13 +450,16 @@ class Dispatches:
             """
             SELECT state FROM {{tables.dispatches}}
             WHERE subject = $1 AND action = $2 AND dispatch_id <> $3
+              AND dispatch_id IS DISTINCT FROM $4
               AND state IN ('dispatching', 'outcome_unknown')
+              AND NOT (continues IS NOT NULL AND state = 'outcome_unknown')
             ORDER BY state = 'outcome_unknown' DESC
             LIMIT 1
             """,
             current.subject,
             current.action,
             current.dispatch_id,
+            current.continues,
         )
         if blocking == State.OUTCOME_UNKNOWN:
             raise ReconciliationPending(
@@ -464,4 +564,5 @@ def _dispatch(row: Mapping[str, Any]) -> Dispatch:
         attempts=row["attempts"],
         result=json.loads(result) if isinstance(result, str) else result,
         late_results=json.loads(late) if isinstance(late, str) else list(late),
+        continues=row["continues"],
     )
