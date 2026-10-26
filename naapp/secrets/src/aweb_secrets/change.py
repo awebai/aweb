@@ -176,13 +176,16 @@ def _object(value: Any, where: str) -> None:
         raise ChangeRefused(f"{where} must be an object")
 
 
-def _fields(value: Any, where: str, shape: Mapping[str, Check]) -> None:
+def _fields(
+    value: Any, where: str, shape: Mapping[str, Check], *, optional: frozenset[str] = frozenset()
+) -> None:
     if not isinstance(value, Mapping):
         raise ChangeRefused(f"{where} must be an object")
-    if set(value) != set(shape):
-        raise ChangeRefused(f"{where} must have exactly the fields {sorted(shape)}")
+    if not set(shape) - optional <= set(value) <= set(shape):
+        raise ChangeRefused(f"{where} must have the required fields and only known optional fields")
     for field, check in shape.items():
-        check(value[field], f"{where}.{field}")
+        if field in value:
+            check(value[field], f"{where}.{field}")
 
 
 @dataclass(frozen=True)
@@ -192,7 +195,8 @@ class AfterShape:
 
     ``derived`` computes fields from the whole ``after``, such as a record's
     digest, refusing an ``after`` that is not a valid record; ``ref_field`` and
-    ``identity`` may name them."""
+    ``identity`` may name them. ``optional_fields`` may be omitted; validation
+    never inserts defaults into the covered ``after``."""
 
     fields: Mapping[str, Check]
     ref_field: str | None
@@ -200,6 +204,7 @@ class AfterShape:
     derived: Callable[[Mapping[str, Any], str], Mapping[str, Any]] | None = None
     # For a per-installation setting: the envelope field the item's ref must equal.
     envelope_ref: str | None = None
+    optional_fields: frozenset[str] = frozenset()
 
 
 def _record_field(value: Any, where: str) -> None:
@@ -268,7 +273,8 @@ AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
         derived=_record(_destination),
     ),
     ("operation", 1): AfterShape(
-        fields=_record_fields(operation.FIELDS),
+        fields=_record_fields(operation.FIELDS | operation.OPTIONAL_FIELDS),
+        optional_fields=operation.OPTIONAL_FIELDS,
         ref_field="operation_id",
         identity=("operation_id", "digest"),
         derived=_record(operation.OperationTemplate.from_after, lambda record: record.digest),
@@ -418,7 +424,7 @@ def _item(value: Any, where: str) -> tuple[str, tuple[Any, ...]]:
     shape = AFTER_SHAPES.get((kind, version)) if isinstance(version, int) else None
     if shape is None or isinstance(version, bool):
         raise ChangeRefused(f"{where}.after.v names no frozen shape for {kind}")
-    _fields(after, f"{where}.after", shape.fields)
+    _fields(after, f"{where}.after", shape.fields, optional=shape.optional_fields)
     found = dict(after)
     if shape.derived is not None:
         derived = shape.derived(after, f"{where}.after")
