@@ -32,7 +32,7 @@ def _principal(value):
     return value
 
 
-async def standalone_install_admin_policy(tx, subject: "InstallAdminSubject", *, action, app_id) -> bool:
+async def standalone_install_admin_policy(tx, subject: "InstallAdminSubject", *, action, app_id, verified_origin=None) -> bool:
     if subject.kind != "certificate":
         return False
     try:

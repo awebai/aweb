@@ -139,7 +139,7 @@ Authority comes before mechanism:
 
 | Hook | Class | Producer | Audit-critical | Fires for |
 | --- | --- | --- | --- | --- |
-| `post-secret-use-hook` | server | an app with an active production (secrets) | **yes** | Every brokered use, refusal, approval request and decision, dispatch, result and outcome-unknown/reconciliation of a secret-mediated operation. |
+| `post-secret-use-hook` | server | an app with an active production (secrets) | **per action/decision** | Every brokered use, refusal, approval request and decision, dispatch, result and outcome-unknown/reconciliation of a secret-mediated operation. Approval request, approved decision, admission and fresh dispatch are gated; denied/expired/revoked decisions and post-dispatch consequences are recording paths. Refusal retains decision 94's dedicated path. |
 | `post-governance-hook` | server | any app with an active production | **widening acts yes; narrowing acts never gated** | App-side governance: role designation (approver, reader, owner-approver), passkey and contact enrolment and recovery, grant and resource lifecycle, policy changes, runner registration, and installation-wide disable. The catalog fixes each act as widening or narrowing; the producer does not choose. Narrowing acts are always enqueued in their own transaction, but they are never refused for audit availability, because containment must not wait. It is generic and shared by secrets, logs, pages and any naapp. |
 | `post-manifest-command-hook` | server | an app with an active production, serving its own tool | no | Every admitted mutation tool call and every attributable refusal. Reads fire only for tools the production lists (§A3). |
 | `post-mutation-hook` | server | core | no (see §A7) | The demo-critical core mutations listed in §A10. |
@@ -176,7 +176,7 @@ Per-hook payloads, beyond the common envelope:
 | Hook | Payload fields |
 | --- | --- |
 | `post-secret-use-hook` | Defined here, and the secrets design cites it. See the flat allowlist below. |
-| `post-governance-hook` | `act` (catalog enum: `role.designated`, `role.revoked`, `credential.enrolled`, `credential.recovered`, `credential.revoked`, `grant.created`, `grant.changed`, `grant.revoked`, `resource.created`, `resource.version_added`, `resource.version_observed`, `resource.disabled`, `resource.enabled`, `resource.replaced`, `policy.changed`, `runner.registered`, `runner.deregistered`, `installation.disabled`, `installation.enabled`); `direction` (`widening` or `narrowing`, fixed per act by the catalog and checked at ingest); `role`, `resource_type` (bounded app-local tokens matching `^[a-z][a-z0-9_.-]{0,63}$`); `subject_ref`, `resource_ref`, optional `before_ref`/`after_ref` (opaque); `authority` (`owner_act`, `passkey_session`, `team_cert`, `backend_observation`); optional `owner_act_sha256` (owner-act-rooted acts), `approval_evidence_sha256` (passkey-confirmed acts), `approval_id`, `policy_digest`, `reason_code`. A governance act that cannot enqueue does not commit. |
+| `post-governance-hook` | `act` (catalog enum: `role.designated`, `role.revoked`, `credential.enrolled`, `credential.recovered`, `credential.revoked`, `grant.created`, `grant.changed`, `grant.revoked`, `resource.created`, `resource.changed`, `resource.version_added`, `resource.version_observed`, `resource.disabled`, `resource.enabled`, `resource.replaced`, `policy.changed`, `runner.registered`, `runner.deregistered`, `installation.disabled`, `installation.enabled`, `hook_delivery.cancelled`); `direction` (`widening` or `narrowing`, fixed per act by the catalog and checked at ingest); `role`, `resource_type` (bounded app-local tokens matching `^[a-z][a-z0-9_.-]{0,63}$`); `subject_ref`, `resource_ref`, optional `before_ref`/`after_ref` (opaque); `authority` (`owner_act`, `passkey_session`, `team_cert`, `backend_observation`, `outbox_state`); optional `owner_act_sha256` (owner-act-rooted acts), `approval_evidence_sha256` (passkey-confirmed acts), `approval_id`, `policy_digest`, `reason_code`. `hook_delivery.cancelled` additionally requires its source binding/hook, contiguous source sequence bounds and count, under the [terminal amendment](../hook-terminal-delivery.md#each-app-producers-cancellation-evidence), with all unrelated governance fields forbidden. A governance act that cannot enqueue does not commit. |
 | `post-manifest-command-hook` | `app_id`, `tool`, `operation_kind` (`mutation`, `read`, `refusal`), `request_sha256` (historical name; producer-keyed HMAC-SHA-256 of the canonical request, as specified below), declared opaque `resource_refs`, `http_status`, optional `result_ref`. Parameter values are not copied; the HMAC commits to them. |
 | `post-mutation-hook` | `mutation_type` (§A10), `target_ref`, optional `before_ref`/`after_ref` (revision or state refs), and the per-type fields in the catalog (status values, assignee identities, `content_mode`). Never bodies, subjects, previews or titles. |
 | `post-command-hook` | `command` (canonical command path), `flags` (names only, plus values of catalog-declared enum flags), `local_effects` (enumerated, e.g. `identity_key_created`, `team_certificate_stored`, `app_approval_recorded`, `grant_minted`), `exit_status`. |
@@ -332,6 +332,13 @@ its registered keys from manifest bytes that hash to the pinned digest. That
 is acgh.7's key-registration fix, built after step 1 of aweb-acgh.8 (today's
 install-time app keys are global and installer-controlled).
 
+A registration for `post-mutation-hook` additionally requires a currently
+valid configured core signer at activation. The explicit
+[signer-readiness correction](../hook-signer-unavailable.md#authority-and-failure-policy)
+returns `409 core_hook_producer_unconfigured` without consuming the nonce or
+activating the row. It does not change controller authority, other binding
+kinds or the optional terminal-receipt purpose.
+
 **Binding state.** Install or update creates each declared binding as `pending`.
 An owner act moves it to `active`. Revocation, uninstall or a new generation
 moves it to `revoked`/`superseded`. A new generation never inherits activation,
@@ -372,14 +379,23 @@ cooling-off. Each act produces a `post-governance-hook` event.
 The owner act is itself a governance event: core emits `post-mutation-hook`
 `hook_binding.activated` and `.revoked`. **Revocation:**
 
-- The revoked target receives `hook_binding.revoked` as its final entry, then
-  it is cut off, so its chain ends with an explanation instead of just
-  stopping.
-- Its other undelivered backlog is cancelled; the cut is the exfiltration
-  remedy.
-- The remaining registrations receive a governance event recording the
-  cancelled count and per-producer `seq` range, so their `verify` shows an
-  explained gap.
+- Each previously active registration is owed one `hook_binding.revoked` as
+  its final record, even for a different original hook or inside its activation
+  pad. The [terminal amendment](../hook-terminal-delivery.md) specifies its
+  exact core authorization, cold evidence, separate retry credential and seal.
+  Pending registrations and productions receive no terminal delivery.
+- Other backlog cancels, including unmaterialized owed events retained as
+  per-target cancellation tombstones. Core records its own exact cancellations
+  in a `cancelled_seq_ranges` list in the one event, preserving sparse ranges;
+  there is no global atomic count across producer databases.
+- Remaining eligible mutation registrations receive the unchanged core event.
+  Each other app producer records its own cancellation count and contiguous
+  source-`seq` ranges through `hook_delivery.cancelled` governance events to
+  remaining governance registrations. An unexplained gap stays unexplained.
+- Uninstall/supersession never reroutes or cancels the old terminal obligation.
+  An unreachable or unanchorable target remains pending/stalled and surfaced
+  for reconciliation; no receiver ACK delays the revocation. A seal closes
+  only that binding, not the continuing team chain.
 - Producers stop delivering within the freshness bound (§A4). The target's
   operator may therefore see redacted activity for up to `max_age` after
   revocation, and the owner copy states this.
@@ -388,7 +404,8 @@ The owner act is itself a governance event: core emits `post-mutation-hook`
 resolution freshness bound (60 s, §A4). From `active_from` on, every producer
 is guaranteed to have refreshed and to deliver. Events that occurred earlier
 are never delivered to that binding, so a new target is never back-fed
-history.
+history. The one deliberate exception is the previously active target’s own
+terminal lifecycle record specified above; it carries no earlier activity.
 
 ### A4. Server-side target resolution: requirements on aweb-acgh.7
 
@@ -497,13 +514,17 @@ result_status, per-hook fields):
   "stable per effect" property of hooks-spec §4.
 - **`producer.kind`** is `core`, `app` (with `app_id`, `installation_id`,
   `generation`) or `client` (the member's `did_key` and `certificate_id`).
-  `producer.seq` is a gap-free counter per **(producer, team, hook)**,
-  assigned in the effecting transaction, so a consumer can prove completeness
-  per producer for each hook it is bound to. A per-producer counter would
+  `producer.seq` is a counter per **(producer, team, hook)**,
+  assigned in the effecting transaction, so a consumer can check observed
+  sequence continuity per producer for each hook it is bound to. A per-producer counter would
   report legitimate gaps to consumers bound to a subset of hooks. It is
   required for server producers (recommendation; it costs one counter-row
-  lock per producing transaction). `verify` judges gaps only inside the
-  binding's active intervals.
+  lock per producing transaction). Ordinary enqueue is gap-free. An
+  unavailable core signer reserves an owed firing's sequence with a typed local
+  [missing-production record](../hook-signer-unavailable.md); no unsigned event
+  is sent. Later authenticated evidence can expose an unexplained hole, while
+  an absent trailing event alone cannot prove loss remotely. `verify` judges
+  gaps only inside the binding's active intervals.
 - **Client events name their signer as actor.** For `producer.kind: client`,
   `actor.did_key` and `actor.certificate_id` must equal the producer's. Member
   A therefore cannot file agent-reported events attributed to member B.
@@ -561,6 +582,17 @@ deliveries owed; future targets receive no retroactive event. S13 also keeps
 its operational refusal record for console activity. See the complete
 [audit gate and admission rules](../hook-events.md#the-audit-critical-gate).
 
+The shared `enqueue_lifecycle` method records only
+`approval_decided: denied|expired|revoked` and
+`completed|not_sent|outcome_unknown|reconciled`, without target/backlog
+gating. Catalog validation, signing and transaction atomicity are unchanged.
+It grants no child/grant creation, result/credential release, upstream
+reconciliation or retry authority; callers retain those independent checks.
+The catalog's complete action/decision classification also governs ordinary
+`enqueue`. Original requester/scope/trace remain frozen. See the same
+normative gate section for the deliberate decision-93 metadata re-freeze,
+deployment evidence limits and paired reader/catalog publication dependency.
+
 **Transport.** Each delivery is `POST` to the binding's origin and path with
 `Authorization: AWEB-Hook DIDKey <did:key> <sig>`. The signed payload binds
 `{v: 1, auth: "hook-delivery", aud, method, path, body_sha256, team_id,
@@ -568,7 +600,10 @@ binding_id, event_id, producer, kid, did_key, timestamp}`, and the body is
 `{hook_event: <base64url signing bytes>, signature: <base64>}`. Egress
 follows the secrets §14 network rules: HTTPS only, no redirects, no private or
 internal addresses unless the operator allows them, and the destination taken
-only from the owner-activated binding.
+only from the owner-activated binding. The sole final-record exception uses
+the [terminal capsule and separate credential](../hook-terminal-delivery.md#separate-terminal-request-credential),
+whose current core transport signer may differ from the historical event key.
+It preserves ordinary v1 and every recipient’s identical event bytes.
 
 **Ack.** A 2xx response carries `{event_id, disposition: "appended" |
 "duplicate", receipt?}`, and the producer keeps any receipt, such as logs'
@@ -586,7 +621,7 @@ infrastructure, not an audit store (hooks-spec §7).
 
 **Failure mode.**
 
-- *Audit-critical effects* (secret uses, and widening
+- *Audit-critical effects* (authorizing secret-use steps, and widening
   `post-governance-hook` acts): the producer refuses the effect (secrets'
   `audit_target_unavailable`, the real error logged) unless both hold:
   - a registry view no older than 60 s holds an active registration with
@@ -599,7 +634,11 @@ infrastructure, not an audit store (hooks-spec §7).
   intent record, dispatches, then commits `completed`, `not_sent` or
   `outcome_unknown`; reconciliation emits `reconciled`. A crash after dispatch
   leaves a committed intent with no result, which is exactly what
-  reconciliation finds (secrets-spec §14). Narrowing admin acts are enqueued
+  reconciliation finds (secrets-spec §14). Those post-dispatch consequence
+  records and denied/expired/revoked approval decisions have no availability
+  gate; their local outbox insert still commits with the transition or neither
+  commits. A new dispatch, including a `not_sent` retry, keeps its gate.
+  Narrowing admin acts are enqueued
   in their own transaction and are never refused by this gate. The gate still
   leaves one window: the only registration can be revoked between commit and
   drain. So an audit-critical event whose deliveries all end `cancelled` or
@@ -608,11 +647,14 @@ infrastructure, not an audit store (hooks-spec §7).
   targets (for example, hosted to self-hosted) therefore follows a fixed
   order: activate the new target, wait for its `active_from`, then revoke the
   old one (§B7).
-- *Core* (`post-mutation-hook`): the event row shares the mutation's
-  transaction, so the two commit together or not at all. Core enqueues only
-  when its fresh view shows an active registration. Requiring a target before
-  every core mutation would make all coordination depend on logs being
-  installed, so it is not required (recommendation).
+- *Core* (`post-mutation-hook`): with a valid signer, its signed event and
+  mutation share a transaction. When the signer is unavailable, a typed local
+  [missing-production reservation](../hook-signer-unavailable.md) and mutation
+  commit together instead; containment remains effective and an unrecorded
+  terminal obligation remains surfaced. A fresh view must show an eligible
+  active registration for an ordinary event to be owed. Core requires no target
+  before a mutation. Operator diagnostics and conservative remote gap reporting
+  follow that correction; they never supply unsigned delivery or completion.
 - **Delivery is at least once. One logical firing is one `event_id`.** No
   exactly-once network claim is made. Consumers dedup on `(team_id, event_id)`.
 
@@ -751,9 +793,16 @@ error:
 2. **Binding.** `binding_id` must be logs' own active registration in
    `team_id` for the envelope's hook (acgh.7 resolution, ≤ 60 s cache). Logs
    returns 503 when authority is unavailable, so the producer retries and
-   nothing is lost.
-3. **Provenance.** Verify the envelope signature with the transport signer's
-   key, and require the envelope `producer` to equal the transport signer:
+   nothing is lost. The [terminal admission rule](../hook-terminal-delivery.md#receiver-admission-dedup-and-sealing)
+   is the only exception: its capsule authenticates the exact old registration
+   without restoring the removed install’s read credentials. It bypasses only
+   active state, original hook and the final-record pad.
+3. **Provenance.** Ordinary delivery verifies the envelope signature with the
+   transport signer's key and requires their producer identity to match. The
+   separate terminal credential verifies historical event/capsule signatures
+   and a current core transport key under its explicit windows; it preserves
+   the same anchored core origin and never substitutes app/member authority.
+   For ordinary delivery:
    - `app` producers need an active production for the hook in that team, with
      a key active for that generation (acgh.7);
    - `core` producers need a key published by the team's discovered core
@@ -767,7 +816,13 @@ error:
    strict allowlist. `occurred_at` must be no later than receipt plus skew.
 5. **Dedup** on `(team_id, event_id)`. Identical bytes return `duplicate` with
    the original receipt. Different bytes return `409 event_conflict` and record
-   a conflict fault that `verify` reports. Nothing is overwritten.
+   a conflict fault that `verify` reports. Nothing is overwritten. A valid
+   terminal duplicate still atomically seals its addressed binding, even when
+   the event previously arrived through another registration; it returns the
+   original receipt without a second append. A receiver-signed binding-seal
+   acknowledgement commits with that seal and authenticates the exact binding,
+   event/capsule and original receipt; the old event receipt alone cannot prove
+   that terminal admission completed.
 6. **Append** (§B3) in one transaction, then return a signed receipt. With
    the event, logs records the **key evidence** it verified against:
    `kid`, `did_key`, purposes, `installation_id`, generation and the

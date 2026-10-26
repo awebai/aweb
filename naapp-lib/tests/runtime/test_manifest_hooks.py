@@ -18,6 +18,7 @@ from starlette.requests import ClientDisconnect
 from aweb_naapp.hooks.commitment import CommitmentContext, RequestBytes
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.runtime.authorization import Authorization, Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.hook_resolver import HookResolutionUnavailable
 from aweb_naapp.runtime.manifest_hooks import bounded_body
 from tests.hooks.test_producer import TEAM
@@ -43,13 +44,13 @@ class Grants:
     installation_id: str | None = INSTALLATION
     generation: int = 2
 
-    async def grant_for(self, team_id):
+    async def grant_for(self, team_id, certificate_id=None):
         if not self.installed:
             return None
         return Grant(
             team_id=team_id,
             scopes=self.scopes,
-            fresh_until=time.monotonic() + 60,
+            fresh_until=time.monotonic_ns() + seconds_to_ns(60),
             installation_id=self.installation_id,
             generation=self.generation,
         )

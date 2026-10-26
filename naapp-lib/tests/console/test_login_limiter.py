@@ -136,15 +136,34 @@ async def test_limits_must_be_positive(db: AsyncDatabaseManager) -> None:
             _limiter(db, **changes)
 
 
-async def test_volume_older_than_its_retention_is_pruned(db: AsyncDatabaseManager) -> None:
-    limiter = _limiter(db, window=timedelta(seconds=1), volume_retention=timedelta(seconds=1))
+@pytest.mark.parametrize("slow_database", [False, True], ids=["normal", "slow-write"])
+async def test_volume_older_than_its_retention_is_pruned(
+    db: AsyncDatabaseManager, slow_database: bool
+) -> None:
+    if slow_database:
+        # Real PostgreSQL latency: the bucket is stamped at transaction start,
+        # while pruning runs in another statement after the write commits.
+        await db.execute(
+            "CREATE FUNCTION {{tables.slow_volume_write}}() RETURNS trigger LANGUAGE plpgsql AS "
+            "$$ BEGIN PERFORM pg_sleep(1.1); RETURN NEW; END $$"
+        )
+        await db.execute(
+            "CREATE TRIGGER slow_volume_write AFTER INSERT ON {{tables.console_login_volume}} "
+            "FOR EACH ROW EXECUTE FUNCTION {{tables.slow_volume_write}}()"
+        )
+    retention = timedelta(days=1)
+    limiter = _limiter(db, window=timedelta(seconds=1), volume_retention=retention)
     async with _client(limiter, "203.0.113.7") as client:
-        await _codes(client, 1)
-        await asyncio.sleep(2.1)
-        await _codes(client, 1)
+        assert await _codes(client, 1) == [200]
+        # Age the fixture explicitly. A one-second retention can legitimately
+        # expire even the current bucket while a slow request is in progress.
+        await db.execute(
+            "UPDATE {{tables.console_login_volume}} SET window_start = NOW() - interval '2 days'"
+        )
+        assert await _codes(client, 1) == [200]
     rows = await db.fetch_value("SELECT count(*) FROM {{tables.console_login_volume}}")
     assert rows == 1
-    assert (await limiter.volume(SCOPE, since=timedelta(seconds=1))).requests == 1
+    assert (await limiter.volume(SCOPE, since=retention)).requests == 1
 
 
 async def test_volume_is_kept_for_thirty_days_by_default(db: AsyncDatabaseManager) -> None:

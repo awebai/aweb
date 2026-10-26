@@ -454,7 +454,7 @@ func TestPluginManagementInstallListRemoveAndRejectBuiltins(t *testing.T) {
 		t.Fatalf("plugin still exists after remove: %v", err)
 	}
 
-	for _, name := range []string{"aw-id", "aw-introspect"} {
+	for _, name := range []string{"aw-id", "aw-introspect", "aw-org"} {
 		reservedSource := filepath.Join(tmp, name)
 		if err := os.WriteFile(reservedSource, []byte("#!/bin/sh\necho reserved\n"), 0o755); err != nil {
 			t.Fatal(err)

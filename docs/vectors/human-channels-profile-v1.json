@@ -86,7 +86,7 @@
         }
       },
       "optional": {
-        "team_id": "uuid",
+        "team_id": "teamid",
         "selector": "text",
         "session_id": "uuid",
         "participant": {
@@ -153,7 +153,7 @@
       },
       "optional": {
         "actor_id": "uuid",
-        "team_id": "uuid",
+        "team_id": "teamid",
         "key_assertion": "json_object",
         "ownership_proof": {
           "ref": "SignedArtifact"

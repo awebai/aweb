@@ -81,7 +81,7 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "request",
-            "description": "Make a brokered call with a secret: a named operation, or an open request where the grant allows one. Returns a structured outcome and your request_id. If awaiting_approval, check status and then re-submit the identical request_id and body after approval; status never dispatches.",
+            "description": "Make a brokered call with a secret: a named operation, or an open request where the grant allows one. Read the structured state independently of HTTP success. If awaiting_approval, check status using request_ref; after approved with next:resubmit, explicitly re-submit the identical request_id and body. Status never dispatches.",
             "method": "POST",
             "path": "/v1/secrets/{secret}/requests",
             "scopes": ["secrets:use"],
@@ -116,7 +116,7 @@ MANIFEST: dict[str, Any] = {
                     "url": {"type": "string", "description": "An open request's URL."},
                     "headers": {
                         "type": "array",
-                        "description": "An open request's headers, as 'Name: value' strings.",
+                        "description": "Ordered 'Name: value' strings. Named operations allow only their declared header names; fixed and injected headers cannot be overridden.",
                     },
                     "data": {"description": "An open request's body: a string, or a JSON object."},
                     "reason": {
@@ -129,7 +129,7 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "run",
-            "description": "Run a pinned job on a runner, with the credentials its definition names. Supply request_id; after approval, re-submit the identical ID and body. The agent never receives credentials.",
+            "description": "Run a pinned job on a runner, with the credentials its definition names. Supply request_id. Check aggregate status using request_ref: one approved slot does not approve the run. After approved with next:resubmit, explicitly re-submit the identical ID and body. Admitted means waiting for the runner, not completed. The agent never receives credentials.",
             "method": "POST",
             "path": "/v1/jobs/{job}/runs",
             "scopes": ["secrets:run"],
@@ -157,7 +157,7 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "status",
-            "description": "Show the state of a request, an approval or a reconciliation, by its request_id, approval_ref or reconcile_ref. Never a link or dispatch. If approved, re-submit the original request with the same request_id and unchanged body.",
+            "description": "Show request, approval or reconciliation state by request_id or a returned locator. Use request_ref for aggregate run approval status. Never a link, admission or dispatch. If approved with next:resubmit, explicitly re-submit the original request with the same request_id and unchanged body. Read state even when HTTP succeeds.",
             "method": "GET",
             "path": "/v1/status/{ref}",
             "scopes": ["secrets:read"],

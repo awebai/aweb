@@ -61,11 +61,12 @@ var teamEnsureCmd = &cobra.Command{
 }
 
 type workspaceTeamEnsureRequest struct {
-	WorkspaceKeyFormat int    `json:"workspace_key_format"`
-	WorkspaceKeySHA256 string `json:"workspace_key_sha256"`
-	Label              string `json:"label,omitempty"`
-	ExpectedTeamID     string `json:"expected_team_id,omitempty"`
-	ExpectedAccountID  string `json:"expected_account_id"`
+	Org                *string `json:"org,omitempty"`
+	WorkspaceKeyFormat int     `json:"workspace_key_format"`
+	WorkspaceKeySHA256 string  `json:"workspace_key_sha256"`
+	Label              string  `json:"label,omitempty"`
+	ExpectedTeamID     string  `json:"expected_team_id,omitempty"`
+	ExpectedAccountID  string  `json:"expected_account_id"`
 }
 
 type workspaceTeamEnsureResponse struct {
@@ -79,6 +80,7 @@ type workspaceTeamEnsureResponse struct {
 }
 
 type workspaceTeamEnrollRequest struct {
+	Org                *string                     `json:"org,omitempty"`
 	WorkspaceKeyFormat int                         `json:"workspace_key_format"`
 	WorkspaceKeySHA256 string                      `json:"workspace_key_sha256"`
 	ExpectedAccountID  string                      `json:"expected_account_id"`
@@ -128,21 +130,23 @@ type workspaceTeamSpawnAdvisory struct {
 }
 
 type teamEnsureOutput struct {
-	Status          string `json:"status"`
-	TeamID          string `json:"team_id"`
-	CanonicalTeamID string `json:"canonical_team_id,omitempty"`
-	IdentityHome    string `json:"identity_home"`
-	IdentityScope   string `json:"identity_scope"`
-	DID             string `json:"did"`
-	StableID        string `json:"stable_id,omitempty"`
-	Alias           string `json:"alias,omitempty"`
-	Created         bool   `json:"created"`
-	Reused          bool   `json:"reused"`
-	CanSpawn        bool   `json:"can_spawn"`
-	ActorAgentID    string `json:"actor_agent_id,omitempty"`
-	AuthKind        string `json:"auth_kind,omitempty"`
-	AccountID       string `json:"account_id,omitempty"`
-	AccountHandle   string `json:"account_handle,omitempty"`
+	Owner           map[string]any `json:"owner,omitempty"`
+	Binding         map[string]any `json:"binding,omitempty"`
+	Status          string         `json:"status"`
+	TeamID          string         `json:"team_id"`
+	CanonicalTeamID string         `json:"canonical_team_id,omitempty"`
+	IdentityHome    string         `json:"identity_home"`
+	IdentityScope   string         `json:"identity_scope"`
+	DID             string         `json:"did"`
+	StableID        string         `json:"stable_id,omitempty"`
+	Alias           string         `json:"alias,omitempty"`
+	Created         bool           `json:"created"`
+	Reused          bool           `json:"reused"`
+	CanSpawn        bool           `json:"can_spawn"`
+	ActorAgentID    string         `json:"actor_agent_id,omitempty"`
+	AuthKind        string         `json:"auth_kind,omitempty"`
+	AccountID       string         `json:"account_id,omitempty"`
+	AccountHandle   string         `json:"account_handle,omitempty"`
 }
 
 type workspaceTeamPartialState struct {
@@ -179,6 +183,7 @@ type workspaceTeamIdentityMaterial struct {
 }
 
 func init() {
+	teamEnsureCmd.Flags().String("org", "", "Organization slug or ID for workspace ownership and enrollment")
 	teamEnsureCmd.Flags().StringVar(&teamEnsureWorkspaceKey, "workspace-key", "", "OATS canonical format-1 workspace key")
 	teamEnsureCmd.Flags().StringVar(&teamEnsureLabel, "label", "", "Optional display label for the workspace's default team")
 	teamEnsureCmd.Flags().StringVar(&teamEnsureExpectedAccountID, "expect-account", "", "Expected hosted account ID that owns this workspace's default team")
@@ -188,6 +193,15 @@ func init() {
 
 func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	loadDotenvBestEffort()
+	var org *string
+	if cmd.Flags().Changed("org") {
+		selector, _ := cmd.Flags().GetString("org")
+		selector = strings.TrimSpace(selector)
+		if selector == "" {
+			return usageError("--org must not be blank")
+		}
+		org = &selector
+	}
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return err
@@ -215,12 +229,17 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	ensure, err := postWorkspaceTeamEnsure(ctx, cfg, workspaceTeamEnsureRequest{
+	request := workspaceTeamEnsureRequest{
+		Org:                org,
 		WorkspaceKeyFormat: workspaceTeamKeyFormat,
 		WorkspaceKeySHA256: workspaceDigest,
 		Label:              strings.TrimSpace(teamEnsureLabel),
 		ExpectedAccountID:  expectedAccountID,
-	})
+	}
+	if org != nil && binding != nil {
+		request.ExpectedTeamID = binding.TeamID
+	}
+	ensure, err := postWorkspaceTeamEnsure(ctx, cfg, request)
 	if err != nil {
 		return err
 	}
@@ -234,7 +253,7 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	enroll, err := postWorkspaceTeamEnroll(ctx, cfg, ensure, workspaceDigest, material, expectedAccountID)
+	enroll, err := postWorkspaceTeamEnroll(ctx, cfg, ensure, workspaceDigest, material, expectedAccountID, org)
 	if err != nil {
 		return err
 	}
@@ -260,7 +279,7 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	if strings.TrimSpace(enroll.APIKey) != "" || enroll.APIKeyCreated {
 		return fmt.Errorf("team ensure enroll response returned an API key; this client path requires cert-authenticated retryable enrollment")
 	}
-	if err := installWorkspaceTeamEnrollment(workingDir, home.Root, cfg.Issuer, material, enroll, cert); err != nil {
+	if err := installWorkspaceTeamEnrollment(workingDir, home.Root, cfg.Issuer, material, enroll, cert, ""); err != nil {
 		return err
 	}
 	spawn, err := verifyWorkspaceTeamSpawnAuthority(ctx, workingDir, home.Root, enroll.TeamID)
@@ -274,6 +293,7 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 		return fmt.Errorf("remove partial team ensure state: %w", err)
 	}
 	out := teamEnsureOutput{
+		Owner: ensure.Owner, Binding: ensure.Binding,
 		Status:          "bound",
 		TeamID:          enroll.TeamID,
 		CanonicalTeamID: enroll.CanonicalTeamID,
@@ -413,7 +433,7 @@ func postWorkspaceTeamEnsure(ctx context.Context, cfg cliAuthConfig, req workspa
 	return &out, nil
 }
 
-func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *workspaceTeamEnsureResponse, digest string, material workspaceTeamIdentityMaterial, expectedAccountID string) (*workspaceTeamEnrollResponse, error) {
+func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *workspaceTeamEnsureResponse, digest string, material workspaceTeamIdentityMaterial, expectedAccountID string, org *string) (*workspaceTeamEnrollResponse, error) {
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	issuerAud, err := cliAuthIssuerAudience(cfg.Issuer)
 	if err != nil {
@@ -440,6 +460,9 @@ func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *wor
 	}
 	// This fixed enrollment proof has its own wire contract, distinct from
 	// domain-separated user-data signatures.
+	if org != nil {
+		payload["org"] = strings.TrimSpace(*org)
+	}
 	payload["timestamp"] = timestamp
 	canonical, err := awid.CanonicalJSONValue(payload)
 	if err != nil {
@@ -447,6 +470,7 @@ func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *wor
 	}
 	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(material.SigningKey, []byte(canonical)))
 	req := workspaceTeamEnrollRequest{
+		Org:                org,
 		WorkspaceKeyFormat: workspaceTeamKeyFormat,
 		WorkspaceKeySHA256: digest,
 		ExpectedAccountID:  strings.TrimSpace(expectedAccountID),
@@ -776,7 +800,7 @@ func decodeWorkspaceTeamTeamCert(encoded string) (*awid.TeamCertificate, error) 
 	return nil, fmt.Errorf("decode team ensure team_cert: %w", err)
 }
 
-func installWorkspaceTeamEnrollment(workingDir, identityHome, issuer string, material workspaceTeamIdentityMaterial, enroll *workspaceTeamEnrollResponse, cert *awid.TeamCertificate) error {
+func installWorkspaceTeamEnrollment(workingDir, identityHome, issuer string, material workspaceTeamIdentityMaterial, enroll *workspaceTeamEnrollResponse, cert *awid.TeamCertificate, registryURL string) error {
 	if err := persistLocalSigningKeyAndCertificateAt(workingDir, identityHome, material.SigningKey, cert); err != nil {
 		return err
 	}
@@ -786,13 +810,13 @@ func installWorkspaceTeamEnrollment(workingDir, identityHome, issuer string, mat
 			return err
 		}
 		stableID := firstNonEmptyString(enroll.StableID, material.StableID)
-		if err := awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{DID: material.DIDKey, StableID: stableID, Address: strings.TrimSpace(cert.MemberAddress), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryStatus: "registered", CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		if err := awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{DID: material.DIDKey, StableID: stableID, Address: strings.TrimSpace(cert.MemberAddress), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: registryURL, RegistryStatus: "registered", CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
 			return err
 		}
 	}
 	canonicalTeamID := strings.TrimSpace(enroll.CanonicalTeamID)
 	output := &teamAcceptInviteOutput{Status: "accepted", TeamID: canonicalTeamID, Alias: firstNonEmptyString(enroll.Alias, material.Alias), CertPath: awconfig.TeamCertificateRelativePath(canonicalTeamID), AwebURL: strings.TrimRight(issuer, "/")}
-	if err := recordAcceptedTeamMembership(workingDir, output, cert, "", strings.TrimRight(issuer, "/"), recordMembershipOptions{IdentityHome: explicitEncryptionKeyIdentityHome(identityHome), SetActive: true, WriteWorkspaceBinding: false}); err != nil {
+	if err := recordAcceptedTeamMembership(workingDir, output, cert, registryURL, strings.TrimRight(issuer, "/"), recordMembershipOptions{IdentityHome: explicitEncryptionKeyIdentityHome(identityHome), SetActive: true, WriteWorkspaceBinding: false}); err != nil {
 		return err
 	}
 	return saveWorkspaceTeamBinding(identityHome, output, cert, strings.TrimRight(issuer, "/"))

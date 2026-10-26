@@ -75,7 +75,6 @@ from aweb.messaging.messages import (
     MessagePriority,
     authorize_message_delivery,
     deliver_message,
-    get_agent_by_alias,
     get_agent_by_id,
     resolve_agent_by_did,
     utc_iso as _utc_iso,
@@ -89,16 +88,18 @@ from aweb.messaging.verification import (
 )
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
 
+from aweb.messaging.participants import messaging_participant_by_alias
 from aweb.messaging.sender_membership import SenderMembership, sender_memberships
 
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
 
 
-async def _resolve_message_alias(db, auth: MessagingAuth, raw_alias: str) -> dict | None:
+async def _resolve_message_alias(db, auth: MessagingAuth, raw_alias: str, request: Request | None = None) -> dict | None:
     target = resolve_alias_target(auth.team_id, raw_alias, field="to_alias")
     if "~" in str(raw_alias or "") and not await team_exists(db, target.team_id):
         raise HTTPException(status_code=404, detail=f"Unknown team: {target.team_id}")
-    return await get_agent_by_alias(db, team_id=target.team_id, alias=target.alias)
+    return await messaging_participant_by_alias(db, team_id=target.team_id, alias=target.alias,
+                                              selected_team_id=auth.team_id, request=request)
 
 
 class SendMessageRequest(BaseModel):
@@ -1368,6 +1369,7 @@ async def _existing_mail_conversation_for_target(
     sender_did: str,
     sender_address: str | None,
     payload: SendMessageRequest,
+    request: Request | None = None,
 ) -> dict | None:
     target_did = ""
     target_agent_id = None
@@ -1404,7 +1406,7 @@ async def _existing_mail_conversation_for_target(
             target_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
             target_address = (recipient.get("address") or "").strip() or None
     elif payload.to_alias is not None and payload.to_alias.strip():
-        recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
+        recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip(), request=request)
         if recipient is None:
             return None
         target_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
@@ -1435,6 +1437,22 @@ async def send_message(
     request: Request, payload: SendMessageRequest, db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SendMessageResponse:
+    from aweb.human_channels.http import ingress_requested, accept_native_http
+
+    if ingress_requested(request):
+        accepted = await accept_native_http(
+            request, payload, auth=auth, db=db, kind="mail"
+        )
+        row = await db.get_manager("aweb").fetch_one(
+            "SELECT created_at FROM {{tables.messages}} WHERE message_id=$1",
+            UUID(accepted["message_id"]),
+        )
+        return SendMessageResponse(
+            message_id=accepted["message_id"],
+            conversation_id=accepted["conversation_id"],
+            status="delivered",
+            delivered_at=row["created_at"].isoformat(),
+        )
     attachment_context = prepare_attachment_send(request, payload, auth)
     if attachment_context is not None:
         with attachment_context:
@@ -1543,6 +1561,7 @@ async def send_message(
                 sender_did=sender_did,
                 sender_address=sender_address,
                 payload=payload,
+                request=request,
             )
             if existing_conversation is not None:
                 existing_conversation_id = existing_conversation["conversation_id"]
@@ -1610,7 +1629,7 @@ async def send_message(
             if payload.to_agent_id.strip() != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_agent_id must match the to_stable_id recipient")
         if payload.to_alias is not None and payload.to_alias.strip():
-            bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
+            bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip(), request=request)
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_alias must match the to_stable_id recipient")
         if payload.to_address is not None and payload.to_address.strip():
@@ -1637,7 +1656,7 @@ async def send_message(
                 _raise_bare_did_first_contact_unsupported()
             raise HTTPException(status_code=404, detail="Recipient agent not found")
         if payload.to_alias is not None and payload.to_alias.strip():
-            bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
+            bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip(), request=request)
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_alias must match the to_did recipient")
         if payload.to_agent_id is not None and payload.to_agent_id.strip():
@@ -1699,7 +1718,7 @@ async def send_message(
                     source_ip=str(request.client.host if request.client else "unknown"),
                 )
             except FederationAuthorityError as exc:
-                if exc.reason != "sender_identity_not_found":
+                if exc.reason != "recipient_identity_not_found":
                     raise
                 resolved = None
             if resolved is not None and resolved.did_aw:
@@ -1750,7 +1769,7 @@ async def send_message(
                 if payload.to_alias.strip() != recipient["alias"]:
                     raise HTTPException(status_code=422, detail="to_alias must match the to_address recipient")
             else:
-                bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
+                bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip(), request=request)
                 if not _recipient_identity_matches(bound_recipient, recipient):
                     raise HTTPException(status_code=422, detail="to_alias must match the to_address recipient")
         if payload.to_agent_id is not None and payload.to_agent_id.strip():
@@ -1775,13 +1794,13 @@ async def send_message(
         if recipient is None:
             raise HTTPException(status_code=404, detail="Recipient agent not found")
         if payload.to_alias is not None and payload.to_alias.strip():
-            bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
+            bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip(), request=request)
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_alias must match the to_agent_id recipient")
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
         to_alias = recipient.get("alias")
     elif payload.to_alias is not None:
-        recipient = await _resolve_message_alias(db, auth, payload.to_alias)
+        recipient = await _resolve_message_alias(db, auth, payload.to_alias, request=request)
         if recipient is None:
             raise HTTPException(status_code=404, detail="Recipient agent not found")
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()

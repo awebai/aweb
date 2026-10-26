@@ -17,7 +17,7 @@ import (
 // local resident approval. A receipt is saved only after every requested write
 // succeeds. Failed registration can be retried with update; a partial initial
 // subscription failure is retried by repeating install.
-func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string, previous, next *pluginProvenance, update bool, selectedScopes []string) error {
+func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string, previous, next *pluginProvenance, update bool, selectedScopes []string, approvedInstallationID string) error {
 	manifest := resolved.Manifest
 	client, selection, err := resolveClientSelection()
 	if err != nil {
@@ -38,6 +38,9 @@ func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string
 			return fmt.Errorf("installation_identity_required: the team server returned no installation identity")
 		}
 		expected = &current.Generation
+	}
+	if update && (approvedInstallationID == "" || current.InstallationID != approvedInstallationID || current.State == "uninstalled") {
+		return installationApprovalError("app_installation_changed", manifest.App.Origin, selection.IdentityHome, selection.TeamID)
 	}
 	grantedScopes, err := installationScopes(resolved.InstallScopes, current.GrantedScopes, expected != nil, selectedScopes)
 	if err != nil {

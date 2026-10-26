@@ -24,3 +24,20 @@ def test_stack_follows_the_allocation_a_gate_passes_in() -> None:
     assert stack.awid_url == "http://aweb-docker.test:41001"
     assert stack.postgres_url == "postgresql://folio:folio@aweb-docker.test:41002/folio"
     assert stack.compose == ["docker", "compose", "-p", "gate-run-folio", "-f", "docker-compose.e2e.yml"]
+
+
+def test_candidate_stack_uses_its_owned_compose_network() -> None:
+    stack = e2e_stack(
+        {
+            "NAAPP_E2E_PROJECT": "gate-run-folio",
+            "NAAPP_E2E_HOST": "aweb-docker.test",
+            "NAAPP_E2E_AWID_PORT": "41001",
+            "NAAPP_E2E_POSTGRES_PORT": "41002",
+            "NAAPP_E2E_CONTAINER_NETWORK": "1",
+        }
+    )
+
+    assert stack.awid_url == "http://gate-run-folio-awid.test:8010"
+    assert stack.postgres_url == "postgresql://folio:folio@gate-run-folio-postgres.test:5432/folio"
+    assert stack.redis_url == "redis://gate-run-folio-redis.test:6379/0"
+    assert stack.compose == ["docker", "compose", "-p", "gate-run-folio", "-f", "docker-compose.e2e.yml"]

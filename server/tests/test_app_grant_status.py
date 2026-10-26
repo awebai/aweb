@@ -112,6 +112,8 @@ async def test_grant_read_returns_the_installed_grant_of_the_credentials_team_an
     body = response.json()
     as_of = datetime.strptime(body.pop("as_of"), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     assert before <= as_of <= datetime.now(timezone.utc)
+    installed_at = datetime.fromisoformat(body.pop("installed_at"))
+    assert installed_at == await installed["db"].fetch_value("SELECT installed_at FROM {{tables.team_app_installs}}")
     current = await installed["db"].fetch_one("SELECT installation_id,generation,digest FROM {{tables.team_app_installs}} WHERE team_id=$1", TEAM_ID)
     assert body == {
         "team_id": TEAM_ID,

@@ -39,13 +39,13 @@ from aweb_naapp.runtime.approvals import (
     PgApprovalStore,
 )
 from aweb_naapp.runtime.authorization import Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.installation import (
     AdmittedInstallation,
     InstallationFence,
     apply_installation_migrations,
 )
 from aweb_naapp.runtime.passkeys import Notice, Passkeys, RelyingParty
-from aweb_naapp_testing import awid_registry
 from aweb_naapp_testing.owner_acts import (
     INSTALLATION_ID,
     TeamOwner,
@@ -53,10 +53,11 @@ from aweb_naapp_testing.owner_acts import (
     team_owner,
 )
 from aweb_naapp_testing.webauthn import SoftAuthenticator
+from awid_service.testing import running_registry
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME
-from aweb_secrets.approvers import approvers_for_secret
+from aweb_secrets.approvers import approvers_for_secret, record_approver
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_policy import apply_change_policy_migrations, four_eyes, require_four_eyes
 from aweb_secrets.change_sets import (
@@ -66,6 +67,7 @@ from aweb_secrets.change_sets import (
     apply_change_set_migrations,
 )
 from aweb_secrets.containment import Containment
+from aweb_secrets.credential_audit import CredentialAudit
 from aweb_secrets.custody import (
     Custody,
     CustodyUnavailable,
@@ -87,6 +89,7 @@ from aweb_secrets.passkey_context import PasskeyContexts
 from aweb_secrets.revisions import apply_revision_migrations, bump_config_revision, config_revision
 from aweb_secrets.tokens import ProcessTokenCache
 from aweb_secrets.use_approvals import apply_use_approval_migrations
+from tests.governance import view
 from tests.test_owner_directory import Audit
 
 ORIGIN = "https://secrets.example.com"
@@ -114,10 +117,10 @@ class Installations:
             installation_id=INSTALLATION_ID,
             generation=1,
             scopes=frozenset({"secrets:use"}),
-            fresh_until=time.monotonic() + 55,
+            fresh_until=time.monotonic_ns() + seconds_to_ns(55),
         )
 
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         return self.grant if team_id == self.team_id else None
 
     async def status_for(self, team_id: str) -> SimpleNamespace | None:
@@ -174,6 +177,7 @@ class World:
     fence: InstallationFence
     admitted: AdmittedInstallation
     containment: Containment
+    credential_audit: CredentialAudit
     devices: dict[str, SoftAuthenticator] = field(default_factory=dict)
 
 
@@ -244,27 +248,42 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
             seed=os.urandom(32),
         )
     )
-    containment = Containment(
-        db=db,
-        fence=fence,
-        approvals=approvals,
-        custody=custody,
-        passkeys=passkeys,
-        directory=directory,
-        tokens=ProcessTokenCache(),
-        governance=partial(producer.enqueue, hook="post-governance-hook"),
-    )
-    change_sets = ChangeSets(
-        db,
-        approvals=approvals,
-        passkeys=passkeys,
-        directory=directory,
-        custody=custody,
-        containment=containment,
-        draft_limit=DraftLimit(count=2, window=timedelta(hours=1)),
-        internal_destinations=InternalDestinations.DISABLED,
-    )
-    async with awid_registry(registry_db.config.get_dsn()) as registry:
+    async with running_registry(registry_db.config.get_dsn()) as registry:
+        owner = await team_owner(registry, team_id=TEAM)
+
+        from tests.governance import credential_audit as compose_audit
+
+        credential_audit = await compose_audit(
+            db=db,
+            passkeys=passkeys,
+            owner=owner,
+            fence=fence,
+            admitted=admitted,
+            origin=ORIGIN,
+            producer=producer,
+        )
+        containment = Containment(
+            db=db,
+            fence=fence,
+            approvals=approvals,
+            custody=custody,
+            passkeys=passkeys,
+            directory=directory,
+            tokens=ProcessTokenCache(),
+            governance=partial(producer.enqueue, hook="post-governance-hook"),
+            credential_audit=credential_audit,
+        )
+        change_sets = ChangeSets(
+            db,
+            approvals=approvals,
+            passkeys=passkeys,
+            directory=directory,
+            custody=custody,
+            containment=containment,
+            credential_audit=credential_audit,
+            draft_limit=DraftLimit(count=2, window=timedelta(hours=1)),
+            internal_destinations=InternalDestinations.DISABLED,
+        )
         yield World(
             db,
             passkeys,
@@ -272,11 +291,12 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
             change_sets,
             directory,
             custody,
-            await team_owner(registry, team_id=TEAM),
+            owner,
             inbox,
             fence,
             admitted,
             containment,
+            credential_audit,
         )
 
 
@@ -284,18 +304,29 @@ async def enrol_owner(world: World, principal: PrincipalKey, contact: str) -> st
     """The team owner designates ``principal`` an owner, who enrols a passkey."""
     scope = owner_scope(INSTALLATION_ID, principal.team_id, principal.principal_did)
     subject = designation_subject(scope, contact)
-    prepared = await world.owner.prepare("app-role.designate", subject)
-    async with world.db.transaction() as tx:
-        act = await world.owner.consume(tx, prepared, subject)
-        designation = await world.passkeys.designate(tx, scope=scope, contact=contact, evidence=act)
-        await record_owner(tx, installation_id=INSTALLATION_ID, principal=principal)
-        await assign(tx, principal, OWNER_ROLE)
+    signing, signature = world.owner.sign("app-role.designate", subject)
+    prepared = await world.owner.verifier.prepare(signing, signature, team_id=principal.team_id)
+    context = await world.credential_audit.prepare_owner_act(
+        world.admitted, signing=signing, signature=signature
+    )
+    with world.credential_audit.prepared(context):
+        async with world.db.transaction() as tx:
+            await world.fence.check(tx, world.admitted)
+            act = await world.owner.consume(tx, prepared, subject)
+            await record_owner(tx, installation_id=INSTALLATION_ID, principal=principal)
+            await assign(tx, principal, OWNER_ROLE)
+            designation = await world.passkeys.designate(
+                tx, scope=scope, contact=contact, evidence=act
+            )
+            await world.fence.check(tx, world.admitted)
     await world.passkeys.deliver(designation)
     token = world.inbox.enrolments[contact][-1]
     device = SoftAuthenticator(ORIGIN)
-    await world.passkeys.complete_enrolment(
-        token, device.create(await world.passkeys.enrolment_options(token))
-    )
+    context = await world.credential_audit.prepare_enrolment(token)
+    with world.credential_audit.prepared(context):
+        await world.passkeys.complete_enrolment(
+            token, device.create(await world.passkeys.enrolment_options(token)), fence=context
+        )
     world.devices[contact] = device
     return scope
 
@@ -388,6 +419,7 @@ async def confirm(world: World, change: dict[str, Any]) -> None:
             operation_id=f"apply-{change['change_id']}",
             fence=world.fence,
             admitted=world.admitted,
+            governance_view=view(),
         )
 
 
@@ -703,6 +735,7 @@ async def test_a_confirmed_approver_is_designated_and_recorded(world: World) -> 
             operation_id="apply-1",
             fence=world.fence,
             admitted=world.admitted,
+            governance_view=view(),
         )
         assert "finance@acme.com" not in world.inbox.enrolments
     await world.change_sets.deliver(confirmation)
@@ -824,19 +857,47 @@ async def test_a_second_approver_with_the_same_ref_is_refused(world: World) -> N
 
 async def test_a_refused_designation_is_a_coded_refusal(world: World) -> None:
     await enrol_owner(world, ALICE, "alice@acme.com")
+    prior = change_set(
+        drafter=by_member(CAROL),
+        changes=[designate_approver("finance", "f@acme.com", ["sec_1"])],
+    )
+    await draft(world, prior)
     scope = approver_scope(INSTALLATION_ID, TEAM, "finance")
     subject = designation_subject(scope, "f@acme.com")
-    prepared = await world.owner.prepare("app-role.designate", subject)
-    async with world.db.transaction() as tx:
-        act = await world.owner.consume(tx, prepared, subject)
-        await world.passkeys.designate(tx, scope=scope, contact="f@acme.com", evidence=act)
+    signing, signature = world.owner.sign("app-role.designate", subject)
+    prepared = await world.owner.verifier.prepare(signing, signature, team_id=TEAM)
+    context = await world.credential_audit.prepare_owner_act(
+        world.admitted, signing=signing, signature=signature
+    )
+    with world.credential_audit.prepared(context):
+        async with world.db.transaction() as tx:
+            await world.fence.check(tx, world.admitted)
+            act = await world.owner.consume(tx, prepared, subject)
+            await record_approver(
+                tx,
+                installation_id=INSTALLATION_ID,
+                team_id=TEAM,
+                approver_ref="finance",
+                scope=scope,
+                covers=["sec_1"],
+                principal_did=None,
+                change_id=prior["change_id"],
+            )
+            await world.passkeys.designate(tx, scope=scope, contact="f@acme.com", evidence=act)
+            # Exercise the existing orphaned-B3 conflict, without retaining
+            # application metadata that would trigger approver_exists first.
+            await tx.execute("DELETE FROM {{tables.approvers}} WHERE scope=$1", scope)
     change = change_set(
         drafter=by_member(CAROL), changes=[designate_approver("finance", "f@acme.com", ["sec_1"])]
     )
-    await decide(world, await draft(world, change), "alice@acme.com")
+    approval_id = await draft(world, change)
+    await decide(world, approval_id, "alice@acme.com")
     with pytest.raises(ChangeRefused) as refused:
         await confirm(world, change)
     assert refused.value.code == "approver_designation_refused"
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.approvers}}") == 0
+    assert await config_revision(world.db, INSTALLATION_ID) == 0
+    assert (await world.approvals.get(approval_id)).state is ApprovalState.APPROVED
 
 
 async def test_four_eyes_turned_on_after_a_draft_refuses_its_confirmation(world: World) -> None:
@@ -902,6 +963,7 @@ async def _confirm_and_deliver(world: World, change: dict[str, Any]):
             operation_id=f"apply-{change['change_id']}",
             fence=world.fence,
             admitted=world.admitted,
+            governance_view=view(),
         )
         assert world.inbox.notices == {}
     await world.change_sets.deliver(confirmation)
@@ -955,7 +1017,7 @@ async def test_a_contact_change_for_an_unknown_approver_is_refused(world: World)
 
 
 @pytest.mark.parametrize("delivery", ["durable", "short_lived"])
-async def test_job_definitions_cannot_apply_before_source_validation_is_wired(world, delivery):
+async def test_job_definitions_refuse_unavailable_sources_or_unwired_minting(world, delivery):
     from tests.test_jobs import after as job_after
 
     await enrol_owner(world, ALICE, "alice@acme.com")
@@ -970,4 +1032,6 @@ async def test_job_definitions_cannot_apply_before_source_validation_is_wired(wo
     item = {"kind": "job", "op": "create", "ref": body["job_id"], "after": body}
     with pytest.raises(ChangeRefused) as refused:
         await draft(world, change_set(drafter=by_member(CAROL), changes=[item]))
-    assert refused.value.code == "change_kind_not_applicable"
+    assert refused.value.code == (
+        "job_source_unknown" if delivery == "durable" else "change_kind_not_applicable"
+    )

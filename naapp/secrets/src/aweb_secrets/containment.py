@@ -9,10 +9,10 @@ import hashlib
 import json
 import logging
 import secrets
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from aweb_naapp.console import ConsoleSession
@@ -38,6 +38,9 @@ from aweb_secrets.custody import Custody, SealContext
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, owner_scope
 from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.tokens import TokenCache
+
+if TYPE_CHECKING:
+    from aweb_secrets.credential_audit import CredentialAudit
 
 _LOG = logging.getLogger(__name__)
 
@@ -233,7 +236,6 @@ ACTIONS = {
     "disable-secret": "resource.disabled",
     "disable-installation": "installation.disabled",
     "deregister-runner": "runner.deregistered",
-    "revoke-approver": "credential.revoked",
 }
 GovernanceEnqueue = Callable[..., Awaitable[UUID]]
 RunnerDeregistration = Callable[..., Awaitable[object]]
@@ -253,6 +255,7 @@ class Containment:
         directory: OwnerDirectory,
         tokens: TokenCache,
         governance: GovernanceEnqueue,
+        credential_audit: "CredentialAudit",
         deregister_runner: RunnerDeregistration | None = None,
     ) -> None:
         self.db = db
@@ -263,6 +266,7 @@ class Containment:
         self.directory = directory
         self.tokens = tokens
         self.governance = governance
+        self.credential_audit = credential_audit
         self.deregister_runner = deregister_runner
 
     async def evict(self, installation_id: str, team_id: str, ids: tuple[str, ...]) -> None:
@@ -308,19 +312,23 @@ class Containment:
                     key.principal_did,
                     target,
                 )
-            result = await self._act(
-                tx,
-                installation_id=installed.installation_id,
-                team_id=installed.team_id,
-                authorized_by=key.principal_did,
-                request_id=request_id,
-                action=action,
-                target=target,
-                credential_id=credential_id,
-                authority="team_cert",
-                actor=actor,
-                signed_trace_id=signed_trace_id,
+            prepared = await self.credential_audit.prepare_containment(
+                tx, admitted=installed, principal=principal, signed_trace_id=signed_trace_id
             )
+            with self.credential_audit.prepared(prepared):
+                result = await self._act(
+                    tx,
+                    installation_id=installed.installation_id,
+                    team_id=installed.team_id,
+                    authorized_by=key.principal_did,
+                    request_id=request_id,
+                    action=action,
+                    target=target,
+                    credential_id=credential_id,
+                    authority="team_cert",
+                    actor=actor,
+                    signed_trace_id=signed_trace_id,
+                )
             await self.fence.check(tx, installed)
         await self.evict(installed.installation_id, installed.team_id, result.affected_secret_ids)
         return result
@@ -364,19 +372,23 @@ class Containment:
                 )
             except PasskeyProofUnavailable:
                 raise ContainmentRefused("login_evidence_unavailable", 401) from None
-            result = await self._act(
-                tx,
-                installation_id=admitted.installation_id,
-                team_id=admitted.team_id,
-                authorized_by=session.subject,
-                request_id=request_id,
-                action=action,
-                target=target,
-                credential_id=credential_id,
-                authority="passkey_session",
-                actor={"authority_mode": "system", "attestations": []},
-                evidence_sha256=commitment,
+            prepared = await self.credential_audit.prepare_containment(
+                tx, admitted=admitted, session=session
             )
+            with self.credential_audit.prepared(prepared):
+                result = await self._act(
+                    tx,
+                    installation_id=admitted.installation_id,
+                    team_id=admitted.team_id,
+                    authorized_by=session.subject,
+                    request_id=request_id,
+                    action=action,
+                    target=target,
+                    credential_id=credential_id,
+                    authority="passkey_session",
+                    actor={"authority_mode": "system", "attestations": []},
+                    evidence_sha256=commitment,
+                )
             await self._session_current(tx, session)
             await self.fence.check(tx, admitted)
             self._session_unexpired(session)
@@ -421,7 +433,7 @@ class Containment:
         target: str | None,
         credential_id: bytes | None,
     ) -> None:
-        if action not in ACTIONS:
+        if action not in ACTIONS and action != "revoke-approver":
             raise ContainmentRefused("containment_action_invalid", 400)
         if not isinstance(request_id, str) or not 1 <= len(request_id) <= 200:
             raise ContainmentRefused("request_invalid", 400)
@@ -557,27 +569,30 @@ class Containment:
                 authorized_by=authorized_by,
             )
             ids = ()
-        payload = {
-            "act": ACTIONS[action],
-            "direction": "narrowing",
-            "authority": authority,
-            "resource_type": action.removeprefix("disable-")
-            .removeprefix("revoke-")
-            .removeprefix("deregister-"),
-        }
-        if target is not None:
-            payload["resource_ref"] = target
-        if evidence_sha256 is not None:
-            payload["approval_evidence_sha256"] = evidence_sha256
-        await self.governance(
-            tx,
-            team_id=team_id,
-            payload=payload,
-            actor=actor,
-            occurred_at=datetime.now(UTC),
-            result_status="success",
-            signed_trace_id=signed_trace_id,
-        )
+        # B3 emits each actual designation/key effect through the shared sink.
+        # Its receipts carry the original caller context, not a generic action.
+        if action != "revoke-approver":
+            payload = {
+                "act": ACTIONS[action],
+                "direction": "narrowing",
+                "authority": authority,
+                "resource_type": action.removeprefix("disable-")
+                .removeprefix("revoke-")
+                .removeprefix("deregister-"),
+            }
+            if target is not None:
+                payload["resource_ref"] = target
+            if evidence_sha256 is not None:
+                payload["approval_evidence_sha256"] = evidence_sha256
+            await self.governance(
+                tx,
+                team_id=team_id,
+                payload=payload,
+                actor=actor,
+                occurred_at=datetime.now(UTC),
+                result_status="success",
+                signed_trace_id=signed_trace_id,
+            )
         await tx.execute(
             "INSERT INTO {{tables.containment_receipts}}"
             " (receipt_id,installation_id,team_id,action,target,affected_secret_ids)"
@@ -653,6 +668,7 @@ class Containment:
         team_id: str,
         secret_ids: tuple[str, ...],
         approval_ids: tuple[str, ...] = (),
+        job_ids: Sequence[str] = (),
     ) -> None:
         """Lock the complete replacement/reenable forest before B2 consumption.
 
@@ -705,6 +721,16 @@ class Containment:
             team_id,
             list(locked),
         )
+        # Run admission resolves CURRENT after forest/grants. Replacements take
+        # the same order, before B2, including job-only changes without a forest.
+        if job_ids:
+            await tx.fetch_all(
+                "SELECT job_id FROM {{tables.current_jobs}}"
+                " WHERE installation_id=$1 AND job_id=ANY($2::text[])"
+                " ORDER BY job_id FOR UPDATE",
+                installation_id,
+                sorted(set(job_ids)),
+            )
         # Prelock a conservative superset across the FULL forest before S10
         # consumes its own confirmation or invokes any per-root callback.
         # Revocation later retains the root's version filter.

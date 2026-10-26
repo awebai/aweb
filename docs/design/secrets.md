@@ -785,7 +785,8 @@ response: projection (JSON pointers), max bytes, content types,
 side_effect: none | reversible | irreversible,
 token_issuing: bool, result_handling (§8.3),
 idempotency: {header: "Idempotency-Key"} | none,
-reconcile: optional status-lookup operation_id keyed by the idempotency key or the response id
+reconcile: optional status-lookup operation_id (manual settlement in the first release),
+outcome_unknown_retry: optional {delay_s: integer 1..60, upstream_honours_idempotency_key: bool} | null
 ```
 
 Parameters fill only typed slots. A value never becomes a path separator, header
@@ -1694,25 +1695,103 @@ point it cannot recall bytes already sent, and the record says so.
 
 ### 11.4 Reconciliation before retry
 
-- If the operation declares a `reconcile` lookup, secrets runs it as a brokered
-  dispatch of its own, recorded and linked, and resolves to
-  `reconciled_completed` or `reconciled_failed`.
-- Otherwise the console asks an owner or approver to resolve it, and the agent
-  sees `outcome_unknown` together with an opaque `reconcile_ref`.
-- **Retry block.** While a principal has an unreconciled `outcome_unknown` on
-  `(secret, operation)` (or the canonical method and URL for open requests), new
-  requests from that principal for the same pair are refused with
-  `reconciliation_pending`. The exception is operations declared
-  `side_effect: none`. This is how "reconcile before retry" is enforced. secrets
-  cannot tell a retry from a new request, so it blocks the pair.
-- **In flight.** While a principal has a dispatch of the same pair in
-  `dispatching`, a new request for that pair is refused at admission and at the
-  fence with `dispatch_in_flight`, under the same `side_effect: none`
-  exception. Unlike `reconciliation_pending`, it clears by itself when that
-  dispatch reaches `completed` or `not_sent`. If it becomes `outcome_unknown`
-  instead, the retry block above applies.
-- A new dispatch after reconciliation is a new intent. Under `approve_only` it
-  needs a **fresh approval**, per the joint recommendation.
+An `outcome_unknown` receipt includes an opaque `reconcile_ref` naming its
+original persisted association; it is the same locator as `request_ref`.
+Status remains a read under current authorization. Possessing or reading the
+locator never authorizes a send, a settlement or approval consumption.
+
+**One explicitly safe automatic repeat.** An operation may opt in with the
+optional `outcome_unknown_retry` object:
+
+```json
+{"delay_s": 2, "upstream_honours_idempotency_key": true}
+```
+
+The object has exactly those two fields. `delay_s` is an integer from 1 to 60
+(boolean values are not integers here); the guarantee field is a strict
+boolean. Omitted or `null` means manual settlement only. Validation never
+inserts a missing field or default: existing template bytes and digests are
+unchanged. Present terms, including `null`, participate in the operation digest
+and in the owner's passkey-confirmed change set.
+
+An opt-in is valid only when `reconcile` is `null` and either the operation
+has `side_effect: none`, or it declares an `idempotency` header and
+`upstream_honours_idempotency_key: true`. A true guarantee requires that header
+even for `side_effect: none`. The guarantee is the owner's assertion about the
+upstream; secrets does not infer it from an HTTP method, a header name or a
+previous response. The passkey confirmation explicitly shows the one-repeat
+limit, delay and the assertion that the upstream honours the named header.
+**A wrong assertion can duplicate an effect.** The manual-only default is also
+shown explicitly.
+
+After the configured delay, secrets repeats the original broker call **once**
+if its original authority still passes the fence.
+The delay and eligibility come from the original immutable operation terms and
+digest, never an edited current template or a heuristic. The repeat preserves
+the original outbound-effect fields and the original upstream idempotency key;
+using a new dispatch ID must not change that key. A durable association claims
+at most one repeat for the original uncertain dispatch, including across crashes
+and concurrent workers. The repeat is its own ordinary fenced, audited broker
+dispatch linked to the original intent. It rechecks the original member,
+certificate, grant, installation generation, policy and revocation at the fence,
+uses the same custody and egress path, and obtains no fresh approval. The repeat
+is refused if the grant recorded on the original dispatch has been replaced,
+edited or revoked, if the member's team membership has changed or been removed,
+or if the certificate has been rotated or revoked. The fence compares exact
+original identities and versions; it does not derive replacement authority from
+current state. Original
+approval provenance stays immutable; the repeat cannot rearm it or transfer it
+to a different intent.
+
+A definitive completed or failed outcome of that repeat settles the original
+as `reconciled_completed` or `reconciled_failed`. Failure to send the repeat,
+a refused repeat, or another uncertain outcome does not establish what the
+original call did; it leaves the original for manual settlement. The one-repeat
+budget is never replenished. This automatic path applies to broker operations,
+not runner jobs or open requests without explicit operation terms.
+
+**Owner settlement.** Everything else, including a template declaring a
+`reconcile` lookup, uses the console manual path in the first release. There is
+no generic lookup dispatch: its input mapping and result interpretation are
+out of scope. An owner settles the original association with a **fresh passkey
+APPROVE assertion bound to `reconcile_ref` and the chosen outcome**:
+`completed`, `failed` or `unknown-closed`. These record
+`reconciled_completed`, `reconciled_failed` or `reconciled_unknown` respectively.
+A covering approver is not a manual resolver in this release. The console
+holds its current owner, session and installation authority in the original
+caller transaction; the settlement and audit use the same S3/B2 stores.
+There is one settlement per original reference, including when the automatic
+and owner paths race. Settlement reopens no credential, sends nothing, and
+rearms no approval. A repeated decision cannot replace the first outcome.
+
+The separate owner control ceremony has a durable, value-free B2 association
+and retained-passkey-proof audit in the caller transaction. Its request and
+decision do not emit hooks in the first release and never enter the secret-use
+approval sink or its target/backlog gate. Only actual settlement of the original
+S3 dispatch emits its existing `reconciled` hook, in that same transaction.
+Pending, undecided, rejected or refused controls never emit `reconciled`. The
+customer-visible effect is settlement; this local control audit preserves the
+fresh APPROVE binding without misdescribing the ceremony as a secret-use
+approval or adding a public hook shape.
+
+**Retry block.** While a principal has an unreconciled `outcome_unknown` on
+`(secret, operation)` (or the canonical method and URL for open requests), new
+requests from that principal for the same pair are refused with
+`reconciliation_pending`. The exception is operations declared
+`side_effect: none`. The single linked automatic repeat above is a bounded
+continuation of the original intent; it does not unblock a fresh request or
+permit another repeat.
+
+**In flight.** While a principal has a dispatch of the same pair in
+`dispatching`, a new request for that pair is refused at admission and at the
+fence with `dispatch_in_flight`, under the same `side_effect: none` exception.
+The block clears when that dispatch reaches `completed` or `not_sent`; an
+`outcome_unknown` instead applies the retry block above.
+
+A later user retry after settlement is a **new intent**. Under `approve_only`
+it needs a **fresh approval**. Read-only status never initiates the automatic
+repeat or owner settlement, and neither path creates a second registry, opener
+or dispatch state machine.
 
 ### 11.5 Operational record and the post-secret-use-hook outbox
 
@@ -1728,6 +1807,24 @@ SOT §2), reached through the hook.
   refused or stays in its previous state, and nothing is dispatched.
 - A dispatch therefore never happens without durably enqueued `admitted` and
   `dispatching` events.
+- **Per-action availability.** The catalog gates `approval_requested`,
+  `approval_decided: approved`, `admitted` and `dispatching`.
+  `approval_decided: denied|expired|revoked` (including requester withdrawal
+  and B2 containment cancellation), `completed`, `not_sent`,
+  `outcome_unknown` and `reconciled` record decisions/consequences without
+  target/backlog gating, through the shared `enqueue_lifecycle` seam or
+  ordinary catalog-classified `enqueue`. `refused` keeps `enqueue_refusal`.
+  All retain catalog/envelope/key checks and local transaction atomicity.
+  The actor stays the original requester, with the frozen use scope/trace.
+  Recording never authorizes child/grant creation (including
+  `stored_as_secret`), result/runner-credential release, an upstream
+  reconciliation call or retry; independent scope/lineage/policy/fence checks
+  still apply. No new availability gate is imposed on storing an observed
+  result. Every new send, including after `not_sent`, repeats its gated
+  dispatch transition. A failed post-dispatch local commit leaves the prior
+  durable state for reconciliation. The
+  [normative hook contract](../hook-events.md#the-audit-critical-gate)
+  specifies the exact catalog classification and decision-93 re-freeze.
 - **No active target.** secrets resolves targets through aweb-acgh.7, using the
   hooks design's freshness bound of 60 s at most. The rule counts only a
   registration whose `active_from` is at or before the event's `occurred_at`.
@@ -1849,12 +1946,115 @@ The catalog fixes its act enum and fixes each act's direction:
 | --- | --- |
 | owner and approver designation and revocation (B3's audit interface) | `role.designated`, `role.revoked` |
 | passkey and contact enrolment, recovery and revocation | `credential.enrolled`, `credential.recovered`, `credential.revoked` |
-| grant lifecycle | `grant.created`, `grant.changed`, `grant.revoked` |
-| secret, destination, operation and job lifecycle | `resource.created`, `resource.version_added`, `resource.replaced`, `resource.disabled`, `resource.enabled` |
+| grant lifecycle; grant-template creation/update | `grant.created`, `grant.changed`, `grant.revoked` (templates use creation/change only) |
+| secret, destination, operation and job lifecycle | `resource.created`, `resource.changed` (secret metadata only), `resource.version_added` (including job CURRENT revisions), `resource.replaced`, `resource.disabled`, `resource.enabled` |
 | validated same-reference backend version observation (§5.3) | `resource.version_observed` |
-| policy changes | `policy.changed` |
+| policy changes; relaxation of change-set four-eyes | `policy.changed` |
 | runners | `runner.registered`, `runner.deregistered` |
 | kill switch | `installation.disabled`, `installation.enabled` |
+
+The following change/1 cases refine those families. Every row is fixed
+widening and uses the actually admitted owner APPROVE proof/approval
+association with the identity-free system actor. The hook's general
+`owner_act` authority does not bypass change/1's passkey-confirmed admission.
+
+| Change item | Hook receipt and identity |
+| --- | --- |
+| `secret` / `update` | `resource.changed`, `resource_type: secret`, `resource_ref: secret_id`; distinct persisted opaque `before_ref`/`after_ref` bind the locked metadata states, including descriptive-only or `approve_only` edits. Never a value addition or value-version increment. |
+| `grant_template` / `create` | `grant.created`, `resource_type: grant_template`, `resource_ref: grant_template_id`; records a template, not issuance of a live grant. |
+| `grant_template` / `update` | `grant.changed`, same template type/identity, including a tightening; no fabricated `policy_digest`. |
+| `change_set_policy` / `update` | `policy.changed`, `resource_type: change_set_policy`, `resource_ref: installation_id`; relaxes four-eyes and has no `policy_digest`, because it is not a content-addressed dispatch Policy. |
+| `job` / `create` | `resource.created`, `resource_type: job`, `resource_ref: job_id`; creates the installation's first CURRENT definition for that job. |
+| `job` / `update` | `resource.version_added`, `resource_type: job`, `resource_ref: job_id`; distinct opaque `before_ref`/`after_ref` identify the locked prior and newly admitted CURRENT revisions, not secret value versions. |
+
+These effects and their signed enqueue commit atomically under the widening
+gate. Existing `resource.version_added` remains the actual value/backend-version
+addition path, including owner-confirmed backend credential and 1Password
+reference versions; it also records admitted job CURRENT revisions below.
+Secret metadata revisions do not replace those existing receipts;
+their state references never encode a value fingerprint, provider version or
+raw metadata. The consumer vector's `change_governance`
+rows make the metadata/template/four-eyes cases explicit.
+
+For `job/update`, **version means a newly admitted revision of CURRENT**, not
+a newly inserted immutable definition body. Both revision handles are persisted
+and bound to the actual job ID in the event's team/installation and to the
+locked prior/new definition digests. Restoring an already-stored body, if
+admitted through the same update path, still creates a new CURRENT revision
+and a fresh `after_ref`; it neither claims a novel definition body nor reuses
+that body's old revision handle. First creation may carry its initial
+`after_ref`. The vector's `job_current_revisions` includes create, changed-body
+update and admitted stored-body restore, with catalog-level refusal variants.
+
+Each update needs its actual admitted change/1 owner APPROVE evidence and
+approval association, with the system actor, widening audit gate and atomic
+CURRENT transition/event insertion. The digest pin, run grant, runner-local
+pin and execution fences in §9.4 still apply; a known stored digest or the
+receipt itself restores none of that authority, and lookup never falls back
+to history. Keep definition bodies and revision associations restricted;
+the generic catalog checks payload syntax, while the sink enforces the
+locked CURRENT-revision association. `resource.changed` stays secret-only.
+
+**B3 stages.** The following is exhaustive for B3's `APPROVER_*` audit kinds.
+It refines the credential families above; a sink must not infer a hook from
+the family alone. Approval and dispatch audit kinds follow the use/change
+mapping for their actual effect, not this credential table.
+
+| B3 audit kind | Governance receipt | Recorded effect and authority |
+| --- | --- | --- |
+| `APPROVER_DESIGNATED` | `role.designated`, widening | First designation, using its consumed owner act or actually admitted owner APPROVE evidence. |
+| `APPROVER_REDESIGNATED` | `credential.recovered`, widening | Recovery by re-designation, using the consumed recovery owner act. Retain the new subject and recovery effective time. |
+| `APPROVER_ENROLLED` | `credential.enrolled`, widening | Actual new key, including one enrolled after recovery, under the immutable original designation/recovery authorization. State TOFU honestly; registration is not an existing-key assertion. |
+| `APPROVER_ENROLMENT_REISSUED` | No governance hook; retain local operational audit | Replaces an unused enrolment link for the same current designation/contact; grants no new designation or credential. |
+| `APPROVER_RETIRED` | `role.revoked`, narrowing | Ends the affected designation, under the actual authorized containment actor/evidence. |
+| `APPROVER_PASSKEY_REVOKED` | `credential.revoked`, narrowing | Ends the affected key, under the actual authorized containment actor/evidence. If losing the last key also emits `APPROVER_RETIRED`, that distinct receipt records the ended designation. |
+| `APPROVER_CONTACT_CHANGE_SCHEDULED` | `credential.enrolled`, widening | Creates the pending contact candidate, using the actual retained `contact_change` assertion. |
+| `APPROVER_CONTACT_CHANGE_BY_OWNER_SCHEDULED` | `credential.enrolled`, widening | Creates the pending contact candidate, using the actually admitted owner's APPROVE evidence. |
+| `APPROVER_CONTACT_PROVEN` | `credential.enrolled`, widening | Makes that candidate eligible to take effect at its retained effective time, under its immutable original scheduling authorization. The proof token establishes reachability, not fresh owner/passkey authority. |
+| `APPROVER_CONTACT_CHANGE_CANCELLED` | `credential.revoked`, narrowing | Cancels only that pending candidate, using the actual retained `contact_cancel` assertion; never describes revocation of the current contact, an existing key or the role. |
+| `APPROVER_LOGGED_IN` | No governance hook; retain local operational audit | Authentication to the existing scope, not a new designation or credential. Later governance can reference its retained assertion only under the existing session authorization rules. |
+
+Recovery re-designation and the later key enrolment are different effects:
+emit `credential.recovered` only for `APPROVER_REDESIGNATED`, and
+`credential.enrolled` for `APPROVER_ENROLLED`, including after recovery.
+Do not emit a second recovery receipt for that enrolment.
+
+Every pending-contact receipt has `resource_type: pending_contact` and the
+same persisted random opaque `resource_ref` for that candidate. Scheduling
+uses `reason_code: contact_change_scheduled`; proof uses `contact_proven`;
+cancellation uses `contact_change_cancelled`. Each transition has a distinct
+opaque `after_ref` for its resulting state, with `before_ref` naming the prior
+state when present. Neither reference derives from a contact, token, key or
+credential identifier. Retain the candidate, its contact binding, state and
+`effective_at` privately. Proof cannot shorten the delay, and an unproven
+candidate never takes effect. A later candidate receives a different reference;
+proof or cancellation for a stale, superseded or different candidate refuses.
+
+Enrolment and contact proof follow the shared
+[completion-association rule](../hook-events.md#post-governance-hook).
+Persist the original consumed owner act, admitted owner APPROVE proof or
+verified self-contact-change assertion, and its exact app/team/installation,
+subject/scope/contact and one-use completion
+binding before the ceremony begins. Reuse its original commitment and frozen
+context, never an actor string, evidence-ref hash, new-key assertion, live
+authorization lookup or a second nonce consumption. An original APPROVE
+commitment proves authorization of designation or the contact change; the
+signed producer attests the subsequent completion. Its envelope actor is
+exactly `{"authority_mode":"system","attestations":[]}`. Direct owner-act
+designation/recovery still records the verified owner-act actor; app-local
+passkey scheduling/cancellation uses the system actor and its real proof.
+Containment retains its actual authorized actor and evidence. Raw contacts,
+contact hashes, tokens and credential IDs stay out of every hook payload.
+
+Scheduling, proof and key enrolment are widening and each gates at its own
+commit. Prepare the registration view before entering B3's transaction; a
+stale view refuses enqueue without network under locks. State transition,
+one-use consumption and event insertion are atomic; any local failure rolls
+the transition back. A successful earlier audit receipt grants no bypass.
+Cancellation is narrowing and retains the ungated availability rule below.
+The consumer vector records these stages in `b3_lifecycle`; catalog acceptance
+checks payload syntax, while the sink must enforce the retained associations
+and authorization described here.
 
 How audit availability applies to governance acts:
 
@@ -1870,7 +2070,13 @@ secrets fills `authority` with one of:
 - `owner_act`, with `owner_act_sha256`;
 - `passkey_session`, with `approval_evidence_sha256`;
 - `team_cert`, for narrowing acts through the agent API;
-- `backend_observation`, exclusively for `resource.version_observed` (§5.3).
+- `backend_observation`, exclusively for `resource.version_observed` (§5.3);
+- `outbox_state`, exclusively for the shared kit's producer-local
+  `hook_delivery.cancelled` accounting under the
+  [terminal contract](../hook-terminal-delivery.md#each-app-producers-cancellation-evidence).
+  It uses the system actor and only this producer's persisted cancellation
+  facts. It authorizes no human governance act and no change to secrets' grants
+  or policy.
 
 That observation act requires `direction: narrowing`, `resource_type: secret`
 and `reason_code: external_version_changed`. Its `resource_ref` is the minted

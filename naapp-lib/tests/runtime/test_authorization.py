@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 
 import httpx
 import pytest
-from aweb_naapp_testing import REGISTRY_URL, Member
+from aweb_naapp_testing import Member
+from awid_service.testing import REGISTRY_URL
 from fastapi import FastAPI, HTTPException, Request
 
 from aweb_naapp.manifest import canonical_bytes, load_manifest
@@ -22,6 +23,7 @@ from aweb_naapp.runtime.authorization import (
     GrantUnavailable,
     authorize_request,
 )
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.team_auth import AWIDTeamCache, authenticate_request
 from tests.runtime.conftest import relying_app
 
@@ -65,7 +67,7 @@ class InstalledGrants:
     unavailable: bool = False
     asked: list[str] = field(default_factory=list)
 
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         self.asked.append(team_id)
         if self.unavailable:
             raise GrantUnavailable("grant authority unreachable")
@@ -74,7 +76,7 @@ class InstalledGrants:
 
 def fresh(*scopes: str, team_id: str = TEAM_ID, installation_id: str | None = None,
           generation: int | None = None) -> Grant:
-    return Grant(team_id=team_id, scopes=frozenset(scopes), fresh_until=time.monotonic() + 60,
+    return Grant(team_id=team_id, scopes=frozenset(scopes), fresh_until=time.monotonic_ns() + seconds_to_ns(60),
                  installation_id=installation_id, generation=generation)
 
 
@@ -190,7 +192,7 @@ async def test_unavailable_grant_authority_is_503_without_fallback(registry, mem
 
 
 async def test_stale_grant_is_503_even_when_it_would_allow(registry, member):
-    stale = Grant(team_id=TEAM_ID, scopes=frozenset({"fixture:read"}), fresh_until=time.monotonic() - 1,
+    stale = Grant(team_id=TEAM_ID, scopes=frozenset({"fixture:read"}), fresh_until=time.monotonic_ns() - seconds_to_ns(1),
                   installation_id=None, generation=None)
     response = await call(registry, member, InstalledGrants({TEAM_ID: stale}), Policy(), "GET", "/v1/items")
     assert response.status_code == 503
@@ -362,7 +364,7 @@ def test_same_path_with_different_methods_is_not_ambiguous():
 
 async def test_authorization_requires_explicit_installation_fields():
     with pytest.raises(TypeError):
-        Grant(team_id=TEAM_ID, scopes=frozenset({"fixture:read"}), fresh_until=time.monotonic() + 60)  # type: ignore[call-arg]
+        Grant(team_id=TEAM_ID, scopes=frozenset({"fixture:read"}), fresh_until=time.monotonic_ns() + seconds_to_ns(60))  # type: ignore[call-arg]
 
 
 async def test_policy_http_refusal_from_the_app_propagates(registry, member):

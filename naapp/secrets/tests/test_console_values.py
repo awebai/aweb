@@ -31,7 +31,7 @@ PATH = f"/installations/{INSTALLATION_ID}/backend-credentials/onepassword/versio
 async def clients(w, *, lookup_ready=None, resume=None):
     await apply_console_migrations(w.db)
 
-    async def installation(installation_id):
+    async def installation(installation_id, *, team_id: str | None = None):
         if installation_id != INSTALLATION_ID:
             raise LookupError(installation_id)
         if lookup_ready is not None:
@@ -42,11 +42,13 @@ async def clients(w, *, lookup_ready=None, resume=None):
     console = OwnerConsole(
         db=w.db,
         passkeys=w.passkeys,
+        credential_audit=w.credential_audit,
         directory=w.directory,
         fence=w.fence,
         verifier=w.owner.verifier,
         installation=installation,
     )
+    w.console = console
     human_app = FastAPI()
     human_app.include_router(owner_console_router(console))
     human_app.include_router(console_ui_router(sessions=console.sessions))
@@ -227,6 +229,11 @@ async def test_login_evidence_retired_during_lookup_cannot_stage_a_token(world):
     ready, resume = asyncio.Event(), asyncio.Event()
     async with clients(w, lookup_ready=ready, resume=resume) as (human, _):
         logged = await login(w, human, scope)
+        import hashlib
+
+        from aweb_naapp.console import COOKIE_NAME
+
+        original_session = hashlib.sha256(human.cookies[COOKIE_NAME].encode()).digest()
         task = asyncio.create_task(
             human.post(
                 PATH,
@@ -236,16 +243,16 @@ async def test_login_evidence_retired_during_lookup_cannot_stage_a_token(world):
         )
         try:
             await asyncio.wait_for(ready.wait(), 5)
-            async with w.db.transaction() as tx:
-                await w.passkeys.retire_in(
-                    tx, scope=scope, subject=holder.subject, authorized_by="owner"
-                )
+            from tests.test_console_changes import retire_owner
+
+            await retire_owner(w, scope, holder.subject)
             resume.set()
             response = await asyncio.wait_for(task, 5)
             assert response.status_code == 401
             assert "Max-Age=0" in response.headers["set-cookie"]
             assert await w.db.fetch_value(
-                "SELECT closed_at IS NOT NULL FROM {{tables.console_sessions}}"
+                "SELECT closed_at IS NOT NULL FROM {{tables.console_sessions}} WHERE token_sha256=$1",
+                original_session,
             )
         finally:
             resume.set()

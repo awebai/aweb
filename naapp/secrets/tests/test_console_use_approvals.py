@@ -1,0 +1,401 @@
+"""Use/run console decisions through real PostgreSQL, S4, B2 and B3."""
+
+from contextlib import asynccontextmanager
+from copy import deepcopy
+
+import httpx
+import pytest
+from aweb_naapp.console import CONSOLE_HEADERS, apply_console_migrations
+from aweb_naapp.runtime.approvals import ApprovalState
+from aweb_naapp.runtime.origins import split_origins
+from aweb_naapp_testing.owner_acts import INSTALLATION_ID
+from fastapi import FastAPI
+
+from aweb_secrets.console import OwnerConsole, owner_console_router
+from aweb_secrets.console_ui import console_ui_router
+from aweb_secrets.console_use_approvals import (
+    ConsoleUseApprovals,
+    console_run_approvals_router,
+    console_use_approvals_router,
+)
+from tests.console_use_world import audit_for, mint
+from tests.test_change_sets import ORIGIN, TEAM, world  # noqa: F401
+from tests.test_console import API
+from tests.test_console_changes import sign_in
+from tests.test_run_approvals import plan_for
+from tests.test_run_approvals import request as request_run
+from tests.test_use_approvals import designate, install
+from tests.test_use_approvals import uses as _uses
+from tests.test_use_audit import targets
+
+uses = _uses
+
+
+async def application(uses, *, origin=ORIGIN, agent_origin=API, registration_view=None):
+    w = uses.world
+    await apply_console_migrations(w.db)
+
+    async def installation(installation_id, *, team_id: str | None = None):
+        if installation_id != INSTALLATION_ID:
+            raise LookupError(installation_id)
+        return w.admitted
+
+    console = OwnerConsole(
+        db=w.db,
+        passkeys=w.passkeys,
+        credential_audit=w.credential_audit,
+        directory=w.directory,
+        fence=w.fence,
+        verifier=w.owner.verifier,
+        installation=installation,
+    )
+    app = FastAPI()
+    app.include_router(owner_console_router(console))
+    app.include_router(console_ui_router(sessions=console.sessions))
+    from aweb_secrets.use_audit import UseApprovalAudit
+
+    # Read-only legacy run fixtures have no audit association. Decisions on
+    # that reserved path must fail closed; broker cases share the real sink.
+    audit = uses.approvals._audit
+    if not isinstance(audit, UseApprovalAudit):
+        audit, _ = audit_for(uses)
+
+    async def registrations(team_id):
+        assert team_id == TEAM
+        return targets(uses.clock())
+
+    services = ConsoleUseApprovals(
+        console=console,
+        approvals=uses.approvals,
+        use_audit=audit,
+        registration_view=registration_view or registrations,
+    )
+    app.include_router(console_use_approvals_router(services=services))
+    app.include_router(console_run_approvals_router(services=services))
+    return split_origins(FastAPI(), app, human_origin=origin, agent_origin=agent_origin)
+
+
+@asynccontextmanager
+async def clients(uses, *, registration_view=None):
+    app = await application(uses, registration_view=registration_view)
+    async with (
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as human,
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API) as agent,
+    ):
+        yield human, agent
+
+
+async def pending_use(uses):
+    await designate(uses, "finance", "finance@acme.com")
+    await install(uses)
+    pending = await mint(uses, reason='</pre><img src=x onerror="alert(1)">')
+    approval_id = pending.pending.approval.approval_id
+    [(actual_id, token)] = uses.world.inbox.links["finance@acme.com"]
+    assert actual_id == approval_id
+    [candidate] = (await uses.approvals.get(approval_id)).candidates
+    return approval_id, token, candidate.scope
+
+
+@pytest.mark.parametrize("decision", ["approve", "reject"])
+async def test_view_and_decision_are_separate_fresh_passkey_ceremonies(uses, decision):
+    approval_id, token, scope = await pending_use(uses)
+    async with clients(uses) as (human, agent):
+        root = "/use-approvals"
+        for path in (root, "/run-approvals", "/console-use-approvals/approvals.js"):
+            response = await human.get(path)
+            assert response.status_code == 200
+            for name, value in CONSOLE_HEADERS.items():
+                assert response.headers[name] == value
+            assert (await agent.get(path)).status_code == 404
+        hint = await human.post(root + "/sign-in", json={"token": token})
+        assert hint.status_code == 200 and hint.json() == {"scope": scope}
+        assert (await human.post(root + "/view-options", json={"token": token})).status_code == 401
+        headers = await sign_in(uses.world, human, scope, "finance@acme.com")
+        assert (await human.post(root + "/view-options", json={"token": token})).status_code == 403
+        options = await human.post(root + "/view-options", json={"token": token}, headers=headers)
+        assert options.status_code == 200
+        proof = uses.world.devices["finance@acme.com"].get(options.json())
+        shown = await human.post(
+            root + "/view", json={"token": token, "assertion": proof}, headers=headers
+        )
+        assert shown.status_code == 200
+        assert shown.json()["view"]["secret_ref"] == "staging-api"
+        assert shown.json()["view"]["open_request"]["body_text"]
+        assert shown.json()["approval_id"] == approval_id
+        assert (await uses.approvals.get(approval_id)).state is ApprovalState.PENDING
+        # A VIEW proof cannot decide, even when the candidate and link match.
+        refused = await human.post(
+            root + "/decide",
+            json={"token": token, "decision": decision, "assertion": proof},
+            headers=headers,
+        )
+        assert refused.status_code == 409
+        options = await human.post(
+            root + "/decision-options", json={"token": token, "decision": decision}, headers=headers
+        )
+        assert options.status_code == 200
+        result = await human.post(
+            root + "/decide",
+            json={
+                "token": token,
+                "decision": decision,
+                "assertion": uses.world.devices["finance@acme.com"].get(options.json()),
+            },
+            headers=headers,
+        )
+        assert result.status_code == 200
+        expected = ApprovalState.APPROVED if decision == "approve" else ApprovalState.REJECTED
+        approved = await uses.approvals.get(approval_id)
+        assert approved.state is expected and approved.consumed_operation_id is None
+        assert result.json() == {"approval_id": approval_id, "state": expected.value}
+        assert (
+            await human.post(
+                root + "/decision-options",
+                json={"token": token, "decision": decision},
+                headers=headers,
+            )
+        ).status_code == 409
+        await human.get(root)
+        assert (await uses.approvals.get(approval_id)).consumed_operation_id is None
+
+
+async def test_personal_link_cannot_be_used_by_another_session_or_router(uses):
+    approval_id, token, scope = await pending_use(uses)
+    async with clients(uses) as (human, _):
+        from aweb_secrets.owners import owner_scope
+        from tests.test_change_sets import ALICE
+
+        owner = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+        headers = await sign_in(uses.world, human, owner)
+        response = await human.post(
+            "/use-approvals/view-options", json={"token": token}, headers=headers
+        )
+        assert response.status_code == 403
+        headers = await sign_in(uses.world, human, scope, "finance@acme.com")
+        assert (
+            await human.post("/run-approvals/sign-in", json={"token": token})
+        ).status_code == 404
+        assert (
+            await human.post("/run-approvals/view-options", json={"token": token}, headers=headers)
+        ).status_code == 404
+        assert (await uses.approvals.get(approval_id)).state is ApprovalState.PENDING
+
+
+async def test_run_view_uses_immutable_slot_plan_after_b2_authentication(uses):
+    plan = await plan_for(uses, delivery="durable")
+    pending = await request_run(uses, plan)
+    approval_id = pending[0].pending.approval.approval_id
+    token = next(t for a, t in uses.world.inbox.links["finance@acme.com"] if a == approval_id)
+    [candidate] = (await uses.approvals.get(approval_id)).candidates
+    async with clients(uses) as (human, _):
+        headers = await sign_in(uses.world, human, candidate.scope, "finance@acme.com")
+        options = await human.post(
+            "/run-approvals/view-options", json={"token": token}, headers=headers
+        )
+        shown = await human.post(
+            "/run-approvals/view",
+            json={
+                "token": token,
+                "assertion": uses.world.devices["finance@acme.com"].get(options.json()),
+            },
+            headers=headers,
+        )
+        assert shown.status_code == 200
+        job = shown.json()["view"]["job"]
+        assert job["plan_digest"] == plan.digest
+        assert job["slot_ordinal"] == 0
+        assert job["frozen_plan"] == plan.body
+        assert job["credential_delivery"] == "durable"
+        assert (await uses.approvals.get(approval_id)).consumed_operation_id is None
+        refused = await human.post(
+            "/run-approvals/decide",
+            json={"token": token, "decision": "approve", "assertion": {}},
+            headers=headers,
+        )
+        assert refused.status_code == 503
+        assert refused.json() == {"detail": "release_context_unavailable"}
+        assert (await uses.approvals.get(approval_id)).state is ApprovalState.PENDING
+
+
+async def test_f6_expiring_during_decision_lock_wait_rolls_back_decision(uses):
+    import asyncio
+
+    approval_id, token, scope = await pending_use(uses)
+    w = uses.world
+    async with clients(uses) as (human, _):
+        headers = await sign_in(w, human, scope, "finance@acme.com")
+        options = await human.post(
+            "/use-approvals/decision-options",
+            json={"token": token, "decision": "approve"},
+            headers=headers,
+        )
+        proof = w.devices["finance@acme.com"].get(options.json())
+        await w.db.execute(
+            "UPDATE {{tables.installation_fences}} SET fresh_until=clock_timestamp()+interval '2 seconds'"
+        )
+        posting = None
+        try:
+            async with w.db.transaction() as gate:
+                pid = await gate.fetch_value("SELECT pg_backend_pid()")
+                await gate.fetch_value(
+                    "SELECT approval_id FROM {{tables.approvals}} WHERE approval_id=$1 FOR UPDATE",
+                    approval_id,
+                )
+                posting = asyncio.create_task(
+                    human.post(
+                        "/use-approvals/decide",
+                        json={"token": token, "decision": "approve", "assertion": proof},
+                        headers=headers,
+                    )
+                )
+                async with asyncio.timeout(5):
+                    while not await w.db.fetch_value(
+                        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))",
+                        pid,
+                    ):
+                        if posting.done():
+                            await posting
+                            pytest.fail("decision did not reach its approval lock")
+                        await asyncio.sleep(0.01)
+                    while await w.db.fetch_value(
+                        "SELECT fresh_until>clock_timestamp() FROM {{tables.installation_fences}}"
+                    ):
+                        await asyncio.sleep(0.02)
+            response = await asyncio.wait_for(posting, 5)
+            assert response.status_code == 503
+        finally:
+            if posting is not None:
+                if not posting.done():
+                    posting.cancel()
+                await asyncio.gather(posting, return_exceptions=True)
+        assert (await uses.approvals.get(approval_id)).state is ApprovalState.PENDING
+
+
+async def test_decision_lock_timeout_refuses_without_recording_a_decision(uses):
+    from tests.test_broker_audit import envelopes
+
+    approval_id, token, scope = await pending_use(uses)
+    w = uses.world
+    async with clients(uses) as (human, _):
+        headers = await sign_in(w, human, scope, "finance@acme.com")
+        options = await human.post(
+            "/use-approvals/decision-options",
+            json={"token": token, "decision": "approve"},
+            headers=headers,
+        )
+        proof = w.devices["finance@acme.com"].get(options.json())
+        before = await envelopes(w.db)
+        # Preserve the released timeout and the original test's F6 deadline.
+        # The real approval-row lock stays held until PostgreSQL refuses the
+        # request, rather than depending on the observer task being scheduled.
+        assert await w.db.fetch_value("SHOW lock_timeout") == "5s"
+        await w.db.execute(
+            "UPDATE {{tables.installation_fences}} SET fresh_until=clock_timestamp()+interval '2 seconds'"
+        )
+        async with w.db.transaction() as gate:
+            await gate.fetch_value(
+                "SELECT approval_id FROM {{tables.approvals}} WHERE approval_id=$1 FOR UPDATE",
+                approval_id,
+            )
+            response = await human.post(
+                "/use-approvals/decide",
+                json={"token": token, "decision": "approve", "assertion": proof},
+                headers=headers,
+            )
+        assert response.status_code == 503
+        assert response.json() == {"detail": "approval_busy"}
+        approval = await uses.approvals.get(approval_id)
+        assert approval.state is ApprovalState.PENDING
+        assert approval.decided_by is None and approval.consumed_operation_id is None
+        assert (
+            await w.db.fetch_value("SELECT count(*) FROM {{tables.use_approval_audit_proofs}}") == 0
+        )
+        assert await envelopes(w.db) == before
+
+
+def test_open_request_projection_keeps_unicode_and_alabel_host_and_full_body():
+    from aweb_secrets.console_use_approvals import _projection
+    from aweb_secrets.use_approval import use_approval_view
+    from tests.test_use_approval_view import _request
+
+    request = deepcopy(_request("broker-open-request"))
+    request["broker"]["canonical_url"] = "https://xn--bcher-kva.example/v1/refunds"
+    projected = _projection(use_approval_view(request))
+    assert projected["open_request"]["host"] == "xn--bcher-kva.example"
+    assert projected["open_request"]["host_unicode"] == "bücher.example"
+    assert projected["open_request"]["body_text"] == request["broker"]["body_preview"]
+
+
+async def test_approve_requires_audit_targets_but_reject_records_without_lookup(uses):
+    from dataclasses import replace
+
+    from tests.test_broker_audit import envelopes
+
+    approval_id, token, scope = await pending_use(uses)
+    calls = []
+
+    async def unavailable(team_id):
+        # A registration fetch happens outside every effect authority lock.
+        # This real second transaction could not UPDATE the fence otherwise.
+        async with uses.world.db.transaction() as tx:
+            await tx.execute("SET LOCAL lock_timeout='100ms'")
+            await tx.fetch_value(
+                "SELECT installation_id FROM {{tables.installation_fences}} FOR UPDATE"
+            )
+        calls.append(team_id)
+        return replace(targets(uses.clock()), registrations=())
+
+    async with clients(uses, registration_view=unavailable) as (human, _):
+        headers = await sign_in(uses.world, human, scope, "finance@acme.com")
+        options = await human.post(
+            "/use-approvals/view-options", json={"token": token}, headers=headers
+        )
+        shown = await human.post(
+            "/use-approvals/view",
+            json={
+                "token": token,
+                "assertion": uses.world.devices["finance@acme.com"].get(options.json()),
+            },
+            headers=headers,
+        )
+        assert shown.status_code == 200 and calls == []
+        before = await envelopes(uses.world.db)
+        for decision in ("approve", "reject"):
+            options = await human.post(
+                "/use-approvals/decision-options",
+                json={"token": token, "decision": decision},
+                headers=headers,
+            )
+            response = await human.post(
+                "/use-approvals/decide",
+                json={
+                    "token": token,
+                    "decision": decision,
+                    "assertion": uses.world.devices["finance@acme.com"].get(options.json()),
+                },
+                headers=headers,
+            )
+            if decision == "approve":
+                assert response.status_code == 503
+                assert response.json() == {"detail": "audit_target_unavailable"}
+                assert (await uses.approvals.get(approval_id)).state is ApprovalState.PENDING
+                assert (
+                    await uses.world.db.fetch_value(
+                        "SELECT COUNT(*) FROM {{tables.use_approval_audit_proofs}}"
+                    )
+                    == 0
+                )
+                assert await envelopes(uses.world.db) == before
+            else:
+                assert response.status_code == 200
+                assert (await uses.approvals.get(approval_id)).state is ApprovalState.REJECTED
+                decisions = [
+                    event["payload"]["approval_decision"]
+                    for event in await envelopes(uses.world.db)
+                    if event["hook"] == "post-secret-use-hook"
+                    and event["payload"].get("approval_id") == approval_id
+                    and event["payload"].get("action") == "approval_decided"
+                ]
+                assert decisions == ["denied"]
+        assert calls == [TEAM]
+        assert (await uses.approvals.get(approval_id)).consumed_operation_id is None

@@ -37,7 +37,7 @@ def test_editable_present_link_appends_versions_and_rejects_stale_saves(
     folio: RunningFolio,
     aw_workspace_factory: Callable[[str], AWWorkspace],
 ) -> None:
-    team = _provision_team(aw_workspace_factory("editable"), alias="agent")
+    team = _provision_team(aw_workspace_factory("editable"), folio=folio, alias="agent")
     _create_document(folio, team, slug="pitch", title="Pitch", body="# Draft\n\nOriginal")
 
     read_link = _mint_present(folio, team, slug="pitch")

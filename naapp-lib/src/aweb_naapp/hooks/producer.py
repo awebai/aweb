@@ -205,7 +205,7 @@ class HookProducer:
         """Store one event in ``tx``, the transaction that applies its effect,
         and return its ``event_id``.
 
-        An audit-critical event (the catalog decides: every secret use, every
+        An audit-critical event (the catalog decides: authorizing secret-use steps, every
         widening governance act) is refused with ``audit_target_unavailable``
         unless ``view``, read before the transaction, is fresh and holds a
         registration owed the event. Nothing is written when it is refused,
@@ -256,6 +256,52 @@ class HookProducer:
             actor=actor,
             occurred_at=occurred_at,
             result_status="denied",
+            signed_trace_id=signed_trace_id,
+            view=None,
+            gate=False,
+        )
+
+    async def enqueue_lifecycle(
+        self,
+        tx: TransactionManager,
+        *,
+        team_id: str,
+        payload: Mapping[str, Any],
+        actor: Mapping[str, Any],
+        occurred_at: datetime,
+        result_status: str,
+        signed_trace_id: str | None = None,
+    ) -> UUID:
+        """Record a non-authorizing secret-use decision or consequence in ``tx``.
+
+        Only denied/expired/revoked approval decisions and completed/not_sent/
+        outcome_unknown/reconciled outcomes qualify. There is no target or
+        backlog gate; catalog, envelope, key and atomic storage checks remain.
+        The caller supplies the original requester actor and frozen use scope.
+
+        Recording grants no authority to create a child/grant, return a result,
+        release runner credentials, reconcile upstream or retry a dispatch.
+        Those effects retain their independent authorization and fence checks.
+        ``not_sent`` records a no-send outcome, never permission to send again.
+        Refusals use ``enqueue_refusal`` instead.
+        """
+        hook = "post-secret-use-hook"
+        self._catalog.validate(hook, payload)
+        action = payload.get("action")
+        allowed = action in ("completed", "not_sent", "outcome_unknown", "reconciled") or (
+            action == "approval_decided"
+            and payload.get("approval_decision") in ("denied", "expired", "revoked")
+        )
+        if not allowed or self._catalog.is_audit_critical(hook, payload):
+            raise Refused("rule_violation", "lifecycle recording requires a non-authorizing action")
+        return await self._enqueue(
+            tx,
+            hook=hook,
+            team_id=team_id,
+            payload=payload,
+            actor=actor,
+            occurred_at=occurred_at,
+            result_status=result_status,
             signed_trace_id=signed_trace_id,
             view=None,
             gate=False,

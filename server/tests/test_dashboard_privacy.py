@@ -126,7 +126,7 @@ async def privacy_app(shared_test_pool, monkeypatch):
             sock = socket.socket()
             sock.bind(("127.0.0.1", 0))
             app.state.public_origin = f"http://127.0.0.1:{sock.getsockname()[1]}"
-            server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
+            server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error", ws="none"))
             serving = asyncio.create_task(server.serve(sockets=[sock]))
             try:
                 for _ in range(100):
@@ -454,3 +454,60 @@ async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, c
             next_item.cancel()
             await asyncio.gather(next_item, return_exceptions=True)
         await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_agent_roster_masks_keys_bound_to_unverified_stable_identity(privacy_app):
+    """An unrelated global row must not invalidate a local caller's roster."""
+    from awid.e2ee_keys import build_encryption_key_assertion, validate_encryption_key_assertion
+    from aweb.e2ee_messages import generate_x25519_keypair
+
+    env = privacy_app
+    bob = env.actors["bob"]
+    registered = await env.app.state.awid_registry_client.register_did(bob.did, bob.sk)
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET did_aw=$1, identity_scope='global' WHERE agent_id=$2",
+        registered.did_aw, bob.id,
+    )
+    certificate = _encode_certificate(_make_certificate(
+        env.team_sk, env.team_did, bob.did, team_id=TEAM, alias="bob",
+        identity_scope="global", member_did_aw=registered.did_aw,
+    ))
+    _, public = generate_x25519_keypair()
+    assertion = build_encryption_key_assertion(
+        signing_key=bob.sk, identity_did=bob.did, identity_stable_id=registered.did_aw,
+        encryption_public_key=public,
+    )
+    content = json.dumps(assertion).encode()
+    published = await env.client.put("/v1/agents/me/encryption-key", content=content, headers={
+        **_signed_team_headers(bob.sk, bob.did, TEAM, certificate, content),
+        "Content-Type": "application/json",
+    })
+    assert published.status_code == 200, published.text
+    alice = env.actors["alice"]
+    for verified in (False, True):
+        # Models the migration/reverification window after a key was published.
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET did_aw_verified_key=$1 WHERE agent_id=$2",
+            bob.did if verified else None, bob.id,
+        )
+        response = await env.client.get("/v1/agents", headers=_signed_team_headers(
+            alice.sk, alice.did, TEAM, alice.certificate,
+        ))
+        assert response.status_code == 200, response.text
+        rows = response.json()["agents"]
+        peer = next(row for row in rows if row["alias"] == "bob")
+        assert peer["did_key"] == bob.did
+        assert peer["did_aw"] == (registered.did_aw if verified else None)
+        for row in rows:
+            if row.get("encryption_key"):
+                # Same identity-binding rule used by released aw's verifier.
+                validate_encryption_key_assertion(
+                    row["encryption_key"], current_did_key=row["did_key"],
+                    stable_id=row.get("did_aw"), now=datetime.now(timezone.utc),
+                )
+        assert peer.get("encryption_key") == (published.json()["encryption_key"] if verified else None)
+        marker = await env.db.fetch_one(
+            "SELECT did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1", bob.id,
+        )
+        assert marker["did_aw_verified_key"] == (bob.did if verified else None)

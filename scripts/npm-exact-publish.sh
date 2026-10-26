@@ -237,7 +237,18 @@ PY
     ;;
   publish-exact)
     [[ -n "$TGZ" && -f "$TGZ" ]] || fail "publish-exact requires an existing --tgz"
-    npm publish "$TGZ" --ignore-scripts --access public
+    # Select from the staged bytes, not caller environment or a filename.
+    dist_tag="$(python3 - "$TGZ" <<'PYTAG'
+import json, re, sys, tarfile
+with tarfile.open(sys.argv[1]) as archive:
+    version = json.load(archive.extractfile("package/package.json"))["version"]
+base = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+if not isinstance(version, str) or not re.fullmatch(base + r"(?:-rc\.[1-9][0-9]*)?", version):
+    sys.exit("REFUSE: npm version must be X.Y.Z or X.Y.Z-rc.N (N >= 1)")
+print("next" if "-rc." in version else "latest")
+PYTAG
+    )"
+    npm publish "$TGZ" --ignore-scripts --access public --tag "$dist_tag"
     printf 'PUBLISHED: %s sha256 %s\n' "$(basename "$TGZ")" "$(sha256 "$TGZ")"
     ;;
   verify-published)
@@ -387,8 +398,8 @@ PYMAN
   validate-inputs)
     [[ -z "$SHA" ]] || [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] \
       || fail "sha must be exactly 40 lowercase hex characters, got: $SHA"
-    [[ -z "$VERSION" ]] || [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-      || fail "version must be strict X.Y.Z with no prefix, got: $VERSION"
+    [[ -z "$VERSION" ]] || [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]] \
+      || fail "version must be X.Y.Z or X.Y.Z-rc.N (N >= 1), got: $VERSION"
     [[ -z "$DIGEST" ]] || [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
       || fail "digest must be sha256:<64 lowercase hex>, got: $DIGEST"
     [[ -z "$RUN_ID" ]] || [[ "$RUN_ID" =~ ^[0-9]+$ ]] \
