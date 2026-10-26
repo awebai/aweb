@@ -169,7 +169,9 @@ class Ingestor:
         event = received.envelope
         occurred_at = datetime.strptime(event.fields["occurred_at"], _EVENT_TIME).replace(tzinfo=UTC)
         binding = await self._binding(event, UUID(binding_id), occurred_at, request)
-        evidence = await self._provenance(event, occurred_at, headers, team_key_did)
+        evidence = await self._provenance(
+            event, occurred_at, headers, team_key_did, received_at=received_at,
+        )
         evidence["binding_ids"].insert(0, str(binding.binding_id))
         check_schema(event, self.catalog, received_at=received_at)
         # Retain exactly the bytes verified by the kit, not a reserialization.
@@ -229,6 +231,7 @@ class Ingestor:
 
     async def _provenance(
         self, event: Envelope, occurred_at: datetime, headers: dict[str, str], team_key_did: str,
+        *, received_at: datetime,
     ) -> dict[str, Any]:
         producer = event.fields["producer"]
         evidence: dict[str, Any] = {
@@ -260,7 +263,10 @@ class Ingestor:
                         if (
                             core_key.kid == event.producer_kid and core_key.did_key == event.producer_did_key
                             and core_key.valid_from <= occurred_at
-                            and (core_key.valid_until is None or occurred_at < core_key.valid_until)
+                            and core_key.valid_from <= received_at
+                            and (core_key.valid_until is None or (
+                                occurred_at < core_key.valid_until and received_at < core_key.valid_until
+                            ))
                         ):
                             return {**evidence, "purposes": ["hook-event"], "server_url": resolution.server_url}
                 raise IngestRefused(403, "provenance_core_key")
