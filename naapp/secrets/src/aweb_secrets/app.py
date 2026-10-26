@@ -44,6 +44,7 @@ MODULE_NAME = "aweb_secrets"
 Authorized = Callable[..., Awaitable[Authorization]]
 ToolRouter = Callable[[NaappRuntime, Authorized], APIRouter]
 ConsoleRouter = Callable[[NaappRuntime], APIRouter]
+RunnerRouter = Callable[[NaappRuntime], APIRouter]
 Prepare = Callable[[NaappRuntime], AbstractAsyncContextManager[None]]
 
 
@@ -107,6 +108,7 @@ def create_app(
     tool_routers: Sequence[ToolRouter] = (),
     prepare: Prepare | None = None,
     console_routers: Sequence[ConsoleRouter] = (),
+    runner_routers: Sequence[RunnerRouter] = (),
 ) -> SecretsService:
     """The secrets service. ``grants`` is the team-server grant authority,
     ``policy`` secrets' admission policy and ``kms`` its KMS canary.
@@ -114,7 +116,9 @@ def create_app(
     Preparation runs inside the runtime lifespan, once its database is ready.
     All router factories then receive that same runtime; tool factories also
     receive its exact B1 dependency. Composition guards every included tool;
-    unavailable declared tools retain 501. Prepared services close before the
+    unavailable declared tools retain 501. Runner factories mount HTTP POST
+    adapters under /runner/v1/ on the API origin outside B1; their existing
+    protocol validates runner authority. Prepared services close before the
     database disconnects; composed routes are removed on failure and shutdown.
     """
     runtime = NaappRuntime(
@@ -162,6 +166,29 @@ def create_app(
                             name=tool.name,
                             dependencies=[Depends(authorized)],
                         )
+                    runner_paths = set()
+                    for runner_factory in runner_routers:
+                        router = runner_factory(runtime)
+                        for route in router.routes:
+                            if (
+                                not isinstance(route, APIRoute)
+                                or route.methods != {"POST"}
+                                or not route.path.startswith("/runner/v1/")
+                                or route.path != route.path_format
+                            ):
+                                raise ValueError(
+                                    "runner routers contain only HTTP POST /runner/v1/ routes"
+                                )
+                            # Placeholder names do not distinguish external
+                            # paths; including the same route twice refuses.
+                            runner_path = tuple(
+                                "{}" if part.startswith("{") and part.endswith("}") else part
+                                for part in route.path_format.split("/")
+                            )
+                            if runner_path in runner_paths:
+                                raise ValueError("a runner route is composed more than once")
+                            runner_paths.add(runner_path)
+                        api.include_router(router)
                     for console_factory in console_routers:
                         console.include_router(console_factory(runtime))
                     # The runtime validates its static routes before opening
