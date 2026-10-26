@@ -837,10 +837,14 @@ async def test_a_refused_designation_is_a_coded_refusal(world: World) -> None:
     change = change_set(
         drafter=by_member(CAROL), changes=[designate_approver("finance", "f@acme.com", ["sec_1"])]
     )
-    await decide(world, await draft(world, change), "alice@acme.com")
+    approval_id = await draft(world, change)
+    await decide(world, approval_id, "alice@acme.com")
     with pytest.raises(ChangeRefused) as refused:
         await confirm(world, change)
     assert refused.value.code == "approver_designation_refused"
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.approvers}}") == 0
+    assert await config_revision(world.db, INSTALLATION_ID) == 0
+    assert (await world.approvals.get(approval_id)).state is ApprovalState.APPROVED
 
 
 async def test_four_eyes_turned_on_after_a_draft_refuses_its_confirmation(world: World) -> None:

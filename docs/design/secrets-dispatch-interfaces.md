@@ -12,6 +12,9 @@ Sources: [secrets](secrets.md) §§4.1, 7, 9–11, 13; the
 `run_approvals.py`, `runners.py` and `runner_results.py` in `naapp/secrets`.
 Short-lived issuance remains parked. The first runner implementation accepts
 durable slots; it does not silently convert a short-lived slot to durable.
+The first release uses the job's own fixed durable slots. Ordinary-child
+selection remains guarded: a valid `secret` selector refuses with
+`job_not_allowed` before an idempotency claim, run preparation or release.
 
 ## Member tools: inputs and replay
 
@@ -186,6 +189,38 @@ mounting and S19. The root constructs one shared set of dependencies and injects
 it into the services; all admission, dispatch and release transactions and final
 fences remain in those services. Human routers use the one shared OwnerConsole
 separately.
+
+### Concrete durable-run construction
+
+`RunDispatch(db, *, fence, opener, committer, response_key, service_key, origin,
+producer, registration_view, approvals, use_audit, passkeys, max_backlog_age,
+assignment_ttl, sweep_margin, claim_wait, derived_max_ttl_s,
+internal_destinations, clock)` implements both `JobRunRequests` and
+`RunDispatchAPI`. Root injects the SAME shared installation fence, B2/B3,
+producer and use opener as the broker. `service_key` is the runner-pinned
+service signing key; `response_key` remains independently provisioned private
+material. Assignment TTL is 1–300 seconds; idle claim wait is 0–30 seconds.
+The S3 execution bound uses each original job timeout plus `sweep_margin`,
+independently of assignment expiry. Root schedules `RunDispatch.sweep`, which
+selects only original run contexts and locks the B2 union before S3.
+
+`RunDispatch.status` is its inert `RunStatus` reader. Construct the ONE shared
+`UseStatus(db, fence=shared_fence, approvals=shared_approvals,
+runs=run_dispatch.status)`, pass that status getter to `UseServices`, and use
+the run instance itself for the member-run and runner-adapter getters. Status
+never dispatches or consumes; another principal's held owner inspection
+receives state/code/refs without result contents. `runs=None` preserves the
+existing broker-only status path without querying run tables.
+
+Root applies `apply_run_dispatch_migrations` after app records, shared S3,
+S12/run approvals, jobs/runners and use-context migrations, BEFORE constructing
+`UseApprovalAudit(enable_runs=True)`. The same use-audit branch then routes
+`is_use_approval` and `is_run_approval`; root does not implement either policy
+or proof grammar. This replaces the reserved run failure branch only when the
+actual service is composed. Mount `runner_dispatch_router(service=get_runs)`
+on the API origin outside B1, while `use_router` stays under its exact B1
+dependency. These constructors and routers alone do not establish the final
+root/S19 journey proof. Short-lived/internal issuance remains unavailable.
 
 ## Runner adapter boundary
 
