@@ -82,6 +82,7 @@ try {
       await expect(proseSave).toBeDisabled();
       await expect(proseSave).toHaveText("Saved");
       const proseDraft = `Unsaved prose remains while a row is saved at ${width}px\n\n`;
+      await expect(prose).not.toHaveValue(proseDraft);
       await prose.fill(proseDraft);
       await expect(proseSave).toBeEnabled();
       const source = tool("record-query", { collection_id: collection }).records[0];
@@ -99,6 +100,7 @@ try {
       await editor.getByRole("button", { name: "Save row", exact: true }).click();
       await expect(editor.locator("tbody")).toContainText("Browser draft " + width);
       await expect(prose).toHaveValue(proseDraft);
+      await expect(proseSave).toBeEnabled();
       const committed = tool("record-query", { collection_id: collection }).records.find(row => row.id === source.id);
       assert.equal(committed.rev, source.rev + 2);
       assert.equal(committed.value.status, "Browser draft " + width);
