@@ -182,7 +182,13 @@ async def test_query_returns_each_event_newest_first_with_what_its_envelope_sign
         "occurred_at": "2026-10-20T12:00:01.000Z",
         "result_status": "success",
         "trace_id": "0af7651916cd43dd8448eb211c80319c",
-        "producer": {"kind": "app", "origin": SECRETS_ORIGIN, "app_id": "secrets"},
+        "producer": {
+            "kind": "app",
+            "origin": SECRETS_ORIGIN,
+            "app_id": "secrets",
+            "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+            "generation": 2,
+        },
         "actor": {
             "authority_mode": "team_cert",
             "did_key": AGENT,

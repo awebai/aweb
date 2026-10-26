@@ -353,7 +353,7 @@ def _event(row: Mapping[str, Any]) -> dict[str, Any]:
     envelope = hook_envelope.open_envelope(bytes(row["signing_bytes"]))
     f = envelope.fields
     producer = {"kind": envelope.producer_kind}
-    for name in ("origin", "app_id", "certificate_id"):
+    for name in ("origin", "app_id", "installation_id", "generation", "certificate_id"):
         if name in f["producer"]:
             producer[name] = f["producer"][name]
     return {
