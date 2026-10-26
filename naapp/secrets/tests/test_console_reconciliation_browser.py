@@ -118,6 +118,9 @@ async def test_browser_frozen_outcome_fresh_approve_and_explicit_settlement(
             approval_id, token = uses.world.inbox.links["alice@acme.com"][-1]
             await context.clear_cookies()
             await page.evaluate("sessionStorage.clear()")
+            # Mint already opened this path. Leave it first so opening the
+            # delivered link loads a new signed-out document, not just a hash.
+            await page.goto("about:blank")
             stage = "navigate signed-out personal link"
             await page.goto(origin + "/reconciliation-approvals#token=" + token)
             stage = "offer personal-link sign-in"
@@ -142,12 +145,13 @@ async def test_browser_frozen_outcome_fresh_approve_and_explicit_settlement(
             "WebAuthn.setUserVerified",
             {"authenticatorId": auth["authenticatorId"], "isUserVerified": verified},
         )
+        before_decision = await snapshot(uses.world.db)
         await page.get_by_role("button", name="Approve with your passkey", exact=True).click()
         if not verified:
-            await expect(page.locator("#reconciliation-status")).to_contain_text(
-                "could not be confirmed"
-            )
+            await expect(page.locator("#approve-outcome")).to_be_enabled()
+            await expect(page.locator("#reconciliation-status")).to_be_focused()
             assert (await uses.approvals.get(approval_id)).state is ApprovalState.PENDING
+            assert await snapshot(uses.world.db) == before_decision
             return
         await expect(page.locator("#settlement-link")).to_be_focused()
         assert (await uses.approvals.get(approval_id)).state is ApprovalState.APPROVED
