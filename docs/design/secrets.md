@@ -1734,7 +1734,12 @@ at most one repeat for the original uncertain dispatch, including across crashes
 and concurrent workers. The repeat is its own ordinary fenced, audited broker
 dispatch linked to the original intent. It rechecks the original member,
 certificate, grant, installation generation, policy and revocation at the fence,
-uses the same custody and egress path, and obtains no fresh approval. Original
+uses the same custody and egress path, and obtains no fresh approval. The repeat
+is refused if the grant recorded on the original dispatch has been replaced,
+edited or revoked, if the member's team membership has changed or been removed,
+or if the certificate has been rotated or revoked. The fence compares exact
+original identities and versions; it does not derive replacement authority from
+current state. Original
 approval provenance stays immutable; the repeat cannot rearm it or transfer it
 to a different intent.
 
