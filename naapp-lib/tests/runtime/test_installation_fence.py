@@ -16,6 +16,7 @@ import pytest
 
 from aweb_naapp.dispatch import Dispatches, State, apply_dispatch_migrations
 from aweb_naapp.runtime.authorization import Grant, GrantUnavailable
+from aweb_naapp.runtime.clock import NANOSECONDS_PER_SECOND
 from aweb_naapp.runtime.installation import (
     InstallationFence,
     InstallationRefused,
@@ -29,7 +30,7 @@ APP = "fixture"
 def grant(installation_id="installation-1", generation=1, *, ttl=60.0, team_id=TEAM):
     return Grant(
         team_id=team_id, installation_id=installation_id, generation=generation,
-        scopes=frozenset({"fixture:write"}), fresh_until=time.monotonic() + ttl,
+        scopes=frozenset({"fixture:write"}), fresh_until=time.monotonic_ns() + int(ttl * NANOSECONDS_PER_SECOND),
     )
 
 
@@ -553,7 +554,7 @@ async def test_admission_lock_wait_deducts_freshness_only_once(db, setup):
         await asyncio.sleep(0.75)
         assert not admission.done()
     admitted = await asyncio.wait_for(admission, 2)
-    remaining = current.fresh_until - time.monotonic()
+    remaining = (current.fresh_until - time.monotonic_ns()) / NANOSECONDS_PER_SECOND
     stored = await db.fetch_value(
         "SELECT extract(epoch FROM fresh_until - clock_timestamp()) FROM {{tables.installation_fences}}"
     )

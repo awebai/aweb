@@ -9,6 +9,7 @@ from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.hooks.producer import HookProducer, ServerProducer
 from aweb_naapp.outbox import apply_outbox_migrations
 from aweb_naapp.roles import assign, principal_key
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 
 from aweb_secrets.containment import Containment, ContainmentRefused
@@ -551,7 +552,7 @@ async def test_uninstall_then_reinstall_does_not_restore_former_owner_role(uses)
             return Grant(
                 team_id=TEAM,
                 scopes=frozenset({"secrets:admin"}),
-                fresh_until=time.monotonic() + 55,
+                fresh_until=time.monotonic_ns() + seconds_to_ns(55),
                 installation_id=self.installation_id,
                 generation=self.generation,
             )
@@ -565,7 +566,7 @@ async def test_uninstall_then_reinstall_does_not_restore_former_owner_role(uses)
                 state=self.state,
                 installation_id=self.installation_id,
                 generation=self.generation,
-                fresh_until=time.monotonic() + 55,
+                fresh_until=time.monotonic_ns() + seconds_to_ns(55),
                 granted_scopes=frozenset({"secrets:admin"}),
             )
 

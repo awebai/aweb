@@ -39,7 +39,9 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 		}
 	}
 	target := strings.TrimSpace(toAlias)
-	if shouldTryLiveRosterAliasFallback(target) {
+	// Encrypted human aliases use selected-team key discovery; preserve the
+	// released plaintext live-roster route.
+	if !opts.EncryptE2EE && shouldTryLiveRosterAliasFallback(target) {
 		if found, findErr := clientHasAgentAlias(ctx, c, target); findErr != nil {
 			debugLog("list agents for chat live alias fallback: %v", findErr)
 		} else if !found {
