@@ -258,6 +258,32 @@ async def test_a_core_key_is_checked_at_the_events_occurrence(world, monkeypatch
     assert (response.status_code, _code(response)) == (403, "provenance_core_key")
 
 
+@pytest.mark.parametrize("seconds_since_retirement", [0, 60])
+async def test_a_retired_core_key_cannot_deliver_backdated_events(
+    world, monkeypatch, seconds_since_retirement,
+):
+    occurred_at = world.now - timedelta(minutes=90)
+    await world.server_db.execute(
+        "UPDATE {{tables.app_hook_bindings}} SET activated_at=$2, active_from=$3 "
+        "WHERE team_id=$1 AND app_id=$4",
+        world.member.team_id, world.now - timedelta(hours=2, seconds=60),
+        world.now - timedelta(hours=2), TEST_APP_ID,
+    )
+    monkeypatch.setenv("AWEB_HOOK_PRODUCER_KEYS", json.dumps([{
+        "kid": "hook-2026-10", "did_key": did_key(CORE_SEED),
+        "valid_from": (world.now - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "valid_until": (world.now - timedelta(seconds=seconds_since_retirement)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
+    }]))
+    # The event and active registration predate retirement; only its delivery
+    # credential is signed now. No authority, verifier or storage is mocked.
+    response = await world.send(world.delivery("core", occurred_at=occurred_at))
+    assert response.status_code == 403
+    assert _code(response) == "provenance_core_key"
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 0
+
+
 @pytest.mark.parametrize("producer", [
     {"installation_id": "10000000-0000-4000-8000-000000000000"},
     {"generation": 99}, {"origin": "https://forged.example"}, {"kid": "unregistered"},
