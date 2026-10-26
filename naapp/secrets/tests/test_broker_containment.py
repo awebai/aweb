@@ -6,6 +6,7 @@ from dataclasses import replace
 import httpx
 from aweb_naapp.roles import principal_key
 from aweb_naapp_testing import Member
+from awid_service.testing import REGISTRY_URL
 from nacl.signing import SigningKey
 
 from aweb_secrets import records
@@ -154,6 +155,16 @@ async def test_disable_worker_a_stops_worker_b_while_its_actual_token_remains_ca
             awid_transport=registry.transport,
             tool_routers=(broker_routes, containment_routes),
         )
+        discovery_domains = []
+
+        async def registry_override(domain):
+            discovery_domains.append(domain)
+            assert domain == TEAM.split(":", 1)[1]
+            return REGISTRY_URL
+
+        # Bootstrap audit receipts use the real runtime drain and directory;
+        # its external discovery answer must name the in-process registry too.
+        app.runtime.team_server_directory()._registry_override = registry_override
         async with app.api_app.router.lifespan_context(app.api_app):
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app), base_url=API
@@ -212,3 +223,4 @@ async def test_disable_worker_a_stops_worker_b_while_its_actual_token_remains_ca
                 assert stopped.status_code == 403 and stopped.json()["code"] == "secret_disabled"
                 assert upstream.paths == ["/oauth2/token", "/oauth2/echo"]
                 assert upstream.issued() == 1
+        assert discovery_domains
