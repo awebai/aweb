@@ -888,7 +888,7 @@ async def test_admission_and_dispatch_of_one_pair_never_deadlock(
 # The one safe repeat of an outcome_unknown dispatch
 
 
-async def _unknown(db: AsyncDatabaseManager, machine: Dispatches, **kwargs) -> UUID:
+async def _reported_unknown(db: AsyncDatabaseManager, machine: Dispatches, **kwargs) -> UUID:
     dispatch_id = await _dispatching(db, machine, **kwargs)
     async with db.transaction() as tx:
         assert await machine.outcome_unknown(tx, dispatch_id, {"error": "reset"}) is True
@@ -916,7 +916,7 @@ async def _published(db: AsyncDatabaseManager, machine: Dispatches, original: UU
 async def test_a_definite_repeat_settles_its_unknown_original(
     db: AsyncDatabaseManager, machine: Dispatches, recorder: Recorder, settles: State
 ) -> None:
-    original = await _unknown(db, machine, retry_exempt=True)
+    original = await _reported_unknown(db, machine, retry_exempt=True)
     repeat = await _published(db, machine, original)
     async with db.transaction() as tx:
         assert await machine.complete(tx, repeat, {"status": 409}) is True
@@ -946,7 +946,7 @@ async def test_a_definite_repeat_settles_its_unknown_original(
 async def test_an_original_is_repeated_at_most_once(
     db: AsyncDatabaseManager, machine: Dispatches
 ) -> None:
-    original = await _unknown(db, machine)
+    original = await _reported_unknown(db, machine)
     repeat = await _published(db, machine, original)
     async with db.transaction() as tx:
         assert await machine.not_sent(tx, repeat, {"error": "connect"}) is True
@@ -960,7 +960,7 @@ async def test_an_original_is_repeated_at_most_once(
 async def test_concurrent_repeat_claims_yield_one(
     db: AsyncDatabaseManager, machine: Dispatches
 ) -> None:
-    original = await _unknown(db, machine)
+    original = await _reported_unknown(db, machine)
 
     async def slow(tx: TransactionManager, dispatch: Dispatch) -> None:
         await asyncio.sleep(0.2)
@@ -1008,7 +1008,7 @@ async def test_only_an_unknown_original_can_be_repeated(
 async def test_a_refused_repeat_leaves_no_claim(
     db: AsyncDatabaseManager, machine: Dispatches, recorder: Recorder, phase: str
 ) -> None:
-    original = await _unknown(db, machine)
+    original = await _reported_unknown(db, machine)
 
     async def refuse(*args) -> None:
         raise FenceRefused
@@ -1028,7 +1028,7 @@ async def test_a_refused_repeat_leaves_no_claim(
 async def test_a_repeat_is_not_blocked_by_its_own_original_but_by_others(
     db: AsyncDatabaseManager, machine: Dispatches
 ) -> None:
-    original = await _unknown(db, machine)
+    original = await _reported_unknown(db, machine)
     # An exempt dispatch of the pair may be in flight beside the unknown original.
     exempt = await _dispatching(db, machine, retry_exempt=True)
     with pytest.raises(DispatchInFlight):
@@ -1041,7 +1041,7 @@ async def test_a_repeat_is_not_blocked_by_its_own_original_but_by_others(
 async def test_a_fresh_request_stays_blocked_until_the_owner_settles_the_original(
     db: AsyncDatabaseManager, machine: Dispatches
 ) -> None:
-    original = await _unknown(db, machine)
+    original = await _reported_unknown(db, machine)
     repeat = await _published(db, machine, original)
     fresh = uuid.uuid4()
     async with db.transaction() as tx:
@@ -1063,7 +1063,7 @@ async def test_a_fresh_request_stays_blocked_until_the_owner_settles_the_origina
 
 
 async def test_a_repeat_is_sent_once(db: AsyncDatabaseManager, machine: Dispatches) -> None:
-    original = await _unknown(db, machine)
+    original = await _reported_unknown(db, machine)
     repeat = await _published(db, machine, original)
     async with db.transaction() as tx:
         await machine.not_sent(tx, repeat, {"error": "connect"})
@@ -1077,7 +1077,7 @@ async def test_a_repeat_is_sent_once(db: AsyncDatabaseManager, machine: Dispatch
 async def test_a_persisted_repeat_never_publishes_after_its_original_was_settled(
     db: AsyncDatabaseManager, machine: Dispatches, left: State
 ) -> None:
-    original = await _unknown(db, machine)
+    original = await _reported_unknown(db, machine)
     async with db.transaction() as tx:
         repeat = await _claim(tx, machine, original)
         if left is State.ADMITTED:
@@ -1097,7 +1097,7 @@ async def test_a_persisted_repeat_never_publishes_after_its_original_was_settled
 async def test_owner_settlement_waits_for_the_repeat_publication_to_commit(
     db: AsyncDatabaseManager, machine: Dispatches
 ) -> None:
-    original = await _unknown(db, machine)
+    original = await _reported_unknown(db, machine)
     fenced = asyncio.Event()
     release = asyncio.Event()
 
@@ -1138,7 +1138,7 @@ async def test_owner_settlement_waits_for_the_repeat_publication_to_commit(
 async def test_resolve_original_takes_only_a_completed_repeat_and_a_definite_state(
     db: AsyncDatabaseManager, machine: Dispatches
 ) -> None:
-    original = await _unknown(db, machine)
+    original = await _reported_unknown(db, machine)
     repeat = await _published(db, machine, original)
     with pytest.raises(InvalidTransition):
         async with db.transaction() as tx:
@@ -1181,7 +1181,7 @@ async def test_repeat_resolution_owner_settlement_and_claims_never_deadlock(
     db: AsyncDatabaseManager, machine: Dispatches
 ) -> None:
     for round_number in range(10):
-        original = await _unknown(db, machine, action=f"{ACTION}:{round_number}")
+        original = await _reported_unknown(db, machine, action=f"{ACTION}:{round_number}")
         repeat = await _published(db, machine, original)
         results = await asyncio.gather(
             _resolve_slowly(db, machine, repeat),
