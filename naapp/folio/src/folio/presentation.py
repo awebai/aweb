@@ -163,9 +163,13 @@ def _resolve_base_palettes(preset: Any) -> tuple[dict[str, str], dict[str, str]]
     if name is not None:
         return _BUILTIN_THEMES[name]
     return _LIGHT_PALETTE, _DARK_PALETTE
+
+
 _HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 _RGB_COLOR_RE = re.compile(r"^rgba?\(([^)]+)\)$", re.IGNORECASE)
-_ASSET_PATH_RE = re.compile(r"^/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$")
+_ASSET_PATH_RE = re.compile(
+    r"^/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+)
 _IMG_WITHOUT_SRC_RE = re.compile(r"<img\b(?![^>]*\bsrc=)[^>]*>", re.IGNORECASE)
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 _MEDIA_IMAGE_PLACEMENTS = {"block", "wrap-left", "wrap-right", "full-width", "full-bleed"}
@@ -256,20 +260,27 @@ def contrast_ratio(first: str, second: str) -> float | None:
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def content_security_policy(*, mode: str, nonce: str | None, stream_host: str) -> str:
+def content_security_policy(
+    *, mode: str, nonce: str | None, stream_host: str, widgets: bool = False
+) -> str:
     """Security policy for a present page.
 
-    Scripts are forbidden outright except the fixed fullscreen control on
-    presentation pages, which is admitted only by its per-request nonce. Frames
-    are limited to the Cloudflare Stream playback host so trusted video embeds load.
+    Fixed host modules and the fullscreen control require a per-request nonce.
+    Dynamic imports inherit that trust; agent markup cannot select scripts.
+    Frames are limited to the configured Stream playback host.
     """
-    script_src = f"'nonce-{nonce}'" if mode == "presentation" and nonce else "'none'"
+    script_src = (
+        f"'nonce-{nonce}' 'strict-dynamic'"
+        if nonce and (mode == "presentation" or widgets)
+        else "'none'"
+    )
     frame_src = f"https://{stream_host}" if stream_host else "'none'"
     return "; ".join(
         [
             "default-src 'none'",
             "img-src 'self'",
-            "style-src 'unsafe-inline'",
+            "style-src 'self' 'unsafe-inline'",
+            "connect-src 'self'",
             f"script-src {script_src}",
             f"frame-src {frame_src}",
             "base-uri 'none'",
@@ -319,7 +330,9 @@ def sanitize_theme_tokens(tokens: Any) -> dict[str, dict[str, str]]:
         safe_fonts = {
             str(key): value.lower().strip()
             for key, value in fonts.items()
-            if key in _FONT_VARIABLES and isinstance(value, str) and value.lower().strip() in _FONT_ALLOWLIST
+            if key in _FONT_VARIABLES
+            and isinstance(value, str)
+            and value.lower().strip() in _FONT_ALLOWLIST
         }
         if safe_fonts:
             sanitized["fonts"] = safe_fonts
@@ -375,7 +388,9 @@ def theme_contrast_error(tokens: Any, *, preset: Any = None) -> str | None:
         surface = custom_surface or palette["--surface"]
         for label, value in (("text", text), ("surface", surface)):
             if not _is_opaque_color(value):
-                return f"Theme {label} color must be a fully opaque color so contrast can be verified."
+                return (
+                    f"Theme {label} color must be a fully opaque color so contrast can be verified."
+                )
         ratio = contrast_ratio(text, surface)
         if ratio is None:
             return "Theme text/surface colors could not be evaluated for contrast."
@@ -459,7 +474,9 @@ def _asset_id_from_same_origin_src(src: str, *, public_origin: str | None) -> UU
         return None
 
 
-def _safe_image_src(src: str, *, public_origin: str | None, image_asset_ids: set[UUID]) -> str | None:
+def _safe_image_src(
+    src: str, *, public_origin: str | None, image_asset_ids: set[UUID]
+) -> str | None:
     asset_id = _asset_id_from_same_origin_src(src, public_origin=public_origin)
     if asset_id is None or asset_id not in image_asset_ids:
         return None
@@ -474,8 +491,8 @@ def _video_iframe_html(*, iframe_url: str, title: str) -> str:
         f'<iframe src="{safe_url}" title="{safe_title}" loading="lazy" '
         'allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture" '
         'allowfullscreen sandbox="allow-scripts allow-same-origin allow-presentation"></iframe>'
-        f'<figcaption>{safe_title}</figcaption>'
-        '</figure>'
+        f"<figcaption>{safe_title}</figcaption>"
+        "</figure>"
     )
 
 
@@ -499,14 +516,20 @@ def _replace_video_markdown(
             status = escape(str(embed.get("status") or "processing"))
             return f'\n\n<div class="folio-video-pending">Video is {status}.</div>\n\n'
         token = f"FOLIO_VIDEO_{secrets.token_urlsafe(24)}"
-        replacements[token] = _video_iframe_html(iframe_url=iframe_url, title=alt or "Embedded video")
+        replacements[token] = _video_iframe_html(
+            iframe_url=iframe_url, title=alt or "Embedded video"
+        )
         return f"\n\n{token}\n\n"
 
     return _MARKDOWN_IMAGE_RE.sub(replace, body), replacements
 
 
 def _media_img_tag(src: str, alt: str, state: dict[str, bool]) -> str:
-    attrs = ['class="folio-img"', f'src="{escape(src, quote=True)}"', f'alt="{escape(alt, quote=True)}"']
+    attrs = [
+        'class="folio-img"',
+        f'src="{escape(src, quote=True)}"',
+        f'alt="{escape(alt, quote=True)}"',
+    ]
     if state["first"]:
         attrs.append('fetchpriority="high"')
         state["first"] = False
@@ -533,9 +556,14 @@ def _parse_directive_fields(block: str) -> tuple[dict[str, str], list[str]]:
 
 
 def _render_image_directive(
-    fields: dict[str, str], public_origin: str | None, image_asset_ids: set[UUID], state: dict[str, bool]
+    fields: dict[str, str],
+    public_origin: str | None,
+    image_asset_ids: set[UUID],
+    state: dict[str, bool],
 ) -> str:
-    safe = _safe_image_src(fields.get("src", ""), public_origin=public_origin, image_asset_ids=image_asset_ids)
+    safe = _safe_image_src(
+        fields.get("src", ""), public_origin=public_origin, image_asset_ids=image_asset_ids
+    )
     if safe is None:
         return ""
     placement = fields.get("placement", "block").strip().lower()
@@ -566,7 +594,9 @@ def _render_gallery_directive(
         match = _GALLERY_ITEM_RE.match(raw_item.strip())
         if match is None:
             continue
-        safe = _safe_image_src(match.group(1), public_origin=public_origin, image_asset_ids=image_asset_ids)
+        safe = _safe_image_src(
+            match.group(1), public_origin=public_origin, image_asset_ids=image_asset_ids
+        )
         if safe is None:
             continue
         img = _media_img_tag(safe, match.group(2) or "", state)
@@ -599,7 +629,9 @@ def _preprocess_media(body: str, *, public_origin: str | None, image_asset_ids: 
             if kind == "media":
                 return _render_image_directive(fields, public_origin, image_asset_ids, state)
             return _render_gallery_directive(fields, items, public_origin, image_asset_ids, state)
-        safe = _safe_image_src(match.group("src"), public_origin=public_origin, image_asset_ids=image_asset_ids)
+        safe = _safe_image_src(
+            match.group("src"), public_origin=public_origin, image_asset_ids=image_asset_ids
+        )
         if safe is None:
             return match.group(0)
         img = _media_img_tag(safe, match.group("alt"), state)
@@ -649,15 +681,19 @@ def render_presented_markdown(
             f'<section class="folio-widget" data-folio-widget="{escape(widget.definition["id"], quote=True)}" '
             'aria-label="Table"><p role="status">Loading table…</p></section>'
         )
-        body = body[:widget.start] + "\n\n" + token + "\n\n" + body[widget.end:]
+        body = body[: widget.start] + "\n\n" + token + "\n\n" + body[widget.end :]
 
     embeds = asset_embeds or {}
     image_asset_ids = {
-        asset_id for asset_id, embed in embeds.items() if str(embed.get("kind") or "image") == "image"
+        asset_id
+        for asset_id, embed in embeds.items()
+        if str(embed.get("kind") or "image") == "image"
     }
     image_asset_ids.update(allowed_asset_ids or set())
     video_embeds = {
-        asset_id: embed for asset_id, embed in embeds.items() if str(embed.get("kind") or "") == "video"
+        asset_id: embed
+        for asset_id, embed in embeds.items()
+        if str(embed.get("kind") or "") == "video"
     }
     preprocessed_body, trusted_video_replacements = _replace_video_markdown(
         body,
@@ -673,7 +709,9 @@ def render_presented_markdown(
             kept = " ".join(token for token in value.split() if token.startswith("folio-"))
             return kept or None
         if tag == "img" and attribute == "src":
-            return _safe_image_src(value, public_origin=public_origin, image_asset_ids=image_asset_ids)
+            return _safe_image_src(
+                value, public_origin=public_origin, image_asset_ids=image_asset_ids
+            )
         return value
 
     unsafe_html = markdown.markdown(
@@ -707,6 +745,7 @@ def render_presented_page(
     allowed_asset_ids: set[UUID] | None = None,
     asset_embeds: dict[UUID, dict[str, str]] | None = None,
     nonce: str | None = None,
+    widget_token: str | None = None,
 ) -> str:
     content = render_presented_markdown(
         body,
@@ -722,7 +761,9 @@ def render_presented_page(
     root_css = _root_css(layout, theme_css, light_palette=light_palette, dark_palette=dark_palette)
     body_class = f"folio-layout-{layout['mode']} folio-measure-{layout['measure']}"
     color_scheme_meta = _COLOR_SCHEME_META[layout["color_scheme"]]
-    fullscreen_html = _fullscreen_control(nonce) if layout["mode"] == "presentation" and nonce else ""
+    fullscreen_html = (
+        _fullscreen_control(nonce) if layout["mode"] == "presentation" and nonce else ""
+    )
     logo_url = str((theme or {}).get("logo_url") or "")
     header = str((theme or {}).get("header") or "")
     footer = str((theme or {}).get("footer") or "")
@@ -731,8 +772,20 @@ def render_presented_page(
         if logo_url
         else ""
     )
-    header_html = f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
-    footer_html = f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
+    header_html = (
+        f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
+    )
+    footer_html = (
+        f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
+    )
+    widget_assets = ""
+    if widget_token and nonce:
+        widget_assets = (
+            '<link rel="stylesheet" href="/present/widgets/assets/renderer.css">'
+            f'<script type="module" nonce="{escape(nonce, quote=True)}" '
+            'src="/present/widgets/assets/folio-widget-host.mjs" data-folio-readonly '
+            f'data-widget-token="{escape(widget_token, quote=True)}"></script>'
+        )
     title = escape("Presented document")
     return f"""<!doctype html>
 <html lang="en">
@@ -742,6 +795,7 @@ def render_presented_page(
   <meta name="color-scheme" content="{color_scheme_meta}">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>{title}</title>
+  {widget_assets}
   <style>
     {root_css}
     * {{ box-sizing: border-box; }}
@@ -934,8 +988,12 @@ def render_editor_page(
         if logo_url
         else ""
     )
-    header_html = f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
-    footer_html = f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
+    header_html = (
+        f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
+    )
+    footer_html = (
+        f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
+    )
     initial_json = _script_json({"body": body, "version_number": version_number, "token": token})
     return f"""<!doctype html>
 <html lang="en">
@@ -944,6 +1002,7 @@ def render_editor_page(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Edit · folio</title>
+  <link rel="stylesheet" href="/present/widgets/assets/renderer.css">
   <style>
     :root {{
       color-scheme: light;
@@ -1013,7 +1072,7 @@ def render_editor_page(
       padding: 16px; border: 1px solid var(--border); border-radius: 8px;
       background: var(--surface); color: var(--text); overflow-wrap: break-word;
     }}
-    .workspace {{ display: grid; grid-template-columns: 1fr 1fr; height: calc(100vh - var(--bar-h)); }}
+    .workspace {{ max-width: none; margin: 0; padding: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); height: calc(100vh - var(--bar-h)); }}
     .pane {{ height: 100%; overflow-y: auto; }}
     .pane-edit {{ border-right: 1px solid var(--border); background: var(--surface); }}
     .editor {{
@@ -1022,6 +1081,11 @@ def render_editor_page(
       padding: 24px clamp(16px, 3vw, 44px);
       font-family: var(--font-mono); font-size: 0.92rem; line-height: 1.7; tab-size: 2;
     }}
+    .editor[hidden] {{ display: none; }}
+    .atomic-document {{ min-width: 0; }}
+    .atomic-prose {{ display: block; position: relative; }}
+    .atomic-prose .editor {{ height: auto; min-height: 9rem; resize: vertical; }}
+    .atomic-document > .folio-widget {{ margin: 1rem; }}
     .editor::placeholder {{ color: var(--muted); }}
     .pane-preview {{ background: var(--bg); }}
     .pane-preview .surface {{
@@ -1120,7 +1184,7 @@ def render_editor_page(
   <main class="workspace">
     <div id="bootstrap-status" class="bootstrap-status" role="status" aria-atomic="true" data-state="loading">Opening the editor…</div>
     <section id="pane-edit" class="pane pane-edit is-active">
-      <textarea id="body" class="editor" spellcheck="false" autofocus disabled placeholder=""></textarea>
+      <textarea id="body" hidden class="editor" spellcheck="false" autofocus disabled placeholder=""></textarea>
     </section>
     <section id="pane-preview" class="pane pane-preview">
       <article class="surface" id="preview-card">
@@ -1151,6 +1215,10 @@ def render_editor_page(
     try {{ sessionSecret = sessionStorage.getItem(sessionKey); }} catch (err) {{}}
     const endpoint = '/present/edit/' + encodeURIComponent(INITIAL.token);
     let ready = false;
+    let widgetModule = null;
+    let atomic = null;
+    // A textarea normalizes CRLF. The atomic model owns the exact raw bytes.
+    function currentBody() {{ return atomic ? atomic.serialize() : bodyEl.value; }}
     async function sessionFetch(path, options = {{}}) {{
       return fetch(endpoint + path, {{...options, cache:'no-store', credentials:'omit', referrerPolicy:'no-referrer',
         headers: {{...options.headers, 'X-Folio-Edit-Session': sessionSecret || ''}}}});
@@ -1189,6 +1257,7 @@ def render_editor_page(
       for (const el of previewEl.children) el.classList.remove('folio-changed');
       const prev = new Set([...previewEl.children].map((el) => el.outerHTML));
       previewEl.innerHTML = html;
+      atomic?.mountPreview(previewEl);
       for (const el of previewEl.children) {{
         if (!prev.has(el.outerHTML)) {{
           el.classList.add('folio-changed');
@@ -1204,7 +1273,7 @@ def render_editor_page(
         const response = await sessionFetch('/preview', {{
           method: 'POST',
           headers: {{'content-type': 'application/json'}},
-          body: JSON.stringify({{body: bodyEl.value}})
+          body: JSON.stringify({{body: currentBody()}})
         }});
         if (seq !== previewSeq) return;
         if (response.status === 404) {{ showUnavailable(); return; }}
@@ -1249,8 +1318,8 @@ def render_editor_page(
     }}
 
     function markDirty() {{
-      dirty = bodyEl.value !== savedBody;
-      if (!dirty && pendingVersion) {{ applyCurrent(pendingVersion); return; }}
+      dirty = currentBody() !== savedBody;
+      if (!dirty && pendingVersion && !atomic?.rowDirty) {{ applyCurrent(pendingVersion); return; }}
       document.title = dirty ? '• ' + baseTitle : baseTitle;
       eyebrowEl.textContent = dirty ? 'Draft · unsaved' : 'Version ' + baseVersion;
       updateButtons();
@@ -1262,13 +1331,14 @@ def render_editor_page(
     async function save() {{
       if (unavailable || !ready || saving || (!dirty && !conflict)) return;
       saving = true; setStatus('Saving…', 'saving'); updateButtons();
-      const sent = bodyEl.value;
+      const sent = currentBody();
+      const sentProse = atomic?.captureProse();
       let response;
       try {{
         response = await sessionFetch('/edit', {{
           method: 'POST',
           headers: {{'content-type': 'application/json'}},
-          body: JSON.stringify({{body: bodyEl.value, base_version: baseVersion, editor_name: nameEl.value || null}})
+          body: JSON.stringify({{body: sent, base_version: baseVersion, editor_name: nameEl.value || null}})
         }});
       }} catch (err) {{
         saving = false; setStatus('Network error — your text is not saved.', 'conflict'); updateButtons(); return;
@@ -1292,7 +1362,8 @@ def render_editor_page(
       if (!response.ok) {{ setStatus('Save failed — the link may be expired or revoked.', 'conflict'); updateButtons(); return; }}
       baseVersion = payload.version_number;
       savedBody = sent;
-      dirty = bodyEl.value !== sent; conflict = false;
+      if (sentProse) atomic.markSaved(sentProse);
+      dirty = currentBody() !== sent; conflict = false;
       pendingVersion = null; newVersionEl.hidden = true;
       document.title = dirty ? '• ' + baseTitle : baseTitle;
       eyebrowEl.textContent = dirty ? 'Draft · unsaved' : 'Version ' + baseVersion + ' · saved';
@@ -1303,12 +1374,12 @@ def render_editor_page(
 
     document.getElementById('copy-draft').addEventListener('click', async () => {{
       try {{
-        await navigator.clipboard.writeText(bodyEl.value);
+        await navigator.clipboard.writeText(atomic ? atomic.proseText : currentBody());
         copyStatusEl.textContent = 'Text copied. Reopen Edit from your dashboard and paste it.';
       }} catch (err) {{
         activate(true);
-        bodyEl.focus();
-        bodyEl.select();
+        if (atomic) atomic.selectProse();
+        else {{ bodyEl.focus(); bodyEl.select(); }}
         copyStatusEl.textContent = 'Your text is selected. Copy it before reopening Edit from your dashboard.';
       }}
     }});
@@ -1321,7 +1392,8 @@ def render_editor_page(
     }});
 
     function discardChanges() {{
-      if (pendingVersion) {{ applyCurrent(pendingVersion); return; }}
+      if (pendingVersion && !atomic?.rowDirty) {{ applyCurrent(pendingVersion); return; }}
+      if (atomic) atomic.resetProse();
       bodyEl.value = savedBody;
       dirty = false; conflict = false;
       document.title = baseTitle;
@@ -1369,6 +1441,7 @@ def render_editor_page(
       recoveryEl.hidden = false;
     }}
     function applyCurrent(state) {{
+      if (atomic?.rowDirty) {{ showNewVersion(state); return; }}
       cancelPreview();
       const start = bodyEl.selectionStart, end = bodyEl.selectionEnd;
       if (state.theme) {{
@@ -1387,6 +1460,17 @@ def render_editor_page(
       savedBody = state.body;
       baseVersion = state.version_number;
       bodyEl.value = savedBody;
+      if (state.segments?.some(part => part.kind === 'widget')) {{
+        if (!atomic) atomic = widgetModule.createAtomicEditor({{
+          container: document.getElementById('pane-edit'), bodyInput: bodyEl,
+          fetcher: sessionFetch,
+          onDraftChange: () => updateButtons()
+        }});
+        atomic.update(state);
+      }} else {{
+        atomic?.clear(); atomic = null;
+        bodyEl.hidden = false;
+      }}
       bodyEl.setSelectionRange(Math.min(start, savedBody.length), Math.min(end, savedBody.length));
       dirty = false; conflict = false; pendingVersion = null;
       newVersionEl.hidden = true;
@@ -1404,6 +1488,7 @@ def render_editor_page(
         'Version ' + state.version_number + ' is available. Your unsaved changes are kept.';
     }}
     document.getElementById('load-latest').addEventListener('click', () => {{
+      if (atomic?.rowDirty) {{ setStatus('Save or discard your row draft before loading another version.', 'conflict'); return; }}
       if (dirty) loadDialog.showModal();
       else if (pendingVersion) applyCurrent(pendingVersion);
     }});
@@ -1412,7 +1497,7 @@ def render_editor_page(
       loadDialog.close();
       if (unavailable || !pendingVersion) return;
       applyCurrent(pendingVersion);
-      activate(true); bodyEl.focus();
+      activate(true); if (atomic) atomic.focus(); else bodyEl.focus();
     }});
 
     let pollTimer = null;
@@ -1437,7 +1522,7 @@ def render_editor_page(
         if (typeof state.body === 'string' && state.version_number > baseVersion) {{
           // Decide on the CURRENT buffer after the read, including typing that
           // happened while it was in flight. Never overwrite a local draft.
-          if (dirty) showNewVersion(state);
+          if (dirty || atomic?.rowDirty) showNewVersion(state);
           else applyCurrent(state);
         }}
       }} catch (err) {{ /* keep the current buffer and retry transient reads */ }}
@@ -1476,6 +1561,7 @@ def render_editor_page(
           try {{ sessionStorage.setItem(sessionKey, sessionSecret); }} catch (err) {{}}
         }}
         opener = '';
+        widgetModule = await import('/present/widgets/assets/atomic-editor.mjs');
         ready = true;
         bodyEl.disabled = false;
         bodyEl.placeholder = 'Start writing in Markdown…';
@@ -1483,7 +1569,7 @@ def render_editor_page(
         bootstrapEl.textContent = '';
         applyCurrent(state);
         activate(true);
-        bodyEl.focus();
+        if (atomic) atomic.focus(); else bodyEl.focus();
         pollState();
       }} catch (err) {{
         bootstrapEl.dataset.state = 'retry';
@@ -1492,6 +1578,9 @@ def render_editor_page(
         if (!unavailable) setTimeout(startSession, 4000);
       }}
     }}
+    window.addEventListener('beforeunload', event => {{
+      if (dirty || atomic?.rowDirty) {{ event.preventDefault(); event.returnValue = ''; }}
+    }});
     updateButtons();
     startSession();
     }})();

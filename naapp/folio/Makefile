@@ -7,6 +7,7 @@ export NAAPP_E2E_PROJECT ?= folio-e2e
 PROD_CONFIG ?= ops/render-production.json
 
 test:
+	node --test tests/*.test.mjs
 	uv run pytest -q -m "not e2e"
 
 test-server:

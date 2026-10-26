@@ -77,3 +77,38 @@ def test_invalid_block_refuses_inertly_without_disclosing_raw_json():
     assert view.mounts == []
     assert "secret-source" not in "".join(view.text)
     assert '"id"' not in "".join(view.text)
+
+
+def test_readonly_widgets_bootstrap_uses_fixed_nonce_module_without_inline_token():
+    from folio.presentation import render_presented_page
+
+    html = render_presented_page(body=table(), nonce="host-nonce", widget_token="checked-token")
+    view = View(html)
+    assert view.mounts == ["research"]
+    assert 'src="/present/widgets/assets/folio-widget-host.mjs"' in html
+    assert 'nonce="host-nonce"' in html
+    assert 'data-widget-token="checked-token"' in html
+    assert "renderer.css" in html
+
+
+def test_widget_module_csp_uses_nonce_and_fixed_origin_fetches():
+    from folio.presentation import content_security_policy
+
+    csp = content_security_policy(mode="document", nonce="host-nonce", stream_host="", widgets=True)
+    assert "script-src 'nonce-host-nonce' 'strict-dynamic'" in csp
+    assert "connect-src 'self'" in csp
+    assert "style-src 'self' 'unsafe-inline'" in csp
+    assert "'unsafe-eval'" not in csp and "script-src 'self'" not in csp
+
+
+def test_initial_editor_never_displays_raw_widget_source_while_session_is_loading():
+    from folio.presentation import render_editor_page
+
+    html = render_editor_page(
+        body=table(), token="checked-token", version_number=1, nonce="host-nonce"
+    )
+    import re
+
+    textarea = re.search(r'<textarea id="body"[^>]*>', html).group(0)
+    assert "hidden" in textarea
+    assert "atomic-editor.mjs" in html

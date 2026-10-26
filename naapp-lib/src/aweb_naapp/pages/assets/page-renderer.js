@@ -7795,8 +7795,8 @@ function createActions({ host, getPage, update, announce }) {
     if (target !== control) target.tabIndex = -1;
     target.focus({ preventScroll: true });
   }
-  function initialize(button, ui, w, actionId, record) {
-    button.disabled = true;
+  function initialize(button2, ui, w, actionId, record) {
+    button2.disabled = true;
     let context;
     try {
       context = capture(w, actionId, record);
@@ -7804,9 +7804,9 @@ function createActions({ host, getPage, update, announce }) {
       return;
     }
     csrf(context).then(() => {
-      if (button.isConnected) button.disabled = false;
+      if (button2.isConnected) button2.disabled = false;
     }).catch((error2) => {
-      if (!error2.silent && button.isConnected) {
+      if (!error2.silent && button2.isConnected) {
         ui.error.hidden = false;
         ui.error.textContent = errorText(error2);
       }
@@ -7854,24 +7854,24 @@ function createActions({ host, getPage, update, announce }) {
   }
   function actionButton(w, actionId, record, label) {
     const action = getPage()?.actions.find((a) => a.id === actionId), admission = policy(actionId, { widget_id: w.id, record });
-    const button = element("button", label || action?.label || "Action");
-    button.type = "button";
-    button.dataset.focusKey = `action:${actionId}:${record?.id || ""}`;
+    const button2 = element("button", label || action?.label || "Action");
+    button2.type = "button";
+    button2.dataset.focusKey = `action:${actionId}:${record?.id || ""}`;
     const fixed = {
       ...admission.input || {},
       ...record ? { record_id: record.id } : {}
     };
-    button.disabled = !admission.allowed || !action || action.kind === "answer" || inputErrors(fixed, action?.input_schema).length > 0;
-    button.title = button.disabled ? admission.reason || "This action needs more information." : action?.label || "";
+    button2.disabled = !admission.allowed || !action || action.kind === "answer" || inputErrors(fixed, action?.input_schema).length > 0;
+    button2.title = button2.disabled ? admission.reason || "This action needs more information." : action?.label || "";
     let pending = false, feedbackBox;
-    button.onclick = async (event) => {
+    button2.onclick = async (event) => {
       if (pending) return;
       pending = true;
-      button.disabled = true;
+      button2.disabled = true;
       feedbackBox?.remove();
       const box = element("div", null, "action-feedback");
       feedbackBox = box;
-      button.after(box);
+      button2.after(box);
       const ui = feedback(box);
       ui.status.textContent = "Submitting\u2026";
       let context;
@@ -7890,20 +7890,20 @@ function createActions({ host, getPage, update, announce }) {
         await showError(ui, error2, void 0, context);
       } finally {
         pending = false;
-        button.disabled = !policy(actionId, { widget_id: w.id, record }).allowed;
-        restoreFocus(button, ui.error.hidden ? ui.status : ui.error, context);
+        button2.disabled = !policy(actionId, { widget_id: w.id, record }).allowed;
+        restoreFocus(button2, ui.error.hidden ? ui.status : ui.error, context);
       }
     };
-    if (!button.disabled) {
+    if (!button2.disabled) {
       const box = element("div", null, "action-feedback");
       queueMicrotask(() => {
-        if (!button.isConnected) return;
-        button.after(box);
+        if (!button2.isConnected) return;
+        button2.after(box);
         feedbackBox = box;
-        initialize(button, feedback(box), w, actionId, record);
+        initialize(button2, feedback(box), w, actionId, record);
       });
     }
-    return button;
+    return button2;
   }
   function form(box, w) {
     const p = w.props, action = getPage().actions.find((a) => a.id === p.submit_action);
@@ -9111,7 +9111,9 @@ function renderCollection({
   onRead,
   actionButton,
   pageLink,
-  announce
+  announce,
+  sortEnabled = true,
+  rowControls
 }) {
   const p = w.props;
   const region = element("div", null, "collection-content");
@@ -9171,8 +9173,9 @@ function renderCollection({
       table2.caption.lang = "en";
       table2.caption.id = `records-${w.id}`;
       [...table2.tHead.rows[0].cells].forEach((th, i) => {
+        if (!sortEnabled) return;
         const column = p.columns[i];
-        const button = element("button", column.label, "sort-button");
+        const button2 = element("button", column.label, "sort-button");
         const order = query.sort?.find(
           (s) => s.field === column.field
         )?.direction;
@@ -9181,9 +9184,9 @@ function renderCollection({
             "aria-sort",
             order === "asc" ? "ascending" : "descending"
           );
-        button.dataset.focusKey = `sort:${column.field}`;
-        button.type = "button";
-        button.onclick = () => change({
+        button2.dataset.focusKey = `sort:${column.field}`;
+        button2.type = "button";
+        button2.onclick = () => change({
           sort: [
             {
               field: column.field,
@@ -9192,16 +9195,17 @@ function renderCollection({
           ],
           cursor: void 0
         });
-        th.replaceChildren(button);
+        th.replaceChildren(button2);
       });
-      if (p.row_actions?.length) {
+      if (p.row_actions?.length || rowControls) {
         const th = chrome("th", t.actions);
         th.scope = "col";
         table2.tHead.rows[0].append(th);
         [...table2.tBodies[0].rows].forEach((row, i) => {
           const td = element("td");
-          for (const id of p.row_actions)
-            td.append(actionButton(id, visible[i]));
+          for (const id of p.row_actions || [])
+            if (actionButton) td.append(actionButton(id, visible[i]));
+          if (rowControls) td.append(rowControls(visible[i]));
           row.append(td);
         });
       }
@@ -9363,6 +9367,10 @@ function renderCollection({
   region.tabIndex = -1;
   draw();
   return {
+    clear() {
+      ++requestSerial;
+      box.replaceChildren();
+    },
     beginRefresh() {
       projectionFocusKey = region.contains(document.activeElement) ? document.activeElement.dataset.focusKey : void 0;
       region.setAttribute("aria-busy", "true");
@@ -9380,6 +9388,456 @@ function renderCollection({
     showError(message) {
       region.setAttribute("aria-busy", "false");
       region.replaceChildren(chrome("p", message));
+    }
+  };
+}
+
+// row-draft.mjs
+function createRowDraft({ operation, record, fields, schema }) {
+  if (!["add", "update", "delete"].includes(operation))
+    throw new TypeError("Invalid row operation");
+  schema = structuredClone(schema);
+  const allowed = new Set(
+    fields.filter((field) => Object.hasOwn(schema.properties || {}, field))
+  );
+  const pick = (source) => Object.fromEntries(
+    [...allowed].filter((field) => Object.hasOwn(source || {}, field)).map((field) => [field, structuredClone(source[field])])
+  );
+  const validRecord = (value) => value && typeof value.id === "string" && Number.isSafeInteger(value.rev) && value.rev > 0;
+  if (operation !== "add" && !validRecord(record))
+    throw new TypeError("Invalid row revision");
+  let base2 = structuredClone(record);
+  let values = operation === "add" ? {} : pick(record.value);
+  let attempt;
+  const changes = () => Object.fromEntries(
+    [...allowed].filter(
+      (field) => Object.hasOwn(values, field) && JSON.stringify(values[field]) !== JSON.stringify(base2?.value?.[field])
+    ).map((field) => [field, structuredClone(values[field])])
+  );
+  function errors2() {
+    if (operation === "delete") return [];
+    const candidate = operation === "add" ? values : changes();
+    const missing = Object.keys(candidate).filter((field) => candidate[field] === void 0).map((field) => "/" + field.replaceAll("~", "~0").replaceAll("/", "~1"));
+    if (operation === "add")
+      return [.../* @__PURE__ */ new Set([...missing, ...inputErrors(candidate, schema)])];
+    return [
+      .../* @__PURE__ */ new Set([
+        ...missing,
+        ...Object.keys(candidate).flatMap(
+          (field) => inputErrors(
+            candidate[field],
+            schema.properties[field],
+            "/" + field.replaceAll("~", "~0").replaceAll("/", "~1")
+          )
+        )
+      ])
+    ];
+  }
+  return {
+    get values() {
+      return structuredClone(values);
+    },
+    get record() {
+      return base2 && { id: base2.id, rev: base2.rev, value: pick(base2.value) };
+    },
+    get errors() {
+      return errors2();
+    },
+    get pending() {
+      return !!attempt;
+    },
+    get changed() {
+      return operation !== "update" || Object.keys(changes()).length > 0;
+    },
+    set(field, value) {
+      if (!allowed.has(field)) throw { code: "field_denied" };
+      if (attempt) throw { code: "unknown_outcome" };
+      values = { ...values, [field]: structuredClone(value) };
+    },
+    request() {
+      if (attempt) return structuredClone(attempt);
+      const invalid = errors2();
+      if (invalid.length) throw { code: "schema_invalid", fields: invalid };
+      const patch = changes();
+      if (operation === "update" && !Object.keys(patch).length)
+        throw { code: "no_changes" };
+      attempt = {
+        request_id: crypto.randomUUID(),
+        ...operation === "add" ? { values: structuredClone(values) } : {
+          record_id: base2.id,
+          expected_rev: base2.rev,
+          ...operation === "update" ? { patch } : {}
+        }
+      };
+      return structuredClone(attempt);
+    },
+    settle() {
+      attempt = void 0;
+    },
+    rebase(latest) {
+      if (attempt) throw { code: "unknown_outcome" };
+      if (operation === "add" || !validRecord(latest) || latest.id !== base2.id)
+        throw new TypeError("Invalid conflict row");
+      const edited = changes();
+      base2 = structuredClone(latest);
+      values = { ...pick(latest.value), ...edited };
+    }
+  };
+}
+
+// table-editor.mjs
+var button = (label, click) => {
+  const node = chrome("button", label);
+  node.type = "button";
+  node.onclick = click;
+  return node;
+};
+function mountTableWidget({ root, widgetId, state, host = {} }) {
+  let active = true, writing = false, conflicted = false, draft, operation, controls = [], controller;
+  let projection = state.query;
+  let currentCursor;
+  const { locale, t } = messages();
+  root.replaceChildren();
+  root.classList.add("widget");
+  const status = chrome("p", "", "row-status");
+  status.setAttribute("role", "status");
+  const formRoot = element("div", null, "row-editor");
+  const conflictRoot = element("div", null, "row-conflict");
+  const tableRoot = element("div");
+  const commands = element("div", null, "row-commands");
+  root.append(commands, tableRoot, formRoot, conflictRoot, status);
+  if (state.state !== "ready") {
+    status.textContent = state.state === "records_identity_required" ? state.reopen === "new_link_from_sharer" ? "This table needs a new link from the person who shared this document." : "Reopen Edit from your dashboard to use this table." : "This table is unavailable. Your text is still here.";
+    return {
+      get dirty() {
+        return false;
+      },
+      clear() {
+        active = false;
+        root.replaceChildren();
+      }
+    };
+  }
+  const page = state.page;
+  const widget = page.layout.find(
+    (w) => w.id === widgetId && w.type === "table"
+  );
+  const collection = page.collections.find(
+    (c) => c.id === widget?.bind.collection
+  );
+  if (!widget || !collection || !projection)
+    throw new TypeError("Invalid checked table state");
+  const schema = collection.schema;
+  const capabilities = state.edit || {};
+  const patchFields = (capabilities.patch_fields || []).filter(
+    (field) => Object.hasOwn(schema.properties || {}, field)
+  );
+  commands.append(
+    chrome(
+      "p",
+      state.data_mode === "pinned" ? "Saved table rows" : "Table rows are current, even when this document is an older version.",
+      "field-description"
+    )
+  );
+  if (capabilities.reopen_to_edit) {
+    const reopen = chrome(
+      "p",
+      "Reopen Edit from your dashboard to edit this table."
+    );
+    reopen.dataset.reopenToEdit = "";
+    commands.append(reopen);
+  }
+  const add = capabilities.add && typeof host.add === "function" ? button("Add row", () => begin("add")) : null;
+  if (add) commands.append(add);
+  commands.append(button("Refresh rows", () => refresh()));
+  function notify() {
+    host.onDraftChange?.(!!draft);
+  }
+  function sync() {
+    for (const input of controls)
+      input.disabled = writing || !!draft?.pending || conflicted;
+    formRoot.querySelectorAll("button").forEach((node) => node.disabled = writing || conflicted);
+    const cancel = formRoot.querySelector("[data-cancel-row]");
+    if (cancel) cancel.disabled = writing || !!draft?.pending;
+    if (add) add.disabled = !!draft || writing;
+    tableRoot.querySelectorAll("[data-row-command]").forEach((node) => node.disabled = !!draft || writing);
+  }
+  async function read(cursor) {
+    const result = await host.query({ cursor });
+    if (!active) throw { code: "unavailable" };
+    projection = result;
+    currentCursor = cursor;
+    return result;
+  }
+  async function refresh() {
+    try {
+      const result = await read();
+      if (active) {
+        controller.beginRefresh();
+        controller.updateProjection(result);
+        sync();
+      }
+    } catch {
+      if (active) {
+        controller.showError(
+          "Rows could not be refreshed. Your draft is kept."
+        );
+        status.textContent = "Rows could not be refreshed. Try again.";
+      }
+    }
+  }
+  function end(message) {
+    draft = void 0;
+    operation = void 0;
+    conflicted = false;
+    formRoot.replaceChildren();
+    conflictRoot.replaceChildren();
+    controls = [];
+    status.textContent = message;
+    notify();
+    sync();
+  }
+  function fieldInput(field) {
+    const fieldSchema = schema.properties[field];
+    const types = Array.isArray(fieldSchema.type) ? fieldSchema.type : [fieldSchema.type];
+    const label = element("label", null, "row-field");
+    label.append(
+      element(
+        "span",
+        fieldSchema.title || widget.props.columns.find((c) => c.field === field)?.label || field
+      )
+    );
+    const value = draft.values[field];
+    let input, getValue;
+    const choices = fieldSchema.enum || (types.includes("boolean") ? [true, false, ...types.includes("null") ? [null] : []] : null);
+    if (choices) {
+      input = element("select");
+      const empty = element("option", "Choose a value");
+      empty.value = "";
+      input.append(empty);
+      choices.forEach((choice, i) => {
+        const option = element(
+          "option",
+          choice === null ? "Empty" : String(choice)
+        );
+        option.value = String(i);
+        input.append(option);
+      });
+      const selected = choices.findIndex((choice) => choice === value);
+      input.value = selected < 0 ? "" : String(selected);
+      getValue = () => input.value === "" ? void 0 : choices[Number(input.value)];
+    } else {
+      const complex = types.includes("object") || types.includes("array") || types.includes("null");
+      input = element(complex ? "textarea" : "input");
+      if (!complex) {
+        input.type = "text";
+        if (types.includes("integer")) input.inputMode = "numeric";
+      }
+      input.value = value === void 0 ? "" : complex ? JSON.stringify(value) : String(value);
+      getValue = () => {
+        if (!complex) return typedValue(input.value, fieldSchema);
+        try {
+          return JSON.parse(input.value);
+        } catch {
+          return void 0;
+        }
+      };
+    }
+    input.oninput = () => {
+      draft.set(field, getValue());
+      input.removeAttribute("aria-invalid");
+      status.textContent = "Row draft \u2014 save this row separately from your text.";
+      notify();
+    };
+    controls.push(input);
+    label.append(input);
+    return label;
+  }
+  function drawForm() {
+    controls = [];
+    formRoot.replaceChildren();
+    if (operation !== "delete") {
+      const fields = operation === "add" ? Object.keys(schema.properties || {}) : patchFields;
+      formRoot.append(
+        chrome(
+          "h3",
+          operation === "add" ? "New row" : "Edit row " + draft.record.id
+        )
+      );
+      for (const field of fields) formRoot.append(fieldInput(field));
+    }
+    formRoot.append(
+      button(
+        operation === "delete" ? "Retry deletion" : "Save row",
+        () => submit()
+      )
+    );
+    const cancel = button(
+      "Discard row draft",
+      () => end("Row draft discarded. Saved rows and your text are unchanged.")
+    );
+    cancel.dataset.cancelRow = "";
+    formRoot.append(cancel);
+    sync();
+  }
+  function begin(kind, record) {
+    if (!active || draft) return false;
+    operation = kind;
+    draft = createRowDraft({
+      operation,
+      record,
+      fields: kind === "update" ? patchFields : Object.keys(schema.properties || {}),
+      schema
+    });
+    conflicted = false;
+    conflictRoot.replaceChildren();
+    drawForm();
+    notify();
+    sync();
+    controls[0]?.focus();
+    return true;
+  }
+  async function conflict() {
+    conflicted = true;
+    sync();
+    conflictRoot.replaceChildren(
+      chrome(
+        "p",
+        "This row changed. Your input is kept. Loading the current row\u2026"
+      )
+    );
+    let current;
+    try {
+      current = (await read(currentCursor)).records.find(
+        (record) => record.id === draft.record.id
+      );
+    } catch {
+    }
+    if (!active || !draft) return;
+    conflictRoot.replaceChildren(
+      chrome(
+        "p",
+        current ? "This row changed. Compare the current row with your input before saving again." : "The current row is not available in this table. Your input is kept; discard the row draft or copy it before reopening Edit."
+      )
+    );
+    if (current) {
+      conflictRoot.append(
+        element("pre", JSON.stringify(current.value, null, 2))
+      );
+      conflictRoot.append(
+        button(
+          operation === "delete" ? "Use current row revision" : "Keep my changes",
+          () => {
+            draft.rebase(current);
+            conflicted = false;
+            conflictRoot.replaceChildren();
+            drawForm();
+            status.textContent = "Current revision loaded. Review your draft, then save the row.";
+          }
+        )
+      );
+    }
+    conflictRoot.append(
+      button("Discard row draft", () => end("Row draft discarded."))
+    );
+  }
+  async function submit() {
+    if (!active || !draft || writing || conflicted) return;
+    let request;
+    try {
+      request = draft.request();
+    } catch (error2) {
+      status.textContent = error2.code === "no_changes" ? "No row changes to save." : "Check the row fields. Your input has been kept.";
+      controls.forEach((input) => input.setAttribute("aria-invalid", "true"));
+      return;
+    }
+    writing = true;
+    sync();
+    status.textContent = "Saving row\u2026";
+    try {
+      await host[operation === "update" ? "patch" : operation](request);
+      if (!active) return;
+      writing = false;
+      end("Row saved. Your text is saved separately.");
+      await refresh();
+    } catch (error2) {
+      if (!active) return;
+      writing = false;
+      if (error2?.code === "revision_conflict" && error2?.status === 409) {
+        draft.settle();
+        await conflict();
+      } else if ([400, 422].includes(error2?.status)) {
+        draft.settle();
+        status.textContent = "This row was refused. Check its values; your input is kept.";
+      } else {
+        status.textContent = "The row save could not be confirmed. Retry to check the same save; your input is kept.";
+      }
+      sync();
+    }
+  }
+  controller = renderCollection({
+    box: tableRoot,
+    w: widget,
+    initialRecords: collection.records || [],
+    initialProjection: projection,
+    schema,
+    locale,
+    timeZone: page.time_zone,
+    t,
+    query: structuredClone(widget.bind),
+    sortEnabled: false,
+    onRead: (bind) => read(bind.cursor),
+    announce: (message) => status.textContent = message,
+    pageLink(node, url) {
+      node.setAttribute("role", "link");
+      node.tabIndex = 0;
+      const activate = (event) => {
+        event.preventDefault();
+        if (active && event.isTrusted) host.confirmLink?.(url.href, event);
+      };
+      node.onclick = activate;
+      node.onauxclick = (event) => event.preventDefault();
+      node.onkeydown = (event) => {
+        if (["Enter", " "].includes(event.key)) activate(event);
+      };
+    },
+    rowControls: patchFields.length && typeof host.patch === "function" || capabilities.delete && typeof host.delete === "function" ? (record) => {
+      const group = element("div", null, "row-commands");
+      if (patchFields.length && typeof host.patch === "function") {
+        const edit = button(
+          "Edit row " + record.id,
+          () => begin("update", record)
+        );
+        edit.disabled = !!draft || writing;
+        edit.dataset.rowCommand = "";
+        group.append(edit);
+      }
+      if (capabilities.delete && typeof host.delete === "function") {
+        const remove = button(
+          "Delete row " + record.id,
+          async (event) => {
+            if (!active || draft || writing || !event.isTrusted) return;
+            const accepted = await host.confirmDelete?.(record, event);
+            if (!active || draft || !accepted) return;
+            if (begin("delete", record)) await submit();
+          }
+        );
+        remove.disabled = !!draft || writing;
+        remove.dataset.rowCommand = "";
+        group.append(remove);
+      }
+      return group;
+    } : void 0
+  });
+  return {
+    get dirty() {
+      return !!draft;
+    },
+    refresh,
+    clear() {
+      active = false;
+      controller.clear();
+      root.replaceChildren();
     }
   };
 }
@@ -9886,5 +10344,6 @@ export {
   createActionConfirmation,
   createLinkConfirmation,
   createPageRenderer,
-  inertLinks
+  inertLinks,
+  mountTableWidget
 };
