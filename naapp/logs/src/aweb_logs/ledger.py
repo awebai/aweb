@@ -11,7 +11,7 @@ import hashlib
 import json
 import os
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -36,7 +36,7 @@ from aweb_logs.chain import (
     sign_checkpoint,
     sign_receipt,
 )
-from aweb_logs.verify import Content, StoredEvent
+from aweb_logs.verify import Content, StoredEvent, verify_chain, verify_deliveries
 
 
 @dataclass(frozen=True)
@@ -139,7 +139,7 @@ async def append_on(
     head.check_signer(signer)
     stored = await tx.fetch_one(
         "SELECT signing_bytes, signature, hook, producer_origin, receipt_bytes,"
-        " receipt_signature FROM {{tables.chain_events}} WHERE team_id = $1 AND event_id = $2",
+        " receipt_signature, key_evidence FROM {{tables.chain_events}} WHERE team_id = $1 AND event_id = $2",
         event.team_id,
         event_id,
     )
@@ -156,6 +156,20 @@ async def append_on(
                 and stored["signature"] == signature
             )
         if same:
+            # The same event can be owed through overlapping registrations.
+            # Preserve each admitted observation without appending or recharging.
+            previous = json.loads(stored["key_evidence"])
+            admissions = list(previous.get("admissions", []))
+            for admitted in key_evidence.get("admissions", []):
+                if admitted not in admissions:
+                    admissions.append(admitted)
+            if admissions != previous.get("admissions", []):
+                await tx.execute(
+                    "UPDATE {{tables.chain_events}} SET key_evidence = $3::jsonb"
+                    " WHERE team_id = $1 AND event_id = $2",
+                    event.team_id, event_id,
+                    json.dumps({**previous, "admissions": admissions}, sort_keys=True),
+                )
             return Appended(receipt=receipt, duplicate=True)
         await tx.execute(
             "INSERT INTO {{tables.chain_faults}}"
@@ -306,7 +320,7 @@ async def open_next_epoch(
 
 
 async def load_epoch(
-    db: AsyncDatabaseManager, team_id: str, chain_epoch: int
+    db: AsyncDatabaseManager | TransactionManager, team_id: str, chain_epoch: int
 ) -> tuple[Genesis, list[StoredEvent]]:
     """One team epoch's genesis and stored events, in team_seq order, for verify."""
     epoch = await db.fetch_one(
@@ -346,17 +360,54 @@ def _stored_event(team_id: str, chain_epoch: int, row: Mapping[str, Any]) -> Sto
         producer_origin=row["producer_origin"],
         content_commitment=row["content_commitment"],
     )
+    evidence = json.loads(row["key_evidence"])
     content = None
     if row["signing_bytes"] is not None:
         content = Content(
             salt=bytes(row["salt"]),
             signing_bytes=bytes(row["signing_bytes"]),
             signature=row["signature"],
-            producer_did_key=json.loads(row["key_evidence"])["did_key"],
+            producer_did_key=evidence["did_key"],
         )
     return StoredEvent(
-        link=link, event_hash=row["event_hash"], content=content, purge_act=row["purge_act"]
+        link=link, event_hash=row["event_hash"], content=content, purge_act=row["purge_act"],
+        key_evidence=evidence,
     )
+
+
+async def verify_epoch(
+    db: AsyncDatabaseManager, team_id: str, chain_epoch: int, *,
+    receipt_keys: frozenset[str], checkpoint_keys: frozenset[str],
+    receipts: Sequence[tuple[bytes, str]] = (), checkpoints: Sequence[tuple[bytes, str]] = (),
+) -> dict[str, Any]:
+    """A consistent stored report for the reader's already-authorized team.
+
+    Chain integrity, observed delivery findings and refused-byte conflicts stay
+    distinct. No refused content is returned. All append/epoch/fault writers use
+    the same head lock, held here only for database reads, never network I/O.
+    Authorization belongs to the caller; this function is not an HTTP route.
+    """
+    async with db.transaction() as tx:
+        await _existing_head(tx, team_id)
+        genesis, events = await load_epoch(tx, team_id, chain_epoch)
+        faults = await tx.fetch_all(
+            "SELECT f.fault_id, f.event_id, e.team_seq, f.kind, f.refused_sha256, f.recorded_at"
+            " FROM {{tables.chain_faults}} f JOIN {{tables.chain_events}} e"
+            " ON (e.team_id, e.event_id) = (f.team_id, f.event_id)"
+            " WHERE f.team_id = $1 AND e.chain_epoch = $2 ORDER BY f.fault_id",
+            team_id, chain_epoch,
+        )
+    report = verify_chain(
+        genesis, events, receipt_keys=receipt_keys, checkpoint_keys=checkpoint_keys,
+        receipts=receipts, checkpoints=checkpoints,
+    ).to_json()
+    report["delivery"] = verify_deliveries(genesis, events).to_json()
+    report["conflicts"] = [
+        {"fault_id": f["fault_id"], "event_id": str(f["event_id"]), "team_seq": f["team_seq"],
+         "kind": f["kind"], "refused_sha256": f["refused_sha256"],
+         "recorded_at": format_time(f["recorded_at"])} for f in faults
+    ]
+    return report
 
 
 async def _locked_head(tx: Any, signer: LogsSigner, team_id: str, at: datetime) -> _Head:

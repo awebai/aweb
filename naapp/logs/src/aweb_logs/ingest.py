@@ -30,6 +30,7 @@ from aweb_naapp.hooks.strictjson import (
 )
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.hook_resolver import (
+    HookBinding,
     HookBindingRequired,
     HookResolutionUnavailable,
     OwnHookBinding,
@@ -41,6 +42,7 @@ from awid.team_certificate import decode_team_certificate
 from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
 
+from aweb_logs.chain import format_time
 from aweb_logs.ledger import Conflicted, LogsSigner, OriginMismatch, append
 
 # How far an event's occurred_at may lead logs' clock: the delivery
@@ -173,6 +175,11 @@ class Ingestor:
             event, occurred_at, headers, team_key_did, received_at=received_at,
         )
         evidence["binding_ids"].insert(0, str(binding.binding_id))
+        evidence["admissions"] = [{
+            "registration": _binding_evidence(binding, event),
+            "production": evidence.pop("production", None),
+            "server_url": evidence.get("server_url"),
+        }]
         check_schema(event, self.catalog, received_at=received_at)
         # Retain exactly the bytes verified by the kit, not a reserialization.
         content = parse_canonical_object(body)
@@ -292,5 +299,32 @@ class Ingestor:
                             **evidence, "purposes": list(production_key.purposes),
                             "installation_id": production.installation_id, "generation": production.generation,
                             "binding_ids": [str(production.binding_id)],
+                            "production": _binding_evidence(production, event),
                         }
         raise IngestRefused(403, "provenance_app_production")
+
+
+def _binding_evidence(binding: HookBinding, event: Envelope) -> dict[str, Any]:
+    """The admitted lifecycle/identity, retained before resolver views expire.
+
+    Productions come only from the resolver's active-production view; own
+    registrations have also passed the explicit active-state check above.
+    A production's lifecycle fields beyond active_from are not in that API.
+    """
+    evidence: dict[str, Any] = {
+        "team_id": event.team_id, "binding_id": str(binding.binding_id),
+        "kind": binding.kind, "app_id": binding.app_id, "origin": binding.origin,
+        "installation_id": binding.installation_id, "generation": binding.generation,
+        "digest": binding.digest, "method": binding.method, "path": binding.path,
+        "active_from": format_time(binding.active_from) if binding.active_from else None,
+        "catalog_id": event.fields["catalog"]["id"],
+        "catalog_version": event.fields["catalog"]["version"], "hook": event.hook,
+        "state": "active",
+    }
+    if isinstance(binding, OwnHookBinding):
+        evidence.update(
+            activated_at=format_time(binding.activated_at) if binding.activated_at else None,
+            revoked_at=format_time(binding.revoked_at) if binding.revoked_at else None,
+            ended_by=binding.ended_by,
+        )
+    return evidence

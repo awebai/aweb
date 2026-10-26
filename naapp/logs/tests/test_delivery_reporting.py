@@ -106,8 +106,13 @@ def test_observation_does_not_bridge_provenance_intervals(boundary):
     assert verify_deliveries(GENESIS, events).gaps == ()
 
 
-def test_distinct_authenticated_events_reusing_a_sequence_are_an_inconsistency():
+@pytest.mark.parametrize("binding_change", [None, "production", "registration"])
+def test_distinct_authenticated_events_reusing_a_sequence_are_an_inconsistency(binding_change):
     events = _events([40, 40])
+    if binding_change is not None:
+        evidence = copy.deepcopy(events[1].key_evidence)
+        evidence["admissions"][0][binding_change]["binding_id"] += "-new"
+        events[1] = replace(events[1], key_evidence=evidence)
     report = verify_deliveries(GENESIS, events).to_json()
     conflict, = report["sequence_conflicts"]
     assert conflict["seq"] == 40
@@ -141,3 +146,13 @@ def test_client_events_do_not_have_a_required_sequence():
     assert verify_deliveries(GENESIS, _events([1, 10], kind="client")).to_json() == {
         "scope": "observed_internal_only", "gaps": [], "sequence_conflicts": [], "unassessed": [],
     }
+
+
+def test_missing_core_anchor_is_unassessed_not_a_reporting_crash():
+    events = _events([40, 43], kind="core")
+    evidence = copy.deepcopy(events[0].key_evidence)
+    evidence["admissions"][0]["server_url"] = None
+    events[0] = replace(events[0], key_evidence=evidence)
+    report = verify_deliveries(GENESIS, events)
+    assert report.gaps == ()
+    assert report.unassessed
