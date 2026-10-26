@@ -19,6 +19,7 @@ repository, messages or retained evidence.
 | `API_ORIGIN` | Absolute HTTPS agent API origin. |
 | `CONSOLE_ORIGIN` | Absolute HTTPS human console origin, separate from the agent API. |
 | `LOGS_ORIGIN` | Absolute HTTPS logs origin for real audit ingestion/read proof. |
+| `PRIVATE_DNS_NAME` | Bare DNS hostname whose HO6-controlled answer is private, for the network-refusal case. No scheme, port, URL path or IP literal; no TLS is required. |
 | `MCP_URL` | Shared absolute HTTPS root MCP endpoint URL, with no credential/query/fragment. |
 | `TEAM_ID` | Expected public team ID for both MCP clients. |
 | `AGENT_A_ID` | Expected public ID of hosted agent A. |
@@ -41,6 +42,17 @@ tool pagination and check protocol/tool errors and structured application
 results. A successful HTTP status alone is insufficient. Identity homes are
 not an alternative HTTP signing/authentication path.
 
+`AWEB_SECRETS_E2E_PRIVATE_DNS_NAME` is distinct from the public API origin and
+the positive test receiver. Preflight checks hostname syntax only, without
+resolving it or connecting. The real network scenario must observe the
+HO6-provisioned private answer and verify that dispatch is refused. The
+hostname alone does not prove the DNS record exists or has the intended answer.
+
+There is no required `AWEB_SECRETS_E2E_UPSTREAM_ORIGIN`. S19 owns starting the
+checkout's test receiver, choosing its listening address/port and configuring
+TLS trust. It passes the resulting origin internally to M9 and the pinned CLI
+job configuration; an externally hosted receiver is not an alternate input.
+
 E2E reads the test 1Password token file and enters that token through the
 customer console's normal passkey-confirmed value ingress. Native custody
 seals it per team; the backend opens it per use. The product has no file-token
@@ -53,6 +65,63 @@ required configuration references. It exits 2 with variable names if inputs
 are absent or invalid, without printing supplied values or opening credential
 files. Credential inputs must be owner-readable private regular files. The
 check verifies configuration, not service connectivity or release acceptance.
+
+## Provision the dedicated hosted team
+
+`AWEB_SECRETS_E2E_CLOUD_OWNER_LOGIN_FILE` is a provisioning-only input. It is
+not required by `load_environment` or supplied to the app, MCP clients or runner.
+HO6 supplies the dedicated verified human account. Its `cloud-owner-login.txt`
+file must be a regular file owned by the controller's OS user with mode `0600`.
+The controller reads it without following a symlink and never overwrites it.
+Use exactly two nonempty UTF-8 lines without BOM, with LF line endings: email
+on line 1, password on line 2, no leading/trailing whitespace. A single final
+LF is optional. Never put the values in command arguments or this repository.
+
+From `naapp/secrets`, run the checkout controller with the operator-supplied
+HTTPS Cloud origin and an absolute, dedicated private state directory:
+
+```text
+uv run --no-sync python e2e/provision_hosted.py --cloud-origin <HTTPS Cloud origin> --state-dir <absolute private directory>
+```
+
+The controller creates a new dedicated test team, activates one test role,
+creates two global custodial agents in that role, and authorizes one normal
+OAuth/PKCE connection for each. Owner login uses a separate in-memory cookie
+session. Owner cookies, the login password and returned identity API keys are
+not MCP authority or runtime outputs. The controller uses two independent
+official MCP clients at the root endpoint and checks canonical team ID and each
+agent ID before publishing outputs. Management UUIDs are not canonical team IDs.
+
+After success the private state directory contains `runtime.json`, whose six
+string keys all carry the `AWEB_SECRETS_E2E_` prefix: `TEAM_ID`, `AGENT_A_ID`, `AGENT_B_ID`, `MCP_URL`,
+`AGENT_A_MCP_TOKEN_FILE` and `AGENT_B_MCP_TOKEN_FILE`. The two files contain only
+their raw OAuth access token, have absolute distinct paths and mode `0600`.
+Refresh pairs and client bindings remain in `controller-state.json` (`0600`),
+inside the `0700` directory. Neither credentials nor codes appear in console
+output. Protect this directory as credentials; never retain it as test evidence.
+
+Writing `runtime.json` does not configure S19 automatically. S19 explicitly
+loads that JSON mapping and merges it with its remaining HO6 inputs before
+validation, without shell evaluation or a dotenv loader:
+
+```python
+runtime_inputs = json.loads((controller_state_dir / "runtime.json").read_text())
+environment = load_environment({**os.environ, **runtime_inputs})
+```
+
+A completed rerun refreshes the stored current grants without another consent,
+persists each rotated pair before publishing access-only files, and checks both
+identities again. The owner login file is not read for that refresh. Concurrent
+controllers refuse. An intent journal is written before remote side effects;
+a partial run or lost exchange/refresh response refuses on rerun, since the
+remote operation may have committed. It never repeats creates, adopts a
+duplicate-name object or retries a consumed code/refresh token. Inspect the
+recorded stage with the hosted owner to recover explicitly; do not delete the
+journal or use a fresh directory to bypass the refusal. Expired/revoked grants
+require the normal owner authorization path, never an API key or CLI-token
+substitute. No automatic remote cleanup runs on failure.
+
+## Runner and release acceptance
 
 S19 launches the real runner under its pre-provisioned OS user. M7's `doctor`
 checks config/job/executable ownership, write authority and UID separation;

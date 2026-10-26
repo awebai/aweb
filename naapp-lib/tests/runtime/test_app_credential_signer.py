@@ -19,9 +19,11 @@ from nacl.signing import SigningKey
 from aweb_naapp.runtime.app_credentials import (
     APP_EVENT,
     APP_GRANT_READ,
+    APP_REQUEST,
     HOOK_RESOLVE,
     PURPOSES,
     AppCredentialSigner,
+    sign_app_credential,
 )
 from aweb_naapp.runtime.app_emit import sign_app_emit_credential
 from aweb_naapp.runtime.app_keys import AppKey
@@ -29,6 +31,9 @@ from aweb_naapp.runtime.app_keys import AppKey
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 VECTOR = json.loads(
     (AWEB_ROOT / "test-vectors" / "app-read-credential-v1.json").read_text(encoding="utf-8")
+)
+REQUEST_VECTOR = json.loads(
+    (AWEB_ROOT / "docs" / "vectors" / "app-request-credential-v1.json").read_text(encoding="utf-8")
 )
 ONE_ENCODING_SIGNATURE = re.compile(r"[A-Za-z0-9+/]{85}[AQgw]")
 
@@ -57,7 +62,86 @@ def _sign(case: dict, purpose: str):
         team_id=payload["team_id"],
         body=case["body"].encode(),
         timestamp=payload["timestamp"],
+        **_installation(purpose),
     )
+
+
+def _installation(purpose: str) -> dict:
+    if purpose == APP_REQUEST:
+        return {
+            name: REQUEST_VECTOR["payload"][name]
+            for name in ("installation_id", "installation_generation")
+        }
+    return {}
+
+
+def _request_args() -> dict:
+    payload = REQUEST_VECTOR["payload"]
+    return {
+        "method": REQUEST_VECTOR["request"]["method"],
+        "target": payload["aud"] + REQUEST_VECTOR["request"]["path"],
+        "team_id": payload["team_id"],
+        "body": REQUEST_VECTOR["request"]["body"].encode(),
+        "timestamp": payload["timestamp"],
+        **_installation(APP_REQUEST),
+    }
+
+
+def _request_sign(*, object_api: bool, omit: tuple[str, ...] = (), **changes):
+    payload = REQUEST_VECTOR["payload"]
+    key = _key(REQUEST_VECTOR["keys"]["app"]["seed_hex"], payload["kid"])
+    args = _request_args() | changes
+    for field in omit:
+        del args[field]
+    if object_api:
+        return AppCredentialSigner(app_id=payload["app_id"], key=key, purpose=APP_REQUEST).sign(**args)
+    return sign_app_credential(
+        purpose=APP_REQUEST,
+        private_key=bytes(key.signing_key),
+        app_id=payload["app_id"],
+        key_id=key.kid,
+        **args,
+    )
+
+
+@pytest.mark.parametrize("object_api", [False, True])
+def test_app_request_matches_its_frozen_wire_vector(object_api):
+    credential = _request_sign(object_api=object_api)
+
+    assert credential.canonical_payload == REQUEST_VECTOR["canonical_payload"]
+    assert credential.signature_b64 == REQUEST_VECTOR["signature"]
+    assert credential.headers == REQUEST_VECTOR["headers"]
+    assert json.loads(credential.canonical_payload) == REQUEST_VECTOR["payload"]
+
+
+@pytest.mark.parametrize("object_api", [False, True])
+@pytest.mark.parametrize("field", ["installation_id", "installation_generation"])
+def test_app_request_requires_both_installation_bindings(object_api, field):
+    with pytest.raises(ValueError):
+        _request_sign(object_api=object_api, omit=(field,))
+
+
+@pytest.mark.parametrize("object_api", [False, True])
+@pytest.mark.parametrize("installation_id", [None, "", " ", 1, True])
+def test_app_request_refuses_missing_or_invalid_installation_id(object_api, installation_id):
+    with pytest.raises(ValueError):
+        _request_sign(object_api=object_api, installation_id=installation_id)
+
+
+@pytest.mark.parametrize("object_api", [False, True])
+@pytest.mark.parametrize("generation", [None, 0, -1, True, False, "3", 3.0])
+def test_app_request_refuses_missing_or_invalid_generation(object_api, generation):
+    with pytest.raises(ValueError):
+        _request_sign(object_api=object_api, installation_generation=generation)
+
+
+@pytest.mark.parametrize("field,value", [("installation_id", "inst_next"), ("installation_generation", 4)])
+def test_app_request_signature_binds_the_installation(field, value):
+    original = _request_sign(object_api=False)
+    changed = _request_sign(object_api=False, **{field: value})
+
+    assert changed.signature_b64 != original.signature_b64
+    assert json.loads(changed.canonical_payload)[field] == value
 
 
 def _purpose_of(case: dict) -> str | None:
@@ -116,6 +200,7 @@ def test_every_signature_has_the_one_accepted_encoding(purpose):
             team_id="backend:acme.com",
             body=b"",
             timestamp=f"2026-10-20T12:00:{second:02d}Z",
+            **_installation(purpose),
         )
         assert ONE_ENCODING_SIGNATURE.fullmatch(credential.signature_b64), credential.signature_b64
 

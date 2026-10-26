@@ -46,6 +46,10 @@ func TestDeployedFolioBinaryWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for name, app := range apps {
+		app.InstallationID = "fixture-" + name
+		apps[name] = app
+	}
 	if err := saveGrantAppToolsSnapshot(f.residentHome, &grantAppToolsSnapshot{Version: grantAppToolsSnapshotVersion, GrantID: appTestGrantID, TeamID: f.grant.TeamID, Apps: apps}); err != nil {
 		t.Fatal(err)
 	}

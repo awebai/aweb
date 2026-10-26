@@ -31,7 +31,6 @@ from aweb_naapp.runtime.installation import (
 )
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty, contact_sha256
 from aweb_naapp_testing import did_key
-from awid_service.testing import running_registry
 from aweb_naapp_testing.owner_acts import (
     APP_ID,
     AUDIENCE,
@@ -40,7 +39,9 @@ from aweb_naapp_testing.owner_acts import (
     team_owner,
 )
 from aweb_naapp_testing.webauthn import SoftAuthenticator
+from awid_service.testing import running_registry
 from nacl.signing import SigningKey
+from pgdbm import AsyncMigrationManager
 
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_policy import apply_change_policy_migrations, require_four_eyes
@@ -66,7 +67,15 @@ BOB = PrincipalKey(team_id=TEAM, principal_did="did:aw:2Uq51iFVLnqmgbVY3vLZtMD5P
 
 class World:
     def __init__(
-        self, db, passkeys, owner: TeamOwner, contacts: Contacts, registry, fence, admitted
+        self,
+        db,
+        passkeys,
+        owner: TeamOwner,
+        contacts: Contacts,
+        registry,
+        fence,
+        admitted,
+        credential_audit,
     ) -> None:
         self.registry = registry
         self.db = db
@@ -75,14 +84,16 @@ class World:
         self.contacts = contacts
         self.directory = OwnerDirectory(passkeys, db)
         self.admitted = admitted
+        self.credential_audit = credential_audit
 
-        async def installation(installation_id):
+        async def installation(installation_id, *, team_id: str | None = None):
             assert installation_id == admitted.installation_id
             return admitted
 
         self.console = OwnerConsole(
             db=db,
             passkeys=passkeys,
+            credential_audit=credential_audit,
             directory=self.directory,
             fence=fence,
             verifier=owner.verifier,
@@ -113,6 +124,11 @@ async def world(test_db_factory) -> AsyncIterator[World]:
         proof_context=PasskeyContexts(app_id=APP_ID),
     )
     await passkeys.migrate()
+    from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME
+
+    await AsyncMigrationManager(
+        db, migrations_path=str(MIGRATIONS_PATH), module_name=MODULE_NAME
+    ).apply_pending_migrations()
     await apply_roles_migrations(db)
     await apply_owner_act_migrations(db)
     await apply_owner_migrations(db)
@@ -126,7 +142,18 @@ async def world(test_db_factory) -> AsyncIterator[World]:
     async with db.transaction() as tx:
         admitted = await fence.admit(tx, installations.grant)
     async with running_registry(registry_db.config.get_dsn()) as registry:
-        yield World(db, passkeys, await team_owner(registry), contacts, registry, fence, admitted)
+        from tests.governance import credential_audit
+
+        owner = await team_owner(registry)
+        audit = await credential_audit(
+            db=db,
+            passkeys=passkeys,
+            owner=owner,
+            fence=fence,
+            admitted=admitted,
+            origin=ORIGIN,
+        )
+        yield World(db, passkeys, owner, contacts, registry, fence, admitted, audit)
 
 
 def _subject(principal: PrincipalKey, contact: str, installation_id: str = INSTALLATION_ID):
@@ -206,9 +233,11 @@ def _policy(scope: str, *, allow_requester_approval: bool = True) -> ActionPolic
 async def _enrol(world: World, contact: str) -> None:
     token = world.contacts.inbox[contact][-1]
     device = SoftAuthenticator(ORIGIN)
-    await world.passkeys.complete_enrolment(
-        token, device.create(await world.passkeys.enrolment_options(token))
-    )
+    prepared = await world.credential_audit.prepare_enrolment(token)
+    with world.credential_audit.prepared(prepared):
+        await world.passkeys.complete_enrolment(
+            token, device.create(await world.passkeys.enrolment_options(token)), fence=prepared
+        )
 
 
 async def test_the_team_owner_act_makes_the_first_owner(world: World) -> None:

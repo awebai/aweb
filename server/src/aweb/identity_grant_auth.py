@@ -61,6 +61,11 @@ def required_grant_scope(method: str, path: str) -> str | None:
     Raises HTTPException(403) for every path outside the grant surface.
     """
     method = method.upper()
+    if ((path in ("/v1/messaging/capabilities", "/v1/messaging/resolve", "/v1/messaging/prepare"))
+            or (method in _READ_METHODS and (path.startswith("/v1/messaging/participants/") or path.startswith("/v1/messaging/ingress-results/")))):
+        # Discovery has no send effects. Prepare/accept and result recovery
+        # enforce the native kind's send scope after decoding the typed DTO.
+        return None
     if path == "/v1/agents" and method in _READ_METHODS:
         return None
     if path == "/v1/conversations" and method in _READ_METHODS:

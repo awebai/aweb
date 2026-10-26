@@ -119,11 +119,11 @@ def test_present_route_sets_x_robots_tag(monkeypatch) -> None:
     db_dependency = present_route.dependant.dependencies[0].call
     app.dependency_overrides[db_dependency] = lambda: object()
 
-    async def fake_get_presented_document(_database, *, token: str) -> dict:
+    async def fake_get_presented_document(_database, *, runtime, token: str) -> dict:
         assert token == "secret-token"
         return {"body": "# Private", "theme": None, "allowed_assets": {}}
 
-    monkeypatch.setattr(folio_api, "get_presented_document", fake_get_presented_document)
+    monkeypatch.setattr(folio_api, "presented_document", fake_get_presented_document)
 
     response = TestClient(app).get("/present/secret-token")
 
@@ -345,10 +345,10 @@ def test_present_route_sets_content_security_policy(monkeypatch) -> None:
     db_dependency = present_route.dependant.dependencies[0].call
     app.dependency_overrides[db_dependency] = lambda: object()
 
-    async def fake_get_presented_document(_database, *, token: str) -> dict:
+    async def fake_get_presented_document(_database, *, runtime, token: str) -> dict:
         return {"body": "# Private", "theme": None, "allowed_assets": {}}
 
-    monkeypatch.setattr(folio_api, "get_presented_document", fake_get_presented_document)
+    monkeypatch.setattr(folio_api, "presented_document", fake_get_presented_document)
     response = TestClient(app).get("/present/secret-token")
 
     assert response.status_code == 200
@@ -646,7 +646,9 @@ def test_raw_figure_cannot_inject_non_folio_class() -> None:
 def test_repo_keeps_initial_migration_and_adds_forward_session_migration() -> None:
     migrations = sorted((Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations").glob("*.sql"))
 
-    assert [migration.name for migration in migrations] == ["001_initial.sql", "002_edit_sessions.sql"]
+    assert [migration.name for migration in migrations] == [
+        "001_initial.sql", "002_edit_sessions.sql", "003_installation_capabilities.sql",
+    ]
 
 
 def test_initial_migration_contains_team_scoped_assets_and_themes() -> None:

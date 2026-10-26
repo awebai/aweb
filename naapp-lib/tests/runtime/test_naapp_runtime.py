@@ -13,9 +13,9 @@ from typing import Annotated
 import httpx
 import pytest
 from aweb_naapp_testing import Member, attested, did_key
-from awid_service.testing import REGISTRY_URL
 from awid.attestation_records import ATTESTATION_HEADER
 from awid.did import stable_id_from_did_key
+from awid_service.testing import REGISTRY_URL
 from fastapi import Depends, FastAPI, Request
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
@@ -24,6 +24,7 @@ from pydantic_settings import SettingsConfigDict
 from aweb_naapp.manifest import ManifestError, write_manifest_file
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import Authorization, DeclaredTool, Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import Principal
 
@@ -67,14 +68,14 @@ class InstalledTeams:
     def __init__(self, scopes_by_team: dict[str, frozenset[str]]) -> None:
         self.scopes_by_team = scopes_by_team
 
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         scopes = self.scopes_by_team.get(team_id)
         if scopes is None:
             return None
         return Grant(
             team_id=team_id,
             scopes=scopes,
-            fresh_until=time.monotonic() + 60,
+            fresh_until=time.monotonic_ns() + seconds_to_ns(60),
             installation_id=None,
             generation=None,
         )

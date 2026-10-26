@@ -15,6 +15,7 @@ from httpx import ASGITransport, AsyncClient
 from aweb.app_credentials import (
     APP_EVENT,
     APP_GRANT_READ,
+    APP_REQUEST,
     HOOK_RESOLVE,
     PURPOSES,
     verify_app_credential,
@@ -37,13 +38,15 @@ def _app(aweb_db) -> FastAPI:
 
     @app.post("/probe/{purpose}")
     async def probe(purpose: str, request: Request):
-        credential = await verify_app_credential(request, aweb_db, purpose)
-        return {"purpose": credential.purpose, "team_id": credential.team_id, "kid": credential.kid}
+        credential = await verify_app_credential(request, aweb_db, purpose,
+            installation=getattr(app.state, "installation_snapshot", None))
+        return {"purpose": credential.purpose, "team_id": credential.team_id, "kid": credential.kid,
+                "installation_id": credential.installation_id, "generation": credential.installation_generation}
 
     return app
 
 
-def _headers(*, signing_key: bytes, did_key: str, kid: str, path: str, body: bytes, prefix: str, auth: str, team_id: str = TEAM_ID):
+def _headers(*, signing_key: bytes, did_key: str, kid: str, path: str, body: bytes, prefix: str, auth: str, team_id: str = TEAM_ID, claims=None):
     timestamp = datetime.now(timezone.utc).isoformat()
     canonical = canonical_json_bytes(
         {
@@ -58,6 +61,7 @@ def _headers(*, signing_key: bytes, did_key: str, kid: str, path: str, body: byt
             "did_key": did_key,
             "body_sha256": hashlib.sha256(body).hexdigest(),
             "timestamp": timestamp,
+            **(claims or {}),
         }
     )
     return {
@@ -228,3 +232,26 @@ async def test_revoked_or_other_team_app_keys_are_refused(installed):
 
     assert revoked.status_code == 403, revoked.text
     assert other_team.status_code == 403, other_team.text
+
+
+@pytest.mark.asyncio
+async def test_app_request_is_purpose_and_installation_bound(installed):
+    key, did = _make_app_keypair()
+    await _register_app_key(installed["db"], did_key=did, kid="request-only", purposes=[APP_REQUEST])
+    installed["app"].state.installation_snapshot = dict(installation_id="installation-1", generation=3, state="active", origin_verified=True)
+    path = "/probe/app-request"
+    args = dict(signing_key=key, did_key=did, kid="request-only", path=path, body=b"{}")
+    claims = dict(installation_id="installation-1", installation_generation=3)
+    valid = await _post(installed["app"], path, b"{}", _signed_for(APP_REQUEST, **args, claims=claims))
+    assert valid.status_code == 200, valid.text
+    assert (valid.json()["installation_id"], valid.json()["generation"]) == ("installation-1", 3)
+    for changes in ({"installation_id": "previous-install"}, {"installation_generation": 2},
+                    {"installation_generation": True}, {"unexpected_authority": True}):
+        refused = await _post(installed["app"], path, b"{}", _signed_for(APP_REQUEST, **args, claims={**claims, **changes}))
+        expected_status = 403 if "installation_id" in changes or type(changes.get("installation_generation")) is int else 401
+        assert refused.status_code == expected_status, refused.text
+    wrong_purpose = await _post(installed["app"], path, b"{}", _signed_for(APP_EVENT, **args, claims=claims))
+    assert wrong_purpose.status_code == 401, wrong_purpose.text
+    installed["app"].state.installation_snapshot["state"] = "uninstalled"
+    retired = await _post(installed["app"], path, b"{}", _signed_for(APP_REQUEST, **args, claims=claims))
+    assert retired.status_code == 403, retired.text

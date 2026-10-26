@@ -16,7 +16,7 @@ to refresh it.
 | Family | Commands |
 | --- | --- |
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
-| Identity | `auth`, `custody`, `id`, `mcp-config`, `team`, `whoami` |
+| Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
@@ -107,6 +107,7 @@ Flags:
 - `--name string Identity/member name (global address name with --global, local routing name otherwise)`
 - `--new-account Explicitly create a new hosted aweb.ai account`
 - `--new-team Explicitly create a new self-hosted/BYOD team`
+- `--org string Organization slug or ID for --workspace-team`
 - `--print-exports Print shell export lines after JSON output`
 - `--remove-notify-hook Remove only the exact aw notify PostToolUse hook from current directory and repository root settings, with backups (standalone local action)`
 - `--role string Compatibility alias for --role-name`
@@ -283,7 +284,7 @@ Start browser-based device login for this host aw CLI
 
 Flags:
 - `-h, --help help for login`
-- `--scope string CLI authorization scope (cli.workspace_team|cli.team_admission) (default "cli.workspace_team")`
+- `--scope string CLI authorization scopes (cli.workspace_team cli.org_create by default; cli.team_admission is separate) (default "cli.workspace_team cli.org_create")`
 - `--timeout duration Maximum time to wait for browser approval (default 10m0s)`
 
 ## `auth logout`
@@ -434,12 +435,28 @@ Create a self-custodial global identity in .aw/ by claiming DOMAIN/NAME
 in a namespace you control. This mints a did:aw, stores the local signing
 key material, and atomically claims the global address in AWID.
 
+With --org and --team-id, create an ordinary hosted member
+in an explicit fresh --identity-home root. The local key stays in that root;
+the hosted operator authorizes the address and certificate. Retry with the
+same root and parameters after a lost response. A completed root refuses
+another creation; use ordinary commands with its installed identity.
+Pass inbound-mode --json's team_id unchanged as --team-id; Cloud resolves
+the service UUID or canonical name:namespace within the chosen organization.
+No namespace controller key
+or API key is used for that path. With --owner-identity-home, the existing
+organization owner's native key authorizes creation using its bound service;
+otherwise the host's human CLI login authorizes it.
+
 Flags:
 - `--domain string Namespace domain for the global identity address`
 - `-h, --help help for create`
+- `--inbound-mode string Hosted inbound delivery mode (default team-and-contacts; requires --org)`
 - `--name string Global identity name (address name under --domain)`
+- `--org string Hosted organization slug or ID (human CLI login or explicit owner principal)`
+- `--owner-identity-home string Authorize --org creation with this owner's absolute native credential directory`
 - `--registry string Registry origin override (default: api.awid.ai)`
 - `--skip-dns-verify Skip the DNS TXT verification prompt and lookup`
+- `--team-id string Chosen hosted team service UUID or canonical name:namespace (requires --org)`
 
 ## `id encryption-key`
 
@@ -514,7 +531,7 @@ Flags:
 Mint a session grant and write a self-contained grant home
 
 Flags:
-- `--app-tool stringArray Legacy one-mint app:verb selection; replaces the resident approval catalog for this mint only`
+- `--app-tool stringArray Select app:verb tools for this grant; requires plugin install approval for this team's current installation`
 - `--bundle stringArray Grant scope bundle, repeatable or comma-separated (normal-agent)`
 - `--custody-socket string Resident custody Unix socket path to write into grant.yaml, or auto for the resident identity home's default custody socket`
 - `-h, --help help for mint`
@@ -932,6 +949,7 @@ Flags:
 - `--hosted Create a hosted sibling using the selected team certificate`
 - `--name string Team name`
 - `--namespace string Namespace domain`
+- `--org string Hosted organization slug or ID (requires aw auth login)`
 - `--registry string Registry origin override`
 - `--request-id string Hosted create UUID (reuse the same UUID and parameters to replay)`
 - `--show-token Print the hosted invite token in text output (JSON includes it)`
@@ -1214,6 +1232,60 @@ Flags:
 - `--channel Output stdio channel config instead of HTTP MCP config`
 - `-h, --help help for mcp-config`
 
+## `org`
+
+### `org`
+
+Manage organizations using host CLI authorization, not an agent or team key.
+
+For an existing account, propose <username>-<hostname>; for a new account,
+propose the hostname. Distro defaults such as omarchy, archlinux and localhost
+should go straight to an available suggestion. Confirm the proposed name before
+creating it. The server never silently suffixes a requested organization slug.
+Use org availability for a read-only plan; it creates no keys or resources.
+
+Subcommands:
+- `availability` Check an organization name without creating anything
+- `create` Create or recover an organization you own
+- `list` List organizations where you are an owner or admin
+
+Flags:
+- `-h, --help help for org`
+
+## `org availability`
+
+### `org availability`
+
+Check an organization name without creating anything
+
+Flags:
+- `-h, --help help for availability`
+
+## `org create`
+
+### `org create`
+
+Manage organizations using host CLI authorization, not an agent or team key.
+
+For an existing account, propose <username>-<hostname>; for a new account,
+propose the hostname. Distro defaults such as omarchy, archlinux and localhost
+should go straight to an available suggestion. Confirm the proposed name before
+creating it. The server never silently suffixes a requested organization slug.
+Use org availability for a read-only plan; it creates no keys or resources.
+
+Flags:
+- `-h, --help help for create`
+- `--name string Optional organization display name`
+
+## `org list`
+
+### `org list`
+
+List organizations where you are an owner or admin
+
+Flags:
+- `-h, --help help for list`
+
 ## `team`
 
 ### `team`
@@ -1281,6 +1353,7 @@ Flags:
 - `--expect-account string Expected hosted account ID that owns this workspace's default team`
 - `-h, --help help for ensure`
 - `--label string Optional display label for the workspace's default team`
+- `--org string Organization slug or ID for workspace ownership and enrollment`
 - `--workspace-key string OATS canonical format-1 workspace key`
 
 ## `team invite`
@@ -1459,6 +1532,9 @@ All --agent/--profile specs populate agents/instances for aw team admin up; only
 --home with a single spec uses that spec for the root workspace profile.
 Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.
 
+With --org, create a hosted team using human CLI authorization and return an invite.
+This explicit mode creates no local identity or profile; accept the invite separately.
+
 Flags:
 - `--agent stringArray Agent spec [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global]`
 - `--blueprint string With --agent/--profile, default public Library blueprint for profile-only selectors; without agents, materialize all profiles in a local blueprint directory`
@@ -1472,10 +1548,13 @@ Flags:
 - `--library-url string Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)`
 - `--name string Team name`
 - `--namespace string Namespace domain for --byot`
+- `--org string Hosted organization slug or ID (requires aw auth login)`
 - `--profile stringArray Deprecated alias for --agent; use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]`
 - `--registry string Registry origin override for --byot`
+- `--request-id string Hosted create UUID (reuse to replay)`
 - `--runtime string Materialization runtime for agent/profile homes (claude-code|codex|pi|local-shell; default claude-code)`
 - `--service string Hosted service URL for dashboard guidance`
+- `--show-token Print the hosted invite token in text output`
 - `--username string Hosted username to create when founding through managed aweb onboarding`
 
 ## `team admin extend`
@@ -3789,9 +3868,10 @@ Manage aw plugins
 Subcommands:
 - `install` Install a plugin into the trusted aw plugin directory
 - `list` List installed plugins
-- `remove` Remove an installed plugin
+- `remove` Remove a local plugin or this home's app approval; keep the team installation
 - `request` Ask a team administrator to install an app; grants no tools or scopes
 - `reserved-names` Emit reserved top-level aw app ids
+- `uninstall` Uninstall an app from the selected team's server installation
 - `update` Update an installed manifest plugin
 
 Flags:
@@ -3825,7 +3905,8 @@ Flags:
 
 ### `plugin remove`
 
-Remove an installed plugin
+Remove a local plugin or this home's app approval only. The team's server installation is unchanged.
+Use aw plugin uninstall to remove the team's server installation.
 
 Flags:
 - `-h, --help help for remove`
@@ -3847,6 +3928,17 @@ Emit reserved top-level aw app ids
 
 Flags:
 - `-h, --help help for reserved-names`
+
+## `plugin uninstall`
+
+### `plugin uninstall`
+
+Uninstall an app from the selected team's server installation. Requires current install-admin authority.
+Local plugin files and approvals are retained; use aw plugin remove for local removal only.
+
+Flags:
+- `--expected-generation int Require this installation generation (default: read the team's current generation)`
+- `-h, --help help for uninstall`
 
 ## `plugin update`
 

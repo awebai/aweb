@@ -439,7 +439,11 @@ GET /v1/apps/self/hooks/{catalog_id}/{catalog_version}/{hook}/productions
   and caches it under §1's rules. It never takes an origin from an event or a
   request. When the team's `aweb.team-server/1` record changes, the consumer
   re-resolves; events received before the change keep verifying from the key
-  evidence recorded at their ingest.
+  evidence recorded at their ingest. [Terminal delivery](../hook-terminal-delivery.md)
+  additionally requires a delivery-carried exact-event/old-target capsule;
+  this key listing alone never authorizes an ended binding. Historical event
+  and capsule windows differ from the current retry signer’s validity. No
+  own-bindings or installation-read authority is restored after uninstall.
 - **Client.** The client keeps a cache of at most 60 s and fails closed on
   expiry plus refresh failure, as grant status does.
 - **Dependency.** Bindings are child rows of the installation (the hooks
@@ -477,7 +481,10 @@ and `httpx` (`naapp-lib/pyproject.toml` on `agents/aweb-protocol-expert-naapp-ve
     until it is measured that no deployment uses it (open question 5).
 - `TeamGrantSource`: the remote implementation of B1's `GrantSource`
   (`aweb_naapp.runtime.authorization`), using
-  `async grant_for(team_id) -> Grant | None`:
+  `async grant_for(team_id, certificate_id=None) -> Grant | None`:
+  - member admission passes the already verified principal's certificate ID
+    through to discovery, so the shared AWID cache can read per-certificate
+    status when the app has no AWID service token;
   - an active installation of this app returns
     `Grant(team_id, scopes, fresh_until, installation_id, generation)`, where
     `fresh_until` is the client's monotonic time when it asked plus

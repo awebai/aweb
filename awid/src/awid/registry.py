@@ -79,14 +79,16 @@ _TEAM_METADATA_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # window below, the hard worst case is 2x this value; the cache lives in Redis
 # and survives process restarts, so the TTL is the only bound.
 _TEAM_REVOCATIONS_CACHE_TTL_SECONDS = 60
-# Registry-outage grace for the revocations tier ONLY (adopted, Juan
-# 2026-08-17; see trust-model.md "Registry availability posture"). When a
-# revocation refresh fails, the last-known-good set is served — loudly logged —
+# Team-controller keys share this freshness bound, with synchronous refresh.
+# Registry-outage grace adopted for revocations (Juan 2026-08-17; see
+# trust-model.md "Registry availability posture"); team-controller keys share
+# this same bound (F-19/F-20). When a revocation refresh fails, the
+# last-known-good set is served — loudly logged —
 # for as long as the data is at most this old; past it the read fails closed
 # (503 upstream). This is a constant, not a configuration knob: raising it is a
 # trust-model change and belongs next to the rulings in trust-model.md. The
 # grace decision is made on the stored fetch timestamp (data age), not on Redis
-# expiry; Redis merely retains revocation entries long enough for the grace to
+# expiry; Redis merely retains the entries long enough for the grace to
 # be decidable.
 _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS = 15 * 60
 _TEAM_CERTIFICATES_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
@@ -831,6 +833,13 @@ class RegistryClient:
             return None
         return team.team_did_key
 
+    async def get_team_public_key_fresh(self, domain: str, name: str) -> str | None:
+        """Read current team authority, without cached or outage-grace data."""
+        # Bind to the HTTP implementation: self.get_team() can dispatch to
+        # CachedRegistryClient's stale-while-revalidate path.
+        team = await RegistryClient.get_team(self, domain, name)
+        return team.team_did_key if team is not None else None
+
     async def get_team(self, domain: str, name: str) -> Team | None:
         """Fetch team metadata from awid."""
         data = await self._request_optional_json(
@@ -847,6 +856,25 @@ class RegistryClient:
         without a stale cache result."""
         return await self.get_team(domain, name)
 
+    async def get_team_server_record(self, domain: str, name: str) -> dict[str, Any] | None:
+        """Read the signed envelope, or None on 404; the caller verifies current team authority."""
+        return await self._request_optional_json(
+            "GET",
+            f"/v1/namespaces/{domain}/teams/{name}/server",
+            registry_url=await self._registry_url_for_domain(domain),
+        )
+
+    async def publish_team_server_record(
+        self, domain: str, name: str, record: dict[str, Any], signature: str,
+    ) -> dict[str, Any]:
+        """PUT a team-key-signed envelope; registry refusals raise RegistryError."""
+        return await self._request_json(
+            "PUT",
+            f"/v1/namespaces/{domain}/teams/{name}/server",
+            json={"record": record, "signature": signature},
+            registry_url=await self._registry_url_for_domain(domain),
+        )
+
     async def get_team_revocations(self, domain: str, name: str) -> set[str]:
         """Fetch the complete set of revoked certificate IDs for a team.
 
@@ -861,6 +889,10 @@ class RegistryClient:
         truncated page as complete.
         """
         return (await self._scan_team_revocations(domain, name)).certificate_ids
+
+    async def get_team_revocations_fresh(self, domain: str, name: str) -> set[str]:
+        """Read the complete live revocation set; propagate any registry failure."""
+        return await RegistryClient.get_team_revocations(self, domain, name)
 
     async def _scan_team_revocations(
         self,
@@ -968,6 +1000,19 @@ class RegistryClient:
                 )
             seen_cursors.add(next_cursor)
             cursor = next_cursor
+
+    async def list_team_certificates_fresh(
+        self,
+        domain: str,
+        name: str,
+        *,
+        active_only: bool = True,
+        signing_key: bytes | None = None,
+    ) -> list[TeamCertificate]:
+        """Read current certificates without stale fallback, on cached clients too."""
+        return await RegistryClient.list_team_certificates(
+            self, domain, name, active_only=active_only, signing_key=signing_key,
+        )
 
     async def register_team_certificate(
         self,
@@ -1399,10 +1444,47 @@ class CachedRegistryClient(RegistryClient):
         )
 
     async def get_team_public_key(self, domain: str, name: str) -> str | None:
-        team = await self.get_team(domain, name)
-        if team is None:
+        """Read controller authority with the revocation freshness/grace bounds.
+
+        Refresh synchronously after freshness expires. Team metadata's longer
+        TTL and stale-while-revalidate path must never authorize a controller.
+        """
+        cache_key = self._team_public_key_cache_key(domain, name)
+        ttl_seconds = _TEAM_REVOCATIONS_CACHE_TTL_SECONDS
+        grace_seconds = _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
+        cached = await self._read_cache_entry(cache_key, decode=lambda value: value)
+        fetched_at = _cache_entry_fetched_at(cached, ttl_seconds) if cached is not None else None
+        if (
+            cached is not None and fetched_at is not None
+            and max(0, _cache_now() - fetched_at) < ttl_seconds
+        ):
+            return cached["value"]
+        try:
+            # Bind to HTTP, bypassing get_team's metadata cache entirely.
+            team = await RegistryClient.get_team(self, domain, name)
+        except Exception as exc:
+            age = max(0, _cache_now() - fetched_at) if fetched_at is not None else None
+            if cached is not None and age is not None and age <= grace_seconds:
+                logger.warning(
+                    "AWID team key refresh failed for team %s/%s; "
+                    "serving last-known-good team key aged %ds "
+                    "(outage grace bound %ds): %s",
+                    domain, name, age, grace_seconds, exc,
+                )
+                return cached["value"]
+            raise
+        key = team.team_did_key if team is not None else None
+        if not key:
+            # A successful not-found read replaces prior authority; it is not
+            # an outage and must not let that old key reappear during grace.
+            await self._invalidate_keys(cache_key)
             return None
-        return team.team_did_key
+        await self._write_cache_entry(
+            cache_key, value=key, ttl_seconds=ttl_seconds,
+            encode=lambda value: value,
+            retention_seconds=ttl_seconds + grace_seconds,
+        )
+        return key
 
     async def get_team(self, domain: str, name: str) -> Team | None:
         return await self._cached_read(
@@ -1427,7 +1509,7 @@ class CachedRegistryClient(RegistryClient):
 
     async def get_team_revocations(self, domain: str, name: str) -> set[str]:
         # Revocations get a dedicated read path rather than _cached_read: they
-        # are the only tier with an outage grace (see
+        # and controller keys have an outage grace (see
         # _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS). Freshness, staleness, and
         # grace are all decided on the age of the cached data (its stored fetch
         # timestamp), never on Redis expiry alone.
@@ -1628,7 +1710,10 @@ class CachedRegistryClient(RegistryClient):
         try:
             await self._invalidate_team_certificate_cache_keys(domain, name)
         finally:
-            await self._invalidate_keys(self._team_revocations_cache_key(domain, name))
+            await self._invalidate_keys(
+                self._team_revocations_cache_key(domain, name),
+                self._team_public_key_cache_key(domain, name),
+            )
 
     async def register_did(
         self,
@@ -1997,6 +2082,7 @@ class CachedRegistryClient(RegistryClient):
         )
         await self._invalidate_keys(
             self._team_metadata_cache_key(domain, name),
+            self._team_public_key_cache_key(domain, name),
             self._team_revocations_cache_key(domain, name),
             *certificate_keys,
         )
@@ -2119,6 +2205,9 @@ class CachedRegistryClient(RegistryClient):
 
     def _team_revocations_cache_key(self, domain: str, name: str) -> str:
         return f"awid:registry_cache:v1:team_revocations:{self.registry_url}:{domain}/{name}"
+
+    def _team_public_key_cache_key(self, domain: str, name: str) -> str:
+        return f"awid:registry_cache:v1:team_public_key:{self.registry_url}:{domain}/{name}"
 
     def _team_certificates_cache_key(
         self,

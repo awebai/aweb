@@ -10,8 +10,10 @@ There is no cross-server lease and no rollback of already committed work.
 from __future__ import annotations
 
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -19,10 +21,11 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.runtime.authorization import Grant, GrantSource, GrantUnavailable
+from aweb_naapp.runtime.clock import NANOSECONDS_PER_MICROSECOND, MonotonicClock, seconds_to_ns
 
 MIGRATIONS_PATH = Path(__file__).parent / "installation_migrations"
 MIGRATIONS_MODULE = "aweb_naapp_installation"
-MAX_FRESHNESS_SECONDS = 60.0
+MAX_FRESHNESS_SECONDS = 60
 
 
 class InstallationStatus(Protocol):
@@ -39,9 +42,11 @@ class InstallationStatus(Protocol):
     @property
     def generation(self) -> int | None: ...
     @property
-    def fresh_until(self) -> float: ...
+    def fresh_until(self) -> int: ...
     @property
     def granted_scopes(self) -> frozenset[str]: ...
+    @property
+    def installed_at(self) -> datetime: ...
 
 
 class InstallationGrantSource(GrantSource, Protocol):
@@ -72,6 +77,76 @@ class AdmittedInstallation:
     app_id: str
     installation_id: str
     generation: int
+
+
+@dataclass(frozen=True)
+class InstallationPermit:
+    """A fresh observation; check its SQL fence before locking app resources."""
+    store: InstallationFence
+    status: InstallationStatus
+    admitted: AdmittedInstallation
+
+    async def check(self, tx: TransactionManager) -> None:
+        await self.store.check(tx, self.admitted)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[TransactionManager]:
+        """Fence before resources and recheck freshness before their commit."""
+        async with self.store.db.transaction() as tx:
+            await self.check(tx)
+            yield tx
+            await self.check(tx)
+
+    def database(self) -> InstallationDatabase:
+        """A SQL facade for member handlers using this exact admission."""
+        return InstallationDatabase(self)
+
+    def bind(self, *, installation_id: str | None, created_at: datetime, refused: bool = False) -> str:
+        """Bind a legacy capability only to an installation older than that row.
+
+        The caller persists this ID or a permanent refusal under the resource
+        lock. No future installation may retry adoption of a refused row.
+        Database clock skew is outside this creation-order rule.
+        """
+        if refused:
+            raise InstallationRefused("installation_binding_refused", 403, "The capability's installation binding was refused")
+        if installation_id is not None:
+            if installation_id != self.admitted.installation_id:
+                raise InstallationRefused("installation_replaced", 403, "The capability belongs to a retired installation")
+            return installation_id
+        installed_at = self.status.installed_at
+        if not isinstance(installed_at, datetime) or installed_at.tzinfo is None or created_at.tzinfo is None:
+            raise _unavailable("A typed installation creation time is required")
+        if installed_at >= created_at:
+            raise InstallationRefused("installation_binding_refused", 403, "The current installation was created after this capability")
+        return self.admitted.installation_id
+
+
+class InstallationDatabase:
+    """Route SQL through a permit; nested app transactions stay on its lock.
+
+    This contains no authority logic or cache. A handler's explicit transaction
+    gets the shared fence before app locks and rechecks it before committing.
+    Single statements use the same transaction path.
+    """
+
+    def __init__(self, permit: InstallationPermit) -> None:
+        self.permit = permit
+
+    def transaction(self):
+        return self.permit.transaction()
+
+    async def execute(self, query, *args, **kwargs):
+        async with self.transaction() as tx:
+            return await tx.execute(query, *args, **kwargs)
+
+    async def fetch_one(self, query, *args, **kwargs):
+        async with self.transaction() as tx:
+            return await tx.fetch_one(query, *args, **kwargs)
+
+    async def fetch_all(self, query, *args, **kwargs):
+        async with self.transaction() as tx:
+            return await tx.fetch_all(query, *args, **kwargs)
 
 
 class InstallationDispatchFence:
@@ -121,7 +196,7 @@ class InstallationFence:
         app_id: str,
         grants: InstallationGrantSource,
         on_retire: RetirementHook | None = None,
-        monotonic: Callable[[], float] = time.monotonic,
+        monotonic: MonotonicClock = time.monotonic_ns,
     ) -> None:
         if not app_id:
             raise ValueError("an installation fence needs its app ID")
@@ -160,10 +235,10 @@ class InstallationFence:
             installation_id=grant.installation_id, generation=grant.generation,
         )
 
-    def _remaining(self, grant: Grant) -> float:
+    def _remaining(self, grant: Grant) -> int:
         self._identity(grant)
         remaining = grant.fresh_until - self.monotonic()
-        if not 0 < remaining <= MAX_FRESHNESS_SECONDS:
+        if not 0 < remaining <= seconds_to_ns(MAX_FRESHNESS_SECONDS):
             raise _unavailable()
         return remaining
 
@@ -227,10 +302,10 @@ class InstallationFence:
             """UPDATE {{tables.installation_fences}}
                SET installation_id = $3, generation = $4, state = 'active',
                    active_installation_id = $3,
-                   fresh_until = $5::timestamptz + $6 * interval '1 second'
+                   fresh_until = $5::timestamptz + $6::bigint * interval '1 microsecond'
                WHERE app_id = $1 AND team_id = $2""",
             self.app_id, grant.team_id, grant.installation_id, grant.generation,
-            observed_at, remaining,
+            observed_at, remaining // NANOSECONDS_PER_MICROSECOND,
         )
         return self._identity(grant)
 
@@ -242,7 +317,7 @@ class InstallationFence:
                 self.app_id, team_id,
             )
 
-    async def refresh(self, team_id: str) -> None:
+    async def refresh(self, team_id: str) -> InstallationStatus:
         """Observe authority BEFORE the dispatch transaction/intent row lock.
 
         Uses ordinary ``status_for`` cache semantics, never a forced refresh.
@@ -291,6 +366,19 @@ class InstallationFence:
                     self.app_id, team_id, status.installation_id, status.generation,
                     status.state == "uninstalled",
                 )
+
+        return status
+
+    async def permit(self, team_id: str) -> InstallationPermit:
+        """Refresh outside app locks, then require an active typed installation."""
+        status = await self.refresh(team_id)
+        if status.state != "active":
+            raise InstallationRefused("installation_inactive", 403, "The app installation is inactive")
+        assert status.installation_id is not None and status.generation is not None
+        return InstallationPermit(self, status, AdmittedInstallation(
+            team_id=team_id, app_id=self.app_id,
+            installation_id=status.installation_id, generation=status.generation,
+        ))
 
     async def check(self, tx: TransactionManager, admitted: AdmittedInstallation) -> None:
         """SQL-only standalone check; acquire this before app resource locks.

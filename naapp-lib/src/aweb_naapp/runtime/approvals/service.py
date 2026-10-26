@@ -29,6 +29,14 @@ from typing import Any, overload
 
 from pgdbm.core import TransactionManager
 
+from aweb_naapp.runtime.approvals.dispatch_fence import (
+    DispatchAuthority,
+    DispatchBinding,
+    PreparedDispatch,
+    check_dispatch,
+    prepare_continuation,
+    prepare_dispatches,
+)
 from aweb_naapp.runtime.approvals.model import (
     DISPATCHER_OUTCOMES,
     RECONCILED_OUTCOMES,
@@ -811,6 +819,66 @@ class Approvals:
         )
 
     # The trusted dispatcher
+
+    async def prepare_dispatch(
+        self,
+        tx: TransactionManager,
+        approval_id: str,
+        request: Mapping[str, Any],
+        operation_id: str,
+        *,
+        authority: DispatchAuthority,
+    ) -> PreparedDispatch:
+        """Prepare a single final fence before dispatch locks. For runs use the batch API."""
+        return (
+            await self.prepare_dispatches(
+                tx,
+                [DispatchBinding(approval_id, request, operation_id)],
+                authority=authority,
+            )
+        )[0]
+
+    async def prepare_dispatches(
+        self,
+        tx: TransactionManager,
+        dispatches: Sequence[DispatchBinding],
+        *,
+        authority: DispatchAuthority,
+    ) -> tuple[PreparedDispatch, ...]:
+        """Prepare whole app authority, B2 row, then request-lock unions before S3.
+
+        No consumption, outcomes or audit writes. Use the original caller tx;
+        an adapter already prepared before admission must be idempotent here.
+        """
+        return await prepare_dispatches(self, tx, dispatches, authority=authority)
+
+    async def prepare_continuation(
+        self,
+        tx: TransactionManager,
+        approval_id: str,
+        request: Mapping[str, Any],
+        operation_id: str,
+        *,
+        authority: DispatchAuthority,
+    ) -> PreparedDispatch:
+        """Prepare the final fence of the one repeat of a dispatch whose outcome is unknown.
+
+        operation_id is the original consumed operation, whose outcome must be
+        OUTCOME_UNKNOWN. Like prepare_dispatch it writes nothing: the
+        approval's outcome changes only when the original is reconciled.
+        """
+        return await prepare_continuation(
+            self, tx, DispatchBinding(approval_id, request, operation_id), authority=authority
+        )
+
+    async def check_dispatch(self, tx: TransactionManager, prepared: PreparedDispatch) -> None:
+        """Check the prepared attempt, with no new locks or writes.
+
+        This issues no may_send and does not change stable retrieval. The app
+        keeps its original admission and sole-publication association and must
+        check all prepared deadlines after the last await of an aggregate run.
+        """
+        await check_dispatch(self, tx, prepared)
 
     async def admit(
         self,

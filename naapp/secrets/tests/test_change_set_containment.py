@@ -8,18 +8,21 @@ from datetime import UTC, datetime, timedelta
 
 import asyncpg
 import pytest
+from aweb_naapp.roles import hold_role
 from aweb_naapp.runtime.approvals import ApprovalState
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.containment import disable_installation, disable_secret_tree
 from aweb_secrets.custody import CustodyUnavailable, SealContext, encode_value
-from aweb_secrets.owners import approver_scope
+from aweb_secrets.owners import OWNER_ROLE, approver_scope, owner_scope
 from aweb_secrets.revisions import config_revision
 from aweb_secrets.secret import SecretRecord
 from aweb_secrets.tokens import TokenKey
-from tests.test_change_sets import CAROL, TEAM, by_member, change_set, decide, draft
+from tests.governance import view
+from tests.test_change_sets import ALICE, CAROL, TEAM, by_member, change_set, decide, draft
 from tests.test_change_sets import world as _world
+from tests.test_containment_console import login_session
 from tests.test_use_approval_lineage import child, request_child, seed
 from tests.test_use_approvals import SECRET
 from tests.test_use_approvals import uses as _uses
@@ -77,6 +80,7 @@ async def confirm(w, tx, change):
         operation_id=f"apply-{change['change_id']}",
         fence=w.fence,
         admitted=w.admitted,
+        governance_view=view(),
     )
 
 
@@ -201,6 +205,9 @@ async def test_actual_confirmation_prelocks_forest_before_consuming_its_approval
     low, *later = sorted([confirmation_id, *use_ids])
     scope = approver_scope(INSTALLATION_ID, TEAM, "finance")
     holder = await w.passkeys.designated_approver(scope)
+    session = await login_session(
+        w, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did), w.devices["alice@acme.com"]
+    )
     started = asyncio.get_running_loop().create_future()
 
     async def apply():
@@ -211,6 +218,12 @@ async def test_actual_confirmation_prelocks_forest_before_consuming_its_approval
     task = None
     try:
         async with w.db.transaction() as retirement:
+            await w.fence.check(retirement, w.admitted)
+            owner = await w.directory.owner_of(retirement, session.scope)
+            assert owner == ALICE and await hold_role(retirement, owner, OWNER_ROLE)
+            prepared = await w.credential_audit.prepare_containment(
+                retirement, admitted=w.admitted, session=session
+            )
             pid = await retirement.fetch_value("SELECT pg_backend_pid()")
             await retirement.fetch_value(
                 "SELECT approval_id FROM {{tables.approvals}} WHERE approval_id=$1 FOR UPDATE",
@@ -239,9 +252,12 @@ async def test_actual_confirmation_prelocks_forest_before_consuming_its_approval
                             "SELECT secret_id FROM {{tables.secrets}} WHERE secret_id=$1 FOR UPDATE NOWAIT",
                             record.secret_id,
                         )
-            await w.passkeys.retire_in(
-                retirement, scope=scope, subject=holder.subject, authorized_by="owner"
-            )
+            with w.credential_audit.prepared(prepared):
+                await w.passkeys.retire_in(
+                    retirement, scope=scope, subject=holder.subject, authorized_by=session.subject
+                )
+            await w.fence.check(retirement, w.admitted)
+            assert session.expires_at > datetime.now(UTC)
         result = await asyncio.wait_for(task, 10)
         assert set(result.affected_secret_ids) == {root.secret_id, descendant.secret_id}
     finally:

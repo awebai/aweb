@@ -47,6 +47,8 @@ from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
+from aweb_naapp.runtime.clock import seconds_to_ns
+
 logger = logging.getLogger(__name__)
 
 # At most 20,000 certificate records per refresh; incomplete history is never cached.
@@ -97,7 +99,7 @@ class Principal:
 class MembershipProof:
     """Checked mint evidence and its original AWID facts' freshness window.
 
-    Both times use time.monotonic(): checked_at is the facts' fetch-start,
+    Both times use time.monotonic_ns(): checked_at is the facts' fetch-start,
     fresh_until their expiry, never renewed by issuing a proof on a cache hit.
     This object is in-process only: never serialize, persist, accept it from a
     request or compare it across processes. Under the link lock, the consumer
@@ -108,8 +110,16 @@ class MembershipProof:
     team_id: str
     certificate_id: str
     team_did_key: str
-    checked_at: float
-    fresh_until: float
+    checked_at: int
+    fresh_until: int
+
+    def is_fresh_at(self, now: int) -> bool:
+        """Check the original bounded window without extending its deadline."""
+        return (
+            all(type(value) is int for value in (self.checked_at, self.fresh_until, now))
+            and 0 <= self.fresh_until - self.checked_at <= seconds_to_ns(MAX_TEAM_FACTS_TTL_SECONDS)
+            and self.checked_at <= now <= self.fresh_until
+        )
 
 
 @dataclass(frozen=True)
@@ -117,15 +127,15 @@ class CachedTeamFacts:
     team_did_key: str
     published_certificate_ids: frozenset[str]
     revoked_certificate_ids: frozenset[str]
-    fetched_at: float
-    expires_at: float
+    fetched_at: int
+    expires_at: int
 
 
 @dataclass(frozen=True)
 class CachedDidKey:
     # None when the registry answered that it has no such DID.
     current_did_key: str | None
-    expires_at: float
+    expires_at: int
 
 
 def _require_active_certificate(facts: CachedTeamFacts, certificate_id: str) -> None:
@@ -179,7 +189,7 @@ class AWIDTeamCache:
         )
         self._cache: dict[str, CachedTeamFacts] = {}
         self._team_refresh_locks: dict[str, asyncio.Lock] = {}
-        self._unknown_refresh_at: dict[str, float] = {}
+        self._unknown_refresh_at: dict[str, int] = {}
         self._team_refresh_errors: dict[str, tuple[int, Any]] = {}
         self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = {}
         self._did_keys: dict[tuple[str, str], CachedDidKey] = {}
@@ -237,7 +247,7 @@ class AWIDTeamCache:
             raise _current_member_refusal(503) from exc
         if team_did_key != facts.team_did_key:
             raise _current_member_refusal(403)
-        if time.monotonic() > facts.expires_at:
+        if time.monotonic_ns() > facts.expires_at:
             raise _current_member_refusal(503)
         return MembershipProof(
             team_id=team_id,
@@ -252,7 +262,7 @@ class AWIDTeamCache:
             if not certificate_id:
                 raise HTTPException(status_code=401, detail="Missing AWID certificate id")
             return await self._get_certificate_status(team_id, certificate_id)
-        now = time.monotonic()
+        now = time.monotonic_ns()
         cached = self._cache.get(team_id)
         if cached and cached.expires_at > now and (
             certificate_id is None or certificate_id in cached.published_certificate_ids
@@ -261,13 +271,13 @@ class AWIDTeamCache:
 
         lock = self._team_refresh_locks.setdefault(team_id, asyncio.Lock())
         async with lock:
-            now = time.monotonic()
+            now = time.monotonic_ns()
             cached = self._cache.get(team_id)
             fresh = cached is not None and cached.expires_at > now
             if cached is not None and fresh and (certificate_id is None or certificate_id in cached.published_certificate_ids):
                 return cached
             last_refresh = self._unknown_refresh_at.get(team_id)
-            if last_refresh is not None and now - last_refresh < UNKNOWN_CERTIFICATE_REFRESH_SECONDS:
+            if last_refresh is not None and now - last_refresh < seconds_to_ns(UNKNOWN_CERTIFICATE_REFRESH_SECONDS):
                 if cached is not None and fresh:
                     return cached
                 failure = self._team_refresh_errors.get(team_id)
@@ -291,7 +301,7 @@ class AWIDTeamCache:
                     self._team_refresh_errors[team_id] = (exc.status_code, exc.detail)
                     # A slow failure must not consume its own retry window and
                     # make every waiter repeat the same upstream timeout.
-                    self._unknown_refresh_at[team_id] = time.monotonic()
+                    self._unknown_refresh_at[team_id] = time.monotonic_ns()
                 raise
             self._team_refresh_errors.pop(team_id, None)
             if not fresh and (certificate_id is None or certificate_id in facts.published_certificate_ids):
@@ -300,7 +310,7 @@ class AWIDTeamCache:
                 self._unknown_refresh_at.pop(team_id, None)
             return facts
 
-    async def _refresh_team_facts(self, team_id: str, now: float) -> CachedTeamFacts:
+    async def _refresh_team_facts(self, team_id: str, now: int) -> CachedTeamFacts:
         domain, team_name = parse_team_id(team_id)
         try:
             async with self._client() as client:
@@ -375,7 +385,7 @@ class AWIDTeamCache:
             published_certificate_ids=frozenset(published),
             revoked_certificate_ids=frozenset(revoked),
             fetched_at=now,
-            expires_at=now + self.ttl_seconds,
+            expires_at=now + seconds_to_ns(self.ttl_seconds),
         )
         self._cache[team_id] = facts
         return facts
@@ -383,7 +393,7 @@ class AWIDTeamCache:
     async def _get_certificate_status(
         self, team_id: str, certificate_id: str
     ) -> CachedTeamFacts:
-        now = time.monotonic()
+        now = time.monotonic_ns()
         cache_key = (team_id, certificate_id)
         cached = self._certificate_cache.get(cache_key)
         if cached and cached.expires_at > now:
@@ -432,7 +442,7 @@ class AWIDTeamCache:
             published_certificate_ids=frozenset({certificate_id}),
             revoked_certificate_ids=revoked,
             fetched_at=now,
-            expires_at=now + self.ttl_seconds,
+            expires_at=now + seconds_to_ns(self.ttl_seconds),
         )
         self._certificate_cache[cache_key] = facts
         return facts
@@ -448,7 +458,7 @@ class AWIDTeamCache:
             did_aw = validate_stable_id(did_aw)
         except ValueError:
             return None
-        now = time.monotonic()
+        now = time.monotonic_ns()
         cache_key = (self.registry_origin, did_aw)
         cached = self._did_keys.get(cache_key)
         if cached and cached.expires_at > now:
@@ -474,7 +484,7 @@ class AWIDTeamCache:
             logger.warning("AWID did:aw resolution failed for %s", did_aw, exc_info=True)
             raise HTTPException(status_code=503, detail="AWID did:aw resolution unavailable") from exc
         self._did_keys[cache_key] = CachedDidKey(
-            current_did_key=current_did_key, expires_at=now + self.ttl_seconds
+            current_did_key=current_did_key, expires_at=now + seconds_to_ns(self.ttl_seconds)
         )
         return current_did_key
 

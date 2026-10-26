@@ -15,6 +15,7 @@ from aweb_naapp.manifest import write_manifest_file
 from aweb_naapp.page_store import Access, PageStore, Scope, StoreError, apply_page_store_migrations
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import Authorization, Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.settings import NaappSettings
 from tests.page_store.test_store import POLICY, page
 
@@ -50,12 +51,12 @@ class InstalledGrant:
     def __init__(self, team):
         self.team, self.active = team, True
 
-    async def grant_for(self, team_id):
+    async def grant_for(self, team_id, certificate_id=None):
         if self.active and team_id == self.team:
             return Grant(
                 team_id=team_id,
                 scopes=frozenset({"page:read", "page:write"}),
-                fresh_until=time.monotonic() + 30,
+                fresh_until=time.monotonic_ns() + seconds_to_ns(30),
                 installation_id="fixture-install",
                 generation=1,
             )

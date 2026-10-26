@@ -1169,7 +1169,7 @@ async def _team_server_body(request: Request) -> TeamServerRecordBody:
 @router.put(
     "/{name}/server",
     response_model=TeamServerRecordBody,
-    dependencies=[Depends(rate_limit_dep("team_server_publish"))],
+    dependencies=[Depends(rate_limit_dep("team_server_publish", allow_trusted_service=True))],
 )
 async def publish_team_server(
     request: Request,
