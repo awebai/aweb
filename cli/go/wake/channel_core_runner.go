@@ -354,6 +354,13 @@ func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(childCtx, node, bundle)
+	// Registrations select presentation independently of the host daemon.
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "AWEB_WAKE_PRESENTATION=") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	cmd.Env = append(cmd.Env, "AWEB_WAKE_PRESENTATION="+c.reg.WakePresentation)
 	configureChildProcess(cmd)
 	pipes, err := openChildPipes()
 	if err != nil {

@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   formatAwakeningForAgent,
+  formatAwakeningLine,
   type ChannelAwakening,
 } from "@awebai/channel-core";
 
@@ -145,7 +146,7 @@ export function createWakeDispatcher(
             ) => unknown)(
               {
                 customType: "aweb-channel",
-                content: formatAwakeningForAgent(next),
+                content: formatAwakeningLine(next) ?? formatAwakeningForAgent(next),
                 display: true,
                 details: next.meta,
               },

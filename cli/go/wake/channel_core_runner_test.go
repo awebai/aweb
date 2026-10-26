@@ -716,8 +716,7 @@ func TestBundledWakePresentationMode(t *testing.T) {
 				}
 				text := string(data)
 				if mode == "line" {
-					canonicalHome, _ := filepath.EvalSymlinks(home)
-					prefix := "AWEB_IDENTITY_HOME=" + shellQuoteForTest(canonicalHome) + " aw "
+					prefix := "aw "
 					read, reply := "mail show --message-id "+messageID, "mail reply "+messageID
 					if kind == "chat" {
 						read = "chat history --session-id " + sessionID + " --message-id " + messageID

@@ -15,6 +15,7 @@ import {
   createRegistryResolver,
   dispatchAgentEvent,
   formatEventStreamState,
+  formatAwakeningLine,
   loadSessionPinStore,
   type PinStore,
   type PinStoreWriter,
@@ -44,7 +45,7 @@ export function loadChannelConfig(workdir: string) {
 export function notifyClaudeAwakening(mcp: Server, awakening: ChannelAwakening) {
   return mcp.notification({
     method: "notifications/claude/channel",
-    params: { content: awakening.content, meta: awakening.meta },
+    params: { content: formatAwakeningLine(awakening) ?? awakening.content, meta: awakening.meta },
   });
 }
 
@@ -278,10 +279,7 @@ export async function dispatchEvent(
       pinStoreWriter,
       trust,
       self,
-      onAwakening: (awakening) => mcp.notification({
-        method: "notifications/claude/channel",
-        params: { content: awakening.content, meta: awakening.meta },
-      }),
+      onAwakening: (awakening) => notifyClaudeAwakening(mcp, awakening),
       // Presented (notification) = read; see startChannelLoop above (aajy).
       mailAcknowledgment: "delivery",
     },

@@ -10155,6 +10155,26 @@ function trustWarningLine(status2) {
   }
   return `WARNING: sender verification failed or is unknown (status: ${status2 || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
+function formatAwakeningLine(awakening, awCommand = "aw") {
+  if (process.env.AWEB_WAKE_PRESENTATION !== "line" || awakening.kind !== "mail" && awakening.kind !== "chat") return void 0;
+  if (awakening.meta.decrypt_error || awakening.meta.decrypted === "false") return void 0;
+  const safeID = (id2) => !!id2 && /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(id2);
+  const id = awakening.meta.message_id;
+  if (!safeID(id)) return void 0;
+  const summary = (value) => truncateText(sanitizeSummaryComponent(value.replace(/[\u0080-\u009F\u2028\u2029]+/g, " ")), MAX_APP_EVENT_VALUE_LENGTH);
+  const from = summary(awakening.meta.from || "unknown");
+  let line;
+  if (awakening.kind === "mail") {
+    const subject = JSON.stringify(summary(awakening.meta.subject || ""));
+    line = `aweb mail waiting: ${subject} from ${from} \u2014 read: ${awCommand} mail show --message-id ${id}; reply: ${awCommand} mail reply ${id}`;
+  } else {
+    const session = awakening.meta.session_id;
+    if (!safeID(session)) return void 0;
+    line = `aweb chat waiting: from ${from} \u2014 read: ${awCommand} chat history --session-id ${session} --message-id ${id}; reply: ${awCommand} chat send --session-id ${session}`;
+  }
+  const warning = Object.prototype.hasOwnProperty.call(awakening.meta, "trust_status") ? trustWarningLine(awakening.meta.trust_status) : "";
+  return warning ? `${line}; ${sanitizeSummaryComponent(warning)}` : line;
+}
 function formatAwakeningForAgent(awakening) {
   const rawType = awakening.meta.type || awakening.kind;
   const type2 = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
@@ -10326,6 +10346,10 @@ function safeAwakeningNotice(awakening, awCommand = "aw") {
 }
 function textForTerminalAwakening(awakening, receivingIdentityHome) {
   const quotedHome = receivingIdentityHome === void 0 ? void 0 : quotedIdentityHome(receivingIdentityHome);
+  if (receivingIdentityHome === void 0 || quotedHome) {
+    const line = formatAwakeningLine(awakening, quotedHome ? `AWEB_IDENTITY_HOME=${quotedHome} aw` : "aw");
+    if (line) return terminalInputSafeText(line);
+  }
   const richText = terminalInputSafeText(formatAwakeningForAgent(awakening));
   if (awakening.kind === "mail" || awakening.kind === "chat") {
     const recovery = quotedHome ? messageRecoveryCommand(awakening, `aw --identity-home ${quotedHome}`) : void 0;

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add opt-in `AWEB_WAKE_PRESENTATION=line` for one-line mail/chat wakes with exact read/reply commands; full presentation remains the default and acknowledgement is unchanged.
+
 ## 0.4.0
 
 - Publish live agent activity for the session when the host owner opts in

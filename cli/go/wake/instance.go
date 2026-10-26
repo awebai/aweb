@@ -97,7 +97,7 @@ func (r *instanceRunner) updateRegistration(reg Registration) bool {
 	if r.pendingReg != nil {
 		current = *r.pendingReg
 	}
-	changed := !sameReceiveBindings(current.ReceiveBindings(), reg.ReceiveBindings())
+	changed := !sameReceiveBindings(current.ReceiveBindings(), reg.ReceiveBindings()) || current.WakePresentation != reg.WakePresentation
 	started := r.cancel != nil
 	if started && !changed && r.pendingReg != nil {
 		// Keep the pending apply boundary; do not queue or publish it twice.

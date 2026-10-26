@@ -184,6 +184,11 @@ var wakeRegisterCmd = &cobra.Command{
 				reg.ReceiveIdentities = append(reg.ReceiveIdentities, binding)
 			}
 		}
+		// Capture the seat launcher's choice, not the long-lived daemon's environment.
+		reg.WakePresentation = ""
+		if os.Getenv("AWEB_WAKE_PRESENTATION") == "line" {
+			reg.WakePresentation = "line"
+		}
 		if err := reg.Validate(); err != nil {
 			return usageError("%s", err.Error())
 		}

@@ -49,6 +49,7 @@ export {
   createRegistryResolver,
   dispatchAgentEvent,
   formatAwakeningForAgent,
+  formatAwakeningLine,
   isTrustedVerificationStatus,
   loadPinStore,
   loadSessionPinStore,

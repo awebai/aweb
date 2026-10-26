@@ -20,7 +20,7 @@ than accept a message. This is a safety refusal, independent of ordinary busy
 readiness. A failed safety inspect also refuses input. These failures
 use the normal bounded delivery retry and leave the source unread.
 
-Mail and chat present full `formatAwakeningForAgent` text, including sender/trust
+By default, mail and chat present full `formatAwakeningForAgent` text, including sender/trust
 metadata and message body, through `terminalInputSafeText`. Terminal controls
 are stripped. Multiple receive bindings add a safely quoted `--identity-home`
 recovery command as a footer; invalid recovery context never replaces content.
@@ -29,6 +29,38 @@ Explicit operator pause remains independent of readiness. Paused input rejects
 without typing, including if pause arrives during the safety inspection. Resume requests an immediate stream re-open after applying the control, so
 a fresh unread snapshot re-offers refused messages; no held-text retry queue is
 created. Legacy `--coalesce` and `--rate-limit` flags remain accepted but ignored.
+
+## Optional one-line presentation
+
+Set `AWEB_WAKE_PRESENTATION=line` in the launching environment to show a short
+mail/chat line instead of the full message. Unset or any other value keeps the
+existing full presentation. Claude's channel plugin and the pi extension read
+this variable from their process environment. For broker delivery, `aw wake
+register` captures it per instance; re-register to change the mode. The broker's
+own environment does not override registered instances.
+
+```text
+aweb mail waiting: "Subject" from alice — read: aw mail show --message-id 12345678-1234-1234-1234-123456789abc; reply: aw mail reply 12345678-1234-1234-1234-123456789abc
+aweb chat waiting: from alice — read: aw chat history --session-id 87654321-4321-4321-4321-cba987654321 --message-id 12345678-1234-1234-1234-123456789abc; reply: aw chat send --session-id 87654321-4321-4321-4321-cba987654321
+```
+
+Subjects use the existing summary sanitation and 160-character limit. Trust
+warnings remain on the line. With multiple receive bindings, broker lines prefix commands with a safely quoted
+`AWEB_IDENTITY_HOME` for the receiving identity. Decryption failures retain the
+full diagnostic presentation. App, work and control events keep their current
+presentation.
+
+The client still fetches, decrypts and verifies the message before presentation;
+only the presented text changes. **Acknowledgement is unchanged:** accepted
+presentation still marks mail read (when permitted) and chat read at the same
+point, before the agent runs the suggested command. The exact message ID and
+read command remain available through a context compaction.
+
+If the session hard-crashes before the next turn reads that line, recovery still
+requires a paged reconcile: run `aw mail inbox --show-all --json`, then pass each
+returned `next_cursor` as `--cursor <next_cursor>` until exhausted. Reconcile exact
+message IDs with your saved state; unread-only inbox output cannot recover mail
+already acknowledged by presentation.
 
 ## Acceptance and retry
 

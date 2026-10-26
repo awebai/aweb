@@ -141,6 +141,7 @@ type Registration struct {
 	IdentityHome        string            `json:"identity_home"`
 	Delivery            string            `json:"delivery"`
 	RuntimeDelivery     string            `json:"runtime_delivery,omitempty"`
+	WakePresentation    string            `json:"wake_presentation,omitempty"`
 	PrimaryIdentityHome string            `json:"primary_identity_home,omitempty"`
 	ReceiveIdentities   []ReceiveIdentity `json:"receive_identities,omitempty"`
 	Backend             string            `json:"backend,omitempty"`

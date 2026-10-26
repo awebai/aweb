@@ -1085,6 +1085,31 @@ export function trustWarningLine(status: VerificationStatus | undefined): string
   return `WARNING: sender verification failed or is unknown (status: ${status || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
 
+/** Opt-in mail/chat presentation; delivery and read receipts stay with the caller. */
+export function formatAwakeningLine(awakening: ChannelAwakening, awCommand = "aw"): string | undefined {
+  if (process.env.AWEB_WAKE_PRESENTATION !== "line" || (awakening.kind !== "mail" && awakening.kind !== "chat")) return undefined;
+  // Keep failure diagnostics intact, and never turn an untrusted identifier
+  // into a shell command. Real message/session UUIDs are preserved verbatim.
+  if (awakening.meta.decrypt_error || awakening.meta.decrypted === "false") return undefined;
+  const safeID = (id: string | undefined): id is string => !!id && /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(id);
+  const id = awakening.meta.message_id;
+  if (!safeID(id)) return undefined;
+  const summary = (value: string) => truncateText(sanitizeSummaryComponent(value.replace(/[\u0080-\u009F\u2028\u2029]+/g, " ")), MAX_APP_EVENT_VALUE_LENGTH);
+  const from = summary(awakening.meta.from || "unknown");
+  let line: string;
+  if (awakening.kind === "mail") {
+    const subject = JSON.stringify(summary(awakening.meta.subject || ""));
+    line = `aweb mail waiting: ${subject} from ${from} — read: ${awCommand} mail show --message-id ${id}; reply: ${awCommand} mail reply ${id}`;
+  } else {
+    const session = awakening.meta.session_id;
+    if (!safeID(session)) return undefined;
+    line = `aweb chat waiting: from ${from} — read: ${awCommand} chat history --session-id ${session} --message-id ${id}; reply: ${awCommand} chat send --session-id ${session}`;
+  }
+  const warning = Object.prototype.hasOwnProperty.call(awakening.meta, "trust_status")
+    ? trustWarningLine(awakening.meta.trust_status as VerificationStatus | undefined) : "";
+  return warning ? `${line}; ${sanitizeSummaryComponent(warning)}` : line;
+}
+
 export function formatAwakeningForAgent(awakening: ChannelAwakening): string {
   const rawType = awakening.meta.type || awakening.kind;
   const type = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;

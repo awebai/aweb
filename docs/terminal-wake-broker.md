@@ -38,6 +38,20 @@ The boundary is intentionally the same one documented in
 
 There is no `/v1/events/actionable` endpoint and no Go-side read/ack logic.
 
+## One-line wakes
+
+Set `AWEB_WAKE_PRESENTATION=line` when launching `aw wake register` to select
+one-line mail/chat presentation for that instance. It is persisted as
+`wake_presentation` in the registration, so one host daemon can serve both full
+and one-line seats. Re-registering applies a changed mode by restarting that
+instance's delivery child. Unset or any other value keeps full presentation.
+Native Claude and pi launches use the same environment variable directly.
+
+This changes formatting only; accepted presentation still acknowledges mail and
+marks chat read as before. See the [presentation and recovery
+contract](channel-core-terminal-adapter.md#optional-one-line-presentation),
+including paged recovery after a hard crash.
+
 ## Registration, streams and state
 
 A registration is one instance home plus one or more receive bindings. A receive

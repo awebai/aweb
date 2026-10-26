@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add opt-in `AWEB_WAKE_PRESENTATION=line` for one-line mail/chat wakes with exact read/reply commands; full presentation remains the default and acknowledgement is unchanged.
+  The wake broker captures the launching environment per registration.
+
 - Release preparation: server 1.27.35. Update the server test fixtures for
   the shared naapp runtime's integer nanosecond freshness deadlines.
 

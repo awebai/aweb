@@ -104,7 +104,7 @@ describe("opt-in one-line terminal presentation", () => {
     vi.stubEnv("AWEB_WAKE_PRESENTATION", "line");
     let accept!: () => void;
     const accepted = new Promise<void>((resolve) => { accept = resolve; });
-    const input = vi.fn(async () => accepted);
+    const input = vi.fn(async (_home: string, _text: string) => accepted);
     const { client, deliver } = fixture(kind, "idle", input);
     const pending = deliver();
     try {
@@ -125,7 +125,7 @@ describe("opt-in one-line terminal presentation", () => {
 
   test.each(["", "unknown"])("%s preserves full presentation", async (mode) => {
     vi.stubEnv("AWEB_WAKE_PRESENTATION", mode);
-    const input = vi.fn(async () => {});
+    const input = vi.fn(async (_home: string, _text: string) => {});
     await fixture("mail", "idle", input).deliver();
     expect(input.mock.calls[0][1]).toContain("aweb mail event received.");
     expect(input.mock.calls[0][1]).toContain("actual body");
@@ -136,7 +136,7 @@ describe("opt-in one-line terminal presentation", () => {
     ["x".repeat(170), "x".repeat(157) + "..."],
   ])("sanitizes and bounds the subject", async (subject, displayed) => {
     vi.stubEnv("AWEB_WAKE_PRESENTATION", "line");
-    const input = vi.fn(async () => {});
+    const input = vi.fn(async (_home: string, _text: string) => {});
     await fixture("mail", "idle", input, subject).deliver();
     expect(input.mock.calls[0][1]).toContain(`waiting: "${displayed}" from`);
   });
@@ -150,11 +150,35 @@ describe("opt-in one-line terminal presentation", () => {
 
   test("keeps the receiving identity and literal fetch command on one line", async () => {
     vi.stubEnv("AWEB_WAKE_PRESENTATION", "line");
-    const input = vi.fn(async () => {});
+    const input = vi.fn(async (_home: string, _text: string) => {});
     const handler = createTerminalAwakeningHandler({ home: "/agent", session: { inspect: async () => ({ state: "idle" }), input } });
     await handler({ kind: "mail", content: "private body", deliveryIntent: "wake", meta: { from: "alice", subject: "hello", message_id: messageID, trust_status: "verified" } }, "/joined team");
     expect(input.mock.calls[0][1]).toBe(`aweb mail waiting: "hello" from alice — read: AWEB_IDENTITY_HOME='/joined team' aw mail show --message-id ${messageID}; reply: AWEB_IDENTITY_HOME='/joined team' aw mail reply ${messageID}`);
   });
+  test("keeps the complete sender verification warning on the line", async () => {
+    vi.stubEnv("AWEB_WAKE_PRESENTATION", "line");
+    const input = vi.fn(async (_home: string, _text: string) => {});
+    const handler = createTerminalAwakeningHandler({ home: "/agent", session: { inspect: async () => ({ state: "idle" }), input } });
+    await handler({ kind: "mail", content: "private body", meta: { from: "alice", subject: "hello", message_id: messageID, trust_status: "verification_stale" } });
+    const text = input.mock.calls[0][1];
+    expect(text).toContain(`aw mail show --message-id ${messageID}`);
+    expect(text).toContain("WARNING: sender signature verified, but stale registry key material could not be refreshed. This is not an identity-mismatch finding; retry verification before sensitive work.");
+    expect(text).not.toContain("\n");
+  });
+
+  test.each([
+    { message_id: "bad; injected" },
+    { message_id: messageID, decrypt_error: "recipient key unavailable" },
+  ])("keeps full diagnostics when a safe fetch line cannot be formed", async (meta) => {
+    vi.stubEnv("AWEB_WAKE_PRESENTATION", "line");
+    const input = vi.fn(async (_home: string, _text: string) => {});
+    const handler = createTerminalAwakeningHandler({ home: "/agent", session: { inspect: async () => ({ state: "idle" }), input } });
+    await handler({ kind: "mail", content: "diagnostic body", meta });
+    expect(input.mock.calls[0][1]).toContain("aweb mail event received.");
+    expect(input.mock.calls[0][1]).toContain("diagnostic body");
+    expect(input.mock.calls[0][1]).not.toContain("aweb mail waiting:");
+  });
+
 });
 
 

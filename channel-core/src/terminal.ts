@@ -1,4 +1,4 @@
-import { formatAwakeningForAgent, type ChannelAwakening } from "./channel.js";
+import { formatAwakeningForAgent, formatAwakeningLine, type ChannelAwakening } from "./channel.js";
 
 export type TerminalReadinessState = "idle" | "working" | "blocked" | "shell" | "unknown" | "stopped" | "not-launched";
 
@@ -127,6 +127,12 @@ function safeAwakeningNotice(awakening: ChannelAwakening, awCommand = "aw"): str
 
 function textForTerminalAwakening(awakening: ChannelAwakening, receivingIdentityHome?: string): string {
   const quotedHome = receivingIdentityHome === undefined ? undefined : quotedIdentityHome(receivingIdentityHome);
+  if (receivingIdentityHome === undefined || quotedHome) {
+    // The environment prefix keeps the exact fetch command visible while
+    // selecting the locally trusted receiving identity for both CLI commands.
+    const line = formatAwakeningLine(awakening, quotedHome ? `AWEB_IDENTITY_HOME=${quotedHome} aw` : "aw");
+    if (line) return terminalInputSafeText(line);
+  }
   const richText = terminalInputSafeText(formatAwakeningForAgent(awakening));
   // Mail/chat present actual content before their accepted-input receipt
   // can mark them read, regardless of harness readiness.
