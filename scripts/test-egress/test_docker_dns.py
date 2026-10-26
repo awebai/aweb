@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Qualify the real Docker guard with a CI-like inherited DNS search domain.
 
-Run under the suite lock with --image naming a prepared test-egress source image.
+Run with --image naming an existing Python image. No image build is needed.
 The CLI adapter supplies a resolver default only when the harness leaves it unset;
 all Docker commands, DNS replies and child lookups are real.
 """
@@ -25,6 +25,9 @@ class DockerDNS(unittest.TestCase):
 import os
 import sys
 args = sys.argv[1:]
+if args and args[0] == 'run' and 'scripts/test-egress/dns.py' in args:
+    args[1:1] = ['--mount', 'type=bind,src=' + os.environ['TEST_DNS_SOURCE'] +
+                 ',dst=/src/scripts/test-egress,readonly', '--workdir', '/src']
 if args and args[0] == 'run' and '--dns' in args and not any(
     arg == '--dns-search' or arg.startswith('--dns-search=') for arg in args
 ):
@@ -33,6 +36,7 @@ os.execv(os.environ['TEST_REAL_DOCKER'], [os.environ['TEST_REAL_DOCKER'], *args]
 ''')
             adapter.chmod(0o755)
             env = dict(os.environ, TEST_REAL_DOCKER=shutil.which('docker'),
+                       TEST_DNS_SOURCE=str(ROOT / 'scripts/test-egress'),
                        PATH=temp + os.pathsep + os.environ['PATH'])
             child = f'''import socket
 from pathlib import Path

@@ -40,11 +40,11 @@ code carries any of these mechanisms.
 
 The Docker resolver qualification reproduces a CI host's inherited search domain
 using the real Docker CLI, DNS sink and child `getaddrinfo`. Run it under the host
-suite lock with a prepared source/dependency image (the same image accepted by
-`docker.py --image`):
+test policy with an existing Python image; no dependency image build is needed.
+The DNS sidecar reads the repository DNS sink from a read-only bind mount:
 
 ```sh
-python3 scripts/test-egress/test_docker_dns.py --image IMAGE --evidence /tmp/dns-proof
+python3 scripts/test-egress/test_docker_dns.py --image python:3.12-slim --evidence /tmp/dns-proof
 ```
 
 A reserved-name lookup must leave the guard green even when the host supplies a
