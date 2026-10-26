@@ -1,5 +1,6 @@
 import secrets
 from contextlib import asynccontextmanager
+from importlib.resources import files
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
@@ -138,6 +139,22 @@ def create_app(
     def db(request: Request):
         permit = getattr(request.state, "folio_installation", None)
         return permit.database() if permit is not None else runtime.db()
+
+    @app.get("/present/widgets/assets/{name}", include_in_schema=False)
+    async def widget_asset(name: str) -> Response:
+        shared = {"renderer.js": "page-renderer.js", "renderer.css": "page-renderer.css"}
+        local = {"atomic-editor.mjs", "document-model.mjs", "folio-widget-host.mjs"}
+        if name in shared:
+            asset = files("aweb_naapp.pages").joinpath("assets", shared[name])
+        elif name in local:
+            asset = files("folio").joinpath("assets", name)
+        else:
+            raise HTTPException(404)
+        return Response(
+            asset.read_bytes(),
+            media_type=("text/css" if name.endswith(".css") else "text/javascript"),
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
 
     document_records.mount(app, db)
 
@@ -597,10 +614,21 @@ def create_app(
                 public_origin=resolved.public_origin,
                 asset_embeds=presentation_asset_embeds(presented.get("allowed_assets")),
                 nonce=nonce,
+                widget_token=token
+                if any(
+                    part["kind"] == "widget" for part in document_segments(str(presented["body"]))
+                )
+                else None,
             ),
             headers={
                 "Content-Security-Policy": content_security_policy(
-                    mode=mode, nonce=nonce, stream_host=resolved.cloudflare_stream_playback_host
+                    mode=mode,
+                    nonce=nonce,
+                    stream_host=resolved.cloudflare_stream_playback_host,
+                    widgets=any(
+                        part["kind"] == "widget"
+                        for part in document_segments(str(presented["body"]))
+                    ),
                 ),
             },
         )
