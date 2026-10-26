@@ -39,9 +39,10 @@ async def db(test_db_factory) -> AsyncIterator[AsyncDatabaseManager]:
 
 
 async def _slot(directory: ReaderDirectory, contact: str = CONTACT_SHA256) -> str:
-    slot = await directory.create_slot(
-        installation_id=INSTALLATION, team_id=TEAM, contact_sha256=contact
-    )
+    async with directory.db.transaction() as tx:
+        slot = await directory.create_slot(
+            tx, installation_id=INSTALLATION, team_id=TEAM, contact_sha256=contact
+        )
     return slot.scope
 
 
@@ -160,15 +161,17 @@ async def test_a_claim_rolled_back_leaves_the_slot_pending(db: AsyncDatabaseMana
 
 
 async def test_a_slot_lives_for_its_ttl(db: AsyncDatabaseManager) -> None:
-    slot = await ReaderDirectory(db, slot_ttl=timedelta(minutes=10)).create_slot(
-        installation_id=INSTALLATION, team_id=TEAM, contact_sha256=CONTACT_SHA256
-    )
+    async with db.transaction() as tx:
+        slot = await ReaderDirectory(db, slot_ttl=timedelta(minutes=10)).create_slot(
+            tx, installation_id=INSTALLATION, team_id=TEAM, contact_sha256=CONTACT_SHA256
+        )
     remaining = slot.expires_at - await db.fetch_value("SELECT NOW()")
     assert timedelta(minutes=9) < remaining <= timedelta(minutes=10)
 
 
 async def test_a_contact_digest_must_be_a_sha256(db: AsyncDatabaseManager) -> None:
     with pytest.raises(ValueError):
-        await ReaderDirectory(db).create_slot(
-            installation_id=INSTALLATION, team_id=TEAM, contact_sha256="m@example.com"
-        )
+        async with db.transaction() as tx:
+            await ReaderDirectory(db).create_slot(
+                tx, installation_id=INSTALLATION, team_id=TEAM, contact_sha256="m@example.com"
+            )

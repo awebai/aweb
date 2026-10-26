@@ -55,15 +55,18 @@ class ReaderDirectory:
     """The reader slots of this deployment, pending and claimed."""
 
     def __init__(self, db: AsyncDatabaseManager, *, slot_ttl: timedelta = SLOT_TTL) -> None:
-        self._db = db
+        self.db = db
         self._slot_ttl = slot_ttl
 
-    async def create_slot(self, *, installation_id: str, team_id: str, contact_sha256: str) -> Slot:
-        """Issue a pending slot for the reader the owner will designate at this contact."""
+    async def create_slot(
+        self, tx: TransactionManager, *, installation_id: str, team_id: str, contact_sha256: str
+    ) -> Slot:
+        """Issue, in the caller's transaction, a pending slot for the reader the
+        owner will designate at this contact."""
         if not _SHA256.fullmatch(contact_sha256):
             raise ValueError("a reader's contact is named by its SHA-256")
         scope = f"{READER_ROLE}.{secrets.token_hex(16)}"
-        expires_at = await self._db.fetch_value(
+        expires_at = await tx.fetch_value(
             "INSERT INTO {{tables.readers}}"
             " (scope, installation_id, team_id, contact_sha256, expires_at)"
             " VALUES ($1, $2, $3, $4, NOW() + $5) RETURNING expires_at",
@@ -102,7 +105,7 @@ class ReaderDirectory:
     async def reader(self, scope: str) -> Reader | None:
         if not is_reader_scope(scope):
             return None
-        row = await self._db.fetch_one(
+        row = await self.db.fetch_one(
             "SELECT scope, installation_id, team_id FROM {{tables.readers}}"
             " WHERE scope = $1 AND claimed_at IS NOT NULL",
             scope,
@@ -110,7 +113,7 @@ class ReaderDirectory:
         return Reader(**row) if row is not None else None
 
     async def readers(self, *, installation_id: str, team_id: str) -> list[Reader]:
-        rows = await self._db.fetch_all(
+        rows = await self.db.fetch_all(
             "SELECT scope, installation_id, team_id FROM {{tables.readers}}"
             " WHERE installation_id = $1 AND team_id = $2 AND claimed_at IS NOT NULL"
             " ORDER BY scope",
