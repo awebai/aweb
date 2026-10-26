@@ -190,6 +190,8 @@ class RunStatus:
             if not isinstance(payload, Mapping) or not isinstance(payload.get("refusal_code"), str):
                 raise UseAuditUnavailable()
             return ToolReply(200, {"state": "refused", **identity, "code": payload["refusal_code"]})
+        if state is State.OUTCOME_UNKNOWN:
+            return ToolReply(200, tool_results.outcome_unknown(**identity))
         return ToolReply(200, {"state": state.value, **identity})
 
     async def receipt(
