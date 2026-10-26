@@ -139,3 +139,102 @@ async def test_current_acl_projects_receipt_replay_and_refuses_hidden_fields(aut
     assert hidden.status_code == 403 and "secret" not in hidden.text
     query = await world.client.get(path + "/widgets/research/records", headers=headers)
     assert query.status_code == 200 and query.json()["records"][0]["value"] == {"finding": "kept"}
+
+
+async def test_saved_collection_change_is_live_readonly_until_fresh_mint(authors):
+    from folio.record_collections import DISCOVERY_SCHEMA
+
+    world, row = await with_table(authors)
+    _, path, headers, _ = await mint(world)
+    defined = await signed(
+        world,
+        world.member,
+        "POST",
+        "/v1/collections",
+        payload={
+            "collection_id": "other",
+            "title": "Other",
+            "schema": DISCOVERY_SCHEMA,
+            "request_id": "other-define",
+        },
+    )
+    assert defined.status_code == 200
+    added = await signed(
+        world,
+        world.member,
+        "POST",
+        "/v1/records/add",
+        payload={
+            "collection_id": "other",
+            "values": {**row["value"], "finding": "Other collection"},
+            "request_id": "other-add",
+        },
+    )
+    assert added.status_code == 200
+    from test_widget_records_session import full_table_body
+
+    saved = await signed(
+        world,
+        world.member,
+        "POST",
+        "/v1/documents/ordinary/versions",
+        body=full_table_body().replace('"collection": "discovery"', '"collection": "other"'),
+    )
+    assert saved.status_code == 200
+    state = await world.client.get(path + "/state", headers=headers)
+    table = state.json()["widgets"]["research"]
+    assert table["query"]["records"] == [added.json()["record"]]
+    assert table["edit"] == {
+        "add": False,
+        "patch_fields": [],
+        "delete": False,
+        "reopen_to_edit": True,
+    }
+    refused = await world.client.post(
+        path + "/widgets/research/records/update",
+        headers=headers,
+        json={
+            "record_id": added.json()["record"]["id"],
+            "expected_rev": 1,
+            "patch": {"status": "refused"},
+            "request_id": "rebind",
+        },
+    )
+    assert refused.status_code == 403
+    _, _, _, fresh = await mint(world)
+    assert fresh["widgets"]["research"]["edit"]["add"]
+
+
+async def test_new_displayed_field_does_not_expand_old_sessions_write_grant(authors):
+    world, row = await with_table(authors, body=table_body("allowed"))
+    _, path, headers, _ = await mint(world)
+    saved = await signed(
+        world, world.member, "POST", "/v1/documents/ordinary/versions", body=table_body()
+    )
+    assert saved.status_code == 200
+    state = await world.client.get(path + "/state", headers=headers)
+    table = state.json()["widgets"]["research"]
+    assert set(table["query"]["records"][0]["value"]) == {"finding", "status"}
+    assert table["edit"]["patch_fields"] == ["finding"] and table["edit"]["reopen_to_edit"]
+    refused = await world.client.post(
+        path + "/widgets/research/records/update",
+        headers=headers,
+        json={
+            "record_id": row["id"],
+            "expected_rev": 1,
+            "patch": {"status": "refused"},
+            "request_id": "new-field",
+        },
+    )
+    assert refused.status_code == 403
+
+
+async def test_consumed_opener_deadline_is_not_a_session_lifetime(authors):
+    world, _ = await with_table(authors)
+    link, path, headers, _ = await mint(world)
+    await world.host.runtime.db().execute(
+        "UPDATE {{tables.presentation_links}} SET expires_at=NOW()-interval '1 hour' WHERE token=$1",
+        link["token"],
+    )
+    query = await world.client.get(path + "/widgets/research/records", headers=headers)
+    assert query.status_code == 200 and query.json()["count"] == 1
