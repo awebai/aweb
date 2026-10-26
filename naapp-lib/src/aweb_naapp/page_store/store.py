@@ -23,6 +23,7 @@ from aweb_naapp.idempotency import (
 )
 from aweb_naapp.outbox import OutboxEvent, apply_outbox_migrations, enqueue
 from aweb_naapp.page_store.lifecycle import LifecycleMixin
+from aweb_naapp.page_store.link_records import LinkRecordContext
 from aweb_naapp.page_store.models import Access, RetentionPolicy, Scope, StoreError
 from aweb_naapp.page_store.support import canonical, decoded, identity, validated, widgets
 from aweb_naapp.pages import PAGE_SCHEMA, inline_schema_errors, inline_value_valid
@@ -157,10 +158,17 @@ class PageStore(LifecycleMixin):
         )
         return [decoded(row["record"]) for row in rows]
 
-    async def _claim(self, tx, scope, principal, key, request, *, retention=None):
+    async def _claim(
+        self, tx, scope, principal, key, request, *, retention=None, request_actor=None
+    ):
         if not isinstance(key, str) or not key or len(key) > 256:
             raise StoreError("precondition_required", 428)
-        request_key = [scope.installation_id, scope.team_id, identity(principal, scope), key]
+        request_key = [
+            scope.installation_id,
+            scope.team_id,
+            identity(principal, scope) if request_actor is None else request_actor,
+            key,
+        ]
         request_hash = hashlib.sha256(canonical({"scope": scope.key, **request}).encode()).digest()
         horizon = timedelta(days=(retention or self._policy()).retry_horizon_days)
         # Serialize this key until the content transaction commits. The metadata
@@ -239,7 +247,10 @@ class PageStore(LifecycleMixin):
         changed,
         record_revs=None,
         receipt_details=None,
+        link_context=None,
     ):
+        if link_context is not None:
+            await link_context.revalidate(tx)
         if old_rev >= MAX_REV:
             raise StoreError("revision_exhausted", 409)
         document["rev"] = old_rev + 1
@@ -257,12 +268,16 @@ class PageStore(LifecycleMixin):
             self._policy().version,
             canonical(self._policy().as_dict()),
         )
-        evidence = {
-            "principal_id": identity(principal, scope),
-            "signer_did": principal.did_key,
-            "certificate_id": principal.certificate_id,
-            "origin_kind": "member",
-        }
+        evidence = (
+            link_context.evidence()
+            if link_context is not None
+            else {
+                "principal_id": identity(principal, scope),
+                "signer_did": principal.did_key,
+                "certificate_id": principal.certificate_id,
+                "origin_kind": "member",
+            }
+        )
         await tx.execute(
             "INSERT INTO {{tables.page_audit}} (transaction_id,scope,old_rev,new_rev,evidence,changed) VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb)",
             transaction,
@@ -526,7 +541,95 @@ class PageStore(LifecycleMixin):
             },
         )
 
-    async def _record_write_on(self, tx, scope, principal, *, key, change, request):
+    async def write_link_record_on(
+        self,
+        tx,
+        scope,
+        context: LinkRecordContext,
+        *,
+        operation,
+        collection,
+        key,
+        record_id=None,
+        expected_rev=None,
+        values=None,
+        patch=None,
+    ):
+        """Join a checked session to the same member row engine and savepoint.
+
+        The host holds installation/session/document locks and supplies current
+        evidence in ``context``. No member Principal is manufactured for a holder.
+        """
+        _require_transaction(tx)
+        if not isinstance(context, LinkRecordContext):
+            raise TypeError("a checked LinkRecordContext is required")
+        context.require(
+            scope,
+            operation=operation,
+            collection=collection,
+            values=values if operation == "add" else patch,
+        )
+        if operation == "add":
+            if expected_rev is not None or patch is not None:
+                raise StoreError("schema_invalid")
+            change = {
+                "op": "create",
+                "collection": collection,
+                "id": record_id,
+                "expected_rev": 0,
+                "value": values,
+            }
+            request = {
+                "op": "add_record",
+                "collection": collection,
+                "record_id": record_id,
+                "values": values,
+            }
+        elif operation == "patch":
+            if values is not None:
+                raise StoreError("schema_invalid")
+            change = {
+                "op": "patch",
+                "collection": collection,
+                "id": record_id,
+                "expected_rev": expected_rev,
+                "patch": patch,
+            }
+            request = {
+                "op": "patch_record",
+                "collection": collection,
+                "record_id": record_id,
+                "expected_rev": expected_rev,
+                "patch": patch,
+            }
+        else:  # require() has admitted only a declared delete operation here.
+            if values is not None or patch is not None:
+                raise StoreError("schema_invalid")
+            change = {
+                "op": "delete",
+                "collection": collection,
+                "id": record_id,
+                "expected_rev": expected_rev,
+            }
+            request = {
+                "op": "delete_record",
+                "collection": collection,
+                "record_id": record_id,
+                "expected_rev": expected_rev,
+            }
+        return await self._record_write_on(
+            tx,
+            scope,
+            None,
+            key=key,
+            change=change,
+            request=request,
+            link_context=context,
+        )
+
+    async def _record_write_on(
+        self, tx, scope, principal, *, key, change, request, link_context=None
+    ):
         if (
             not isinstance(change["collection"], str)
             or not change["collection"]
@@ -539,7 +642,10 @@ class PageStore(LifecycleMixin):
         async with tx.transaction() as tx:
             # Keep the current revision under the same lock, but never put this
             # derived revision in the original row request's retry identity.
-            document, _, _ = await self._load(tx, scope, principal, "write")
+            if link_context is None:
+                document, _, _ = await self._load(tx, scope, principal, "write")
+            else:
+                document, _, _ = await self._load_actor(tx, scope, link_context.creator_id, "write")
             return await self._mutate_on(
                 tx,
                 scope,
@@ -550,6 +656,7 @@ class PageStore(LifecycleMixin):
                 state=None,
                 sync=False,
                 request=request,
+                link_context=link_context,
             )
 
     async def sync(self, scope, principal, *, expected_rev, key, records):
@@ -609,12 +716,29 @@ class PageStore(LifecycleMixin):
             )
 
     async def _mutate_on(
-        self, tx, scope, principal, *, expected_rev, key, records, state, sync, request=None
+        self,
+        tx,
+        scope,
+        principal,
+        *,
+        expected_rev,
+        key,
+        records,
+        state,
+        sync,
+        request=None,
+        link_context=None,
     ):
         self._policy()
-        document, access, actor = await self._load(
-            tx, scope, principal, "owner" if sync else "write"
-        )
+        if link_context is None:
+            document, access, actor = await self._load(
+                tx, scope, principal, "owner" if sync else "write"
+            )
+        else:
+            document, access, actor = await self._load_actor(
+                tx, scope, link_context.creator_id, "write"
+            )
+            await link_context.revalidate(tx)
         transaction, replay = await self._claim(
             tx,
             scope,
@@ -628,7 +752,12 @@ class PageStore(LifecycleMixin):
                 "records": records,
                 "state": state,
             },
+            request_actor=link_context.request_actor(request["op"])
+            if link_context is not None
+            else None,
         )
+        if link_context is not None:
+            await link_context.revalidate(tx)
         row_request = request is not None
         if replay:
             if row_request:
@@ -640,7 +769,10 @@ class PageStore(LifecycleMixin):
                 original = replay.get("record", {}).get("value", {})
                 if not access.visible_row(actor, definition["id"], replay["record_id"]) or set(
                     original
-                ) - access.value_fields(actor, definition, original):
+                ) - (
+                    access.value_fields(actor, definition, original)
+                    & (link_context.fields if link_context is not None else set(original))
+                ):
                     raise StoreError("action_denied", 403)
             return replay
         self._precondition(document, expected_rev)
@@ -698,9 +830,13 @@ class PageStore(LifecycleMixin):
                 if not isinstance(proposed, dict) or not proposed or "value" in change or sync:
                     raise StoreError("schema_invalid")
                 allowed = access.value_fields(actor, collection, proposed)
+                if link_context is not None:
+                    allowed &= link_context.fields
             else:
                 proposed = change.get("value") if isinstance(change.get("value"), dict) else {}
                 allowed = access.value_fields(actor, collection, set(previous) | set(proposed))
+                if link_context is not None:
+                    allowed &= link_context.fields
                 if row and set(previous) - allowed:
                     raise StoreError("action_denied", 403)
             if operation == "delete":
@@ -731,6 +867,8 @@ class PageStore(LifecycleMixin):
                     receipt_details["deleted"] = True
                 else:
                     visible = access.value_fields(actor, collection, value)
+                    if link_context is not None:
+                        visible &= link_context.fields
                     receipt_details["record"] = {
                         "id": rid,
                         "rev": rev,
@@ -761,6 +899,7 @@ class PageStore(LifecycleMixin):
             changed,
             revisions,
             receipt_details=receipt_details,
+            link_context=link_context,
         )
 
     def _validate_record(self, scope, document, collection, record):
