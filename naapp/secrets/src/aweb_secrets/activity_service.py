@@ -47,6 +47,7 @@ class ActivityEntry:
     runner_id: str | None
     approval_id: str | None
     approval_ref: str | None
+    principal_alias: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,19 @@ class ActivityPage:
 def _text(payload, name: str) -> str | None:
     value = payload.get(name)
     return value if isinstance(value, str) else None
+
+
+def _principal_alias(actor: object, principal_did: str | None) -> str | None:
+    if not isinstance(actor, dict) or not isinstance(principal_did, str):
+        return None
+    if principal_did.startswith("did:aw:"):
+        bound = actor.get("did_aw") == principal_did
+    elif principal_did.startswith("did:key:"):
+        bound = actor.get("did_key") == principal_did and actor.get("did_aw") is None
+    else:
+        return None
+    alias = actor.get("alias")
+    return alias if bound and isinstance(alias, str) and alias.strip() else None
 
 
 class ActivityReads:
@@ -76,7 +90,7 @@ class ActivityReads:
             raise ValueError("activity pagination requires an ActivityCursor")
         rows = await tx.fetch_all(
             "SELECT e.event_id,e.occurred_at,e.install_generation,e.action,e.dispatch_id,"
-            "e.payload,e.correlation,i.principal_did,i.request_id,i.intent_id,"
+            "e.payload,e.actor,e.correlation,i.principal_did,i.request_id,i.intent_id,"
             "i.secret_id,i.operation_id,i.operation_digest"
             " FROM {{tables.broker_use_events}} e"
             " LEFT JOIN {{tables.use_contexts}} c ON c.dispatch_id=e.dispatch_id"
@@ -119,6 +133,9 @@ class ActivityReads:
                     outcome=_text(payload, "dispatch_state") or _text(payload, "approval_decision"),
                     refusal_code=_text(payload, "refusal_code"),
                     principal_did=_text(correlation, "principal_did"),
+                    principal_alias=_principal_alias(
+                        json.loads(row["actor"]), _text(correlation, "principal_did")
+                    ),
                     secret_id=_text(correlation, "secret_id"),
                     secret_ref=_text(correlation, "secret_ref"),
                     request_id=_text(correlation, "request_id"),
