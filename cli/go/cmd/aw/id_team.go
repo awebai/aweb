@@ -113,7 +113,7 @@ type teamMembersOutput struct {
 	Limitations string           `json:"limitations,omitempty"`
 }
 
-const grantRosterLimitations = "agents only (no humans); no certificate IDs or issued/revoked metadata"
+const grantRosterLimitations = "agents only (people are not included); no certificate IDs or issued/revoked metadata"
 
 type teamImportRequestOutput struct {
 	Status              string         `json:"status"`
@@ -487,7 +487,7 @@ var teamMembersCmd = &cobra.Command{
 		"Membership is represented by team certificates, so this identity-level\n" +
 		"command lists the certificate roster for the selected team. By default it\n" +
 		"shows active certificates; pass --include-revoked to include revoked rows.\n\n" +
-		"Grant homes read their bound team's service roster: agents only (no humans),\n" +
+		"Grant homes read their bound team's service roster: agents only (people are not included),\n" +
 		"without certificate IDs or issued/revoked metadata. --include-revoked and\n" +
 		"--registry are not supported in grant homes.",
 	RunE: runTeamMembers,
