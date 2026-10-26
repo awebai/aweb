@@ -127,7 +127,13 @@ async def test_exact_fresh_approve_settles_once_without_open_send_or_availabilit
         event for event in await envelopes(db) if event["payload"].get("action") == "reconciled"
     ]
     assert event["payload"]["dispatch_state"] == state.value
-    assert event["actor"] == (await envelopes(db))[0]["actor"]
+    [original_event] = [
+        previous
+        for previous in await envelopes(db)
+        if previous["payload"].get("dispatch_id") == event["payload"]["dispatch_id"]
+        and previous["payload"].get("dispatch_state") == "outcome_unknown"
+    ]
+    assert event["actor"] == original_event["actor"]
     async with db.transaction() as tx:
         originals = await context.arguments["use_audit"].dispatch_approvals(
             tx, original.original.dispatch_id
