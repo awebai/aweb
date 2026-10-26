@@ -73,6 +73,10 @@ class ReconciliationAudit:
     ) -> None:
         self._reads, self._approval, self._passkeys = reads, approval, passkeys
 
+    async def approval_in(self, tx: TransactionManager, approval_id: str) -> Approval | None:
+        """The injected plain shared B2 read, on the identical caller transaction."""
+        return await self._approval(tx, approval_id)
+
     async def _request(self, tx: TransactionManager, approval: Approval):
         raw = await tx.fetch_value(
             "SELECT canonical FROM {{tables.approval_requests}} WHERE request_ref=$1",

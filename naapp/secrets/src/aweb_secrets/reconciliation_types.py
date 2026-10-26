@@ -9,15 +9,41 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Protocol
 from uuid import UUID
 
 from aweb_naapp.dispatch import State
 from aweb_naapp.runtime.approvals import ApprovalState, DeliveryStatus
 from aweb_naapp.runtime.installation import AdmittedInstallation
+from aweb_naapp.runtime.passkeys import PreparedCurrentApprovers
+from pgdbm.core import TransactionManager
 
 ReconciliationKind = Literal["broker", "run_job"]
 ReconciliationOutcome = Literal["completed", "failed", "unknown-closed"]
+
+
+class OwnerReconciliationFence(Protocol):
+    """Console-owned authority for one exact S4 owner in one original tx.
+
+    prepare caches the complete F6/OWNER/B3 union before exact LOGIN and S4
+    holds; S13 only checks the returned shared handle. check takes no new
+    locks and ends with live F6 and pure persisted session expiry. A new
+    postcommit presentation transaction requires a new fence and handle.
+    This credential-holding fence never spans Approvals.decide.
+    """
+
+    @property
+    def scope(self) -> AdmittedInstallation: ...
+    @property
+    def owner_scope(self) -> str: ...
+    @property
+    def owner_subject(self) -> str: ...
+    @property
+    def expires_at(self) -> datetime: ...
+
+    async def prepare(self, tx: TransactionManager) -> PreparedCurrentApprovers: ...
+
+    async def check(self, tx: TransactionManager) -> None: ...
 
 
 @dataclass(frozen=True)

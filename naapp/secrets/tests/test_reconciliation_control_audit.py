@@ -25,13 +25,18 @@ from aweb_secrets.reconciliation_reads import ReconciliationReads
 from aweb_secrets.use_audit import UseAuditUnavailable
 from tests.test_broker_audit import envelopes
 from tests.test_change_sets import ALICE, TEAM
-from tests.test_run_dispatch_service import setup
+from tests.test_run_dispatch_service import decide, setup
 from tests.test_use_approvals import uses as uses
 from tests.test_use_approvals import world as world
 
 
-async def control_world(uses):
-    context = await setup(uses)
+async def control_world(uses, *, approval_required=False):
+    context = await setup(uses, approval_required=approval_required)
+    if approval_required:
+        pending = await context.service.submit(
+            job=context.job.job_id, submission=context.submission
+        )
+        await decide(context, pending, Decision.APPROVE)
     admitted, _, _ = await context.assigned()
     db = uses.world.db
     uses.approvals = context.arguments["approvals"]
