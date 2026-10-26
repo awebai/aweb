@@ -243,7 +243,7 @@ async def list_versions(db: AsyncDatabaseManager, *, principal: Principal, slug:
 
 
 async def mint_presentation_link(
-    db: AsyncDatabaseManager,
+    db: AsyncDatabaseManager | TransactionManager,
     *,
     installation_id: str,
     principal: Principal,
