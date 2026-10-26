@@ -12,6 +12,7 @@ from awid.team_server_record import record_signing_bytes
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, signed_team_server_record
 from nacl.signing import SigningKey
 
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
 from aweb_naapp.runtime.team_server import TeamServerDirectory, TeamServerUnavailable
 
@@ -21,9 +22,9 @@ SERVER_URL = "https://coord.discovery.example/api"
 
 class Clock:
     def __init__(self) -> None:
-        self.now = 1000.0
+        self.now = seconds_to_ns(1000)
 
-    def __call__(self) -> float:
+    def __call__(self) -> int:
         return self.now
 
 
@@ -113,10 +114,10 @@ async def test_an_answer_is_reused_for_at_most_a_minute_and_never_after(registry
     await directory.resolve(TEAM_ID)
     calls = len(registry.transport.calls)
 
-    clock.now += 59
+    clock.now += seconds_to_ns(59)
     await directory.resolve(TEAM_ID)
     reused_calls = len(registry.transport.calls)
-    clock.now += 2
+    clock.now += seconds_to_ns(2)
 
     def outage(request: httpx.Request, response: httpx.Response) -> None:
         response.status_code = 503

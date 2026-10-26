@@ -39,6 +39,7 @@ from aweb_naapp.runtime.approvals import (
     PgApprovalStore,
 )
 from aweb_naapp.runtime.authorization import Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.installation import (
     AdmittedInstallation,
     InstallationFence,
@@ -115,7 +116,7 @@ class Installations:
             installation_id=INSTALLATION_ID,
             generation=1,
             scopes=frozenset({"secrets:use"}),
-            fresh_until=time.monotonic() + 55,
+            fresh_until=time.monotonic_ns() + seconds_to_ns(55),
         )
 
     async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:

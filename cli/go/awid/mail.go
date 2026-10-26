@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -388,6 +389,21 @@ func (c *Client) e2eeRecipientAgent(ctx context.Context, agentID, alias string) 
 		if strings.TrimSpace(alias) != "" && strings.TrimSpace(agent.Alias) == strings.TrimSpace(alias) {
 			return agent, nil
 		}
+	}
+	if strings.TrimSpace(alias) != "" && !strings.ContainsAny(alias, "/~:") {
+		var scoped struct {
+			AgentView
+			TeamID string `json:"team_id"`
+		}
+		if err := c.Get(ctx, "/v1/messaging/participants/"+url.PathEscape(strings.TrimSpace(alias)), &scoped); err != nil {
+			return AgentView{}, err
+		}
+		participant := scoped.AgentView
+		if strings.TrimSpace(scoped.TeamID) == "" || (c.TeamID() != "" && scoped.TeamID != c.TeamID()) || strings.TrimSpace(participant.Alias) != strings.TrimSpace(alias) || participant.Status != "active" {
+			return AgentView{}, errors.New("recipient participant binding is invalid")
+		}
+		participant.sameServiceParticipant = true
+		return participant, nil
 	}
 	return AgentView{}, errors.New("recipient agent not found")
 }

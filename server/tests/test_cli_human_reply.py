@@ -132,14 +132,15 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
                                                     stderr=asyncio.subprocess.STDOUT)
         output, _ = await asyncio.wait_for(reply.communicate(), 30)
         assert reply.returncode == 0, output.decode()
-        # Reply continuity must not make human aliases valid send targets.
+        # Stored-source reply can use its signed key; alias encryption still
+        # requires a published participant key and never falls back to plaintext.
         forbidden = await asyncio.create_subprocess_exec(str(binary), "mail", "send", "--to", "alice",
                                                         "--e2ee", "--body-file", str(body_file), cwd=command_dir,
                                                         env=command_env, stdout=asyncio.subprocess.PIPE,
                                                         stderr=asyncio.subprocess.STDOUT)
         refused, _ = await asyncio.wait_for(forbidden.communicate(), 30)
         assert forbidden.returncode != 0
-        assert "recipient agent not found" in refused.decode()
+        assert (await env.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 2
         response = await _request(env, "alice", "GET", f"/v1/messages/conversations/{conversation_id}")
         assert response.status_code == 200, response.text
         messages = response.json()["messages"]

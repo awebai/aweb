@@ -16,6 +16,7 @@ from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.manifest import canonical_bytes
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.app_keys import AppKeyError
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.hook_resolver import HookBinding, Resolution
 from tests.hooks.test_producer import SYSTEM, TEAM
 from tests.hooks.test_transport import SECRET_USE
@@ -216,7 +217,7 @@ async def test_effect_and_runtime_producer_event_share_commit_and_rollback(
             team_id=team_id,
             server_url="https://coord.example",
             items=(),
-            fresh_until=time.monotonic() + 60,
+            fresh_until=time.monotonic_ns() + seconds_to_ns(60),
             as_of=datetime.now(UTC),
             max_age_seconds=60,
         )
@@ -301,7 +302,7 @@ async def test_runtime_lifespan_drains_through_one_resolver_and_guarded_real_tls
                     active_from=registration.active_from,
                 ),
             ),
-            fresh_until=time.monotonic() + 60,
+            fresh_until=time.monotonic_ns() + seconds_to_ns(60),
             as_of=datetime.now(UTC),
             max_age_seconds=60,
         )
