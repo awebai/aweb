@@ -42,7 +42,7 @@ def refused(code: str, *, request_id: str | None) -> dict[str, Any]:
 
 
 def outcome_unknown(*, request_id: str, request_ref: str) -> dict[str, Any]:
-    return _use("outcome_unknown", request_id, request_ref)
+    return {**_use("outcome_unknown", request_id, request_ref), "reconcile_ref": request_ref}
 
 
 def result_withheld(code: str, *, request_id: str, request_ref: str) -> dict[str, Any]:
