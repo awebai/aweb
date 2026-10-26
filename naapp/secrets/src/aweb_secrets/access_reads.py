@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from pgdbm.core import TransactionManager
 
-from aweb_secrets import jobs, records
+from aweb_secrets import derived_lineage, jobs, records
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
@@ -149,12 +149,12 @@ async def confirmed_access(
             policy = await records.policy(tx, installation.installation_id, grant.policy_digest)
             operations = []
             for operation_id, digest in grant.operations:
-                current = await records.current_operation(
+                current = await derived_lineage.current_operation_snapshot(
                     tx,
                     installation.installation_id,
+                    installation.team_id,
                     secret.record.secret_id,
                     operation_id,
-                    lock=False,
                 )
                 operations.append(OperationAccessPin(operation_id, digest, current))
             job_pins = []
