@@ -2,10 +2,13 @@
 
 The caller holds OWNER/S4/F6 and checks their live authority after this read.
 No row lock, opener, approval consumer, grant refresh or mutation lives here.
-Run reads require the run-dispatch migrations before enable_runs=True.
+Shared dispatch migrations (including 002 continuations) precede every read.
+Run reads additionally require run-dispatch migrations before enable_runs=True.
 """
 
 from __future__ import annotations
+
+from uuid import UUID
 
 from aweb_naapp.dispatch import State
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationRefused
@@ -25,6 +28,24 @@ def _current_generation(scope: AdmittedInstallation, generation: int) -> None:
         raise InstallationRefused(
             "generation_superseded", 409, "the original reconciliation generation is superseded"
         )
+
+
+async def _repeat_state(tx: TransactionManager, original_id: UUID) -> State | None:
+    rows = await tx.fetch_all(
+        "SELECT r.state, (r.subject=o.subject AND r.action=o.action"
+        " AND r.retry_exempt=o.retry_exempt) AS same_pair"
+        " FROM {{tables.dispatches}} r JOIN {{tables.dispatches}} o ON r.continues=o.dispatch_id"
+        " WHERE o.dispatch_id=$1 LIMIT 2",
+        original_id,
+    )
+    if not rows:
+        return None
+    if len(rows) != 1 or not rows[0]["same_pair"]:
+        raise UseAuditUnavailable()
+    try:
+        return State(rows[0]["state"])
+    except ValueError:
+        raise UseAuditUnavailable() from None
 
 
 class ReconciliationReads:
@@ -80,6 +101,7 @@ class ReconciliationReads:
                     operation_digest=row["operation_digest"],
                 ),
                 state=State(row["state"]),
+                repeat_state=await _repeat_state(tx, row["dispatch_id"]),
             )
         if not self._enable_runs:
             return None
