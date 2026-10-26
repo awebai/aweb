@@ -6,6 +6,7 @@ import json
 import httpx
 from aweb_naapp.runtime.approvals import ApprovalState, Assurance, Decision
 from aweb_naapp_testing import Member
+from awid_service.testing import REGISTRY_URL
 from nacl.signing import SigningKey
 
 from aweb_secrets.app import create_app
@@ -61,6 +62,16 @@ async def test_mounted_revoke_commits_before_final_fence_and_prevents_any_send(
             awid_transport=registry.transport,
             tool_routers=(broker_routes, containment_routes),
         )
+        discovery_domains = []
+
+        async def registry_override(domain):
+            discovery_domains.append(domain)
+            assert domain == TEAM.split(":", 1)[1]
+            return REGISTRY_URL
+
+        # Bootstrap audit receipts use the real runtime drain and directory;
+        # its external discovery answer must name the in-process registry too.
+        app.runtime.team_server_directory()._registry_override = registry_override
         async with app.api_app.router.lifespan_context(app.api_app):
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app), base_url=API
@@ -162,3 +173,4 @@ async def test_mounted_revoke_commits_before_final_fence_and_prevents_any_send(
                     if sender is not None and not sender.done():
                         sender.cancel()
                         await asyncio.gather(sender, return_exceptions=True)
+        assert discovery_domains

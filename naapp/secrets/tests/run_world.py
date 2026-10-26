@@ -58,6 +58,7 @@ class RunWorld:
     arguments: dict
     submission: MemberSubmission
     available: list[bool]
+    origin: str = ORIGIN
 
     def signed(self, target, body=b"{}", *, key=None):
         key = key or self.signing_key
@@ -65,7 +66,7 @@ class RunWorld:
             {
                 "v": 1,
                 "type": "aweb.secrets.runner-request",
-                "origin": ORIGIN,
+                "origin": self.origin,
                 "runner_id": self.runner.runner_id,
                 "kid": did_from_public_key(bytes(key.verify_key)),
                 "method": "POST",
