@@ -1,10 +1,11 @@
 """The delivered common email entry reaches the actual typed approval page."""
 
 import asyncio
+import base64
 import secrets
 import socket
 from functools import partial
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 import uvicorn
@@ -15,6 +16,7 @@ from aweb_naapp.runtime.approvals import ApprovalState
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.passkeys import RelyingParty
 from aweb_naapp_testing.smtp import SmtpServer
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 from fastapi import FastAPI
 from playwright.async_api import Error as BrowserError
 from playwright.async_api import expect
@@ -30,9 +32,10 @@ from aweb_secrets.console_use_approvals import (
     console_run_approvals_router,
     console_use_approvals_router,
 )
+from aweb_secrets.owners import owner_scope
 from tests.console_use_world import audit_for, mint
 from tests.test_approval_email import contents, mailer
-from tests.test_change_sets import ALICE, TEAM, Installations
+from tests.test_change_sets import ALICE, TEAM, Installations, enrol_owner
 from tests.test_change_sets import world as _world
 from tests.test_console_changes import Registrations
 from tests.test_console_forms import enrolled_page
@@ -54,6 +57,7 @@ async def entry_service(world, tmp_path, request):
     uses = Uses(w, w.approvals, Clock(), Installations().grant)
     run = None
     if getattr(request, "param", "use") == "run":
+        await enrol_owner(w, ALICE, "alice@acme.com")
         run = await run_setup(uses, approval_required=True)
         uses.approvals = run.arguments["approvals"]
         audit = run.arguments["use_audit"]
@@ -174,6 +178,53 @@ async def test_broker_email_entry_reaches_the_use_page_and_keeps_fresh_ceremonie
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
+async def existing_owner_page(world, context, origin):
+    """Import the real setup key; LOGIN still uses the browser and B3/S4."""
+    page = await context.new_page()
+    cdp = await context.new_cdp_session(page)
+    await cdp.send("WebAuthn.enable")
+    auth = await cdp.send(
+        "WebAuthn.addVirtualAuthenticator",
+        {
+            "options": {
+                "protocol": "ctap2",
+                "transport": "internal",
+                "hasResidentKey": True,
+                "hasUserVerification": True,
+                "isUserVerified": True,
+                "automaticPresenceSimulation": True,
+            }
+        },
+    )
+    [credential] = world.devices["alice@acme.com"].credentials.values()
+    try:
+        await cdp.send(
+            "WebAuthn.addCredential",
+            {
+                "authenticatorId": auth["authenticatorId"],
+                "credential": {
+                    "credentialId": base64.b64encode(credential.credential_id).decode(),
+                    "isResidentCredential": True,
+                    "rpId": "localhost",
+                    "privateKey": base64.b64encode(
+                        credential.key.private_bytes(
+                            Encoding.DER, PrivateFormat.PKCS8, NoEncryption()
+                        )
+                    ).decode(),
+                    "userHandle": base64.b64encode(credential.user_handle).decode(),
+                    "signCount": credential.sign_count,
+                },
+            },
+        )
+    except BrowserError:
+        raise AssertionError("generated browser authenticator could not be prepared") from None
+    scope = owner_scope(world.admitted.installation_id, TEAM, ALICE.principal_did)
+    await page.goto(origin + "/login?" + urlencode({"scope": scope}))
+    await page.get_by_role("button", name="Sign in with a passkey", exact=True).click()
+    await page.wait_for_url(origin + "/")
+    return page
+
+
 @pytest.mark.parametrize("width", [375, 1440])
 @pytest.mark.parametrize("entry_service", ["run"], indirect=True)
 async def test_run_email_entry_selects_run_page_without_releasing_terms_to_another_candidate(
@@ -181,7 +232,7 @@ async def test_run_email_entry_selects_run_page_without_releasing_terms_to_anoth
 ):
     uses, origin, smtp, run = entry_service
     async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
-        page, _, _ = await enrolled_page(world, context, origin)
+        page = await existing_owner_page(world, context, origin)
         reply = await run.service.submit(job=run.job.job_id, submission=run.submission)
         assert reply.status == 202
         [received] = smtp.received
