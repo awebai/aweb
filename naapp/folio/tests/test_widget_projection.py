@@ -13,7 +13,7 @@ __all__ = ["authors", "linked", "listener"]
 @pytest.mark.parametrize("editable", [False, True])
 @pytest.mark.parametrize("filtered", [False, True])
 async def test_widget_fields_bound_query_schema_snapshot_and_receipt(authors, editable, filtered):
-    world, row = await with_table(authors)
+    world, row = await with_table(authors, body=table_body())
     body = table_body()
     if filtered:
         # A saved, author-authorized predicate may use a non-displayed field.

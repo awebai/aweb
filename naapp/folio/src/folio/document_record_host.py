@@ -127,6 +127,7 @@ class DocumentRecordHost:
                     if error.status in (403, 404):
                         continue  # Prose may be shared even when a table is unavailable.
                     raise
+                fields &= {column["field"] for column in widget["props"]["columns"]}
                 if fields:
                     frozen[identifier] = {
                         "collection": metadata["id"],
@@ -149,6 +150,24 @@ class DocumentRecordHost:
             self.storage,
             write=write,
         )
+        displayed = {column["field"] for column in widget["props"]["columns"]}
+        metadata = {
+            **metadata,
+            "collection_fields": metadata["fields"],
+            "fields": sorted(displayed & set(metadata["fields"])),
+        }
+        schema = copy.deepcopy(metadata["schema"])
+        schema["properties"] = {
+            key: value for key, value in schema["properties"].items() if key in displayed
+        }
+        if "required" in schema:
+            schema["required"] = [key for key in schema["required"] if key in displayed]
+        page["collections"][0]["schema"] = schema
+        # Predicate fields/values belong to the checked server query, not the renderer.
+        page["layout"][0]["bind"] = {
+            "collection": metadata["id"],
+            "limit": widget["bind"].get("limit", 20),
+        }
         await context.revalidate(context.tx)
         return widget, scope, metadata, page
 
@@ -165,6 +184,9 @@ class DocumentRecordHost:
             widget_id=TABLE_WIDGET_ID,
             bind=bind,
             link_id=context.row["token"] + ":" + identifier,
+            predicate_fields=frozenset(
+                item["field"] for item in bind.get("all", []) + bind.get("sort", [])
+            ),
             projection={
                 "collections": [
                     {"collection": metadata["id"], "fields": metadata["fields"], "record_ids": "*"}
@@ -186,6 +208,7 @@ class DocumentRecordHost:
         current = await self.write_fields(
             context.tx, scope, self.require_identity(context), metadata["id"]
         )
+        current &= set(metadata["fields"])
         frozen = grants(context.row).get(identifier, {})
         if not isinstance(frozen, dict) or frozen.get("collection") != metadata["id"]:
             return empty | {"reopen_to_edit": bool(current)}
@@ -196,7 +219,9 @@ class DocumentRecordHost:
             and bool(fields)
             and set(metadata["schema"].get("required", [])) <= fields,
             "patch_fields": sorted(fields) if "patch" in operations else [],
-            "delete": "delete" in operations and bool(fields) and set(metadata["fields"]) <= fields,
+            "delete": "delete" in operations
+            and bool(fields)
+            and set(metadata["collection_fields"]) <= fields,
             "reopen_to_edit": bool(current - fields),
         }
 

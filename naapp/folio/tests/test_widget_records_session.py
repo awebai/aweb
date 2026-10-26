@@ -9,6 +9,8 @@ from test_record_collections import VALUE
 from test_record_links import linked, listener
 from test_widget_authorization import authors, signed, table_body
 
+from folio.record_collections import DISCOVERY_SCHEMA
+
 __all__ = ["authors", "linked", "listener"]
 HEADER = "X-Folio-Edit-Session"
 
@@ -39,10 +41,23 @@ async def mint(world, *, editable=True):
     return link, parts.path, {HEADER: opened.json()["session_secret"]}, opened.json()
 
 
-async def with_table(authors):
+def full_table_body():
+    definition = json.loads(table_body().split(":::widget\n")[1].split("\n:::")[0])
+    definition["props"]["columns"] = [
+        {"field": field, "label": field, "format": "text"}
+        for field in DISCOVERY_SCHEMA["properties"]
+    ]
+    return "Before\n\n:::widget\n" + json.dumps(definition) + "\n:::\n\nAfter"
+
+
+async def with_table(authors, *, body=None):
     world, _, _, _ = authors
     saved = await signed(
-        world, world.member, "POST", "/v1/documents/ordinary/versions", body=table_body()
+        world,
+        world.member,
+        "POST",
+        "/v1/documents/ordinary/versions",
+        body=body or full_table_body(),
     )
     assert saved.status_code == 200, saved.text
     added = await signed(

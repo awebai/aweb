@@ -1266,7 +1266,16 @@ class PageStore(LifecycleMixin):
         return entries
 
     async def collection_access_on(
-        self, tx, scope, *, creator_id, collection, link_mode, record_ids="*", write=False, exclusive=False
+        self,
+        tx,
+        scope,
+        *,
+        creator_id,
+        collection,
+        link_mode,
+        record_ids="*",
+        write=False,
+        exclusive=False,
     ):
         """Current collection authority after the host checks its creator proof.
 
@@ -1599,6 +1608,7 @@ class PageStore(LifecycleMixin):
         link_id,
         expected_page_rev=None,
         projection=None,
+        predicate_fields=frozenset(),
     ):
         """Read a checked live link while its caller holds the link/session lock.
 
@@ -1628,6 +1638,7 @@ class PageStore(LifecycleMixin):
             allow_current=True,
             projection=projection,
             link_id=link_id,
+            predicate_fields=predicate_fields,
         )
 
     async def _query_widget_on(
@@ -1644,6 +1655,7 @@ class PageStore(LifecycleMixin):
         allow_current=False,
         projection=None,
         link_id=None,
+        predicate_fields=frozenset(),
     ):
         if allow_current and expected_page_rev is None:
             expected_page_rev = document["rev"]
@@ -1658,7 +1670,10 @@ class PageStore(LifecycleMixin):
         ):
             raise StoreError("query_denied", 403)
         definition = next(c for c in document["collections"] if c["id"] == bind["collection"])
-        fields = access.visible_fields(actor, definition)
+        visible = access.visible_fields(actor, definition)
+        if not isinstance(predicate_fields, frozenset) or predicate_fields - visible:
+            raise StoreError("query_denied", 403)
+        fields = set(visible)
         record_ids = None
         if projection is not None:
             entries = self._projection_entries(projection, allow_live=True)
@@ -1667,20 +1682,23 @@ class PageStore(LifecycleMixin):
                 raise StoreError("action_denied", 403)
             fields &= set(selected["fields"])
             record_ids = None if selected["record_ids"] == "*" else list(selected["record_ids"])
+        query_fields = fields | predicate_fields
         probe = copy.deepcopy(document)
         probe["layout"] = [
             {
                 "id": widget_id,
                 "type": "table",
                 "props": {
-                    "columns": [{"field": f, "label": f, "format": "text"} for f in sorted(fields)]
+                    "columns": [
+                        {"field": f, "label": f, "format": "text"} for f in sorted(query_fields)
+                    ]
                 },
                 "bind": bind,
             }
         ]
         probe["widget_state"] = {}
         validated(probe)
-        if {f.get("field") for f in bind.get("all", []) + bind.get("sort", [])} - fields:
+        if {f.get("field") for f in bind.get("all", []) + bind.get("sort", [])} - query_fields:
             raise StoreError("query_denied", 403)
         for predicate in bind.get("all", []):
             field_schema = definition["schema"]["properties"][predicate["field"]]
@@ -1698,7 +1716,9 @@ class PageStore(LifecycleMixin):
             "bind": {k: v for k, v in bind.items() if k != "cursor"},
         }
         if link_id is not None:
-            query.update(link_id=link_id, projection=projection)
+            query.update(
+                link_id=link_id, projection=projection, predicate_fields=sorted(predicate_fields)
+            )
         digest = hashlib.sha256(canonical(query).encode()).hexdigest()
         offset = 0
         if bind.get("cursor"):
@@ -1718,7 +1738,7 @@ class PageStore(LifecycleMixin):
             definition,
             access,
             actor,
-            fields=fields if projection is not None else None,
+            fields=query_fields if projection is not None else None,
             record_ids=record_ids,
         )
 
@@ -1774,7 +1794,16 @@ class PageStore(LifecycleMixin):
             )
         ]
         if projection is not None:
-            selected = [{key: record[key] for key in ("id", "rev", "value")} for record in selected]
+            selected = [
+                {
+                    "id": record["id"],
+                    "rev": record["rev"],
+                    "value": {
+                        key: value for key, value in record["value"].items() if key in fields
+                    },
+                }
+                for record in selected
+            ]
         next_cursor = None
         if offset + limit < count:
             next_cursor = secrets.token_urlsafe(32)
