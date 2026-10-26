@@ -230,7 +230,7 @@ registry storage, and product language use `name` as the concept and
 ### Hosted organization setup (including Omarchy)
 
 A person already signed in can create a managed organization without a namespace
-controller key in the terminal. Human CLI authorization grants the hosted service
+controller key in the terminal. Account authorization through the CLI grants the hosted service
 permission to create the organization and team; each agent keeps its own signing
 key. Device login prints an approval URL and code, and works without opening a
 browser on the CLI machine:
@@ -259,7 +259,7 @@ slug; JSON and non-interactive invocations exit nonzero with the suggestion.
 
 Choose the same organization when ensuring a workspace team and enrolling its
 member. The selector is covered by the enrollment signature; it does not itself
-grant human organization authority:
+grant an account owner's organization authority:
 
 ```bash
 aw --identity-home /path/to/principal init --workspace-team \
@@ -339,10 +339,10 @@ authorize this path. The service still verifies the new member's separate intent
 proof and returns an ordinary self-custodial global certificate.
 
 This owner path uses the Cloud base from the owner's own workspace binding,
-leaves that root unchanged, and creates no human device session. It does not use
-an API key or grant and does not switch to human login after a refusal. Omitting
-`--owner-identity-home` retains the human `cli.org_create` flow above. Signup and
-claim-human alone do not mint that human device authorization.
+leaves that root unchanged, and creates no account device session. It does not use
+an API key or grant and does not switch to account login after a refusal. Omitting
+`--owner-identity-home` retains the account `cli.org_create` flow above. Signup and
+claim-human alone do not mint that account device authorization.
 
 The owner-request DIDKey signature covers canonical JSON with `aud` (the
 hosted service's configured public origin, which must equal the owner workspace
