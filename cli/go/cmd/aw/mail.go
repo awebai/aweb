@@ -521,6 +521,10 @@ var mailSendCmd = &cobra.Command{
 				} else {
 					req.ToAlias = targetValue
 				}
+			} else if sendEncryptE2EE {
+				// Key discovery for a human is scoped to the selected team,
+				// using its original identity-signed assertion.
+				req.ToAlias = targetValue
 			} else if liveTarget, liveFound, liveErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetValue); liveErr != nil {
 				debugLog("resolve live team member %s/%s: %v", strings.TrimSpace(sel.TeamID), targetValue, liveErr)
 				req.ToAlias = targetValue
