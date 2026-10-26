@@ -142,6 +142,7 @@ services:
     network_mode: service:aweb
     environment:
       FOLIO_UNINSTALL_PROOF: ${FOLIO_UNINSTALL_PROOF:-0}
+      FOLIO_RECORDS_BROWSER_EVIDENCE: /browser-evidence
       AW_BIN: /usr/local/bin/aw
       FOLIO_WAKES_ORIGIN: https://folio-wakes.test:8765
       FOLIO_WAKES_MANIFEST: /folio-template/aweb-app.json
@@ -150,9 +151,12 @@ services:
     volumes:
       - fixture:/fixture:ro
       - folio-source:/folio-template
+      - browser-evidence:/browser-evidence
       - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
+  browser-evidence:
+    name: abrm-folio-browser-evidence
   fixture:
     name: abrm-folio-fixture
   folio-source:

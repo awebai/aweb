@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { chromium, expect } from "@playwright/test";
 
 let input = "";
@@ -13,12 +15,31 @@ function tool(name, body) {
   assert.equal(result.status, 0, "Synthetic member CLI operation failed: " + result.stderr);
   return JSON.parse(result.stdout);
 }
+const evidenceDirectory = process.env.FOLIO_RECORDS_BROWSER_EVIDENCE;
+assert(evidenceDirectory, "The journey must retain browser failure evidence");
+async function retainFailure(page, width, error) {
+  await mkdir(evidenceDirectory, { recursive: true });
+  const stem = join(evidenceDirectory, `records-failure-${width || "unknown"}`);
+  const editor = page.locator("#pane-edit");
+  const root = await editor.count() ? editor : page.locator("body");
+  const captures = await Promise.allSettled([
+    root.ariaSnapshot({ timeout: 5000 }).then(snapshot => writeFile(stem + ".aria.yml", snapshot)),
+    page.screenshot({ path: stem + ".png", fullPage: true, timeout: 5000 }),
+  ]);
+  await writeFile(stem + ".json", JSON.stringify({
+    viewport: width, failure: { name: error.name, message: error.message },
+    aria: captures[0].status, screenshot: captures[1].status,
+  }, null, 2));
+  console.error(`Browser failure evidence retained under ${stem}`);
+}
+let failurePage, failureWidth;
 const browser = await chromium.launch();
 try {
   for (const [iteration, width] of [1280, 375].entries()) {
     const currentValues = values.length ? tool("record-query", { collection_id: collection }).records.map(row => row.value) : [];
     const context = await browser.newContext({ viewport: { width, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
+    failurePage = page; failureWidth = width;
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     const response = await page.goto(url);
@@ -105,10 +126,12 @@ try {
     }
     assert.deepEqual(errors, []);
     await context.close();
+    failurePage = undefined;
   }
   if (legacy) {
     const context = await browser.newContext({ viewport: { width: 375, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
+    failurePage = page; failureWidth = 375;
     const view = new URL(legacy.view_url);
     const viewState = page.waitForResponse(response => new URL(response.url()).pathname === view.pathname + "/widgets");
     await page.goto(view.href);
@@ -143,7 +166,14 @@ try {
     await expect(page.locator("#status")).toContainText("Saved version");
     console.log("PASS records legacy readonly/edit links disclose no rows or receipts; prose save still works");
     await context.close();
+    failurePage = undefined;
   }
+} catch (error) {
+  if (failurePage) {
+    try { await retainFailure(failurePage, failureWidth, error); }
+    catch { console.error("Browser failure evidence capture failed"); }
+  }
+  throw error;
 } finally {
   await browser.close();
 }

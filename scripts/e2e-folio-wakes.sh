@@ -9,12 +9,22 @@ mkdir -p "$EVIDENCE"
 COMPOSE=(docker compose -p abrm-folio --project-directory "$ROOT" -f "$ROOT/scripts/e2e/folio-wakes.compose.yml")
 BUILDER="folio-wakes-$$"
 SEED="folio-wakes-seed-$$"
+EVIDENCE_READER="folio-wakes-evidence-$$"
 export FOLIO_WAKES_ORIGIN=https://folio-wakes.test:8765
 export FOLIO_WAKES_APP_KEY_FILES='{}'
 cleanup() {
   status=$?
   "${COMPOSE[@]}" unpause aweb >/dev/null 2>&1 || true
   "${COMPOSE[@]}" logs --no-color >"$EVIDENCE/services.log" 2>&1 || true
+  # A named volume survives the --rm client, including nested Docker runs.
+  # Copy failure diagnostics out before removing the disposable volumes/images.
+  if docker volume inspect abrm-folio-browser-evidence >/dev/null 2>&1 && \
+      docker create --pull=never --name "$EVIDENCE_READER" --entrypoint /bin/true \
+      -v abrm-folio-browser-evidence:/browser-evidence:ro abrm-folio-client >/dev/null 2>&1; then
+    mkdir -p "$EVIDENCE/browser"
+    docker cp "$EVIDENCE_READER:/browser-evidence/." "$EVIDENCE/browser/" || status=1
+    docker container rm "$EVIDENCE_READER" >/dev/null || status=1
+  fi
   "${COMPOSE[@]}" down -v --rmi local --remove-orphans || status=1
   docker container rm -f "$SEED" >/dev/null 2>&1 || true
   docker buildx rm "$BUILDER" >/dev/null 2>&1 || true

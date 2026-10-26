@@ -12,9 +12,9 @@ import pytest
 from aweb_naapp.manifest import canonical_bytes
 from awid.did import did_from_public_key
 from fastapi.testclient import TestClient
-from nacl.signing import SigningKey
 from manifest_config import TEST_EMIT_DID_KEY, TEST_EMIT_SEED_HEX, TEST_GRANT_DID_KEY
 from manifest_config import configured_settings as configured
+from nacl.signing import SigningKey
 from pydantic import SecretStr
 
 import folio.api as folio_api
