@@ -14,6 +14,7 @@ from aweb.member_attribution import (
     AttributionAcceptanceContext, AttributionError, LocalControllerSigner,
     MemberReference, ValidatedHuman, accept_member_attribution,
 )
+from aweb.routes.connect import connect_agent
 from test_messages_http import _build_test_app, _insert_agent, _insert_team, _make_keypair
 
 
@@ -30,7 +31,7 @@ async def attribution_env(aweb_cloud_db):
         agent_id = await _insert_agent(db, team_id=team, alias=alias, did_key=member_key, did_aw=None, address=None)
         certificate_id = str(uuid4())
         await db.execute("UPDATE {{tables.agents}} SET certificate_id=$1,identity_scope='local' WHERE agent_id=$2", certificate_id, UUID(agent_id))
-        members.append(MemberReference(team, agent_id, certificate_id, member_key))
+        members.append(MemberReference(team_id=team, agent_id=agent_id, certificate_id=certificate_id, member_did_key=member_key))
     now = datetime.now(UTC).replace(microsecond=0)
     await db.execute("UPDATE {{tables.agents}} SET created_at=$1 WHERE team_id=$2", now - timedelta(minutes=2), team)
     return SimpleNamespace(
@@ -91,22 +92,26 @@ async def test_host_rollback_removes_acceptance_and_publication_intent(attributi
 @pytest.mark.asyncio
 async def test_fresh_child_can_be_inserted_after_the_human_policy_on_the_same_transaction(attribution_env):
     env = attribution_env
-    child = MemberReference(env.parent.team_id, str(uuid4()), str(uuid4()), _make_keypair()[2])
+    child = MemberReference(team_id=env.parent.team_id, certificate_id=str(uuid4()), member_did_key=_make_keypair()[2])
     checked = []
     async def policy(context, connection):
         checked.append(context)
-        assert await connection.fetchval("SELECT count(*) FROM aweb.agents WHERE agent_id=$1", UUID(child.agent_id)) == 0
+        assert await connection.fetchval("SELECT count(*) FROM aweb.agents WHERE certificate_id=$1", child.certificate_id) == 0
     async with env.db.transaction() as tx:
         await accept(env, tx, event="claim", validated_human=env.human)
         result = await accept(env, tx, member=child, event="spawn", parent=env.parent, lock_human_policy=policy)
-        await tx.execute(
-            """INSERT INTO {{tables.agents}} (agent_id,team_id,did_key,alias,identity_scope,certificate_id)
-               VALUES ($1,$2,$3,'new-child','local',$4)""",
-            UUID(child.agent_id), child.team_id, child.member_did_key, child.certificate_id,
+        connected = await connect_agent(
+            db=tx, cert_info={"team_id": child.team_id, "did_key": child.member_did_key,
+                              "certificate_id": child.certificate_id, "alias": "new-child", "identity_scope": "local"},
+            team_did_key=env.signer.team_did_key, hostname="", workspace_path="", repo_origin="",
+            role="", human_name="", agent_type="agent",
         )
     assert len(checked) == 1
     assert result.publications[0].record["parent"]["member_did_key"] == env.parent.member_did_key
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.member_attributions}}") == 2
+    assert str(await env.db.fetch_value(
+        "SELECT agent_id FROM {{tables.member_attributions}} WHERE certificate_id=$1", child.certificate_id,
+    )) == connected["agent_id"]
 
 
 @pytest.mark.asyncio
