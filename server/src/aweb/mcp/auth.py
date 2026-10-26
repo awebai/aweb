@@ -43,6 +43,9 @@ class AuthContext:
     workspace_id: str | None = None
     trusted_proxy: bool = False
     identity_scope: str | None = None
+    # Evidence from get_team_identity verifying the presented certificate,
+    # never from the agent projection's stored certificate_id.
+    certificate_id: str | None = None
 
 
 def auth_dids(auth: AuthContext) -> list[str]:
@@ -185,6 +188,7 @@ class MCPAuthMiddleware:
             did_aw=identity.did_aw or None,
             address=identity.address or None,
             identity_scope=identity.identity_scope or None,
+            certificate_id=identity.certificate_id,
         )
 
     async def _resolve_proxy_auth(self, internal: dict[str, str], *, request: Request) -> AuthContext:
