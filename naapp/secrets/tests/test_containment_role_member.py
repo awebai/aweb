@@ -27,6 +27,7 @@ from tests.test_use_approvals import uses as uses
 from tests.test_use_approvals import world as world
 
 ROLE = "secrets.role.deployers"
+SIGNED_TRACE = "0123456789abcdef0123456789abcdef"
 MEMBER_A, MEMBER_B = _member(8), _member(9)
 
 
@@ -85,7 +86,7 @@ async def remove(uses, svc, request, *, actor=REQUESTER):
         action=request["action"],
         target=request["target"],
         member_principal=request["principal"],
-        signed_trace_id="role-removal-trace",
+        signed_trace_id=SIGNED_TRACE,
     )
 
 
@@ -122,7 +123,7 @@ async def test_exact_member_only_replay_hash_and_canonical_receipt(uses, key_onl
         "subject_ref": "member:" + request["principal"],
     }
     assert event["actor"]["did_aw"] == REQUESTER.did_aw
-    assert event["trace"] == {"id": "role-removal-trace", "origin": "signed_request"}
+    assert event["trace"] == {"id": SIGNED_TRACE, "origin": "signed_request"}
     assert (
         await db.fetch_value("SELECT count(*) FROM {{tables.credential_narrowing_authority}}") == 1
     )
