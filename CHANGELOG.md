@@ -5,6 +5,12 @@
 - Release preparation: server 1.27.35. Update the server test fixtures for
   the shared naapp runtime's integer nanosecond freshness deadlines.
 
+- AWID SDK: `CachedRegistryClient.get_team_public_key` caches controller keys
+  for 60 seconds and serves them during registry failures only through 15
+  minutes of data age. Certificate-cache invalidation also clears the key.
+  OSS local key replacement and controller status-host designation now verify
+  against this AWID read instead of the stored team key hint.
+
 - aw: local members initialized with an API key now register and approve app
   installations on their team server through `aw plugin install`, even without
   global identity metadata. Local members can also update and remove approvals.
