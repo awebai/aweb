@@ -17,6 +17,7 @@ from pgdbm.core import TransactionManager
 
 from folio.cloudflare_stream import CloudflareStreamClient, stream_direct_upload_expires_at
 from folio.config import Settings
+from folio.document_widgets import WidgetDocumentError, require_same_widgets
 from folio.event_emit import emit_doc_changed
 from folio.presentation import builtin_preset, sanitize_theme_tokens
 
@@ -421,6 +422,11 @@ async def append_presented_version(
             status_code=409,
             detail={"version_number": latest_version, "body": latest["body"]},
         )
+
+    try:
+        require_same_widgets(str(latest["body"]), body)
+    except WidgetDocumentError as error:
+        raise HTTPException(status_code=422, detail={"code": error.code}) from None
 
     new_version = latest_version + 1
     version_id = uuid4()
