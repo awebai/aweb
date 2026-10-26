@@ -107,8 +107,11 @@ try {
       await editor.getByRole("button", { name: "Add row", exact: true }).click();
       const added = { ...values[0], finding: "Browser added " + width, status: "added" };
       for (const [field, value] of Object.entries(added)) {
-        const control = editor.getByLabel(schema.properties[field].title || field, { exact: true });
-        if (Array.isArray(schema.properties[field].enum))
+        const isEnum = Array.isArray(schema.properties[field].enum);
+        const control = editor.getByRole(isEnum ? "combobox" : "textbox", {
+          name: schema.properties[field].title || field, exact: true,
+        });
+        if (isEnum)
           await control.selectOption(String(schema.properties[field].enum.indexOf(value)));
         else await control.fill(String(value));
       }
