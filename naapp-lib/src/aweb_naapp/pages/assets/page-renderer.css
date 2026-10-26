@@ -826,3 +826,54 @@ polyline {
     gap: 0;
   }
 }
+
+/* Ordinary document hosts use the same table controls as page hosts. */
+.folio-widget,
+.row-editor,
+.row-conflict {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.row-commands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.row-commands > p {
+  flex-basis: 100%;
+}
+.row-editor:not(:empty),
+.row-conflict:not(:empty) {
+  margin-block: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+}
+.row-field {
+  display: grid;
+  gap: 0.35rem;
+  margin-block: 0.75rem;
+}
+.row-field input,
+.row-field select,
+.row-field textarea {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 0.5rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+}
+.row-field [aria-invalid="true"] {
+  border-color: var(--error, #a83e32);
+}
+.row-conflict pre {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

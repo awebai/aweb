@@ -7,6 +7,7 @@ import { safeLink } from "./sanitize.mjs";
 import { element, chrome } from "./dom.mjs";
 import { renderCollection } from "./collections.mjs";
 export { inertLinks } from "./sanitize.mjs";
+export { mountTableWidget } from "./table-editor.mjs";
 export {
   createLinkConfirmation,
   createActionConfirmation,

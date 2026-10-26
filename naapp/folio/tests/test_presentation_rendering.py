@@ -203,7 +203,7 @@ def test_render_editor_page_fills_the_viewport_with_a_split_layout() -> None:
     assert 'id="pane-edit"' in html
     assert 'id="pane-preview"' in html
     assert "calc(100vh - var(--bar-h))" in html
-    assert "grid-template-columns: 1fr 1fr" in html
+    assert "grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)" in html
     # The body loads into the textarea via JS (textarea is empty in source).
     assert '<textarea id="body"' in html
     assert "bodyEl.value = INITIAL.body;" in html

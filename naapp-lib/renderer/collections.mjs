@@ -192,6 +192,8 @@ export function renderCollection({
   actionButton,
   pageLink,
   announce,
+  sortEnabled = true,
+  rowControls,
 }) {
   const p = w.props;
   const region = element("div", null, "collection-content");
@@ -263,6 +265,7 @@ export function renderCollection({
       table.caption.lang = "en";
       table.caption.id = `records-${w.id}`;
       [...table.tHead.rows[0].cells].forEach((th, i) => {
+        if (!sortEnabled) return;
         const column = p.columns[i];
         const button = element("button", column.label, "sort-button");
         const order = query.sort?.find(
@@ -287,14 +290,15 @@ export function renderCollection({
           });
         th.replaceChildren(button);
       });
-      if (p.row_actions?.length) {
+      if (p.row_actions?.length || rowControls) {
         const th = chrome("th", t.actions);
         th.scope = "col";
         table.tHead.rows[0].append(th);
         [...table.tBodies[0].rows].forEach((row, i) => {
           const td = element("td");
-          for (const id of p.row_actions)
-            td.append(actionButton(id, visible[i]));
+          for (const id of p.row_actions || [])
+            if (actionButton) td.append(actionButton(id, visible[i]));
+          if (rowControls) td.append(rowControls(visible[i]));
           row.append(td);
         });
       }
@@ -477,6 +481,10 @@ export function renderCollection({
   region.tabIndex = -1;
   draw();
   return {
+    clear() {
+      ++requestSerial;
+      box.replaceChildren();
+    },
     beginRefresh() {
       projectionFocusKey = region.contains(document.activeElement)
         ? document.activeElement.dataset.focusKey
