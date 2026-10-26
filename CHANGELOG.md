@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Core hooks: unavailable signing authority preserves noncritical mutations with local loss accounting, and refuses new mutation-hook activation. Expiry diagnostics retain bounded operator fields in both JSON and text logs.
+
 - Release preparation: server 1.27.35. Update the server test fixtures for
   the shared naapp runtime's integer nanosecond freshness deadlines.
 

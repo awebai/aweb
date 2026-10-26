@@ -7,6 +7,7 @@ reads S1 directly, so no registration cache can outlive a revocation here.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import os
@@ -127,7 +128,7 @@ class CoreHookDiagnostics:
         }
         if state is not None and state != self._fault_state:
             logger.error(
-                "Core hook signer unavailable; losses remain in local outbox accounting",
+                json.dumps(fields, sort_keys=True),
                 extra=fields,
             )
         self._fault_state = state
@@ -139,9 +140,10 @@ class CoreHookDiagnostics:
         ):
             warning = (kid, deadline)
             if warning != self._warning_state:
+                warning_fields = {**fields, "reason": "key_expiring"}
                 logger.warning(
-                    "Core hook signing key approaches expiry",
-                    extra={**fields, "reason": "key_expiring"},
+                    json.dumps(warning_fields, sort_keys=True),
+                    extra=warning_fields,
                 )
         self._warning_state = warning
 
@@ -303,6 +305,11 @@ def start_core_hooks(
                 egress=egress,
                 registrations=registrations,
                 internal_cidr=internal_cidr,
+                key_valid_from=parse_utc_seconds(hooks.key.valid_from) if hooks.key else None,
+                key_valid_until=(
+                    parse_utc_seconds(hooks.key.valid_until)
+                    if hooks.key and hooks.key.valid_until else None
+                ),
             ),
             policy=RetryPolicy(stalled_after=timedelta(days=1)),
             stop=stop,
