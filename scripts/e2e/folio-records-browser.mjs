@@ -26,7 +26,15 @@ try {
     assert.equal(response.headers()["referrer-policy"], "no-referrer");
     const table = page.locator('[data-folio-widget="research"]');
     if (currentValues.length) await expect(table.getByRole("table")).toBeVisible();
-    else await expect(table.getByText("No records", { exact: true })).toBeVisible();
+    else {
+      // The served renderer bundle is built from collections.mjs. Read its
+      // authoritative empty-state text instead of maintaining another copy.
+      const shared = await context.request.get(new URL("/present/widgets/assets/renderer.js", url).href);
+      assert(shared.ok());
+      const match = (await shared.text()).match(/if \(!visible\.length\)\s+region\.append\(chrome\("p", ("(?:\\.|[^"\\])*"), "field-description"\)\)/);
+      assert(match, "Shared renderer empty-state source must be identifiable");
+      await expect(table.getByText(JSON.parse(match[1]), { exact: true })).toBeVisible();
+    }
     await expect(table.locator("tbody tr")).toHaveCount(currentValues.length);
     for (const value of currentValues) {
       const row = table.locator("tbody tr").filter({ hasText: value.finding });
