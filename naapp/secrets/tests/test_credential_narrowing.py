@@ -1,5 +1,6 @@
 """B3 narrowing keeps actual caller authority through nested effect savepoints."""
 
+import json
 from uuid import uuid4
 
 import pytest
@@ -125,6 +126,13 @@ async def test_session_retirement_uses_the_actual_retained_login_commitment(worl
     assert revoked["payload"]["authority"] == "passkey_session"
     assert revoked["payload"]["approval_evidence_sha256"] == expected
     assert revoked["actor"] == {"authority_mode": "system", "attestations": []}
+    retained = await world.db.fetch_one(
+        "SELECT commitment,retained_proof FROM {{tables.credential_narrowing_authority}} "
+        "WHERE authority='passkey_session'"
+    )
+    assert retained["commitment"] == expected
+    original = await world.passkeys.retained_proof(session.evidence_ref)
+    assert json.loads(retained["retained_proof"]) == original.export()
 
 
 async def test_rollback_restores_designation_and_clears_the_prepared_authority(world):
@@ -154,5 +162,24 @@ async def test_rollback_restores_designation_and_clears_the_prepared_authority(w
                 subject=approver.subject,
                 authorized_by=principal_key(REQUESTER).principal_did,
             )
+    assert await world.passkeys.designated_approver(approver.scope) is not None
+    assert len(await events(world)) == 2
+
+
+async def test_preparation_cannot_authorize_another_sql_transaction(world):
+    audit, approver, _ = await enrolled_target(world)
+    async with world.db.transaction() as tx:
+        await hold_member(world, tx)
+        prepared = await audit.prepare_containment(tx, admitted=world.admitted, principal=REQUESTER)
+    with pytest.raises(GovernanceUnavailable):
+        async with world.db.transaction() as tx:
+            await hold_member(world, tx)
+            with audit.prepared(prepared):
+                await world.passkeys.retire_in(
+                    tx,
+                    scope=approver.scope,
+                    subject=approver.subject,
+                    authorized_by=principal_key(REQUESTER).principal_did,
+                )
     assert await world.passkeys.designated_approver(approver.scope) is not None
     assert len(await events(world)) == 2

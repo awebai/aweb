@@ -15,6 +15,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from aweb_naapp.hooks.producer import RegistrationView
@@ -44,6 +45,13 @@ from webauthn.helpers import base64url_to_bytes
 
 from aweb_secrets.change_sets import POLICY_PREFIX
 from aweb_secrets.use_audit import HookProducerFactory
+
+if TYPE_CHECKING:
+    from aweb_naapp.console import ConsoleSession
+    from aweb_naapp.runtime.team_auth import Principal
+
+    from aweb_secrets.credential_narrowing import PreparedContainment
+
 
 _HOOK = "post-governance-hook"
 _SYSTEM = {"authority_mode": "system", "attestations": []}
@@ -237,7 +245,12 @@ class CredentialAudit:
         self._producer, self._passkeys, self._approval = producer, passkeys, approval
         self._view, self._max_backlog_age = registration_view, max_backlog_age
         self._prepared: ContextVar[
-            _OwnerActContext | _ApprovalContext | PreparedEnrolment | PreparedContactProof | None
+            _OwnerActContext
+            | _ApprovalContext
+            | PreparedEnrolment
+            | PreparedContactProof
+            | PreparedContainment
+            | None
         ] = ContextVar("credential_governance", default=None)
 
     async def migrate(self) -> None:
@@ -254,6 +267,7 @@ class CredentialAudit:
         | _ApprovalContext
         | PreparedEnrolment
         | PreparedContactProof
+        | PreparedContainment
         | None,
     ) -> Iterator[None]:
         if context is not None and context.owner is not self:
@@ -276,6 +290,26 @@ class CredentialAudit:
             raise GovernanceUnavailable()
         with self.prepared(_ApprovalContext(self, admitted, view, evidence)):
             yield
+
+    async def prepare_containment(
+        self,
+        tx: TransactionManager,
+        *,
+        admitted: AdmittedInstallation,
+        principal: Principal | None = None,
+        session: ConsoleSession | None = None,
+        signed_trace_id: str | None = None,
+    ) -> PreparedContainment:
+        from aweb_secrets.credential_narrowing import prepare_containment
+
+        return await prepare_containment(
+            self,
+            tx,
+            admitted=admitted,
+            principal=principal,
+            session=session,
+            signed_trace_id=signed_trace_id,
+        )
 
     async def prepare_owner_act(
         self, admitted: AdmittedInstallation, *, signing: bytes, signature: str
@@ -351,6 +385,10 @@ class CredentialAudit:
             await self._contact_scheduled(event, tx)
         elif event.kind is AuditKind.APPROVER_CONTACT_PROVEN:
             await self._contact_proven(event, tx)
+        elif event.kind in {AuditKind.APPROVER_RETIRED, AuditKind.APPROVER_PASSKEY_REVOKED}:
+            from aweb_secrets.credential_narrowing import record_narrowing
+
+            await record_narrowing(self, event, tx, self._prepared.get())
         elif event.kind not in _LOCAL:
             # No kind is silently dropped or allowed through another producer.
             raise GovernanceUnavailable()
@@ -814,7 +852,9 @@ class CredentialAudit:
         )
         await self._enqueue(tx, context.admitted, payload, _SYSTEM, event.occurred_at, context.view)
 
-    async def _enqueue(self, tx, admitted, payload, actor, occurred_at, view):
+    async def _enqueue(
+        self, tx, admitted, payload, actor, occurred_at, view, *, signed_trace_id=None
+    ):
         producer = self._producer(
             installation_id=admitted.installation_id, generation=admitted.generation
         )
@@ -833,7 +873,7 @@ class CredentialAudit:
                 view=view,
                 max_backlog_age=self._max_backlog_age,
             )
-        await producer.enqueue(
+        return await producer.enqueue(
             tx,
             hook=_HOOK,
             team_id=admitted.team_id,
@@ -841,5 +881,6 @@ class CredentialAudit:
             actor=actor,
             occurred_at=occurred_at,
             result_status="success",
+            signed_trace_id=signed_trace_id,
             view=view,
         )
