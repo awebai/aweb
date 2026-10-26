@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Shared hooks: retain typed local missing-production accounting without creating unsigned deliveries. Hook transports honor configured signing-key windows at each fresh credential signature, leaving expired-key deliveries outstanding.
+
 - Release preparation: server 1.27.35. Update the server test fixtures for
   the shared naapp runtime's integer nanosecond freshness deadlines.
 

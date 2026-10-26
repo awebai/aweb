@@ -85,6 +85,10 @@ registration view the caller read beforehand is fresh and holds a registration
 owed it. The drain resolves deliveries with `hook_targets(registrations)`, and
 `HookTransport` re-checks each binding, signs a `hook-delivery` request and sends
 it through the egress guard to the binding's endpoint only.
+Producers with a published key window pass `key_valid_from` and
+`key_valid_until` to `HookTransport`. It checks that window immediately before
+each fresh credential signature, after registration resolution; an unavailable
+key leaves the original event and its delivery outstanding without sending.
 
 Producing runtimes install `aweb-naapp[runtime,egress]`. A manifest with
 an implemented app production in `aweb.hooks` v1 must declare and configure a

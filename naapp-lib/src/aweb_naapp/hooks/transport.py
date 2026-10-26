@@ -79,6 +79,8 @@ class HookTransport:
     """The outbox transport for the ``hooks`` channel.
 
     ``seed`` is the producer's key, the one that signs its events.
+    ``key_valid_from`` and ``key_valid_until`` carry its published signing
+    window when one exists. An unavailable signer leaves delivery pending.
     ``internal_cidr`` names the deployment network a self-hosted operator lets
     hooks reach, as well as the public internet; it requires an egress that
     allows internal destinations.
@@ -91,6 +93,8 @@ class HookTransport:
         egress: Egress,
         registrations: Registrations,
         internal_cidr: IPv4Network | IPv6Network | None = None,
+        key_valid_from: datetime | None = None,
+        key_valid_until: datetime | None = None,
         clock: Callable[[], datetime] = _now,
     ) -> None:
         if (
@@ -102,6 +106,8 @@ class HookTransport:
         self._egress = egress
         self._registrations = registrations
         self._internal_cidr = internal_cidr
+        self._key_valid_from = key_valid_from
+        self._key_valid_until = key_valid_until
         self._clock = clock
 
     async def deliver(self, event: StoredEvent, target: Target) -> Outcome:
@@ -123,6 +129,15 @@ class HookTransport:
         origin, method, path = target.meta["origin"], target.meta["method"], target.meta["path"]
         url = origin + path
         try:
+            # Resolution can await across expiry. Check at the signing
+            # boundary and use that same instant for the fresh credential.
+            timestamp = self._clock()
+            if (
+                self._key_valid_from is not None and timestamp < self._key_valid_from
+            ) or (
+                self._key_valid_until is not None and timestamp >= self._key_valid_until
+            ):
+                return Retryable("signing_key_out_of_window")
             delivery = sign_delivery(
                 self._seed,
                 method,
@@ -131,7 +146,7 @@ class HookTransport:
                 event.payload,
                 event.signature,
                 None,
-                self._clock(),
+                timestamp,
             )
             public = self._parse(self._destination(origin, method, path))
         except (Refused, EgressRefused) as refused:
