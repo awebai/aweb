@@ -41,11 +41,9 @@ An invite issuer is not the parent without authenticated creation authority
 for that member. Org-owner authority in a different team is not evidence of a
 target-team parent or of a human in this team.
 
-`human` is either null, the private form
-`{"email":"alice@example.com","domain":"example.com","fingerprint":"<hex>"}`,
-or the public form `{"domain":"example.com","fingerprint":"<hex>"}`.
-Section 2 defines these bytes. A private-team publication must contain the
-private form; a public-team publication must contain the public form.
+`human` is either null or exactly
+`{"domain":"example.com","fingerprint":"<hex>"}` for every team. Section 2
+defines these bytes. A record never contains the readable email.
 
 `how` is `login`, `email`, `inherited` or `none`. Null human requires `none`
 and null `since`; an attributed human requires one of the first three and a
@@ -96,16 +94,18 @@ This uses a public per-team scope, not a secret salt. Newline and NUL are
 literal bytes; neither may occur in T or E. A verifier knowing an email
 normalizes it and recomputes this fingerprint for T. The domain remains in
 clear so a verifier without the email can make the company-scope check.
-Private records require the domain and fingerprint to agree with their email.
 Matching a known email requires BOTH its domain and fingerprint to match;
 otherwise the comparison reports `email_mismatch`, not that H is this email.
 
-Public records never contain the readable email. This prevents directly
+Records never contain the readable email. This prevents directly
 listing addresses and cross-team hash equality, **not guessing attacks**:
 someone who guesses an address can test it within a team. Do not describe this
 as anonymous identity or as encryption. Controller-only storage may retain E
-for delivery/inheritance; no email or redemption secret enters a public read,
-message, header, log or error. No human directory or unused DID/key is created.
+for delivery/inheritance and display to its own authorized viewers. A verifier
+can display an email it already knows after matching it; otherwise it displays
+the domain and fingerprint. No email or redemption secret enters the signed
+record, registry read, message, header, log or error. No human directory or
+unused DID/key is created.
 
 A company claim means that the email domain is the team's namespace (exact
 DNS-name equality) or that the verifier independently establishes this
@@ -117,12 +117,8 @@ never establishes namespace authority. The controller's validation remains the
 personhood trust root; DNS alone does not verify a mailbox.
 
 An email change is leaving: retire the old human's agents and admit/claim new
-agents with the new email. There is no rename or H-to-H update. Public/private
-representations of the SAME `(T, fingerprint, domain)` are the same human.
-Before switching a private team to public, re-sign stored records without E;
-reads and senders must not expose the old private form. A visibility change
-does not change human, parent, how or since. Earlier authorized private readers
-may already possess the address; changing visibility cannot retract their copy.
+agents with the new email. There is no rename or H-to-H update.
+`(T, fingerprint, domain)` identifies the human in this team.
 
 ## 3. Publish, fetch and monotonic updates
 
@@ -143,8 +139,7 @@ Publication rules under one write lock:
 - H never becomes null or another fingerprint/domain. Conflicting writes
   refuse with 409. Two competing first claims cannot both succeed.
 - Byte-identical retry succeeds. An H record's `how`, `since` and parent stay
-  fixed; key-rotation re-signing and the privacy rendering above may change
-  only controller key, `issued_at`, and the email representation of that H.
+  fixed; key-rotation re-signing may change only controller key and `issued_at`.
 - A fresh certificate for the same established member receives a freshly
   bound record preserving H and its known provenance; no further human auth.
   Reuse/import/projection cannot invent a new creator or replace known H.
@@ -154,7 +149,7 @@ gate: anonymous public teams; private teams require controller, current member
 or trusted service read authority. Existing anonymous person/custody endpoints
 are not a precedent for making attribution anonymous. A missing record for an
 otherwise readable certificate returns 404 (unknown), not null-human. A
-missing/inaccessible team must not leak its private email via errors.
+missing/inaccessible team must not disclose its attribution via errors.
 
 Include attribution in the existing signed-record enumeration and atomic team
 key-rotation set as `member_attribution`, keyed by certificate id. Re-sign with
@@ -165,7 +160,9 @@ also retains its previous rotation behavior for the record families it knows;
 attribution may remain stale until re-published. An explicitly supplied new
 field requires the complete attribution set. New clients always include it.
 Do not make an old, otherwise valid rotate request fail merely because the
-team has since acquired attribution records.
+team has since acquired attribution records. A stale record supplies no verified
+human (display unknown/stale); the next rotation by an upgraded client re-signs
+the full set and clears it. There is no automatic re-signing job.
 
 ## 4. Presentation and verification
 
@@ -309,7 +306,7 @@ ordinary human admission and seat checks remain separate operator policies.
 ## 7. Conformance and integration
 
 The JSON fixture is a **contract-only corpus**, not evidence of a running
-implementation. It includes real synthetic Ed25519 signatures, private/public
+implementation. It includes real synthetic Ed25519 signatures, login/email
 and inherited/no-human examples, email normalization/matching, canonical header
 bytes, forgery/binding/shape refusals, monotonic writes and the fetch-on-none
 procedure. Go and Python must consume these root bytes in the implementation
