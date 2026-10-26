@@ -134,9 +134,10 @@ async def test_create_draft_is_inert_and_confirmation_uses_retained_approve_audi
     rows = await w.db.fetch_all(
         "SELECT payload, signature FROM {{tables.outbox_events}} WHERE kind='post-governance-hook'"
     )
-    assert len(rows) == 3
-    for row in rows:
-        event = verify(bytes(row["payload"]), row["signature"], team_id=TEAM).fields
+    events = [verify(bytes(row["payload"]), row["signature"], team_id=TEAM).fields for row in rows]
+    events = [event for event in events if event["payload"].get("approval_id") == approval]
+    assert len(events) == 3
+    for event in events:
         assert event["actor"] == {"authority_mode": "system", "attestations": []}
         assert event["payload"]["authority"] == "passkey_session"
         assert len(event["payload"]["approval_evidence_sha256"]) == 64

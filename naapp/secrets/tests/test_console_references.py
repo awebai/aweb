@@ -237,9 +237,18 @@ async def test_authority_changed_after_observation_refuses_without_allocating(wo
             if changed == "role":
                 await unassign(tx, ALICE, OWNER_ROLE)
             elif changed == "login":
-                await w.passkeys.retire_in(
-                    tx, scope=scope, subject=current.subject, authorized_by="owner"
+                await w.fence.check(tx, w.admitted)
+                await w.containment.authorize_console(
+                    tx, admitted=w.admitted, session=current, action="revoke-approver", target=scope
                 )
+                context = await w.credential_audit.prepare_containment(
+                    tx, admitted=w.admitted, session=current
+                )
+                with w.credential_audit.prepared(context):
+                    await w.passkeys.retire_in(
+                        tx, scope=scope, subject=current.subject, authorized_by=current.subject
+                    )
+                await w.fence.check(tx, w.admitted)
             elif changed == "token":
                 await w.custody.destroy(tx, credential)
             elif changed == "kind":
