@@ -95,6 +95,7 @@ async def service_world(uses, *, approval_required=False):
         fence=context.arguments["fence"],
         verifier=w.owner.verifier,
         installation=installation,
+        credential_audit=w.credential_audit,
     )
     options = await w.passkeys.login_options(request["owner"]["scope"])
     logged = await w.passkeys.verify_login(

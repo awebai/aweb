@@ -42,7 +42,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.hooks.producer import RegistrationView
@@ -97,6 +97,10 @@ from aweb_secrets.revisions import claim_config_revision, config_revision
 from aweb_secrets.runner_protocol import RunnerRefused
 from aweb_secrets.secret import SecretRecord, sealed_shape_changed
 
+if TYPE_CHECKING:
+    from aweb_secrets.credential_audit import CredentialAudit
+
+
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "change_set_migrations"
 MIGRATIONS_MODULE = "aweb_secrets_change_sets"
 
@@ -125,7 +129,8 @@ APPLICABLE_KINDS = frozenset(
 
 
 # These creation paths have proof-bound governance in the sole writer. Keep
-# HTTP exposure tied to this set until the remaining update/B3 paths are ready.
+# HTTP creation exposure tied to this set; the required B3 sink separately
+# supports approver creation and owner-scheduled contact changes.
 AUDITED_CREATE_KINDS = frozenset(
     {
         "backend_credential",
@@ -281,6 +286,7 @@ class ChangeSets:
         directory: OwnerDirectory,
         custody: Custody,
         containment: Containment,
+        credential_audit: CredentialAudit,
         draft_limit: DraftLimit,
         internal_destinations: InternalDestinations,
     ) -> None:
@@ -290,6 +296,7 @@ class ChangeSets:
         self._directory = directory
         self._custody = custody
         self._containment = containment
+        self._credential_audit = credential_audit
         self._draft_limit = draft_limit
         self._internal_destinations = internal_destinations
 
@@ -960,18 +967,19 @@ class ChangeSets:
                         tx, change, item["after"], confirmer.principal_did
                     )
                 )
-        for item in change["changes"]:
-            if item["kind"] == "backend_credential":
-                continue
-            applied = await self._apply(tx, change, item, evidence, confirmer.principal_did)
-            if isinstance(applied, RunnerRegistration):
-                runner_registrations.append(applied)
-            elif isinstance(applied, tuple):
-                affected.update(applied)
-            elif isinstance(applied, ContactChange):
-                contact_changes.append(applied)
-            else:
-                designations.extend(applied)
+        with self._credential_audit.approved(admitted, evidence, governance_view):
+            for item in change["changes"]:
+                if item["kind"] == "backend_credential":
+                    continue
+                applied = await self._apply(tx, change, item, evidence, confirmer.principal_did)
+                if isinstance(applied, RunnerRegistration):
+                    runner_registrations.append(applied)
+                elif isinstance(applied, tuple):
+                    affected.update(applied)
+                elif isinstance(applied, ContactChange):
+                    contact_changes.append(applied)
+                else:
+                    designations.extend(applied)
         if commitment is not None:
             for item in audited_items:
                 await self._creation_audit(tx, change, item, evidence, commitment, governance_view)
@@ -1149,12 +1157,8 @@ class ChangeSets:
                     f"approver {after['approver_ref']} already exists", code="approver_exists"
                 )
             scope = approver_scope(installation_id, team_id, after["approver_ref"])
-            try:
-                designation = await self._passkeys.designate(
-                    tx, scope=scope, contact=after["contact"], evidence=evidence
-                )
-            except DesignationRefused as refused:
-                raise ChangeRefused(str(refused), code="approver_designation_refused") from None
+            # B3's audit resolves this scoped binding in the same transaction.
+            # A refused designation rolls the binding back with the effect.
             await record_approver(
                 tx,
                 installation_id=installation_id,
@@ -1165,6 +1169,12 @@ class ChangeSets:
                 principal_did=after["principal"],
                 change_id=change["change_id"],
             )
+            try:
+                designation = await self._passkeys.designate(
+                    tx, scope=scope, contact=after["contact"], evidence=evidence
+                )
+            except DesignationRefused as refused:
+                raise ChangeRefused(str(refused), code="approver_designation_refused") from None
             return [designation]
         if item["kind"] == "approver_contact":
             # The scope and contact come from the item of the request the owner's
