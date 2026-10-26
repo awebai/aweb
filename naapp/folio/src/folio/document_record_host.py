@@ -150,6 +150,7 @@ class DocumentRecordHost:
             self.storage,
             write=write,
         )
+        page = copy.deepcopy(page)  # Renderer normalization must not rewrite the saved query.
         displayed = {column["field"] for column in widget["props"]["columns"]}
         metadata = {
             **metadata,
