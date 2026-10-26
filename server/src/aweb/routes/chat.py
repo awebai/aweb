@@ -90,7 +90,7 @@ from aweb.messaging.signatures import (
     MessageSignatureShapeError,
     validate_ed25519_message_signature,
 )
-from aweb.messaging.verification import require_conversation_not_legacy_bound
+from aweb.messaging.verification import require_conversation_not_legacy_bound, verified_signed_recipient_fields
 from aweb.messaging.waiting import (
     get_waiting_agents,
     get_waiting_agents_by_session,
@@ -1988,6 +1988,7 @@ async def history(
                 "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
                 "signature": msg.get("signature"),
                 "signed_payload": msg.get("signed_payload"),
+                **verified_signed_recipient_fields({**msg, "conversation_id": str(session_uuid)}),
                 "is_contact": is_address_in_contacts(from_address, contact_addrs),
             }
         )
@@ -2282,6 +2283,7 @@ async def _sse_events(
                     "from_did": row.get("from_did"),
                     "signature": row.get("signature"),
                     "signed_payload": row.get("signed_payload"),
+                    **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
                     "is_contact": is_address_in_contacts(from_address, contact_addrs),
                 }
                 yield f"event: message\ndata: {json.dumps(payload)}\n\n"
@@ -2416,6 +2418,7 @@ async def _sse_events(
                         "from_did": row.get("from_did"),
                         "signature": row.get("signature"),
                         "signed_payload": row.get("signed_payload"),
+                        **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
                         "is_contact": is_address_in_contacts(from_address, contact_addrs),
                     }
                     yield f"event: message\ndata: {json.dumps(payload)}\n\n"
