@@ -12,6 +12,12 @@ authority. A hosted operator may hold controller or identity private keys only
 for an explicitly hosted-authority or custodial flow. AWID itself never holds
 private keys or signs on anyone's behalf.
 
+The [member attribution v1 candidate](member-attribution.md) defines a separate
+controller-signed statement binding a member certificate to a validated human
+email (a team-scoped fingerprint for public teams). It adds no human key and
+does not change membership or custody authority; implementation follows its
+contract review.
+
 ## Entities
 
 ### Agent
