@@ -25,6 +25,7 @@ from aweb_logs.ledger import (
     issue_checkpoint,
     load_epoch,
     open_next_epoch,
+    verify_epoch,
 )
 from aweb_logs.verify import verify_chain
 
@@ -401,3 +402,36 @@ async def test_caller_transaction_commits_the_original_receipt_for_later_redeliv
     assert await db.fetch_value("SELECT count(*) FROM {{tables.caller_effects}}") == 1
     assert await db.fetch_value("SELECT team_seq FROM {{tables.chain_heads}}") == 1
     assert (await _verify(db, receipts=[first.receipt])).intact
+
+
+async def test_verify_reports_conflicts_in_this_team_epoch_without_returning_refused_content(db):
+    event_id = str(uuid.uuid4())
+    await _append(db, event_id=event_id, seq=40)
+    await _append(db, event_id=event_id, seq=41)
+    await _append(db, team_id=OTHER_TEAM)
+    report = await verify_epoch(db, TEAM_ID, 1, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS)
+    assert report["intact"] is True
+    conflict, = report["conflicts"]
+    assert conflict["event_id"] == event_id
+    assert conflict["team_seq"] == 1
+    assert conflict["kind"] == "event_conflict"
+    assert set(conflict) == {"fault_id", "event_id", "team_seq", "kind", "refused_sha256", "recorded_at"}
+    assert (await verify_epoch(db, OTHER_TEAM, 1, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS))["conflicts"] == []
+    await open_next_epoch(db, SIGNER, TEAM_ID, at=START + timedelta(hours=1))
+    assert (await verify_epoch(db, TEAM_ID, 2, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS))["conflicts"] == []
+
+
+async def test_duplicate_keeps_each_admitted_binding_context_but_the_original_receipt(db):
+    signing, signature = signed_event("app", event_id=str(uuid.uuid4()))
+    event = hook_envelope.verify(signing, signature, team_id=TEAM_ID)
+    receipts = []
+    for binding_id in ("first", "second", "second"):
+        evidence = {**_evidence(signing), "admissions": [{"registration": {"binding_id": binding_id}}]}
+        result = await append(db, SIGNER, event=event, signing_bytes=signing, signature=signature,
+                              key_evidence=evidence, received_at=START)
+        assert isinstance(result, Appended)
+        receipts.append(result.receipt)
+    assert receipts[0] == receipts[1] == receipts[2]
+    _, events = await load_epoch(db, TEAM_ID, 1)
+    stored, = events
+    assert [a["registration"]["binding_id"] for a in stored.key_evidence["admissions"]] == ["first", "second"]

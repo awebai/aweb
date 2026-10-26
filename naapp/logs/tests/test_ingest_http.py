@@ -190,6 +190,20 @@ async def test_a_real_delivery_appends_reverifiable_content_and_a_signed_receipt
     ))
     assert evidence["did_key"] == did_key(SEEDS[kind])
     assert world.bindings[envelope.open_envelope(world.event(kind)[0]).hook] in evidence["binding_ids"]
+    admitted, = evidence["admissions"]
+    registration = admitted["registration"]
+    assert registration["state"] == "active"
+    assert registration["origin"] == ORIGIN
+    assert registration["path"] == PATH
+    assert registration["binding_id"] in evidence["binding_ids"]
+    assert registration["active_from"] is not None
+    if kind == "app":
+        production = admitted["production"]
+        assert production["state"] == "active"
+        assert production["binding_id"] in evidence["binding_ids"]
+        assert production["installation_id"] == world.installation["installation_id"]
+        assert production["generation"] == world.installation["generation"]
+        assert production["active_from"] is not None
     assert (evidence["installation_id"], evidence["generation"]) == (
         (world.installation["installation_id"], world.installation["generation"]) if kind == "app" else (None, None)
     )
