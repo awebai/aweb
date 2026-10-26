@@ -8,11 +8,11 @@ from datetime import UTC, datetime
 
 from aweb_naapp.console import COOKIE_NAME
 from aweb_naapp.roles import has_role, hold_role
-from aweb_secrets.reconciliation_service import ReconciliationControls
 from fastapi import HTTPException, Request
 
 from aweb_secrets.console import OwnerConsole
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from aweb_secrets.reconciliation_service import ReconciliationControls
 from tests.test_reconciliation_control_audit import control_world
 
 
@@ -75,10 +75,12 @@ class OwnerFence:
             raise HTTPException(401, "console_session_required")
 
 
-async def service_world(uses):
+async def service_world(uses, *, approval_required=False):
     from aweb_naapp.console import apply_console_migrations
 
-    context, view, request, audit, _, _ = await control_world(uses)
+    context, view, request, audit, _, _ = await control_world(
+        uses, approval_required=approval_required
+    )
     w = uses.world
     await apply_console_migrations(w.db)
 

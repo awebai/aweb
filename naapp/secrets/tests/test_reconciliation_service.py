@@ -7,10 +7,11 @@ import pytest
 from aweb_naapp.dispatch import State
 from aweb_naapp.roles import unassign
 from aweb_naapp.runtime.approvals import ApprovalRefused, ApprovalState, Assurance, Decision
-from aweb_secrets.reconciliation_service import ReconciliationRefused
 from fastapi import HTTPException
 
+from aweb_secrets import records
 from aweb_secrets.owners import OWNER_ROLE
+from aweb_secrets.reconciliation_service import ReconciliationRefused
 from tests.reconciliation_world import OwnerFence, service_world
 from tests.test_broker_audit import envelopes
 from tests.test_change_sets import ALICE
@@ -48,6 +49,7 @@ async def approve(uses, pending):
     )
 
 
+@pytest.mark.parametrize("approval_required", [False, True])
 @pytest.mark.parametrize(
     "outcome,state",
     [
@@ -57,9 +59,11 @@ async def approve(uses, pending):
     ],
 )
 async def test_exact_fresh_approve_settles_once_without_open_send_or_availability_gate(
-    uses, outcome, state
+    uses, outcome, state, approval_required
 ):
-    context, original, service, console, session = await service_world(uses)
+    context, original, service, console, session = await service_world(
+        uses, approval_required=approval_required
+    )
     db, scope = uses.world.db, uses.world.admitted
     pending = await mint(uses, service, console, session, original.original.reconcile_ref, outcome)
     async with db.transaction() as tx:
@@ -80,6 +84,11 @@ async def test_exact_fresh_approve_settles_once_without_open_send_or_availabilit
     assert await snapshot(db) == before
     await approve(uses, pending)
     context.available[0] = False
+    resource = original.original.resources[0]
+    async with db.transaction() as tx:
+        await records.set_active_version(
+            tx, scope.installation_id, scope.team_id, resource.secret_id, resource.version + 1
+        )
     async with db.transaction() as tx:
         receipt = await service.settle(
             tx, approval_id=pending.approval.approval_id, fence=OwnerFence(console, session, scope)
@@ -99,6 +108,13 @@ async def test_exact_fresh_approve_settles_once_without_open_send_or_availabilit
     ]
     assert event["payload"]["dispatch_state"] == state.value
     assert event["actor"] == (await envelopes(db))[0]["actor"]
+    async with db.transaction() as tx:
+        originals = await context.arguments["use_audit"].dispatch_approvals(
+            tx, original.original.dispatch_id
+        )
+        if approval_required:
+            assert len(originals) == 1
+        assert all(approval.dispatch_outcome.value == state.value for approval in originals)
     settled = await snapshot(db)
     async with db.transaction() as tx:
         again = await service.settle(
