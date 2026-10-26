@@ -386,3 +386,31 @@ mutation retry. The DTO/read checkpoint precedes the concrete control
 association, provider/audit and mutation-service implementation. Root will
 inject the same branch into the composite and console when that source is
 reviewed; these types alone do not mount it.
+
+
+The concrete control policy and local audit branch are
+`ReconciliationPolicies(db, *, owners=shared_directory)`,
+`ReconciliationApprovers(*, owners=shared_directory)` and
+`ReconciliationAudit(*, reads=shared_reads, approval=plain_original_tx_reader,
+passkeys=request_time_shared_passkeys_getter)`. The classifier is
+`is_reconciliation_control(event)`. Root routes that classifier before any
+fallback and requires the branch. Its `approval(tx, id)` callback must use the
+same shared B2 store's plain `get_in(id, tx)`, never a locking read.
+
+`reconciliation_request(original, *, control_id, outcome, owner_scope,
+owner_subject)` and `reconciliation_policy_ref(request)` freeze the original
+pins, chosen outcome and exact owner into B2's canonical covered request.
+The owner-only policy expires within five minutes. Candidate selection returns
+only that exact current owner; an empty set remains final. Existing
+OwnerDirectory/UseApprovers current-holder routing still supplies B2's
+`is_current`, with no new authority interpreter in root.
+
+Apply `apply_reconciliation_migrations(db)` after shared B2/S3, records and
+use-context/audit migrations, before composing the control branch. Enable run
+reads only after run-dispatch migrations. `ReconciliationAudit.control(tx, *,
+scope, approval_id)` returns the frozen association without tokens or effects.
+Control associations, local events and retained-proof commitments are immutable.
+No hook producer is injected into this branch. Actual settlement retains the
+original S3 reconciled hook. These providers and audit do not themselves mint,
+consume or settle; the caller-owned mutation/final-fence service remains the
+next composition step.

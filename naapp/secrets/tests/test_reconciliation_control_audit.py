@@ -8,6 +8,8 @@ from aweb_naapp.dispatch import State
 from aweb_naapp.runtime.approvals import Assurance, Decision, PgApprovalStore
 from aweb_naapp.runtime.approvals.request import request_sha256
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind
+
+from aweb_secrets.owners import owner_scope
 from aweb_secrets.reconciliation_control_audit import (
     ReconciliationAudit,
     apply_reconciliation_migrations,
@@ -19,8 +21,6 @@ from aweb_secrets.reconciliation_policy import (
     reconciliation_policy_ref,
     reconciliation_request,
 )
-
-from aweb_secrets.owners import owner_scope
 from aweb_secrets.reconciliation_reads import ReconciliationReads
 from aweb_secrets.use_audit import UseAuditUnavailable
 from tests.test_broker_audit import envelopes
@@ -34,6 +34,7 @@ async def control_world(uses):
     context = await setup(uses)
     admitted, _, _ = await context.assigned()
     db = uses.world.db
+    uses.approvals = context.arguments["approvals"]
     await db.execute(
         "UPDATE {{tables.dispatches}} SET sweep_after=clock_timestamp()-interval '1 second'"
     )
