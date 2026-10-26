@@ -132,12 +132,32 @@ jobs:
   # it uncovered in a repo that has CI would have been an oversight rather than
   # a decision (aweb-aavw criterion 5).
   #
-  # Separate job, not extra steps: it needs no postgres, no docker and no node,
-  # so it must not sit behind the e2e stack's setup or wait on its 40 minutes.
+  # The shared runtime has its own real PostgreSQL and browser tests. Keep it
+  # independent of the Library e2e stack and its 40-minute timeout.
   naapp-lib:
     name: naapp-lib lint and tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
+    env:
+      NAAPP_REQUIRE_TEST_DATABASE: "1"
+      TEST_DB_HOST: localhost
+      TEST_DB_PORT: "5432"
+      TEST_DB_USER: postgres
+      TEST_DB_PASSWORD: postgres
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout aweb
@@ -157,6 +177,10 @@ jobs:
       - name: Install locked dependencies
         working-directory: naapp-lib
         run: uv sync --locked
+
+      - name: Install the runtime test browser
+        working-directory: naapp-lib
+        run: uv run --no-sync playwright install --with-deps --only-shell chromium
 
       - name: Lint and type-check
         working-directory: naapp-lib

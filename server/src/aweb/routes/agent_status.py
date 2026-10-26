@@ -15,7 +15,7 @@ from awid.team_ids import parse_team_id
 from aweb.agent_status import StatusDocumentError, verify_status_document
 from aweb.deps import get_db, get_redis
 from aweb.hooks import fire_mutation_hook
-from aweb.team_auth_deps import TeamIdentity, get_team_identity
+from aweb.team_auth_deps import TeamIdentity, _resolve_team_key, get_team_identity
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,7 @@ async def controller_set_status_host(
 
     aweb_db = db.get_manager("aweb")
     team = await aweb_db.fetch_one(
-        "SELECT team_did_key FROM {{tables.teams}} WHERE team_id = $1",
+        "SELECT team_id FROM {{tables.teams}} WHERE team_id = $1",
         team_id,
     )
     if team is None:
@@ -240,7 +240,7 @@ async def controller_set_status_host(
             "previous_host_did": payload.previous_host_did,
         },
     )
-    if authorizer_did != str(team["team_did_key"]):
+    if authorizer_did != await _resolve_team_key(request, team_id):
         raise HTTPException(
             status_code=403,
             detail="controller_required: Team controller authorization is required to set a status host",

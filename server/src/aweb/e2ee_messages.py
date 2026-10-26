@@ -1033,6 +1033,87 @@ def validate_e2ee_message_envelope(
         raise E2EEEnvelopeError("invalid encrypted envelope signature")
 
 
+_STRICT_IDENTITY_FIELDS = dict.fromkeys(
+    ("address", "did", "stable_id", "team_id", "encryption_key_id"), str,
+)
+_STRICT_ENVELOPE_FIELDS: dict[str, Any] = {
+    **dict.fromkeys((
+        "envelope_type", "kind", "message_id", "conversation_id", "created_at",
+        "expires_at", "reply_to_message_id", "signing_key_id", "ciphertext", "signature",
+    ), str),
+    "message_version": int,
+    "from": _STRICT_IDENTITY_FIELDS,
+    "recipients": [{**_STRICT_IDENTITY_FIELDS, "wrap_id": str}],
+    "routing": dict.fromkeys((
+        "to", "to_did", "to_stable_id", "delivery_origin", "sender_observed_inbound_mode",
+    ), str),
+    "policy": {"requires_e2ee": bool, "legacy_plaintext_allowed": bool},
+    "crypto": {
+        **dict.fromkeys((
+            "suite", "content_nonce", "ciphertext_hash", "inner_header_hash", "key_wraps_hash",
+        ), str),
+        "ciphertext_size": int,
+    },
+    "key_wraps": [dict.fromkeys((
+        "wrap_id", "recipient_encryption_key_id", "sender_encryption_key_id", "sender_did",
+        "wrap_purpose", "algorithm", "encapsulated_key", "wrapped_cek", "recipient_stable_id",
+        "recipient_did", "recipient_address", "sender_stable_id",
+    ), str)],
+    "sender_encryption_key": dict.fromkeys((
+        "operation", "version", "identity_did", "encryption_key_id", "encryption_public_key",
+        "algorithm", "created_at", "not_before", "expires_at", "signature", "identity_stable_id",
+        "custody", "previous_encryption_key_id",
+    ), str),
+}
+
+
+def _validate_strict_envelope_object(value: Any, fields: dict[str, Any], *, path: str) -> None:
+    if type(value) is not dict:
+        raise E2EEEnvelopeError(f"{path} must be an object")
+    if value.keys() - fields.keys():
+        # Report the structural location without echoing arbitrary fields or
+        # values from an envelope that may have leaked plaintext.
+        raise E2EEEnvelopeError(f"{path} has unknown fields")
+    for name, item in value.items():
+        expected = fields[name]
+        location = f"{path}.{name}"
+        if isinstance(expected, dict):
+            _validate_strict_envelope_object(item, expected, path=location)
+        elif isinstance(expected, list):
+            if type(item) is not list:
+                raise E2EEEnvelopeError(f"{location} must be an array")
+            for index, element in enumerate(item):
+                _validate_strict_envelope_object(element, expected[0], path=f"{location}[{index}]")
+        elif type(item) is not expected:
+            raise E2EEEnvelopeError(f"{location} must have type {expected.__name__}")
+
+
+def validate_strict_e2ee_message_envelope(
+    envelope: dict[str, Any],
+    *,
+    kind: str,
+    message_id: str,
+    conversation_id: str,
+    sender_did: str,
+    sender_stable_id: str | None,
+    recipients: list[dict[str, str | None]],
+    now: datetime | None = None,
+) -> None:
+    """Validate a closed, strictly typed encrypted-v2 mail or chat envelope.
+
+    Raises E2EEEnvelopeError for unknown fields at any level or wrong JSON
+    types, then applies the normal signature, crypto and trusted binding
+    checks. Optional fields may be omitted; present optional string fields
+    may be empty but cannot be null. The caller's envelope is not normalized
+    or changed. Supply expected bindings from trusted inputs, not the envelope.
+    """
+    _validate_strict_envelope_object(envelope, _STRICT_ENVELOPE_FIELDS, path="encrypted_envelope")
+    validate_e2ee_message_envelope(
+        envelope, kind=kind, message_id=message_id, conversation_id=conversation_id,
+        sender_did=sender_did, sender_stable_id=sender_stable_id, recipients=recipients, now=now,
+    )
+
+
 def validate_e2ee_mail_envelope(
     envelope: dict[str, Any],
     *,

@@ -68,6 +68,7 @@ var hcProfile = func() hcProfileSpec {
 var hcPatterns = map[string]*regexp.Regexp{
 	"platform_kind": regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`),
 	"uuid":          regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`),
+	"teamid":        regexp.MustCompile(`^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[a-z0-9]([a-z0-9.-]*[a-z0-9])?)$`),
 	"hash":          regexp.MustCompile(`^sha256:[0-9a-f]{64}$`),
 	"commitment":    regexp.MustCompile(`^commitment:[0-9a-f]{64}$`),
 	"did":           regexp.MustCompile(`^did:(aw:[A-Za-z0-9._:-]+|key:z[1-9A-HJ-NP-Za-km-z]+)$`),
