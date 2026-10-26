@@ -16,6 +16,18 @@ async def test_widget_fields_bound_query_schema_snapshot_and_receipt(authors, ed
     world, row = await with_table(authors, body=table_body())
     body = table_body()
     if filtered:
+        excluded = await signed(
+            world,
+            world.member,
+            "POST",
+            "/v1/records/add",
+            payload={
+                "collection_id": "discovery",
+                "values": {**row["value"], "why_relevant": "excluded-row"},
+                "request_id": "excluded-filter-control",
+            },
+        )
+        assert excluded.status_code == 200
         # A saved, author-authorized predicate may use a non-displayed field.
         body = body.replace(
             '"limit": 20',
