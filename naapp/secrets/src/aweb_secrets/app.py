@@ -101,10 +101,11 @@ def installation_fence(
 def create_app(
     settings: SecretsSettings,
     *,
-    grants: GrantSource,
+    grants: GrantSource | None = None,
     policy: ActionPolicy,
     kms: HealthCheck,
     awid_transport: httpx.AsyncBaseTransport | None = None,
+    team_server_transport: httpx.AsyncBaseTransport | None = None,
     tool_routers: Sequence[ToolRouter] = (),
     prepare: Prepare | None = None,
     console_routers: Sequence[ConsoleRouter] = (),
@@ -127,11 +128,14 @@ def create_app(
         migrations_path=MIGRATIONS_PATH,
         manifest_path=MANIFEST_PATH,
         awid_transport=awid_transport,
+        team_server_transport=team_server_transport,
         stores=STORES,
     )
     checks = {**runtime.health_checks(), "kms": kms}
 
-    authorized = runtime.authorized(grants=grants, policy=policy)
+    authorized = runtime.authorized(
+        grants=grants if grants is not None else runtime.installation_grants(), policy=policy
+    )
 
     console = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     mount_health(console, settings, checks=checks)

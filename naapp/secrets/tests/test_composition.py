@@ -91,3 +91,15 @@ async def test_missing_required_custody_key_refuses_the_production_constructor(
         configured.custody_key_file.unlink()
         with pytest.raises(KeyFileError):
             create_service(configured, awid_transport=registry.transport)
+
+
+async def test_request_response_and_runner_keys_require_independent_material(
+    test_db_factory, registry, tmp_path
+):
+    database = await test_db_factory.create_db(suffix="secrets_production_reused_key")
+    with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
+        configured = settings(database, tmp_path, smtp)
+        # Different file paths must not conceal reuse of the same key material.
+        configured.response_key_file.write_bytes(configured.secret_request_key_file.read_bytes())
+        with pytest.raises(ValueError, match="independent"):
+            create_service(configured, awid_transport=registry.transport)
