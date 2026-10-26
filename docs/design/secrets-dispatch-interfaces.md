@@ -414,3 +414,44 @@ No hook producer is injected into this branch. Actual settlement retains the
 original S3 reconciled hook. These providers and audit do not themselves mint,
 consume or settle; the caller-owned mutation/final-fence service remains the
 next composition step.
+
+
+`OwnerReconciliationFence` is the frozen console-owned protocol in
+`reconciliation_types.py`. Its readonly `scope`, `owner_scope`, `owner_subject`
+and `expires_at` bind the authoritative installation and exact current S4
+owner. `prepare(tx)` prepares/caches the complete F6/OWNER/B3 union, then exact
+LOGIN and S4 holds, and returns the shared `PreparedCurrentApprovers` handle.
+S13 only checks that handle; it does not prepare another B3 union. `check(tx)`
+is a plain read under those holds, ending with live F6 and pure session expiry.
+Both methods use the identical original caller transaction. A new postcommit
+presentation transaction takes a new fence. This credential-holding fence must
+never span the separate fresh `Approvals.decide` ceremony.
+
+The frozen `ReconciliationControls(*, reads, audit, approvals, passkeys,
+use_audit, broker, runs, clock)` consumes the same shared services. A missing
+broker/run backend refuses before any control write. Its methods are:
+
+- `mint(tx, *, reconcile_ref, outcome, fence) -> PendingApproval`. The pending
+  is internal, never a reply DTO; expiry clamps to the exact S4 expiry and the
+  five-minute policy. Call ordinary `Approvals.deliver` once after commit.
+- `status(tx, *, scope, approval_id) -> ReconciliationControlStatus | None`.
+  The caller authorizes the read. This inert method has no token and uses no
+  credential-holding preparation.
+- `present(tx, *, pending, fence) -> ReconciliationPresentation`. A fresh
+  postcommit transaction checks the exact owner, persisted B2/link identity and
+  live authority; release its token only after that transaction commits.
+- `settle(tx, *, approval_id, fence) -> ReconciliationReceipt`. Outcome comes
+  only from the frozen control. All tentative consumption, original B2/S3
+  consequences and audit records share a savepoint, so a caught refusal cannot
+  leave a partial settlement. The complete B2 union precedes S3; final caller
+  and shared-handle checks and pure control/session deadlines follow all audit
+  waits. A repeated explicit POST may read its identical persisted receipt,
+  never replace another settlement or rearm anything.
+
+`ReconciliationRefused` exposes fixed `.code`/`.status` pairs:
+`reconciliation_not_found`/404, `owner_required`/403,
+`reconciliation_invalid`/400 and `reconciliation_conflict`/409. Shared
+`ApprovalRefused` maps to existing 409 `approval_refused`;
+`InstallationRefused` retains its fixed code/status; `UseAuditUnavailable`
+remains 503 `release_context_unavailable`. Caller 401 session and 403 owner
+refusals pass through; other database failures propagate and roll back.
