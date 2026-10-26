@@ -166,7 +166,8 @@ async def test_pins_report_current_or_missing_and_never_select_history(store):
 
 async def test_fixed_slot_absence_is_a_requirement_refusal_without_fabricated_sources(store):
     definition = job_definition(
-        credentials=[{"secret_ref": "not-configured", "delivery": "durable", "mint": None}], env={}
+        credentials=[{"secret_ref": "not-configured", "delivery": "durable", "mint": None}],
+        env={"DB_ADMIN": {"$credential": "not-configured", "field": "value"}},
     )
     async with store.transaction() as tx:
         await jobs.create_job(tx, INSTALLATION, TEAM, definition)
