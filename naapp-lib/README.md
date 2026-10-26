@@ -210,7 +210,7 @@ An observed-principal row or a bare creator DID is not membership evidence.
 This uses the request verifier's AWID cache, with the same maximum 60-second
 revocation window. Success returns the frozen `MembershipProof` from
 `aweb_naapp.runtime.team_auth`: `team_id`, `certificate_id`, `team_did_key`,
-`checked_at` and `fresh_until`. Both times use `time.monotonic()` from the
+`checked_at` and `fresh_until`. Both times are integer nanoseconds from `time.monotonic_ns()`, retaining the
 original facts' fetch-start and expiry. A cache hit does not renew them. The
 proof stays in the same process: never serialize, persist or accept it from a
 request. Facts that expired during lookup raise retryable 503.

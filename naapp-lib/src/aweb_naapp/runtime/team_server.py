@@ -26,6 +26,7 @@ from awid.team_ids import parse_team_id
 from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 from fastapi import HTTPException
 
+from aweb_naapp.runtime.clock import MonotonicClock, seconds_to_ns
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ class TeamServer:
     server_url: str
     audience: str
     team_did_key: str
-    expires_at: float
+    expires_at: int
 
 
 class TeamServerDirectory:
@@ -71,7 +72,7 @@ class TeamServerDirectory:
         transport: httpx.AsyncBaseTransport | None = None,
         registry_override: RegistryOverride = discover_registry_override,
         ttl_seconds: int = MAX_TEAM_SERVER_TTL_SECONDS,
-        clock: Callable[[], float] = time.monotonic,
+        clock: MonotonicClock = time.monotonic_ns,
     ) -> None:
         self._team_cache = team_cache
         self._transport = transport
@@ -115,7 +116,7 @@ class TeamServerDirectory:
             server_url=verified.server_url,
             audience=verified.audience,
             team_did_key=team_did_key,
-            expires_at=now + self._ttl,
+            expires_at=now + seconds_to_ns(self._ttl),
         )
         self._cache[key] = server
         return server

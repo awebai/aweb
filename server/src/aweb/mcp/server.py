@@ -784,6 +784,7 @@ def create_mcp_app(
     federation_chat_transport=None,
     public_origin: str | None = None,
     streamable_http_path: str = "/",
+    human_channels_service=None,
 ) -> Any:
     """Create an MCP ASGI app for aweb tools.
 
@@ -832,4 +833,4 @@ def create_mcp_app(
     # mounted sub-applications do not receive lifespan events from FastAPI.
     # Wrap the app so the parent can start/stop the session manager explicitly.
     inner = mcp.streamable_http_app()
-    return ManagedMCPApp(MCPAuthMiddleware(inner, db_infra), mcp.session_manager)
+    return ManagedMCPApp(MCPAuthMiddleware(inner, db_infra, human_channels_service=human_channels_service), mcp.session_manager)

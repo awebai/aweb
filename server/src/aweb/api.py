@@ -561,6 +561,8 @@ def create_app(
     app.include_router(events_router)
     app.include_router(federation_router)
     app.include_router(identity_grants_router)
+    from aweb.routes.messaging import router as messaging_router
+    app.include_router(messaging_router)
     app.include_router(messages_router)
     app.include_router(reservations_router)
     app.include_router(session_leases_router)
