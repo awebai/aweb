@@ -3,13 +3,12 @@
 import asyncio
 import hashlib
 import json
-import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 from aweb_naapp.hooks.envelope import verify
-from aweb_naapp.hooks.producer import HookProducer, Registration, RegistrationView, ServerProducer
+from aweb_naapp.hooks.producer import Registration, RegistrationView
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.roles import assign
 from aweb_naapp.runtime.approvals import PgApprovalStore
@@ -45,24 +44,6 @@ def target():
 
 
 async def audit_for(world, *, registration_view=None, shared_producer=None):
-    key = secrets.token_bytes(32)
-    producers = {}
-
-    def producer(*, installation_id, generation):
-        identity = (installation_id, generation)
-        if identity not in producers:
-            producers[identity] = HookProducer(
-                ServerProducer.app(
-                    origin=ORIGIN,
-                    app_id=APP_ID,
-                    installation_id=installation_id,
-                    generation=generation,
-                    kid="test-key",
-                    seed=key,
-                )
-            )
-        return producers[identity]
-
     async def default_view(team_id):
         assert team_id == TEAM
         return target()
@@ -78,7 +59,7 @@ async def audit_for(world, *, registration_view=None, shared_producer=None):
         fence=world.fence,
         contexts=world.passkeys._proof_context,
         owner_act_scope=world.owner.verifier.scope,
-        producer=shared_producer or producer,
+        producer=shared_producer or world.credential_audit._producer,
         passkeys=lambda: world.passkeys,
         approval=approval,
         registration_view=registration_view or default_view,
@@ -86,6 +67,13 @@ async def audit_for(world, *, registration_view=None, shared_producer=None):
     )
     await audit.migrate()
     world.passkeys._audit = audit
+    world.credential_audit = audit
+    world.change_sets._credential_audit = audit
+    world.containment.credential_audit = audit
+    if not hasattr(world, "audit_event_start"):
+        world.audit_event_start = await world.db.fetch_value(
+            "SELECT COALESCE(max(position),0) FROM {{tables.outbox_events}}"
+        )
     return audit
 
 
@@ -131,7 +119,8 @@ async def designate(
 
 async def events(world):
     rows = await world.db.fetch_all(
-        "SELECT payload,signature FROM {{tables.outbox_events}} ORDER BY position"
+        "SELECT payload,signature FROM {{tables.outbox_events}} WHERE position > $1 ORDER BY position",
+        world.audit_event_start,
     )
     return [verify(bytes(row["payload"]), row["signature"], team_id=TEAM).fields for row in rows]
 

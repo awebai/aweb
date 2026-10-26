@@ -20,6 +20,7 @@ from tests.test_change_sets import (
     ORIGIN,
     TEAM,
     by_member,
+    change_approver_contact,
     change_set,
     designate_approver,
     enrol_owner,
@@ -30,7 +31,7 @@ from tests.test_credential_audit import audit_for, events
 
 
 @asynccontextmanager
-async def client(w, audit):
+async def client(w, audit, *, registrations=None):
     await apply_console_migrations(w.db)
 
     async def installation(installation_id, *, team_id=None):
@@ -65,7 +66,7 @@ async def client(w, audit):
         console=console,
         changes=writer,
         approvals=w.approvals,
-        registrations=Registrations(),
+        registrations=registrations or Registrations(),
         after_commit=cleanup,
     )
     app = FastAPI()
@@ -176,7 +177,7 @@ async def test_real_http_confirmation_prepares_actual_owner_approval_for_b3(worl
             ROOT + "/" + request["change_id"] + "/confirm", json={}, headers=headers
         )
         assert result.status_code == 200, result.text
-        assert result.json()["state"] == "applied"
+        assert result.json()["revision"] == 1
         approval = await world.approvals.get(draft["approval_id"])
         assert approval.state is ApprovalState.CONSUMED
         [event] = await events(world)
@@ -188,3 +189,72 @@ async def test_real_http_confirmation_prepares_actual_owner_approval_for_b3(worl
             "role.designated",
             "credential.enrolled",
         ]
+
+        request = change_set(
+            drafter=by_member(ALICE),
+            base_revision=1,
+            changes=[change_approver_contact("finance", "new-finance@example.com")],
+        )
+        async with world.db.transaction() as tx:
+            pending = await writer.draft(tx, request)
+        await world.approvals.deliver(pending)
+        draft = {"approval_id": pending.approval.approval_id, "change_id": request["change_id"]}
+        await approve(world, human, headers, draft)
+        confirmed = await human.post(
+            ROOT + "/" + request["change_id"] + "/confirm", json={}, headers=headers
+        )
+        assert confirmed.status_code == 200, confirmed.text
+        token = world.inbox.proofs["new-finance@example.com"][-1]
+        proof = await human.post("/contact-proof", json={"proof_token": token})
+        assert proof.status_code == 200, proof.text
+        scheduled, proven = (await events(world))[-2:]
+        assert (
+            scheduled["payload"]["approval_id"]
+            == proven["payload"]["approval_id"]
+            == draft["approval_id"]
+        )
+        assert scheduled["payload"]["resource_ref"] == proven["payload"]["resource_ref"]
+        assert scheduled["payload"]["after_ref"] == proven["payload"]["before_ref"]
+        assert proven["payload"]["reason_code"] == "contact_proven"
+        assert (await human.post("/contact-proof", json={"proof_token": token})).status_code == 403
+
+
+async def test_confirm_http_audit_refusal_rolls_back_b2_revision_and_designation(world):
+    from aweb_secrets.revisions import config_revision
+    from tests.governance import view
+
+    scope = await enrol_owner(world, ALICE, "alice@acme.com")
+    audit = await audit_for(world)
+
+    class Availability:
+        available = False
+
+        async def view(self, team_id, hook):
+            return view() if self.available else None
+
+    registrations = Availability()
+    async with client(world, audit, registrations=registrations) as (human, writer):
+        request = change_set(
+            drafter=by_member(ALICE),
+            changes=[
+                designate_approver("finance", "finance@example.com", ["sec_19ab42"]),
+            ],
+        )
+        async with world.db.transaction() as tx:
+            pending = await writer.draft(tx, request)
+        await world.approvals.deliver(pending)
+        draft = {"approval_id": pending.approval.approval_id, "change_id": request["change_id"]}
+        headers = await sign_in(world, human, scope)
+        await approve(world, human, headers, draft)
+        path = ROOT + "/" + request["change_id"] + "/confirm"
+        refused = await human.post(path, json={}, headers=headers)
+        assert refused.status_code == 503, refused.text
+        assert refused.json() == {"detail": "audit_target_unavailable"}
+        assert (await world.approvals.get(draft["approval_id"])).state is ApprovalState.APPROVED
+        assert await config_revision(world.db, INSTALLATION_ID) == 0
+        assert await world.db.fetch_value("SELECT count(*) FROM {{tables.approvers}}") == 0
+        assert "finance@example.com" not in world.inbox.enrolments
+        assert await events(world) == []
+        registrations.available = True
+        assert (await human.post(path, json={}, headers=headers)).status_code == 200
+        assert len(await events(world)) == 1

@@ -195,6 +195,15 @@ fields; this slice supports durable slots. Job updates, mint slots and B3
 approver/contact changes retain their integration guards.
 Mount it only on the human application, sharing the same services:
 
+`OwnerConsole` and `ChangeSets` require the same `credential_audit` instance
+used by the shared B3 sink. The console prepares owner-act, enrolment and
+contact-proof context before the effect transaction; completion holds its F6
+fence in the original B3 transaction. The sole confirmation writer supplies
+the admitted owner approval and its prefetched governance view for designation
+and contact scheduling. Their fixed governance refusals return 503 and roll
+back the effect. Approver creation and owner-scheduled contact changes use the
+existing draft, review and confirmation routes.
+
 ```python
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 

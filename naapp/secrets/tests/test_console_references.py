@@ -48,6 +48,7 @@ async def console_clients(w):
     console = OwnerConsole(
         db=w.db,
         passkeys=w.passkeys,
+        credential_audit=w.credential_audit,
         directory=w.directory,
         fence=w.fence,
         verifier=w.owner.verifier,
