@@ -245,7 +245,7 @@ for (const width of [1280, 375]) {
       const scroller = table.locator(".table-scroll");
       await expect(scroller).toHaveAttribute("tabindex", "0");
       await expect(scroller).toHaveAttribute("role", "region");
-      await expect(scroller).toHaveAccessibleName("Records");
+      await expect(scroller).toHaveAccessibleName("records");
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
       ).toBeLessThanOrEqual(width);
