@@ -488,7 +488,6 @@ async def test_operation_retry_terms_are_disclosed_before_fresh_confirmation(
         if mode == "idempotent":
             after["side_effect"] = "irreversible"
             after["idempotency"] = {"header": "Idempotency-Key"}
-            after["headers"]["allowed"] = ["Idempotency-Key"]
     async with await browser.new_context(viewport={"width": width, "height": 900}) as context:
         page, _, _ = await enrolled_page(w, context, service)
         csrf = await page.evaluate("sessionStorage.getItem('aweb.secrets.console.csrf')")
@@ -526,7 +525,7 @@ async def test_operation_retry_terms_are_disclosed_before_fresh_confirmation(
                 await expect(facts).not_to_contain_text(re.compile(r"owner.asserted", re.I))
         await expect(page.locator("#confirm-change")).to_be_enabled()
         assert (await w.approvals.get(draft["approval_id"])).state is ApprovalState.PENDING
-        assert not await w.db.fetch_value("SELECT count(*) FROM {{tables.operations}}")
+        assert not await w.db.fetch_value("SELECT count(*) FROM {{tables.current_operations}}")
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         await page.screenshot(path=tmp_path / f"operation-retry-{mode}-{width}.png", full_page=True)
         await page.locator("#confirm-change").click()
