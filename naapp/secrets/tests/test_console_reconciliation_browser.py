@@ -110,18 +110,23 @@ async def test_browser_frozen_outcome_fresh_approve_and_explicit_settlement(
         assert await snapshot(uses.world.db) == before
         await page.screenshot(path=tmp_path / f"settlement-choice-{width}.png", full_page=True)
         await page.get_by_label("Outcome to record").select_option("failed")
+        stage = "submit chosen outcome"
         try:
             await page.get_by_role("button", name="Review this outcome", exact=True).click()
+            stage = "open minted personal review"
             await expect(page.locator("#view-outcome")).to_be_enabled()
             approval_id, token = uses.world.inbox.links["alice@acme.com"][-1]
             await context.clear_cookies()
             await page.evaluate("sessionStorage.clear()")
+            stage = "navigate signed-out personal link"
             await page.goto(origin + "/reconciliation-approvals#token=" + token)
+            stage = "offer personal-link sign-in"
             await page.get_by_role("button", name="Sign in with your passkey", exact=True).click()
+            stage = "complete personal-link sign-in"
             await expect(page.locator("#view-outcome")).to_be_enabled()
-        except BrowserError:
+        except (BrowserError, AssertionError):
             # Navigation diagnostics can otherwise contain the personal link.
-            raise AssertionError("personal review navigation or sign-in failed") from None
+            raise AssertionError("personal review failed at: " + stage) from None
         await page.get_by_role("button", name="Review with your passkey", exact=True).click()
         await expect(page.locator("#outcome-review")).to_be_visible()
         await expect(page.locator("#outcome-facts")).to_contain_text("failed")
