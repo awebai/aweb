@@ -251,8 +251,10 @@ async def test_owner_console_csrf_and_retained_login_without_new_ceremony(uses):
 
 async def test_signed_api_owner_only_and_strict_action_fields(uses, registry):
     await prepare(uses)
-    owner = Member(team_id=TEAM, certificate_id="role-owner")
-    outsider = Member(team_id=TEAM, team_key=owner.team_key, certificate_id="role-outsider")
+    owner = Member(team_id=TEAM, certificate_id="role-owner", alias="role-owner")
+    outsider = Member(
+        team_id=TEAM, team_key=owner.team_key, certificate_id="role-outsider", alias="role-outsider"
+    )
     await registry.add_team(TEAM, owner.team_did_key)
     for member in (owner, outsider):
         await registry.add_certificate(member.certificate())
