@@ -271,6 +271,7 @@ async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
             directory=directory,
             tokens=ProcessTokenCache(),
             governance=partial(producer.enqueue, hook="post-governance-hook"),
+            credential_audit=credential_audit,
         )
         change_sets = ChangeSets(
             db,
