@@ -38,6 +38,7 @@ from aweb_secrets.revisions import config_revision
 from aweb_secrets.run_planner import run_grant_covers_job
 
 _ASSETS = Path(__file__).parent
+OWNER_DEFINED_ROLE = "secrets.role."
 
 
 @dataclass(frozen=True)
@@ -357,7 +358,18 @@ def _conditions(conditions: Conditions | None) -> str:
     )
 
 
-def _grant(view: AccessView, agent: AgentAccess, grant: GrantAccess) -> str:
+def _remove_member(view: AccessView, agent: AgentAccess, role: str) -> str:
+    """Containment's remove-role-member: this agent leaves an owner-defined role, others stay."""
+    return (
+        '<button type="button" class="access-remove-member secondary"'
+        f' data-role="{escape(role, quote=True)}"'
+        f' data-principal-did="{escape(agent.principal_did, quote=True)}"'
+        f' data-installation-id="{escape(view.installation_id, quote=True)}">'
+        f"Remove this agent from the role {escape(role)}</button>"
+    )
+
+
+def _grant(view: AccessView, agent: AgentAccess, grant: GrantAccess, *, removable: bool) -> str:
     role = (
         "" if grant.via_role is None else f' data-via-role="{escape(grant.via_role, quote=True)}"'
     )
@@ -387,7 +399,9 @@ def _grant(view: AccessView, agent: AgentAccess, grant: GrantAccess) -> str:
         + f'<button type="button" class="access-revoke secondary"'
         f' data-grant-id="{escape(grant.grant_id, quote=True)}"'
         f' data-installation-id="{escape(view.installation_id, quote=True)}">'
-        f"{escape(revoke_label)}</button></article>"
+        f"{escape(revoke_label)}</button>"
+        + (_remove_member(view, agent, grant.via_role) if removable and grant.via_role else "")
+        + "</article>"
     )
 
 
@@ -409,6 +423,15 @@ def _render(view: AccessView) -> str:
     if not view.agents:
         parts.append('<p id="access-empty">No agent can use these secrets.</p>')
     for agent in view.agents:
+        # One removal per owner-defined role ends every grant the agent holds through it.
+        # The owner role is left to the owner designation and retirement ceremonies.
+        roles = [g.via_role for g in agent.grants]
+        removable = [
+            g.via_role is not None
+            and g.via_role.startswith(OWNER_DEFINED_ROLE)
+            and roles.index(g.via_role) == i
+            for i, g in enumerate(agent.grants)
+        ]
         label = principal_html(
             principal_did=agent.principal_did, alias=agent.alias, team_id=view.team_id
         )
@@ -416,7 +439,10 @@ def _render(view: AccessView) -> str:
             f'<section class="access-agent" data-principal-did="{escape(agent.principal_did, quote=True)}"'
             f' data-flags="{escape(" ".join(agent.flags), quote=True)}">'
             f'<h2>{label}</h2><p class="access-flags">{_flags(agent.flags)}</p>'
-            + "".join(_grant(view, agent, grant) for grant in agent.grants)
+            + "".join(
+                _grant(view, agent, grant, removable=r)
+                for grant, r in zip(agent.grants, removable, strict=True)
+            )
             + "</section>"
         )
     parts.append('<link rel="stylesheet" href="/console-access/access.css">')
