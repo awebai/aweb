@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/server-ci.yml"
       - "server/**"
+      - "scripts/test-egress/**"
       - "scripts/check-server-version-bump.sh"
       - "scripts/check-server-version-bump-test.sh"
 

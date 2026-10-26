@@ -23,7 +23,8 @@ This proxy is a **soft** guard: a client disabling proxy support bypasses it.
 `make test-isolated` is the hard Go/Python/Node suite gate: dependencies are built
 into an image before execution; the runner has only an internal Docker network,
 no Docker socket, and a DNS sink with no upstream. It disables the native
-proxy so refused DNS retains normal connection-error semantics. PostgreSQL and Redis share
+proxy and the host's DNS search domains, keeping reserved fixture lookups from
+expanding into queries for the host's network. Refused DNS retains normal connection-error semantics. PostgreSQL and Redis share
 the runner's network namespace, so fixtures remain loopback. A denied DNS query
 fails the run independently of the test process status. Logs and network inspect
 receipts remain in `TEST_EGRESS_EVIDENCE` (a new directory per run).
