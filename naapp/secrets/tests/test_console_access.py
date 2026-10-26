@@ -1,5 +1,6 @@
 """The owner's access view: who can use which secret, agreeing with real admission."""
 
+import asyncio
 import hashlib
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -397,3 +398,36 @@ async def test_only_a_current_owner_reads_the_view_on_the_human_origin(access):
         refused = await human.get("/access")
         assert refused.status_code in (303, 401, 403)
         assert DB_AGENT.did_aw not in refused.text
+
+
+async def test_an_owner_withdrawal_committed_under_the_snapshot_refuses_without_retry(access):
+    db = access.world.db
+    async with clients(access) as (human, _):
+        await sign_in(access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        holding, release = asyncio.Event(), asyncio.Event()
+
+        async def withdraw():
+            async with db.transaction() as tx:
+                await unassign(tx, ALICE, OWNER_ROLE)
+                holding.set()
+                await release.wait()
+
+        withdrawal = asyncio.create_task(withdraw())
+        await holding.wait()
+        view = asyncio.create_task(human.get("/access"))
+        for _ in range(500):
+            if await db.fetch_value(
+                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database()"
+                " AND wait_event_type='Lock' AND query LIKE '%role_assignments%FOR SHARE%')"
+            ):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            release.set()
+            await asyncio.gather(withdrawal, view, return_exceptions=True)
+            pytest.fail("the view did not reach the owner role hold")
+        release.set()
+        await withdrawal
+        refused = await asyncio.wait_for(view, 5)
+    assert refused.status_code == 409 and refused.json()["detail"] == "access_changed"
+    assert DB_AGENT.did_aw not in refused.text
