@@ -37,3 +37,18 @@ The real AWID init fixture registers the DID before publishing. It uses the
 suite's PG/Redis when supplied, otherwise disposable local Docker services, and
 runs the repository AWID service. No identity, registry-selection or release
 code carries any of these mechanisms.
+
+The Docker resolver qualification reproduces a CI host's inherited search domain
+using the real Docker CLI, DNS sink and child `getaddrinfo`. Run it under the host
+suite lock with a prepared source/dependency image (the same image accepted by
+`docker.py --image`):
+
+```sh
+python3 scripts/test-egress/test_docker_dns.py --image IMAGE --evidence /tmp/dns-proof
+```
+
+A reserved-name lookup must leave the guard green even when the host supplies a
+search domain; a public-name lookup must still fail the guard while the child
+handles the DNS refusal successfully. Each control retains resolver configuration,
+DNS logs, runner inspection and the child exit in its evidence directory. Neither
+control needs an external DNS service or a route out of the internal network.
