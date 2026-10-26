@@ -2124,6 +2124,7 @@ availability, only for a failed local commit (§11.5).
 | Action | Effect |
 | --- | --- |
 | **Revoke a grant** | Admission refuses at once. The dispatch fence (§11.3) stops admitted, not-yet-sent intents (`refused: grant_revoked`). The same transaction disables children issued under that grant and their descendants, and voids affected unconsumed approvals (§8.4); the parent and children issued under other grants stay usable. |
+| **Remove one agent from a user role** (`remove-role-member`) | Owner-only through team-auth or an owner console session with CSRF, without a new passkey ceremony. The request names `target` = the canonical `secrets.role.<slug>` and `principal` = the exact member DID used by role/1. It removes only that membership: fresh role-derived admissions refuse, and the dispatch fence stops admitted, not-yet-sent uses. Other members and the shared grant remain unchanged. `secrets.owner` and other apps' roles are excluded. Approvers are independent person designations, so no person or owner is retired. An absent membership succeeds without inventing a role-revocation event; an exact request replay returns its original receipt. The membership effect, configuration revision, receipt and governance record commit together. |
 | **Revoke approvals** | A pending or approved-but-unconsumed approval moves to `revoked`. The consume CAS fails. There is no bearer token to chase, because the link was never authority. |
 | **Disable a secret** | New admissions, the fence and runner credential release all refuse. Pending approvals are voided, and the cached OAuth tokens and derived secrets are disabled. For 1Password, the console also links to revoking the service account. Re-enabling is widening, so it needs a passkey. |
 | **Disable the installation** (kill switch) | Every secret is disabled at once, through one flag checked at admission and at the fence. |
@@ -2150,7 +2151,7 @@ The manifest is v2 (D1 C3). Every tool is signed with team-auth. Nothing is
 | `secrets.run` | agent, surface | `secrets:run` | a grant | a runner job (§9); optional `secret` selects an ordinary child for the unique durable slot (§9.5) |
 | `secrets.status` | agent, surface | `secrets:read` | the requester; owners | state of a `request_id`, `approval_ref` or `reconcile_ref`; never a link, admission or dispatch. Approved: re-submit the same `request_id` (§10.3) |
 | `secrets.cancel` | agent, surface | `secrets:use` | the requester | cancel the caller's own request while it is still before `admitted` |
-| `secrets.contain` | agent, surface | `secrets:admin` | owner (approver for its own approvals) | revoke a grant, revoke approvals, disable a secret or the installation, deregister a runner (§12) |
+| `secrets.contain` | agent, surface | `secrets:admin` | owner (approver for its own approvals) | revoke a grant, remove one agent from a user role (owner-only), revoke approvals, disable a secret or the installation, deregister a runner (§12) |
 | `secrets.propose-change` | surface | `secrets:admin` | owner | draft a widening change: secret metadata, destination, operation, job, grant, role or approver. It is inert until passkey confirmation on the console (§6.3) |
 | `secrets.activity` | surface | `secrets:read` | owner | operational record view: requests, approvals, dispatch states, `outcome_unknown` queue |
 
