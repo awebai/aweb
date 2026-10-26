@@ -12,6 +12,7 @@ import httpx
 from aweb_naapp.hooks.strictjson import encode_base64url
 from aweb_naapp_testing.databases import TEST_SCHEMA
 from awid.did import did_from_public_key
+from awid_service.testing import REGISTRY_URL
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from nacl.signing import SigningKey
 
@@ -62,12 +63,23 @@ async def mounted(uses, registry, tmp_path):
         prepare=prepare,
         runner_routers=(runner_factory,),
     )
+    discovery_domains = []
+
+    async def registry_override(domain):
+        discovery_domains.append(domain)
+        assert domain == TEAM.split(":", 1)[1]
+        return REGISTRY_URL
+
+    # The real drain also reads bootstrap audit events. Its external discovery
+    # answer must name the same in-process AWID used by this mounted runtime.
+    service.runtime.team_server_directory()._registry_override = registry_override
     async with service.api_app.router.lifespan_context(service.api_app):
         context, run = active[0]
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(service), base_url=API
         ) as client:
             yield client, context, run
+    assert set(discovery_domains) == {TEAM.split(":", 1)[1]}
 
 
 async def report_state(db):
