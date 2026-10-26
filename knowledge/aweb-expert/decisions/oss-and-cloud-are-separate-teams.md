@@ -3,7 +3,7 @@ type: Decision
 title: OSS and Cloud are separate teams with separate expertise
 description: No hosted-aweb expertise in the OSS souls or their knowledge; the hosted application has its own team, sources, knowledge custody and deployment scope, and contributes to OSS through assignments or cross-team pull requests.
 tags: [decision, boundary, oss, cloud, roster]
-timestamp: 2026-09-21
+timestamp: 2026-10-25
 ---
 
 Decided by the operator on 2026-09-21 while the aweb team moved to
@@ -41,3 +41,24 @@ aweb-oss; we will need another team in aweb-cloud."
 - Isolation is physical in classic OATS: a team scope enumerates every child
   repository's souls regardless of nested configuration, so the hosted checkout
   belongs under its own deployment root when that team is set up.
+
+# Clarification of 2026-10-19
+
+The operator corrected a rule that had spread through design briefs: there is
+no "zero hosted-service changes" constraint, and he never set one. The working
+principle is one generic architecture: shared pieces are built once,
+generically, across the naapp library, the OSS server and the hosted service,
+not as per-app special cases.
+
+- Do not shape a design, or refuse a solution, merely to avoid touching the
+  hosted service. Where a hosted change is the right answer, propose it plainly
+  and route it to the hosted-product team; reviewers do not flag it as an
+  invariant violation.
+- OSS code and docs never refer to the hosted repository: no repository name,
+  paths, private details or hosted "invariants". A hosted need is stated
+  generically, as a requirement on "a hosted operator" or "a custodial
+  deployment", and the hosted specifics go to the coordinator separately.
+
+Provenance: relayed by the secrets coordinator in 3644a94b and 0b45b8eb on
+2026-10-20; harvested 2026-10-25 from seat
+`aweb-protocol-expert-secrets-design`.

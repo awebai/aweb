@@ -25,6 +25,7 @@ from aweb_secrets import records, tool_results
 from aweb_secrets.grant import is_secrets_role
 from aweb_secrets.member_types import ToolReply
 from aweb_secrets.owners import OWNER_ROLE
+from aweb_secrets.run_status import RunStatus
 
 _APPROVAL_STATES = {
     ApprovalState.PENDING: "awaiting_approval",
@@ -47,8 +48,10 @@ class UseStatus:
         *,
         fence: InstallationFence,
         approvals: Approvals | None = None,
+        runs: RunStatus | None = None,
     ) -> None:
         self._db, self._fence, self._approvals = db, fence, approvals
+        self._runs = runs
 
     async def get(self, *, ref: str, authorization: Authorization) -> ToolReply:
         """Look up a caller's ID or an authorized opaque receipt, never send.
@@ -90,6 +93,10 @@ class UseStatus:
                     OWNER_ROLE in roles,
                 )
                 reply = self._missing()
+                if row is None and self._runs is not None:
+                    reply = await self._runs.get_in(
+                        tx, ref=ref, scope=scope, principal_did=key.principal_did, roles=roles
+                    )
                 if row is not None and (
                     OWNER_ROLE in roles
                     or await self._read_granted(tx, row, key.principal_did, roles)
