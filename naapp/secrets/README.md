@@ -191,9 +191,25 @@ The fresh-confirmation HTTP routes support `create` items for backend credential
 grants, policies, plain roles, jobs and runners. Every such effect requires the
 actual retained APPROVE commitment and atomic signed governance recording.
 Job credentials must name same-installation/team secrets and compatible structured
-fields; this slice supports durable slots. Job updates, mint slots and B3
-approver/contact changes retain their integration guards.
+fields; this slice supports durable slots. Job updates and mint slots retain
+their integration guards. Self-contact and contact-change cancellation remain
+unmounted.
 Mount it only on the human application, sharing the same services:
+
+`OwnerConsole` and `ChangeSets` require the same `credential_audit` instance
+used by the shared B3 sink. The console prepares owner-act, enrolment and
+contact-proof context before the effect transaction; completion holds its F6
+fence in the original B3 transaction. The sole confirmation writer supplies
+the admitted owner approval and its prefetched governance view for designation
+and contact scheduling. Their fixed governance refusals return 503 and roll
+back the effect. Approver creation and owner-scheduled contact changes use the
+existing draft, review and confirmation routes.
+
+The frozen operation review states whether an unknown outcome requires manual
+settlement or permits one automatic repeat after the configured delay. It names
+any owner-asserted upstream idempotency-header guarantee and warns that an
+incorrect assertion can duplicate an effect. This display uses the frozen
+operation terms; it does not change dispatch or settlement authority.
 
 ```python
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router

@@ -48,6 +48,7 @@ async def service(uses):  # noqa: F811
         directory=w.directory,
         tokens=tokens,
         governance=partial(producer.enqueue, hook="post-governance-hook"),
+        credential_audit=w.credential_audit,
     )
 
 
@@ -69,7 +70,9 @@ async def test_team_auth_containment_succeeds_without_audit_target_and_with_stal
     svc = await service(uses)
     if stalled:
         await act(svc, uses, "disable-installation", None, "earlier-event")
-        event_id = await uses.world.db.fetch_value("SELECT event_id FROM {{tables.outbox_events}}")
+        event_id = await uses.world.db.fetch_value(
+            "SELECT event_id FROM {{tables.outbox_events}} ORDER BY position DESC LIMIT 1"
+        )
         await uses.world.db.execute(
             "INSERT INTO {{tables.outbox_deliveries}} (event_id,target_id,state,attempts)"
             " VALUES ($1,'stalled-target','stalled',40)",
@@ -94,6 +97,7 @@ async def test_role_and_team_are_checked_before_containment(uses):  # noqa: F811
 
     await seed(uses)
     svc = await service(uses)
+    before = await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
     async with uses.world.db.transaction() as tx:
         await unassign(tx, principal_key(REQUESTER), OWNER_ROLE)
     with pytest.raises(ContainmentRefused) as refused:
@@ -114,15 +118,21 @@ async def test_role_and_team_are_checked_before_containment(uses):  # noqa: F811
         )
         == "active"
     )
-    assert await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
+    assert (
+        await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == before
+    )
 
 
 async def test_receipt_replays_without_duplicate_event_and_conflicting_id_refuses(uses):  # noqa: F811
     await seed(uses)
     svc = await service(uses)
+    before = await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
     first = await act(svc, uses)
     assert await act(svc, uses) == first
-    assert await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 1
+    assert (
+        await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
+        == before + 1
+    )
     with pytest.raises(ContainmentRefused) as refused:
         await act(svc, uses, "disable-installation", None)
     assert refused.value.code == "idempotency_conflict"
@@ -215,6 +225,7 @@ async def test_team_auth_refuses_last_enrolled_owner_contact_or_key(uses, passke
 
     await seed(uses)
     svc = await service(uses)
+    before = await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
     scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
     credential_id = (
         next(iter(uses.world.devices["alice@acme.com"].credentials)) if passkey else None
@@ -230,7 +241,9 @@ async def test_team_auth_refuses_last_enrolled_owner_contact_or_key(uses, passke
         )
     assert refused.value.code == "last_owner_protected"
     assert await uses.world.passkeys.designated_approver(scope) is not None
-    assert await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
+    assert (
+        await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == before
+    )
 
 
 @pytest.mark.parametrize("passkey", [False, True])
@@ -290,7 +303,7 @@ async def test_failed_local_outbox_write_rolls_back_containment_and_keeps_cache(
     key = TokenKey(INSTALLATION_ID, TEAM, SECRET_ID, 4, "https://api.example.com/token", "")
     await svc.tokens.put(key, os.urandom(24).hex(), datetime.now(UTC) + timedelta(hours=1))
     await uses.world.db.execute(
-        "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT refuse_local_commit CHECK (kind <> 'post-governance-hook')"
+        "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT refuse_local_commit CHECK (kind <> 'post-governance-hook') NOT VALID"
     )
     with pytest.raises(asyncpg.CheckViolationError):
         await act(svc, uses)
@@ -490,7 +503,7 @@ async def test_by_member_grant_revoke_contains_exact_subtree_and_source_approval
     for key in keys:
         await svc.tokens.put(key, os.urandom(24).hex(), datetime.now(UTC) + timedelta(hours=1))
     await uses.world.db.execute(
-        "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT reject_grant_event CHECK (kind <> 'post-governance-hook')"
+        "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT reject_grant_event CHECK (kind <> 'post-governance-hook') NOT VALID"
     )
     with pytest.raises(asyncpg.CheckViolationError):
         await act(svc, uses, "revoke-grant", source)

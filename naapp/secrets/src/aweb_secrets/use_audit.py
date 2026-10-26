@@ -16,17 +16,16 @@ from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 from aweb_naapp.hooks.commitment import CommitmentContext
 from aweb_naapp.hooks.producer import HookProducer, RegistrationView
-from aweb_naapp.runtime.approvals import Approval, ApprovalState, Assurance
+from aweb_naapp.runtime.approvals import Approval, ApprovalState
 from aweb_naapp.runtime.approvals.request import DOMAIN_PREFIX, parse_request_json, request_sha256
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind
 from aweb_naapp.runtime.passkeys import (
     PasskeyInstallationContext,
-    PasskeyProofUnavailable,
     Passkeys,
 )
 from pgdbm.core import TransactionManager
@@ -343,61 +342,23 @@ class UseApprovalAudit:
         )
 
     async def _proof(self, tx, context, approval, event) -> dict[str, str]:
-        decided = approval.decided_by
-        if (
-            decided is None
-            or decided.assurance is not Assurance.PASSKEY
-            or (
-                decided.evidence_ref != event.details.get("evidence_ref")
-                or decided.subject != event.actor
-            )
-        ):
-            raise UseAuditUnavailable()
-        passkeys = self._passkeys()
-        try:
-            proof = await passkeys.retained_proof(decided.evidence_ref, tx=tx)
-        except PasskeyProofUnavailable:
-            raise UseAuditUnavailable() from None
-        if any(
-            proof.metadata.get(name) != expected
-            for name, expected in (
-                ("approval_id", approval.approval_id),
-                ("request_sha256", approval.request_sha256),
-                ("policy_ref", approval.policy_ref),
-                ("policy_version", approval.policy_version),
-            )
-        ):
-            raise UseAuditUnavailable()
-        purpose = event.details["decision"]
-        try:
-            commitment = await passkeys.evidence_commitment(
-                decided.evidence_ref,
-                context=PasskeyInstallationContext(
-                    app_id=context.app_id,
-                    team_id=context.team_id,
-                    installation_id=context.installation_id,
-                    generation=context.generation,
-                ),
-                scope=decided.scope,
-                subject=decided.subject,
-                purpose=purpose,
-                tx=tx,
-            )
-        except PasskeyProofUnavailable:
-            raise UseAuditUnavailable() from None
-        proof_table = (
+        from aweb_secrets.approval_evidence import record_approval_proof
+
+        table: Literal["run_approval_audit_proofs", "use_approval_audit_proofs"] = (
             "run_approval_audit_proofs"
             if self._enable_runs and approval.policy_ref.split("|", 1)[0] == "secrets.run"
             else "use_approval_audit_proofs"
         )
-        await tx.execute(
-            f"INSERT INTO {{{{tables.{proof_table}}}}}"
-            " (approval_id,evidence_ref,scope,subject,purpose,commitment) VALUES ($1,$2,$3,$4,$5,$6)",
-            approval.approval_id,
-            decided.evidence_ref,
-            decided.scope,
-            decided.subject,
-            purpose,
-            commitment,
+        return await record_approval_proof(
+            tx,
+            passkeys=self._passkeys(),
+            context=PasskeyInstallationContext(
+                app_id=context.app_id,
+                team_id=context.team_id,
+                installation_id=context.installation_id,
+                generation=context.generation,
+            ),
+            approval=approval,
+            event=event,
+            table=table,
         )
-        return {"approval_assurance": "passkey", "approval_evidence_sha256": commitment}
