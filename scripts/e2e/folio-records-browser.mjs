@@ -78,7 +78,12 @@ try {
       const editor = page.locator('#pane-edit [data-folio-widget="research"]');
       await expect(editor.getByRole("table")).toBeVisible();
       const prose = page.getByRole("textbox", { name: "Document text 1", exact: true });
-      await prose.fill("Unsaved prose remains while a row is saved\n\n");
+      const proseSave = page.locator("#save");
+      await expect(proseSave).toBeDisabled();
+      await expect(proseSave).toHaveText("Saved");
+      const proseDraft = `Unsaved prose remains while a row is saved at ${width}px\n\n`;
+      await prose.fill(proseDraft);
+      await expect(proseSave).toBeEnabled();
       const source = tool("record-query", { collection_id: collection }).records[0];
       await editor.getByRole("button", { name: "Edit row " + source.id, exact: true }).click();
       const status = editor.getByLabel(schema.properties.status.title || "status", { exact: true });
@@ -89,20 +94,20 @@ try {
       await editor.getByRole("button", { name: "Save row", exact: true }).click();
       await expect(editor.getByRole("button", { name: "Keep my changes", exact: true })).toBeVisible();
       await expect(status).toHaveValue("Browser draft " + width);
-      await expect(prose).toHaveValue("Unsaved prose remains while a row is saved\n\n");
+      await expect(prose).toHaveValue(proseDraft);
       await editor.getByRole("button", { name: "Keep my changes", exact: true }).click();
       await editor.getByRole("button", { name: "Save row", exact: true }).click();
       await expect(editor.locator("tbody")).toContainText("Browser draft " + width);
-      await expect(prose).toHaveValue("Unsaved prose remains while a row is saved\n\n");
+      await expect(prose).toHaveValue(proseDraft);
       const committed = tool("record-query", { collection_id: collection }).records.find(row => row.id === source.id);
       assert.equal(committed.rev, source.rev + 2);
       assert.equal(committed.value.status, "Browser draft " + width);
       console.log(`PASS records browser conflict keeps row and prose drafts, explicit rebase at ${width}px`);
       // Explicit prose save preserves the widget definition; a reload reuses the session.
-      await page.locator("#save").click();
+      await proseSave.click();
       await expect(page.locator("#status")).toContainText("Saved version");
       await page.reload();
-      await expect(prose).toHaveValue("Unsaved prose remains while a row is saved\n\n");
+      await expect(prose).toHaveValue(proseDraft);
       await expect(editor.locator("tbody")).toContainText("Browser draft " + width);
       await editor.getByRole("button", { name: "Add row", exact: true }).click();
       const added = { ...values[0], finding: "Browser added " + width, status: "added" };
