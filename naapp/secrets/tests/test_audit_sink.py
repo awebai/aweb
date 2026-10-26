@@ -60,6 +60,10 @@ class AbortEffect(Exception):
 async def test_change_ceremony_records_locally_and_rolls_back_with_its_original_tx(world):
     await enrol_owner(world, ALICE, "owner@example.com")
     await composite(world)
+    baseline = {
+        table: await world.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}")
+        for table in ("approvals", "change_sets", "credential_audit_events", "outbox_events")
+    }
     request = change_set(
         drafter=by_member(ALICE),
         changes=[designate_approver("finance", "finance@example.com", ["sec_19ab42"])],
@@ -68,13 +72,22 @@ async def test_change_ceremony_records_locally_and_rolls_back_with_its_original_
         async with world.db.transaction() as tx:
             pending = await world.change_sets.draft(tx, request)
             assert (
-                await tx.fetch_value("SELECT approval_id FROM {{tables.credential_audit_events}}")
+                await tx.fetch_value(
+                    "SELECT approval_id FROM {{tables.credential_audit_events}} WHERE approval_id=$1",
+                    pending.approval.approval_id,
+                )
                 == pending.approval.approval_id
             )
-            assert await tx.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
+            assert (
+                await tx.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
+                == baseline["outbox_events"]
+            )
             raise AbortEffect
     for table in ("approvals", "change_sets", "credential_audit_events", "outbox_events"):
-        assert await world.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
+        assert (
+            await world.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}")
+            == baseline[table]
+        )
 
 
 async def test_use_decision_and_signed_event_roll_back_on_the_original_caller_tx(uses):
@@ -84,6 +97,10 @@ async def test_use_decision_and_signed_event_roll_back_on_the_original_caller_tx
     sink = SecretsAudit(credentials=credentials, use=use)
     uses.approvals._audit = sink
     world.passkeys._audit = sink
+    event_count = await world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
+    credential_count = await world.db.fetch_value(
+        "SELECT count(*) FROM {{tables.credential_audit_events}}"
+    )
     approval_id = pending.pending.approval.approval_id
     [token] = [t for aid, t in world.inbox.links["finance@acme.com"] if aid == approval_id]
     options = await uses.approvals.challenge(
@@ -97,13 +114,19 @@ async def test_use_decision_and_signed_event_roll_back_on_the_original_caller_tx
             )
             original = await PgApprovalStore(world.db).get_in(approval_id, tx)
             assert original.state is ApprovalState.APPROVED
-            assert await tx.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 2
             assert (
-                await tx.fetch_value("SELECT count(*) FROM {{tables.credential_audit_events}}") == 0
+                await tx.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
+                == event_count + 1
+            )
+            assert (
+                await tx.fetch_value("SELECT count(*) FROM {{tables.credential_audit_events}}")
+                == credential_count
             )
             raise AbortEffect
     assert (await uses.approvals.get(approval_id)).state is ApprovalState.PENDING
-    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 1
+    assert (
+        await world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == event_count
+    )
     assert (
         await world.db.fetch_value("SELECT count(*) FROM {{tables.use_approval_audit_proofs}}") == 0
     )
