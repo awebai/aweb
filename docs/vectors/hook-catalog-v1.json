@@ -372,6 +372,10 @@
         "derived_grant_id": {
           "type": "ref",
           "required": false
+        },
+        "use_ref": {
+          "type": "ref",
+          "required": false
         }
       },
       "rules": [
@@ -2519,6 +2523,120 @@
         "after_ref": "sm_c36d958a06f34b3a8af72b1694ef5f22",
         "owner_act_sha256": "9e370f6b0fccdcc94713687057c72f6a9818bb99400247f262feea1ff19d44e9"
       }
+    },
+    {
+      "name": "secret_use_admitted_use_ref",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "op_kind": "broker",
+        "secret_id": "sec_19ab42",
+        "secret_ref": "payments-live",
+        "secret_version": 4,
+        "secret_kind": "bearer",
+        "secret_backend": "native",
+        "target_method": "POST",
+        "target_host": "api.payments.example",
+        "target_port": 443,
+        "target_path_template": "/v1/refunds",
+        "operation_id": "refund",
+        "operation_digest": "24252d809f32328585e0e05fa02bf474df2cab5ba52b840eba6941f80c1c7fe1",
+        "request_sha256": "1f58b9145b24d108d7ac38887338b3ea3229833b9c1e418250343f907bfd1047",
+        "params_sha256": "a20b52fae57cc7a99c9651f1b573950fd211823e3ace3bb9c273c06430f24cd3",
+        "grant_id": "grt_77c1",
+        "policy_digest": "6dc5f241e5d381249cbdbfb4d412216462bd0f6dd616d959929c1ef0d1cac881",
+        "action": "admitted",
+        "approval_id": "apr_51c0e2",
+        "approval_assurance": "passkey",
+        "approver_id": "approver-1",
+        "dispatch_id": "dsp_240bbWTk7JDOszX8Q0TnVw",
+        "use_ref": "int_a1b2c3d4e5f60718293a4b5c6d7e8f90"
+      }
+    },
+    {
+      "name": "secret_use_approval_requested_use_ref",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "op_kind": "broker",
+        "secret_id": "sec_19ab42",
+        "secret_ref": "payments-live",
+        "secret_version": 4,
+        "secret_kind": "bearer",
+        "secret_backend": "native",
+        "target_method": "POST",
+        "target_host": "api.payments.example",
+        "target_port": 443,
+        "target_path_template": "/v1/refunds",
+        "operation_id": "refund",
+        "operation_digest": "24252d809f32328585e0e05fa02bf474df2cab5ba52b840eba6941f80c1c7fe1",
+        "request_sha256": "1f58b9145b24d108d7ac38887338b3ea3229833b9c1e418250343f907bfd1047",
+        "params_sha256": "a20b52fae57cc7a99c9651f1b573950fd211823e3ace3bb9c273c06430f24cd3",
+        "grant_id": "grt_77c1",
+        "policy_digest": "6dc5f241e5d381249cbdbfb4d412216462bd0f6dd616d959929c1ef0d1cac881",
+        "action": "approval_requested",
+        "approval_id": "apr_51c0e2",
+        "use_ref": "int_a1b2c3d4e5f60718293a4b5c6d7e8f90"
+      }
+    },
+    {
+      "name": "secret_use_approval_decided_use_ref",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "approval_decided",
+        "op_kind": "broker",
+        "approval_id": "apr_9",
+        "approval_decision": "approved",
+        "approval_assurance": "passkey",
+        "approval_evidence_sha256": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752",
+        "use_ref": "int_a1b2c3d4e5f60718293a4b5c6d7e8f90"
+      }
+    },
+    {
+      "name": "secret_use_run_use_ref",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "dispatching",
+        "op_kind": "run_job",
+        "runner_id": "runner_a",
+        "job_id": "job_7",
+        "job_digest": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "dispatch_id": "dsp_02",
+        "dispatch_state": "dispatching",
+        "use_ref": "int_0123456789abcdef0123456789abcdef"
+      }
+    },
+    {
+      "name": "secret_use_refusal_attempt_use_ref",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "refusal_code": "grant_missing",
+        "target_method": "POST",
+        "target_host": "api.example.com",
+        "target_port": 443,
+        "target_path_template": "/v1/charges",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "use_ref": "ref_9b85075f0c6b44d4abedc480b013ddca"
+      }
+    },
+    {
+      "name": "secret_use_legacy_without_use_ref",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "completed",
+        "op_kind": "broker",
+        "secret_id": "sec_01",
+        "secret_version": 3,
+        "disposition": "returned",
+        "returned_hmac": "n4bQgYhMfWWaL-qgxVrQFaO_TxsrC4Is0V1sFbDwCgg",
+        "undeclared_credential": false,
+        "upstream_status_code": 200,
+        "upstream_bytes": 512,
+        "upstream_truncated": false,
+        "redaction_count": 0,
+        "dispatch_id": "dsp_01",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      }
     }
   ],
   "negative_cases": [
@@ -3936,6 +4054,74 @@
       },
       "error": "rule_violation",
       "field": "source_seq_first"
+    },
+    {
+      "name": "secret_use_use_ref_empty",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "refusal_code": "grant_missing",
+        "target_method": "POST",
+        "target_host": "api.example.com",
+        "target_port": 443,
+        "target_path_template": "/v1/charges",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "use_ref": ""
+      },
+      "error": "invalid_value",
+      "field": "use_ref"
+    },
+    {
+      "name": "secret_use_use_ref_too_long",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "refusal_code": "grant_missing",
+        "target_method": "POST",
+        "target_host": "api.example.com",
+        "target_port": 443,
+        "target_path_template": "/v1/charges",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "use_ref": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "error": "invalid_value",
+      "field": "use_ref"
+    },
+    {
+      "name": "secret_use_use_ref_invalid_chars",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "refusal_code": "grant_missing",
+        "target_method": "POST",
+        "target_host": "api.example.com",
+        "target_port": 443,
+        "target_path_template": "/v1/charges",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "use_ref": "ref_unsafe@example.invalid"
+      },
+      "error": "invalid_value",
+      "field": "use_ref"
+    },
+    {
+      "name": "secret_use_use_ref_non_string",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "refusal_code": "grant_missing",
+        "target_method": "POST",
+        "target_host": "api.example.com",
+        "target_port": 443,
+        "target_path_template": "/v1/charges",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "use_ref": 7
+      },
+      "error": "invalid_value",
+      "field": "use_ref"
     }
   ]
 }
