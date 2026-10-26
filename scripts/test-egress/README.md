@@ -53,3 +53,6 @@ search domain; a public-name lookup must still fail the guard while the child
 handles the DNS refusal successfully. Each control retains resolver configuration,
 DNS logs, runner inspection and the child exit in its evidence directory. Neither
 control needs an external DNS service or a route out of the internal network.
+
+Use a fresh evidence path for each qualification run; existing control directories
+are refused so a new result cannot overwrite an earlier receipt.
