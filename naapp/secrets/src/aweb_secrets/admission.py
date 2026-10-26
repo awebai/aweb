@@ -117,19 +117,22 @@ def mint_intent_id() -> str:
     return "int_" + random.token_urlsafe(16)
 
 
-def _covers(
+def use_coverage_refusal(
     grant: GrantRecord,
     policy: Policy,
-    request: UseRequest,
-    sensitivity: str,
+    *,
+    operation_id: str | None,
     operation: OperationTemplate | None,
+    sensitivity: str,
 ) -> str | None:
-    """The refusal code when the grant and its policy do not cover the action, else None.
+    """Request-independent configured coverage, with no authority or effects.
 
-    A named operation is covered at its current digest only, so an edited
-    operation is covered by no grant made before the edit.
+    The caller supplies an active use-grant candidate, its matching policy,
+    and the CURRENT definition for operation_id (or None when missing).
+    Parameters, windows, rates, attestation and live fences remain admission's
+    responsibility; None does not promise a future request will be admitted.
     """
-    if request.operation_id is None:
+    if operation_id is None:
         if sensitivity != "standard" or not grant.open_request or not policy.body["open_request"]:
             return "open_request_not_allowed"
         return None
@@ -142,6 +145,26 @@ def _covers(
         return "operation_not_allowed"
     if operation.token_issuing and operation.after["result_handling"] == "deny":
         return "token_issuing_denied"
+    return None
+
+
+def _covers(
+    grant: GrantRecord,
+    policy: Policy,
+    request: UseRequest,
+    sensitivity: str,
+    operation: OperationTemplate | None,
+) -> str | None:
+    refusal = use_coverage_refusal(
+        grant,
+        policy,
+        operation_id=request.operation_id,
+        operation=operation,
+        sensitivity=sensitivity,
+    )
+    if refusal is not None or request.operation_id is None:
+        return refusal
+    assert operation is not None  # A missing named definition was refused above.
     if request.params is None or not operation.params_valid(request.params):
         return "params_invalid"
     return None
