@@ -4,6 +4,7 @@ import asyncio
 import os
 
 import pytest
+from aweb_naapp.roles import hold_role, principal_key
 from aweb_naapp.runtime.approvals import ApprovalState
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 
@@ -255,7 +256,7 @@ async def test_reverse_id_replacement_and_approver_retirement_do_not_deadlock(us
     import uuid
     from datetime import timedelta
 
-    from aweb_secrets.owners import approver_scope
+    from aweb_secrets.owners import OWNER_ROLE, approver_scope
     from aweb_secrets.secret import SecretRecord
     from tests.test_containment_service import service
     from tests.test_use_approval_lineage import grant_record
@@ -351,6 +352,11 @@ async def test_reverse_id_replacement_and_approver_retirement_do_not_deadlock(us
     try:
         async with db.transaction() as retirement:
             blocker = await retirement.fetch_value("SELECT pg_backend_pid()")
+            await uses.world.fence.check(retirement, uses.world.admitted)
+            assert await hold_role(retirement, principal_key(REQUESTER), OWNER_ROLE)
+            prepared = await uses.world.credential_audit.prepare_containment(
+                retirement, admitted=uses.world.admitted, principal=REQUESTER
+            )
             await retirement.fetch_value(
                 "SELECT approval_id FROM {{tables.approvals}} WHERE approval_id=$1 FOR UPDATE",
                 low_id,
@@ -360,12 +366,14 @@ async def test_reverse_id_replacement_and_approver_retirement_do_not_deadlock(us
             async with asyncio.timeout(5):
                 while blocker not in await db.fetch_value("SELECT pg_blocking_pids($1)", pid):
                     await asyncio.sleep(0.01)
-                await uses.world.passkeys.retire_in(
-                    retirement,
-                    scope=scope,
-                    subject=holder.subject,
-                    authorized_by="owner",
-                )
+                with uses.world.credential_audit.prepared(prepared):
+                    await uses.world.passkeys.retire_in(
+                        retirement,
+                        scope=scope,
+                        subject=holder.subject,
+                        authorized_by=principal_key(REQUESTER).principal_did,
+                    )
+            await uses.world.fence.check(retirement, uses.world.admitted)
         await asyncio.wait_for(task, 5)
         for approval_id in (low_id, high_id):
             assert (await uses.approvals.get(approval_id)).state == ApprovalState.REVOKED
