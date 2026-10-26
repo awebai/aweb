@@ -2,6 +2,7 @@
 // failure and the accepted populated URL overflow. Host callbacks isolate the
 // renderer boundary; the real Folio/CLI journey remains separate acceptance.
 import { test, expect } from "@playwright/test";
+import { mkdir, writeFile } from "node:fs/promises";
 
 const schema = {
   type: "object",
@@ -163,15 +164,27 @@ async function open(page, editable) {
 }
 
 async function diagnostics(page, table, info) {
-  await info.attach("table-dom", {
+  await mkdir(info.outputDir, { recursive: true });
+  const retain = async (name, { body, contentType }) => {
+    const extension = {
+      "text/html": ".html",
+      "text/plain": ".yml",
+      "application/json": ".json",
+      "image/png": ".png",
+    }[contentType];
+    const path = info.outputPath(name + extension);
+    await writeFile(path, body);
+    await info.attach(name, { path, contentType });
+  };
+  await retain("table-dom", {
     body: await table.evaluate((node) => node.outerHTML),
     contentType: "text/html",
   });
-  await info.attach("table-accessibility", {
+  await retain("table-accessibility", {
     body: await table.ariaSnapshot(),
     contentType: "text/plain",
   });
-  await info.attach("table-layout", {
+  await retain("table-layout", {
     body: JSON.stringify(
       await page.evaluate(() => ({
         viewport: innerWidth,
@@ -192,7 +205,7 @@ async function diagnostics(page, table, info) {
     ),
     contentType: "application/json",
   });
-  await info.attach("table-screen", {
+  await retain("table-screen", {
     body: await page.screenshot(),
     contentType: "image/png",
   });
@@ -204,6 +217,35 @@ test("discovery Kind can be selected by its exact visible label when adding a ro
   const table = await open(page, true);
   await table.getByRole("button", { name: "Add row", exact: true }).click();
   try {
+    // Compare both locator engines in this same rendered form before the
+    // original failing selection. The role name is independently captured.
+    const counts = {
+      kind_label: await table.getByLabel("Kind", { exact: true }).count(),
+      kind_role: await table
+        .getByRole("combobox", { name: "Kind", exact: true })
+        .count(),
+      finding_label: await table.getByLabel("Finding", { exact: true }).count(),
+      finding_role: await table
+        .getByRole("textbox", { name: "Finding", exact: true })
+        .count(),
+    };
+    console.log("Discovery locator counts: " + JSON.stringify(counts));
+    await mkdir(info.outputDir, { recursive: true });
+    const countsPath = info.outputPath("locator-counts.json");
+    await writeFile(countsPath, JSON.stringify(counts, null, 2));
+    await info.attach("locator-counts", {
+      path: countsPath,
+      contentType: "application/json",
+    });
+    expect(counts).toEqual({
+      kind_label: 0,
+      kind_role: 1,
+      finding_label: 1,
+      finding_role: 1,
+    });
+    await expect(
+      table.getByRole("combobox", { name: "Kind", exact: true }),
+    ).toHaveAccessibleName("Kind");
     // Same values, label and enum index as the failing real Folio journey.
     const added = { ...value, finding: "Browser added 1280", status: "added" };
     for (const [field, entry] of Object.entries(added)) {
