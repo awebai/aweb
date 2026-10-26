@@ -746,3 +746,36 @@ func assertFileNotContains(t *testing.T, path, needle string) {
 		t.Fatalf("%s unexpectedly contains %q: %q", path, needle, string(data))
 	}
 }
+
+func TestBrokerPresentationChangeRestartsChild(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputPath := filepath.Join(root, "input.txt")
+	writeFakeOATS(t, root, inputPath)
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	oldServer := mailServer(t, "old mail")
+	oldHome := writeGrantHome(t, filepath.Join(root, "old"), oldServer.URL, []string{"events.read", "mail.read", "mail.send"})
+	home := filepath.Join(root, "terminal")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logs := &logCapture{}
+	broker, cancel := liveBroker(t, Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store), Log: logs.log})
+	defer cancel()
+	if err := broker.Register(Registration{Home: home, IdentityHome: oldHome, Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
+	if err := broker.Register(registrationWithWakePresentation(t, Registration{Home: home, IdentityHome: oldHome, Delivery: DeliverySession}, "line")); err != nil {
+		t.Fatal(err)
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
+		return inst.ChannelCore.Running && inst.ChannelCore.Generation >= 1
+	})
+}

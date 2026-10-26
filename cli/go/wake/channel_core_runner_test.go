@@ -668,7 +668,12 @@ func TestBundledWakePresentationMode(t *testing.T) {
 	for _, mode := range []string{"", "line"} {
 		for _, kind := range []string{"mail", "chat"} {
 			t.Run(mode+"/"+kind, func(t *testing.T) {
-				t.Setenv("AWEB_WAKE_PRESENTATION", mode)
+				// The host daemon's environment must not select another seat's mode.
+				daemonMode := "line"
+				if mode == "line" {
+					daemonMode = ""
+				}
+				t.Setenv("AWEB_WAKE_PRESENTATION", daemonMode)
 				root := t.TempDir()
 				store, err := NewStore(filepath.Join(root, "state"))
 				if err != nil {
@@ -693,7 +698,7 @@ func TestBundledWakePresentationMode(t *testing.T) {
 				}))
 				defer server.Close()
 				home := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read", "mail.send", "chat.read"})
-				reg := Registration{Home: filepath.Join(root, "terminal"), IdentityHome: home, Delivery: DeliverySession}
+				reg := registrationWithWakePresentation(t, Registration{Home: filepath.Join(root, "terminal"), IdentityHome: home, Delivery: DeliverySession}, mode)
 				_ = os.MkdirAll(reg.Home, 0o700)
 				child := NewChannelCoreRunner(store).StartChild(context.Background(), reg, channelCoreChildConfig{OatsBin: writeFakeOATS(t, root, inputPath), AWCommand: writeFakeAW(t, root, "")})
 				defer child.Stop()
@@ -738,4 +743,26 @@ func TestBundledWakePresentationMode(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Use the persisted registration wire shape, including when testing an older reader.
+func registrationWithWakePresentation(t *testing.T, reg Registration, mode string) Registration {
+	t.Helper()
+	data, err := json.Marshal(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["wake_presentation"] = mode
+	data, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &reg); err != nil {
+		t.Fatal(err)
+	}
+	return reg
 }

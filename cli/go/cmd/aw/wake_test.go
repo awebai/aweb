@@ -727,3 +727,65 @@ func TestIdentityHomePreScanStopsAtABuiltinCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestWakeRegisterCapturesLaunchingPresentation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	instanceHome := filepath.Join(root, "instance")
+	identityHome := filepath.Join(instanceHome, ".aw")
+	if err := os.MkdirAll(identityHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(root, "state")
+	store, err := wake.NewStore(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, jsonInput := range []bool{false, true} {
+		for _, mode := range []string{"line", "", "unknown"} {
+			args := []string{"wake", "register", "--state-dir", stateDir}
+			if jsonInput {
+				file := filepath.Join(root, "registration.json")
+				data, err := json.Marshal(wake.Registration{Home: instanceHome, IdentityHome: identityHome, Delivery: wake.DeliverySession})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(file, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--registration-json", file)
+			} else {
+				args = append(args, "--home", instanceHome, "--identity-home", identityHome, "--delivery", "session")
+			}
+			cmd := exec.CommandContext(ctx, bin, args...)
+			cmd.Dir = root
+			cmd.Env = append(testCommandEnv(filepath.Join(root, "user")), "AW_NO_UPDATE_CHECK=1", awconfig.IdentityHomeEnv+"=", "AWEB_WAKE_PRESENTATION="+mode)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("register: %v %s", err, out)
+			}
+			reg, ok, err := store.LoadRegistration(instanceHome)
+			if err != nil || !ok {
+				t.Fatalf("load: %t %v", ok, err)
+			}
+			data, err := json.Marshal(reg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(data, &fields); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := fields["wake_presentation"].(string)
+			want := ""
+			if mode == "line" {
+				want = "line"
+			}
+			if got != want {
+				t.Fatalf("JSON=%t launching mode=%q: persisted presentation=%q, want %q", jsonInput, mode, got, want)
+			}
+		}
+	}
+}
