@@ -1,4 +1,9 @@
-"""Check the original dispatch's authority at publication, without admitting again."""
+"""Check the original dispatch's authority at publication, without admitting again.
+
+A continuation, the one repeat of a dispatch whose outcome is unknown, is
+checked against the same consumed approval with every exact check, at
+``outcome_unknown`` instead of ``dispatching``.
+"""
 
 from __future__ import annotations
 
@@ -57,7 +62,8 @@ class PreparedDispatch:
     """Private app handle for checks in one live caller transaction.
 
     expires_at is the original deadline for the app's final aggregate expiry
-    check after all awaited work. This handle never grants may_send.
+    check after all awaited work. This handle never grants may_send. The check
+    requires the approval's dispatch outcome to be the one it was prepared for.
     """
 
     approval_id: str
@@ -69,6 +75,7 @@ class PreparedDispatch:
     _transaction_id: int = field(repr=False)
     _guard_key: int = field(repr=False)
     _authority: DispatchAuthority = field(repr=False)
+    _outcome: DispatchOutcome = field(repr=False)
 
 
 def _live(tx: TransactionManager) -> bool:
@@ -122,6 +129,7 @@ async def prepare_dispatches(
     dispatches: Sequence[DispatchBinding],
     *,
     authority: DispatchAuthority,
+    outcome: DispatchOutcome = DispatchOutcome.DISPATCHING,
 ) -> tuple[PreparedDispatch, ...]:
     if not _live(tx) or await tx.fetch_value("SHOW transaction_isolation") != "read committed":
         raise ApprovalRefused(Refusal.DISPATCH_NOT_PREPARED)
@@ -155,10 +163,34 @@ async def prepare_dispatches(
         raise ApprovalRefused(Refusal.DISPATCH_NOT_PREPARED)
     return tuple(
         PreparedDispatch(
-            a.approval_id, b.operation_id, a.expires_at, a, service, tx, xid, guard, authority
+            a.approval_id,
+            b.operation_id,
+            a.expires_at,
+            a,
+            service,
+            tx,
+            xid,
+            guard,
+            authority,
+            outcome,
         )
         for a, b in zip(current, bindings, strict=True)
     )
+
+
+async def prepare_continuation(
+    service: Approvals,
+    tx: TransactionManager,
+    binding: DispatchBinding,
+    *,
+    authority: DispatchAuthority,
+) -> PreparedDispatch:
+    (prepared,) = await prepare_dispatches(
+        service, tx, [binding], authority=authority, outcome=DispatchOutcome.OUTCOME_UNKNOWN
+    )
+    if prepared._approval.dispatch_outcome is not DispatchOutcome.OUTCOME_UNKNOWN:
+        raise ApprovalRefused(Refusal.OUTCOME_INVALID)
+    return prepared
 
 
 async def check_dispatch(
@@ -196,7 +228,7 @@ async def check_dispatch(
         or approval.consumed_operation_id != prepared.operation_id
     ):
         raise ApprovalRefused(Refusal.OPERATION_MISMATCH)
-    if approval.dispatch_outcome is not DispatchOutcome.DISPATCHING:
+    if approval.dispatch_outcome is not prepared._outcome:
         raise ApprovalRefused(Refusal.OUTCOME_INVALID)
     state = await prepared._authority.read(tx, approval)
     policy = state.policy
