@@ -211,14 +211,14 @@ async function diagnostics(page, table, info) {
   });
 }
 
-test("discovery Kind can be selected by its exact visible label when adding a row", async ({
+test("discovery Kind can be selected by its exact accessible role and name", async ({
   page,
 }, info) => {
   const table = await open(page, true);
   await table.getByRole("button", { name: "Add row", exact: true }).click();
   try {
-    // Compare both locator engines in this same rendered form before the
-    // original failing selection. The role name is independently captured.
+    // Retain the measured distinction that classified the original harness
+    // failure. Role/name follows the same accessible control used by people.
     const counts = {
       kind_label: await table.getByLabel("Kind", { exact: true }).count(),
       kind_role: await table
@@ -246,12 +246,13 @@ test("discovery Kind can be selected by its exact visible label when adding a ro
     await expect(
       table.getByRole("combobox", { name: "Kind", exact: true }),
     ).toHaveAccessibleName("Kind");
-    // Same values, label and enum index as the failing real Folio journey.
+    // Same values and enum index as the real Folio journey; select the
+    // control by its verified accessible role and exact name.
     const added = { ...value, finding: "Browser added 1280", status: "added" };
     for (const [field, entry] of Object.entries(added)) {
-      const control = table.getByLabel(
-        schema.properties[field].title || field,
-        { exact: true },
+      const control = table.getByRole(
+        Array.isArray(schema.properties[field].enum) ? "combobox" : "textbox",
+        { name: schema.properties[field].title || field, exact: true },
       );
       if (Array.isArray(schema.properties[field].enum))
         await control.selectOption(
