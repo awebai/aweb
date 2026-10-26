@@ -195,8 +195,21 @@
         fact("Service-account token version", item.after.version);
       } else {
         for (const [name, value] of Object.entries(item.after)) {
-          if (name === "v") continue;
+          if (name === "v" || (item.kind === "operation" && name === "outcome_unknown_retry")) continue;
           fact(name.replaceAll("_", " "), typeof value === "object" ? JSON.stringify(value, null, 2) : value);
+        }
+        if (item.kind === "operation") {
+          const retry = item.after.outcome_unknown_retry;
+          if (retry == null) {
+            fact("Unknown outcome", "Manual settlement only, with a fresh owner passkey approval.");
+          } else {
+            fact("Unknown outcome", "Automatically repeat once after " + retry.delay_s + (retry.delay_s === 1 ? " second" : " seconds") + ". If the outcome remains unknown, settle manually with a fresh owner passkey approval.");
+            if (retry.upstream_honours_idempotency_key) {
+              fact("Owner-asserted upstream guarantee", "The upstream honours the " + item.after.idempotency.header + " header. A wrong assertion can duplicate an effect.");
+            } else {
+              fact("Repeat safety", "This operation is declared to have no side effect.");
+            }
+          }
         }
       }
     }
@@ -244,6 +257,7 @@
         : frozen.change.changes.every(item => item.kind === "backend_credential")
           ? "1Password service-account token activated." : "Change applied.";
       confirm.hidden = true;
+      document.querySelector("#approval-instructions").textContent = "This change has already been applied.";
       if (!result.reauth_required && frozen.change.changes.every(item => item.kind === "backend_credential")) {
         const link = document.createElement("a");
         link.href = "/onepassword/references/new";
