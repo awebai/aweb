@@ -3,6 +3,8 @@
 from contextlib import asynccontextmanager
 
 import httpx
+import pytest
+from aweb_naapp.dispatch import State
 from aweb_naapp.runtime.approvals import ApprovalState
 from aweb_naapp.runtime.origins import split_origins
 from fastapi import FastAPI
@@ -13,9 +15,12 @@ from aweb_secrets.console_activity import ConsoleActivity, console_activity_rout
 from aweb_secrets.console_reconciliation import ConsoleReconciliation, console_reconciliation_router
 from aweb_secrets.console_ui import console_ui_router
 from tests.reconciliation_world import service_world
-from tests.test_change_sets import BOB, ORIGIN, enrol_owner
+from tests.test_broker_audit import prepared
+from tests.test_broker_fence import authority
+from tests.test_change_sets import BOB, ORIGIN, Installations, enrol_owner
 from tests.test_console import API
 from tests.test_console_changes import sign_in
+from tests.test_reconciliation_repeat_reads import observed_repeat
 from tests.test_reconciliation_service import snapshot
 from tests.test_use_approvals import uses as uses
 from tests.test_use_approvals import world as world
@@ -39,6 +44,62 @@ async def application(uses, *, origin=ORIGIN, agent_origin=API):
         original,
         current,
     )
+
+
+async def repeated_broker(uses, repeat_state, *, settled=False):
+    """Actual uncertain broker plus a persisted continuation observation.
+
+    This exercises the reader/page, not automatic-repeat execution.
+    """
+    db = uses.world.db
+    request, admission, original_id, machine = await prepared(
+        db, uses.world.fence, installation_grant=Installations().grant
+    )
+    async with db.transaction() as tx:
+        await machine.admit(
+            tx, original_id, fence=authority(uses.world.fence, admission, request, original_id)
+        )
+        await machine.begin_dispatch(
+            tx, original_id, fence=authority(uses.world.fence, admission, request, original_id)
+        )
+        assert await machine.outcome_unknown(tx, original_id, {"state": "outcome_unknown"})
+        repeat_id = await observed_repeat(tx, original_id)
+        await tx.execute(
+            "UPDATE {{tables.dispatches}} SET state=$2,"
+            " sweep_after=clock_timestamp()+interval '60 seconds' WHERE dispatch_id=$1",
+            repeat_id,
+            repeat_state.value,
+        )
+        if settled:
+            await machine.reconcile(tx, original_id, State.RECONCILED_UNKNOWN, {"state": "closed"})
+    return admission.intent_id
+
+
+@pytest.mark.parametrize(
+    "repeat_state,settled",
+    [
+        (State.ADMITTED, False),
+        (State.DISPATCHING, False),
+        (State.OUTCOME_UNKNOWN, False),
+        (State.OUTCOME_UNKNOWN, True),
+    ],
+)
+async def test_repeat_observation_is_visible_without_changing_the_original(
+    uses, repeat_state, settled
+):
+    async with clients(uses) as (human, _, _, _, current):
+        await sign_in(uses.world, human, current.scope)
+        ref = await repeated_broker(uses, repeat_state, settled=settled)
+        before = await snapshot(uses.world.db)
+        response = await human.get("/reconciliations/" + ref)
+        assert response.status_code == 200, "repeat record HTTP status " + str(response.status_code)
+        assert 'id="repeat-status"' in response.text
+        assert f'data-repeat-state="{repeat_state.value}"' in response.text
+        expected = "closed" if settled else "open"
+        assert f'data-pair-state="{expected}"' in response.text
+        record = (await human.get("/reconciliations/" + ref + "/record")).json()
+        assert record["repeat_state"] == repeat_state.value
+        assert await snapshot(uses.world.db) == before
 
 
 @asynccontextmanager

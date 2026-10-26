@@ -7,13 +7,15 @@ from urllib.parse import urlencode
 
 import pytest
 import uvicorn
+from aweb_naapp.console import LOGIN_BUCKET
+from aweb_naapp.dispatch import State
 from aweb_naapp.runtime.approvals import ApprovalState
 from aweb_naapp.runtime.passkeys import RelyingParty
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 from playwright.async_api import Error as BrowserError
 from playwright.async_api import expect
 
-from tests.test_console_reconciliation import application
+from tests.test_console_reconciliation import application, repeated_broker
 from tests.test_console_ui_browser import browser as browser
 from tests.test_reconciliation_service import snapshot
 from tests.test_use_approvals import uses as uses
@@ -169,7 +171,7 @@ async def test_browser_frozen_outcome_fresh_approve_and_explicit_settlement(
         await expect(page.locator("#reconciliation-status")).to_be_focused()
         assert (await uses.approvals.get(approval_id)).state is ApprovalState.CONSUMED
         await page.screenshot(path=tmp_path / f"settlement-recorded-{width}.png", full_page=True)
-        summary = page.locator("p").filter(has_text="Original outcome:")
+        summary = page.locator("#settlement-summary")
         await expect(summary).to_contain_text("reconciled_failed")
         await expect(summary).to_contain_text("consumed")
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -207,4 +209,45 @@ async def test_cookie_only_failed_passkey_reauthentication_shows_feedback(
         await expect(feedback).not_to_be_empty()
         await expect(feedback).to_be_focused()
         await expect(page.locator("[data-console-scope]")).to_be_hidden()
+        after = await snapshot(uses.world.db)
+        # A real failed LOGIN is metered by S4. Preserve complete comparisons
+        # of every domain/audit table and all non-login rate buckets.
+        changed_buckets = {
+            row["bucket"]
+            for left, right in ((before, after), (after, before))
+            for row in left["rate_buckets"]
+            if row not in right["rate_buckets"]
+        }
+        assert changed_buckets == {LOGIN_BUCKET}, "unexpected reauthentication rate changes"
+        for observation in (before, after):
+            observation["rate_buckets"] = [
+                row for row in observation["rate_buckets"] if row["bucket"] != LOGIN_BUCKET
+            ]
+        for table in before:
+            assert after[table] == before[table], "unexpected settlement effect in " + table
+
+
+@pytest.mark.parametrize("width", [375, 1440])
+@pytest.mark.parametrize(
+    "repeat_state,settled",
+    [(State.ADMITTED, False), (State.OUTCOME_UNKNOWN, False), (State.OUTCOME_UNKNOWN, True)],
+)
+async def test_browser_repeat_observation_keeps_original_and_repeat_distinct(
+    uses, browser, service, tmp_path, width, repeat_state, settled
+):
+    origin, _, _, current = service
+    ref = await repeated_broker(uses, repeat_state, settled=settled)
+    async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
+        page, _, _ = await signed_in_page(uses, context, origin, current)
+        await page.goto(origin + "/reconciliations/" + ref)
+        notice = page.locator("#repeat-status")
+        await expect(notice).to_be_visible()
+        await expect(notice).to_have_attribute("data-repeat-state", repeat_state.value)
+        await expect(notice).to_have_attribute("data-pair-state", "closed" if settled else "open")
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        await page.screenshot(
+            path=tmp_path / f"repeat-{repeat_state.value}-{settled}-{width}.png", full_page=True
+        )
+        before = await snapshot(uses.world.db)
+        await page.reload()
         assert await snapshot(uses.world.db) == before

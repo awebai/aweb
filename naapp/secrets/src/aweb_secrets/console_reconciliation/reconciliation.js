@@ -9,6 +9,26 @@
   const scoped = document.querySelector("[data-console-scope]");
   const needsLogin = () => !scoped || scoped.hidden;
   function message(text) { status.textContent = text; status.focus(); }
+  function showRepeat(originalState, repeatState) {
+    const notice = document.querySelector("#repeat-status");
+    if (!notice) return;
+    notice.hidden = !repeatState;
+    if (!repeatState) return;
+    const closed = originalState.startsWith("reconciled_");
+    notice.dataset.repeatState = repeatState;
+    notice.dataset.pairState = closed ? "closed" : "open";
+    if (["admitted", "dispatching"].includes(repeatState)) {
+      notice.textContent = closed
+        ? "The original is settled. A repeat is in flight and retains its own result as evidence."
+        : "A repeat is in flight. You can still settle the original. The first settlement wins; the repeat retains its own result as evidence.";
+    } else if (repeatState === "outcome_unknown") {
+      notice.textContent = closed
+        ? "The original is settled. The repeat has an unknown outcome and no longer blocks this pair. Its result remains as evidence."
+        : "The repeat has an unknown outcome. You can settle the original; the first settlement wins. The repeat retains its own result as evidence.";
+    } else {
+      notice.textContent = "Repeat state: " + repeatState + ". Its result remains as evidence.";
+    }
+  }
   function fact(list, label, value) {
     if (value === undefined || value === null) return;
     const term = document.createElement("dt"), detail = document.createElement("dd");
@@ -69,6 +89,9 @@
       for (const [label, value] of [["State", result.state], ["Request reference", result.reconcile_ref],
         ["Request ID", result.request_id], ["Dispatch ID", result.dispatch_id], ["Approval ID", result.control_approval_id]]) fact(receipt, label, value);
       receipt.dataset.state = result.state;
+      document.querySelector("#settlement-summary").textContent =
+        "Approval: consumed. Original outcome: " + result.state + ".";
+      showRepeat(result.state, document.querySelector("#repeat-status")?.dataset.repeatState);
       message("Settlement recorded. The original operation is closed.");
       settle.hidden = true;
     } catch { message("Settlement could not be confirmed. Reload this status page before taking another action."); }
@@ -82,6 +105,7 @@
       const options = await api.post(root + "/view-options", {token});
       const result = await api.post(root + "/view", {token, assertion: await api.assertion(options)});
       const control = result.control, original = control.original;
+      showRepeat(result.original_state, result.repeat_state);
       const facts = document.querySelector("#outcome-facts");
       facts.replaceChildren();
       for (const [label, value] of [["Chosen outcome", control.outcome], ["Request reference", original.reconcile_ref],

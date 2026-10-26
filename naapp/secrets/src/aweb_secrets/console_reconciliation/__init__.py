@@ -293,6 +293,38 @@ def _facts(original, *, outcome=None):
     )
 
 
+def _repeat_notice(original_state: State, repeat_state: State | None) -> str:
+    if repeat_state is None:
+        return ""
+    closed = original_state in {
+        State.RECONCILED_COMPLETED,
+        State.RECONCILED_FAILED,
+        State.RECONCILED_UNKNOWN,
+    }
+    if repeat_state in {State.ADMITTED, State.DISPATCHING}:
+        text = (
+            "The original is settled. A repeat is in flight and retains its own result as evidence."
+            if closed
+            else "A repeat is in flight. You can still settle the original. The first settlement wins; "
+            "the repeat retains its own result as evidence."
+        )
+    elif repeat_state is State.OUTCOME_UNKNOWN:
+        text = (
+            "The original is settled. The repeat has an unknown outcome and no longer blocks this pair. "
+            "Its result remains as evidence."
+            if closed
+            else "The repeat has an unknown outcome. You can settle the original; the first settlement wins. "
+            "The repeat retains its own result as evidence."
+        )
+    else:
+        text = "Repeat state: " + repeat_state.value + ". Its result remains as evidence."
+    pair = "closed" if closed else "open"
+    return (
+        f'<p id="repeat-status" data-repeat-state="{escape(repeat_state.value, quote=True)}" '
+        f'data-pair-state="{pair}">{escape(text)}</p>'
+    )
+
+
 def _assets():
     return (
         '<link rel="stylesheet" href="/console-reconciliation/reconciliation.css">'
@@ -314,6 +346,7 @@ def console_reconciliation_router(*, services: ConsoleReconciliation) -> APIRout
             view = await services.record(current, reconcile_ref)
         body = "<h1>Resolve an uncertain outcome</h1>" + _facts(view.original)
         body += f"<p>Recorded state: {escape(view.state.value)}</p>"
+        body += _repeat_notice(view.state, view.repeat_state)
         if view.state is State.OUTCOME_UNKNOWN:
             endpoint = "/reconciliations/" + quote(reconcile_ref, safe="") + "/controls"
             body += (
@@ -356,7 +389,12 @@ def console_reconciliation_router(*, services: ConsoleReconciliation) -> APIRout
         body = "<h1>Settlement status</h1>" + _facts(
             status.control.original, outcome=status.control.outcome
         )
-        body += f"<p>Approval: {escape(status.approval_state.value)}. Original outcome: {escape(status.original_state.value)}.</p>"
+        body += (
+            '<p id="settlement-summary">'
+            f"Approval: {escape(status.approval_state.value)}. "
+            f"Original outcome: {escape(status.original_state.value)}.</p>"
+        )
+        body += _repeat_notice(status.original_state, status.repeat_state)
         if (
             status.approval_state is ApprovalState.APPROVED
             and status.original_state is State.OUTCOME_UNKNOWN
@@ -394,6 +432,7 @@ def console_reconciliation_router(*, services: ConsoleReconciliation) -> APIRout
             '<p id="reconciliation-status" role="status" tabindex="-1">Open your personal approval link to continue.</p>'
             '<button id="view-outcome" type="button" disabled>Review with your passkey</button>'
             '<section id="outcome-review" hidden><h2>Outcome for approval</h2><dl id="outcome-facts"></dl>'
+            '<p id="repeat-status" hidden></p>'
             "<p>Approval records your chosen outcome. Confirm settlement in the next step to close the original record.</p>"
             '<button id="approve-outcome" type="button">Approve with your passkey</button> '
             '<button id="reject-outcome" type="button" class="secondary">Reject with your passkey</button></section>'
