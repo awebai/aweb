@@ -785,7 +785,8 @@ response: projection (JSON pointers), max bytes, content types,
 side_effect: none | reversible | irreversible,
 token_issuing: bool, result_handling (§8.3),
 idempotency: {header: "Idempotency-Key"} | none,
-reconcile: optional status-lookup operation_id keyed by the idempotency key or the response id
+reconcile: optional status-lookup operation_id (manual settlement in the first release),
+outcome_unknown_retry: optional {delay_s: integer 1..60, upstream_honours_idempotency_key: bool} | null
 ```
 
 Parameters fill only typed slots. A value never becomes a path separator, header
@@ -1694,25 +1695,93 @@ point it cannot recall bytes already sent, and the record says so.
 
 ### 11.4 Reconciliation before retry
 
-- If the operation declares a `reconcile` lookup, secrets runs it as a brokered
-  dispatch of its own, recorded and linked, and resolves to
-  `reconciled_completed` or `reconciled_failed`.
-- Otherwise the console asks an owner or approver to resolve it, and the agent
-  sees `outcome_unknown` together with an opaque `reconcile_ref`.
-- **Retry block.** While a principal has an unreconciled `outcome_unknown` on
-  `(secret, operation)` (or the canonical method and URL for open requests), new
-  requests from that principal for the same pair are refused with
-  `reconciliation_pending`. The exception is operations declared
-  `side_effect: none`. This is how "reconcile before retry" is enforced. secrets
-  cannot tell a retry from a new request, so it blocks the pair.
-- **In flight.** While a principal has a dispatch of the same pair in
-  `dispatching`, a new request for that pair is refused at admission and at the
-  fence with `dispatch_in_flight`, under the same `side_effect: none`
-  exception. Unlike `reconciliation_pending`, it clears by itself when that
-  dispatch reaches `completed` or `not_sent`. If it becomes `outcome_unknown`
-  instead, the retry block above applies.
-- A new dispatch after reconciliation is a new intent. Under `approve_only` it
-  needs a **fresh approval**, per the joint recommendation.
+An `outcome_unknown` receipt includes an opaque `reconcile_ref` naming its
+original persisted association; it is the same locator as `request_ref`.
+Status remains a read under current authorization. Possessing or reading the
+locator never authorizes a send, a settlement or approval consumption.
+
+**One explicitly safe automatic repeat.** An operation may opt in with the
+optional `outcome_unknown_retry` object:
+
+```json
+{"delay_s": 2, "upstream_honours_idempotency_key": true}
+```
+
+The object has exactly those two fields. `delay_s` is an integer from 1 to 60
+(boolean values are not integers here); the guarantee field is a strict
+boolean. Omitted or `null` means manual settlement only. Validation never
+inserts a missing field or default: existing template bytes and digests are
+unchanged. Present terms, including `null`, participate in the operation digest
+and in the owner's passkey-confirmed change set.
+
+An opt-in is valid only when `reconcile` is `null` and either the operation
+has `side_effect: none`, or it declares an `idempotency` header and
+`upstream_honours_idempotency_key: true`. A true guarantee requires that header
+even for `side_effect: none`. The guarantee is the owner's assertion about the
+upstream; secrets does not infer it from an HTTP method, a header name or a
+previous response. The passkey confirmation explicitly shows the one-repeat
+limit, delay and the assertion that the upstream honours the named header.
+**A wrong assertion can duplicate an effect.** The manual-only default is also
+shown explicitly.
+
+After the configured delay, secrets repeats the original broker call **once**
+if its original authority still passes the fence.
+The delay and eligibility come from the original immutable operation terms and
+digest, never an edited current template or a heuristic. The repeat preserves
+the original outbound-effect fields and the original upstream idempotency key;
+using a new dispatch ID must not change that key. A durable association claims
+at most one repeat for the original uncertain dispatch, including across crashes
+and concurrent workers. The repeat is its own ordinary fenced, audited broker
+dispatch linked to the original intent. It rechecks the original member,
+certificate, grant, installation generation, policy and revocation at the fence,
+uses the same custody and egress path, and obtains no fresh approval. The repeat
+is refused if the grant recorded on the original dispatch has been replaced,
+edited or revoked, if the member's team membership has changed or been removed,
+or if the certificate has been rotated or revoked. The fence compares exact
+original identities and versions; it does not derive replacement authority from
+current state. Original
+approval provenance stays immutable; the repeat cannot rearm it or transfer it
+to a different intent.
+
+A definitive completed or failed outcome of that repeat settles the original
+as `reconciled_completed` or `reconciled_failed`. Failure to send the repeat,
+a refused repeat, or another uncertain outcome does not establish what the
+original call did; it leaves the original for manual settlement. The one-repeat
+budget is never replenished. This automatic path applies to broker operations,
+not runner jobs or open requests without explicit operation terms.
+
+**Owner settlement.** Everything else, including a template declaring a
+`reconcile` lookup, uses the console manual path in the first release. There is
+no generic lookup dispatch: its input mapping and result interpretation are
+out of scope. An owner settles the original association with a **fresh passkey
+APPROVE assertion bound to `reconcile_ref` and the chosen outcome**:
+`completed`, `failed` or `unknown-closed`. These record
+`reconciled_completed`, `reconciled_failed` or `reconciled_unknown` respectively.
+A covering approver is not a manual resolver in this release. The console
+holds its current owner, session and installation authority in the original
+caller transaction; the settlement and audit use the same S3/B2 stores.
+There is one settlement per original reference, including when the automatic
+and owner paths race. Settlement reopens no credential, sends nothing, and
+rearms no approval. A repeated decision cannot replace the first outcome.
+
+**Retry block.** While a principal has an unreconciled `outcome_unknown` on
+`(secret, operation)` (or the canonical method and URL for open requests), new
+requests from that principal for the same pair are refused with
+`reconciliation_pending`. The exception is operations declared
+`side_effect: none`. The single linked automatic repeat above is a bounded
+continuation of the original intent; it does not unblock a fresh request or
+permit another repeat.
+
+**In flight.** While a principal has a dispatch of the same pair in
+`dispatching`, a new request for that pair is refused at admission and at the
+fence with `dispatch_in_flight`, under the same `side_effect: none` exception.
+The block clears when that dispatch reaches `completed` or `not_sent`; an
+`outcome_unknown` instead applies the retry block above.
+
+A later user retry after settlement is a **new intent**. Under `approve_only`
+it needs a **fresh approval**. Read-only status never initiates the automatic
+repeat or owner settlement, and neither path creates a second registry, opener
+or dispatch state machine.
 
 ### 11.5 Operational record and the post-secret-use-hook outbox
 
