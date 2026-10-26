@@ -19,13 +19,14 @@ from aweb_secrets import runners
 from aweb_secrets.app import create_app
 from aweb_secrets.run_service import RunDispatch
 from aweb_secrets.runner_routes import runner_dispatch_router
-from tests.run_world import ORIGIN
 from tests.test_app import CONSOLE, InstalledTeams, _settings, allow_all, kms_check
 from tests.test_run_dispatch_service import report, setup
 from tests.test_run_runner_routes import headers
 from tests.test_use_approvals import TEAM
 from tests.test_use_approvals import uses as uses
 from tests.test_use_approvals import world as world
+
+API = "http://127.0.0.1:8770"
 
 
 @asynccontextmanager
@@ -35,6 +36,10 @@ async def mounted(uses, registry, tmp_path):
     @asynccontextmanager
     async def prepare(runtime):
         context = await setup(uses)
+        # The shared fixture uses the hosted app id. A loopback test origin
+        # may serve it without claiming that identity at another public host.
+        context.origin = API
+        context.arguments["origin"] = API
         run = RunDispatch(runtime.db(), **context.arguments)
         active.append((context, run))
         try:
@@ -46,7 +51,7 @@ async def mounted(uses, registry, tmp_path):
         return runner_dispatch_router(service=lambda: active[0][1])
 
     settings = _settings(uses.world.db.config.get_dsn(), tmp_path).model_copy(
-        update={"db_schema": TEST_SCHEMA, "app_id": "secrets", "public_origin": ORIGIN}
+        update={"db_schema": TEST_SCHEMA, "app_id": "secrets", "public_origin": API}
     )
     service = create_app(
         settings,
@@ -60,7 +65,7 @@ async def mounted(uses, registry, tmp_path):
     async with service.api_app.router.lifespan_context(service.api_app):
         context, run = active[0]
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(service), base_url=ORIGIN
+            transport=httpx.ASGITransport(service), base_url=API
         ) as client:
             yield client, context, run
 
