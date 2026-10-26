@@ -15,13 +15,13 @@ from aweb_naapp.roles import assign, principal_key, unassign
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.team_auth import Principal, record_observed_principal
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
-from aweb_secrets.console_access import ConsoleAccess, console_access_router
 from fastapi import FastAPI
 from pgdbm import AsyncMigrationManager
 
 from aweb_secrets import records
 from aweb_secrets.admission import AdmissionRefused, UseRequest, admit_use
 from aweb_secrets.console import OwnerConsole, owner_console_router
+from aweb_secrets.console_access import ConsoleAccess, console_access_router
 from aweb_secrets.console_ui import console_ui_router
 from aweb_secrets.containment_routes import containment_console_router
 from aweb_secrets.grant import GrantRecord
@@ -289,8 +289,8 @@ async def test_role_derived_access_names_its_role_for_each_member(access):
 async def test_the_secret_view_lists_who_can_use_it_and_how(access):
     async with clients(access) as (human, _):
         await sign_in(access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
-        page = await owner_page(human, access, f"/access/secrets/{ORDERS_DB.secret_id}")
-        assert (await human.get("/access/secrets/sec_missing01")).status_code == 404
+        page = await owner_page(human, access, f"/access/secrets/{ORDERS_DB.ref}")
+        assert (await human.get("/access/secrets/no-such-secret")).status_code == 404
     assert set(agents(page)) == {DB_AGENT.did_aw, READER.did_aw}
     assert set(grants(page)) == {
         (DB_AGENT.did_aw, DB_WRITE.grant_id),
