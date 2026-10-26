@@ -89,4 +89,4 @@ class ReconciliationReceipt:
     dispatch_id: UUID
     control_approval_id: str
     control_approval_ref: str
-    state: Literal[State.RECONCILED_COMPLETED, State.RECONCILED_FAILED, State.RECONCILED_UNKNOWN]
+    state: Literal["reconciled_completed", "reconciled_failed", "reconciled_unknown"]
