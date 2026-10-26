@@ -97,7 +97,7 @@ renewal; it never rewrites original certificate/plan/audit provenance.
 | `completed` | 200 | `request_ref`, `result` (sanitized/projected result). |
 | `result_withheld` | 200 | `request_ref`, `code`, `result` (safe status/count metadata, no body). |
 | `not_sent` | 503 | `request_ref`, `next: "resubmit"`; fresh-send checks may still refuse a retry. |
-| `outcome_unknown` | 200 | `request_ref`; no automatic retry. |
+| `outcome_unknown` | 200 | `request_ref` and `reconcile_ref` name the same original opaque association. Reading either never sends or retries; §11.4 governs reconciliation. |
 | `refused` | refusal HTTP below | `code`; `request_ref` only if an intent exists. |
 | `cancelled`, `reconciled_completed`, `reconciled_failed`, `reconciled_unknown` | 200 on retrieval | `request_ref`; sanitized `result` if one exists. No new execution. |
 

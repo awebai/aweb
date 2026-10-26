@@ -125,3 +125,33 @@ async def test_run_status_is_hidden_after_original_grant_revocation(uses):
     assert reply.status == 404
     assert reply.body == {"state": "refused", "request_id": None, "code": "not_found"}
     assert await snapshot(uses.world.db) == before
+
+
+async def test_uncertain_run_locator_is_an_original_scoped_read_without_send_authority(uses):
+    context = await setup(uses)
+    admitted, _, _ = await context.assigned()
+    await uses.world.db.execute(
+        "UPDATE {{tables.dispatches}} SET sweep_after=clock_timestamp()-interval '1 second'"
+    )
+    assert await context.service.sweep() == 1
+    service = UseStatus(
+        uses.world.db,
+        fence=context.arguments["fence"],
+        approvals=context.arguments["approvals"],
+        runs=context.service.status,
+    )
+    before = await snapshot(uses.world.db)
+    reply = await service.get(ref=admitted.body["request_id"], authorization=authorization(context))
+    locator = reply.body["reconcile_ref"]
+    assert locator == admitted.body["request_ref"]
+    assert reply.body["state"] == "outcome_unknown" and "next" not in reply.body
+    assert await service.get(ref=locator, authorization=authorization(context)) == reply
+    assert (
+        await service.get(ref=locator, authorization=authorization(context, principal=BOB))
+    ).status == 404
+    assert await snapshot(uses.world.db) == before
+    async with uses.world.db.transaction() as tx:
+        await records.revoke_grant(tx, uses.world.admitted.installation_id, "grt_durable001")
+    before = await snapshot(uses.world.db)
+    assert (await service.get(ref=locator, authorization=authorization(context))).status == 404
+    assert await snapshot(uses.world.db) == before
