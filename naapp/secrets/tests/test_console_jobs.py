@@ -8,6 +8,7 @@ from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from fastapi import FastAPI
 
+from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 from aweb_secrets.console_jobs import console_jobs_router
@@ -43,6 +44,7 @@ async def application(w, *, origin=ORIGIN, agent_origin=API):
         changes=w.change_sets,
         approvals=w.approvals,
         registrations=Registrations(),
+        approval_kind=approval_kind,
         after_commit=w.containment.evict,
     )
     app = FastAPI()

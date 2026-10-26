@@ -212,6 +212,7 @@ incorrect assertion can duplicate an effect. This display uses the frozen
 operation terms; it does not change dispatch or settlement authority.
 
 ```python
+from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 
 console_changes = ConsoleChanges(
@@ -220,9 +221,20 @@ console_changes = ConsoleChanges(
     approvals=approvals,
     registrations=hook_registrations,
     after_commit=containment.evict,
+    approval_kind=approval_kind,
 )
 human_app.include_router(console_changes_router(console_changes))
 ```
+
+The sole `/approvals#token=...` entry first calls read-only `POST /approvals/dispatch`
+with `{token}`. It returns only a closed `kind` and fixed `path` from exact
+persisted associations. Change sets continue in the same document; use, run and
+reconciliation controls hand the transient fragment to their own typed pages.
+Those pages retain their own LOGIN/VIEW/APPROVE and session/installation checks.
+The app-owned `approval_kind` helper must share the database and use-audit
+migrations. Composition binds `enable_runs` and `enable_reconciliation` to the
+services whose migrations and routers it actually mounts; defaults query neither
+optional table. No routing policy belongs in the root.
 
 Authenticated POSTs require JSON, the S4 cookie and this tab's `X-CSRF-Token`. Browser
 forms call `window.awebSecretsConsole.post(path, body)`. Under

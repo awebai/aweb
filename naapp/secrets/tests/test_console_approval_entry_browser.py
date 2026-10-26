@@ -3,6 +3,7 @@
 import asyncio
 import secrets
 import socket
+from functools import partial
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -19,6 +20,7 @@ from playwright.async_api import Error as BrowserError
 from playwright.async_api import expect
 
 from aweb_secrets.approval_email import ApprovalEmailDelivery
+from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 from aweb_secrets.console_forms import console_forms_router
@@ -35,6 +37,7 @@ from tests.test_change_sets import world as _world
 from tests.test_console_changes import Registrations
 from tests.test_console_forms import enrolled_page
 from tests.test_console_ui_browser import browser as _browser
+from tests.test_run_dispatch_service import setup as run_setup
 from tests.test_use_approvals import Clock, Uses, install
 from tests.test_use_audit import targets
 
@@ -43,13 +46,19 @@ browser = _browser
 
 
 @pytest.fixture
-async def entry_service(world, tmp_path):
+async def entry_service(world, tmp_path, request):
     w = world
     await apply_console_migrations(w.db)
     await apply_idempotency_migrations(w.db)
     await apply_ratelimit_migrations(w.db)
     uses = Uses(w, w.approvals, Clock(), Installations().grant)
-    audit, _ = audit_for(uses)
+    run = None
+    if getattr(request, "param", "use") == "run":
+        run = await run_setup(uses, approval_required=True)
+        uses.approvals = run.arguments["approvals"]
+        audit = run.arguments["use_audit"]
+    else:
+        audit, _ = audit_for(uses)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
@@ -75,6 +84,7 @@ async def entry_service(world, tmp_path):
         changes=w.change_sets,
         approvals=uses.approvals,
         registrations=Registrations(),
+        approval_kind=partial(approval_kind, enable_runs=run is not None),
         after_commit=w.containment.evict,
     )
 
@@ -110,7 +120,7 @@ async def entry_service(world, tmp_path):
             uses.approvals._delivery = ApprovalEmailDelivery(
                 mailer=mailer(smtp, tmp_path), approval_url=origin + "/approvals"
             )
-            yield uses, origin, smtp
+            yield uses, origin, smtp, run
     finally:
         server.should_exit = True
         await asyncio.wait_for(running, 10)
@@ -122,7 +132,7 @@ async def entry_service(world, tmp_path):
 async def test_broker_email_entry_reaches_the_use_page_and_keeps_fresh_ceremonies(
     world, browser, entry_service, width, signed_out
 ):
-    uses, origin, smtp = entry_service
+    uses, origin, smtp, _ = entry_service
     async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
         page, _, _ = await enrolled_page(world, context, origin)
         await install(uses, approvers=["owner:" + ALICE.principal_did])
@@ -161,4 +171,43 @@ async def test_broker_email_entry_reaches_the_use_page_and_keeps_fresh_ceremonie
         approval = await uses.approvals.get(approval_id)
         assert approval.state is ApprovalState.APPROVED
         assert approval.consumed_operation_id is None
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [375, 1440])
+@pytest.mark.parametrize("entry_service", ["run"], indirect=True)
+async def test_run_email_entry_selects_run_page_without_releasing_terms_to_another_candidate(
+    world, browser, entry_service, width
+):
+    uses, origin, smtp, run = entry_service
+    async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
+        page, _, _ = await enrolled_page(world, context, origin)
+        reply = await run.service.submit(job=run.job.job_id, submission=run.submission)
+        assert reply.status == 202
+        [received] = smtp.received
+        _, _, _, url = contents(received)
+        assert urlsplit(url).path == "/approvals"
+        [token] = parse_qs(urlsplit(url).fragment)["token"]
+        approval_id = await world.db.fetch_value(
+            "SELECT approval_id FROM {{tables.run_slot_approvals}} WHERE approval_ref=$1",
+            reply.body["approval_ref"],
+        )
+        try:
+            await page.goto(url)
+        except BrowserError:
+            raise AssertionError("delivered run approval entry failed") from None
+        await expect(page.locator("#use-approval")).to_have_attribute("data-root", "/run-approvals")
+        assert urlsplit(page.url).path == "/run-approvals" and not urlsplit(page.url).fragment
+        assert not await page.evaluate(
+            "token => JSON.stringify({...sessionStorage,...localStorage}).includes(token)", token
+        )
+        await expect(page.locator("#request-review")).to_be_hidden()
+        # The email's finance candidate is distinct from this owner session.
+        # Dispatch may select a page, but cannot authorize its VIEW or decision.
+        async with page.expect_response(origin + "/run-approvals/view-options") as viewed:
+            await page.get_by_role("button", name="Review with your passkey", exact=True).click()
+        assert (await viewed.value).status == 403
+        await expect(page.locator("#request-review")).to_be_hidden()
+        approval = await uses.approvals.get(approval_id)
+        assert approval.state is ApprovalState.PENDING and approval.consumed_operation_id is None
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
