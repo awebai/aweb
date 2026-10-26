@@ -42,6 +42,7 @@ from folio.record_models import (
 )
 from folio.record_service import RecordService
 from folio.record_storage import RecordStorage
+from folio.record_widgets import validate_saved_widgets_on
 
 
 def now() -> datetime:
@@ -114,6 +115,17 @@ class RecordHost:
 
     def service(self) -> RecordService:
         return RecordService(self.storage.require_store())
+
+    async def save_document(self, database, installation, principal, *, body, operation, **kwargs):
+        """Join author admission and collection read locks to the version write."""
+        try:
+            async with database.transaction() as tx:
+                await validate_saved_widgets_on(tx, installation, principal, body, self.storage)
+                return await operation(
+                    tx, principal=principal, events=self.runtime.app_events, body=body, **kwargs,
+                )
+        except (StoreError, InstallationRefused) as error:
+            raise store_http(error) from None
 
     async def member_operation(self, authorization, method, payload):
         try:

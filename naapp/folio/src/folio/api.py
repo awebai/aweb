@@ -163,6 +163,7 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
 
     @app.post("/v1/documents", response_model=DocumentResponse)
     async def create_document_route(
+        request: Request,
         payload: CreateDocumentRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
@@ -179,10 +180,11 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
             if payload.body is None:
                 raise HTTPException(status_code=422, detail="body must be a string")
             body = payload.body
-        result = await create_document(
+        result = await records.save_document(
             database,
-            principal=actor,
-            events=runtime.app_events,
+            request.state.folio_installation.admitted,
+            actor,
+            operation=create_document,
             slug=payload.slug,
             title=payload.title,
             body=body,
@@ -217,18 +219,25 @@ def create_app(settings: Settings | None = None, *, awid_transport=None, team_se
             body = (await request.body()).decode("utf-8")
         except UnicodeDecodeError as exc:
             raise HTTPException(status_code=400, detail="Version body must be valid UTF-8") from exc
-        result = await append_version(database, principal=actor, events=runtime.app_events, slug=slug, body=body)
+        result = await records.save_document(
+            database, request.state.folio_installation.admitted, actor,
+            operation=append_version, slug=slug, body=body,
+        )
         return result
 
     @app.post("/v1/documents/{slug}/versions/template", response_model=DocumentResponse)
     async def append_template_version_route(
         slug: str,
+        request: Request,
         payload: AppendTemplateVersionRequest,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         body = render_declarative_template(payload.model_dump())
-        result = await append_version(database, principal=actor, events=runtime.app_events, slug=slug, body=body)
+        result = await records.save_document(
+            database, request.state.folio_installation.admitted, actor,
+            operation=append_version, slug=slug, body=body,
+        )
         return result
 
     @app.get("/v1/billing", response_model=BillingResponse)
