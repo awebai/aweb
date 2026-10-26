@@ -1,4 +1,4 @@
-"""Production and wakes manifests start with distinct purpose-specific keys."""
+"""Folio starts on its configured v2 template, using purpose-specific keys."""
 
 import copy
 import json
@@ -12,10 +12,10 @@ import pytest
 from aweb_naapp.manifest import canonical_bytes
 from awid.did import did_from_public_key
 from fastapi.testclient import TestClient
-from manifest_config import TEST_EMIT_DID_KEY, TEST_EMIT_SEED_HEX, TEST_GRANT_DID_KEY
 from nacl.signing import SigningKey
+from manifest_config import TEST_EMIT_DID_KEY, TEST_EMIT_SEED_HEX, TEST_GRANT_DID_KEY
+from manifest_config import configured_settings as configured
 from pydantic import SecretStr
-from test_record_runtime import configured
 
 import folio.api as folio_api
 from folio.aweb_manifest import MANIFEST
@@ -51,8 +51,17 @@ async def test_folio_starts_with_separate_grant_key_and_existing_emit_seed_or_fi
                 {"kid": "folio:emit-test", "did_key": TEST_EMIT_DID_KEY, "purposes": ["app-event"]},
                 {"kid": "folio:grant-read-1", "did_key": TEST_GRANT_DID_KEY, "purposes": ["app-grant-read"]},
             ]
+            assert app.state.folio_runtime.installation_grants() is app.state.folio_runtime.installation_grants()
             assert served["events"][0]["type"] == "doc.changed"
             assert (await client.get("/health")).json()["checks"]["database"]["ok"]
+
+
+def test_missing_grant_read_key_refuses_startup(tmp_path):
+    from aweb_naapp.runtime.app_keys import AppKeyError
+    settings = configured(tmp_path)
+    settings.app_key_files.pop("folio:grant-read-1")
+    with pytest.raises(AppKeyError):
+        folio_api.create_app(settings)
 
 
 _GENERATOR = Path(__file__).resolve().parents[3] / "scripts" / "e2e" / "folio_wakes_manifest.py"

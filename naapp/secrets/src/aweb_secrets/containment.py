@@ -7,8 +7,9 @@ writes commit together. No audit availability predicate is consulted here.
 
 import hashlib
 import json
+import logging
 import secrets
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -20,7 +21,12 @@ from aweb_naapp.roles import hold_role, principal_key
 from aweb_naapp.runtime.approvals import Approvals
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationFence
-from aweb_naapp.runtime.passkeys import Passkeys, RetirementRefused
+from aweb_naapp.runtime.passkeys import (
+    PasskeyInstallationContext,
+    PasskeyProofUnavailable,
+    Passkeys,
+    RetirementRefused,
+)
 from aweb_naapp.runtime.team_auth import Principal
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
@@ -32,6 +38,8 @@ from aweb_secrets.custody import Custody, SealContext
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, owner_scope
 from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.tokens import TokenCache
+
+_LOG = logging.getLogger(__name__)
 
 
 async def _lock_tree(
@@ -313,8 +321,98 @@ class Containment:
                 actor=actor,
                 signed_trace_id=signed_trace_id,
             )
+            await self.fence.check(tx, installed)
         await self.evict(installed.installation_id, installed.team_id, result.affected_secret_ids)
         return result
+
+    async def by_console(
+        self,
+        *,
+        admitted: AdmittedInstallation,
+        session: ConsoleSession,
+        request_id: str,
+        action: str,
+        target: str | None = None,
+        credential_id: bytes | None = None,
+    ) -> ContainmentResult:
+        """Narrow under the current LOGIN proof, without a fresh ceremony.
+
+        The human router supplies S4 session/CSRF and authoritative installation
+        lookup. All authority, effects and the governance outbox share this tx.
+        """
+        self._validate(request_id, action, target, credential_id)
+        async with self.db.transaction() as tx:
+            await self.fence.check(tx, admitted)
+            self._session_unexpired(session)
+            await self.authorize_console(
+                tx, admitted=admitted, session=session, action=action, target=target
+            )
+            await self._session_current(tx, session)
+            try:
+                commitment = await self.passkeys.evidence_commitment(
+                    session.evidence_ref,
+                    context=PasskeyInstallationContext(
+                        admitted.app_id,
+                        admitted.team_id,
+                        admitted.installation_id,
+                        admitted.generation,
+                    ),
+                    scope=session.scope,
+                    subject=session.subject,
+                    purpose="login",
+                    tx=tx,
+                )
+            except PasskeyProofUnavailable:
+                raise ContainmentRefused("login_evidence_unavailable", 401) from None
+            result = await self._act(
+                tx,
+                installation_id=admitted.installation_id,
+                team_id=admitted.team_id,
+                authorized_by=session.subject,
+                request_id=request_id,
+                action=action,
+                target=target,
+                credential_id=credential_id,
+                authority="passkey_session",
+                actor={"authority_mode": "system", "attestations": []},
+                evidence_sha256=commitment,
+            )
+            await self._session_current(tx, session)
+            await self.fence.check(tx, admitted)
+            self._session_unexpired(session)
+        try:
+            await self.evict(admitted.installation_id, admitted.team_id, result.affected_secret_ids)
+        except Exception:
+            # The effect is committed. Cleanup failure must not invite a replay;
+            # S13 checks active custody before using a cached token.
+            _LOG.warning("post-containment cache cleanup unavailable")
+        return result
+
+    @staticmethod
+    def _session_unexpired(session: ConsoleSession) -> None:
+        if session.expires_at <= datetime.now(UTC):
+            raise ContainmentRefused("console_session_required", 401)
+
+    @staticmethod
+    async def _session_current(tx: TransactionManager, session: ConsoleSession) -> None:
+        # F6, application authority and exact LOGIN credential precede this
+        # session lock. Logout only updates the session row. Holding it makes
+        # logout serialize with the effect, while a completed logout is seen.
+        row = await tx.fetch_one(
+            "SELECT scope,subject,evidence_ref,expires_at,closed_at FROM {{tables.console_sessions}}"
+            " WHERE token_sha256=$1 FOR SHARE",
+            session.token_sha256,
+        )
+        # Check the live clock AFTER any row-lock wait, and bind every field
+        # back to the exact token S4 authenticated, never another live session.
+        if (
+            row is None
+            or row["closed_at"] is not None
+            or (row["scope"], row["subject"], row["evidence_ref"], row["expires_at"])
+            != (session.scope, session.subject, session.evidence_ref, session.expires_at)
+            or row["expires_at"] <= datetime.now(UTC)
+        ):
+            raise ContainmentRefused("console_session_required", 401)
 
     @staticmethod
     def _validate(
@@ -420,16 +518,17 @@ class Containment:
                 **kwargs,
             )
         elif action == "revoke-approvals":
-            row = await tx.fetch_one(
-                "SELECT secret_id FROM {{tables.use_approvals}}"
-                " WHERE installation_id=$1 AND team_id=$2 AND approval_id=$3",
-                installation_id,
-                team_id,
-                target,
+            assert target is not None
+            sources = await use_approvals.use_approval_secret_ids(
+                tx,
+                installation_id=installation_id,
+                team_id=team_id,
+                approval_id=target,
             )
-            if row is None:
+            if not sources:
                 raise ContainmentRefused("approval_unknown", 404)
-            await _lock_tree(tx, installation_id, team_id, row["secret_id"])
+            for source in sources:
+                await _lock_tree(tx, installation_id, team_id, source)
             await self.approvals.revoke_many(
                 [target],
                 revoked_by=authorized_by,
@@ -554,6 +653,7 @@ class Containment:
         team_id: str,
         secret_ids: tuple[str, ...],
         approval_ids: tuple[str, ...] = (),
+        job_ids: Sequence[str] = (),
     ) -> None:
         """Lock the complete replacement/reenable forest before B2 consumption.
 
@@ -606,19 +706,28 @@ class Containment:
             team_id,
             list(locked),
         )
+        # Run admission resolves CURRENT after forest/grants. Replacements take
+        # the same order, before B2, including job-only changes without a forest.
+        if job_ids:
+            await tx.fetch_all(
+                "SELECT job_id FROM {{tables.current_jobs}}"
+                " WHERE installation_id=$1 AND job_id=ANY($2::text[])"
+                " ORDER BY job_id FOR UPDATE",
+                installation_id,
+                sorted(set(job_ids)),
+            )
         # Prelock a conservative superset across the FULL forest before S10
         # consumes its own confirmation or invokes any per-root callback.
         # Revocation later retains the root's version filter.
-        rows = await tx.fetch_all(
-            "SELECT approval_id FROM {{tables.use_approvals}}"
-            " WHERE installation_id=$1 AND team_id=$2 AND secret_id=ANY($3::text[])",
-            installation_id,
-            team_id,
-            list(affected),
+        associated_ids = await use_approvals.select_use_approval_ids(
+            tx,
+            installation_id=installation_id,
+            team_id=team_id,
+            secret_ids=tuple(affected),
         )
         await self.approvals.lock_many(
             tx,
-            [*approval_ids, *(row["approval_id"] for row in rows)],
+            [*approval_ids, *associated_ids],
         )
 
     async def reenable(
@@ -834,7 +943,7 @@ class Containment:
             return True
         if action in {"disable-installation", "deregister-runner"}:
             raise ContainmentRefused("owner_required")
-        secret_id = await self._prepare_action(tx, admitted, action, target)
+        secret_ids = await self._prepare_action(tx, admitted, action, target)
         row = await tx.fetch_one(
             "SELECT approver_ref, covers FROM {{tables.approvers}}"
             " WHERE installation_id=$1 AND team_id=$2 AND scope=$3"
@@ -849,16 +958,17 @@ class Containment:
             if target not in {session.scope, row["approver_ref"]}:
                 raise ContainmentRefused("coverage_denied")
             return False
-        if secret_id is None:
+        if not secret_ids:
             raise ContainmentRefused("coverage_denied")
-        ancestry = await derived_lineage.ancestry_ids(
-            tx,
-            admitted.installation_id,
-            admitted.team_id,
-            secret_id,
-        )
-        if not set(ancestry).intersection(json.loads(row["covers"])):
-            raise ContainmentRefused("coverage_denied")
+        for secret_id in secret_ids:
+            ancestry = await derived_lineage.ancestry_ids(
+                tx,
+                admitted.installation_id,
+                admitted.team_id,
+                secret_id,
+            )
+            if not set(ancestry).intersection(json.loads(row["covers"])):
+                raise ContainmentRefused("coverage_denied")
         return False
 
     async def _prepare_action(
@@ -867,9 +977,10 @@ class Containment:
         admitted: AdmittedInstallation,
         action: str,
         target: str | None,
-    ) -> str | None:
+    ) -> tuple[str, ...]:
+        secret_ids: tuple[str, ...]
         if action == "disable-secret":
-            secret_id = target
+            secret_ids = (target,) if target is not None else ()
         elif action == "revoke-grant":
             secret_id = await tx.fetch_value(
                 "SELECT secret_id FROM {{tables.grants}}"
@@ -878,20 +989,22 @@ class Containment:
                 admitted.team_id,
                 target,
             )
+            secret_ids = (secret_id,) if secret_id is not None else ()
         elif action == "revoke-approvals":
-            secret_id = await tx.fetch_value(
-                "SELECT secret_id FROM {{tables.use_approvals}}"
-                " WHERE installation_id=$1 AND team_id=$2 AND approval_id=$3",
-                admitted.installation_id,
-                admitted.team_id,
-                target,
+            assert target is not None
+            secret_ids = await use_approvals.use_approval_secret_ids(
+                tx,
+                installation_id=admitted.installation_id,
+                team_id=admitted.team_id,
+                approval_id=target,
             )
         else:
-            return None
-        if secret_id is None:
+            return ()
+        if not secret_ids:
             raise ContainmentRefused("resource_unknown", 404)
-        await _lock_tree(tx, admitted.installation_id, admitted.team_id, secret_id)
-        return secret_id
+        for secret_id in secret_ids:
+            await _lock_tree(tx, admitted.installation_id, admitted.team_id, secret_id)
+        return secret_ids
 
     async def _authorize_member_approver(
         self,
@@ -902,35 +1015,39 @@ class Containment:
     ) -> None:
         from aweb_secrets.approvers import approvers_for_secrets
 
-        secret_id = await self._prepare_action(tx, admitted, "revoke-approvals", approval_id)
-        assert secret_id is not None
-        ids = await derived_lineage.ancestry_ids(
-            tx,
-            admitted.installation_id,
-            admitted.team_id,
-            secret_id,
-        )
-        covering = await approvers_for_secrets(
-            tx,
-            installation_id=admitted.installation_id,
-            team_id=admitted.team_id,
-            secret_ids=ids,
-        )
-        scopes = {record.scope for record in covering if record.principal_did == principal_did}
-        if not scopes:
-            raise ContainmentRefused("approver_required")
+        secret_ids = await self._prepare_action(tx, admitted, "revoke-approvals", approval_id)
+        scope_sets = []
+        for secret_id in secret_ids:
+            ids = await derived_lineage.ancestry_ids(
+                tx,
+                admitted.installation_id,
+                admitted.team_id,
+                secret_id,
+            )
+            covering = await approvers_for_secrets(
+                tx,
+                installation_id=admitted.installation_id,
+                team_id=admitted.team_id,
+                secret_ids=ids,
+            )
+            scopes = {record.scope for record in covering if record.principal_did == principal_did}
+            if not scopes:
+                raise ContainmentRefused("approver_required")
+            scope_sets.append(scopes)
         # Retirement serializes on this B2 row. Read the committed candidate
         # and holder AFTER acquiring it, so a completed retirement is seen and
         # a concurrent retirement commits after this narrowing action.
         await self.approvals.lock_many(tx, [approval_id])
         approval = await self.approvals.get(approval_id)
         if approval is not None:
+            current_scopes = set()
             for candidate in approval.candidates:
                 if (
-                    candidate.scope in scopes
-                    and candidate.principal_did == principal_did
+                    candidate.principal_did == principal_did
                     and candidate.retired_at is None
                     and await self.passkeys.is_current(candidate.scope, candidate.subject)
                 ):
-                    return
+                    current_scopes.add(candidate.scope)
+            if all(scopes.intersection(current_scopes) for scopes in scope_sets):
+                return
         raise ContainmentRefused("approver_required")

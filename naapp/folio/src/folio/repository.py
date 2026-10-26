@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import re
 import secrets
@@ -12,6 +13,7 @@ from aweb_naapp.runtime.event_emit import AppEvents
 from aweb_naapp.runtime.team_auth import Principal
 from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
+from pgdbm.core import TransactionManager
 
 from folio.cloudflare_stream import CloudflareStreamClient, stream_direct_upload_expires_at
 from folio.config import Settings
@@ -243,6 +245,7 @@ async def list_versions(db: AsyncDatabaseManager, *, principal: Principal, slug:
 async def mint_presentation_link(
     db: AsyncDatabaseManager,
     *,
+    installation_id: str,
     principal: Principal,
     settings: Settings,
     slug: str,
@@ -290,15 +293,16 @@ async def mint_presentation_link(
         else (ttl_seconds or settings.default_present_ttl_seconds)
     )
     ttl = min(requested_ttl, settings.max_present_ttl_seconds)
-    token = secrets.token_urlsafe(32)
+    opener = secrets.token_urlsafe(32) if editable else None
+    token = secrets.token_urlsafe(16) if editable else secrets.token_urlsafe(32)
     # Use the same database clock for expiry and the row's default created_at.
     # That makes the stored editable lifetime exactly bounded across hosts.
     minted = await db.fetch_one(
         """
         INSERT INTO {{tables.presentation_links}}
           (token, document_id, version_number, expires_at, created_by_did_key,
-           created_by_did_aw, created_by_alias, certificate_id, editable)
-        VALUES ($1, $2, $3, NOW() + $4::integer * interval '1 second', $5, $6, $7, $8, $9)
+           created_by_did_aw, created_by_alias, certificate_id, editable, opener_sha256, creator_team_did_key, installation_id)
+        VALUES ($1, $2, $3, NOW() + $4::integer * interval '1 second', $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING expires_at
         """,
         token,
@@ -310,11 +314,15 @@ async def mint_presentation_link(
         principal.alias,
         principal.certificate_id,
         editable,
+        hashlib.sha256(opener.encode()).digest() if opener else None,
+        principal.team_did_key,
+        installation_id,
     )
     assert minted is not None
     return {
         "token": token,
-        "url": f"{settings.public_origin.rstrip('/')}/present/{token}",
+        "url": (f"{settings.public_origin.rstrip('/')}/present/edit/{token}#k={opener}"
+                if editable else f"{settings.public_origin.rstrip('/')}/present/{token}"),
         "expires_at": minted["expires_at"],
     }
 
@@ -343,7 +351,7 @@ async def revoke_presentation_link(
     )
 
 
-async def get_presented_document(db: AsyncDatabaseManager, *, token: str) -> dict[str, Any]:
+async def get_presented_document(db: AsyncDatabaseManager | TransactionManager, *, token: str) -> dict[str, Any]:
     row = await db.fetch_one(
         """
         SELECT p.editable, p.expires_at, d.team_id, t.tokens, t.logo_asset_id, t.header, t.footer,
@@ -361,7 +369,7 @@ async def get_presented_document(db: AsyncDatabaseManager, *, token: str) -> dic
             LIMIT 1
         ) latest ON TRUE
         LEFT JOIN {{tables.themes}} t ON t.team_id = d.team_id
-        WHERE p.token = $1 AND p.revoked_at IS NULL AND p.expires_at > NOW()
+        WHERE p.token = $1 AND p.editable IS FALSE AND p.revoked_at IS NULL AND p.expires_at > NOW()
           AND (p.editable IS FALSE OR p.expires_at <= p.created_at + interval '300 seconds')
         """,
         token,
@@ -388,110 +396,63 @@ def _clean_editor_name(editor_name: str | None) -> str | None:
     return cleaned[:120] or None
 
 
-async def get_presentation_state(db: AsyncDatabaseManager, *, token: str) -> dict[str, Any]:
-    row = await db.fetch_one(
-        """
-        SELECT latest.version_number
-        FROM {{tables.presentation_links}} p
-        JOIN LATERAL (
-            SELECT version_number
-            FROM {{tables.document_versions}}
-            WHERE document_id = p.document_id
-            ORDER BY version_number DESC
-            LIMIT 1
-        ) latest ON TRUE
-        WHERE p.token = $1
-          AND p.editable IS TRUE
-          AND p.revoked_at IS NULL
-          AND p.expires_at > NOW()
-          AND p.expires_at <= p.created_at + interval '300 seconds'
-        """,
-        token,
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="Presentation not found")
-    return {"version_number": int(row["version_number"])}
-
-
-async def edit_presented_document(
-    db: AsyncDatabaseManager,
-    *,
-    events: AppEvents,
-    token: str,
-    body: str,
-    base_version: int,
-    editor_name: str | None,
+async def append_presented_version(
+    tx: TransactionManager, *, events: AppEvents, link: dict[str, Any],
+    body: str, base_version: int, editor_name: str | None,
 ) -> dict[str, Any]:
+    """Append under the caller's session/link/document locks."""
     clean_editor_name = _clean_editor_name(editor_name)
-    async with db.transaction() as tx:
-        link = await tx.fetch_one(
-            """
-            SELECT p.document_id, d.team_id, d.slug, p.created_by_did_key, p.created_by_did_aw,
-                   p.created_by_alias, p.certificate_id
-            FROM {{tables.presentation_links}} p
-            JOIN {{tables.documents}} d ON d.document_id = p.document_id
-            WHERE p.token = $1
-              AND p.editable IS TRUE
-              AND p.revoked_at IS NULL
-              AND p.expires_at > NOW()
-              AND p.expires_at <= p.created_at + interval '300 seconds'
-            FOR UPDATE OF d
-            """,
-            token,
+    document_id: UUID = link["document_id"]
+    latest = await tx.fetch_one(
+        """
+        SELECT version_number, body
+        FROM {{tables.document_versions}}
+        WHERE document_id = $1
+        ORDER BY version_number DESC
+        LIMIT 1
+        """,
+        document_id,
+    )
+    if latest is None:
+        raise HTTPException(status_code=404, detail="Presentation not found")
+    latest_version = int(latest["version_number"])
+    if base_version != latest_version:
+        raise HTTPException(
+            status_code=409,
+            detail={"version_number": latest_version, "body": latest["body"]},
         )
-        if link is None:
-            raise HTTPException(status_code=404, detail="Presentation not found")
-        document_id: UUID = link["document_id"]
-        latest = await tx.fetch_one(
-            """
-            SELECT version_number, body
-            FROM {{tables.document_versions}}
-            WHERE document_id = $1
-            ORDER BY version_number DESC
-            LIMIT 1
-            """,
-            document_id,
-        )
-        if latest is None:
-            raise HTTPException(status_code=404, detail="Presentation not found")
-        latest_version = int(latest["version_number"])
-        if base_version != latest_version:
-            raise HTTPException(
-                status_code=409,
-                detail={"version_number": latest_version, "body": latest["body"]},
-            )
 
-        new_version = latest_version + 1
-        version_id = uuid4()
-        await tx.execute(
-            """
-            INSERT INTO {{tables.document_versions}}
-              (version_id, document_id, version_number, body, created_by_did_key,
-               created_by_did_aw, created_by_address, created_by_alias, certificate_id, created_by_editor_name)
-            VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $9)
-            """,
-            version_id,
-            document_id,
-            new_version,
-            body,
-            link["created_by_did_key"],
-            link["created_by_did_aw"],
-            link["created_by_alias"],
-            link["certificate_id"],
-            clean_editor_name,
-        )
-        await tx.execute(
-            "UPDATE {{tables.documents}} SET updated_at = NOW() WHERE document_id = $1",
-            document_id,
-        )
-        await emit_doc_changed(
-            events,
-            tx,
-            team_id=str(link["team_id"]),
-            slug=str(link["slug"]),
-            version=new_version,
-            source="present-link",
-        )
+    new_version = latest_version + 1
+    version_id = uuid4()
+    await tx.execute(
+        """
+        INSERT INTO {{tables.document_versions}}
+          (version_id, document_id, version_number, body, created_by_did_key,
+           created_by_did_aw, created_by_address, created_by_alias, certificate_id, created_by_editor_name)
+        VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $9)
+        """,
+        version_id,
+        document_id,
+        new_version,
+        body,
+        link["created_by_did_key"],
+        link["created_by_did_aw"],
+        link["created_by_alias"],
+        link["certificate_id"],
+        clean_editor_name,
+    )
+    await tx.execute(
+        "UPDATE {{tables.documents}} SET updated_at = NOW() WHERE document_id = $1",
+        document_id,
+    )
+    await emit_doc_changed(
+        events,
+        tx,
+        team_id=str(link["team_id"]),
+        slug=str(link["slug"]),
+        version=new_version,
+        source="present-link",
+    )
     return {"version_number": new_version}
 
 
@@ -589,7 +550,7 @@ def _asset_ids_referenced_by_body(body: str) -> set[UUID]:
     return asset_ids
 
 
-async def _allowed_assets_for_body(db: AsyncDatabaseManager, *, team_id: str, body: str) -> dict[UUID, dict[str, Any]]:
+async def _allowed_assets_for_body(db: AsyncDatabaseManager | TransactionManager, *, team_id: str, body: str) -> dict[UUID, dict[str, Any]]:
     referenced = _asset_ids_referenced_by_body(body)
     if not referenced:
         return {}

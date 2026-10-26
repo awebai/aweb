@@ -18,6 +18,7 @@ from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.roles import apply_roles_migrations, assign, principal_key, unassign
 from aweb_naapp.runtime.attestation import VerifiedAttestation
 from aweb_naapp.runtime.authorization import Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.installation import (
     InstallationFence,
     InstallationRefused,
@@ -93,14 +94,14 @@ def _grant_source_grant(
     return Grant(
         team_id=TEAM,
         scopes=frozenset({"secrets:use"}),
-        fresh_until=time.monotonic() + 30,
+        fresh_until=time.monotonic_ns() + seconds_to_ns(30),
         installation_id=installation_id,
         generation=generation,
     )
 
 
 class InstalledSecrets:
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         return _grant_source_grant() if team_id == TEAM else None
 
 

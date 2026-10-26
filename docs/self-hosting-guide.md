@@ -309,6 +309,20 @@ For `awid`:
 - `AWID_REDIS_URL`
 - optional `AWID_SKIP_DNS_VERIFY=1` for internal non-DNS deployments
 
+### App Task Request Authority Reads
+
+Successful creation and replay checks on `POST /v1/tasks/app-requests` make
+three uncached AWID reads: the team key, revocations, and current certificates.
+The public member answer route repeats these fresh checks before its transaction.
+Paginated lists can require additional HTTP calls. Account for this traffic
+when sizing AWID's per-client rate limits. Registry failures return
+`503 authority_unavailable`; these checks do not use stale authority.
+
+If request volume warrants a future cache, it must have an explicit freshness
+bound measured in seconds and fail closed at expiry, with no stale fallback.
+The general registry outage-grace cache cannot serve this path. See the
+[app task request contract](app-task-requests.md#verification-in-order).
+
 ### Cross-Registry Authority and Migration
 
 `AWID_REGISTRY_URL` selects this aweb service's home registry. It does not route

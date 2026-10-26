@@ -2,7 +2,7 @@
 
 The app composes one OwnerConsole with the same database, passkeys and fence
 used by its broker. Its installation lookup reads authoritative F6 records;
-request team fields never establish the installation's team. Routes belong only
+the owner-act team field is only a G1 lookup hint, never team authority. Routes belong only
 on split_origins' human app. S4 rechecks the current owner role or approver
 record on every session request; owner-only actions separately require the
 owner role.
@@ -12,9 +12,8 @@ the fenced transaction; registration and login use B3's distinct ceremonies.
 """
 
 import base64
-from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Protocol
 
 from aweb_naapp.console import (
     ClientIdentity,
@@ -48,7 +47,13 @@ from aweb_secrets.change_policy import keep_four_eyes_owners
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, OwnerRequired, owner_scope, record_owner
 from aweb_secrets.principal import is_principal
 
-InstallationLookup = Callable[[str], Awaitable[AdmittedInstallation]]
+
+class InstallationLookup(Protocol):
+    async def __call__(
+        self, installation_id: str, *, team_id: str | None = None
+    ) -> AdmittedInstallation:
+        """Refresh authoritative G1/F6; team_id is an untrusted lookup hint."""
+        ...
 
 
 async def _require_json(request: Request) -> None:
@@ -80,7 +85,9 @@ class OwnerConsole:
 
     Mount with owner_console_router. Apply S4 console migrations before serving.
     The installation lookup refreshes F6 outside any write transaction and must
-    return its stored installation identity, or refuse an unavailable one.
+    return its authoritative installation identity, or refuse an unavailable one.
+    For first-owner bootstrap it receives an untrusted team lookup hint before
+    any local F6 row exists. ID-only calls resolve existing admitted state.
     """
 
     def __init__(
@@ -189,16 +196,17 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
     )
     async def owner_act(installation_id: str, request: Request) -> dict[str, str]:
         body = await _body(request, {"signing", "signature", "team_id", "principal", "contact"})
+        team_id = _text(body, "team_id")
         principal_did = _text(body, "principal")
         if not is_principal(principal_did):
             raise HTTPException(status_code=403, detail="owner_required")
         try:
-            admitted = await services.installation(installation_id)
+            admitted = await services.installation(installation_id, team_id=team_id)
         except InstallationRefused as refused:
             raise HTTPException(status_code=refused.status, detail=refused.code) from None
         except LookupError:
             raise HTTPException(status_code=403, detail="owner_required") from None
-        if admitted.installation_id != installation_id or body["team_id"] != admitted.team_id:
+        if admitted.installation_id != installation_id or team_id != admitted.team_id:
             raise HTTPException(status_code=403, detail="owner_required")
         principal = PrincipalKey(team_id=admitted.team_id, principal_did=principal_did)
         contact = _text(body, "contact")

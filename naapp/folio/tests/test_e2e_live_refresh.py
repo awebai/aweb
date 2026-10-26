@@ -18,14 +18,14 @@ pytestmark = pytest.mark.e2e
 
 
 def test_live_views_follow_cli_and_human_saves_without_losing_a_draft(folio, aw_workspace_factory, tmp_path):
-    team = _provision_team(aw_workspace_factory("live-refresh"), alias="writer")
+    team = _provision_team(aw_workspace_factory("live-refresh"), folio=folio, alias="writer")
     _create_document(folio, team, slug="live", title="Live document", body="# First version")
     edit = _mint_present(folio, team, slug="live", editable=True)
     with sync_playwright() as p:
         browser = p.chromium.launch()
         try:
-            clean, dirty, other = [browser.new_page() for _ in range(3)]
-            for page, link in [(clean, edit), (dirty, edit), (other, edit)]:
+            clean, dirty, other = [browser.new_page(ignore_https_errors=True) for _ in range(3)]
+            for page, link in [(clean, edit), (dirty, _mint_present(folio, team, slug="live", editable=True)), (other, _mint_present(folio, team, slug="live", editable=True))]:
                 page.goto(link["url"])
             dirty.locator("#body").fill("Retained local draft")
             _append_version(folio, team, slug="live", body="# CLI second version", tmp_path=tmp_path)

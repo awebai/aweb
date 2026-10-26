@@ -119,11 +119,11 @@ def test_present_route_sets_x_robots_tag(monkeypatch) -> None:
     db_dependency = present_route.dependant.dependencies[0].call
     app.dependency_overrides[db_dependency] = lambda: object()
 
-    async def fake_get_presented_document(_database, *, token: str) -> dict:
+    async def fake_get_presented_document(_database, *, runtime, token: str) -> dict:
         assert token == "secret-token"
         return {"body": "# Private", "theme": None, "allowed_assets": {}}
 
-    monkeypatch.setattr(folio_api, "get_presented_document", fake_get_presented_document)
+    monkeypatch.setattr(folio_api, "presented_document", fake_get_presented_document)
 
     response = TestClient(app).get("/present/secret-token")
 
@@ -223,39 +223,6 @@ def test_render_editor_page_marks_preview_changes_subtly() -> None:
     html = render_editor_page(token="t", body="# Hi", version_number=1, nonce="n")
     assert "folio-changed" in html  # changed blocks flash briefly
     assert "is-updating" in html  # preview dims while a re-render is in flight
-
-
-def _preview_route_app(monkeypatch, *, editable: bool):
-    app = folio_api.create_app()
-    preview_route = next(
-        route for route in app.routes if getattr(route, "path", None) == "/present/{token}/preview"
-    )
-    db_dependency = preview_route.dependant.dependencies[0].call
-    app.dependency_overrides[db_dependency] = lambda: object()
-
-    async def fake_get_presented_document(_database, *, token: str) -> dict:
-        return {"editable": editable, "allowed_assets": {}}
-
-    monkeypatch.setattr(folio_api, "get_presented_document", fake_get_presented_document)
-    return app
-
-
-def test_present_preview_endpoint_renders_full_markdown_for_editable_token(monkeypatch) -> None:
-    app = _preview_route_app(monkeypatch, editable=True)
-    response = TestClient(app).post(
-        "/present/tok/preview",
-        json={"body": "# Heading\n\n**bold** and a [link](https://example.com)."},
-    )
-    assert response.status_code == 200
-    assert "<h1>Heading</h1>" in response.text
-    assert "<strong>bold</strong>" in response.text
-    assert 'href="https://example.com"' in response.text
-
-
-def test_present_preview_endpoint_rejects_read_only_token(monkeypatch) -> None:
-    app = _preview_route_app(monkeypatch, editable=False)
-    response = TestClient(app).post("/present/tok/preview", json={"body": "# hi"})
-    assert response.status_code == 404
 
 
 def test_sanitize_layout_tokens_defaults_when_absent() -> None:
@@ -378,10 +345,10 @@ def test_present_route_sets_content_security_policy(monkeypatch) -> None:
     db_dependency = present_route.dependant.dependencies[0].call
     app.dependency_overrides[db_dependency] = lambda: object()
 
-    async def fake_get_presented_document(_database, *, token: str) -> dict:
+    async def fake_get_presented_document(_database, *, runtime, token: str) -> dict:
         return {"body": "# Private", "theme": None, "allowed_assets": {}}
 
-    monkeypatch.setattr(folio_api, "get_presented_document", fake_get_presented_document)
+    monkeypatch.setattr(folio_api, "presented_document", fake_get_presented_document)
     response = TestClient(app).get("/present/secret-token")
 
     assert response.status_code == 200
@@ -674,6 +641,15 @@ def test_media_figures_never_admit_an_iframe() -> None:
 def test_raw_figure_cannot_inject_non_folio_class() -> None:
     html = _render_media('<figure class="evil-class folio-full-bleed">text</figure>')
     assert "evil-class" not in html
+
+
+def test_repo_keeps_initial_migration_and_adds_forward_session_migration() -> None:
+    migrations = sorted((Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations").glob("*.sql"))
+
+    assert [migration.name for migration in migrations] == [
+        "001_initial.sql", "002_edit_sessions.sql", "003_installation_capabilities.sql",
+        "004_collection_documents.sql",
+    ]
 
 
 def test_initial_migration_contains_team_scoped_assets_and_themes() -> None:

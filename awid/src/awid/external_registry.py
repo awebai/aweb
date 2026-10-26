@@ -37,7 +37,13 @@ class HostResolver(Protocol):
 
 
 class RegistryHTTP(Protocol):
-    async def get_json(self, path: str, *, bypass_cache: bool = False) -> Any: ...
+    async def get_json(
+        self,
+        path: str,
+        *,
+        bypass_cache: bool = False,
+        not_found_reason: str = "sender_identity_not_found",
+    ) -> Any: ...
 
     async def aclose(self) -> None: ...
 
@@ -154,7 +160,9 @@ class StrictExternalRegistry:
         checkpoint: IdentityCheckpoint | None = None,
         bypass_cache: bool = False,
         discovered_authority: RegistryAuthority | None = None,
+        not_found_reason: str = "sender_identity_not_found",
     ) -> ExternalAuthorityEvidence:
+        """Verify evidence, classifying absent objects for the caller's lookup role."""
         try:
             async with asyncio.timeout(self.deadline_seconds):
                 return await self._fetch_evidence(
@@ -163,6 +171,7 @@ class StrictExternalRegistry:
                     checkpoint=checkpoint,
                     bypass_cache=bypass_cache,
                     discovered_authority=discovered_authority,
+                    not_found_reason=not_found_reason,
                 )
         except FederationAuthorityError:
             raise
@@ -177,6 +186,7 @@ class StrictExternalRegistry:
         checkpoint: IdentityCheckpoint | None,
         bypass_cache: bool,
         discovered_authority: RegistryAuthority | None,
+        not_found_reason: str,
     ) -> ExternalAuthorityEvidence:
         canonical_address = canonical_protocol_address(address)
         domain, name = canonical_address.split("/", 1)
@@ -194,6 +204,7 @@ class StrictExternalRegistry:
             client,
             f"/v1/namespaces/{escaped_path_component(domain)}",
             bypass_cache=bypass_cache,
+            not_found_reason=not_found_reason,
         )
         namespace_domain = namespace.get("domain")
         namespace_controller = namespace.get("controller_did")
@@ -227,6 +238,7 @@ class StrictExternalRegistry:
                 f"/addresses/{escaped_path_component(name)}"
             ),
             bypass_cache=bypass_cache,
+            not_found_reason=not_found_reason,
         )
         address_domain = address_row.get("domain")
         if not isinstance(address_domain, str) or address_row.get("name") != name:
@@ -264,12 +276,14 @@ class StrictExternalRegistry:
             client,
             f"/v1/did/{escaped_path_component(did_aw)}/key",
             bypass_cache=bypass_cache,
+            not_found_reason=not_found_reason,
         )
         if key_row.get("did_aw") != did_aw:
             raise FederationAuthorityError("sender_address_did_mismatch", did_aw=did_aw)
         if key_row.get("current_did_key") != current_did_key:
             raise FederationAuthorityError("sender_current_key_mismatch", did_aw=did_aw)
 
+        # A missing required log is unverifiable evidence in either lookup role.
         verified: VerifiedIdentityLog | None = None
         head = key_row.get("log_head")
         if key_row.get("status") != "OK_DEGRADED" and isinstance(head, dict):
@@ -325,9 +339,16 @@ class StrictExternalRegistry:
         )
 
     async def _object(
-        self, client: RegistryHTTP, path: str, *, bypass_cache: bool
+        self,
+        client: RegistryHTTP,
+        path: str,
+        *,
+        bypass_cache: bool,
+        not_found_reason: str,
     ) -> dict[str, Any]:
-        value = await client.get_json(path, bypass_cache=bypass_cache)
+        value = await client.get_json(
+            path, bypass_cache=bypass_cache, not_found_reason=not_found_reason
+        )
         if not isinstance(value, dict):
             raise FederationAuthorityError("sender_registry_protocol_invalid")
         return value

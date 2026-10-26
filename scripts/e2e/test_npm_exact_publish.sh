@@ -119,7 +119,7 @@ if args and args[-1] == b"":
     args.pop()
 args = [arg.decode() for arg in args]
 expected = os.path.realpath(sys.argv[2])
-if args != ["publish", expected, "--ignore-scripts", "--access", "public"]:
+if args != ["publish", expected, "--ignore-scripts", "--access", "public", "--tag", "latest"]:
     raise SystemExit(f"npm argv {args!r} does not name exact physical tgz {expected!r}")
 if not os.path.isabs(args[1]):
     raise SystemExit(f"npm tgz argument is not absolute: {args[1]!r}")

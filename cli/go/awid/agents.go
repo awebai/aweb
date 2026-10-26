@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -21,24 +22,25 @@ type HeartbeatResponse struct {
 }
 
 type AgentView struct {
-	AgentID       string                  `json:"agent_id"`
-	Alias         string                  `json:"alias"`
-	DIDKey        string                  `json:"did_key"`
-	DIDAW         string                  `json:"did_aw,omitempty"`
-	Address       string                  `json:"address,omitempty"`
-	HumanName     string                  `json:"human_name,omitempty"`
-	AgentType     string                  `json:"agent_type,omitempty"`
-	WorkspaceType string                  `json:"workspace_type,omitempty"`
-	Role          string                  `json:"role,omitempty"`
-	Hostname      string                  `json:"hostname,omitempty"`
-	WorkspacePath string                  `json:"workspace_path,omitempty"`
-	Repo          string                  `json:"repo,omitempty"`
-	Status        string                  `json:"status,omitempty"`
-	LastSeen      string                  `json:"last_seen,omitempty"`
-	Online        bool                    `json:"online,omitempty"`
-	IdentityScope string                  `json:"identity_scope,omitempty"`
-	InboundMode   string                  `json:"inbound_mode,omitempty"`
-	EncryptionKey *EncryptionKeyAssertion `json:"encryption_key,omitempty"`
+	sameServiceParticipant bool                    // Set only by authenticated messaging participant discovery; never a wire claim.
+	AgentID                string                  `json:"agent_id"`
+	Alias                  string                  `json:"alias"`
+	DIDKey                 string                  `json:"did_key"`
+	DIDAW                  string                  `json:"did_aw,omitempty"`
+	Address                string                  `json:"address,omitempty"`
+	HumanName              string                  `json:"human_name,omitempty"`
+	AgentType              string                  `json:"agent_type,omitempty"`
+	WorkspaceType          string                  `json:"workspace_type,omitempty"`
+	Role                   string                  `json:"role,omitempty"`
+	Hostname               string                  `json:"hostname,omitempty"`
+	WorkspacePath          string                  `json:"workspace_path,omitempty"`
+	Repo                   string                  `json:"repo,omitempty"`
+	Status                 string                  `json:"status,omitempty"`
+	LastSeen               string                  `json:"last_seen,omitempty"`
+	Online                 bool                    `json:"online,omitempty"`
+	IdentityScope          string                  `json:"identity_scope,omitempty"`
+	InboundMode            string                  `json:"inbound_mode,omitempty"`
+	EncryptionKey          *EncryptionKeyAssertion `json:"encryption_key,omitempty"`
 }
 
 func (a AgentView) VerifyEncryptionKey(now time.Time) error {
@@ -64,6 +66,33 @@ func (a AgentView) RequireEncryptionKey(now time.Time) (*EncryptionKeyAssertion,
 }
 
 func (c *Client) e2eeRecipientFromAgent(ctx context.Context, agent AgentView) (E2EERecipientKey, error) {
+	if agent.sameServiceParticipant {
+		assertion, err := agent.RequireEncryptionKey(time.Now().UTC())
+		if err != nil {
+			return E2EERecipientKey{}, err
+		}
+		if stableID := strings.TrimSpace(agent.DIDAW); stableID != "" {
+			chain, ok := c.resolver.(*ChainResolver)
+			if !ok || chain.DeliveryTeamRegistry == nil || chain.Team == nil {
+				return E2EERecipientKey{}, errors.New("recipient current key requires a configured team registry")
+			}
+			registryURL, registry, err := chain.DeliveryTeamRegistry.receivedRegistry(ctx, chain.Team.TeamID)
+			if err != nil {
+				return E2EERecipientKey{}, fmt.Errorf("recipient registry discovery failed: %w", err)
+			}
+			// Registry authority comes from the selected membership, never the participant response.
+			binding, err := registry.resolveKeyFresh(ctx, registryURL, stableID, true)
+			if err != nil {
+				return E2EERecipientKey{}, fmt.Errorf("recipient current key lookup failed: %w", err)
+			}
+			if binding.DIDAW != stableID || binding.CurrentDIDKey != strings.TrimSpace(agent.DIDKey) {
+				return E2EERecipientKey{}, errors.New("recipient current registry key does not match participant")
+			}
+		}
+		return E2EERecipientKey{DID: strings.TrimSpace(agent.DIDKey), StableID: strings.TrimSpace(agent.DIDAW),
+			Address: strings.TrimSpace(agent.Address), EncryptionKey: assertion,
+			InboundMode: strings.TrimSpace(agent.InboundMode)}, nil
+	}
 	if strings.TrimSpace(agent.DIDAW) != "" {
 		return c.e2eeGlobalRecipientFromAgent(ctx, agent)
 	}
@@ -256,12 +285,14 @@ func (c *Client) ListAgents(ctx context.Context) (*ListAgentsResponse, error) {
 	if err := c.Get(ctx, "/v1/agents", &out); err != nil {
 		return nil, err
 	}
-	for _, agent := range out.Agents {
+	for i := range out.Agents {
+		agent := &out.Agents[i]
 		if agent.EncryptionKey == nil {
 			continue
 		}
 		if err := agent.VerifyEncryptionKey(time.Now().UTC()); err != nil {
-			return nil, fmt.Errorf("ListAgents: invalid encryption key assertion for %s: %w", agent.Alias, err)
+			fmt.Fprintf(os.Stderr, "Warning: agent %s: invalid_encryption_key_assertion: %v; encryption key unavailable\n", agent.Alias, err)
+			agent.EncryptionKey = nil
 		}
 	}
 	return &out, nil

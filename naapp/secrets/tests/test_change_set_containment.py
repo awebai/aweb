@@ -18,6 +18,7 @@ from aweb_secrets.owners import approver_scope
 from aweb_secrets.revisions import config_revision
 from aweb_secrets.secret import SecretRecord
 from aweb_secrets.tokens import TokenKey
+from tests.governance import view
 from tests.test_change_sets import CAROL, TEAM, by_member, change_set, decide, draft
 from tests.test_change_sets import world as _world
 from tests.test_use_approval_lineage import child, request_child, seed
@@ -77,6 +78,7 @@ async def confirm(w, tx, change):
         operation_id=f"apply-{change['change_id']}",
         fence=w.fence,
         admitted=w.admitted,
+        governance_view=view(),
     )
 
 

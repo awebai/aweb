@@ -146,6 +146,26 @@ def parse_request(header: str) -> ParsedRequest:
         raise RunnerRefused("runner_request_invalid") from None
 
 
+def verify_request_signature(parsed: ParsedRequest, *, registered_kid: str | None) -> None:
+    """Steps 2–3, before reading a result body (§4.5).
+
+    The caller supplies the current active runner key. This precheck grants
+    no effect authority and leaves ``parsed`` unverified: body binding, time
+    and the locked current-key/nonce checks still precede every effect. The
+    final transaction must call ``verify_request`` again against its held key.
+    """
+    p = parsed.payload
+    if registered_kid is None or p["kid"] != registered_kid:
+        raise RunnerRefused("runner_unknown")
+    try:
+        VerifyKey(public_key_from_did(registered_kid)).verify(
+            (REQUEST_TYPE + "/1\n").encode() + parsed.raw,
+            parsed.signature,
+        )
+    except (BadSignatureError, ValueError, TypeError):
+        raise RunnerRefused("runner_request_invalid") from None
+
+
 def verify_request(
     parsed: ParsedRequest,
     *,
@@ -157,16 +177,8 @@ def verify_request(
     now: datetime,
 ) -> VerifiedRequest:
     """Steps 2–5; the caller must still consume step 6 inside the effect transaction."""
+    verify_request_signature(parsed, registered_kid=registered_kid)
     p = parsed.payload
-    if registered_kid is None or p["kid"] != registered_kid:
-        raise RunnerRefused("runner_unknown")
-    try:
-        VerifyKey(public_key_from_did(registered_kid)).verify(
-            (REQUEST_TYPE + "/1\n").encode() + parsed.raw,
-            parsed.signature,
-        )
-    except (BadSignatureError, ValueError, TypeError):
-        raise RunnerRefused("runner_request_invalid") from None
     if (
         p["origin"] != origin
         or p["method"] != method

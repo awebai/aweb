@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
 import uvicorn
+from fastapi import Request
 from playwright.async_api import async_playwright, expect
 from test_present_privacy import OWNER, present_world
 
@@ -18,17 +20,20 @@ __all__ = ["present_world"]
 @pytest.fixture
 async def live_world(present_world):
     app, db, settings = present_world
+    async def owner(request: Request):
+        request.state.folio_installation = await app.state.folio_runtime.installation_fence().permit(OWNER.team_id)
+        return OWNER
     for route in app.routes:
         for dep in getattr(getattr(route, "dependant", None), "dependencies", ()):
             if dep.name == "actor":
-                app.dependency_overrides[dep.call] = lambda: OWNER
+                app.dependency_overrides[dep.call] = owner
     return app, db, settings
 
 
 async def link(world, *, editable=False, version=None):
     _, db, settings = world
     return await mint_presentation_link(
-        db, principal=OWNER, settings=settings, slug="draft", version=version,
+        db, installation_id="test-installation", principal=OWNER, settings=settings, slug="draft", version=version,
         editable=editable, ttl_seconds=300,
     )
 
@@ -63,12 +68,13 @@ async def test_clean_editor_follows_agent_and_other_browser(live_world, live_bro
     origin, browser = live_browser
     edit = await link(live_world, editable=True)
     editor, other = [await browser.new_page() for _ in range(2)]
-    await editor.goto(f"{origin}/present/{edit['token']}")
+    await editor.goto(origin + urlsplit(edit["url"]).path + "#" + urlsplit(edit["url"]).fragment)
     async with httpx.AsyncClient(base_url=origin) as client:
         response = await client.post("/v1/documents/draft/versions", content="# Agent second")
         assert response.status_code == 200
     await expect(editor.locator("#body")).to_have_value("# Agent second", timeout=10000)
-    await other.goto(f"{origin}/present/{edit['token']}")
+    other_link = await link(live_world, editable=True)
+    await other.goto(origin + urlsplit(other_link["url"]).path + "#" + urlsplit(other_link["url"]).fragment)
     await other.locator("#body").fill("# Person third")
     await other.locator("#save").click()
     await expect(other.locator("#save")).to_be_disabled()
@@ -79,7 +85,8 @@ async def test_dirty_editor_retains_draft_until_explicit_latest_load(live_world,
     origin, browser = live_browser
     edit = await link(live_world, editable=True)
     page = await browser.new_page(viewport={"width": 375, "height": 812})
-    await page.goto(f"{origin}/present/{edit['token']}")
+    await page.goto(origin + urlsplit(edit["url"]).path + "#" + urlsplit(edit["url"]).fragment)
+    await expect(page.locator("#body")).to_have_value("Original")
     await page.locator("#body").fill("My unsaved text")
     await page.locator("#body").focus()
     await page.locator("#body").evaluate("el => el.setSelectionRange(3, 8)")
@@ -122,7 +129,8 @@ async def test_typing_while_refresh_is_in_flight_keeps_text(live_world, live_bro
         return response
 
     page = await browser.new_page()
-    await page.goto(f"{origin}/present/{edit['token']}")
+    await page.goto(origin + urlsplit(edit["url"]).path + "#" + urlsplit(edit["url"]).fragment)
+    await expect(page.locator("#body")).to_have_value("Original")
     async with httpx.AsyncClient(base_url=origin) as client:
         assert (await client.post("/v1/documents/draft/versions", content="Remote version")).status_code == 200
     changed.set()
@@ -136,11 +144,12 @@ async def test_typing_while_refresh_is_in_flight_keeps_text(live_world, live_bro
 
 
 @pytest.mark.parametrize("has_draft", [False, True])
-async def test_expired_recovery_copy_tracks_the_current_buffer(live_world, live_browser, has_draft):
+async def test_revoked_recovery_copy_tracks_the_current_buffer(live_world, live_browser, has_draft):
     origin, browser = live_browser
     edit = await link(live_world, editable=True)
     page = await browser.new_page(viewport={"width": 375, "height": 812})
-    await page.goto(f"{origin}/present/{edit['token']}")
+    await page.goto(origin + urlsplit(edit["url"]).path + "#" + urlsplit(edit["url"]).fragment)
+    await expect(page.locator("#body")).to_have_value("Original")
     original = await page.locator("#body").input_value()
     draft = "Unsaved UTF-8 draft — keep it.\nAnother line."
     if has_draft:
@@ -148,7 +157,7 @@ async def test_expired_recovery_copy_tracks_the_current_buffer(live_world, live_
     await page.locator("#tab-preview").click()
     _, db, _ = live_world
     await db.execute(
-        "UPDATE {{tables.presentation_links}} SET expires_at=NOW()-interval '1 second' WHERE token=$1",
+        "UPDATE {{tables.presentation_links}} SET revoked_at=NOW() WHERE token=$1",
         edit["token"],
     )
     await expect(page.locator("#link-recovery")).to_be_visible(timeout=10000)

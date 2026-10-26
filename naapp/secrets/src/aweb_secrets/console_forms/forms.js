@@ -120,7 +120,18 @@
     root = "/installations/" + encodeURIComponent(change.installation_id) + "/change-sets/" + encodeURIComponent(change.change_id);
     fact("Team", change.team_id);
     fact("Expires", new Date(change.expires_at).toLocaleString(undefined, {dateStyle: "medium", timeStyle: "long"}));
-    for (const item of change.changes) fact("Service-account token version", item.after.version);
+    document.querySelector("#backend-replacement-notice").hidden = !change.changes.some(item => item.kind === "backend_credential");
+    for (const item of change.changes) {
+      fact("Change", item.kind.replaceAll("_", " ") + " · " + item.op + " · " + item.ref);
+      if (item.kind === "backend_credential") {
+        fact("Service-account token version", item.after.version);
+      } else {
+        for (const [name, value] of Object.entries(item.after)) {
+          if (name === "v") continue;
+          fact(name.replaceAll("_", " "), typeof value === "object" ? JSON.stringify(value, null, 2) : value);
+        }
+      }
+    }
     document.querySelector("#change-reason").textContent = change.reason;
     document.querySelector("#change-summary").hidden = false;
     document.querySelector("#change-summary").dataset.state = projection.state;
@@ -162,8 +173,27 @@
       status.dataset.state = "applied";
       status.textContent = result.reauth_required
         ? "Change applied. Sign in again to continue."
-        : "1Password service-account token activated.";
+        : frozen.change.changes.every(item => item.kind === "backend_credential")
+          ? "1Password service-account token activated." : "Change applied.";
       confirm.hidden = true;
+      if (!result.reauth_required && result.runner_registrations && result.runner_registrations.length) {
+        const section = document.createElement("section");
+        section.id = "runner-registration-result";
+        section.setAttribute("aria-label", "Runner registration");
+        const heading = document.createElement("h2");
+        heading.textContent = "Register your runner";
+        const instructions = document.createElement("p");
+        instructions.textContent = "Copy this one-time registration code now. It will not be shown again. The runner must register before it can receive jobs.";
+        section.append(heading, instructions);
+        for (const registration of result.runner_registrations) {
+          const label = document.createElement("h3");
+          label.textContent = registration.runner_id;
+          const code = document.createElement("code");
+          code.textContent = registration.registration_code;
+          section.append(label, code);
+        }
+        status.after(section);
+      }
       if (result.reauth_required) {
         // No protected result was returned, and no mutation is retried.
         const link = document.createElement("a");

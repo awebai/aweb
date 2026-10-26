@@ -141,6 +141,7 @@ services:
       dockerfile: scripts/e2e/folio-wakes-client.Dockerfile
     network_mode: service:aweb
     environment:
+      FOLIO_UNINSTALL_PROOF: ${FOLIO_UNINSTALL_PROOF:-0}
       AW_BIN: /usr/local/bin/aw
       FOLIO_WAKES_ORIGIN: https://folio-wakes.test:8765
       FOLIO_WAKES_MANIFEST: /folio-template/aweb-app.json

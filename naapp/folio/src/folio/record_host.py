@@ -1,6 +1,5 @@
 """Folio's thin member and read-only capability adapters over shared stores."""
 
-import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
@@ -12,8 +11,6 @@ from aweb_naapp.page_store import Scope, StoreError, principal_id
 from aweb_naapp.pages import validate_page
 from aweb_naapp.pages.render import page_shell
 from aweb_naapp.runtime.app import NaappRuntime
-from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, AppCredentialSigner
-from aweb_naapp.runtime.app_keys import load_app_key
 from aweb_naapp.runtime.authorization import Authorization, GrantUnavailable
 from aweb_naapp.runtime.capability_links import (
     LinkCreator,
@@ -30,7 +27,6 @@ from aweb_naapp.runtime.capability_links import (
 from aweb_naapp.runtime.capability_links.routes import LINK_RESPONSE_HEADERS, refusal_response
 from aweb_naapp.runtime.installation import InstallationFence, InstallationRefused
 from aweb_naapp.runtime.team_auth import MembershipProof, raw_request_target
-from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
@@ -104,15 +100,7 @@ class RecordHost:
     ) -> None:
         self.runtime, self.storage = runtime, storage
         self.settings = runtime.settings
-        self.grants = TeamGrantSource(
-            identity=AppIdentity(app_id=runtime.manifest.app_id,
-                                 origin=runtime.manifest.document["app"]["origin"],
-                                 digest="sha256:" + hashlib.sha256(runtime.manifest_bytes).hexdigest()),
-            signer=AppCredentialSigner(app_id=runtime.manifest.app_id,
-                                      key=load_app_key(self.settings, runtime.manifest, APP_GRANT_READ),
-                                      purpose=APP_GRANT_READ),
-            discovery=runtime.team_server_directory(), transport=team_server_transport,
-        )
+        self.grants = runtime.installation_grants()
 
         async def policy(request, principal, tool):
             # Record-level and field-level authority is decided inside PageStore.

@@ -12,11 +12,13 @@ import sys
 import tomllib
 from pathlib import Path
 
-
-SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-TAG_PATTERN = re.compile(
-    rf"^(server-v|awid-service-v|aweb-naapp-v|awid-v|aw-v|channel-v|pi-v|skills-v|a2a-gw-v)({SEMVER})$"
+from release_versions import (
+    VersionRefusal as CandidateRefusal,
+    require_final_promotion,
+    tag_parts,
+    valid_version,
 )
+
 MANIFESTS = {
     "server-v": "server/pyproject.toml",
     "awid-service-v": "awid/pyproject.toml",
@@ -28,10 +30,6 @@ MANIFESTS = {
 }
 # Packages a tag lane publishes together with its manifest's, at the same version.
 LOCKSTEP = {"aweb-naapp-v": ["naapp-lib/testing/pyproject.toml"]}
-
-
-class CandidateRefusal(RuntimeError):
-    pass
 
 
 def run(
@@ -62,7 +60,7 @@ def manifest_version(root: Path, path: str) -> str:
             value = tomllib.load(handle)["project"]["version"]
     else:
         value = json.loads((root / path).read_text(encoding="utf-8"))["version"]
-    if not isinstance(value, str) or not re.fullmatch(SEMVER, value):
+    if not valid_version(path, value):
         raise CandidateRefusal(f"{path} has invalid version {value!r}")
     return value
 
@@ -79,10 +77,7 @@ def validate_tags(root: Path, tags: list[str]) -> tuple[str, dict[str, str]]:
         raise CandidateRefusal("git did not return a full source SHA")
     versions: dict[str, str] = {}
     for tag in tags:
-        matched = TAG_PATTERN.fullmatch(tag)
-        if not matched:
-            raise CandidateRefusal(f"unsupported release tag {tag!r}")
-        prefix, version = matched.group(1), matched.group(2)
+        prefix, version = tag_parts(tag)
         if prefix in versions:
             raise CandidateRefusal(f"more than one {prefix} tag was requested")
         versions[prefix] = version
@@ -93,6 +88,7 @@ def validate_tags(root: Path, tags: list[str]) -> tuple[str, dict[str, str]]:
                 )
         if run(root, "git", "tag", "--list", tag):
             raise CandidateRefusal(f"local tag {tag} already exists; tags are never moved")
+        require_final_promotion(root, tag, source_sha)
     return source_sha, versions
 
 

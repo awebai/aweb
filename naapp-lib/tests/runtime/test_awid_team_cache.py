@@ -14,10 +14,12 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member
+from aweb_naapp_testing import Member
 from awid.pagination import decode_cursor, encode_cursor
+from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from fastapi import HTTPException
 
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
 from tests.runtime.conftest import relying_app
 
@@ -91,7 +93,7 @@ async def test_history_facts_are_reused_for_at_most_a_minute(registry, team):
     cache = AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=600, service_token=SERVICE_TOKEN,
                           transport=registry.transport)
     await cache.get(TEAM_ID, "target")
-    assert 0 < cache._cache[TEAM_ID].expires_at - time.monotonic() <= 60
+    assert 0 < cache._cache[TEAM_ID].expires_at - time.monotonic_ns() <= seconds_to_ns(60)
 
 
 async def test_history_page_bound_fails_closed_without_caching_partial_facts(registry, team, history_clock):
@@ -105,7 +107,7 @@ async def test_history_page_bound_fails_closed_without_caching_partial_facts(reg
         await registry.db.execute("DELETE FROM {{tables.team_certificates}} WHERE certificate_id = 'filler-1'")
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
         assert len(certificate_pages(registry)) == 100
-        history_clock[0] += 5
+        history_clock[0] += seconds_to_ns(5)
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
     assert TEAM_ID in cache._cache
 
@@ -191,7 +193,7 @@ async def test_history_later_page_fault_fails_closed_then_recovers(registry, tea
         registry.transport.fault = None
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
         assert len(certificate_pages(registry)) == len(pages)
-        history_clock[0] += 5
+        history_clock[0] += seconds_to_ns(5)
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
     assert TEAM_ID in cache._cache
 
@@ -240,11 +242,11 @@ async def test_history_team_lookup_refusals_map_to_distinct_outcomes(registry, t
 
 
 @pytest.fixture
-def history_clock(monkeypatch):
-    clock = [time.monotonic()]
+def history_clock(monkeypatch, request):
+    clock = [getattr(request, "param", time.monotonic_ns())]
     # Replace this module's clock reference, leaving asyncio/AWID clocks alone.
     monkeypatch.setattr(
-        "aweb_naapp.runtime.team_auth.time", SimpleNamespace(monotonic=lambda: clock[0])
+        "aweb_naapp.runtime.team_auth.time", SimpleNamespace(monotonic_ns=lambda: clock[0])
     )
     return clock
 
@@ -262,7 +264,7 @@ async def test_history_new_member_refreshes_before_the_cached_team_expires(regis
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
         old_facts = cache._cache[TEAM_ID]
         await registry.add_certificate(newcomer.certificate())
-        history_clock[0] += 1
+        history_clock[0] += seconds_to_ns(1)
         responses = await asyncio.gather(
             *(client.get("/v1/items", headers=get_items(newcomer)) for _ in range(8))
         )
@@ -277,12 +279,13 @@ async def test_history_new_member_refreshes_before_the_cached_team_expires(regis
         TEAM_ID, certificate_id=newcomer.certificate_id, team_did_key=newcomer.team_did_key
     )
     assert proof.checked_at == facts.fetched_at == history_clock[0]
-    assert proof.fresh_until == facts.expires_at == history_clock[0] + 60
+    assert proof.fresh_until == facts.expires_at == history_clock[0] + seconds_to_ns(60)
     assert proof.fresh_until != old_facts.expires_at
     assert len(team_lookups(registry)) == 2
 
 
 @pytest.mark.parametrize("warm", [False, True])
+@pytest.mark.parametrize("history_clock", [1_000_000_000_000, 1_021_100_000_000], indirect=True)
 async def test_history_unknown_id_flood_coalesces_one_refresh_per_window(registry, team, history_clock, warm):
     cache = history_cache(registry)
     ghosts = [
@@ -298,10 +301,10 @@ async def test_history_unknown_id_flood_coalesces_one_refresh_per_window(registr
         )
         assert all(response.status_code == 401 for response in responses)
         assert len(team_lookups(registry)) == initial_loads + 1  # At most one lookup for the unknown wave.
-        history_clock[0] += 4
+        history_clock[0] += seconds_to_ns(4)
         assert (await client.get("/v1/items", headers=get_items(ghosts[0]))).status_code == 401
         assert len(team_lookups(registry)) == initial_loads + 1
-        history_clock[0] += 1
+        history_clock[0] += seconds_to_ns(1)
         responses = await asyncio.gather(
             *(client.get("/v1/items", headers=get_items(member)) for member in ghosts)
         )
@@ -332,7 +335,7 @@ async def test_history_cold_outage_coalesces_failures_and_retries_after_window(
 
     def fault(request, response):
         if request.url.path.endswith("/teams/backend"):
-            history_clock[0] += response_seconds
+            history_clock[0] += seconds_to_ns(response_seconds)
             response.status_code = 503
 
     registry.transport.fault = fault
@@ -343,10 +346,10 @@ async def test_history_cold_outage_coalesces_failures_and_retries_after_window(
         assert all(response.status_code == 503 for response in responses)
         assert len(team_lookups(registry)) == 1
         assert TEAM_ID not in cache._cache
-        history_clock[0] += 4
+        history_clock[0] += seconds_to_ns(4)
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
         assert len(team_lookups(registry)) == 1
-        history_clock[0] += 1
+        history_clock[0] += seconds_to_ns(1)
         registry.transport.fault = None
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
         assert len(team_lookups(registry)) == 2
@@ -372,7 +375,7 @@ async def test_history_nonexistent_team_flood_does_not_retain_refresh_state(regi
 async def test_history_unknown_refresh_failure_never_authorizes_or_renews_old_facts(registry, team, history_clock):
     cache = history_cache(registry)
     old_facts = await cache.get(TEAM_ID, team.certificate_id)
-    history_clock[0] += 1
+    history_clock[0] += seconds_to_ns(1)
 
     def fault(request, response):
         if request.url.path.endswith("/teams/backend"):
@@ -385,10 +388,10 @@ async def test_history_unknown_refresh_failure_never_authorizes_or_renews_old_fa
         )
     assert refused.value.status_code == 503
     assert cache._cache[TEAM_ID] is old_facts
-    assert old_facts.expires_at == old_facts.fetched_at + 60
+    assert old_facts.expires_at == old_facts.fetched_at + seconds_to_ns(60)
     # Previously known members keep only the original accepted TTL.
     assert await cache.get(TEAM_ID, team.certificate_id) is old_facts
-    history_clock[0] = old_facts.expires_at + 1
+    history_clock[0] = old_facts.expires_at + seconds_to_ns(1)
     with pytest.raises(HTTPException) as refused:
         await cache.get(TEAM_ID, team.certificate_id)
     assert refused.value.status_code == 503
@@ -407,7 +410,7 @@ async def test_status_path_verifies_without_a_token_and_reuses_for_at_most_a_min
         ]
         assert "X-AWID-Service-Token" not in registry.transport.calls[0].headers
         cached = cache._certificate_cache[(TEAM_ID, "target")]
-        assert 0 < cached.expires_at - time.monotonic() <= 60
+        assert 0 < cached.expires_at - time.monotonic_ns() <= seconds_to_ns(60)
         await registry.revoke("target")
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
         cache._certificate_cache[(TEAM_ID, "target")] = replace(cached, expires_at=-1)

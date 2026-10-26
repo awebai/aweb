@@ -36,10 +36,13 @@ async def clients(
     *,
     lookup_ready: asyncio.Event | None = None,
     continue_lookup: asyncio.Event | None = None,
+    lookup_hints: list[str | None] | None = None,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, httpx.AsyncClient]]:
     await apply_console_migrations(world.db)
 
-    async def installation(installation_id: str):
+    async def installation(installation_id: str, *, team_id: str | None = None):
+        if lookup_hints is not None:
+            lookup_hints.append(team_id)
         # The real admitted F6 record this fixture already stored.
         row = await world.db.fetch_one(
             "SELECT installation_id, team_id FROM {{tables.installation_fences}}"
@@ -127,7 +130,8 @@ async def test_owner_bootstrap_uses_the_installations_team_and_never_returns_the
         "contact": contact,
     }
     path = f"/installations/{INSTALLATION_ID}/owner-acts"
-    async with clients(world) as (human, agent):
+    hints: list[str | None] = []
+    async with clients(world, lookup_hints=hints) as (human, agent):
         assert (
             await human.post(path, json={**body, "team_id": "other:example.com"})
         ).status_code == 403
@@ -135,6 +139,7 @@ async def test_owner_bootstrap_uses_the_installations_team_and_never_returns_the
         response = await human.post(path, json=body)
         assert response.status_code == 200
         assert response.json()["scope"] == scope
+        assert hints == ["other:example.com", TEAM]
         token = world.inbox.enrolments[contact][-1]
         assert token not in response.text
         assert (await human.post(path, json=body)).status_code == 403
@@ -378,3 +383,23 @@ async def test_json_content_type_parameters_are_allowed(world: World):
         )
         assert response.status_code == 403
         assert response.json() == {"detail": "contact_proof_refused"}
+
+
+@pytest.mark.parametrize("hint", [None, 17, {}, [], ""])
+async def test_owner_act_rejects_malformed_lookup_hint_before_g1(world: World, hint):
+    hints: list[str | None] = []
+    async with clients(world, lookup_hints=hints) as (human, _):
+        response = await human.post(
+            f"/installations/{INSTALLATION_ID}/owner-acts",
+            json={
+                "signing": "invalid",
+                "signature": "invalid",
+                "team_id": hint,
+                "principal": ALICE.principal_did,
+                "contact": "alice@acme.com",
+            },
+        )
+        assert response.status_code == 400
+        assert response.json() == {"detail": "request_invalid"}
+        assert hints == []
+        assert not world.inbox.enrolments

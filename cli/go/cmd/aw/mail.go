@@ -487,7 +487,7 @@ var mailSendCmd = &cobra.Command{
 				return err
 			}
 			if agent, found, findErr := clientAgentForAlias(ctx, c, targetValue); findErr != nil {
-				debugLog("list agents for mail auto-threading: %v", findErr)
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: recipient lookup failed; automatic mail threading unavailable: %v\n", findErr)
 				req.ToAlias = targetValue
 			} else if found {
 				if agentMatchesSelection(agent, sel) {
@@ -521,6 +521,10 @@ var mailSendCmd = &cobra.Command{
 				} else {
 					req.ToAlias = targetValue
 				}
+			} else if sendEncryptE2EE {
+				// Key discovery for a human is scoped to the selected team,
+				// using its original identity-signed assertion.
+				req.ToAlias = targetValue
 			} else if liveTarget, liveFound, liveErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetValue); liveErr != nil {
 				debugLog("resolve live team member %s/%s: %v", strings.TrimSpace(sel.TeamID), targetValue, liveErr)
 				req.ToAlias = targetValue

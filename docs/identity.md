@@ -221,6 +221,132 @@ remains a hidden, warning compatibility alias for `--name`. New requests,
 registry storage, and product language use `name` as the concept and
 `identity_scope=local|global` for scope.
 
+### Hosted organization setup (including Omarchy)
+
+A person already signed in can create a managed organization without a namespace
+controller key in the terminal. Human CLI authorization grants the hosted service
+permission to create the organization and team; each agent keeps its own signing
+key. Device login prints an approval URL and code, and works without opening a
+browser on the CLI machine:
+
+```bash
+aw auth login --json
+aw org list --json
+aw org availability alice-laptop --json
+aw org create alice-laptop --name "Alice's laptop" --json
+aw team create machine --org alice-laptop --json
+```
+
+Default login requests `cli.workspace_team cli.org_create`. Existing tokens that
+only have `cli.workspace_team` still work for workspace enrollment. Organization
+operations require a new `aw auth login` when that scope is missing; the CLI does
+not substitute an agent credential or start browser approval on its own.
+
+For automatic setup, propose `<username>-<hostname>` for an existing account and
+the hostname for a new account. Default distro hostnames such as `omarchy`,
+`archlinux` and `localhost` should go straight to an available suggestion. Use
+`org availability` for planning: it creates nothing. Explicit slugs use the
+service's existing lowercase handle rules (3–39 characters); the CLI does not
+remove punctuation, truncate, or silently append a suffix. A collision returns
+`org_slug_taken` and a suggestion. Interactive users confirm it or enter another
+slug; JSON and non-interactive invocations exit nonzero with the suggestion.
+
+Choose the same organization when ensuring a workspace team and enrolling its
+member. The selector is covered by the enrollment signature; it does not itself
+grant human organization authority:
+
+```bash
+aw --identity-home /path/to/principal init --workspace-team \
+  --workspace-key aweb.ai/alice/workspace --org alice-laptop \
+  --expect-account ACCOUNT_ID --json
+```
+
+`aw team create NAME --org ORG` returns a one-use invitation and creates no local
+identity or workspace. Keep its `request_id` and parameters for a deliberate
+retry. A consumed-invitation replay returns the existing team without a token;
+it does not enroll the current caller. `aw id team create --name NAME --org ORG`
+is the primitive with the same behavior. Existing controller creation and
+certificate-authorized sibling creation keep their own authority paths.
+
+To create a **new** self-custodial global member in an explicitly chosen hosted
+team, select a fresh credential root and a Cloud service UUID or canonical team ID:
+
+```bash
+aw --identity-home /path/to/steward id create --org alice-laptop \
+  --team-id SERVICE_TEAM_UUID --name steward \
+  --inbound-mode team-and-contacts --json
+```
+
+The CLI registers its local key with public AWID, then asks the hosted service
+to authorize the address and ordinary member certificate. It receives no API key
+or administrator role. The result names the exact address and canonical team;
+the private key stays in the selected root. A lost reply is retried with the
+same root and original parameters, retaining the same key. Do not discard that
+root or change the organization/team to recover an uncertain result. A name
+held by another key refuses with `identity_name_taken`.
+
+Once creation completes, the recovery file is removed. Repeating creation in
+that completed root refuses and preserves the installed identity. Use ordinary
+commands with that root; another new identity needs a fresh root. This differs
+from retrying an incomplete operation after a lost response, which keeps its
+original key and exact creation parameters.
+
+This explicit creation differs from joining with an existing global identity:
+`aw team join --global` continues to reuse its stored identity and cannot mint
+a new address. The selected root can use ordinary mail commands after creation. An explicit
+`--inbound-mode contacts-only` requests strict `contacts_only`, which admits
+contacts only, including for same-team senders. Before reporting success the CLI
+requires the returned mode and a live certificate-authenticated readback to
+match the requested mode; a service downgrade is an error. Existing global
+creation paths also verify an explicitly selected mode after connecting.
+Unspecified modes keep their existing defaults.
+
+
+A CLI-signup organization's owner principal can authorize this hosted creation
+with its existing native key. Select that authority explicitly, separately from
+the new member's fresh credential directory:
+
+```bash
+aw --identity-home /team-root/.aw inbound-mode --json
+aw --identity-home /steward-root/.aw id create \
+  --owner-identity-home /team-root/.aw --org alice \
+  --team-id TEAM_ID_FROM_INBOUND_MODE --name steward \
+  --inbound-mode contacts-only --json
+```
+
+Pass the read-only first command's `team_id` unchanged as `--team-id`. It may
+be a canonical ID such as `default:alice.aweb.ai` or a service UUID. Cloud
+resolves that selector within the authorized organization and returns both
+the service UUID and canonical ID. The CLI preserves the exact trimmed input
+in its signed intent and recovery state; it does no mapping lookup. `--org`
+takes the organization slug (`alice`) or
+ID, rather than its namespace domain. A newly created signup flow can retain its
+original username as that slug; `whoami.domain` is namespace information rather
+than proof of organization ownership.
+
+Both root flags name the credential directory itself: they append no `.aw` and
+the directory may have another name. The owner root must differ from the fresh
+destination. Its native key signs the authorization request; the hosted service
+checks the principal's live owner authority for the selected organization and
+team. Ordinary team membership and organization administrator status do not
+authorize this path. The service still verifies the new member's separate intent
+proof and returns an ordinary self-custodial global certificate.
+
+This owner path uses the Cloud base from the owner's own workspace binding,
+leaves that root unchanged, and creates no human device session. It does not use
+an API key or grant and does not switch to human login after a refusal. Omitting
+`--owner-identity-home` retains the human `cli.org_create` flow above. Signup and
+claim-human alone do not mint that human device authorization.
+
+The owner-request DIDKey signature covers canonical JSON with `aud` (the
+hosted service's configured public origin, which must equal the owner workspace
+binding's `scheme://host[:port]`), `body_sha256` (the exact transmitted request bytes),
+`method`, `path` and `timestamp`. The service checks the audience and timestamp
+before looking up authority. This is the audience-bound variant for hosted
+identity creation; existing signup, claim-human and bootstrap-redeem signature
+bytes remain unchanged. Recovery pins the original authorizing principal as
+well as the new member key, and success still requires the exact mode readback.
+
 ## Command-to-verb mapping
 
 | Verb | Canonical model action | Current command surface | Notes |

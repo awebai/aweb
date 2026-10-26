@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from uuid import UUID
 
@@ -280,6 +281,18 @@ def test_linked_manifest_paths_serve_filled_bytes() -> None:
         assert "application/json" in response.headers["content-type"], path
         assert response.headers.get("X-Content-Type-Options") == "nosniff", path
         assert response.content == expected, path
+    catalog = client.get("/.well-known/aweb-app-versions.json")
+    assert catalog.status_code == 200
+    assert catalog.json() == {
+        "catalog_version": 1,
+        "app_id": "folio",
+        "variants": [{
+            "manifest_version": 2,
+            "url": "/manifests/v2.json",
+            "digest": "sha256:" + hashlib.sha256(expected).hexdigest(),
+        }],
+    }
+    assert client.get("/.well-known/aweb-app.json").status_code == 404
     # Guard against drift: the surfaces actually link /aweb-app.json.
     assert "/aweb-app.json" in client.get("/reference").text
     assert "/aweb-app.json" in client.get("/").text
@@ -379,10 +392,10 @@ def test_present_route_keeps_noindex_header(monkeypatch) -> None:
     app = folio_api.create_app(Settings(public_origin="https://folio.aweb.ai"))
     _override_db_for_path(app, "/present/{token}")
 
-    async def fake_get_presented_document(_database, *, token: str) -> dict:
+    async def fake_get_presented_document(_database, *, runtime, token: str) -> dict:
         return {"body": "# Private", "theme": None, "allowed_assets": {}}
 
-    monkeypatch.setattr(folio_api, "get_presented_document", fake_get_presented_document)
+    monkeypatch.setattr(folio_api, "presented_document", fake_get_presented_document)
 
     response = TestClient(app).get("/present/private-token")
 
