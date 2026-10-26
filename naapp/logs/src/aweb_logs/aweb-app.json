@@ -47,6 +47,73 @@
       "invocation_contexts": [
         "hook"
       ]
+    },
+    {
+      "name": "verify",
+      "description": "Return integrity flags only for this team's selected log epoch. Requires the current member's owner-delegated verifier assignment; returns no log content and does not prove complete delivery.",
+      "method": "POST",
+      "path": "/v1/integrity",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "chain_epoch": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "chain_epoch",
+          "in": "body"
+        }
+      ],
+      "scopes": [
+        "logs.verify"
+      ],
+      "mutation": false,
+      "body": {
+        "mode": "json"
+      },
+      "invocation_contexts": [
+        "agent"
+      ]
+    },
+    {
+      "name": "reader-slot",
+      "description": "Issue a pending reader slot bound to a contact commitment. The slot grants no read authority; the owner must designate it with an owner act.",
+      "method": "POST",
+      "path": "/v1/reader-slots",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "contact_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "contact_sha256"
+        ],
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "contact_sha256",
+          "in": "body"
+        }
+      ],
+      "scopes": [
+        "logs.readers"
+      ],
+      "mutation": true,
+      "body": {
+        "mode": "json"
+      },
+      "invocation_contexts": [
+        "agent"
+      ]
     }
   ],
   "app_keys": [
