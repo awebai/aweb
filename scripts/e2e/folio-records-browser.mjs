@@ -4,7 +4,7 @@ import { chromium, expect } from "@playwright/test";
 
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-const { url, values, edit_urls, schema, collection, cli_binary, cli_home } = JSON.parse(input);
+const { url, values, edit_urls, schema, collection, cli_binary, cli_home, legacy } = JSON.parse(input);
 function tool(name, body) {
   const args = ["folio", name];
   for (const [key, value] of Object.entries(body))
@@ -48,6 +48,7 @@ try {
     assert.equal(new URL(page.url()).hash, "");
     assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0]);
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    console.log(`PASS records ${currentValues.length ? "populated" : "empty"} readonly table at ${width}px`);
     // Read-only document links retain their ordinary valid-link reload behavior.
     await page.reload();
     await expect(table.locator("tbody tr")).toHaveCount(currentValues.length);
@@ -75,6 +76,7 @@ try {
       const committed = tool("record-query", { collection_id: collection }).records.find(row => row.id === source.id);
       assert.equal(committed.rev, source.rev + 2);
       assert.equal(committed.value.status, "Browser draft " + width);
+      console.log(`PASS records browser conflict keeps row and prose drafts, explicit rebase at ${width}px`);
       // Explicit prose save preserves the widget definition; a reload reuses the session.
       await page.locator("#save").click();
       await expect(page.locator("#status")).toContainText("Saved version");
@@ -99,8 +101,47 @@ try {
       assert(!tool("record-query", { collection_id: collection }).records.some(row => row.id === addedRow.id));
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       assert.equal(new URL(page.url()).hash, "");
+      console.log(`PASS records browser add/delete, separate prose save and session reload at ${width}px`);
     }
     assert.deepEqual(errors, []);
+    await context.close();
+  }
+  if (legacy) {
+    const context = await browser.newContext({ viewport: { width: 375, height: 800 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    const view = new URL(legacy.view_url);
+    const viewState = page.waitForResponse(response => new URL(response.url()).pathname === view.pathname + "/widgets");
+    await page.goto(view.href);
+    const state = await (await viewState).json();
+    assert.deepEqual(state.widgets.research, { state: "records_identity_required", reopen: "new_link_from_sharer" });
+    const table = page.locator('[data-folio-widget="research"]');
+    await expect(table.locator(".row-status")).toBeVisible();
+    await expect(table.getByRole("table")).toHaveCount(0);
+    const refusedView = await context.request.get(new URL(view.pathname + "/widgets/research/records", view.origin).href);
+    assert.equal(refusedView.status(), 409);
+    assert.deepEqual(await refusedView.json(), { detail: { code: "records_identity_required" } });
+    const edit = new URL(legacy.edit_url);
+    const exchanged = page.waitForResponse(response => new URL(response.url()).pathname === edit.pathname + "/session");
+    await page.goto(edit.href);
+    const opened = await (await exchanged).json();
+    assert.deepEqual(opened.widgets.research, { state: "records_identity_required", reopen: "edit" });
+    const editor = page.locator('#pane-edit [data-folio-widget="research"]');
+    await expect(editor.locator(".row-status")).toBeVisible();
+    await expect(editor.getByRole("table")).toHaveCount(0);
+    const headers = { "X-Folio-Edit-Session": opened.session_secret };
+    const endpoint = new URL(edit.pathname + "/widgets/research/records", edit.origin).href;
+    const refusedEdit = await context.request.get(endpoint, { headers });
+    assert.equal(refusedEdit.status(), 409);
+    assert.deepEqual(await refusedEdit.json(), { detail: { code: "records_identity_required" } });
+    const refusedWrite = await context.request.post(endpoint + "/update", { headers,
+      data: { record_id: "unavailable", expected_rev: 1, patch: { finding: "refused" }, request_id: "legacy-write" } });
+    assert.equal(refusedWrite.status(), 409);
+    assert.deepEqual(await refusedWrite.json(), { detail: { code: "records_identity_required" } });
+    const prose = page.getByRole("textbox", { name: "Document text 1", exact: true });
+    await prose.fill("Legacy prose remains editable\n\n");
+    await page.locator("#save").click();
+    await expect(page.locator("#status")).toContainText("Saved version");
+    console.log("PASS records legacy readonly/edit links disclose no rows or receipts; prose save still works");
     await context.close();
   }
 } finally {

@@ -9,7 +9,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 
-def exercise_records(aw, run, root, schema, *, cli_binary, cli_home, cli_env):
+def exercise_records(aw, run, root, schema, *, cli_binary, cli_home, cli_env, prepare_legacy_links):
     collection = "records-acceptance"
     title = "Synthetic discovery records"
 
@@ -47,8 +47,18 @@ def exercise_records(aw, run, root, schema, *, cli_binary, cli_home, cli_env):
         link = result("bob", "present", slug=slug)
         # Pass capability bytes on stdin, never in retained output or process argv.
         edit_links = [result("bob", "present", slug=slug, editable="true")["url"] for _ in range(2)] if edit else []
+        legacy = None
+        if edit:
+            legacy_slug = "legacy-records-acceptance"
+            result("alice", "create", slug=legacy_slug, title="Legacy document", body=body)
+            view = result("bob", "present", slug=legacy_slug)
+            editor = result("bob", "present", slug=legacy_slug, editable="true")
+            # A migrated pre-records link has no canonical row identity/grants.
+            # Only these disposable fixture rows are changed; all uses are HTTP.
+            prepare_legacy_links(view["token"], editor["token"])
+            legacy = {"view_url": view["url"], "edit_url": editor["url"]}
         run(["node", str(root / "scripts/e2e/folio-records-browser.mjs")], env=cli_env,
-            input=json.dumps({"url": link["url"], "edit_urls": edit_links,
+            input=json.dumps({"url": link["url"], "edit_urls": edit_links, "legacy": legacy,
                               "values": expected, "schema": schema, "collection": collection,
                               "cli_binary": cli_binary, "cli_home": cli_home}))
 
@@ -111,6 +121,7 @@ def exercise_records(aw, run, root, schema, *, cli_binary, cli_home, cli_env):
     assert {record["id"] for record in first_page["records"] + next_page["records"]} == {
         row["id"], second["record"]["id"],
     }
+    print("PASS records installed CLI add/retry/update/filter, two-member CAS and pagination", flush=True)
     browser([final_value, second_value], edit=True)
     print("PASS installed CLI define/add/retry/one-field update/filter and two-member CAS; same table in Chromium", flush=True)
     return {"collection_id": collection, "document_slug": slug}

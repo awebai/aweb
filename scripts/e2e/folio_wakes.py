@@ -390,7 +390,17 @@ except urllib.error.HTTPError as exc:
     print('PASS v2 manifest registers from server-fetched bytes, grants only agent and surface scopes, emits through its app-event key, refuses its hook-only verb', flush=True)
     schema = json.loads(run(COMPOSE + ['exec', '-T', 'folio', '/app/.venv/bin/python', '-c',
                                      'import json; from folio.record_collections import DISCOVERY_SCHEMA; print(json.dumps(DISCOVERY_SCHEMA))']))
-    exercise_records(aw, run, ROOT, schema, cli_binary=str(AW), cli_home=str(homes["alice"]), cli_env=env)
+    def prepare_legacy_record_links(view_token, edit_token):
+        # Model only the two pre-records rows after migration005. No auth or
+        # read/write component is mocked, and no production database is used.
+        literals = ["'" + token.replace("'", "''") + "'" for token in (view_token, edit_token)]
+        changed = run(COMPOSE + ['exec', '-T', 'postgres', 'psql', '-U', 'aweb', '-d', 'library',
+            '-v', 'ON_ERROR_STOP=1'],
+            input="UPDATE public.presentation_links SET records_creator_id=NULL, record_write_grants='{}'::jsonb "
+                  "WHERE token IN (" + ','.join(literals) + ");\n")
+        assert changed.strip() == 'UPDATE 2', 'Both synthetic legacy links must be prepared'
+    exercise_records(aw, run, ROOT, schema, cli_binary=str(AW), cli_home=str(homes["alice"]),
+                     cli_env=env, prepare_legacy_links=prepare_legacy_record_links)
 
     if os.environ.get('FOLIO_UNINSTALL_PROOF') == '1':
         from folio_uninstall import prove_uninstall
