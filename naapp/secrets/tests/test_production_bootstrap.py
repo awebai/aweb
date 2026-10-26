@@ -1,15 +1,19 @@
 """First owner and member requests go through the actual production root."""
 
+import asyncio
 import base64
 import json
+from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import httpx
 import pytest
+from aweb_naapp.egress import DnsResolver
 from aweb_naapp.hooks.envelope import KID_PATTERN, verify
 from aweb_naapp.runtime.passkeys import contact_sha256
 from aweb_naapp_testing import Member
+from aweb_naapp_testing.network import DnsServer
 from aweb_naapp_testing.owner_acts import AUDIENCE, TeamOwner
 from aweb_naapp_testing.smtp import SmtpServer
 from aweb_naapp_testing.webauthn import SoftAuthenticator
@@ -53,24 +57,38 @@ async def root(test_db_factory, registry, tmp_path):
                 team_server_transport=transport,
             )
             service.runtime.team_server_directory()._registry_override = no_dns_override
-            async with service.api_app.router.lifespan_context(service.api_app):
-                async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
-                    manifest = await client.get(AUDIENCE + "/manifests/v2.json")
-                    assert manifest.status_code == 200
-                    installed = await install(
-                        aweb_db,
-                        member,
-                        manifest.content,
-                        ["secrets:read", "secrets:use", "secrets:run", "secrets:admin"],
-                    )
-                    await install_audit_receiver(aweb_db, member)
-                    assert (
-                        await service.runtime.db().fetch_value(
-                            "SELECT count(*) FROM installation_fences"
+            # The activated receiver is external fixture state, not a running
+            # logs service. Keep the real drain/transport and give its resolver
+            # a real local NXDOMAIN answer instead of querying public DNS.
+            dns = DnsServer()
+            await dns.start()
+            hook_transport = service.runtime._hooks.transport
+            assert hook_transport is not None
+            hook_transport._egress = replace(
+                hook_transport._egress,
+                resolver=DnsResolver(nameservers=["127.0.0.1"], port=dns.port),
+            )
+            try:
+                async with service.api_app.router.lifespan_context(service.api_app):
+                    async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
+                        manifest = await client.get(AUDIENCE + "/manifests/v2.json")
+                        assert manifest.status_code == 200
+                        installed = await install(
+                            aweb_db,
+                            member,
+                            manifest.content,
+                            ["secrets:read", "secrets:use", "secrets:run", "secrets:admin"],
                         )
-                        == 0
-                    )
-                    yield service, client, configured, member, installed, smtp, transport
+                        await install_audit_receiver(aweb_db, member)
+                        assert (
+                            await service.runtime.db().fetch_value(
+                                "SELECT count(*) FROM installation_fences"
+                            )
+                            == 0
+                        )
+                        yield service, client, configured, member, installed, smtp, transport, dns
+            finally:
+                dns.close()
 
 
 def owner_body(configured, member, installation_id):
@@ -98,7 +116,7 @@ def owner_body(configured, member, installation_id):
 
 
 async def test_first_owner_enrols_from_actual_smtp_and_logs_into_production_console(root):
-    service, client, configured, member, installed, smtp, transport = root
+    service, client, configured, member, installed, smtp, transport, dns = root
     installation_id = installed["installation_id"]
     scope, body = owner_body(configured, member, installation_id)
     human = configured.console_origin
@@ -145,11 +163,15 @@ async def test_first_owner_enrols_from_actual_smtp_and_logs_into_production_cons
     assert (
         await client.post(human + "/enrolment/options", json={"link_token": token})
     ).status_code == 403
+    async with asyncio.timeout(5):
+        while dns.queries[("logs.example", "A")] == 0:
+            await asyncio.sleep(0.01)
+    assert dns.queries[("logs.example", "AAAA")] > 0
 
 
 @pytest.mark.parametrize("fault", ["wrong_team", "wrong_installation", "unavailable"])
 async def test_bootstrap_authority_controls_leave_no_owner_nonce_or_audit(root, fault):
-    service, client, configured, member, installed, smtp, transport = root
+    service, client, configured, member, installed, smtp, transport, _ = root
     installation_id = installed["installation_id"]
     _, body = owner_body(configured, member, installation_id)
     if fault == "wrong_team":
