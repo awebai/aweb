@@ -36,15 +36,21 @@ CREATE INDEX IF NOT EXISTS idx_read_events_operation ON {{tables.read_events}} (
 CREATE INDEX IF NOT EXISTS idx_read_events_actor ON {{tables.read_events}} (team_id, actor_did_key);
 CREATE INDEX IF NOT EXISTS idx_read_events_occurred ON {{tables.read_events}} (team_id, occurred_at);
 
--- Each reader an owner act designated: the installation and team it reads, and
--- the contact the act committed to by hash. Whether the reader holds the scope
--- now, and with which passkey, is B3's record of the scope.
+-- Reader slots. Logs issues a slot before the owner signs: an opaque random
+-- scope bound to the installation, team and contact hash the owner act must
+-- name. A pending slot grants nothing and expires; the owner act that names it
+-- claims it, and from then on it is the reader's B3 scope.
 CREATE TABLE IF NOT EXISTS {{tables.readers}} (
     scope           TEXT PRIMARY KEY,
     installation_id TEXT NOT NULL,
     team_id         TEXT NOT NULL,
     contact_sha256  TEXT NOT NULL,
-    recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at      TIMESTAMPTZ NOT NULL,
+    claimed_at      TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_readers_installation ON {{tables.readers}} (installation_id, team_id);
+CREATE INDEX IF NOT EXISTS idx_readers_installation
+    ON {{tables.readers}} (installation_id, team_id) WHERE claimed_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_readers_pending
+    ON {{tables.readers}} (expires_at) WHERE claimed_at IS NULL;
