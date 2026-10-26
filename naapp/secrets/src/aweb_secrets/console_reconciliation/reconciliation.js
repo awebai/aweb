@@ -25,9 +25,12 @@
   }
   if (needsLogin() && (token || scoped)) {
     const notice = document.querySelector("#console-reauth-notice") || status.parentElement;
+    // Feedback must remain visible while the authenticated content is hidden.
+    if (!notice.contains(status)) notice.append(status);
     const ordinary = document.querySelector("#console-reauth");
     if (ordinary) ordinary.hidden = true;
     const login = document.createElement("button");
+    login.id = "reconciliation-sign-in";
     login.type = "button";
     login.textContent = "Sign in with your passkey";
     login.addEventListener("click", async () => {

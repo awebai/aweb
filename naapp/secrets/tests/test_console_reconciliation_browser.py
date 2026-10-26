@@ -196,12 +196,15 @@ async def test_cookie_only_failed_passkey_reauthentication_shows_feedback(
             "WebAuthn.setUserVerified",
             {"authenticatorId": auth["authenticatorId"], "isUserVerified": False},
         )
-        login = page.get_by_role("button", name="Sign in with your passkey", exact=True)
+        login = page.locator("#reconciliation-sign-in")
         await login.click()
         await expect(login).to_be_enabled()
         await page.screenshot(
             path=tmp_path / f"settlement-reauth-refused-{width}.png", full_page=True
         )
-        feedback = page.get_by_role("status").filter(has_text="Sign-in could not be completed.")
+        feedback = page.locator("#reconciliation-status")
         await expect(feedback).to_be_visible()
+        await expect(feedback).not_to_be_empty()
+        await expect(feedback).to_be_focused()
+        await expect(page.locator("[data-console-scope]")).to_be_hidden()
         assert await snapshot(uses.world.db) == before
