@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from aweb_naapp.console import CONSOLE_HEADERS, apply_console_migrations
+from aweb_naapp.dispatch import apply_dispatch_migrations
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from fastapi import FastAPI
@@ -16,6 +17,7 @@ from aweb_secrets.console_jobs import console_jobs_router
 from aweb_secrets.console_ui import console_ui_router
 from aweb_secrets.jobs import apply_job_migrations
 from aweb_secrets.runners import apply_runner_migrations
+from aweb_secrets.use_context import apply_use_context_migrations
 from tests.test_change_sets import ALICE, ORIGIN, enrol_owner
 from tests.test_change_sets import world as _world
 from tests.test_console import API
@@ -29,6 +31,8 @@ async def application(w, *, origin=ORIGIN, agent_origin=API):
     await apply_console_migrations(w.db)
     await apply_job_migrations(w.db)
     await apply_runner_migrations(w.db)
+    await apply_dispatch_migrations(w.db)
+    await apply_use_context_migrations(w.db)
 
     async def installation(installation_id, *, team_id: str | None = None):
         if installation_id != INSTALLATION_ID:
