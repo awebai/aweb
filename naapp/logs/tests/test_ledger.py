@@ -20,6 +20,7 @@ from aweb_logs.ledger import (
     LogsSigner,
     OriginMismatch,
     append,
+    append_on,
     checkpoint_moved_heads,
     issue_checkpoint,
     load_epoch,
@@ -356,3 +357,47 @@ async def test_concurrent_passes_sign_each_moved_head_once(db: AsyncDatabaseMana
     )
     assert sorted(team for result in passes for team in result) == [TEAM_ID]
     assert await _checkpoint_seqs(db) == [(1, 3)]
+
+
+async def test_caller_transaction_rolls_back_its_effect_and_chain_append(
+    db: AsyncDatabaseManager,
+) -> None:
+    await db.execute("CREATE TABLE {{tables.caller_effects}} (effect_id INTEGER PRIMARY KEY)")
+    signing, signature = signed_event("app", event_id=str(uuid.uuid4()))
+    event = hook_envelope.verify(signing, signature, team_id=TEAM_ID)
+    with pytest.raises(RuntimeError, match="forced caller rollback"):
+        async with db.transaction() as tx:
+            await tx.execute("INSERT INTO {{tables.caller_effects}} VALUES (1)")
+            result = await append_on(
+                tx, SIGNER, event=event, signing_bytes=signing, signature=signature,
+                key_evidence=_evidence(signing), received_at=START,
+            )
+            assert isinstance(result, Appended) and not result.duplicate
+            assert await tx.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 1
+            raise RuntimeError("forced caller rollback")
+    for table in ("caller_effects", "chain_events", "chain_epochs", "chain_heads"):
+        assert await db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
+
+
+async def test_caller_transaction_commits_the_original_receipt_for_later_redelivery(
+    db: AsyncDatabaseManager,
+) -> None:
+    await db.execute("CREATE TABLE {{tables.caller_effects}} (effect_id INTEGER PRIMARY KEY)")
+    event_id = str(uuid.uuid4())
+    signing, signature = signed_event("app", event_id=event_id)
+    event = hook_envelope.verify(signing, signature, team_id=TEAM_ID)
+    async with db.transaction() as tx:
+        await tx.execute("INSERT INTO {{tables.caller_effects}} VALUES (1)")
+        first = await append_on(
+            tx, SIGNER, event=event, signing_bytes=signing, signature=signature,
+            key_evidence=_evidence(signing), received_at=START,
+        )
+    delivered = await append(
+        db, SIGNER, event=event, signing_bytes=signing, signature=signature,
+        key_evidence=_evidence(signing), received_at=START + timedelta(seconds=1),
+    )
+    assert isinstance(first, Appended) and isinstance(delivered, Appended)
+    assert not first.duplicate and delivered.duplicate and delivered.receipt == first.receipt
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.caller_effects}}") == 1
+    assert await db.fetch_value("SELECT team_seq FROM {{tables.chain_heads}}") == 1
+    assert (await _verify(db, receipts=[first.receipt])).intact
