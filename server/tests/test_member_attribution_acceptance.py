@@ -32,6 +32,7 @@ async def attribution_env(aweb_cloud_db):
         await db.execute("UPDATE {{tables.agents}} SET certificate_id=$1,identity_scope='local' WHERE agent_id=$2", certificate_id, UUID(agent_id))
         members.append(MemberReference(team, agent_id, certificate_id, member_key))
     now = datetime.now(UTC).replace(microsecond=0)
+    await db.execute("UPDATE {{tables.agents}} SET created_at=$1 WHERE team_id=$2", now - timedelta(minutes=2), team)
     return SimpleNamespace(
         db=db, infra=_build_test_app(db, None).state.db, parent=members[0], child=members[1],
         signer=LocalControllerSigner(seed, root_member_did_key=members[0].member_did_key),
@@ -85,6 +86,27 @@ async def test_host_rollback_removes_acceptance_and_publication_intent(attributi
             await tx.execute("SELECT 1")
             raise RuntimeError("host rollback")
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.member_attributions}}") == 0
+
+
+@pytest.mark.asyncio
+async def test_fresh_child_can_be_inserted_after_the_human_policy_on_the_same_transaction(attribution_env):
+    env = attribution_env
+    child = MemberReference(env.parent.team_id, str(uuid4()), str(uuid4()), _make_keypair()[2])
+    checked = []
+    async def policy(context, connection):
+        checked.append(context)
+        assert await connection.fetchval("SELECT count(*) FROM aweb.agents WHERE agent_id=$1", UUID(child.agent_id)) == 0
+    async with env.db.transaction() as tx:
+        await accept(env, tx, event="claim", validated_human=env.human)
+        result = await accept(env, tx, member=child, event="spawn", parent=env.parent, lock_human_policy=policy)
+        await tx.execute(
+            """INSERT INTO {{tables.agents}} (agent_id,team_id,did_key,alias,identity_scope,certificate_id)
+               VALUES ($1,$2,$3,'new-child','local',$4)""",
+            UUID(child.agent_id), child.team_id, child.member_did_key, child.certificate_id,
+        )
+    assert len(checked) == 1
+    assert result.publications[0].record["parent"]["member_did_key"] == env.parent.member_did_key
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.member_attributions}}") == 2
 
 
 @pytest.mark.asyncio
