@@ -224,6 +224,7 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	}
 	if v, ok := data["signed_payload"].(string); ok {
 		signedPayload = v
+		ev.SignedPayload = v
 	}
 	if v, ok := data["is_contact"].(bool); ok {
 		ev.IsContact = &v
@@ -313,6 +314,14 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	// Error is encoded in VerificationStatus; discard it.
 	if signedPayload != "" {
 		ev.VerificationStatus, _ = awid.VerifySignedPayload(signedPayload, ev.Signature, ev.FromDID, ev.SigningKeyID)
+		if ev.VerificationStatus == awid.Verified {
+			via, err := awid.SignedPayloadVia(signedPayload)
+			if err != nil {
+				ev.VerificationStatus = awid.Failed
+			} else {
+				ev.Via = via
+			}
+		}
 	} else {
 		ev.VerificationStatus, _ = awid.VerifyMessage(env)
 	}
@@ -971,11 +980,20 @@ func buildMessages(messages []awid.ChatMessage) []Event {
 			FromStableID:            m.FromStableID,
 			ToStableID:              m.ToStableID,
 			Signature:               m.Signature,
+			SignedPayload:           m.SignedPayload,
 			SigningKeyID:            m.SigningKeyID,
 			RotationAnnouncement:    m.RotationAnnouncement,
 			ReplacementAnnouncement: m.ReplacementAnnouncement,
 			VerificationStatus:      m.VerificationStatus,
 			IsContact:               m.IsContact,
+		}
+		if m.SignedPayload != "" && (m.VerificationStatus == awid.Verified || m.VerificationStatus == awid.VerifiedLegacy || m.VerificationStatus == awid.VerifiedCustodial) {
+			via, err := awid.SignedPayloadVia(m.SignedPayload)
+			if err != nil {
+				events[i].VerificationStatus = awid.Failed
+			} else {
+				events[i].Via = via
+			}
 		}
 	}
 	return events

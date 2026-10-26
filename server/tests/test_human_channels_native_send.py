@@ -162,7 +162,7 @@ async def native_send(aweb_cloud_db):
         ),
     )
 
-    async def prepared(kind="mail", message_id=None, body="native send", caller=None):
+    async def prepared(kind="mail", message_id=None, body="native send", caller=None, via=None):
         cid, mid = str(uuid4()), message_id or str(uuid4())
         payload = dict(
             type=kind,
@@ -178,6 +178,8 @@ async def native_send(aweb_cloud_db):
             conversation_id=cid,
             **{"from": "agent"},
         )
+        if via is not None:
+            payload["via"] = via
         signed = canonical_json_bytes(payload).decode()
         envelope = canonical_json_bytes(
             {"signed_payload": signed, "signature": sign_message(a_sk, signed.encode())}
@@ -220,6 +222,19 @@ async def native_send(aweb_cloud_db):
         "recipient_did": b_did,
         "app": _build_test_app(db, None),
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+async def test_bridge_signer_without_via_keeps_custody_and_confidentiality(native_send, kind):
+    env = native_send
+    await env["db"].execute("UPDATE public.host_authority SET custody='bridge_custodial' WHERE actor_id=$1", UUID(env["a"]))
+    labelled = (await env["prepared"](kind=kind, via="telegram")).value["author"]
+    omitted = (await env["prepared"](kind=kind)).value["author"]
+    assert labelled.pop("via") == "telegram"
+    assert labelled == omitted
+    assert omitted["trust_status"] == "verified_custodial"
+    assert omitted["confidentiality"] == "server_readable"
 
 
 async def complete(env, prepared, *, fail=None, key=None):

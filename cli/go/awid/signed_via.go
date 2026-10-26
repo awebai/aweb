@@ -35,6 +35,12 @@ func signedMessageVia(data []byte) (string, error) {
 	return value, nil
 }
 
+// SignedPayloadVia extracts a channel kind without reconstructing signed bytes.
+// Callers must verify the original signature before using it as provenance.
+func SignedPayloadVia(payload string) (string, error) {
+	return signedMessageVia([]byte(payload))
+}
+
 func (env *MessageEnvelope) UnmarshalJSON(data []byte) error {
 	type wire MessageEnvelope
 	var value wire

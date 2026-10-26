@@ -24,7 +24,7 @@ signature/AEAD/header protection preserves compatibility.
 
 Source inventory basis: `fa5ae8430b7f2120fec0242ffc93d7e006985edb`.
 Paths below are relative to the repository root at that SHA. This first
-inventory is source evidence; released-reader/server matrix runs are pending.
+inventory is source evidence; the released-reader/server matrix below extends it.
 "Retains" means copies the original string, never reconstructs its JSON.
 
 | Path | Source evidence | Initial state / verification hop |
@@ -67,3 +67,33 @@ paths verify raw `signed_payload`; their missing-payload fallbacks rebuild known
 fields and therefore fail via-bearing signatures. The Python awid-service
 0.5.32 verifier accepts original bytes. No native mail/chat reader was found in
 aweb-naapp 0.5.0. This inventory does not claim arbitrary remote retention.
+
+## Released-reader proof
+
+`server/tests/test_signed_via_paths.py` runs against real local PostgreSQL, Redis,
+AWID and OSS HTTP services. `AW_TEST_CLI_BINARY` selects an actual released aw;
+`AW_TEST_CHANNEL_BUNDLE` selects the published channel 1.8.0 bundle, whose SHA256
+is asserted before exports are appended to an otherwise unchanged copy.
+
+| Consumer / path | Executed proof |
+| --- | --- |
+| aw 1.36.48 and 1.36.49, plaintext | Mail/chat × absent/telegram/msteams: original signatures verify after REST inbox, show, conversation, pagination, exact history, repeated retained reads and sender self-read. Actual aw mail inbox/show/conversation and chat history verify these responses. |
+| Released aw chat SSE | `test_real_cli_live_chat_via` opens the real listener, waits for its real waiting registration, then delivers a signed message through the live server stream. |
+| Channel 1.8.0 plaintext | Released APIClient, inbox/history fetchers, raw verifiers and SSE parser perform real authenticated HTTP reads, including event-then-fetch. Mail pages and exact fetch preserve original bytes. |
+| MCP projections | Real retained rows through mail inbox/contact, chat history/wait/contact. Pending and REST session lists are discovery; the matrix follows them to full retained reads. |
+| Released aw v2 | Python encrypts inner via for mail/chat × telegram/msteams; released aw decrypts/verifies both recipient and sender copies, with unchanged ciphertext/signature commitments. Old readers ignore the new display field. |
+| Custody/disclosure | `test_bridge_signer_without_via_keeps_custody_and_confidentiality` compares the prepared author projection with/without signed via under real bridge custody facts; both remain custodial and server-readable. |
+
+The original MCP history/wait/contact gaps above were fixed in the separately
+reviewed recipient-display prerequisite `c534e7f093e8247dcb1619a8535eb7a13f850b18`.
+P1 preserves raw payloads in Go Event JSON as well. No discovery preview supplies
+verified provenance. The old-reader claim is bounded to these retained paths;
+it does not advertise compatibility for arbitrary remote/federated servers.
+
+Per integrations' C3 call-site decision (368669d5, relayed 1fb67a46), the actual
+channel composer is the hosted caller before public prepare. It owns omission
+before signing on an unproven delivery path. OSS prepare accepts an already
+signed artifact and never strips it. Its native delivery is local-retained by
+construction; no remote branch or retention flag is introduced. Low-level Go
+and Python composers validate and preserve explicitly supplied via. P1 adds no
+Via option to the high-level Go send API; N1 owns its first runtime caller.
