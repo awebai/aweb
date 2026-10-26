@@ -29,7 +29,10 @@ async def caller(world, audit, *, owner=True):
     # Compose the fixture's real service with the SAME B3 sink and producer.
     await apply_idempotency_migrations(world.db)
     service = world.containment
-    service.credential_audit = world.credential_audit
+    # Fail in setup if the pending shared-world composition is incomplete;
+    # a different ContextVar must never manufacture the expected refusal.
+    assert audit is world.credential_audit is world.passkeys._audit
+    service.credential_audit = audit
     producer = audit._producer(
         installation_id=world.admitted.installation_id, generation=world.admitted.generation
     )
