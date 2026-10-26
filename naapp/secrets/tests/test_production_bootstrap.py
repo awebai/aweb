@@ -1,12 +1,13 @@
 """First owner and member requests go through the actual production root."""
 
 import base64
+import json
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import httpx
 import pytest
-from aweb_naapp.hooks.envelope import verify
+from aweb_naapp.hooks.envelope import KID_PATTERN, verify
 from aweb_naapp.runtime.passkeys import contact_sha256
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.owner_acts import AUDIENCE, TeamOwner
@@ -15,10 +16,18 @@ from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid_service.testing import SERVICE_TOKEN
 
 from aweb_secrets.composition import create_service
+from aweb_secrets.manifest import MANIFEST_PATH
 from aweb_secrets.owners import owner_scope
 from tests.production_authority import authority, install, install_audit_receiver, no_dns_override
 from tests.test_composition import settings
 from tests.test_console_bootstrap import delivered_url
+
+
+def test_committed_hook_keys_match_the_shared_event_and_delivery_identifier_contract():
+    manifest = json.loads(MANIFEST_PATH.read_bytes())
+    for key in manifest["app_keys"]:
+        if {"hook-event", "hook-delivery"}.intersection(key["purposes"]):
+            assert KID_PATTERN.fullmatch(key["kid"]), key["kid"]
 
 
 async def envelopes(db, team_id):
@@ -152,7 +161,12 @@ async def test_bootstrap_authority_controls_leave_no_owner_nonce_or_audit(root, 
     response = await client.post(
         configured.console_origin + f"/installations/{installation_id}/owner-acts", json=body
     )
-    assert response.status_code in {403, 503}, response.text
+    expected = {
+        "wrong_team": (503, "authority_unavailable"),
+        "wrong_installation": (403, "owner_required"),
+        "unavailable": (503, "authority_unavailable"),
+    }[fault]
+    assert (response.status_code, response.json()) == (expected[0], {"detail": expected[1]})
     db = service.runtime.db()
     for table in (
         "owner_principals",
