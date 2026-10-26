@@ -66,6 +66,21 @@ async def test_run_approval_assignment_result_replay_and_distinct_execution_refs
     second_event = use_events(await envelopes(uses.world.db))[-1]
     assert second_event["payload"]["use_ref"] == second.body["request_ref"]
     assert second_event["payload"]["job_id"] == events[0]["payload"]["job_id"]
+    await decide(context, second, Decision.APPROVE)
+    second_request = changed(context, request_id="second-execution")
+    await context.service.submit(job=context.job.job_id, submission=second_request)
+    second_claim = await context.service.claim(context.signed("/runner/v1/claim"))
+    second_ref = json.loads(second_claim.body)["assignment"]["dispatch_id"]
+    assert second_ref != ref
+    second_target = f"/runner/v1/dispatches/{second_ref}"
+    await context.service.started(second_ref, context.signed(second_target + "/started"))
+    await context.service.result(second_ref, context.signed(second_target + "/result", report()))
+    second_receipt = await context.service.submit(job=context.job.job_id, submission=second_request)
+    assert second_receipt.body["state"] == "completed"
+    assert second_receipt.body["request_ref"] == second.body["request_ref"]
+    finished = use_events(await envelopes(uses.world.db))
+    assert len([e for e in finished if e["payload"]["action"] == "completed"]) == 2
+    assert finished[-1]["payload"]["use_ref"] == second.body["request_ref"]
 
 
 @pytest.mark.parametrize("injected", [False, True])
@@ -113,3 +128,30 @@ async def test_run_refusal_record_failure_presents_no_ref_and_rolls_back_audit(u
             await context.service.submit(job=context.job.job_id, submission=context.submission)
         )
     assert replies == [] and await snapshot(uses.world.db) == before
+
+
+async def test_unknown_run_and_owner_settlement_keep_the_original_public_ref(uses):
+    from tests.reconciliation_world import OwnerFence, service_world
+    from tests.test_reconciliation_service import approve, mint
+
+    context, original, controls, console, session = await service_world(uses)
+    ref = original.original.reconcile_ref
+    pending = await mint(uses, controls, console, session, ref)
+    await approve(uses, pending)
+    async with uses.world.db.transaction() as tx:
+        receipt = await controls.settle(
+            tx,
+            approval_id=pending.approval.approval_id,
+            fence=OwnerFence(console, session, uses.world.admitted),
+        )
+    assert receipt.reconcile_ref == ref
+    events = use_events(await envelopes(uses.world.db))
+    assert [e["payload"]["action"] for e in events] == [
+        "admitted",
+        "dispatching",
+        "outcome_unknown",
+        "reconciled",
+    ]
+    assert all(e["payload"]["use_ref"] == ref for e in events)
+    reply = await context.service.submit(job=context.job.job_id, submission=context.submission)
+    assert reply.body["request_ref"] == ref

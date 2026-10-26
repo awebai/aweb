@@ -37,8 +37,12 @@ def awaiting_approval(*, request_id: str, request_ref: str, approval_ref: str) -
     return {**_use("awaiting_approval", request_id, request_ref), "approval_ref": approval_ref}
 
 
-def refused(code: str, *, request_id: str | None) -> dict[str, Any]:
-    return {**_envelope("refused", request_id), "code": code}
+def refused(code: str, *, request_id: str | None, use_ref: str | None = None) -> dict[str, Any]:
+    """Present an audit ref only after its caller's refusal transaction commits."""
+    result = {**_envelope("refused", request_id), "code": code}
+    if use_ref is not None:
+        result["use_ref"] = use_ref
+    return result
 
 
 def outcome_unknown(*, request_id: str, request_ref: str) -> dict[str, Any]:

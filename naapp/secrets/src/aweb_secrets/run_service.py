@@ -49,7 +49,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_secrets import jobs, records, runners, tool_results
 from aweb_secrets.admission import IDEMPOTENCY_RETENTION, AdmissionRefused, _charges, mint_intent_id
-from aweb_secrets.broker_audit import record_use_refusal
+from aweb_secrets.broker_audit import mint_refusal_ref, record_use_refusal
 from aweb_secrets.containment_state import ContainmentRefused, require_enabled
 from aweb_secrets.custody import (
     CustodyUnavailable,
@@ -351,6 +351,7 @@ class RunDispatch:
     ) -> ToolReply:
         # The failed admission transaction has ended: no claim, plan, approval
         # or rate charge survives it. Record only an attributed catalog refusal.
+        refusal_ref = None
         if code not in {
             "release_context_unavailable",
             "authority_unavailable",
@@ -375,6 +376,20 @@ class RunDispatch:
                         submission.inbound,
                         parameters=params if isinstance(params, Mapping) else None,
                     )
+                    refusal_ref = (
+                        await tx.fetch_value(
+                            "SELECT intent_id FROM {{tables.run_contexts}} WHERE app_id=$1"
+                            " AND installation_id=$2 AND team_id=$3 AND install_generation=$4"
+                            " AND principal_did=$5 AND request_id=$6",
+                            scope.app_id,
+                            scope.installation_id,
+                            scope.team_id,
+                            scope.generation,
+                            principal_key(auth.principal).principal_did,
+                            request_id,
+                        )
+                        or mint_refusal_ref()
+                    )
                     await record_use_refusal(
                         tx,
                         producer=self._producer(
@@ -387,13 +402,18 @@ class RunDispatch:
                         signed_trace_id=submission.signed_trace_id,
                         request_id=request_id,
                         job_id=job if isinstance(job, str) and IDENTIFIER.fullmatch(job) else None,
+                        use_ref=refusal_ref,
                     )
                     await self._fence.check(tx, scope)
             except InstallationRefused as refused:
                 return ToolReply(
                     refused.status, tool_results.refused(refused.code, request_id=request_id)
                 )
-        return ToolReply(status, tool_results.refused(code, request_id=request_id), headers or {})
+        return ToolReply(
+            status,
+            tool_results.refused(code, request_id=request_id, use_ref=refusal_ref),
+            headers or {},
+        )
 
     async def _submit(
         self,
