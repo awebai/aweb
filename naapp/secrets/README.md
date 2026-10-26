@@ -141,8 +141,9 @@ is the inert `onepassword_binding/1` after record; it never includes item values
 or the token. Staging creates no active secret or binding. Secret/binding
 confirmation shares the canonical change-set routes: create the secret record,
 activate the staged binding and, when needed, activate its staged backend token
-in one owner-confirmed change. Reference entry forms remain separate work. Successful external vault
-access still requires the HO6 fixture and release proof.
+in one owner-confirmed change. The reference form described below uses a
+previously confirmed active backend token. Successful external vault access
+still requires the HO6 fixture and release proof.
 
 `aweb_secrets.approval_email.ApprovalEmailDelivery` implements B2 delivery for
 both use and change approvals. Composition supplies a shared
@@ -256,6 +257,20 @@ The field clears as soon as submitted, and no token enters a URL, template or
 browser storage. Saving stages an inert token and drafts its metadata. The
 page directs the owner to the registered-contact approval link.
 
+`GET /secrets/new` and `/onepassword/references/new` render reference entry;
+`/installations/{installation_id}/onepassword/references/new` is the scoped
+equivalent. The page requires the current owner session and role, resolves the
+active backend version for that exact installation and team, and offers the
+connection page if none is confirmed. No credential version is entered by the
+owner. Labelled controls collect secret metadata, authentication parameters,
+and vault/item/field IDs for each supported authentication kind, never vault
+field values. The browser submits the existing metadata ingress, then drafts
+`secret/create` and `onepassword_binding/create` with the returned inert version
+through the sole writer and navigates to canonical review. It stores no form
+data, retries no mutation automatically, and cannot activate a binding without
+fresh approval and confirmation. The form's successful external SDK path is
+part of the real-root/HO6 journey; local refusal tests do not replace that proof.
+
 `GET /approvals#token=<locator>` accepts the personal email fragment. With no
 session, the public read-only `POST /approvals/sign-in` accepts exactly `{token}`
 and returns only that link candidate's opaque sign-in scope. This neither
@@ -273,8 +288,9 @@ approving again. Browser actions use the sole shared `post` and `assertion`
 helpers; no automatic mutation retry occurs. New tabs without tab CSRF retain
 the shared scoped re-authentication guard. Frozen review shows every proposed
 field. A runner registration code appears once in that deciding document after
-commit; it is never stored for a later read, navigation or retry. Configuration
-entry forms and the real root application mount remain separate integration work.
+commit; it is never stored for a later read, navigation or retry. Other
+configuration entry forms and the real root application mount remain separate
+integration work.
 
 Run-slot approvals use the same B2 service and `apply_use_approval_migrations`.
 `run_approvals.request_run_approvals(tx, approvals, prepared=..., principal=...,
