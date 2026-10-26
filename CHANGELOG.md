@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Pre-deployment hook catalog v1 re-freeze: `post-secret-use-hook` accepts optional
+  opaque `use_ref` for the public request/refusal-to-audit join. Legacy events
+  without it remain valid. The catalog in `aweb-naapp 0.5.1rc1` rejects this
+  field: third-party receivers on that RC must upgrade before receiving it.
+  The next aweb-naapp RC must include the re-frozen catalog, and updated
+  readers/catalogs must land before new emission. Decision 93's scoped
+  evidence and landing stop/version-bump conditions are in `docs/hook-events.md`.
+
 - Release preparation: server 1.27.35. Update the server test fixtures for
   the shared naapp runtime's integer nanosecond freshness deadlines.
 
