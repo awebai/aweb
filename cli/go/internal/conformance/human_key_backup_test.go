@@ -2,7 +2,11 @@ package conformance_test
 
 import (
 	"bytes"
+	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/json"
@@ -10,6 +14,7 @@ import (
 	"testing"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/youmark/pkcs8"
 )
 
 type humanKeyBackupVector struct {
@@ -119,9 +124,9 @@ func TestHumanKeyBackupRefusesOtherParameters(t *testing.T) {
 		"scrypt kdf": func(e *backupEnvelope) {
 			e.params.KDF.Algorithm = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 11591, 4, 11}
 		},
-		"default hmac-sha1 prf": func(e *backupEnvelope) { e.kdf.PRF = nil },
+		"default hmac-sha1 prf": func(e *backupEnvelope) { e.kdf.PRF = pkix.AlgorithmIdentifier{} },
 		"hmac-sha512 prf": func(e *backupEnvelope) {
-			e.kdf.PRF = &pkix.AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 2, 840, 113549, 2, 11}, Parameters: asn1.NullRawValue}
+			e.kdf.PRF = pkix.AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 2, 840, 113549, 2, 11}, Parameters: asn1.NullRawValue}
 		},
 		"aes-128-cbc cipher": func(e *backupEnvelope) {
 			e.params.Cipher.Algorithm = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 1, 2}
@@ -138,8 +143,9 @@ func TestHumanKeyBackupRefusesOtherParameters(t *testing.T) {
 			if err == nil || key != nil {
 				t.Fatalf("%s imported a key", name)
 			}
-			if code := awid.HumanKeyBackupErrorCode(err); code == "" {
-				t.Fatalf("%s: uncoded error %v", name, err)
+			// Refused by the parameter check itself, not by a failed decryption.
+			if code := awid.HumanKeyBackupErrorCode(err); code != "unsupported_backup" {
+				t.Fatalf("%s: code %q (err=%v)", name, code, err)
 			}
 		})
 	}
@@ -169,6 +175,24 @@ func TestHumanKeyBackupRefusesOtherParameters(t *testing.T) {
 		}
 	})
 
+	t.Run("a key that is not Ed25519", func(t *testing.T) {
+		ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		der, err := pkcs8.MarshalPrivateKey(ecKey, []byte(vector.Passphrase), &pkcs8.Opts{
+			Cipher:  pkcs8.AES256CBC,
+			KDFOpts: pkcs8.PBKDF2Opts{SaltSize: 16, IterationCount: vector.MinimumIterations, HMACHash: crypto.SHA256},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		backup := pem.EncodeToMemory(&pem.Block{Type: "ENCRYPTED PRIVATE KEY", Bytes: der})
+		if key, err := awid.ImportHumanKeyBackup(backup, []byte(vector.Passphrase)); err == nil || key != nil {
+			t.Fatal("an ECDSA backup imported as a human key")
+		}
+	})
+
 	t.Run("an unencrypted PKCS#8 key", func(t *testing.T) {
 		block := &pem.Block{Type: "PRIVATE KEY", Bytes: []byte{0x30, 0x00}}
 		if _, err := awid.ImportHumanKeyBackup(pem.EncodeToMemory(block), []byte(vector.Passphrase)); err == nil {
@@ -186,8 +210,8 @@ var (
 type pbkdf2Parameters struct {
 	Salt       []byte
 	Iterations int
-	KeyLength  int                       `asn1:"optional"`
-	PRF        *pkix.AlgorithmIdentifier `asn1:"optional"`
+	KeyLength  int                      `asn1:"optional"`
+	PRF        pkix.AlgorithmIdentifier `asn1:"optional"`
 }
 
 type pbes2Parameters struct {
@@ -239,7 +263,7 @@ type decodedBackup struct {
 func decodeBackup(t *testing.T, backup []byte) decodedBackup {
 	t.Helper()
 	e := parseEnvelope(t, backup)
-	if e.kdf.PRF == nil {
+	if len(e.kdf.PRF.Algorithm) == 0 {
 		t.Fatal("export omits the PRF (defaults to HMAC-SHA1)")
 	}
 	return decodedBackup{iterations: e.kdf.Iterations, salt: e.kdf.Salt, iv: e.iv, prf: e.kdf.PRF.Algorithm, cipher: e.params.Cipher.Algorithm}
