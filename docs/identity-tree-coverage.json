@@ -77,7 +77,9 @@
       "id": "S1.TS.VERIFIER",
       "repo": "aweb",
       "files": [
-        "channel-core/src/identity/id_certificates.ts"
+        "channel-core/src/identity/id_certificates.ts",
+        "channel-core/src/identity/id_verification.ts",
+        "channel-core/src/identity/strict_json.ts"
       ],
       "operations": [
         "encode",
@@ -85,14 +87,20 @@
       ],
       "change": "add",
       "slice": "S1",
-      "status": "pending",
+      "status": "candidate",
       "journeys": [
         "J1",
         "J4",
         "J8"
       ],
-      "proving_tests": [],
-      "acceptance": "All frozen cases and refusal dispositions; owner supplies exact proving test paths after review."
+      "proving_tests": [
+        "channel-core/test/id_certificates_codec.test.ts",
+        "channel-core/test/id_certificates_verify.test.ts",
+        "channel-core/test/id_certificates_verify_probes.test.ts",
+        "channel-core/test/id_certificates_disposition.test.ts"
+      ],
+      "acceptance": "All frozen cases and refusal dispositions; owner supplies exact proving test paths after review.",
+      "candidate_head": "3c9c2c0d67815764e4ea1b0bfe0d9cb8fdf8abab"
     },
     {
       "id": "S1.PY.ANCESTRY",

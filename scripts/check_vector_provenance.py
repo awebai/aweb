@@ -55,7 +55,7 @@ ROOT_CONSUMERS = {
     ),
     PurePosixPath("cli/go/internal/conformance/id_chain_test.go"): _consumer(
         "id-certificates-v1.json",
-        'readRootVector(t,"id-certificates-v1.json")',
+        'readRootVector(t, "id-certificates-v1.json")',
     ),
     PurePosixPath("awid/tests/test_id_certificate_vectors.py"): _consumer(
         "id-certificates-v1.json",
