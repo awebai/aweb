@@ -280,7 +280,12 @@ const MICROSECOND_TIMESTAMP = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-
 function trustedSnapshot(evidence: IdStatusEvidence | null, domain: string | undefined): Snapshot {
   if (evidence === null || domain === undefined) throw new Refusal("evidence_unavailable");
   const mode = idStatusCacheMode(evidence.age_seconds, evidence.refresh_failed);
-  if (mode === "unavailable") throw new Refusal(evidence.age_seconds === null ? "evidence_unavailable" : "status_expired");
+  // Only last-known-good evidence outliving its outage grace has expired;
+  // stale evidence that was never refreshed is not evidence at all.
+  if (mode === "unavailable") {
+    const expired = evidence.age_seconds !== null && evidence.refresh_failed;
+    throw new Refusal(expired ? "status_expired" : "evidence_unavailable");
+  }
   const authority = evidence.namespace_authority;
   // Only this exact domain's own _awid record is authority; never an ancestor's.
   if (authority.inherited || authority.domain !== domain || authority.dns_name !== `_awid.${domain}`) {
