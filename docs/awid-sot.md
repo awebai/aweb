@@ -239,9 +239,6 @@ reserved `local` domain are recorded but never exact
 ([identity certificates](id-certificates.md) §1, §4). No epoch is inferred for
 a namespace registered before this history existed: the first exact
 registration, rotation or reverification witnesses its current key.
-Deletion refuses while the domain has a non-revoked registered identity, as it
-does while a team certificate is active: registered identities verify against
-the epoch valid at their registration, so the operator revokes them first.
 
 ## Addresses
 

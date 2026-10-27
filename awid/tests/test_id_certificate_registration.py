@@ -63,6 +63,9 @@ S2_LATER = {
     "post-lock-revocation-time-is-not-transaction-start",
     "status-prefix-enumeration-refuses",
     "status-never-discloses-private-team-data",
+    # Juan's R8 ruling replaces the delete refusal with namespace continuity;
+    # the contract delta replaces this case with delete-then-re-register cases.
+    "namespace-delete-live-id-refuses",
 }
 
 # Cases whose effects belong to another slice's component.
@@ -432,18 +435,6 @@ async def _enroll_normal_tree(tree):
 async def _delete_namespace(tree, domain):
     headers = build_signed_headers(seed("root"), did_key("root"), domain=domain, operation="delete_namespace")
     return await tree.client.request("DELETE", f"/v1/namespaces/{domain}", headers=headers)
-
-
-@consumes("namespace-delete-live-id-refuses")
-async def test_namespace_delete_live_id_refuses(case, tree, awid_db_infra):
-    await _enroll_normal_tree(tree)
-    before = await _revisions(awid_db_infra)
-
-    resp = await _delete_namespace(tree, case["input"]["domain"])
-
-    assert (resp.status_code, _code(resp)) == (409, case["expected"]["reason"]), resp.text
-    assert (await tree.client.get(f"/v1/namespaces/{case['input']['domain']}")).status_code == 200
-    assert await _revisions(awid_db_infra) == before
 
 
 @consumes("namespace-delete-after-all-ids-revoked")
