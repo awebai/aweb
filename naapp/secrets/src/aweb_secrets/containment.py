@@ -17,7 +17,7 @@ from uuid import UUID
 
 from aweb_naapp.console import ConsoleSession
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired, claim
-from aweb_naapp.roles import hold_role, principal_key
+from aweb_naapp.roles import PrincipalKey, hold_role, principal_key, unassign
 from aweb_naapp.runtime.approvals import Approvals
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationFence
@@ -35,12 +35,15 @@ from aweb_secrets import derived_lineage, use_approvals
 from aweb_secrets.containment_state import ContainmentRefused
 from aweb_secrets.containment_state import require_enabled as require_enabled
 from aweb_secrets.custody import Custody, SealContext
+from aweb_secrets.grant import is_secrets_role
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, owner_scope
+from aweb_secrets.principal import is_principal
 from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.tokens import TokenCache
 
 if TYPE_CHECKING:
     from aweb_secrets.credential_audit import CredentialAudit
+    from aweb_secrets.credential_narrowing import PreparedContainment
 
 _LOG = logging.getLogger(__name__)
 
@@ -231,6 +234,7 @@ class ContainmentResult:
 
 
 ACTIONS = {
+    "remove-role-member": "role.revoked",
     "revoke-grant": "grant.revoked",
     "revoke-approvals": "credential.revoked",
     "disable-secret": "resource.disabled",
@@ -286,11 +290,12 @@ class Containment:
         action: str,
         target: str | None = None,
         credential_id: bytes | None = None,
+        member_principal: str | None = None,
         signed_trace_id: str | None = None,
     ) -> ContainmentResult:
         if grant.team_id != principal.team_id:
             raise ContainmentRefused("owner_required")
-        self._validate(request_id, action, target, credential_id)
+        self._validate(request_id, action, target, credential_id, member_principal)
         await self.fence.refresh(principal.team_id)
         key = principal_key(principal)
         actor = {
@@ -312,6 +317,9 @@ class Containment:
                     key.principal_did,
                     target,
                 )
+            role_present = action == "remove-role-member" and await self._lock_role_member(
+                tx, installed, target, member_principal
+            )
             prepared = await self.credential_audit.prepare_containment(
                 tx, admitted=installed, principal=principal, signed_trace_id=signed_trace_id
             )
@@ -325,6 +333,9 @@ class Containment:
                     action=action,
                     target=target,
                     credential_id=credential_id,
+                    member_principal=member_principal,
+                    role_present=role_present,
+                    context=prepared,
                     authority="team_cert",
                     actor=actor,
                     signed_trace_id=signed_trace_id,
@@ -342,18 +353,24 @@ class Containment:
         action: str,
         target: str | None = None,
         credential_id: bytes | None = None,
+        member_principal: str | None = None,
     ) -> ContainmentResult:
         """Narrow under the current LOGIN proof, without a fresh ceremony.
 
         The human router supplies S4 session/CSRF and authoritative installation
         lookup. All authority, effects and the governance outbox share this tx.
         """
-        self._validate(request_id, action, target, credential_id)
+        self._validate(request_id, action, target, credential_id, member_principal)
         async with self.db.transaction() as tx:
             await self.fence.check(tx, admitted)
             self._session_unexpired(session)
-            await self.authorize_console(
-                tx, admitted=admitted, session=session, action=action, target=target
+            _, role_present = await self._authorize_console(
+                tx,
+                admitted=admitted,
+                session=session,
+                action=action,
+                target=target,
+                member_principal=member_principal,
             )
             await self._session_current(tx, session)
             try:
@@ -385,6 +402,9 @@ class Containment:
                     action=action,
                     target=target,
                     credential_id=credential_id,
+                    member_principal=member_principal,
+                    role_present=role_present,
+                    context=prepared,
                     authority="passkey_session",
                     actor={"authority_mode": "system", "attestations": []},
                     evidence_sha256=commitment,
@@ -432,10 +452,23 @@ class Containment:
         action: str,
         target: str | None,
         credential_id: bytes | None,
+        member_principal: str | None,
     ) -> None:
         if action not in ACTIONS and action != "revoke-approver":
             raise ContainmentRefused("containment_action_invalid", 400)
         if not isinstance(request_id, str) or not 1 <= len(request_id) <= 200:
+            raise ContainmentRefused("request_invalid", 400)
+        if action == "remove-role-member":
+            if not is_principal(member_principal) or credential_id is not None:
+                raise ContainmentRefused("request_invalid", 400)
+            if (
+                not isinstance(target, str)
+                or len(target) > 128
+                or not target.startswith("secrets.role.")
+                or not is_secrets_role(target)
+            ):
+                raise ContainmentRefused("containment_target_invalid", 400)
+        elif member_principal is not None:
             raise ContainmentRefused("request_invalid", 400)
         if action == "disable-installation":
             if target is not None:
@@ -456,18 +489,24 @@ class Containment:
         action: str,
         target: str | None,
         credential_id: bytes | None,
+        member_principal: str | None,
+        role_present: bool,
+        context: "PreparedContainment",
         authority: str,
         actor: Mapping[str, Any],
         signed_trace_id: str | None = None,
         evidence_sha256: str | None = None,
     ) -> ContainmentResult:
+        request_body = {
+            "action": action,
+            "target": target,
+            "credential_id": credential_id.hex() if credential_id is not None else None,
+        }
+        if action == "remove-role-member":
+            request_body["principal"] = member_principal
         request_hash = hashlib.sha256(
             json.dumps(
-                {
-                    "action": action,
-                    "target": target,
-                    "credential_id": credential_id.hex() if credential_id is not None else None,
-                },
+                request_body,
                 sort_keys=True,
                 separators=(",", ":"),
             ).encode()
@@ -502,7 +541,24 @@ class Containment:
                 tuple(json.loads(row["affected_secret_ids"])),
             )
         kwargs = dict(installation_id=installation_id, team_id=team_id, revoked_by=authorized_by)
-        if action == "disable-secret":
+        ids: tuple[str, ...]
+        if action == "remove-role-member":
+            assert target is not None and member_principal is not None
+            if role_present:
+                await unassign(tx, PrincipalKey(team_id, member_principal), target)
+            # Every fresh narrowing act invalidates drafts, including an
+            # observed no-op. Exact receipt replays returned above.
+            await bump_config_revision(tx, installation_id)
+            if role_present:
+                await self.credential_audit.record_role_revoked(
+                    tx,
+                    context=context,
+                    role=target,
+                    subject_ref="member:" + member_principal,
+                    occurred_at=datetime.now(UTC),
+                )
+            ids = ()
+        elif action == "disable-secret":
             assert target is not None
             ids = await disable_secret_tree(
                 tx, self.approvals, self.custody, secret_id=target, **kwargs
@@ -569,9 +625,9 @@ class Containment:
                 authorized_by=authorized_by,
             )
             ids = ()
-        # B3 emits each actual designation/key effect through the shared sink.
-        # Its receipts carry the original caller context, not a generic action.
-        if action != "revoke-approver":
+        # B3 designation/key events and user-role removals use the shared
+        # recorder with the original caller context, without a generic duplicate.
+        if action not in {"revoke-approver", "remove-role-member"}:
             payload = {
                 "act": ACTIONS[action],
                 "direction": "narrowing",
@@ -920,12 +976,37 @@ class Containment:
         and CSRF. Application authority locks precede B3's scope/credential locks.
         Return whether the authorized caller is an owner.
         """
+        owner, _ = await self._authorize_console(
+            tx,
+            admitted=admitted,
+            session=session,
+            action=action,
+            target=target,
+            member_principal=None,
+        )
+        return owner
+
+    async def _authorize_console(
+        self,
+        tx: TransactionManager,
+        *,
+        admitted: AdmittedInstallation,
+        session: ConsoleSession,
+        action: str,
+        target: str | None,
+        member_principal: str | None,
+    ) -> tuple[bool, bool]:
         owner = await self._console_authority(
             tx,
             admitted=admitted,
             session=session,
             action=action,
             target=target,
+        )
+        # The target user-role lock must precede LOGIN/B3/session locks, just
+        # as memberships held by admissions precede approval authority.
+        role_present = action == "remove-role-member" and await self._lock_role_member(
+            tx, admitted, target, member_principal
         )
         if not await self.passkeys.login_evidence_is_current(
             session.scope,
@@ -934,7 +1015,24 @@ class Containment:
             tx=tx,
         ):
             raise ContainmentRefused("login_evidence_unavailable", 401)
-        return owner
+        return owner, role_present
+
+    @staticmethod
+    async def _lock_role_member(
+        tx: TransactionManager,
+        admitted: AdmittedInstallation,
+        role: str | None,
+        member_principal: str | None,
+    ) -> bool:
+        return bool(
+            await tx.fetch_value(
+                "SELECT 1 FROM {{tables.role_assignments}}"
+                " WHERE team_id=$1 AND principal_did=$2 AND role=$3 FOR UPDATE",
+                admitted.team_id,
+                member_principal,
+                role,
+            )
+        )
 
     async def _console_authority(
         self,
@@ -956,7 +1054,7 @@ class Containment:
             # Pre-acquire normal resource authority before B3 login evidence.
             await self._prepare_action(tx, admitted, action, target)
             return True
-        if action in {"disable-installation", "deregister-runner"}:
+        if action in {"disable-installation", "deregister-runner", "remove-role-member"}:
             raise ContainmentRefused("owner_required")
         secret_ids = await self._prepare_action(tx, admitted, action, target)
         row = await tx.fetch_one(

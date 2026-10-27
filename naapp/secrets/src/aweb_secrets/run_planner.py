@@ -34,7 +34,7 @@ from pgdbm.core import TransactionManager
 from aweb_secrets import derived_grants, derived_lineage, jobs, records, runners
 from aweb_secrets.containment_state import ContainmentRefused, require_enabled
 from aweb_secrets.destination import DestinationInvalid, parse_destination_scope
-from aweb_secrets.grant import is_secrets_role
+from aweb_secrets.grant import GrantRecord, is_secrets_role
 from aweb_secrets.operation import OperationInvalid
 from aweb_secrets.policy import Policy
 from aweb_secrets.run_plan import (
@@ -59,6 +59,15 @@ _REFUSALS = (
 def _require(ok: bool, code: str) -> None:
     if not ok:
         raise RunPlanRefused(code)
+
+
+def run_grant_covers_job(grant: GrantRecord, job: jobs.JobDefinition) -> bool:
+    """Whether an active candidate pins this CURRENT job, without granting a run.
+
+    Every fixed credential slot still needs its own source/grant and policy
+    checks in the planner; one matching grant is not whole-job authority.
+    """
+    return grant.capability == "run" and (job.job_id, job.digest) in grant.jobs
 
 
 async def _runner(tx, installation: AdmittedInstallation, job: jobs.JobDefinition, runner_id: str):
@@ -253,10 +262,7 @@ class RunPlanner:
                 selected = None
                 first = None
                 for candidate in grants:
-                    if (
-                        candidate.grant_id not in alive
-                        or (job.job_id, job.digest) not in candidate.jobs
-                    ):
+                    if candidate.grant_id not in alive or not run_grant_covers_job(candidate, job):
                         continue
                     policy = await records.policy(
                         tx, installation.installation_id, candidate.policy_digest
