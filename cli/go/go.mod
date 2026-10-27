@@ -17,9 +17,9 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
-	golang.org/x/net v0.27.0
-	golang.org/x/sys v0.39.0
-	golang.org/x/term v0.38.0
+	golang.org/x/net v0.49.0
+	golang.org/x/sys v0.41.0
+	golang.org/x/term v0.40.0
 )
 
 require (
@@ -48,5 +48,5 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yuin/goldmark v1.7.4 // indirect
 	github.com/yuin/goldmark-emoji v1.0.3 // indirect
-	golang.org/x/crypto v0.25.0 // indirect
+	golang.org/x/crypto v0.48.0 // indirect
 )
