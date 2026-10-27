@@ -25,7 +25,7 @@ jobs:
   test:
     name: Test suite
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:17
