@@ -1174,6 +1174,45 @@ the stored controller, the open epoch and exact DNS disagree, or as soon as
 the response being built would exceed 131072 bytes, the endpoint answers 503
 `evidence_unavailable` with no partial evidence.
 
+### Cached status client
+
+A status response is authority evidence only when the production cached
+client obtained it. `CachedRegistryClient.id_chain_evidence(bundle, subject,
+*, domain)` (`awid/src/awid/registry.py`) returns the verifier's
+`IDChainEvidence` and never raises on a fetch failure;
+`RegistryClient.fetch_id_certificate_status(domain, request)` is the raw POST,
+which raises.
+
+- `domain` is always supplied by the caller. A chainless local subject, or a
+  request the verifier would refuse before reading evidence (another domain,
+  an oversized bundle), does no DNS or HTTP work and gets evidence without an
+  age.
+- One Redis entry per exact status request holds the status response together
+  with the namespace authority (`domain`, `dns_name`, `inherited`,
+  `controller_key`) from the client's `DomainVerifier`, both fetched in one
+  attempt. The entry's age is measured on this client's clock from when that
+  attempt began, never from the body's `observed_at`, and it survives
+  restarts.
+- Evidence aged 60 seconds or less is served with no DNS, routing or HTTP
+  work. Older evidence waits for one refresh shared by every concurrent caller
+  of that request; a cancelled caller does not cancel it. DNS, routing and HTTP
+  share one `timeout_seconds` bound.
+- Any successful JSON object answer replaces the entry, including a missing,
+  revoked, replaced or contradictory one, and the verifier judges it. A
+  successful answer that is not a JSON object within the response bound
+  removes the entry, so no older tree outlives it.
+- A failed attempt (timeout, transport error, DNS failure, any refusal
+  including 429) never touches the entry. The caller gets the last-known-good
+  evidence with its true age and `refresh_failed`, or, with none, evidence
+  without an age. The verifier allows the outage grace through 900 seconds and
+  reports `status_expired` after it.
+- A failed attempt stands for every refresh of its domain for the next 60
+  seconds inclusive, in process memory only, so a stalled registry costs one
+  timeout per window. During it callers get exactly the failed-refresh answer
+  above, with no network attempt; it never changes an age or extends the
+  grace. A successful answer ends it. Each domain's entries and cooldown are
+  independent of every other domain's.
+
 ---
 
 ## awid database schema

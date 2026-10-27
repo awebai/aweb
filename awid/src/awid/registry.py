@@ -22,6 +22,8 @@ from redis.exceptions import RedisError
 
 from awid.contract import normalize_identity_scope
 from awid.did import did_from_public_key, stable_id_from_did_key
+from awid.dns_verify import DomainVerifier
+from awid.id_certificates import IDCertificateError, IDChainEvidence, status_request
 from awid.log import (
     canonical_server_origin,
     identity_state_hash,
@@ -95,6 +97,19 @@ _TEAM_CERTIFICATES_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # Keep stale entries for one additional TTL window so callers can get
 # stale-while-revalidate behavior instead of taking a hard miss immediately.
 _STALE_MULTIPLIER = 2
+# Identity-tree status evidence (docs/id-certificates.md R-1) is reused through
+# this age inclusive, then refreshed synchronously. The 900-second outage grace
+# after a failed refresh is the verifier's: this client reports the age of
+# what it serves and whether a refresh failed, and the verifier decides.
+_ID_STATUS_FRESH_SECONDS = 60
+# A failed attempt stands for every refresh of its domain through this many
+# seconds inclusive, so a registry that stalls costs one timeout per window
+# rather than one per request. It changes no evidence age.
+_ID_STATUS_FAILURE_COOLDOWN_SECONDS = _ID_STATUS_FRESH_SECONDS
+# Entries outlive the grace, so evidence past it is reported as expired rather
+# than as never observed.
+_ID_STATUS_RETENTION_SECONDS = 2 * 15 * 60
+_ID_STATUS_PATH = "/v1/id-certificates/status"
 
 
 def _is_local_registry_origin(registry_url: str) -> bool:
@@ -244,6 +259,10 @@ class AlreadyRegisteredError(RegistryError):
             status_code=409,
             detail="did_aw already registered",
         )
+
+
+class MalformedIDStatusError(ValueError):
+    """A successful status answer that is not a JSON object within the response bound."""
 
 
 class DIDRegistrationRequiredError(RegistryError):
@@ -420,6 +439,21 @@ class RegistryClient:
             if exc.status_code == 404:
                 return None
             raise
+
+    async def fetch_id_certificate_status(self, domain: str, request: dict[str, Any]) -> dict[str, Any]:
+        """POST a status request to the registry ``domain`` routes to.
+
+        Raises RegistryError for a refused answer and MalformedIDStatusError
+        for a successful answer that is not a JSON object.
+        """
+        registry_url = await self._registry_url_for_domain(domain)
+        try:
+            status = await self._request_json("POST", _ID_STATUS_PATH, json=request, registry_url=registry_url)
+        except ValueError as exc:
+            raise MalformedIDStatusError(str(exc)) from exc
+        if not isinstance(status, dict):
+            raise MalformedIDStatusError("status answer is not a JSON object")
+        return status
 
     async def get_mapping(self, did_aw: str, signing_key: bytes) -> DIDMapping:
         path = f"/v1/did/{did_aw}/full"
@@ -1289,6 +1323,9 @@ class CachedRegistryClient(RegistryClient):
 
     redis_client: Redis
     _refresh_tasks: dict[str, asyncio.Task[None]]
+    _domain_verifier: DomainVerifier | None
+    _id_status_refreshes: dict[str, asyncio.Task[_IDStatusRefresh]]
+    _id_status_failed_at: dict[str, int]
 
     def __init__(
         self,
@@ -1300,6 +1337,7 @@ class CachedRegistryClient(RegistryClient):
         base_url: str | None = None,
         domain_registry_resolver: DomainRegistryResolver | None = None,
         service_token: str | None = None,
+        domain_verifier: DomainVerifier | None = None,
     ) -> None:
         super().__init__(
             registry_url=registry_url,
@@ -1311,6 +1349,110 @@ class CachedRegistryClient(RegistryClient):
         )
         object.__setattr__(self, "redis_client", redis_client)
         object.__setattr__(self, "_refresh_tasks", {})
+        object.__setattr__(self, "_domain_verifier", domain_verifier)
+        object.__setattr__(self, "_id_status_refreshes", {})
+        object.__setattr__(self, "_id_status_failed_at", {})
+
+    async def id_chain_evidence(
+        self, bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str,
+    ) -> IDChainEvidence:
+        """Trusted identity-tree evidence for verifying ``subject``'s chain in ``domain``.
+
+        Evidence aged 60 seconds or less is served with no DNS or HTTP work.
+        Older evidence waits for one refresh shared by every caller of the
+        same request; when that attempt fails, the last-known-good evidence is
+        returned with its age and refresh_failed set, and with none it is
+        returned without an age. Fetch failures never raise.
+        """
+        try:
+            request = status_request(bundle, subject, domain=domain)
+        except IDCertificateError:
+            request = None
+        if request is None:
+            # The verifier refuses this request before it reads any evidence.
+            return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
+        cache_key = self._id_status_cache_key(request)
+        cached = await self._read_id_status_entry(cache_key)
+        if cached is not None and _id_status_age(cached) <= _ID_STATUS_FRESH_SECONDS:
+            return _id_status_evidence(cached, refresh_failed=False)
+        refresh = await self._coalesced_id_status_refresh(cache_key, request)
+        if refresh.entry is not None:
+            return _id_status_evidence(refresh.entry, refresh_failed=False)
+        if refresh.failed and cached is not None:
+            return _id_status_evidence(cached, refresh_failed=True)
+        return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None, refresh_failed=refresh.failed)
+
+    async def _coalesced_id_status_refresh(self, cache_key: str, request: dict[str, Any]) -> _IDStatusRefresh:
+        task = self._id_status_refreshes.get(cache_key)
+        if task is None:
+            failed_at = self._id_status_failed_at.get(request["domain"])
+            if failed_at is not None and _cache_now() - failed_at <= _ID_STATUS_FAILURE_COOLDOWN_SECONDS:
+                return _IDStatusRefresh(entry=None, failed=True)
+            task = asyncio.create_task(self._refresh_id_status(cache_key, request))
+            self._id_status_refreshes[cache_key] = task
+            task.add_done_callback(lambda _task, key=cache_key: self._id_status_refreshes.pop(key, None))
+        # A cancelled caller leaves the shared attempt running for the others.
+        return await asyncio.shield(task)
+
+    async def _refresh_id_status(self, cache_key: str, request: dict[str, Any]) -> _IDStatusRefresh:
+        """One attempt, with DNS authority, routing and HTTP under one timeout.
+
+        The status and the authority it is checked against are stored as one
+        entry, aged from when the attempt began on this client's clock. A
+        malformed successful answer is not an outage: it removes the entry, so
+        no older tree outlives it.
+        """
+        domain = request["domain"]
+        fetched_at = _cache_now()
+        verify_domain = self._domain_verifier
+        if verify_domain is None:
+            from awid.dns_verify import verify_domain
+        try:
+            async with asyncio.timeout(self.timeout_seconds):
+                authority = await verify_domain(domain)
+                status = await self.fetch_id_certificate_status(domain, request)
+        except MalformedIDStatusError:
+            logger.warning("AWID identity-tree status for %s is malformed; no evidence is served", domain)
+            self._id_status_failed_at.pop(domain, None)
+            await self._invalidate_keys(cache_key)
+            return _IDStatusRefresh(entry=None, failed=False)
+        except Exception as exc:
+            logger.warning("AWID identity-tree status refresh failed for %s: %r", domain, exc)
+            self._id_status_failed_at[domain] = _cache_now()
+            return _IDStatusRefresh(entry=None, failed=True)
+        self._id_status_failed_at.pop(domain, None)
+        entry = {
+            "fetched_at": fetched_at,
+            "status": status,
+            "namespace_authority": {
+                "domain": domain,
+                "dns_name": authority.dns_name,
+                "inherited": authority.inherited,
+                "controller_key": authority.controller_did,
+            },
+        }
+        await self._redis_set(
+            cache_key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=_ID_STATUS_RETENTION_SECONDS,
+        )
+        return _IDStatusRefresh(entry=entry, failed=False)
+
+    async def _read_id_status_entry(self, cache_key: str) -> dict[str, Any] | None:
+        raw = await self._redis_get(cache_key)
+        if raw is None:
+            return None
+        try:
+            entry = json.loads(raw)
+            if (
+                type(entry["fetched_at"]) is not int
+                or not isinstance(entry["status"], dict)
+                or not isinstance(entry["namespace_authority"], dict)
+            ):
+                raise ValueError("invalid identity-tree status entry")
+        except Exception:
+            logger.warning("Invalid AWID cache payload for %s; dropping entry", cache_key)
+            await self._invalidate_keys(cache_key)
+            return None
+        return entry
 
     async def resolve_key(self, did_aw: str) -> KeyResolution:
         return await self._cached_read(
@@ -2164,6 +2306,10 @@ class CachedRegistryClient(RegistryClient):
         except (RedisError, OSError):
             logger.debug("AWID cache write skipped because Redis is unavailable", exc_info=True)
 
+    def _id_status_cache_key(self, request: dict[str, Any]) -> str:
+        digest = hashlib.sha256(canonical_json_bytes(request)).hexdigest()
+        return f"awid:registry_cache:v1:id_status:{request['domain']}:{digest}"
+
     def _did_key_cache_key(self, did_aw: str) -> str:
         return f"awid:registry_cache:v1:did_key:{self.registry_url}:{did_aw}"
 
@@ -2246,6 +2392,27 @@ def _lookup_cache_scope(caller_did_key: str | None) -> str:
 
 def _cache_now() -> int:
     return int(time.time())
+
+
+@dataclass(frozen=True)
+class _IDStatusRefresh:
+    """One status refresh: the stored entry, or why there is none."""
+
+    entry: dict[str, Any] | None
+    failed: bool
+
+
+def _id_status_age(entry: dict[str, Any]) -> int:
+    return max(0, _cache_now() - entry["fetched_at"])
+
+
+def _id_status_evidence(entry: dict[str, Any], *, refresh_failed: bool) -> IDChainEvidence:
+    return IDChainEvidence(
+        status=entry["status"],
+        namespace_authority=entry["namespace_authority"],
+        age_seconds=_id_status_age(entry),
+        refresh_failed=refresh_failed,
+    )
 
 
 def _cache_entry_fetched_at(entry: dict[str, Any], ttl_seconds: int) -> int:
