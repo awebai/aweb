@@ -846,12 +846,15 @@ can approve. The CLI shows the privately fixed recipient, exact child did:aw,
 parent/domain/kind, invitation ID and the child's key fingerprint. The recipient
 CLI shows the same fingerprint when exporting its request:
 `lowercase_hex(SHA256(raw_32_byte_subject_public_key)[0:16])`, displayed as four
-groups of eight hex digits separated by hyphens. The inviter must compare and
-confirm the fingerprint supplied by the recipient through a DIFFERENT trusted
+groups of eight hex digits separated by hyphens. The inviter ENTERS the
+recipient-supplied fingerprint and the CLI compares it with the CSR's key;
+a yes/no confirmation of the displayed value is insufficient. Obtain that
+fingerprint from the recipient through a DIFFERENT trusted
 channel from the invitation/CSR delivery (in person, a call, or an already
 trusted contact). Approval is the inviter's attestation that this exact key
 belongs to that intended person. A mismatched confirmed fingerprint refuses
-`recipient_key_mismatch`; a name, a token or the displayed fingerprint alone is
+`recipient_key_mismatch`, voids the invitation and fails the request: a new
+invitation is required. A name, a token or the displayed fingerprint alone is
 insufficient. Approval covers exactly invitation ID, child ID/key, parent,
 kind=human and domain, and is consumed by the single issuance. There is no
 --yes, batch, config/env auto-approval, agent approval or non-TTY approval;
