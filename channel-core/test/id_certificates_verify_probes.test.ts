@@ -241,3 +241,13 @@ describe("namespace replacement probes", () => {
     expect(verifyIdChain(chainOf(signedOf("alice"), child), subject, evidence(status, { controller_key: keys.root_rotated.did_key }))).toEqual(refused("root_replaced"));
   });
 });
+
+describe("cache age probes", () => {
+  const coordinator = signedOf("coordinator").certificate.id;
+  const local: IdSubject = { id: coordinator, did_key: coordinator, team_member_did_aw: null, team_member_did_key: null };
+  const chain = chainOf(signedOf("alice"), signedOf("coordinator"));
+
+  test("a negative age after a failed refresh is unavailable, not expired", () => {
+    expect(verifyIdChain(chain, local, { ...evidence(normal()), age_seconds: -1, refresh_failed: true })).toEqual(unavailable);
+  });
+});
