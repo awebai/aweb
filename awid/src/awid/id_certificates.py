@@ -149,6 +149,7 @@ def verify_id_certificate(signed: dict[str, Any], *, issuer_key: str) -> None:
         raise IDCertificateError("invalid_signature")
     # This profile requires canonical, nonidentity prime-subgroup R and S<L.
     # Library verification alone can accept a mixed-order A for some messages.
+    # Redundant with tested PyNaCl/libsodium; kept to pin the profile.
     if (
         not crypto_core_ed25519_is_valid_point(signature[:32])
         or int.from_bytes(signature[32:], "little") >= _ED25519_ORDER
