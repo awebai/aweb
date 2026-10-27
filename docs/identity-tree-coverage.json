@@ -993,7 +993,8 @@
         "J8"
       ],
       "proving_tests": [
-        "awid/tests/test_id_status_client.py"
+        "awid/tests/test_id_status_client.py",
+        "awid/tests/test_id_enrollment_resolution.py"
       ],
       "acceptance": "Production cached client, 60/900 bounds, domain isolation, timeout/negative-cache/429 and enrolled omission; S2 checkpoint6 owns final paths.",
       "ed25519_profile": "strict",
@@ -1013,6 +1014,10 @@
         {
           "file": "awid/src/awid/registry.py",
           "symbol": "_id_status_evidence"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "_id_tree_enrollment"
         }
       ]
     },
@@ -18020,6 +18025,14 @@
         "calls": {
           "awid.id_certificates.verify_ed25519": 1,
           "reference:awid.id_certificates.IDCertificateError": 1
+        }
+      },
+      {
+        "row": "AWID.STATUS.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "_id_tree_enrollment",
+        "calls": {
+          "awid.id_certificates.key_response_id_tree": 1
         }
       }
     ]

@@ -19,7 +19,7 @@ from awid.registry import CachedRegistryClient, IDTreeEnrollment, RegistryClient
 
 from awid_service.routes import did as did_routes
 
-from id_tree_support import DOMAIN, ORIGIN, Tree, at, certificate, certificate_id, did_aw, did_key
+from id_tree_support import DOMAIN, ORIGIN, VECTORS, Tree, at, certificate, certificate_id, did_aw, did_key
 from test_registry_client import FakeRedis
 
 
@@ -182,3 +182,44 @@ async def test_key_and_enrollment_come_from_one_snapshot(tree, monkeypatch):
     assert await _id_tree(tree, "bob") == {"enrolled": False}
     monkeypatch.setattr(did_routes, "_fetch_current_encryption_assertion", real)
     assert await _id_tree(tree, "bob") == {"enrolled": True, "domain": DOMAIN}
+
+
+KEY_RESPONSE_CASES = VECTORS["key_response_id_tree"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", KEY_RESPONSE_CASES, ids=lambda c: c["name"])
+async def test_key_response_id_tree_cases(case):
+    """The frozen carrier cases, by name, through the client's key resolution."""
+    registry = CountingRegistry(_key_answer(**case["key_response"]))
+    redis = FakeRedis()
+    client = CachedRegistryClient(ORIGIN, redis, transport=httpx.MockTransport(registry.handler))
+    if "cached_key_response" in case:
+        await redis.set(client._did_key_cache_key(did_aw("alice")), json.dumps({
+            "fetched_at": 2_000_000_000, "fresh_until": 2_000_000_000 + 300,
+            "value": _key_answer(**case["cached_key_response"]),
+        }), ex=600)
+    expected = case["expected_parse"]
+    try:
+        if expected["state"] == "malformed":
+            with pytest.raises(ValueError):
+                await client.resolve_key(did_aw("alice"))
+            return
+        resolution = await client.resolve_key(did_aw("alice"))
+    finally:
+        await client.aclose()
+    assert resolution.id_tree == {
+        "enrolled": IDTreeEnrollment(enrolled=True, domain=expected["domain"]),
+        "not_enrolled": IDTreeEnrollment(enrolled=False, domain=None),
+        "unknown": None,
+    }[expected["state"]]
+    if case.get("expected_key_refetch"):
+        assert registry.requests == 1
+
+
+def test_every_key_response_case_is_consumed_here():
+    names = [case["name"] for case in KEY_RESPONSE_CASES]
+    assert len(names) == len(set(names)) == 19
+    assert {case["expected_parse"]["state"] for case in KEY_RESPONSE_CASES} == {
+        "enrolled", "not_enrolled", "malformed", "unknown",
+    }

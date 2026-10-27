@@ -30,6 +30,7 @@ from awid.id_certificates import (
     IDCertificateError,
     IDChainEvidence,
     encode_id_chain_header,
+    key_response_id_tree,
     status_request,
     verify_ed25519,
 )
@@ -2711,20 +2712,18 @@ def _key_resolution_from_json(data: dict[str, Any]) -> KeyResolution:
         current_did_key=data["current_did_key"],
         log_head=_did_key_evidence_from_json(data.get("log_head")),
         encryption_key=data.get("encryption_key"),
-        id_tree=_id_tree_enrollment_from_json(data["id_tree"]) if "id_tree" in data else None,
+        id_tree=_id_tree_enrollment(data),
     )
 
 
-def _id_tree_enrollment_from_json(value: Any) -> IDTreeEnrollment:
-    """A stated enrollment, exactly; anything else stated rejects the resolution."""
-    if isinstance(value, dict) and set(value) == {"enrolled"} and value["enrolled"] is False:
-        return IDTreeEnrollment(enrolled=False, domain=None)
-    if (
-        isinstance(value, dict) and set(value) == {"enrolled", "domain"} and value["enrolled"] is True
-        and isinstance(value["domain"], str) and value["domain"]
-    ):
-        return IDTreeEnrollment(enrolled=True, domain=value["domain"])
-    raise ValueError("malformed identity-tree enrollment in key resolution")
+def _id_tree_enrollment(data: dict[str, Any]) -> IDTreeEnrollment | None:
+    """The key resolution's stated enrollment, None when unstated; a malformed one rejects it."""
+    parsed = key_response_id_tree(data)
+    if parsed["state"] == "malformed":
+        raise ValueError("malformed identity-tree enrollment in key resolution")
+    if parsed["state"] == "unknown":
+        return None
+    return IDTreeEnrollment(enrolled=parsed["state"] == "enrolled", domain=parsed["domain"])
 
 
 def _id_tree_enrollment_to_json(value: IDTreeEnrollment) -> dict[str, Any]:

@@ -510,10 +510,11 @@ enforcement of Principle 5.
   enrollment are read in one read-only `REPEATABLE READ` snapshot.
   `KeyResolution.id_tree` in the client is the same fact: an
   `IDTreeEnrollment`, or `None` (unknown) when the registry did not state it.
-  A malformed stated value rejects the resolution. `CachedRegistryClient`
-  keeps it in the same cache entry under the same TTL; entries written before
-  enrollment was carried live under an older key version and are never
-  read.
+  The client parses it with the shared `awid.id_certificates.key_response_id_tree`;
+  a malformed stated value rejects the resolution. `CachedRegistryClient`
+  keeps it in the same cache entry under the same TTL, and never serves a
+  cached resolution that does not state it: that one is fetched fresh, and if
+  the fresh answer still lacks it, enrollment stays unknown.
 - `GET /v1/did/{did_aw}/full` — full identity record. Identity auth (the
   DID holder).
 - `GET /v1/did/{did_aw}/log` — append-only audit log of `register_did`
