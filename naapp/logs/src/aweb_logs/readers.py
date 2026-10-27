@@ -23,7 +23,8 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from aweb_naapp.hooks.envelope import verify
-from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
+from aweb_naapp.hooks.owner_act import VerifiedOwnerAct
+from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, PreparedOwnerAct
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationFence
 from aweb_naapp.runtime.passkeys import (
@@ -146,6 +147,27 @@ class ReaderDirectory:
             "SELECT scope, installation_id, team_id FROM {{tables.readers}}"
             " WHERE installation_id = $1 AND team_id = $2 AND claimed_at IS NOT NULL"
             " ORDER BY scope",
+            installation_id,
+            team_id,
+        )
+        return [Reader(**row) for row in rows]
+
+    async def holder(self, scope: str) -> str | None:
+        """The B3 subject currently designated for ``scope``, if any."""
+        return await self.db.fetch_value(
+            "SELECT subject FROM {{tables.passkey_approvers}}"
+            " WHERE scope = $1 AND superseded_at IS NULL",
+            scope,
+        )
+
+    async def current_readers(self, *, installation_id: str, team_id: str) -> list[Reader]:
+        """The claimed slots of this installation and team that a holder
+        currently fills."""
+        rows = await self.db.fetch_all(
+            "SELECT r.scope, r.installation_id, r.team_id FROM {{tables.readers}} r"
+            " JOIN {{tables.passkey_approvers}} a ON a.scope = r.scope AND a.superseded_at IS NULL"
+            " WHERE r.installation_id = $1 AND r.team_id = $2 AND r.claimed_at IS NOT NULL"
+            " ORDER BY r.scope",
             installation_id,
             team_id,
         )
@@ -283,20 +305,14 @@ class ReaderDesignations:
             "role": scope,
             "contact_sha256": pending.contact_sha256,
         }
-        try:
-            prepared = await self.verifier.prepare(signing, signature, team_id=admitted.team_id)
-        except Refused:
-            raise ReaderRefused("the act is not the owner's") from None
+        prepared = await self._prepare(signing, signature, admitted)
         context = await self.recorder.prepare_owner_act(
             admitted, signing=signing, signature=signature
         )
         with self.recorder.prepared(context):
             async with self.directory.db.transaction() as tx:
                 await self.fence.check(tx, admitted)
-                try:
-                    act = await self.verifier.consume_in(tx, prepared, expected_subject=expected)
-                except Refused:
-                    raise ReaderRefused("the act does not name this slot") from None
+                act = await self._consume(tx, prepared, expected)
                 reader = await self.directory.claim(
                     tx,
                     scope=scope,
@@ -313,3 +329,50 @@ class ReaderDesignations:
                 await self.fence.check(tx, admitted)
         await self.passkeys.deliver(designation)
         return reader
+
+    async def revoke(self, *, signing: bytes, signature: str, scope: str) -> None:
+        """End a reader's designation by an ``app-role.revoke`` act naming its
+        scope and current holder. The slot stays claimed and holds no reader
+        until the owner designates one again."""
+        reader = await self.directory.reader(scope)
+        holder = await self.directory.holder(scope) if reader is not None else None
+        if reader is None or holder is None:
+            raise ReaderRefused("no reader holds this scope")
+        admitted = (await self.fence.permit(reader.team_id)).admitted
+        if admitted.installation_id != reader.installation_id:
+            raise ReaderRefused("the reader belongs to another installation")
+        expected = {
+            "app_id": admitted.app_id,
+            "installation_id": admitted.installation_id,
+            "role": scope,
+            "subject_ref": holder,
+        }
+        prepared = await self._prepare(signing, signature, admitted)
+        context = await self.recorder.prepare_owner_act(
+            admitted, signing=signing, signature=signature
+        )
+        with self.recorder.prepared(context):
+            async with self.directory.db.transaction() as tx:
+                await self.fence.check(tx, admitted)
+                act = await self._consume(tx, prepared, expected)
+                try:
+                    await self.passkeys.retire(tx, scope=scope, evidence=act)
+                except DesignationRefused:
+                    raise ReaderRefused("the reader cannot be revoked") from None
+                await self.fence.check(tx, admitted)
+
+    async def _prepare(
+        self, signing: bytes, signature: str, admitted: AdmittedInstallation
+    ) -> PreparedOwnerAct:
+        try:
+            return await self.verifier.prepare(signing, signature, team_id=admitted.team_id)
+        except Refused:
+            raise ReaderRefused("the act is not the owner's") from None
+
+    async def _consume(
+        self, tx: TransactionManager, prepared: PreparedOwnerAct, expected: dict[str, str]
+    ) -> VerifiedOwnerAct:
+        try:
+            return await self.verifier.consume_in(tx, prepared, expected_subject=expected)
+        except Refused:
+            raise ReaderRefused("the act does not name this reader") from None

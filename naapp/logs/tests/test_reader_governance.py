@@ -1,10 +1,12 @@
-"""Designating a reader (audit-substrate.md §B5), on real PostgreSQL with a
-real AWID registry, real owner acts and a software passkey.
+"""Designating and revoking readers (audit-substrate.md §B5), on real
+PostgreSQL with a real AWID registry, real owner acts and a software passkey.
 
 The owner's ``app-role.designate`` act names a pending reader slot. In one
 transaction it consumes the act's nonce, claims the slot, designates the
 slot's B3 holder and appends logs' own signed governance event to the team's
-chain, so either all of that holds or none of it does.
+chain, so either all of that holds or none of it does. The owner's
+``app-role.revoke`` act names a reader's scope and its current holder, and
+ends the holder's designation the same way.
 """
 
 from __future__ import annotations
@@ -410,3 +412,109 @@ async def test_when_logs_cannot_append_its_own_event_nothing_takes_effect(world:
     assert await count(world, "outbox_events") == 0
     assert await count(world, "owner_act_nonces") == 0
     assert len(await chained(world)) == 1
+
+
+async def enrolled_reader(world: World) -> tuple[str, str]:
+    """A designated reader that has enrolled its passkey: its scope and holder."""
+    scope = await slot(world)
+    signing, signature = world.owner.sign("app-role.designate", designation(scope))
+    await world.designations.designate(
+        signing=signing, signature=signature, scope=scope, contact=CONTACT
+    )
+    token = world.inbox.enrolments[CONTACT][-1]
+    enrolment = await world.recorder.prepare_enrolment(token)
+    with world.recorder.prepared(enrolment):
+        await world.passkeys.complete_enrolment(
+            token,
+            SoftAuthenticator(CONSOLE).create(await world.passkeys.enrolment_options(token)),
+            fence=enrolment,
+        )
+    return scope, await holder(world, scope)
+
+
+async def holder(world: World, scope: str) -> str | None:
+    return await world.db.fetch_value(
+        "SELECT subject FROM {{tables.passkey_approvers}} WHERE scope = $1 AND superseded_at IS NULL",
+        scope,
+    )
+
+
+def revocation(scope: str, subject_ref: str) -> dict:
+    return {
+        "app_id": APP_ID,
+        "installation_id": INSTALLATION_ID,
+        "role": scope,
+        "subject_ref": subject_ref,
+    }
+
+
+async def test_the_owner_revokes_a_reader_on_logs_own_chain(world: World):
+    scope, reader = await enrolled_reader(world)
+    signing, signature = world.owner.sign("app-role.revoke", revocation(scope, reader))
+    await world.designations.revoke(signing=signing, signature=signature, scope=scope)
+    assert await holder(world, scope) is None
+    revoked = (await chained(world))[-1]
+    assert revoked["payload"] == {
+        "act": "role.revoked",
+        "direction": "narrowing",
+        "role": READER_ROLE,
+        "subject_ref": reader,
+        "authority": "owner_act",
+        "owner_act_sha256": hashlib.sha256(signing).hexdigest(),
+    }
+    assert (
+        await world.directory.current_readers(installation_id=INSTALLATION_ID, team_id=TEAM_ID)
+        == []
+    )
+
+
+async def test_the_owner_may_revoke_the_last_reader(world: World):
+    scope, reader = await enrolled_reader(world)
+    assert [
+        r.scope
+        for r in await world.directory.current_readers(
+            installation_id=INSTALLATION_ID, team_id=TEAM_ID
+        )
+    ] == [scope]
+    signing, signature = world.owner.sign("app-role.revoke", revocation(scope, reader))
+    await world.designations.revoke(signing=signing, signature=signature, scope=scope)
+    assert await holder(world, scope) is None
+
+
+@pytest.mark.parametrize(
+    "signed",
+    [
+        lambda scope, reader: revocation(scope, "someone-else"),
+        lambda scope, reader: {**revocation(scope, reader), "installation_id": str(uuid4())},
+        lambda scope, reader: revocation("logs.reader." + "0" * 32, reader),
+    ],
+    ids=["another holder", "another installation", "another scope"],
+)
+async def test_a_revocation_that_does_not_name_the_reader_exactly_revokes_nobody(
+    world: World, signed
+):
+    scope, reader = await enrolled_reader(world)
+    before = await chained(world)
+    signing, signature = world.owner.sign("app-role.revoke", signed(scope, reader))
+    with pytest.raises(ReaderRefused):
+        await world.designations.revoke(signing=signing, signature=signature, scope=scope)
+    assert await holder(world, scope) == reader
+    assert await chained(world) == before
+
+
+async def test_a_replayed_revocation_revokes_once(world: World):
+    scope, reader = await enrolled_reader(world)
+    signing, signature = world.owner.sign("app-role.revoke", revocation(scope, reader))
+    await world.designations.revoke(signing=signing, signature=signature, scope=scope)
+    with pytest.raises(ReaderRefused):
+        await world.designations.revoke(signing=signing, signature=signature, scope=scope)
+    acts = [entry["payload"]["act"] for entry in await chained(world)]
+    assert acts.count("role.revoked") == 1
+
+
+async def test_a_scope_that_is_no_reader_is_revoked_by_nobody(world: World):
+    scope = await slot(world)
+    signing, signature = world.owner.sign("app-role.revoke", revocation(scope, "anyone"))
+    with pytest.raises(ReaderRefused):
+        await world.designations.revoke(signing=signing, signature=signature, scope=scope)
+    assert await chained(world) == []
