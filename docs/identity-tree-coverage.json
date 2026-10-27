@@ -1496,8 +1496,8 @@
         "backend/tests/test_human_identity_keys.py::test_storage_requires_selected_canonical_domain_without_silent_relabel",
         "backend/tests/test_stored_key_crypto.py"
       ],
-      "acceptance": "One checked user+domain human key/ID, session/exact-invitation signer; BYOT root never in Cloud. Cloud owner supplies the exact per-site paths and proving tests before conversion.",
-      "candidate_head": "ac91518d85dd5cb52cfbbb71eee7ec7bfa4aef9a38",
+      "acceptance": "One checked user+domain human key/ID, session/exact-invitation signer; BYOT root never in Cloud.",
+      "candidate_head": "91518d85dd5cb52cfbbb71eee7ec7bfa4aef9a38",
       "sites": [
         {
           "file": "backend/src/aweb_cloud/services/human_identity_keys.py",
@@ -1514,7 +1514,6 @@
       ],
       "coverage_scope": "Prepared custodial pending-key storage only; no registered-human authority.",
       "open_items": [
-        "Focused Postgres tests are queued; measured runtime result is pending.",
         "Signing/export route, external-human account binding and BYOT completion remain pending.",
         "Registered-human authority, constructor conversion and runtime verifier remain pending."
       ],
@@ -1523,7 +1522,10 @@
         "reported_by": "aweb-cloud-expert-channels-plan-review",
         "static_command": "make lint release-verify-migration-checksums verify-gate-idioms release-verify-migrations",
         "static_result": "passed_as_reported_by_owner",
-        "focused_result": "queued"
+        "focused_result": "passed_as_reported_by_owner",
+        "focused_command": "make ENV_FILE=/dev/null test-backend PYTEST_BACKEND_ARGS='-n 0 -q -x tests/test_human_identity_keys.py tests/test_stored_key_crypto.py'",
+        "focused_summary": "20 passed in 1.89s; exit 0",
+        "focused_source_message_id": "dbfe593e-eda6-465f-83a0-eb41a3cf2ccf"
       }
     },
     {
