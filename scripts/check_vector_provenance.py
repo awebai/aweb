@@ -519,6 +519,22 @@ ROOT_CONSUMERS = {
         "agent-activity-v1.json",
         'new URL("../../docs/vectors/agent-activity-v1.json", import.meta.url)',
     ),
+    PurePosixPath("channel-core/test/id_certificates_codec.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/id_certificates_disposition.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/id_certificates_verify.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/id_certificates_verify_probes.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
     PurePosixPath("channel-core/test/pin_store_raw_wire.test.ts"): _consumer(
         "pin-store-raw-wire-v1.json",
         'join(testDir, "..", "..", "docs", "vectors", "pin-store-raw-wire-v1.json")',
