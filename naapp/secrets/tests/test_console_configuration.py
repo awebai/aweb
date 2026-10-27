@@ -51,6 +51,9 @@ async def configuration_draft(w, human, headers):
 async def test_owner_confirms_vault_reference_with_metadata_and_atomic_governance(world):
     w = world
     scope = await enrol_owner(w, ALICE, "alice@acme.com")
+    event_start = await w.db.fetch_value(
+        "SELECT COALESCE(max(position),0) FROM {{tables.outbox_events}}"
+    )
     async with clients(w) as (human, agent):
         headers = await sign_in(w, human, scope)
         drafted, record, token, binding, value = await configuration_draft(w, human, headers)
@@ -66,7 +69,8 @@ async def test_owner_confirms_vault_reference_with_metadata_and_atomic_governanc
     assert (await active_binding(w.db, binding.context)).credential_context == token
     assert (await w.approvals.get(drafted["approval_id"])).state is ApprovalState.CONSUMED
     rows = await w.db.fetch_all(
-        "SELECT payload, signature FROM {{tables.outbox_events}} WHERE kind='post-governance-hook'"
+        "SELECT payload, signature FROM {{tables.outbox_events}} WHERE kind='post-governance-hook' AND position>$1",
+        event_start,
     )
     events = [verify(bytes(row["payload"]), row["signature"], team_id=TEAM).fields for row in rows]
     assert sorted(event["payload"]["act"] for event in events) == [
@@ -123,6 +127,9 @@ async def test_configuration_refusal_keeps_revision_activation_and_decision_iner
 async def test_owner_configuration_records_share_the_single_proof_bound_writer(world):
     w = world
     scope = await enrol_owner(w, ALICE, "alice@acme.com")
+    event_start = await w.db.fetch_value(
+        "SELECT COALESCE(max(position),0) FROM {{tables.outbox_events}}"
+    )
     items = [
         deepcopy(ITEMS[kind]) for kind in ("secret", "destination", "operation", "policy", "grant")
     ]
@@ -157,7 +164,8 @@ async def test_owner_configuration_records_share_the_single_proof_bound_writer(w
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.destinations}}") == 1
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.grants}}") == 1
     rows = await w.db.fetch_all(
-        "SELECT payload,signature FROM {{tables.outbox_events}} WHERE kind='post-governance-hook'"
+        "SELECT payload,signature FROM {{tables.outbox_events}} WHERE kind='post-governance-hook' AND position>$1",
+        event_start,
     )
     events = [verify(bytes(row["payload"]), row["signature"], team_id=TEAM).fields for row in rows]
     assert sorted(event["payload"]["act"] for event in events) == [
@@ -186,6 +194,9 @@ async def test_job_and_runner_creation_use_shared_confirmation_and_protected_res
     await apply_job_migrations(w.db)
     await apply_runner_migrations(w.db)
     scope = await enrol_owner(w, ALICE, "alice@acme.com")
+    event_start = await w.db.fetch_value(
+        "SELECT COALESCE(max(position),0) FROM {{tables.outbox_events}}"
+    )
     runner_id = mint_runner_id()
     body = job_after()
     body["runner_ids"] = [runner_id]
@@ -223,7 +234,8 @@ async def test_job_and_runner_creation_use_shared_confirmation_and_protected_res
         assert registration["registration_code"] not in (await human.get(path)).text
         assert (await human.post(path + "/confirm", json={}, headers=headers)).status_code == 409
     rows = await w.db.fetch_all(
-        "SELECT payload,signature FROM {{tables.outbox_events}} WHERE kind='post-governance-hook'"
+        "SELECT payload,signature FROM {{tables.outbox_events}} WHERE kind='post-governance-hook' AND position>$1",
+        event_start,
     )
     events = [verify(bytes(row["payload"]), row["signature"], team_id=TEAM).fields for row in rows]
     job_event = next(

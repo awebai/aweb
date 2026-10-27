@@ -179,7 +179,12 @@ async def store_run_context(
     ):
         raise UseAuditUnavailable()
     if inputs.secret_ref is not None:
-        candidates = [slot for slot in prepared.slots if slot.body["delivery"] == "durable"]
+        candidates = [
+            slot
+            for slot in prepared.slots
+            if slot.body["delivery"] == "durable"
+            and slot.body["source"]["ref"] == inputs.secret_ref
+        ]
         if len(candidates) != 1 or candidates[0].body["source"]["ref"] != inputs.secret_ref:
             raise UseAuditUnavailable()
     payload = {

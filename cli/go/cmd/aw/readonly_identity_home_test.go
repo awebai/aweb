@@ -137,7 +137,7 @@ func TestReadOnlyCommandsUseExternalIdentityHome(t *testing.T) {
 								t.Fatalf("wrong roster: %s", out)
 							}
 							if kind == "grant" {
-								if got.Source != "service-roster" || !strings.Contains(got.Limitations, "agents only") || !strings.Contains(got.Limitations, "no humans") || !strings.Contains(got.Limitations, "certificate") {
+								if got.Source != "service-roster" || !strings.Contains(got.Limitations, "agents only") || !strings.Contains(got.Limitations, "people are not included") || !strings.Contains(got.Limitations, "certificate") {
 									t.Errorf("missing service limitations: %s", out)
 								}
 								if got.Members[0].Alias != "alice" || got.Members[0].MemberDIDAW != "did:aw:alice" || got.Members[0].CertificateID != "" || got.Members[0].IssuedAt != "" {
@@ -226,7 +226,7 @@ func TestReadOnlyGrantBoundaries(t *testing.T) {
 		responseTeam string
 		expired      bool
 	}{
-		{name: "roster-any-valid-grant", args: []string{"id", "team", "members"}, want: "agents only (no humans)", requests: 1},
+		{name: "roster-any-valid-grant", args: []string{"id", "team", "members"}, want: "agents only (people are not included)", requests: 1},
 		{name: "instructions-outside-scope", args: []string{"instructions", "show"}, want: "outside grant scope", requests: 1, status: 403},
 		{name: "roster-revoked-grant", args: []string{"id", "team", "members"}, want: "identity grant rejected", requests: 1, status: 403},
 		{name: "roster-server-failure", args: []string{"id", "team", "members"}, want: "roster unavailable", requests: 4, status: 503},

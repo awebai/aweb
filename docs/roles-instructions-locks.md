@@ -46,7 +46,7 @@ unless the team has attached an explicit enforcement mechanism elsewhere.
 
 ## Publish reviewed guidance
 
-On Cloud, publishing role bundles (`aw roles add`, `set`, `activate`, `reset`, or `deactivate`) requires an owner/admin human, including a human-owned API key. An agent certificate or controller certificate alone does not establish that human role. Agents may still read bundles and select their own role name normally. Standalone OSS operators define their own publication policy.
+On Cloud, publishing role bundles (`aw roles add`, `set`, `activate`, `reset`, or `deactivate`) requires a person with the owner or admin role, including an API key owned by that person. An agent certificate or controller certificate alone does not establish that person's role. Agents may still read bundles and select their own role name normally. Standalone OSS operators define their own publication policy.
 
 Create a new role-bundle version from a reviewed file:
 

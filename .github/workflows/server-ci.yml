@@ -87,4 +87,5 @@ jobs:
         working-directory: server
         env:
           POSTGRES_PASSWORD: testpass
+          AWID_SERVICE_TOKEN: ci-compose-validation-only
         run: docker compose config

@@ -43,6 +43,7 @@ async def application(uses, *, origin=ORIGIN, agent_origin=API, registration_vie
     console = OwnerConsole(
         db=w.db,
         passkeys=w.passkeys,
+        credential_audit=w.credential_audit,
         directory=w.directory,
         fence=w.fence,
         verifier=w.owner.verifier,
@@ -270,6 +271,48 @@ async def test_f6_expiring_during_decision_lock_wait_rolls_back_decision(uses):
         assert (await uses.approvals.get(approval_id)).state is ApprovalState.PENDING
 
 
+async def test_decision_lock_timeout_refuses_without_recording_a_decision(uses):
+    from tests.test_broker_audit import envelopes
+
+    approval_id, token, scope = await pending_use(uses)
+    w = uses.world
+    async with clients(uses) as (human, _):
+        headers = await sign_in(w, human, scope, "finance@acme.com")
+        options = await human.post(
+            "/use-approvals/decision-options",
+            json={"token": token, "decision": "approve"},
+            headers=headers,
+        )
+        proof = w.devices["finance@acme.com"].get(options.json())
+        before = await envelopes(w.db)
+        # Preserve the released timeout and the original test's F6 deadline.
+        # The real approval-row lock stays held until PostgreSQL refuses the
+        # request, rather than depending on the observer task being scheduled.
+        assert await w.db.fetch_value("SHOW lock_timeout") == "5s"
+        await w.db.execute(
+            "UPDATE {{tables.installation_fences}} SET fresh_until=clock_timestamp()+interval '2 seconds'"
+        )
+        async with w.db.transaction() as gate:
+            await gate.fetch_value(
+                "SELECT approval_id FROM {{tables.approvals}} WHERE approval_id=$1 FOR UPDATE",
+                approval_id,
+            )
+            response = await human.post(
+                "/use-approvals/decide",
+                json={"token": token, "decision": "approve", "assertion": proof},
+                headers=headers,
+            )
+        assert response.status_code == 503
+        assert response.json() == {"detail": "approval_busy"}
+        approval = await uses.approvals.get(approval_id)
+        assert approval.state is ApprovalState.PENDING
+        assert approval.decided_by is None and approval.consumed_operation_id is None
+        assert (
+            await w.db.fetch_value("SELECT count(*) FROM {{tables.use_approval_audit_proofs}}") == 0
+        )
+        assert await envelopes(w.db) == before
+
+
 def test_open_request_projection_keeps_unicode_and_alabel_host_and_full_body():
     from aweb_secrets.console_use_approvals import _projection
     from aweb_secrets.use_approval import use_approval_view
@@ -316,6 +359,7 @@ async def test_approve_requires_audit_targets_but_reject_records_without_lookup(
             headers=headers,
         )
         assert shown.status_code == 200 and calls == []
+        before = await envelopes(uses.world.db)
         for decision in ("approve", "reject"):
             options = await human.post(
                 "/use-approvals/decision-options",
@@ -341,12 +385,17 @@ async def test_approve_requires_audit_targets_but_reject_records_without_lookup(
                     )
                     == 0
                 )
-                assert len(await envelopes(uses.world.db)) == 1
+                assert await envelopes(uses.world.db) == before
             else:
                 assert response.status_code == 200
                 assert (await uses.approvals.get(approval_id)).state is ApprovalState.REJECTED
-                assert (await envelopes(uses.world.db))[-1]["payload"][
-                    "approval_decision"
-                ] == "denied"
+                decisions = [
+                    event["payload"]["approval_decision"]
+                    for event in await envelopes(uses.world.db)
+                    if event["hook"] == "post-secret-use-hook"
+                    and event["payload"].get("approval_id") == approval_id
+                    and event["payload"].get("action") == "approval_decided"
+                ]
+                assert decisions == ["denied"]
         assert calls == [TEAM]
         assert (await uses.approvals.get(approval_id)).consumed_operation_id is None

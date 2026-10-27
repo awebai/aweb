@@ -8,7 +8,7 @@ import pytest
 from aweb_naapp.roles import assign, principal_key, unassign
 from aweb_naapp.runtime.authorization import Authorization, DeclaredTool
 
-from aweb_secrets import records
+from aweb_secrets import records, tool_results
 from aweb_secrets.broker_audit import BrokerAudit
 from aweb_secrets.member_types import broker_result_reply
 from aweb_secrets.redaction import KnownValues
@@ -65,6 +65,40 @@ async def test_request_id_and_opaque_locator_return_same_progress_without_any_wr
     for ref in ("broker-request", admission.intent_id):
         reply = await service.get(ref=ref, authorization=authorization())
         assert reply.status == 200 and reply.body == expected
+    assert await snapshot(db) == before
+
+
+async def test_uncertain_broker_locator_reads_only_its_original_authorized_association(db, fence):  # noqa: F811
+    request, admission, dispatch_id, dispatches = await prepared(db, fence)
+    async with db.transaction() as tx:
+        await dispatches.admit(
+            tx, dispatch_id, fence=authority(fence, admission, request, dispatch_id)
+        )
+    async with db.transaction() as tx:
+        final = authority(fence, admission, request, dispatch_id)
+        current = await dispatches.begin_dispatch(tx, dispatch_id, fence=final)
+        await final.check(tx, current)
+    async with db.transaction() as tx:
+        assert await dispatches.outcome_unknown(
+            tx,
+            dispatch_id,
+            tool_results.outcome_unknown(
+                request_id="broker-request", request_ref=admission.intent_id
+            ),
+        )
+    service = UseStatus(db, fence=fence)
+    before = await snapshot(db)
+    reply = await service.get(ref="broker-request", authorization=authorization())
+    locator = reply.body["reconcile_ref"]
+    assert locator == admission.intent_id
+    assert reply.body["state"] == "outcome_unknown" and "next" not in reply.body
+    assert await service.get(ref=locator, authorization=authorization()) == reply
+    assert (await service.get(ref=locator, authorization=authorization(BOB))).status == 404
+    assert await snapshot(db) == before
+    async with db.transaction() as tx:
+        await records.revoke_grant(tx, INSTALLATION, admission.grant_id)
+    before = await snapshot(db)
+    assert (await service.get(ref=locator, authorization=authorization())).status == 404
     assert await snapshot(db) == before
 
 
