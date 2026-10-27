@@ -5,21 +5,9 @@ package awid
 // the same id/domain/parent/kind with its current key, only for a certificate
 // its own signer issued.
 import (
-	"encoding/base64"
 	"reflect"
 	"time"
 )
-
-// IDCertificateSigner signs exact bytes and returns the signing did:key with
-// the raw 64-byte Ed25519 signature. No private key crosses this boundary.
-type IDCertificateSigner func(payload []byte) (didKey string, signature []byte, err error)
-
-// IDIssuanceLog is the parent signer's durable record of the certificates it
-// issued. Entries survive rotation and are never seeded from a submission.
-type IDIssuanceLog interface {
-	Recorded(certificateID string) (bool, error)
-	Record(certificateID string) error
-}
 
 // IDResignRequest is what a child presents on contact: its old signed
 // certificate, the binding it asks to have signed, and the did:key it proved.
@@ -30,8 +18,12 @@ type IDResignRequest struct {
 }
 
 // ResignIDCertificate returns the re-signed certificate after recording it in
-// the issuance log. Every refusal happens before the signer runs.
-func ResignIDCertificate(req IDResignRequest, parentID string, evidence *IDChainEvidence, domain string, log IDIssuanceLog, sign IDCertificateSigner, now time.Time) (map[string]any, error) {
+// the issuance store. Every refusal happens before the signer runs.
+func ResignIDCertificate(req IDResignRequest, parentID string, evidence *IDChainEvidence, domain string, store IDIssuanceStore, sign IDCertificateSigner, now time.Time) (map[string]any, error) {
+	return resignIDCertificate(req, parentID, evidence, domain, store, sign, now, recordIssued(store, now))
+}
+
+func resignIDCertificate(req IDResignRequest, parentID string, evidence *IDChainEvidence, domain string, store IDIssuanceStore, sign IDCertificateSigner, now time.Time, commit func(map[string]any, string) error) (map[string]any, error) {
 	old, err := idCertificateShape(req.Signed)
 	if err != nil {
 		return nil, err
@@ -86,12 +78,8 @@ func ResignIDCertificate(req IDResignRequest, parentID string, evidence *IDChain
 	if err != nil {
 		return nil, err
 	}
-	recorded, err := log.Recorded(oldID)
-	if err != nil {
+	if err = idIssuanceRecorded(store, parent, oldID); err != nil {
 		return nil, err
-	}
-	if !recorded {
-		return nil, idCertificateRefusal("issuance_not_recorded")
 	}
 
 	certificate := map[string]any{}
@@ -99,30 +87,8 @@ func ResignIDCertificate(req IDResignRequest, parentID string, evidence *IDChain
 		certificate[field] = value
 	}
 	certificate["issuer_key"] = current
-	certificate["issued_at"] = now.UTC().Format("2006-01-02T15:04:05Z")
-	payload, err := IDCertificateSigningBytes(certificate)
-	if err != nil {
-		return nil, err
-	}
-	signer, signature, err := sign(payload)
-	if err != nil {
-		return nil, err
-	}
-	if signer != current {
-		return nil, idCertificateRefusal("issuer_key_not_current")
-	}
-	signed := map[string]any{"certificate": certificate, "signature": base64.RawURLEncoding.EncodeToString(signature)}
-	if err = VerifyIDCertificate(signed, current); err != nil {
-		return nil, err
-	}
-	id, err := IDCertificateID(certificate)
-	if err != nil {
-		return nil, err
-	}
-	if err = log.Record(id); err != nil {
-		return nil, err
-	}
-	return signed, nil
+	certificate["issued_at"] = idRecordTime(now)
+	return issueIDCertificate(certificate, current, sign, commit)
 }
 
 func parentKeyHistoryHas(parent *idStatusIdentity, key string) bool {
