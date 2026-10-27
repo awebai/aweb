@@ -181,48 +181,66 @@
       "id": "AWID.NAMESPACE.REGISTER",
       "repo": "aweb",
       "files": [
-        "awid/src/awid_service/routes/dns_namespaces.py"
+        "awid/src/awid_service/routes/dns_namespaces.py",
+        "awid/src/awid_service/namespace_epochs.py"
       ],
       "operations": [
         "register"
       ],
       "change": "adapt",
       "slice": "S2",
-      "status": "pending",
+      "status": "candidate",
       "journeys": [
         "J1",
         "J2",
         "J3"
       ],
-      "proving_tests": [],
-      "acceptance": "Exact authority, witnessed epochs and initial/replaced continuity."
+      "proving_tests": [
+        "awid/tests/test_id_namespace_epochs.py::test_exact_first_registration_opens_a_replaced_epoch",
+        "awid/tests/test_id_namespace_epochs.py::test_a_first_registration_without_exact_proof_opens_no_epoch",
+        "awid/tests/test_id_namespace_epochs.py::test_pre_upgrade_authenticated_post_opens_first_epoch",
+        "awid/tests/test_id_namespace_epochs.py::test_repeat_authenticated_post_is_epoch_noop",
+        "awid/tests/test_id_namespace_epochs.py::test_pre_upgrade_post_by_another_dns_key_opens_nothing",
+        "awid/tests/test_id_namespace_epochs.py::test_pre_upgrade_parent_authorized_post_opens_nothing",
+        "awid/tests/test_id_namespace_epochs.py::test_pre_upgrade_reverify_opens_nothing",
+        "awid/tests/test_id_namespace_epochs.py::test_pre_upgrade_concurrent_authenticated_posts_open_once"
+      ],
+      "acceptance": "Exact authority, witnessed epochs and initial/replaced continuity.",
+      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b"
     },
     {
       "id": "AWID.NAMESPACE.REVERIFY",
       "repo": "aweb",
       "files": [
-        "awid/src/awid_service/routes/dns_namespaces.py"
+        "awid/src/awid_service/routes/dns_namespace_reverify.py"
       ],
       "operations": [
         "register",
         "verify"
       ],
-      "change": "adapt",
+      "change": "keep",
       "slice": "S2",
-      "status": "pending",
+      "status": "candidate",
       "journeys": [
         "J1",
         "J2",
         "J3"
       ],
-      "proving_tests": [],
-      "acceptance": "No epoch backfill; unchanged live exact authority is not a replacement."
+      "proving_tests": [
+        "awid/tests/test_id_namespace_epochs.py::test_same_key_reverify_writes_no_epoch",
+        "awid/tests/test_id_namespace_epochs.py::test_reverify_to_another_key_writes_no_epoch",
+        "awid/tests/test_id_namespace_epochs.py::test_failed_or_unverified_dns_writes_no_epoch",
+        "awid/tests/test_id_namespace_epochs.py::test_exact_inherited_exact_observations_write_no_epoch"
+      ],
+      "acceptance": "Retain released reverify row behavior; observations write no epoch and unchanged live exact authority is not a replacement.",
+      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b"
     },
     {
       "id": "AWID.NAMESPACE.ROTATE",
       "repo": "aweb",
       "files": [
-        "awid/src/awid_service/routes/dns_namespaces.py"
+        "awid/src/awid_service/routes/dns_namespaces.py",
+        "awid/src/awid_service/namespace_epochs.py"
       ],
       "operations": [
         "register",
@@ -230,13 +248,23 @@
       ],
       "change": "adapt",
       "slice": "S2",
-      "status": "pending",
+      "status": "candidate",
       "journeys": [
         "J5",
         "J10"
       ],
-      "proving_tests": [],
-      "acceptance": "Previous-key-authorized rotation versus DNS-only replacement; serialize against child registration."
+      "proving_tests": [
+        "awid/tests/test_id_namespace_rotation.py",
+        "awid/tests/test_id_namespace_epochs.py::test_exact_put_to_a_new_key_opens_replaced",
+        "awid/tests/test_id_namespace_epochs.py::test_exact_put_of_the_epoch_key_is_an_epoch_noop",
+        "awid/tests/test_id_namespace_epochs.py::test_exact_put_without_an_epoch_opens_the_first_one",
+        "awid/tests/test_id_namespace_epochs.py::test_put_skip_dns_writes_no_epoch",
+        "awid/tests/test_id_namespace_epochs.py::test_put_parent_authorization_writes_no_epoch",
+        "awid/tests/test_id_namespace_epochs.py::test_reverify_row_change_then_exact_put_opens_replaced",
+        "awid/tests/test_id_certificate_registration.py::test_replacement_races_parent_registration"
+      ],
+      "acceptance": "Previous-key-authorized rotation versus DNS-only replacement; serialize against child registration.",
+      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b"
     },
     {
       "id": "AWID.NAMESPACE.DELETE",
@@ -249,19 +277,22 @@
       ],
       "change": "adapt",
       "slice": "S2",
-      "status": "pending",
+      "status": "candidate",
       "journeys": [
         "J5",
         "J10"
       ],
-      "proving_tests": [],
-      "acceptance": "Retain epochs/revisions; delete/re-register cannot revive the old tree, including same-key reuse."
+      "proving_tests": [
+        "awid/tests/test_id_namespace_epochs.py::test_namespace_delete_with_live_ids_preserves_history",
+        "awid/tests/test_id_namespace_epochs.py::test_namespace_delete_then_reregister_opens_replaced"
+      ],
+      "acceptance": "Retain epochs/revisions; delete/re-register cannot revive the old tree, including same-key reuse.",
+      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b"
     },
     {
       "id": "AWID.DID.GENESIS",
       "repo": "aweb",
       "files": [
-        "awid/src/awid/did.py",
         "awid/src/awid_service/routes/did.py"
       ],
       "operations": [
@@ -270,14 +301,17 @@
       ],
       "change": "adapt",
       "slice": "S2",
-      "status": "pending",
+      "status": "candidate",
       "journeys": [
         "J1",
         "J6",
         "J7"
       ],
-      "proving_tests": [],
-      "acceptance": "Keep DID syntax and key proof; separate ID-tree enrollment from bare DID creation."
+      "proving_tests": [
+        "awid/tests/test_did_key_witness.py::test_registration_and_rotation_times_come_from_the_tree_clock"
+      ],
+      "acceptance": "Keep DID syntax and key proof; separate ID-tree enrollment from bare DID creation.",
+      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b"
     },
     {
       "id": "AWID.DID.ROTATE",
@@ -291,12 +325,16 @@
       ],
       "change": "adapt",
       "slice": "S2",
-      "status": "pending",
+      "status": "candidate",
       "journeys": [
         "J10"
       ],
-      "proving_tests": [],
-      "acceptance": "Current-key CAS and monotone post-lock witnesses; no inference from pre-upgrade log timestamps."
+      "proving_tests": [
+        "awid/tests/test_did_key_witness.py",
+        "awid/tests/test_id_certificate_registration.py::test_witness_times_never_precede_the_key_epochs_they_select"
+      ],
+      "acceptance": "Current-key CAS and monotone post-lock witnesses; no inference from pre-upgrade log timestamps.",
+      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b"
     },
     {
       "id": "AWID.DID.LOG",
@@ -336,19 +374,28 @@
         "J10"
       ],
       "proving_tests": [],
-      "acceptance": "Address replacement changes DID, never resets continuity or silently transfers contact trust."
+      "acceptance": "Address replacement changes DID, never resets continuity or silently transfers contact trust.",
+      "open_items": [
+        "Lost-key journey (checkpoint 5)."
+      ]
     },
     {
       "id": "AWID.ID.REGISTER",
       "repo": "aweb",
-      "files": [],
+      "files": [
+        "awid/src/awid_service/routes/id_certificates.py",
+        "awid/src/awid_service/id_registration.py",
+        "awid/src/awid_service/id_chains.py",
+        "awid/src/awid_service/id_tree_gate.py",
+        "awid/src/awid_service/migrations/010_id_certificates.sql"
+      ],
       "operations": [
         "register",
         "verify"
       ],
       "change": "add",
       "slice": "S2",
-      "status": "pending",
+      "status": "candidate",
       "journeys": [
         "J1",
         "J3",
@@ -357,20 +404,34 @@
         "J8",
         "J10"
       ],
-      "proving_tests": [],
-      "acceptance": "Subject proof, R1-R3 and current parent/replacement state checked atomically; exact invitation retry preserves registration time. S2 owner supplies final module path and test selectors."
+      "proving_tests": [
+        "awid/tests/test_id_certificate_registration.py",
+        "awid/tests/test_id_certificate_registration.py::test_every_frozen_operation_case_is_accounted_for_by_name",
+        "awid/tests/test_id_certificate_schema.py"
+      ],
+      "acceptance": "Subject proof, R1-R3 and current parent/replacement state checked atomically; exact invitation retry preserves registration time.",
+      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "open_items": [
+        "Full ancestor cascade through S1 verify_id_chain (L1, checkpoint 4)."
+      ]
     },
     {
       "id": "AWID.ID.REPARENT",
       "repo": "aweb",
-      "files": [],
+      "files": [
+        "awid/src/awid_service/routes/id_certificates.py",
+        "awid/src/awid_service/id_registration.py",
+        "awid/src/awid_service/id_chains.py",
+        "awid/src/awid_service/id_tree_gate.py",
+        "awid/src/awid_service/migrations/010_id_certificates.sql"
+      ],
       "operations": [
         "register",
         "verify"
       ],
       "change": "add",
       "slice": "S2",
-      "status": "pending",
+      "status": "candidate",
       "journeys": [
         "J1",
         "J3",
@@ -379,20 +440,33 @@
         "J8",
         "J10"
       ],
-      "proving_tests": [],
-      "acceptance": "Explicit new-parent signature and subject proof, expected-head CAS; preserve key and team certificates. S2 owner supplies final module path and test selectors."
+      "proving_tests": [
+        "awid/tests/test_id_certificate_registration.py::test_registered_reparent_keeps_key_and_team_cert",
+        "awid/tests/test_id_certificate_registration.py::test_replacement_root_readmits_existing_id",
+        "awid/tests/test_id_certificate_registration.py::test_head_cas_refuses_a_stale_or_missing_expected_head",
+        "awid/tests/test_id_certificate_registration.py::test_a_reparent_under_its_own_descendant_is_a_cycle"
+      ],
+      "acceptance": "Explicit new-parent signature and subject proof, expected-head CAS; preserve key and team certificates.",
+      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "open_items": [
+        "reparent-register-race (checkpoint 5)."
+      ]
     },
     {
       "id": "AWID.ID.REVOKE",
       "repo": "aweb",
-      "files": [],
+      "files": [
+        "awid/src/awid_service/id_revocation.py",
+        "awid/src/awid_service/routes/id_certificates.py",
+        "awid/src/awid_service/id_tree_gate.py"
+      ],
       "operations": [
         "register",
         "verify"
       ],
       "change": "add",
       "slice": "S2",
-      "status": "pending",
+      "status": "partial",
       "journeys": [
         "J1",
         "J3",
@@ -401,8 +475,22 @@
         "J8",
         "J10"
       ],
-      "proving_tests": [],
-      "acceptance": "Self/current-valid-parent/root authority, root-only past cutoff, cascade and namespace replacement. S2 owner supplies final module path and test selectors."
+      "proving_tests": [
+        "awid/tests/test_id_certificate_registration.py::test_root_revokes_with_compromise_cutoff",
+        "awid/tests/test_id_certificate_registration.py::test_self_revokes_now",
+        "awid/tests/test_id_certificate_registration.py::test_a_live_parent_cannot_revoke_before_its_chain_is_verified",
+        "awid/tests/test_id_certificate_registration.py::test_unrelated_human_cannot_revoke",
+        "awid/tests/test_id_certificate_registration.py::test_revoked_parent_cannot_revoke",
+        "awid/tests/test_id_certificate_registration.py::test_only_the_root_backdates",
+        "awid/tests/test_id_certificate_registration.py::test_non_root_explicit_now_cutoff_refuses",
+        "awid/tests/test_id_certificate_registration.py::test_future_cutoff_refuses",
+        "awid/tests/test_id_certificate_registration.py::test_a_registration_waits_for_its_parents_revocation"
+      ],
+      "acceptance": "Self/current-valid-parent/root authority, root-only past cutoff, cascade and namespace replacement.",
+      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "open_items": [
+        "Parent authority refuses evidence_unavailable until checkpoint 4 wires the cascade: live-parent-revokes-now and post-lock-revocation-time-is-not-transaction-start remain open."
+      ]
     },
     {
       "id": "AWID.ID.STATUS",
@@ -1376,7 +1464,11 @@
     {
       "id": "CLOUD.CUSTODY",
       "repo": "ac",
-      "files": [],
+      "files": [
+        "backend/src/aweb_cloud/services/human_identity_keys.py",
+        "backend/src/aweb_cloud/stored_key_crypto.py",
+        "backend/src/aweb_cloud/migrations/069_human_identity_keys.sql"
+      ],
       "operations": [
         "create",
         "sign",
@@ -1384,9 +1476,9 @@
         "present",
         "verify"
       ],
-      "change": "owner_to_refine",
+      "change": "add",
       "slice": "S6",
-      "status": "pending",
+      "status": "partial",
       "journeys": [
         "J2",
         "J3",
@@ -1396,8 +1488,43 @@
         "J9",
         "J10"
       ],
-      "proving_tests": [],
-      "acceptance": "One checked user+domain human key/ID, session/exact-invitation signer; BYOT root never in Cloud. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+      "proving_tests": [
+        "backend/tests/test_human_identity_keys.py::test_pending_key_is_stable_per_account_and_domain_and_returns_no_secret",
+        "backend/tests/test_human_identity_keys.py::test_pending_key_creation_uses_and_rolls_back_with_callers_transaction",
+        "backend/tests/test_human_identity_keys.py::test_concurrent_preparation_keeps_one_key_after_the_user_lock_wait",
+        "backend/tests/test_human_identity_keys.py::test_account_disabled_while_preparation_waits_cannot_get_a_pending_key",
+        "backend/tests/test_human_identity_keys.py::test_storage_requires_selected_canonical_domain_without_silent_relabel",
+        "backend/tests/test_stored_key_crypto.py"
+      ],
+      "acceptance": "One checked user+domain human key/ID, session/exact-invitation signer; BYOT root never in Cloud. Cloud owner supplies the exact per-site paths and proving tests before conversion.",
+      "candidate_head": "ac91518d85dd5cb52cfbbb71eee7ec7bfa4aef9a38",
+      "sites": [
+        {
+          "file": "backend/src/aweb_cloud/services/human_identity_keys.py",
+          "symbol": "prepare_human_key"
+        },
+        {
+          "file": "backend/src/aweb_cloud/services/human_identity_keys.py",
+          "symbol": "PendingHumanKey"
+        },
+        {
+          "file": "backend/src/aweb_cloud/stored_key_crypto.py",
+          "symbol": "StoredKeyPurpose.HUMAN_IDENTITY"
+        }
+      ],
+      "coverage_scope": "Prepared custodial pending-key storage only; no registered-human authority.",
+      "open_items": [
+        "Focused Postgres tests are queued; measured runtime result is pending.",
+        "Signing/export route, external-human account binding and BYOT completion remain pending.",
+        "Registered-human authority, constructor conversion and runtime verifier remain pending."
+      ],
+      "validation": {
+        "source_message_id": "0cb8da69-324d-469f-93ef-47ae17ad18ef",
+        "reported_by": "aweb-cloud-expert-channels-plan-review",
+        "static_command": "make lint release-verify-migration-checksums verify-gate-idioms release-verify-migrations",
+        "static_result": "passed_as_reported_by_owner",
+        "focused_result": "queued"
+      }
     },
     {
       "id": "CLOUD.DASHBOARD.CREATE",
