@@ -353,6 +353,46 @@ func TestIDChildResignExchangeProbes(t *testing.T) {
 			t.Fatalf("approve after refuse: %v calls=%d", err, a.calls)
 		}
 	})
+	t.Run("N55 after a refuse the same request id with other bytes conflicts", func(t *testing.T) {
+		a := x.approval(t, accepted)
+		if _, err := a.receive(); err != nil {
+			t.Fatal(err)
+		}
+		if err := awid.RefuseIDResignRequest(a.store, "20000000-0000-4000-8000-000000000004"); err != nil {
+			t.Fatal(err)
+		}
+		request := map[string]any{}
+		for k, v := range x.requests["local-resign"].Signed["request"].(map[string]any) {
+			request[k] = v
+		}
+		request["domain"] = "other.example"
+		request["parent"] = map[string]any{"kind": "identity", "id": x.v.Keys["bob"].DIDAW}
+		a.request = signRequest(t, x.v, "coordinator", request)
+		writes := a.store.writes
+		if _, err := a.receive(); awid.IDCertificateErrorCode(err) != "request_conflict" || a.store.writes != writes {
+			t.Fatalf("receive: %v writes=%d", err, a.store.writes-writes)
+		}
+	})
+	t.Run("N56 recovery refuses a stored response for another certificate", func(t *testing.T) {
+		a := x.approval(t, accepted)
+		if _, err := a.receive(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.approve(t); err != nil {
+			t.Fatal(err)
+		}
+		old, _ := a.store.Entry(oldID)
+		old.Resign.Response = x.responses["human-issued"].CanonicalUTF8
+		raw, err := json.Marshal(old)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.store.entries[oldID] = raw
+		delete(a.store.entries, newID)
+		if response, err := a.approve(t); err == nil || response != nil || a.store.has(newID) || a.calls != 1 {
+			t.Fatalf("recovery: err=%v new=%v calls=%d", err, a.store.has(newID), a.calls)
+		}
+	})
 	t.Run("an issued request cannot be refused", func(t *testing.T) {
 		a := x.approval(t, accepted)
 		if _, err := a.receive(); err != nil {

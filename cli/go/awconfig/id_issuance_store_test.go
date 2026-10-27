@@ -83,7 +83,7 @@ func TestIDIssuanceFileStoreWritesPrivateFilesAndNoTemporaries(t *testing.T) {
 }
 
 func TestIDIssuanceFileStoreRefusesNonCertificateNames(t *testing.T) {
-	store := IDIssuanceFileStore{Dir: t.TempDir()}
+	store := IDIssuanceFileStore{Dir: filepath.Join(t.TempDir(), "id-issuance")}
 	for _, id := range []string{"sha256:../../etc/passwd", "sha256:ABCDEF", "101a89303275362d5d3a366a19a59911e1dda6d39b57b45bbb2bd0e43e1cb2d9", "sha256:101a89303275362d5d3a366a19a59911e1dda6d39b57b45bbb2bd0e43e1cb2d"} {
 		if _, err := store.Entry(id); err == nil {
 			t.Fatalf("Entry accepted %q", id)
@@ -97,7 +97,7 @@ func TestIDIssuanceFileStoreRefusesNonCertificateNames(t *testing.T) {
 }
 
 func TestIDIssuanceFileStoreRefusesAnEntryFiledUnderAnotherName(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "id-issuance")
 	store := IDIssuanceFileStore{Dir: dir}
 	if err := store.Put(testIssuanceEntry()); err != nil {
 		t.Fatal(err)
@@ -109,5 +109,62 @@ func TestIDIssuanceFileStoreRefusesAnEntryFiledUnderAnotherName(t *testing.T) {
 	}
 	if _, err := store.Entry(other); err == nil {
 		t.Fatal("an entry filed under another certificate's name was returned")
+	}
+}
+
+func TestIDIssuanceFileStoreRefusesALooseDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes")
+	}
+	dir := filepath.Join(t.TempDir(), "id-issuance")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := IDIssuanceFileStore{Dir: dir}
+	if err := store.Put(testIssuanceEntry()); err == nil {
+		t.Fatal("wrote into a directory other users can read")
+	}
+	if _, err := store.Entry(testCertificateID); err == nil {
+		t.Fatal("read from a directory other users can read")
+	}
+	if _, err := store.EntryForRequest("20000000-0000-4000-8000-000000000004"); err == nil {
+		t.Fatal("scanned a directory other users can read")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("directory holds %d files", len(entries))
+	}
+}
+
+func TestIDIssuanceFileStoreRefusesASymlinkedDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX symlinks")
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, "elsewhere")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "id-issuance")
+	if err := os.Symlink(target, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := (IDIssuanceFileStore{Dir: dir}).Put(testIssuanceEntry()); err == nil {
+		t.Fatal("wrote through a symlinked directory")
+	}
+}
+
+func TestIDIssuanceFileStoreRefusesAFileInPlaceOfItsDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "id-issuance")
+	if err := os.WriteFile(dir, nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (IDIssuanceFileStore{Dir: dir}).Entry(testCertificateID); err == nil {
+		t.Fatal("read entries from a file standing in for the directory")
 	}
 }
