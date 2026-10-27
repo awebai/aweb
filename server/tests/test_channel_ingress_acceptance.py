@@ -230,3 +230,43 @@ async def test_channel_ingress_provider_refuses_or_rolls_back_without_downgrade(
     assert await _row(env, prepared) is None
     for table in ("human_channel_sends", "human_channel_ingress", "human_channel_mutations"):
         assert (await env["db"].fetch_one("SELECT count(*) n FROM {{tables." + table + "}}"))["n"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail"])
+async def test_ordinary_receipt_survives_normal_message_gc(native_send, kind):
+    from datetime import timedelta
+    from aweb.gc import gc_expired_messages
+    env = native_send
+    prepared = await env["prepared"](kind=kind)
+    original = await complete(env, prepared)
+    table = "messages" if kind == "mail" else "chat_messages"
+    await env["db"].execute("UPDATE {{tables." + table + "}} SET created_at=$1 WHERE message_id=$2", datetime.now(UTC)-timedelta(days=31), UUID(prepared.value["message_id"]))
+    deleted = await gc_expired_messages(env["service"].db)
+    assert deleted["messages_deleted"] == 1
+    assert await env["db"].fetch_value("SELECT count(*) FROM {{tables.human_channel_ingress}}") == 1
+    recovered = await env["service"].ingress_result(env["auth"], env["key"])
+    assert canonical_record(recovered) == canonical_record(original)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("facade", ["channel", "ordinary"])
+async def test_channel_receipt_missing_row_never_recovers_context(native_send, facade):
+    from datetime import timedelta
+    from aweb.gc import gc_expired_messages
+    env = native_send
+    await _channel_service(env)
+    prepared = await _prepare(env)
+    await _bind(env, prepared)
+    original = await complete(env, prepared)
+    await env["db"].execute(
+        "UPDATE {{tables.messages}} SET created_at=$1 WHERE message_id=$2",
+        datetime.now(UTC)-timedelta(days=31), UUID(prepared.value["message_id"]))
+    assert (await gc_expired_messages(env["service"].db))["mail_deleted"] == 1
+    service = env["service"] if facade == "channel" else NativeMessagingService(
+        env["service"].db, authority=env["provider"], service=env["provider"].service)
+    with pytest.raises(ContractError, match="replay_conflict.*channel ingress"):
+        await service.ingress_result(env["auth"], env["key"])
+    assert await _row(env, prepared) is None
+    retained = await env["db"].fetch_one("SELECT result FROM {{tables.human_channel_ingress}}")
+    assert canonical_record(dto("IngressResult", json.loads(retained["result"]))) == canonical_record(original)

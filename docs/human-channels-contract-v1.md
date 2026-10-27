@@ -492,7 +492,11 @@ re-accept or recovery with different context refuses against that stored row.
 Recovery invokes the hook with the original `AcceptedSend` in place of an
 expired preparation, binding the same caller/key/input and message/envelope.
 Exact recovery returns the original `IngressResult` unchanged; normal reads
-return the original row metadata. `AcceptedSend`, `IngressResult`, all P0 DTOs
+return the original row metadata. Ordinary receipt recovery survives message
+retention cleanup when the retained durable mutation confirms that the original
+send had no ingress context. A missing channel message row still refuses
+recovery: the mutation snapshot never recreates a message or its row context.
+`AcceptedSend`, `IngressResult`, all P0 DTOs
 and signed/encrypted bytes stay unchanged. Unfinished or failed units of work
 roll back the message, context and outbox together; publication follows commit.
 

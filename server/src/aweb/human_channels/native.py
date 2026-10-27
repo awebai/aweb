@@ -636,12 +636,22 @@ class NativeMessagingUnitOfWork:
         except ValueError as error:
             raise ContractError("authority_unavailable", "channel ingress context") from error
 
-    async def _check_stored_ingress(self, send, context):
+    async def _check_stored_ingress(self, send, context, *, recovering=False):
         table = "messages" if send.value["kind"] == "mail" else "chat_messages"
         row = await self.manager.fetch_one(
             "SELECT ingress FROM {{tables." + table + "}} WHERE message_id=$1 FOR UPDATE",
             UUID(send.value["message_id"]),
         )
+        if row is None and recovering and context is None:
+            # Message GC does not expire ordinary ingress receipts. The retained
+            # server-owned mutation distinguishes those from channel sends;
+            # never recover channel context from an event after its row is gone.
+            mutation = await self.manager.fetch_one(
+                "SELECT context->'ingress' AS ingress FROM {{tables.human_channel_mutations}} WHERE message_id=$1",
+                UUID(send.value["message_id"]),
+            )
+            if mutation is not None and ingress_from_row(mutation) is None:
+                return
         if row is None or ingress_from_row(row) != context:
             raise ContractError("replay_conflict", "channel ingress")
 
@@ -688,7 +698,7 @@ class NativeMessagingUnitOfWork:
             _grant(self.auth, result.value["accepted"]["kind"])
             accepted = _dto("AcceptedSend", result.value["accepted"])
             context = await self._ingress_context(accepted, key)
-            await self._check_stored_ingress(accepted, context)
+            await self._check_stored_ingress(accepted, context, recovering=True)
             self.finished = True
             self.claim = key
             return result
