@@ -131,6 +131,10 @@ class _OwnerActContext:
     signature: str
 
 
+def _owner_act_actor(event: AuditEvent) -> dict:
+    return {"authority_mode": "owner_act", "did_key": event.actor, "attestations": []}
+
+
 @dataclass(frozen=True, repr=False)
 class _ApprovalContext:
     owner: CredentialAudit
@@ -463,27 +467,16 @@ class CredentialAudit:
         role = await self._role(tx, scope, context.admitted)
         approval_id, signing, signature, retained = None, None, None, None
         if isinstance(context, _OwnerActContext):
-            digest = hashlib.sha256(context.signing).hexdigest()
-            nonce = await tx.fetch_one(
-                "SELECT nonce FROM {{tables.owner_act_nonces}} WHERE scope=$1 AND team_id=$2 AND act_sha256=$3",
-                self._owner_act_scope,
-                context.admitted.team_id,
-                digest,
-            )
-            expected_act = (
+            digest = await self._consumed_act(
+                tx,
+                context,
+                event,
                 "app-role.designate"
                 if event.kind is AuditKind.APPROVER_DESIGNATED
-                else "app-credential.recover"
+                else "app-credential.recover",
             )
-            if (
-                nonce is None
-                or event.details.get("owner_act_id")
-                != f"{context.admitted.team_id}:{nonce['nonce']}"
-                or event.details.get("owner_act_kind") != expected_act
-            ):
-                raise GovernanceUnavailable()
             authority, signing, signature = "owner_act", context.signing, context.signature
-            actor = {"authority_mode": "owner_act", "did_key": event.actor, "attestations": []}
+            actor = _owner_act_actor(event)
         else:
             digest, retained = await self._approved_proof(tx, context, event, scope)
             authority, approval_id, actor = "passkey_session", context.evidence.approval_id, _SYSTEM
@@ -522,6 +515,24 @@ class CredentialAudit:
             ),
         )
         await self._enqueue(tx, context.admitted, payload, actor, event.occurred_at, context.view)
+
+    async def _consumed_act(self, tx, context: _OwnerActContext, event, expected_act) -> str:
+        """The SHA-256 of the prepared act, which this event names and which
+        was consumed for this team under this app's owner-act scope."""
+        digest = hashlib.sha256(context.signing).hexdigest()
+        nonce = await tx.fetch_one(
+            "SELECT nonce FROM {{tables.owner_act_nonces}} WHERE scope=$1 AND team_id=$2 AND act_sha256=$3",
+            self._owner_act_scope,
+            context.admitted.team_id,
+            digest,
+        )
+        if (
+            nonce is None
+            or event.details.get("owner_act_id") != f"{context.admitted.team_id}:{nonce['nonce']}"
+            or event.details.get("owner_act_kind") != expected_act
+        ):
+            raise GovernanceUnavailable()
+        return digest
 
     async def _approved_proof(self, tx, context, event, scope):
         evidence = context.evidence

@@ -1,10 +1,12 @@
 """The shared credential recorder for an app whose scopes only owner acts
 govern, on real PostgreSQL with a real AWID registry, real owner acts and a
 software passkey: no owner approvals, and every signed event handed to the
-app in the transaction that enqueued it."""
+app in the transaction that enqueued it. A role an owner act revokes is
+signed as a narrowing that needs no registered hook target."""
 
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 import time
@@ -21,6 +23,7 @@ from aweb_naapp_testing.owner_acts import (
     TEAM_ID,
     TeamOwner,
     designation_subject,
+    revocation_subject,
     team_owner,
 )
 from aweb_naapp_testing.webauthn import SoftAuthenticator
@@ -29,6 +32,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.hooks.envelope import verify
+from aweb_naapp.hooks.owner_act import Refused
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from aweb_naapp.hooks.producer import HookProducer, Registration, RegistrationView, ServerProducer
 from aweb_naapp.outbox import apply_outbox_migrations
@@ -154,6 +158,7 @@ class World:
     inbox: Inbox
     handed: list[tuple[int, UUID]]
     fail_after_enqueue: list[bool]
+    target_registered: list[bool]
     recorder: CredentialAudit = field(init=False)
     passkeys: Passkeys = field(init=False)
 
@@ -191,20 +196,21 @@ async def world(test_db_factory) -> AsyncIterator[World]:
     )
     handed: list[tuple[int, UUID]] = []
     fail: list[bool] = [False]
+    registered: list[bool] = [True]
 
     async def after_enqueue(tx: TransactionManager, event_id: UUID) -> None:
         handed.append((await tx.fetch_value("SELECT txid_current()"), event_id))
         if fail[0]:
             raise RuntimeError("the app could not append the event")
 
-    async def view(team_id: str) -> RegistrationView:
+    async def view(team_id: str) -> RegistrationView | None:
         assert team_id == TEAM_ID
-        return registration_view()
+        return registration_view() if registered[0] else None
 
     async with running_registry(registry_db.config.get_dsn()) as registry:
         owner = await team_owner(registry, team_id=TEAM_ID)
         inbox = Inbox()
-        state = World(db, owner, fence, admitted, inbox, handed, fail)
+        state = World(db, owner, fence, admitted, inbox, handed, fail, registered)
         state.recorder = CredentialAudit(
             db=db,
             app_id=APP_ID,
@@ -342,3 +348,132 @@ async def test_an_app_without_owner_approvals_accepts_none(world: World):
     with pytest.raises(GovernanceUnavailable):
         async with world.db.transaction() as tx:
             await world.recorder.emit(decided, tx)
+
+
+async def holder(world: World, scope: str) -> str | None:
+    return await world.db.fetch_value(
+        "SELECT subject FROM {{tables.passkey_approvers}} WHERE scope=$1 AND superseded_at IS NULL",
+        scope,
+    )
+
+
+async def revoke(
+    world: World, scope: str, subject_ref: str, *, bound_to: tuple[bytes, str] | None = None
+) -> tuple[int, bytes, str]:
+    """The owner revokes ``subject_ref``'s role on ``scope``; returns the effect's
+    transaction ID and the signed act. ``bound_to`` prepares the recorder with
+    another signed act than the one consumed."""
+    subject = revocation_subject(scope, subject_ref)
+    signing, signature = world.owner.sign("app-role.revoke", subject)
+    prepared = await world.owner.verifier.prepare(signing, signature, team_id=TEAM_ID)
+    bound_signing, bound_signature = bound_to or (signing, signature)
+    context = await world.recorder.prepare_owner_act(
+        world.admitted, signing=bound_signing, signature=bound_signature
+    )
+    with world.recorder.prepared(context):
+        async with world.db.transaction() as tx:
+            await world.fence.check(tx, world.admitted)
+            act = await world.owner.consume(tx, prepared, subject)
+            await world.passkeys.retire(tx, scope=scope, evidence=act)
+            await world.fence.check(tx, world.admitted)
+            txid = await tx.fetch_value("SELECT txid_current()")
+    return txid, signing, signature
+
+
+async def designated_reader(world: World) -> tuple[str, str]:
+    scope = await bind(world)
+    await designate(world, scope)
+    await enrol(world)
+    return scope, await holder(world, scope)
+
+
+async def count(world: World, table: str) -> int:
+    return await world.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}")
+
+
+async def test_an_owner_act_revocation_is_signed_as_a_narrowing_in_its_transaction(world: World):
+    scope, reader = await designated_reader(world)
+    revoking, signing, signature = await revoke(world, scope, reader)
+    assert await holder(world, scope) is None
+    event_id, revoked = (await events(world))[-1]
+    assert revoked["payload"] == {
+        "act": "role.revoked",
+        "direction": "narrowing",
+        "role": ROLE,
+        "subject_ref": reader,
+        "authority": "owner_act",
+        "owner_act_sha256": hashlib.sha256(signing).hexdigest(),
+    }
+    assert world.handed[-1] == (revoking, event_id)
+    retained = await world.db.fetch_one(
+        "SELECT * FROM {{tables.credential_narrowing_authority}} WHERE event_id=$1", event_id
+    )
+    assert (retained["authority"], retained["subject"]) == ("owner_act", reader)
+    assert (bytes(retained["signing"]), retained["signature"]) == (signing, signature)
+    assert retained["commitment"] == hashlib.sha256(signing).hexdigest()
+
+
+async def test_a_revocation_narrows_when_no_hook_target_is_registered(world: World):
+    scope, reader = await designated_reader(world)
+    world.target_registered[0] = False
+    await revoke(world, scope, reader)
+    assert await holder(world, scope) is None
+    assert (await events(world))[-1][1]["payload"]["act"] == "role.revoked"
+
+
+async def test_a_revocation_bound_to_another_act_is_refused_and_takes_no_effect(world: World):
+    scope, reader = await designated_reader(world)
+    unconsumed = world.owner.sign("app-role.revoke", revocation_subject(scope, reader))
+    before = await count(world, "outbox_events")
+    with pytest.raises(GovernanceUnavailable):
+        await revoke(world, scope, reader, bound_to=unconsumed)
+    assert await holder(world, scope) == reader
+    assert await count(world, "outbox_events") == before
+    assert await count(world, "credential_narrowing_authority") == 0
+    await revoke(world, scope, reader)
+    assert await holder(world, scope) is None
+
+
+async def test_a_revocation_without_an_owner_act_context_is_refused(world: World):
+    scope, reader = await designated_reader(world)
+    subject = revocation_subject(scope, reader)
+    prepared = await world.owner.prepare("app-role.revoke", subject)
+    with pytest.raises(GovernanceUnavailable):
+        async with world.db.transaction() as tx:
+            act = await world.owner.consume(tx, prepared, subject)
+            await world.passkeys.retire(tx, scope=scope, evidence=act)
+    assert await holder(world, scope) == reader
+    assert await count(world, "credential_narrowing_authority") == 0
+
+
+async def test_a_replayed_revocation_takes_no_second_effect(world: World):
+    scope, reader = await designated_reader(world)
+    _, signing, signature = await revoke(world, scope, reader)
+    subject = revocation_subject(scope, reader)
+    prepared = await world.owner.verifier.prepare(signing, signature, team_id=TEAM_ID)
+    context = await world.recorder.prepare_owner_act(
+        world.admitted, signing=signing, signature=signature
+    )
+    with pytest.raises(Refused) as refused:
+        with world.recorder.prepared(context):
+            async with world.db.transaction() as tx:
+                act = await world.owner.consume(tx, prepared, subject)
+                await world.passkeys.retire(tx, scope=scope, evidence=act)
+    assert refused.value.code == "nonce_reused"
+    assert [fields["payload"]["act"] for _, fields in await events(world)].count(
+        "role.revoked"
+    ) == 1
+
+
+async def test_an_app_that_cannot_take_the_revocation_keeps_the_role(world: World):
+    scope, reader = await designated_reader(world)
+    before = await count(world, "owner_act_nonces")
+    world.fail_after_enqueue[0] = True
+    with pytest.raises(RuntimeError):
+        await revoke(world, scope, reader)
+    assert await holder(world, scope) == reader
+    assert await count(world, "owner_act_nonces") == before
+    assert await count(world, "credential_narrowing_authority") == 0
+    world.fail_after_enqueue[0] = False
+    await revoke(world, scope, reader)
+    assert await holder(world, scope) is None
