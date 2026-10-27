@@ -99,19 +99,29 @@ export function decodeIdChain(bytes: Uint8Array): IdDecodeResult<IdChain> {
     return refuse("invalid_json");
   }
   if (canonicalJSONValue(value, "unreachable: strict JSON is canonicalizable") !== text) return refuse("noncanonical_json");
-  if (!isRecord(value) || !hasExactKeys(value, ["certificates", "type", "v"])) return refuse("invalid_shape");
-  if (value.v !== 1 || value.type !== "aweb.id-chain" || !Array.isArray(value.certificates)) return refuse("invalid_shape");
-  if (value.certificates.length === 0) return refuse("invalid_shape");
-  if (value.certificates.length > ID_CHAIN_MAX_CERTIFICATES) return refuse("depth_exceeded");
+  const reason = idChainRefusal(value);
+  return reason ? refuse(reason) : { ok: true, value: value as IdChain };
+}
+
+/**
+ * The bundle-level checks every chain passes, however it arrived: exact
+ * shape, at most eight certificates, every certificate's shape, then every
+ * signature against its issuer_key.
+ */
+export function idChainRefusal(value: unknown): IdDecodeRefusal | undefined {
+  if (!isRecord(value) || !hasExactKeys(value, ["certificates", "type", "v"])) return "invalid_shape";
+  if (value.v !== 1 || value.type !== "aweb.id-chain" || !Array.isArray(value.certificates)) return "invalid_shape";
+  if (value.certificates.length === 0) return "invalid_shape";
+  if (value.certificates.length > ID_CHAIN_MAX_CERTIFICATES) return "depth_exceeded";
   for (const signed of value.certificates) {
     const reason = signedShapeRefusal(signed);
-    if (reason) return refuse(reason);
+    if (reason) return reason;
   }
   for (const signed of value.certificates as SignedIdCertificate[]) {
     const reason = signatureRefusal(signed);
-    if (reason) return refuse(reason);
+    if (reason) return reason;
   }
-  return { ok: true, value: value as unknown as IdChain };
+  return undefined;
 }
 
 /** Strictly check one signed certificate's shape, then its signature against its issuer_key. */
@@ -228,11 +238,11 @@ function isCanonicalSecondTimestamp(value: string): boolean {
   );
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
+export function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
   const actual = Object.keys(value).sort();
   return actual.length === keys.length && actual.every((key, index) => key === keys[index]);
 }

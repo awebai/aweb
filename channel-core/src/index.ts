@@ -46,6 +46,19 @@ export {
   type SignedIdCertificate,
 } from "./identity/id_certificates.js";
 export {
+  idStatusCacheMode,
+  idStatusRequest,
+  verifyIdChain,
+  type IdNamespaceAuthority,
+  type IdStatusCacheMode,
+  type IdStatusEvidence,
+  type IdStatusPlan,
+  type IdStatusRequest,
+  type IdSubject,
+  type IdVerification,
+  type IdVerificationReason,
+} from "./identity/id_verification.js";
+export {
   createLocalAWDecryptProvider,
   createLocalAWPinStoreWriter,
   PinStoreCASConflictError,
