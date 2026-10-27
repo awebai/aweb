@@ -5666,6 +5666,215 @@
         }
       ],
       "missing": []
+    },
+    "namespace-first-epoch-rotated": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": null,
+            "continuity": "rotated"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "namespace-unretired-predecessor": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "namespace-contiguous-seq-time-gap": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": "2026-10-26T00:09:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "rotated"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
     }
   },
   "batch_example": {
@@ -9124,6 +9333,84 @@
         "ordinary": "continue",
         "human_required": "continue"
       }
+    },
+    {
+      "name": "namespace-first-epoch-rotated-unavailable",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "namespace-first-epoch-rotated",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "namespace-unretired-predecessor-unavailable",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "namespace-unretired-predecessor",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "namespace-contiguous-seq-rotation-time-gap-unavailable",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "namespace-contiguous-seq-time-gap",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
     }
   ],
   "operation_cases": [
@@ -10030,7 +10317,12 @@
       "action": "rotate_namespace",
       "input": {
         "domain": "example.com",
-        "previous_key_signature": true,
+        "request": "valid",
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
         "registered_at": "2026-10-26T00:10:00.000000Z"
       },
       "expected": {
@@ -10045,7 +10337,12 @@
       "input": {
         "domain": "example.com",
         "previous_key_signature": false,
-        "registered_at": "2026-10-26T00:10:00.000000Z"
+        "registered_at": "2026-10-26T00:10:00.000000Z",
+        "method": "PUT",
+        "path": "/v1/namespaces/example.com",
+        "operation": "rotate_controller",
+        "new_key_proof": true,
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
       },
       "expected": {
         "accepted": true,
@@ -10060,7 +10357,12 @@
         "domain": "example.com",
         "previous_key_available": false,
         "previous_key_signature": false,
-        "registered_at": "2026-10-26T00:10:00.000000Z"
+        "registered_at": "2026-10-26T00:10:00.000000Z",
+        "method": "PUT",
+        "path": "/v1/namespaces/example.com",
+        "operation": "rotate_controller",
+        "new_key_proof": true,
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
       },
       "expected": {
         "accepted": true,
@@ -10081,6 +10383,246 @@
         "accepted": false,
         "reason": "backdate_forbidden",
         "writes": 0
+      }
+    },
+    {
+      "name": "namespace-rotation-wrong-from-seq",
+      "action": "rotate_namespace",
+      "input": {
+        "request": "wrong-from-seq",
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "now": "2026-10-26T00:10:01Z"
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "head_conflict",
+        "writes": 0
+      }
+    },
+    {
+      "name": "namespace-rotation-stale-old-key",
+      "action": "rotate_namespace",
+      "input": {
+        "request": "stale-old-key",
+        "open_epoch": {
+          "seq": 2,
+          "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+        },
+        "exact_dns_key": "did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX",
+        "now": "2026-10-26T00:10:01Z"
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "head_conflict",
+        "writes": 0
+      }
+    },
+    {
+      "name": "namespace-rotation-replay",
+      "action": "rotate_namespace",
+      "input": {
+        "request": "valid",
+        "open_epoch": {
+          "seq": 2,
+          "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+        },
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "now": "2026-10-26T00:10:01Z"
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "head_conflict",
+        "writes": 0
+      }
+    },
+    {
+      "name": "namespace-rotation-new-key-only-refuses",
+      "action": "rotate_namespace",
+      "input": {
+        "request": "new-key-only",
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "now": "2026-10-26T00:10:01Z"
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "invalid_signature",
+        "writes": 0
+      }
+    },
+    {
+      "name": "namespace-same-key-reverify-no-epoch",
+      "action": "reverify_namespace",
+      "input": {
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "observed_dns": "exact",
+        "observed_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "authenticated": false
+      },
+      "expected": {
+        "accepted": true,
+        "epoch_writes": 0,
+        "open_epoch_seq": 1,
+        "tree_valid": true
+      }
+    },
+    {
+      "name": "namespace-exact-inherited-exact-same-key",
+      "action": "reverify_namespace_sequence",
+      "input": {
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "observations": [
+          {
+            "authority": "exact",
+            "key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+          },
+          {
+            "authority": "inherited",
+            "key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+          },
+          {
+            "authority": "exact",
+            "key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+          }
+        ]
+      },
+      "expected": {
+        "epoch_writes": 0,
+        "authority_outcomes": [
+          "available",
+          "unavailable",
+          "available"
+        ],
+        "open_epoch_seq": 1,
+        "tree_valid_after_exact_returns": true
+      }
+    },
+    {
+      "name": "namespace-unauthenticated-reverify-cannot-replace",
+      "action": "reverify_namespace",
+      "input": {
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "observed_dns": "exact",
+        "observed_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "authenticated": false
+      },
+      "expected": {
+        "accepted": true,
+        "epoch_writes": 0,
+        "open_epoch_seq": 1,
+        "current_authority": "unavailable",
+        "old_tree_cut_off": false
+      }
+    },
+    {
+      "name": "namespace-failed-dns-observation-no-epoch",
+      "action": "reverify_namespace",
+      "input": {
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "observed_dns": "failed",
+        "authenticated": false
+      },
+      "expected": {
+        "epoch_writes": 0,
+        "open_epoch_seq": 1,
+        "current_authority": "unavailable",
+        "old_tree_cut_off": false
+      }
+    },
+    {
+      "name": "namespace-unverified-dns-observation-no-epoch",
+      "action": "reverify_namespace",
+      "input": {
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "observed_dns": "unverified",
+        "authenticated": false
+      },
+      "expected": {
+        "epoch_writes": 0,
+        "open_epoch_seq": 1,
+        "current_authority": "unavailable",
+        "old_tree_cut_off": false
+      }
+    },
+    {
+      "name": "pre-upgrade-namespace-authenticated-post-opens-first-epoch",
+      "action": "register_namespace",
+      "input": {
+        "method": "POST",
+        "path": "/v1/namespaces",
+        "namespace_exists": true,
+        "epochs": [],
+        "authenticated_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "stored_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "exact_dns_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "registered_at": "2026-10-26T00:10:00.000000Z"
+      },
+      "expected": {
+        "accepted": true,
+        "epoch_writes": 1,
+        "epoch_seq": 1,
+        "continuity": "replaced",
+        "registered_at": "2026-10-26T00:10:00.000000Z",
+        "namespace_address_team_data_unchanged": true,
+        "history_inferred": false
+      }
+    },
+    {
+      "name": "namespace-repeat-authenticated-post-is-epoch-noop",
+      "action": "register_namespace",
+      "input": {
+        "method": "POST",
+        "path": "/v1/namespaces",
+        "namespace_exists": true,
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "authenticated_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "exact_dns_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+      },
+      "expected": {
+        "accepted": true,
+        "epoch_writes": 0,
+        "namespace_address_team_data_unchanged": true
+      }
+    },
+    {
+      "name": "pre-upgrade-namespace-unauthenticated-reverify-no-epoch",
+      "action": "reverify_namespace",
+      "input": {
+        "namespace_exists": true,
+        "epochs": [],
+        "observed_dns": "exact",
+        "observed_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "authenticated": false
+      },
+      "expected": {
+        "epoch_writes": 0,
+        "tree_authority": "unavailable",
+        "history_inferred": false
       }
     }
   ],
@@ -10540,5 +11082,131 @@
         }
       }
     ]
+  },
+  "namespace_rotation_requests": {
+    "valid": {
+      "body": {
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 1,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "body_utf8": "{\"domain\":\"example.com\",\"from_seq\":1,\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\"}",
+      "payload": {
+        "v": 2,
+        "type": "aweb.awid-controller-request",
+        "aud": "https://registry.example.com",
+        "method": "POST",
+        "path": "/v1/namespaces/example.com/rotate",
+        "body_sha256": "dc2d34e0b2b16548409099eb977cd6b84f6b7cec96f98dc2ffd0bb4b3c7fcdf1",
+        "timestamp": "2026-10-26T00:10:00Z",
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 1,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "canonical_payload_utf8": "{\"aud\":\"https://registry.example.com\",\"body_sha256\":\"dc2d34e0b2b16548409099eb977cd6b84f6b7cec96f98dc2ffd0bb4b3c7fcdf1\",\"domain\":\"example.com\",\"from_seq\":1,\"method\":\"POST\",\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"path\":\"/v1/namespaces/example.com/rotate\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"timestamp\":\"2026-10-26T00:10:00Z\",\"type\":\"aweb.awid-controller-request\",\"v\":2}",
+      "headers": {
+        "Authorization": "DIDKey did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX DPJwZkcM5wsZrZqGcBqtkctDL5FUNBCipaQPVZAe5ZvBMZQucwCtBBnTwRvrYzohTQ6+5nWA/P1899K60buYAg",
+        "X-AWEB-New-Key-Authorization": "DIDKey did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH NTxZ71m17/mt/l+RKyLTv/z3I47msdFrngE7f34dOLNxGvezv6esGfz787ReZkq53NpQS5xum79iEd7LG5azBw",
+        "X-AWEB-Timestamp": "2026-10-26T00:10:00Z",
+        "X-AWEB-Signed-Payload": "eyJhdWQiOiJodHRwczovL3JlZ2lzdHJ5LmV4YW1wbGUuY29tIiwiYm9keV9zaGEyNTYiOiJkYzJkMzRlMGIyYjE2NTQ4NDA5MDk5ZWI5NzdjZDZiODRmNmI3Y2VjOTZmOThkYzJmZmQwYmI0YjNjN2ZjZGYxIiwiZG9tYWluIjoiZXhhbXBsZS5jb20iLCJmcm9tX3NlcSI6MSwibWV0aG9kIjoiUE9TVCIsIm5ld19kaWRfa2V5IjoiZGlkOmtleTp6Nk1rbzloVGdnTXdqU1RFYUphUFVmRTZ0cWN5Mnh2VTZCbk5xM2UzbzhxVkJpeUgiLCJvcGVyYXRpb24iOiJyb3RhdGVfbmFtZXNwYWNlX2NvbnRyb2xsZXIiLCJwYXRoIjoiL3YxL25hbWVzcGFjZXMvZXhhbXBsZS5jb20vcm90YXRlIiwicHJldmlvdXNfZGlkX2tleSI6ImRpZDprZXk6ejZNa29uM05lY2Q2TmtreWZvR29IeGlkMnpuR2M1OUxVM0s3bXViYVJjRmJMZkxYIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yNlQwMDoxMDowMFoiLCJ0eXBlIjoiYXdlYi5hd2lkLWNvbnRyb2xsZXItcmVxdWVzdCIsInYiOjJ9"
+      }
+    },
+    "wrong-from-seq": {
+      "body": {
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 2,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "body_utf8": "{\"domain\":\"example.com\",\"from_seq\":2,\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\"}",
+      "payload": {
+        "v": 2,
+        "type": "aweb.awid-controller-request",
+        "aud": "https://registry.example.com",
+        "method": "POST",
+        "path": "/v1/namespaces/example.com/rotate",
+        "body_sha256": "a4b138a574517929d28f567fe26ed38165d98002f75d83d5f2bedf390b46a1f5",
+        "timestamp": "2026-10-26T00:10:00Z",
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 2,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "canonical_payload_utf8": "{\"aud\":\"https://registry.example.com\",\"body_sha256\":\"a4b138a574517929d28f567fe26ed38165d98002f75d83d5f2bedf390b46a1f5\",\"domain\":\"example.com\",\"from_seq\":2,\"method\":\"POST\",\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"path\":\"/v1/namespaces/example.com/rotate\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"timestamp\":\"2026-10-26T00:10:00Z\",\"type\":\"aweb.awid-controller-request\",\"v\":2}",
+      "headers": {
+        "Authorization": "DIDKey did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX EzM1Y2CgRvZzh2aS6lpUD+mYUGhh8x2uv7krw4CMCcIQNHQGUMg8kKx8kiKGR1laXSj8QXtgBTRfw0syzwgDDw",
+        "X-AWEB-New-Key-Authorization": "DIDKey did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH /G04BtzUG67hj6VgE0QEBz19WudeueC9zSw4e+T30ET08eGI6XovApP0DL506LAV7NV4MYArOw2dVJB5dZA2Bw",
+        "X-AWEB-Timestamp": "2026-10-26T00:10:00Z",
+        "X-AWEB-Signed-Payload": "eyJhdWQiOiJodHRwczovL3JlZ2lzdHJ5LmV4YW1wbGUuY29tIiwiYm9keV9zaGEyNTYiOiJhNGIxMzhhNTc0NTE3OTI5ZDI4ZjU2N2ZlMjZlZDM4MTY1ZDk4MDAyZjc1ZDgzZDVmMmJlZGYzOTBiNDZhMWY1IiwiZG9tYWluIjoiZXhhbXBsZS5jb20iLCJmcm9tX3NlcSI6MiwibWV0aG9kIjoiUE9TVCIsIm5ld19kaWRfa2V5IjoiZGlkOmtleTp6Nk1rbzloVGdnTXdqU1RFYUphUFVmRTZ0cWN5Mnh2VTZCbk5xM2UzbzhxVkJpeUgiLCJvcGVyYXRpb24iOiJyb3RhdGVfbmFtZXNwYWNlX2NvbnRyb2xsZXIiLCJwYXRoIjoiL3YxL25hbWVzcGFjZXMvZXhhbXBsZS5jb20vcm90YXRlIiwicHJldmlvdXNfZGlkX2tleSI6ImRpZDprZXk6ejZNa29uM05lY2Q2TmtreWZvR29IeGlkMnpuR2M1OUxVM0s3bXViYVJjRmJMZkxYIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yNlQwMDoxMDowMFoiLCJ0eXBlIjoiYXdlYi5hd2lkLWNvbnRyb2xsZXItcmVxdWVzdCIsInYiOjJ9"
+      }
+    },
+    "new-key-only": {
+      "body": {
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 1,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "body_utf8": "{\"domain\":\"example.com\",\"from_seq\":1,\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\"}",
+      "payload": {
+        "v": 2,
+        "type": "aweb.awid-controller-request",
+        "aud": "https://registry.example.com",
+        "method": "POST",
+        "path": "/v1/namespaces/example.com/rotate",
+        "body_sha256": "dc2d34e0b2b16548409099eb977cd6b84f6b7cec96f98dc2ffd0bb4b3c7fcdf1",
+        "timestamp": "2026-10-26T00:10:00Z",
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 1,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "canonical_payload_utf8": "{\"aud\":\"https://registry.example.com\",\"body_sha256\":\"dc2d34e0b2b16548409099eb977cd6b84f6b7cec96f98dc2ffd0bb4b3c7fcdf1\",\"domain\":\"example.com\",\"from_seq\":1,\"method\":\"POST\",\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"path\":\"/v1/namespaces/example.com/rotate\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"timestamp\":\"2026-10-26T00:10:00Z\",\"type\":\"aweb.awid-controller-request\",\"v\":2}",
+      "headers": {
+        "Authorization": "DIDKey did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH NTxZ71m17/mt/l+RKyLTv/z3I47msdFrngE7f34dOLNxGvezv6esGfz787ReZkq53NpQS5xum79iEd7LG5azBw",
+        "X-AWEB-New-Key-Authorization": "DIDKey did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH NTxZ71m17/mt/l+RKyLTv/z3I47msdFrngE7f34dOLNxGvezv6esGfz787ReZkq53NpQS5xum79iEd7LG5azBw",
+        "X-AWEB-Timestamp": "2026-10-26T00:10:00Z",
+        "X-AWEB-Signed-Payload": "eyJhdWQiOiJodHRwczovL3JlZ2lzdHJ5LmV4YW1wbGUuY29tIiwiYm9keV9zaGEyNTYiOiJkYzJkMzRlMGIyYjE2NTQ4NDA5MDk5ZWI5NzdjZDZiODRmNmI3Y2VjOTZmOThkYzJmZmQwYmI0YjNjN2ZjZGYxIiwiZG9tYWluIjoiZXhhbXBsZS5jb20iLCJmcm9tX3NlcSI6MSwibWV0aG9kIjoiUE9TVCIsIm5ld19kaWRfa2V5IjoiZGlkOmtleTp6Nk1rbzloVGdnTXdqU1RFYUphUFVmRTZ0cWN5Mnh2VTZCbk5xM2UzbzhxVkJpeUgiLCJvcGVyYXRpb24iOiJyb3RhdGVfbmFtZXNwYWNlX2NvbnRyb2xsZXIiLCJwYXRoIjoiL3YxL25hbWVzcGFjZXMvZXhhbXBsZS5jb20vcm90YXRlIiwicHJldmlvdXNfZGlkX2tleSI6ImRpZDprZXk6ejZNa29uM05lY2Q2TmtreWZvR29IeGlkMnpuR2M1OUxVM0s3bXViYVJjRmJMZkxYIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yNlQwMDoxMDowMFoiLCJ0eXBlIjoiYXdlYi5hd2lkLWNvbnRyb2xsZXItcmVxdWVzdCIsInYiOjJ9"
+      }
+    },
+    "stale-old-key": {
+      "body": {
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 2,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX"
+      },
+      "body_utf8": "{\"domain\":\"example.com\",\"from_seq\":2,\"new_did_key\":\"did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX\",\"operation\":\"rotate_namespace_controller\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\"}",
+      "payload": {
+        "v": 2,
+        "type": "aweb.awid-controller-request",
+        "aud": "https://registry.example.com",
+        "method": "POST",
+        "path": "/v1/namespaces/example.com/rotate",
+        "body_sha256": "ff3707ca142799626a65bac657caba1838560bafeb15e0b3ee6dfa76d5cf240b",
+        "timestamp": "2026-10-26T00:10:00Z",
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 2,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX"
+      },
+      "canonical_payload_utf8": "{\"aud\":\"https://registry.example.com\",\"body_sha256\":\"ff3707ca142799626a65bac657caba1838560bafeb15e0b3ee6dfa76d5cf240b\",\"domain\":\"example.com\",\"from_seq\":2,\"method\":\"POST\",\"new_did_key\":\"did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX\",\"operation\":\"rotate_namespace_controller\",\"path\":\"/v1/namespaces/example.com/rotate\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"timestamp\":\"2026-10-26T00:10:00Z\",\"type\":\"aweb.awid-controller-request\",\"v\":2}",
+      "headers": {
+        "Authorization": "DIDKey did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX 8UG9+hTKla8OW4PbavqIBmycqHmeWVBIVO1gjBAPAaWg+Tlh4MJGri79TbemNlyMSA2D1s64CuljK3+gRjOaBw",
+        "X-AWEB-New-Key-Authorization": "DIDKey did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX vU2c29XmfHuM20BIdfZgaAc7rHzdQueGu9NYV9P7MQcQB9BVBHhMwUEkrdcI0fUuZTMODYjxCsrAmpxKR3WyDA",
+        "X-AWEB-Timestamp": "2026-10-26T00:10:00Z",
+        "X-AWEB-Signed-Payload": "eyJhdWQiOiJodHRwczovL3JlZ2lzdHJ5LmV4YW1wbGUuY29tIiwiYm9keV9zaGEyNTYiOiJmZjM3MDdjYTE0Mjc5OTYyNmE2NWJhYzY1N2NhYmExODM4NTYwYmFmZWIxNWUwYjNlZTZkZmE3NmQ1Y2YyNDBiIiwiZG9tYWluIjoiZXhhbXBsZS5jb20iLCJmcm9tX3NlcSI6MiwibWV0aG9kIjoiUE9TVCIsIm5ld19kaWRfa2V5IjoiZGlkOmtleTp6Nk1rbU5MNnhrc2RFSkVOR2s5WjFxcUdzWTVuaktRZGpVMVVoblVFVXZXeVFVVlgiLCJvcGVyYXRpb24iOiJyb3RhdGVfbmFtZXNwYWNlX2NvbnRyb2xsZXIiLCJwYXRoIjoiL3YxL25hbWVzcGFjZXMvZXhhbXBsZS5jb20vcm90YXRlIiwicHJldmlvdXNfZGlkX2tleSI6ImRpZDprZXk6ejZNa29uM05lY2Q2TmtreWZvR29IeGlkMnpuR2M1OUxVM0s3bXViYVJjRmJMZkxYIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yNlQwMDoxMDowMFoiLCJ0eXBlIjoiYXdlYi5hd2lkLWNvbnRyb2xsZXItcmVxdWVzdCIsInYiOjJ9"
+      }
+    }
   }
 }

@@ -178,13 +178,80 @@ a missing certificate means **unknown**, not no human.
 
 ### Namespace continuity and replacement
 
-Each namespace epoch records `continuity`: `rotated` only when the previous
-controller key authorized that exact rotation through its existing signed
-request; otherwise `replaced` for DNS-only establishment or replacement. The
-first witnessed epoch is `replaced`. Domain transfer, loss of the root key,
-and delete then re-register all take the `replaced` path, even if re-registration
-uses the same key. This is a witnessed field in the existing epoch history,
-not a new certificate, delegation or confirmation operation.
+Each namespace epoch records `continuity`: `rotated` only through the new
+previous-key-authorized rotation below; `replaced` for DNS-only establishment
+or replacement. The first witnessed epoch is `replaced`. Domain transfer,
+loss of the root key, and delete then re-register take the `replaced` path,
+even when re-registration uses the same key. This is a witnessed field in the
+epoch history, not a new ID certificate, delegation or confirmation operation.
+
+An epoch opens ONLY on explicit first namespace registration, re-registration
+after deletion, or an explicit exact-controller-key change. Same-key observations
+never open, replace or retire an epoch: reverify, address-read verification,
+inherited answers, failed DNS and unverified DNS change only current authority
+availability. Reverify cannot install a different key either: a disagreement
+with the epoch makes authority unavailable under §2, not replaced. When the
+same exact key returns after an unavailable interval, its epoch continues.
+Publishing another party's public key without holding it grants no authority.
+Delete then re-register is different because deletion is an explicit act.
+
+For a pre-upgrade namespace with no epoch, the operator repeats the EXISTING
+authenticated `POST /v1/namespaces`, proving the stored current controller key
+and its exact-domain DNS authority. Under the namespace lock this opens epoch 1,
+`replaced`, at the new post-lock witness time, keeping all existing namespace,
+address and team data. With an epoch already present, the same authenticated
+POST is an epoch no-op. Unauthenticated reverify opens nothing, even when its
+exact DNS answer is correct. No new enrollment endpoint or inferred history.
+
+#### Continuity-preserving namespace rotation (new operation)
+
+`POST /v1/namespaces/{domain}/rotate` is NEW. Its body is exactly:
+
+```json
+{"domain":"example.com","operation":"rotate_namespace_controller","from_seq":1,"previous_did_key":"did:key:...","new_did_key":"did:key:..."}
+```
+
+The canonical domain equals the path domain; from_seq is a positive integer;
+both keys satisfy §2's strict point profile and must differ. Invalid shape
+refuses invalid_shape. The previous controller and new controller BOTH sign the
+SAME existing [covering-v2 DIDKey request](awid-controller-requests.md). Its
+payload has the seven existing common fields (`v`, `type`, `aud`, `method`,
+`path`, `body_sha256`, `timestamp`) PLUS exactly the five body fields above.
+It uses configured audience, exact POST/path/body hash, and the existing
+300-second timestamp bound; there is no new signing prefix or canonical format.
+
+- `Authorization: DIDKey <previous_did_key> <signature>` proves the old key.
+- `X-AWEB-New-Key-Authorization: DIDKey <new_did_key> <signature>` proves the
+  new key, using the SAME `X-AWEB-Timestamp` and `X-AWEB-Signed-Payload`.
+- Both signatures are raw standard base64 without padding, as in the existing
+  envelope. The covering payload header is canonical JSON in unpadded base64url.
+  This NEW route requires covering-v2 and has no legacy fallback.
+
+Before changing any epoch, verify both proofs, including their signer roles;
+a missing/incorrect old or new proof refuses invalid_signature. Under the
+namespace gate locks, after the last wait, recheck the timestamp, the exact
+DNS evidence for new_did_key and the open epoch: from_seq and previous_did_key
+must equal its seq and key, otherwise head_conflict. A captured valid request
+replayed after success therefore refuses head_conflict, even within timestamp
+freshness. Non-exact or contradictory DNS evidence is evidence_unavailable.
+No network call occurs under those locks. Retire that epoch and open its
+immediate successor at the SAME post-lock witness time with continuity=rotated.
+This preserves earlier registrations while changing the current root key.
+
+The released `PUT /v1/namespaces/{domain}` is still the new-key-only recovery
+path (`operation="rotate_controller"`, body `{new_controller_did}`). It never
+establishes rotated continuity: an actual key change opens replaced. A same-key
+PUT does not open an epoch. Existing legacy envelopes and other namespace
+contracts remain accepted; their inherited/skip-DNS authority is not exact-domain
+ID-tree evidence. No existing request is silently reinterpreted as old-key proof.
+
+Brief DNS control can cause a permanent tree cutoff: an attacker who installs
+and proves a new key through the recovery path opens replaced. That is the
+accepted DNS trust root; with the observation rule above, unauthenticated
+reverify alone cannot cause it. V1 adds no DNSSEC requirement or hold-down.
+S7 operator UX and Cloud alert the previous controller's operator and org owners
+when replaced opens, using their existing private contact channels. Notifications
+are not an authority gate and require no public contact directory.
 
 Retain epoch history and registered revisions across deletion; epoch sequences
 never reset. Namespace deletion has NO live-ID refusal precondition. Existing
@@ -451,8 +518,9 @@ evidence for this domain. `continuity` is required and is exactly `rotated` or
 `replaced`, assigned by the serialized gate's previous-key proof check above.
 Missing, unknown or contradictory continuity evidence is evidence_unavailable.
 Return the complete witnessed namespace epoch history through the current
-epoch, including replacements. A rotated epoch immediately follows its
-predecessor's retirement time; a gap can reopen only as replaced. This prevents
+epoch, including replacements. Every successor requires a retired predecessor;
+its registered_at cannot precede that retirement. A rotated epoch immediately
+follows its predecessor's retirement time; a gap can reopen only as replaced. This prevents
 omitting an intermediate replacement or treating a later rotation as repair.
 Namespace history/time witnesses come from
 the registry independently selected through DNS, not an agent-supplied URL.

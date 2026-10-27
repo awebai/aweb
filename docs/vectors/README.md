@@ -62,6 +62,13 @@ children, DNS-only replacement cuts off prior registrations (`root_replaced`).
 The cases also pin namespace epoch admission windows and sequence-only DID-key
 selection; operation cases replace live-ID deletion refusal with retained
 history and delete/re-register discontinuity.
+`namespace_rotation_requests` freezes both DIDKey signatures over the same
+covering-v2 payload, plus wrong-sequence, new-key-only, stale-key and replay
+operation refusals. Epoch observations never create replacement: pre-upgrade
+first enrollment uses the existing authenticated namespace POST once, and
+same-key reverify/temporary DNS failure preserves its epoch. History negatives
+isolate first-epoch continuity, an unretired predecessor and a contiguous-seq
+rotation time gap.
 
 ### `member-attribution-v1.json` — superseded, historical only
 
