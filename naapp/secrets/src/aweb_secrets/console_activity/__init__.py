@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, Response
 from aweb_secrets.activity_service import ActivityCursor, ActivityPage, ActivityReads
 from aweb_secrets.console import OwnerConsole
 from aweb_secrets.console_changes import _errors
-from aweb_secrets.console_ui import _login_redirect, console_page
+from aweb_secrets.console_ui import _login_redirect, console_page, recovery_page
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.principal_display import principal_html
 
@@ -165,11 +165,22 @@ def console_activity_router(*, services: ConsoleActivity) -> APIRouter:
     async def page(request: Request, before: str | None = None, limit: str = "50"):
         try:
             current = await services.console.sessions.current(request)
+            count = _limit(limit)
+            async with _errors(services.console, current):
+                result, team_id = await services.page(current, before=before, limit=count)
         except HTTPException as refused:
-            return _login_redirect(refused)
-        count = _limit(limit)
-        async with _errors(services.console, current):
-            result, team_id = await services.page(current, before=before, limit=count)
+            if refused.status_code == 401:
+                return _login_redirect(refused)
+            return recovery_page(
+                refused,
+                message=(
+                    "Activity link is invalid."
+                    if refused.status_code == 400
+                    else "Activity could not be loaded."
+                ),
+                action_href="/activity",
+                action_label="View activity",
+            )
         return console_page(
             title="Activity", body_html=_render(result, count, team_id), session=current
         )
