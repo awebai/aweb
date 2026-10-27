@@ -70,11 +70,12 @@ def test_invalid_status_never_confers_authority(mutation):
 
 def test_final_vector_names_include_the_isolated_authority_boundaries():
     names = [case['name'] for case in V['verification_cases']]
-    assert len(names) == len(set(names)) == 125
+    assert len(names) == len(set(names)) == 126
     assert {
         'namespace-overlapping-replaced-successor-unavailable',
         'namespace-unretired-predecessor-unavailable',
         'root-replacement-cutoff-in-historical-human-parent',
         'namespace-epoch-at-retirement-unavailable',
         'cached-status-age-61-without-failed-refresh',
+        'cached-status-age-901-without-failed-refresh',
     } <= set(names)
