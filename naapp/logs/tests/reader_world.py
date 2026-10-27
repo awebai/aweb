@@ -113,6 +113,7 @@ class World:
     designations: ReaderDesignations = field(init=False)
     recorder: CredentialAudit = field(init=False)
     passkeys: Passkeys = field(init=False)
+    devices: dict[str, SoftAuthenticator] = field(default_factory=dict)
 
 
 @pytest.fixture(name="world")
@@ -245,13 +246,15 @@ async def enrolled_reader(world: World) -> tuple[str, str]:
         signing=signing, signature=signature, scope=scope, contact=CONTACT
     )
     token = world.inbox.enrolments[CONTACT][-1]
+    device = SoftAuthenticator(CONSOLE)
     enrolment = await world.recorder.prepare_enrolment(token)
     with world.recorder.prepared(enrolment):
         await world.passkeys.complete_enrolment(
             token,
-            SoftAuthenticator(CONSOLE).create(await world.passkeys.enrolment_options(token)),
+            device.create(await world.passkeys.enrolment_options(token)),
             fence=enrolment,
         )
+    world.devices[scope] = device
     return scope, await holder(world, scope)
 
 

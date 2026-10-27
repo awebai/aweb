@@ -173,6 +173,19 @@ class ReaderDirectory:
         )
         return [Reader(**row) for row in rows]
 
+    async def is_current_reader(self, scope: str) -> bool:
+        """Whether ``scope`` is a claimed slot a holder currently fills: the
+        console sessions' admission of a reader scope."""
+        if not is_reader_scope(scope):
+            return False
+        current: bool = await self.db.fetch_value(
+            "SELECT EXISTS (SELECT 1 FROM {{tables.readers}} r"
+            " JOIN {{tables.passkey_approvers}} a ON a.scope = r.scope AND a.superseded_at IS NULL"
+            " WHERE r.scope = $1 AND r.claimed_at IS NOT NULL)",
+            scope,
+        )
+        return current
+
     async def pending(self, scope: str) -> Pending | None:
         """The unexpired, unclaimed slot ``scope``, before any transaction."""
         if not is_reader_scope(scope):
@@ -238,6 +251,7 @@ class ReaderDirectory:
                 " WHERE event_id = $1",
                 event_id,
             )
+            assert row is not None
             signing = bytes(row["payload"])
             event = verify(signing, row["signature"], team_id=row["team_id"])
             producer = event.fields["producer"]
