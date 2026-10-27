@@ -680,7 +680,10 @@ async def delete_namespace(
             domain,
         )
         if live_identity is not None:
-            raise HTTPException(status_code=409, detail="Namespace has registered identities")
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "namespace_has_live_ids", "message": "Namespace has registered identities"},
+            )
 
         now = datetime.now(timezone.utc)
         await tx.execute(

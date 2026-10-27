@@ -307,6 +307,7 @@ async def test_deletion_refuses_while_a_registered_identity_is_live(clocked_clie
     resp = await _delete(clocked_client, key, did)
 
     assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["code"] == "namespace_has_live_ids"
     [epoch] = await _epochs(awid_db_infra)
     assert epoch["retired_at"] is None
 
