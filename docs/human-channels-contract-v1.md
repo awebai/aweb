@@ -456,3 +456,52 @@ implementation or Cloud table access is included in this P0 definition change.
 The [P2 native implementation](human-channels-native-send.md) supplies the
 selected-team human selector, explicit custody/access provider and native
 PostgreSQL UoW/HTTP/MCP ingress families. Managed session families remain gated.
+## Server-asserted channel ingress
+
+An accepted message may have an unsigned `ingress` delivery attribute:
+`{platform, presence_kind, input_origin, confidentiality}`. Its presence is an
+assertion by the authenticated delivery server. `platform` is a public token
+matching `[a-z][a-z0-9_]{0,31}`; `presence_kind` is the actual approved `shared`,
+`dedicated` or `native` presence; `input_origin` is `external_human`; and
+`confidentiality` is independently established as `end_to_end`, `hosted_readable`,
+`bridge_readable` or `server_readable`. Native presence can still carry external
+human input. Absence means no server assertion, and is not evidence of E2EE.
+
+This metadata is separate from author content and signature verification. It
+does not authenticate a platform account, grant custody, membership, controller
+or routing authority, or authorize a read. A signed `via`, signer identity,
+body, claimed presence kind or encrypted envelope cannot create or erase it.
+Do not include provider locators, private binding IDs, credentials or external
+account identifiers. Unknown valid platform tokens remain escaped string data.
+
+`NativeMessagingService` accepts an optional trusted `ingress_authority`, absent
+by default. Its `context(auth, send, ingress_key, service, transaction)` hook
+receives verified caller context, the service-retained `PreparedSend`, exact
+claimed key and configured `ServiceBinding` on the acceptance transaction.
+It must bind verified-event evidence to that caller, preparation, input key/hash
+and message/envelope. Read and lock host-owned authority on the same transaction,
+perform no network I/O, retain locks through finish, and preserve the host's
+final recheck after an OSS wait. Several prepared plans may coexist: a mutable
+service-wide current-event slot is forbidden. Configured missing, stale,
+malformed or mismatched evidence refuses instead of becoming an ordinary send.
+The existing `lock_authority` contract and its `None` return are unchanged.
+
+Acceptance persists a validated snapshot on the message row in the same
+transaction as the original receipt and durable mutation intent. A same-UUID
+re-accept or recovery with different context refuses against that stored row.
+Recovery invokes the hook with the original `AcceptedSend` in place of an
+expired preparation, binding the same caller/key/input and message/envelope.
+Exact recovery returns the original `IngressResult` unchanged; normal reads
+return the original row metadata. `AcceptedSend`, `IngressResult`, all P0 DTOs
+and signed/encrypted bytes stay unchanged. Unfinished or failed units of work
+roll back the message, context and outbox together; publication follows commit.
+
+Only this accepting-server path supplies the attribute. Client send/prepare
+fields, MCP input, author-signed fields, encrypted inner content and federation
+wrappers cannot assert local channel ingress. Ordinary sends, including those
+by the same signer, have no attribute. Existing rows are not backfilled from
+sender, presence, custody or `via`. Authorized message reads, pages, replay/live
+SSE, MCP and durable message events carry the stored snapshot, independently
+of current presence or cryptographic verification success. Session/conversation
+discovery and acknowledgement/control hints carry no session-wide assertion;
+the full-message fetch supplies each message's own metadata.

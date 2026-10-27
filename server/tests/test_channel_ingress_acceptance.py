@@ -1,5 +1,6 @@
 """Server-owned ingress on real accepted rows; frozen receipts stay unchanged."""
 from copy import deepcopy
+import asyncio
 from datetime import UTC, datetime
 import json
 from uuid import UUID, uuid4
@@ -16,6 +17,12 @@ CONTEXT = dict(platform="msteams", presence_kind="shared", input_origin="externa
                confidentiality="hosted_readable")
 
 
+def _caller(auth):
+    return canonical_json_bytes(dict(did_key=auth.did_key, did_aw=auth.did_aw,
+        agent_id=auth.agent_id, team_id=auth.team_id, certificate_id=auth.certificate_id,
+        grant_id=getattr(auth.grant, "grant_id", None))).decode()
+
+
 class IngressAuthority:
     """Real host-owned verified-event records, scoped to each prepared plan."""
 
@@ -27,6 +34,7 @@ class IngressAuthority:
             auth.did_aw or auth.did_key, ingress_key.value["namespace"], ingress_key.value["key"],
         )
         if (not row or row["input_hash"] != ingress_key.value["input_hash"]
+                or row["caller"] != _caller(auth)
                 or row["service"] != canonical_record(service).decode()
                 or row["message_id"] != UUID(send.value["message_id"])
                 or row["envelope_hash"] != send.value["envelope_hash"]
@@ -40,7 +48,7 @@ class IngressAuthority:
 async def _channel_service(env):
     await env["db"].execute("""CREATE TABLE public.host_channel_input (
         issuer text, namespace text, input_key text, input_hash text, service text,
-        message_id uuid, envelope_hash text, prepared_id uuid, context jsonb, active bool,
+        message_id uuid, envelope_hash text, prepared_id uuid, context jsonb, active bool, caller text,
         PRIMARY KEY (issuer,namespace,input_key))""")
     service = NativeMessagingService(env["service"].db, authority=env["provider"],
         service=env["provider"].service, ingress_authority=IngressAuthority())
@@ -72,10 +80,10 @@ async def _bind(env, prepared, context=None, key=None):
     key = key or env["key"]
     context = CONTEXT if context is None else context
     await env["db"].execute("""INSERT INTO public.host_channel_input
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,true)""",
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,true,$10)""",
         env["auth"].did_aw, key.value["namespace"], key.value["key"], key.value["input_hash"],
         canonical_record(env["provider"].service).decode(), UUID(prepared.value["message_id"]),
-        prepared.value["envelope_hash"], UUID(prepared.value["prepared_id"]), json.dumps(context))
+        prepared.value["envelope_hash"], UUID(prepared.value["prepared_id"]), json.dumps(context), _caller(env["auth"]))
 
 
 async def _row(env, prepared):
@@ -156,7 +164,37 @@ async def test_channel_ingress_provider_keeps_several_plans_bound(native_send):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["wrong-plan", "inactive", "extra", "missing", "bad-platform", "rollback"])
+async def test_channel_ingress_provider_rechecks_after_oss_actor_wait(native_send):
+    env = native_send
+    await _channel_service(env)
+    prepared = await _prepare(env)
+    await _bind(env, prepared)
+    pending = None
+    try:
+        async with env["db"].transaction() as blocker:
+            await blocker.fetch_one("SELECT agent_id FROM {{tables.agents}} WHERE agent_id=$1 FOR UPDATE", UUID(env["a"]))
+            pid = await blocker.fetch_value("SELECT pg_backend_pid()")
+            pending = asyncio.create_task(complete(env, prepared))
+            async with asyncio.timeout(5):
+                while not await env["db"].fetch_value(
+                    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1::int=ANY(pg_blocking_pids(pid)))", pid):
+                    assert not pending.done()
+                    await asyncio.sleep(0.01)
+            # Real evidence changes while OSS acceptance waits. The provider
+            # must inspect this committed revision after that wait, not before.
+            await blocker.execute("UPDATE public.host_channel_input SET active=false")
+        with pytest.raises(ContractError, match="stale.*channel event"):
+            await asyncio.wait_for(pending, 5)
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+    assert await _row(env, prepared) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["wrong-plan", "wrong-caller", "wrong-service", "wrong-key",
+                                    "inactive", "extra", "missing", "null", "bad-platform", "rollback"])
 async def test_channel_ingress_provider_refuses_or_rolls_back_without_downgrade(native_send, failure):
     env = native_send
     await _channel_service(env)
@@ -171,11 +209,24 @@ async def test_channel_ingress_provider_refuses_or_rolls_back_without_downgrade(
     await _bind(env, prepared, context)
     if failure == "inactive":
         await env["db"].execute("UPDATE public.host_channel_input SET active=false")
+    if failure == "null":
+        await env["db"].execute("UPDATE public.host_channel_input SET context='null'::jsonb")
+    if failure in {"wrong-caller", "wrong-service"}:
+        column = "caller" if failure == "wrong-caller" else "service"
+        await env["db"].execute("UPDATE public.host_channel_input SET " + column + "='wrong'")
     if failure == "wrong-plan":
-        prepared = await _prepare(env)
+        # Same message ID, envelope and caller; only the preparation differs.
+        target = await env["service"].resolve(env["auth"], dto("ResolveRequest", dict(
+            version="aweb-human-resolve-v1", team_id=env["auth"].team_id, selector="human")))
+        prepared = await env["service"].prepare(env["auth"], dto("PrepareRequest", dict(
+            version="aweb-human-prepare-v1", kind=prepared.value["kind"],
+            message_id=prepared.value["message_id"], envelope=prepared.value["envelope"],
+            conversation_id=prepared.value["conversation_id"], format="native_plaintext",
+            author=dict(kind="native", did=env["auth"].did_aw), target=target.value)))
+    key = env["key"] if failure != "wrong-key" else dto("IngressKey", dict(env["key"].value, key="unbound"))
     expected = RuntimeError if failure == "rollback" else ContractError
     with pytest.raises(expected):
-        await complete(env, prepared, fail="own_write" if failure == "rollback" else None)
+        await complete(env, prepared, key=key, fail="own_write" if failure == "rollback" else None)
     assert await _row(env, prepared) is None
     for table in ("human_channel_sends", "human_channel_ingress", "human_channel_mutations"):
         assert (await env["db"].fetch_one("SELECT count(*) n FROM {{tables." + table + "}}"))["n"] == 0

@@ -137,3 +137,25 @@ class NativeMessagingAuthority(Protocol):
         Returning an original result never sends or revives an old route.
         """
         ...
+
+
+class ChannelIngressAuthority(Protocol):
+    async def context(
+        self,
+        auth: MessagingAuth,
+        send: ContractRecord,
+        ingress_key: ContractRecord,
+        service: ContractRecord,
+        transaction: Connection,
+    ) -> dict[str, str]:
+        """Assert exact verified-event evidence using only this transaction.
+
+        send is the service-retained PreparedSend on acceptance, or the original
+        AcceptedSend on recovery (when the preparation need no longer exist).
+        Bind the exact caller, input key/hash, message/envelope and service, plus
+        the preparation on acceptance. Read current host-owned evidence under
+        locks held through finish, without network I/O. Preserve the host's final
+        post-OSS-wait recheck. Never use a mutable service-wide current-event slot.
+        Missing/stale evidence must refuse, never downgrade to an ordinary send.
+        """
+        ...

@@ -5,6 +5,7 @@ from aweb.human_channels.participants import require_native_participant_input
 from aweb.service_errors import ValidationError
 
 from aweb.attachment_service import attachment_transaction
+from aweb.messaging.ingress import validate_ingress
 
 import logging
 import uuid as uuid_mod
@@ -461,6 +462,7 @@ async def send_in_session(
     encrypted_envelope: dict[str, Any] | None = None,
     encrypted_metadata: dict[str, Any] | None = None,
     message_id: UUID | None = None,
+    _server_ingress: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     aweb_db = db.get_manager("aweb")
     participant = await aweb_db.fetch_one(
@@ -491,10 +493,10 @@ async def send_in_session(
              content_mode, message_version, encrypted_envelope, encrypted_ciphertext,
              encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
              encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite,
-             encrypted_signing_key_id, signed_envelope_hash, created_at)
+             encrypted_signing_key_id, signed_envelope_hash, created_at, ingress)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25)
+                $21, $22, $23, $24, $25, $26::jsonb)
         RETURNING message_id, created_at
         """,
         effective_message_id,
@@ -522,6 +524,7 @@ async def send_in_session(
         encrypted_metadata.get("encrypted_signing_key_id"),
         encrypted_metadata.get("signed_envelope_hash"),
         effective_created_at,
+        json.dumps(validate_ingress(_server_ingress)) if _server_ingress is not None else None,
     )
 
     await aweb_db.execute(

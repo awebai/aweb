@@ -16,6 +16,7 @@ from aweb.inbound_modes import (
     normalize_inbound_mode,
 )
 from aweb.messaging.contacts import has_exact_active_identity_contact, normalize_owner_dids
+from aweb.messaging.ingress import validate_ingress
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 MessagePriority = Literal["low", "normal", "high", "urgent"]
@@ -313,6 +314,7 @@ async def deliver_message(
     message_id: UUID | None = None,
     conversation_id: str | UUID | None = None,
     skip_policy_check: bool = False,
+    _server_ingress: dict[str, str] | None = None,
 ) -> tuple[UUID, datetime]:
     """Deliver a message between identities, not within a team."""
     sender_did = str(from_did or "").strip()
@@ -406,9 +408,9 @@ async def deliver_message(
              conversation_id, message_version, content_mode, encrypted_envelope,
              encrypted_ciphertext, encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
              encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite, encrypted_signing_key_id,
-             signed_envelope_hash)
+             signed_envelope_hash, ingress)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                $17, $18, $19::jsonb, $20, $21::jsonb, $22, $23, $24, $25, $26, $27, $28)
+                $17, $18, $19::jsonb, $20, $21::jsonb, $22, $23, $24, $25, $26, $27, $28, $29::jsonb)
         RETURNING message_id, created_at
         """,
         message_id,
@@ -439,6 +441,7 @@ async def deliver_message(
         encrypted_metadata.get("encrypted_suite"),
         encrypted_metadata.get("encrypted_signing_key_id"),
         encrypted_metadata.get("signed_envelope_hash"),
+        json.dumps(validate_ingress(_server_ingress)) if _server_ingress is not None else None,
     )
     if not row:
         raise ServiceError("Failed to create message")

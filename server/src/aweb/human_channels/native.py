@@ -28,7 +28,8 @@ from aweb.messaging.chat import ensure_session, send_in_session
 from aweb.messaging.conversations import create_conversation, get_conversation
 from aweb.messaging.messages import authorize_message_delivery, deliver_message
 
-from .authority import NativeMessagingAuthority, NativeMessagingSubject
+from .authority import ChannelIngressAuthority, NativeMessagingAuthority, NativeMessagingSubject
+from aweb.messaging.ingress import ingress_from_row, validate_ingress
 from .contract import ContractError, ContractRecord, canonical_record, decode_record
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ class NativeMessagingService:
         service: ContractRecord,
         publisher=None,
         attachment_backend=None,
+        ingress_authority: ChannelIngressAuthority | None = None,
         max_preparations=1024,
     ):
         self.db = db
@@ -119,6 +121,7 @@ class NativeMessagingService:
         self.service = _snapshot(service, "ServiceBinding")
         self.publisher = publisher
         self.attachment_backend = attachment_backend
+        self.ingress_authority = ingress_authority
         self.max_preparations = max_preparations
         self._preparations = {}
 
@@ -620,6 +623,28 @@ class NativeMessagingUnitOfWork:
         if not self.open:
             raise ContractError("invalid", "closed unit of work")
 
+    async def _ingress_context(self, send, key):
+        provider = self.service.ingress_authority
+        if provider is None:
+            return None
+        value = await self.service._authority_call(
+            provider.context, deepcopy(self.auth), _snapshot(send, send.schema),
+            _snapshot(key, "IngressKey"), _snapshot(self.service.service, "ServiceBinding"), self.transaction,
+        )
+        try:
+            return validate_ingress(value)
+        except ValueError as error:
+            raise ContractError("authority_unavailable", "channel ingress context") from error
+
+    async def _check_stored_ingress(self, send, context):
+        table = "messages" if send.value["kind"] == "mail" else "chat_messages"
+        row = await self.manager.fetch_one(
+            "SELECT ingress FROM {{tables." + table + "}} WHERE message_id=$1 FOR UPDATE",
+            UUID(send.value["message_id"]),
+        )
+        if row is None or ingress_from_row(row) != context:
+            raise ContractError("replay_conflict", "channel ingress")
+
     @property
     def transaction(self):
         self._guard()
@@ -661,6 +686,9 @@ class NativeMessagingUnitOfWork:
                 else row["result"],
             )
             _grant(self.auth, result.value["accepted"]["kind"])
+            accepted = _dto("AcceptedSend", result.value["accepted"])
+            context = await self._ingress_context(accepted, key)
+            await self._check_stored_ingress(accepted, context)
             self.finished = True
             self.claim = key
             return result
@@ -754,6 +782,7 @@ class NativeMessagingUnitOfWork:
         original = json.loads(retained.request_bytes)
         original["target"] = original["target"]["principal"]
         request_hash = _hash(canonical_json_bytes(original))
+        ingress = await self._ingress_context(prepared, self.claim)
         if old:
             if (
                 old["issuer"] != _principal(self.auth)
@@ -767,6 +796,7 @@ class NativeMessagingUnitOfWork:
             )
             accepted["replayed"] = True
             self.accepted = _dto("AcceptedSend", accepted)
+            await self._check_stored_ingress(self.accepted, ingress)
             return _snapshot(self.accepted, "AcceptedSend")
         await self.manager.execute(
             "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
@@ -780,7 +810,8 @@ class NativeMessagingUnitOfWork:
             "SELECT session_id FROM {{tables.chat_sessions}} WHERE session_id=$1 FOR UPDATE",
             UUID(value["conversation_id"]),
         )
-        await self._persist(db, retained, value)
+        await self._persist(db, retained, value, ingress)
+        await self._check_stored_ingress(prepared, ingress)
         mutation_id = str(uuid4())
         self.accepted = _dto(
             "AcceptedSend",
@@ -817,6 +848,8 @@ class NativeMessagingUnitOfWork:
             "to_alias": retained.recipient["alias"],
             "content_mode": retained.payload.content_mode,
         }
+        if ingress is not None:
+            context["ingress"] = ingress
         await self.manager.execute(
             "INSERT INTO {{tables.human_channel_mutations}} (mutation_id,message_id,event_type,context) VALUES ($1,$2,$3,$4::jsonb)",
             UUID(mutation_id),
@@ -826,7 +859,7 @@ class NativeMessagingUnitOfWork:
         )
         return _snapshot(self.accepted, "AcceptedSend")
 
-    async def _persist(self, db, retained, value):
+    async def _persist(self, db, retained, value, ingress):
         payload = retained.payload
         actor = dict(retained.author, did=_principal(self.auth), transport_hint="local")
         recipient = dict(
@@ -835,6 +868,7 @@ class NativeMessagingUnitOfWork:
             transport_hint="local",
         )
         common = {
+            "_server_ingress": ingress,
             "signature": payload.signature,
             "signed_payload": payload.signed_payload,
             "content_mode": payload.content_mode,
