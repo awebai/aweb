@@ -64,10 +64,6 @@ S2_LATER = {
     # Namespace continuity checkpoint, later commits: the root_replaced
     # cutoff, the signed rotation and the remaining refusals.
     "register-local-subject-refuses",
-    "replacement-old-owner-child-registration-refuses",
-    "replacement-races-parent-registration",
-    "replacement-root-readmits-existing-id",
-    "replacement-new-root-first-registration",
     "namespace-signed-rotation-preserves-tree",
     "non-root-explicit-now-cutoff-refuses",
     "namespace-rotation-wrong-from-seq",
@@ -434,6 +430,99 @@ async def _enroll_normal_tree(tree):
 async def _delete_namespace(tree, domain):
     headers = build_signed_headers(seed("root"), did_key("root"), domain=domain, operation="delete_namespace")
     return await tree.client.request("DELETE", f"/v1/namespaces/{domain}", headers=headers)
+
+
+# ---------------------------------------------------------------------------
+# Namespace replacement cuts off revisions admitted before it
+# ---------------------------------------------------------------------------
+
+REPLACED_AT = at("2026-10-26T00:10:00Z")
+
+
+async def _replaced_tree(tree):
+    """alice under the first root, then the root replaced through key-loss recovery."""
+    await tree.did("replacement_human")
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    tree.clock.now = REPLACED_AT
+    await tree.replace_root("root_rotated")
+
+
+@consumes("replacement-old-owner-child-registration-refuses")
+async def test_replacement_old_owner_child_registration_refuses(case, tree, awid_db_infra):
+    await _replaced_tree(tree)
+    before = await _revisions(awid_db_infra)
+
+    resp = await tree.register(
+        [certificate("alice"), certificate(case["input"]["certificate"])], when=at(case["input"]["registered_at"]),
+    )
+
+    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), resp.text
+    assert await _revisions(awid_db_infra) == before
+
+
+@consumes("replacement-new-root-first-registration")
+async def test_replacement_new_root_first_registration(case, tree, awid_db_infra):
+    await _replaced_tree(tree)
+
+    resp = await tree.register([certificate(case["input"]["certificate"])], when=at(case["input"]["registered_at"]))
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["registered_at"] == case["expected"]["registered_at"]
+
+
+@consumes("replacement-root-readmits-existing-id")
+async def test_replacement_root_readmits_existing_id(case, tree, awid_db_infra):
+    await _replaced_tree(tree)
+    db = awid_db_infra.get_manager("aweb")
+    key_before = await db.fetch_value(
+        "SELECT current_did_key FROM {{tables.did_aw_mappings}} WHERE did_aw = $1", did_aw("alice"),
+    )
+
+    resp = await tree.register(
+        [certificate(case["input"]["certificate"])], expected_head=case["input"]["expected_head"],
+        when=at(case["input"]["registered_at"]),
+    )
+    child = await tree.register(
+        [certificate(case["input"]["certificate"]), certificate("bob")], when=at("2026-10-26T00:15:00Z"),
+    )
+
+    assert resp.status_code == 200, resp.text
+    old, new = await _revisions(awid_db_infra, did_aw("alice"))
+    assert (old["certificate_id"], new["certificate_id"]) == (
+        case["input"]["expected_head"], certificate_id(case["input"]["certificate"]),
+    )
+    assert await db.fetch_value(
+        "SELECT current_did_key FROM {{tables.did_aw_mappings}} WHERE did_aw = $1", did_aw("alice"),
+    ) == key_before
+    assert child.status_code == 200, child.text
+
+
+@consumes("replacement-races-parent-registration")
+async def test_replacement_races_parent_registration(case, tree, awid_db_infra):
+    await tree.did("replacement_human")
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    db = awid_db_infra.get_manager("aweb")
+    before = await _revisions(awid_db_infra)
+    tree.clock.now = REPLACED_AT
+    tree.exact_dns("root_rotated")
+    async with db.transaction() as holder:
+        await holder.fetch_one(
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE", DOMAIN,
+        )
+        replacement = asyncio.create_task(tree.replace_controller("root_rotated"))
+        await wait_until_blocked_on_lock(db, replacement)
+        registration = asyncio.create_task(
+            tree.register([certificate("alice"), certificate(case["input"]["certificate"])]),
+        )
+        await wait_until_blocked_on_lock(db, registration, waiters=2)
+    replaced = await replacement
+    tree.clock.now = at(case["input"]["registered_at"])
+    resp = await registration
+
+    assert replaced.status_code == 200, replaced.text
+    assert resp.status_code == 422, resp.text
+    assert _code(resp) == case["expected"]["reason"]
+    assert await _revisions(awid_db_infra) == before
 
 
 # ---------------------------------------------------------------------------

@@ -74,6 +74,22 @@ async def _root_authority(tree, child="alice"):
     return "unavailable"
 
 
+async def _old_tree_reason(tree):
+    """Register bob under alice, enrolled under an earlier root, and return the refusal."""
+    resp = await tree.register([certificate("alice"), certificate("bob")])
+    assert resp.status_code == 422, resp.text
+    return resp.json()["detail"]["code"]
+
+
+async def _old_tree_survives(tree):
+    """With DNS and the stored controller back on the open epoch's key, alice still issues."""
+    tree.exact_dns("root")
+    assert (await tree.reverify()).status_code == 200
+    resp = await tree.register([certificate("alice"), certificate("bob")])
+    assert resp.status_code == 200, resp.text
+    return True
+
+
 async def _namespace(tree):
     resp = await tree.client.get(f"/v1/namespaces/{DOMAIN}")
     assert resp.status_code == 200, resp.text
@@ -137,6 +153,7 @@ async def test_namespace_delete_with_live_ids_preserves_history(case, tree, awid
 
 @consumes("namespace-delete-reregister-cuts-old-tree", "namespace-delete-reregister-same-key-cuts-old-tree")
 async def test_namespace_delete_then_reregister_opens_replaced(case, tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     tree.clock.now = at(case["input"]["deleted_at"])
     assert (await tree.delete_namespace()).status_code == 200
     controller = "root" if case["input"]["reuse_same_key"] else "root_rotated"
@@ -151,6 +168,8 @@ async def test_namespace_delete_then_reregister_opens_replaced(case, tree, awid_
     assert (second["seq"], second["did_key"], second["continuity"], second["registered_at"]) == (
         2, did_key(controller), case["expected"]["continuity"], at(case["input"]["registered_at"]),
     )
+    assert case["expected"]["sequence_not_reset"] is True
+    assert await _old_tree_reason(tree) == case["expected"]["old_registered_ids_reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +285,7 @@ async def test_pre_upgrade_concurrent_authenticated_posts_open_once(case, pre_up
 
 @consumes("namespace-dns-replacement-cuts-tree", "lost-root-key-dns-replacement")
 async def test_exact_put_to_a_new_key_opens_replaced(case, tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     tree.exact_dns("root_rotated")
     tree.clock.now = at(case["input"]["registered_at"])
 
@@ -277,6 +297,7 @@ async def test_exact_put_to_a_new_key_opens_replaced(case, tree, awid_db_infra):
     assert (second["seq"], second["did_key"], second["continuity"], second["registered_at"]) == (
         2, case["input"]["exact_dns_key"], case["expected"]["continuity"], at(case["input"]["registered_at"]),
     )
+    assert await _old_tree_reason(tree) == case["expected"]["old_registered_ids_reason"]
 
 
 @pytest.mark.asyncio
@@ -305,6 +326,7 @@ async def test_exact_put_without_an_epoch_opens_the_first_one(pre_upgrade, awid_
 
 @consumes("namespace-put-skip-dns-no-epoch")
 async def test_put_skip_dns_writes_no_epoch(case, tree, awid_db_infra, monkeypatch):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     epochs = await _epochs(awid_db_infra)
     monkeypatch.setenv("AWID_SKIP_DNS_VERIFY", "1")
 
@@ -314,7 +336,8 @@ async def test_put_skip_dns_writes_no_epoch(case, tree, awid_db_infra, monkeypat
     assert resp.status_code == 200, resp.text
     assert (await _namespace(tree))["controller_did"] == case["expected"]["stored_controller"]
     assert await _epochs(awid_db_infra) == epochs
-    assert await _root_authority(tree) == case["expected"]["current_authority"]
+    assert await _root_authority(tree, "other-human") == case["expected"]["current_authority"]
+    assert await _old_tree_survives(tree) is not case["expected"]["old_tree_cut_off"]
 
 
 @consumes("namespace-put-parent-authorization-no-epoch")
@@ -323,6 +346,9 @@ async def test_put_parent_authorization_writes_no_epoch(case, clocked_client, ma
     tree.dns("depth1", domain="com")
     assert (await tree.register_namespace("depth1", domain="com")).status_code == 200
     await tree.root()
+    for key_name in ("alice", "bob", "other_human"):
+        await tree.did(key_name)
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     epochs = await _epochs(awid_db_infra)
     parent = build_signed_headers(
         seed("depth1"), did_key("depth1"), domain=DOMAIN, operation="authorize_subdomain_rotation",
@@ -340,12 +366,13 @@ async def test_put_parent_authorization_writes_no_epoch(case, clocked_client, ma
     assert resp.status_code == 200, resp.text
     assert (await _namespace(tree))["controller_did"] == case["expected"]["stored_controller"]
     assert await _epochs(awid_db_infra) == epochs
-    await tree.did("alice")
-    assert await _root_authority(tree) == case["expected"]["current_authority"]
+    assert await _root_authority(tree, "other-human") == case["expected"]["current_authority"]
+    assert await _old_tree_survives(tree) is not case["expected"]["old_tree_cut_off"]
 
 
 @consumes("namespace-reverify-row-change-then-exact-put-opens-replaced")
 async def test_reverify_row_change_then_exact_put_opens_replaced(case, tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     tree.exact_dns("root_rotated")
     assert (await tree.reverify()).status_code == 200
     assert (await _namespace(tree))["controller_did"] == case["input"]["stored_controller_after_reverify"]
@@ -360,6 +387,7 @@ async def test_reverify_row_change_then_exact_put_opens_replaced(case, tree, awi
     assert (second["seq"], second["did_key"], second["continuity"]) == (
         case["expected"]["epoch_seq"], case["expected"]["stored_controller"], case["expected"]["continuity"],
     )
+    assert await _old_tree_reason(tree) == case["expected"]["old_registered_ids_reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +409,7 @@ async def test_same_key_reverify_writes_no_epoch(case, tree, awid_db_infra):
 
 @consumes("namespace-unauthenticated-reverify-cannot-replace")
 async def test_reverify_to_another_key_writes_no_epoch(case, tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     epochs = await _epochs(awid_db_infra)
     tree.exact_dns("root_rotated")
 
@@ -388,11 +417,13 @@ async def test_reverify_to_another_key_writes_no_epoch(case, tree, awid_db_infra
 
     assert resp.status_code == 200, resp.text
     assert await _epochs(awid_db_infra) == epochs
-    assert await _root_authority(tree) == case["expected"]["current_authority"]
+    assert await _root_authority(tree, "other-human") == case["expected"]["current_authority"]
+    assert await _old_tree_survives(tree) is not case["expected"]["old_tree_cut_off"]
 
 
 @consumes("namespace-failed-dns-observation-no-epoch", "namespace-unverified-dns-observation-no-epoch")
 async def test_failed_or_unverified_dns_writes_no_epoch(case, tree, awid_db_infra, monkeypatch):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     epochs = await _epochs(awid_db_infra)
     if case["input"]["observed_dns"] == "failed":
         tree.dns(None)
@@ -403,7 +434,9 @@ async def test_failed_or_unverified_dns_writes_no_epoch(case, tree, awid_db_infr
     await tree.register_namespace("root")
 
     assert await _epochs(awid_db_infra) == epochs
-    assert await _root_authority(tree) == case["expected"]["current_authority"]
+    assert await _root_authority(tree, "other-human") == case["expected"]["current_authority"]
+    monkeypatch.delenv("AWID_SKIP_DNS_VERIFY", raising=False)
+    assert await _old_tree_survives(tree) is not case["expected"]["old_tree_cut_off"]
 
 
 @consumes("namespace-exact-inherited-exact-same-key")

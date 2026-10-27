@@ -1045,7 +1045,8 @@ controller, the open epoch's key and that DNS key agree; the skip-DNS bypass
 proves nothing), the parent (the root key for a namespace parent; a
 registered, unrevoked, same-domain parent's current key for an identity
 parent) and that the presented ancestors are the
-registered current heads. It records `registered_at` from the post-lock clock,
+registered current heads, none admitted before the domain's latest
+`replaced` epoch (`root_replaced`). It records `registered_at` from the post-lock clock,
 strictly after the latest identity-tree event in the domain and the selected
 key epochs, with the exact `issuer_key_seq`.
 
@@ -1057,7 +1058,7 @@ A success returns exactly `{certificate_id, registered_at}`. Refusals use
 the tree's refusals (`domain_mismatch`, `human_issuer_is_agent`, `cycle`,
 `duplicate_id`, `missing_parent`, `identity_kind_immutable`, `subject_revoked`,
 `unregistered_parent`, `parent_revoked`, `issuer_key_not_current`,
-`superseded_certificate`), and 503 `evidence_unavailable` when the domain has
+`superseded_certificate`, `root_replaced`), and 503 `evidence_unavailable` when the domain has
 no current root authority.
 
 Registration is rate limited in the `id_certificate_register` bucket: 300
