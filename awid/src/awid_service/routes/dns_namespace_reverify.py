@@ -8,6 +8,8 @@ from typing import Any
 from fastapi import HTTPException
 
 from awid.dns_verify import DnsVerificationError, DomainVerifier
+from awid_service.id_tree_clock import Clock
+from awid_service.namespace_epochs import DNS_EXACT, record_namespace_controller
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,7 @@ async def reverify_namespace_row(
     verify_domain: DomainVerifier,
     allow_local_bypass: bool,
     dns_failure_status: int,
+    clock: Clock,
     dns_failure_detail: str | None = None,
 ) -> NamespaceReverifyResult:
     if is_reserved_local_domain(domain):
@@ -55,54 +58,60 @@ async def reverify_namespace_row(
             detail=dns_failure_detail or str(exc),
         ) from exc
 
-    old_controller_did = ns_row["controller_did"]
     # When the DNS record comes from a parent domain, the controller_did
     # belongs to the parent — not this namespace.  Refresh the timestamp
     # (the domain tree is still alive) but do not rotate the controller.
-    if dns_authority.inherited:
-        new_controller_did = old_controller_did
-    else:
-        new_controller_did = dns_authority.controller_did
-    now = datetime.now(timezone.utc)
+    async with db.transaction() as tx:
+        locked = await tx.fetch_one(
+            """
+            SELECT controller_did
+            FROM {{tables.dns_namespaces}}
+            WHERE namespace_id = $1 AND deleted_at IS NULL
+            FOR UPDATE
+            """,
+            ns_row["namespace_id"],
+        )
+        if locked is None:
+            raise HTTPException(status_code=404, detail="Namespace not found")
+        old_controller_did = locked["controller_did"]
+        if dns_authority.inherited:
+            new_controller_did = old_controller_did
+        else:
+            new_controller_did = dns_authority.controller_did
+        now = datetime.now(timezone.utc)
 
-    if new_controller_did == old_controller_did:
-        row = await db.fetch_one(
+        row = await tx.fetch_one(
             """
             UPDATE {{tables.dns_namespaces}}
-            SET verification_status = 'verified',
-                last_verified_at = $2
+            SET controller_did = $2,
+                verification_status = 'verified',
+                last_verified_at = $3
             WHERE namespace_id = $1 AND deleted_at IS NULL
             RETURNING namespace_id, domain, controller_did, verification_status,
                       default_delivery_origin, last_verified_at, created_at
             """,
             ns_row["namespace_id"],
+            new_controller_did,
             now,
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Namespace not found")
+        if not dns_authority.inherited:
+            await record_namespace_controller(
+                tx,
+                domain=domain,
+                did_key=new_controller_did,
+                established_by=DNS_EXACT,
+                clock=clock,
+            )
+
+    if new_controller_did == old_controller_did:
         return NamespaceReverifyResult(
             row=row,
             old_controller_did=old_controller_did,
             new_controller_did=new_controller_did,
             rotated=False,
         )
-
-    row = await db.fetch_one(
-        """
-        UPDATE {{tables.dns_namespaces}}
-        SET controller_did = $2,
-            verification_status = 'verified',
-            last_verified_at = $3
-        WHERE namespace_id = $1 AND deleted_at IS NULL
-        RETURNING namespace_id, domain, controller_did, verification_status,
-                  default_delivery_origin, last_verified_at, created_at
-        """,
-        ns_row["namespace_id"],
-        new_controller_did,
-        now,
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="Namespace not found")
 
     logger.warning(
         "Namespace controller rotated: domain=%s old_controller_did=%s new_controller_did=%s",

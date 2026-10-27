@@ -19,6 +19,14 @@ from awid_service.delivery_origin import validate_delivery_origin
 from awid.ratelimit import rate_limit_dep
 from awid.dns_auth import validate_did_key as _validate_did_key
 from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
+from awid_service.id_tree_clock import app_clock
+from awid_service.namespace_epochs import (
+    PARENT_AUTHORIZATION,
+    UNVERIFIED,
+    dns_establishment,
+    record_namespace_controller,
+    retire_namespace_controller,
+)
 from awid_service.routes.dns_namespace_reverify import (
     is_reserved_local_domain,
     reverify_namespace_row,
@@ -243,6 +251,7 @@ async def register_namespace(
     skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
     domain_is_local = is_reserved_local_domain(domain)
+    established_by = PARENT_AUTHORIZATION if parent_auth_present else UNVERIFIED
     if not skip_dns and not parent_auth_present and not domain_is_local:
         try:
             dns_authority = await verify_domain(domain)
@@ -254,6 +263,7 @@ async def register_namespace(
                 status_code=403,
                 detail="Signing key does not match DNS controller",
             )
+        established_by = dns_establishment(dns_authority)
 
     # Transactional: check-then-insert to prevent duplicate races
     async with db.transaction() as tx:
@@ -299,6 +309,13 @@ async def register_namespace(
             now,
             now,
         )
+        await record_namespace_controller(
+            tx,
+            domain=domain,
+            did_key=controller_did,
+            established_by=established_by,
+            clock=app_clock(request.app),
+        )
 
     return NamespaceResponse(
         namespace_id=str(ns_id),
@@ -317,6 +334,7 @@ async def register_namespace(
     dependencies=[Depends(rate_limit_dep("namespace_reverify"))],
 )
 async def reverify_namespace(
+    request: Request,
     domain: str,
     db_infra=Depends(get_db),
     verify_domain: DomainVerifier = Depends(get_domain_verifier),
@@ -343,6 +361,7 @@ async def reverify_namespace(
         verify_domain=verify_domain,
         allow_local_bypass=False,
         dns_failure_status=422,
+        clock=app_clock(request.app),
     )
     return _namespace_reverify_response(result)
 
@@ -456,6 +475,7 @@ async def rotate_namespace_controller(
     skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
     domain_is_local = is_reserved_local_domain(domain)
+    established_by = PARENT_AUTHORIZATION if parent_auth_present else UNVERIFIED
     if not skip_dns and not parent_auth_present and not domain_is_local:
         try:
             dns_authority = await verify_domain(domain)
@@ -467,6 +487,7 @@ async def rotate_namespace_controller(
                 status_code=403,
                 detail="DNS controller does not match new_controller_did",
             )
+        established_by = dns_establishment(dns_authority)
 
     now = datetime.now(timezone.utc)
     async with db.transaction() as tx:
@@ -510,6 +531,13 @@ async def rotate_namespace_controller(
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Namespace not found")
+        await record_namespace_controller(
+            tx,
+            domain=domain,
+            did_key=new_controller_did,
+            established_by=established_by,
+            clock=app_clock(request.app),
+        )
     if existing["controller_did"] != new_controller_did:
         logger.warning(
             "Namespace controller rotated: domain=%s old_controller_did=%s new_controller_did=%s",
@@ -676,6 +704,7 @@ async def delete_namespace(
             row["namespace_id"],
             now,
         )
+        await retire_namespace_controller(tx, domain=domain, clock=app_clock(request.app))
 
     return {"deleted": True, "namespace_id": str(row["namespace_id"]), "domain": domain}
 

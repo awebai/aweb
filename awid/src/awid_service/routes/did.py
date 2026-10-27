@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from awid_service.deps import get_db as get_db_infra
+from awid_service.id_tree_clock import app_clock, serialization_time
 from awid.ratelimit import rate_limit_dep
 from awid.did import (
     public_key_from_did,
@@ -255,7 +256,7 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
     state_hash = awid_identity_state_hash(did_aw=req.did_aw, current_did_key=req.new_did_key)
 
     db = _db(request)
-    created_at = _now()
+    created_at = app_clock(request.app)()
     updated_at = created_at
 
     async with db.transaction() as tx:
@@ -691,11 +692,14 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
 
     db = _db(request)
     async with db.transaction() as tx:
+        # The mapping row serializes this rotation with registrations that
+        # select this identity's current key as an issuer or subject key.
         row = await tx.fetch_one(
             """
             SELECT did_aw, current_did_key
             FROM {{tables.did_aw_mappings}}
             WHERE did_aw = $1
+            FOR UPDATE
             """,
             did_aw,
         )
@@ -710,7 +714,7 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
 
         last = await tx.fetch_one(
             """
-            SELECT seq, entry_hash
+            SELECT seq, entry_hash, created_at
             FROM {{tables.did_aw_log}}
             WHERE did_aw = $1
             ORDER BY seq DESC
@@ -754,15 +758,21 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
         except Exception as exc:
             raise HTTPException(status_code=401, detail="invalid signature") from exc
 
+        rotated_at = serialization_time(
+            app_clock(request.app),
+            last["created_at"],
+            await _latest_tree_event_for_key_holder(tx, did_aw),
+        )
         await tx.execute(
             """
             UPDATE {{tables.did_aw_mappings}}
             SET current_did_key = $2,
-                updated_at = NOW()
+                updated_at = $3
             WHERE did_aw = $1
             """,
             did_aw,
             req.new_did_key,
+            rotated_at,
         )
 
         await tx.execute(
@@ -771,7 +781,7 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
                 (did_aw, seq, operation, previous_did_key, new_did_key,
                  prev_entry_hash, entry_hash, state_hash, authorized_by, signature,
                  timestamp, created_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
             """,
             did_aw,
             next_seq,
@@ -784,6 +794,25 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
             req.authorized_by,
             req.signature,
             req.timestamp,
+            rotated_at,
         )
 
     return {"updated": True}
+
+
+async def _latest_tree_event_for_key_holder(tx, did_aw: str):
+    """The latest identity-tree event that selected this identity's key.
+
+    Its own registrations and revocation proved its current key, and its
+    children's registrations selected that key as their issuer key.
+    """
+    return await tx.fetch_value(
+        """
+        SELECT GREATEST(
+            (SELECT MAX(GREATEST(registered_at, COALESCE(superseded_at, registered_at)))
+             FROM {{tables.id_certificates}} WHERE id = $1 OR parent_id = $1),
+            (SELECT revoked_at FROM {{tables.id_identities}} WHERE id = $1)
+        )
+        """,
+        did_aw,
+    )

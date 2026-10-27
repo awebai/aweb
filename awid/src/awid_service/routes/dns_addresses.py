@@ -35,6 +35,7 @@ from awid.pagination import encode_cursor, validate_pagination_params
 from awid.ratelimit import rate_limit_dep
 from awid.signing import verify_did_key_signature
 from awid_service.deps import get_db, get_domain_verifier
+from awid_service.id_tree_clock import Clock, app_clock
 from awid_service.routes.dns_namespace_reverify import reverify_namespace_row
 
 _ADDRESS_ALREADY_BOUND_DETAIL = "address already bound to a different did_aw"
@@ -111,7 +112,7 @@ async def _require_namespace(db, domain: str):
     return row
 
 
-async def _ensure_fresh_verification(db, ns_row, domain: str, verify_domain: DomainVerifier):
+async def _ensure_fresh_verification(db, ns_row, domain: str, verify_domain: DomainVerifier, clock: Clock):
     """Re-verify DNS if the namespace verification is stale (>24h).
 
     Returns the current namespace row. Raises 403 on DNS failure without
@@ -136,6 +137,7 @@ async def _ensure_fresh_verification(db, ns_row, domain: str, verify_domain: Dom
         verify_domain=verify_domain,
         allow_local_bypass=True,
         dns_failure_status=403,
+        clock=clock,
         dns_failure_detail="Namespace DNS verification failed",
     )
     return result.row
@@ -572,7 +574,7 @@ async def register_address(
     # The namespace is re-fetched with FOR SHARE inside the transaction to
     # prevent concurrent soft-delete from invalidating these checks.
     ns_row = await _require_namespace(db, domain)
-    ns_row = await _ensure_fresh_verification(db, ns_row, domain, verify_domain)
+    ns_row = await _ensure_fresh_verification(db, ns_row, domain, verify_domain, app_clock(request.app))
     _require_controller(caller_did, ns_row)
 
     async with db.transaction() as tx:
@@ -1057,7 +1059,7 @@ async def update_address(
     )
 
     ns_row = await _require_namespace(db, domain)
-    ns_row = await _ensure_fresh_verification(db, ns_row, domain, verify_domain)
+    ns_row = await _ensure_fresh_verification(db, ns_row, domain, verify_domain, app_clock(request.app))
     _require_controller(caller_did, ns_row)
 
     async with db.transaction() as tx:
@@ -1209,7 +1211,7 @@ async def reassign_address(
     )
 
     ns_row = await _require_namespace(db, domain)
-    ns_row = await _ensure_fresh_verification(db, ns_row, domain, verify_domain)
+    ns_row = await _ensure_fresh_verification(db, ns_row, domain, verify_domain, app_clock(request.app))
     _require_controller(caller_did, ns_row)
 
     async with db.transaction() as tx:

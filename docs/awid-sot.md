@@ -228,6 +228,17 @@ POST   /v1/namespaces/{domain}/rotate   Rotate controller key
 DELETE /v1/namespaces/{domain}          Delete (controller auth)
 ```
 
+Every controller change (registration, rotation, reverification to a new key,
+deletion) appends to the domain's `id_namespace_epochs` history at a post-lock
+witness time instead of overwriting the old key's evidence. Each epoch records
+how AWID accepted its key. Only an epoch proven by the exact `_awid.<domain>`
+TXT record is identity-tree root evidence for that domain. An inherited
+ancestor record, a parent-namespace authorization, the skip-DNS bypass and the
+reserved `local` domain are recorded but never exact
+([identity certificates](id-certificates.md) §1, §4). No epoch is inferred for
+a namespace registered before this history existed: the first exact
+registration, rotation or reverification witnesses its current key.
+
 ## Addresses
 
 Identity handles within namespaces. `acme.com/alice`.
@@ -438,7 +449,10 @@ After the rotation is appended to the log, `new_did_key` becomes the
 `current_did_key` in `did_aw_mappings`.
 
 Rotation is a single-row update of `did_aw_mappings.current_did_key`
-plus one append to `did_aw_log`. There is no cascade to address rows:
+plus one append to `did_aw_log`. It locks the mapping row before reading the
+log head, so concurrent rotations and identity-tree registrations that select
+this key serialize, and the appended entry's `created_at` is the post-lock
+witness time of the new key epoch. There is no cascade to address rows:
 `public_addresses` does not store the current key — address reads
 resolve it via JOIN on `did_aw_mappings`. Any number of addresses
 can be bound to a `did_aw` without affecting rotation cost or
