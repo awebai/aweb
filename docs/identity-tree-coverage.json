@@ -1155,7 +1155,7 @@
       ],
       "acceptance": "Contacts remain pinned to the old did:aw after address replacement; only controller-signed explicit owner acceptance rebinds trust. AWID owns the address-preservation operation.",
       "coverage_scope": "Real AWID/aweb HTTP, Postgres and Redis contact-trust relationship; no ID-chain transport conversion is claimed.",
-      "candidate_head": "21d63621805f6bf9bce60ed7bb280b2aa205fa9b",
+      "candidate_head": "87fbc8334580447a1fbcaf60ab8f0464c36eba9f",
       "ed25519_profile": "legacy"
     },
     {
