@@ -18,6 +18,7 @@ from tests.test_console_access import (
     DB_AGENT,
     DB_WRITE,
     INSERT,
+    OPEN_AGENT,
     ORDERS_DB,
     READ,
     READER,
@@ -33,6 +34,16 @@ from tests.test_use_approvals import Clock, Uses
 
 world = _world
 browser = _browser
+
+
+def apart(a, b, gap=4):
+    """Two controls neither overlap nor touch, side by side or stacked."""
+    return (
+        a["x"] + a["width"] + gap <= b["x"]
+        or b["x"] + b["width"] + gap <= a["x"]
+        or a["y"] + a["height"] + gap <= b["y"]
+        or b["y"] + b["height"] + gap <= a["y"]
+    )
 
 
 @pytest.fixture
@@ -90,6 +101,9 @@ async def test_the_db_write_agent_is_flagged_first_and_revoked_without_a_passkey
         await expect(first).to_contain_text(DB_AGENT.did_aw)
         role_grant = first.locator(f'.access-grant[data-grant-id="{READING.grant_id}"]')
         await expect(role_grant).to_contain_text("secrets.role.readers")
+        opened = page.locator(f'.access-agent[data-principal-did="{OPEN_AGENT.did_aw}"]')
+        await expect(opened.locator(".access-flags .flag-write")).to_be_visible()
+        await expect(opened.locator(".access-use .flag-write")).to_be_visible()
         await page.screenshot(path=tmp_path / f"access-{width}.png", full_page=True)
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
@@ -123,6 +137,8 @@ async def test_one_agent_is_removed_from_its_role_without_a_passkey(
         reader = page.locator(f'.access-agent[data-principal-did="{READER.did_aw}"]')
         remove = reader.locator(f'.access-remove-member[data-role="{READERS}"]')
         await expect(remove).to_be_visible()
+        revoke = reader.locator(f'.access-grant[data-grant-id="{READING.grant_id}"] .access-revoke')
+        assert apart(await revoke.bounding_box(), await remove.bounding_box())
         await page.screenshot(path=tmp_path / f"access-role-{width}.png", full_page=True)
         await cdp.send("WebAuthn.removeVirtualAuthenticator", {"authenticatorId": authenticator})
         page.once("dialog", lambda dialog: asyncio.ensure_future(dialog.accept()))
