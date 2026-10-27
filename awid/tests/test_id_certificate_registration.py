@@ -62,10 +62,6 @@ S2_LATER = {
     # (checkpoint 4); until then the parent path refuses evidence_unavailable.
     "live-parent-revokes-now",
     "post-lock-revocation-time-is-not-transaction-start",
-    # Namespace continuity checkpoint, later commits: the root_replaced
-    # cutoff, the signed rotation and the remaining refusals.
-    "register-local-subject-refuses",
-    "non-root-explicit-now-cutoff-refuses",
 }
 
 # Cases whose effects belong to another slice's component.
@@ -627,6 +623,16 @@ async def test_only_the_root_backdates(case, tree, awid_db_infra):
     assert await _revocations(awid_db_infra) == []
 
 
+@consumes("non-root-explicit-now-cutoff-refuses")
+async def test_non_root_explicit_now_cutoff_refuses(case, tree, awid_db_infra):
+    await _enroll_normal_tree(tree)
+
+    resp = await _revoke_case(case, tree, when=at(case["input"]["now"]))
+
+    assert (resp.status_code, _code(resp)) == (403, case["expected"]["reason"]), resp.text
+    assert await _revocations(awid_db_infra) == []
+
+
 @consumes("future-cutoff-refuses")
 async def test_future_cutoff_refuses(case, tree, awid_db_infra):
     await _enroll_normal_tree(tree)
@@ -1125,13 +1131,17 @@ async def test_a_validly_signed_legacy_envelope_is_never_accepted(tree, awid_db_
     assert await _revisions(awid_db_infra) == []
 
 
-@pytest.mark.asyncio
-async def test_a_did_key_subject_is_not_registered(tree):
+@consumes("register-local-subject-refuses")
+async def test_register_local_subject_refuses(case, tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    before = await _revisions(awid_db_infra)
+
     resp = await tree.register(
-        [certificate("alice"), certificate("coordinator")], signer="coordinator",
+        [certificate("alice"), certificate(case["input"]["certificate"])], signer=case["input"]["certificate"],
     )
 
-    assert (resp.status_code, _code(resp)) == (400, "invalid_shape"), resp.text
+    assert (resp.status_code, _code(resp)) == (400, case["expected"]["reason"]), resp.text
+    assert await _revisions(awid_db_infra) == before
 
 
 @pytest.mark.asyncio
