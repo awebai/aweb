@@ -113,7 +113,7 @@
       ],
       "change": "add",
       "slice": "S1",
-      "status": "pending",
+      "status": "candidate",
       "journeys": [
         "J1",
         "J4",
@@ -121,21 +121,24 @@
         "J8",
         "J10"
       ],
-      "proving_tests": [],
-      "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition."
+      "proving_tests": [
+        "awid/tests/test_id_chain_vectors.py"
+      ],
+      "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition.",
+      "candidate_head": "4132141f0baf98d13ea5a8612c1671c418041414"
     },
     {
       "id": "S1.GO.ANCESTRY",
       "repo": "aweb",
       "files": [
-        "cli/go/awid/id_certificates.go"
+        "cli/go/awid/id_chain.go"
       ],
       "operations": [
         "verify"
       ],
       "change": "add",
       "slice": "S1",
-      "status": "pending",
+      "status": "candidate",
       "journeys": [
         "J1",
         "J4",
@@ -143,8 +146,11 @@
         "J8",
         "J10"
       ],
-      "proving_tests": [],
-      "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition."
+      "proving_tests": [
+        "cli/go/internal/conformance/id_chain_test.go"
+      ],
+      "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition.",
+      "candidate_head": "4132141f0baf98d13ea5a8612c1671c418041414"
     },
     {
       "id": "AWID.NAMESPACE.DNS",
