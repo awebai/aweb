@@ -51,7 +51,8 @@ class UseAccess:
 
     @property
     def writes(self) -> bool:
-        return self.refusal is None and self.side_effect not in (None, "none")
+        """Usable and not declared read-only: an open request declares no effect, so it may write."""
+        return self.refusal is None and self.side_effect != "none"
 
 
 @dataclass(frozen=True)
@@ -300,12 +301,12 @@ def _use(agent: AgentAccess, grant: GrantAccess, use: UseAccess) -> str:
         attributes += f' data-side-effect="{escape(use.side_effect, quote=True)}"'
     if use.refusal is not None:
         detail = escape(_REFUSALS.get(use.refusal, "not usable"))
+    elif use.side_effect is None:
+        detail = '<span class="flag flag-write">May write (effect not declared)</span>'
     elif use.writes:
-        detail = f'<span class="flag flag-write">Writes ({escape(str(use.side_effect))})</span>'
-    elif use.side_effect == "none":
-        detail = "read-only"
+        detail = f'<span class="flag flag-write">Writes ({escape(use.side_effect)})</span>'
     else:
-        detail = "effect not declared"
+        detail = "read-only"
     return f'<li class="access-use"{attributes}>{name} — {detail}</li>'
 
 
@@ -396,12 +397,13 @@ def _grant(view: AccessView, agent: AgentAccess, grant: GrantAccess, *, removabl
         + "".join(_run(agent, grant, run) for run in grant.runs)
         + "</ul>"
         + _conditions(grant.conditions)
+        + '<div class="access-actions">'
         + f'<button type="button" class="access-revoke secondary"'
         f' data-grant-id="{escape(grant.grant_id, quote=True)}"'
         f' data-installation-id="{escape(view.installation_id, quote=True)}">'
         f"{escape(revoke_label)}</button>"
         + (_remove_member(view, agent, grant.via_role) if removable and grant.via_role else "")
-        + "</article>"
+        + "</div></article>"
     )
 
 
