@@ -11,15 +11,20 @@ from __future__ import annotations
 import asyncio
 import base64
 import copy
+import hashlib
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
+from nacl.signing import SigningKey
 
 from awid import dns_auth
 from awid import ratelimit as ratelimit_module
-from awid.ratelimit import MemoryFixedWindowRateLimiter
+from awid.did import did_from_public_key, generate_keypair
+from awid.id_certificates import id_certificate_id, id_certificate_signing_bytes
+from awid.ratelimit import MemoryFixedWindowRateLimiter, NoOpRateLimiter
+from awid.signing import canonical_json_bytes, sign_message
 
 from conftest import build_signed_headers
 
@@ -29,6 +34,7 @@ import test_id_namespace_rotation  # noqa: F401  (consumes rotation cases by nam
 from id_tree_support import (
     CONSUMED,
     DOMAIN,
+    ORIGIN,
     REGISTER_PATH,
     REVOKE_PATH,
     VECTORS,
@@ -46,6 +52,7 @@ from id_tree_support import (
     sign,
     wire_time,
 )
+from identity_support import request_rotation
 from lock_waits import wait_until_blocked_on_lock
 
 # S2 cases whose effects land in a later S2 checkpoint (3 revoke, 4 status,
@@ -55,10 +62,6 @@ S2_LATER = {
     "reparent-register-race",
     "loss-replacement-is-a-new-human-id",
     "address-replacement-does-not-transfer-contact-trust",
-    # A parent's revocation authority needs its whole current chain verified
-    # (checkpoint 4); until then the parent path refuses evidence_unavailable.
-    "live-parent-revokes-now",
-    "post-lock-revocation-time-is-not-transaction-start",
 }
 
 # Cases whose effects belong to another slice's component.
@@ -420,6 +423,136 @@ async def _delete_namespace(tree, domain):
     return await tree.client.request("DELETE", f"/v1/namespaces/{domain}", headers=headers)
 
 
+def _registered_agent(subject: str, parent: str) -> dict:
+    """A did:aw agent certificate issued by ``parent``'s registered did:aw."""
+    fields = copy.deepcopy(certificate("global-agent")["certificate"])
+    fields.update(id=did_aw(subject), parent={"kind": "identity", "id": did_aw(parent)}, issuer_key=did_key(parent),
+                  issued_at="2026-10-26T00:06:00Z")
+    return sign(fields, parent)
+
+
+# ---------------------------------------------------------------------------
+# The parent's whole current chain (S1 verify_id_chain under the gate's locks)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_agent_whose_human_was_revoked_cannot_issue(tree, awid_db_infra):
+    await tree.did("child_of_global")
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
+    revoked = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:10:00Z"))
+    assert revoked.status_code == 200, revoked.text
+    before = await _revisions(awid_db_infra)
+
+    resp = await tree.register(
+        [certificate("alice"), certificate("global-agent"), _registered_agent("child_of_global", "global_agent")],
+        when=at("2026-10-26T00:12:00Z"),
+    )
+
+    assert (resp.status_code, _code(resp)) == (422, "revoked"), resp.text
+    assert await _revisions(awid_db_infra) == before
+
+
+@pytest.mark.asyncio
+async def test_a_human_invitee_outlives_its_inviters_later_revocation(tree, awid_db_infra):
+    await tree.did("replacement_human")
+    await tree.did("child_of_global")
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    invited = await tree.register(
+        [certificate("alice"), certificate("post-replacement-child-of-old-owner")], when=at("2026-10-26T00:02:00Z"),
+    )
+    assert invited.status_code == 200, invited.text
+    revoked = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:10:00Z"))
+    assert revoked.status_code == 200, revoked.text
+    resp = await tree.register(
+        [certificate("alice"), certificate("post-replacement-child-of-old-owner"),
+         _registered_agent("child_of_global", "replacement_human")],
+        when=at("2026-10-26T00:12:00Z"),
+    )
+
+    assert resp.status_code == 200, resp.text
+
+
+async def _rotate_many_times(tree, key_name: str, times: int):
+    """Give ``key_name``'s did:aw a long key history, unthrottled (setup only)."""
+    limiter = tree.client.app.state.rate_limiter
+    tree.client.app.state.rate_limiter = NoOpRateLimiter()
+    signing_key, current = seed(key_name), did_key(key_name)
+    for _ in range(times):
+        next_key, next_public = generate_keypair()
+        next_did = did_from_public_key(next_public)
+        resp = await request_rotation(tree.client, signing_key, did_aw(key_name), current, next_did)
+        assert resp.status_code == 200, resp.text
+        signing_key, current = next_key, next_did
+    tree.client.app.state.rate_limiter = limiter
+    return signing_key, current
+
+
+@pytest.mark.asyncio
+async def test_a_parent_whose_evidence_is_unavailable_cannot_issue(tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    signing_key, current = await _rotate_many_times(tree, "alice", 200)
+    child = copy.deepcopy(certificate("bob")["certificate"])
+    child.update(issuer_key=current)
+    before = await _revisions(awid_db_infra)
+
+    resp = await tree.register(
+        [certificate("alice"), {"certificate": child, "signature": _raw_sign(signing_key, child)}],
+        when=at("2026-10-26T00:12:00Z"),
+    )
+
+    assert (resp.status_code, _code(resp)) == (503, "evidence_unavailable"), resp.text
+    assert await _revisions(awid_db_infra) == before
+
+
+@pytest.mark.asyncio
+async def test_a_parent_whose_evidence_is_unavailable_cannot_revoke(tree, awid_db_infra):
+    await _enroll_normal_tree(tree)
+    signing_key, current = await _rotate_many_times(tree, "alice", 200)
+    body = json.dumps(
+        {"domain": DOMAIN, "id": did_aw("bob"), "expected_head": certificate_id("bob"), "effective_from": None},
+        separators=(",", ":"),
+    ).encode()
+    timestamp, payload = _covering_payload(REVOKE_PATH, body, "revoke_id_certificate")
+
+    resp = await tree.client.post(REVOKE_PATH, content=body, headers={
+        "Authorization": f"DIDKey {current} {sign_message(signing_key, payload)}",
+        "X-AWEB-Timestamp": timestamp,
+        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode(),
+        "Content-Type": "application/json",
+    })
+
+    assert (resp.status_code, _code(resp)) == (503, "evidence_unavailable"), resp.text
+    assert await _revocations(awid_db_infra) == []
+
+
+def _raw_sign(signing_key: bytes, fields: dict) -> str:
+    signature = SigningKey(signing_key).sign(id_certificate_signing_bytes(fields)).signature
+    return base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
+
+
+def _covering_payload(path: str, body: bytes, operation: str) -> tuple[str, bytes]:
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return timestamp, canonical_json_bytes({
+        "v": 2, "type": "aweb.awid-controller-request", "aud": ORIGIN, "method": "POST", "path": path,
+        "body_sha256": hashlib.sha256(body).hexdigest(), "timestamp": timestamp,
+        "domain": DOMAIN, "operation": operation,
+    })
+
+
+@pytest.mark.asyncio
+async def test_a_parent_revocation_is_timed_after_the_parents_key_epoch(tree, awid_db_infra):
+    await _enroll_normal_tree(tree)
+    tree.clock.now = at("2026-10-26T00:10:00Z")
+    await tree.rotate_did("alice", "alice_rotated")
+
+    resp = await tree.revoke("alice_rotated", "bob", expected_head=certificate_id("bob"), when=at("2026-10-26T00:05:00Z"))
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["revoked_at"] == "2026-10-26T00:10:00.000001Z"
+
+
 # ---------------------------------------------------------------------------
 # Namespace replacement cuts off revisions admitted before it
 # ---------------------------------------------------------------------------
@@ -576,13 +709,75 @@ async def test_self_revokes_now(case, tree, awid_db_infra):
     assert row["revoked_by"] == did_key(case["input"]["actor"])
 
 
-@pytest.mark.asyncio
-async def test_a_live_parent_cannot_revoke_before_its_chain_is_verified(tree, awid_db_infra):
+@consumes("live-parent-revokes-now")
+async def test_live_parent_revokes_now(case, tree, awid_db_infra):
     await _enroll_normal_tree(tree)
+
+    resp = await _revoke_case(case, tree)
+
+    assert resp.status_code == 200, resp.text
+    now = wire_time(REVOKED_AT_NOW)
+    assert resp.json() == {"revoked_at": now, "effective_from": now}
+    rows = await _revocations(awid_db_infra)
+    assert len(rows) == case["expected"]["writes"]
+    assert _revocation_of(rows, case["input"]["subject"])["revoked_by"] == did_key(case["input"]["actor"])
+
+
+@consumes("post-lock-revocation-time-is-not-transaction-start")
+async def test_post_lock_revocation_time_is_not_transaction_start(case, tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:00:30Z"))
+    await tree.enroll("alice", "bob", when=at(case["input"]["registration_serialized_at"]))
+    db = awid_db_infra.get_manager("aweb")
+    tree.clock.now = at(case["input"]["transaction_started_at"])
+    async with db.transaction() as holder:
+        await holder.fetch_one(
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE", DOMAIN,
+        )
+        revocation = asyncio.create_task(_revoke_case(case, tree, when=None))
+        await wait_until_blocked_on_lock(db, revocation)
+        tree.clock.now = at(case["input"]["last_lock_acquired_at"])
+    resp = await revocation
+
+    assert resp.status_code == 200, resp.text
+    expected = case["expected"]
+    assert resp.json() == {"revoked_at": expected["revoked_at"], "effective_from": expected["effective_from"]}
+
+
+async def _agent_under_agent(tree):
+    """alice (human) issues global-agent, which issues child-of-global."""
+    await tree.did("child_of_global")
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
+    child = _registered_agent("child_of_global", "global_agent")
+    resp = await tree.register([certificate("alice"), certificate("global-agent"), child], when=at("2026-10-26T00:05:00Z"))
+    assert resp.status_code == 200, resp.text
+    return child
+
+
+@pytest.mark.asyncio
+async def test_a_parent_whose_ancestor_was_revoked_cannot_revoke(tree, awid_db_infra):
+    child = await _agent_under_agent(tree)
+    revoked = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:10:00Z"))
+    assert revoked.status_code == 200, revoked.text
+    before = await _revocations(awid_db_infra)
+
+    resp = await tree.revoke(
+        "global_agent", "child_of_global", expected_head=id_certificate_id(child["certificate"]), when=REVOKED_AT_NOW,
+    )
+
+    assert (resp.status_code, _code(resp)) == (403, "revocation_forbidden"), resp.text
+    assert await _revocations(awid_db_infra) == before
+
+
+@pytest.mark.asyncio
+async def test_a_parent_cut_off_by_root_replacement_cannot_revoke(tree, awid_db_infra):
+    await _enroll_normal_tree(tree)
+    tree.clock.now = at("2026-10-26T00:10:00Z")
+    await tree.replace_root("root_rotated")
 
     resp = await tree.revoke("alice", "bob", expected_head=certificate_id("bob"), when=REVOKED_AT_NOW)
 
-    assert (resp.status_code, _code(resp)) == (503, "evidence_unavailable"), resp.text
+    assert (resp.status_code, _code(resp)) == (403, "revocation_forbidden"), resp.text
     assert await _revocations(awid_db_infra) == []
 
 
@@ -1189,6 +1384,57 @@ async def test_a_registration_waits_for_its_parents_revocation(tree, awid_db_inf
     assert registered.status_code == 422, registered.text
     assert _code(registered) == "parent_revoked"
     assert await _revisions(awid_db_infra, did_aw("bob")) == []
+
+
+async def _until_done_or_blocked(db, task, *, waiters):
+    for _ in range(1000):
+        if task.done():
+            return
+        blocked = await db.fetch_value(
+            "SELECT COUNT(*)::int FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+        )
+        if blocked >= waiters:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("the request neither finished nor waited on a lock")
+
+
+@pytest.mark.asyncio
+async def test_only_the_domain_lock_orders_a_registration_before_its_grandparents_revocation(tree, awid_db_infra):
+    """The grandparent's row is never locked by a registration under its child.
+
+    The registration is paused after every check, at its insert, by an
+    uncommitted row for the same subject. A root revocation of the
+    grandparent then has nothing but the domain lock to wait for: with it,
+    it is ordered after the registration and timed after the child; without
+    it, it would commit first with a cutoff the admitted child postdates.
+    """
+    await tree.did("child_of_global")
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
+    chain = [certificate("alice"), certificate("global-agent"), _registered_agent("child_of_global", "global_agent")]
+    db = awid_db_infra.get_manager("aweb")
+    async with db.transaction() as holder:
+        await holder.execute(
+            """
+            INSERT INTO {{tables.id_identities}} (id, domain, kind, first_registered_at)
+            VALUES ($1, $2, 'agent', $3)
+            """,
+            did_aw("child_of_global"), DOMAIN, at("2026-10-26T00:00:00Z"),
+        )
+        tree.clock.now = at("2026-10-26T00:12:00Z")
+        registration = asyncio.create_task(tree.register(chain))
+        await wait_until_blocked_on_lock(db, registration)
+        tree.clock.now = at("2026-10-26T00:10:00Z")
+        revocation = asyncio.create_task(tree.revoke("root", "alice", expected_head=certificate_id("alice")))
+        await _until_done_or_blocked(db, revocation, waiters=2)
+        await holder.execute("DELETE FROM {{tables.id_identities}} WHERE id = $1", did_aw("child_of_global"))
+    registered, revoked = await registration, await revocation
+
+    assert registered.status_code == 200, registered.text
+    assert revoked.status_code == 200, revoked.text
+    [child] = await _revisions(awid_db_infra, did_aw("child_of_global"))
+    assert child["registered_at"] < at(revoked.json()["effective_from"])
 
 
 @pytest.mark.parametrize("held", ["alice", "bob"], ids=["parent-mapping", "subject-mapping"])

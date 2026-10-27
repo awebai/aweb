@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 
+from awid.id_certificates import IDChainEvidence, verify_id_chain
+
 from awid_service.id_tree_clock import Clock, serialization_time
 from awid_service.id_tree_gate import IdentityTreeRefusal, canonical_json, current_root, wire_time
 from awid_service.namespace_epochs import latest_domain_event
@@ -21,6 +23,7 @@ MAX_RESPONSE_BYTES = 131072
 
 
 async def status_snapshot(db, *, domain: str, ids: list[str], dns_key: str | None, clock: Clock) -> dict:
+    """The POST /status answer, read in its own read-only REPEATABLE READ transaction."""
     async with db.transaction() as tx:
         await tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         namespace = await tx.fetch_one(
@@ -35,56 +38,111 @@ async def status_snapshot(db, *, domain: str, ids: list[str], dns_key: str | Non
         # open epoch and exact DNS disagree.
         if await current_root(tx, domain, namespace, dns_key) is None:
             raise IdentityTreeRefusal("evidence_unavailable", 503)
+        return await read_snapshot(tx, domain=domain, ids=ids, clock=clock)
 
-        epochs = await tx.fetch_all(
-            """
-            SELECT seq, did_key, registered_at, retired_at, continuity
-            FROM {{tables.id_namespace_epochs}}
-            WHERE domain = $1
-            ORDER BY seq
-            """,
-            domain,
+
+async def read_snapshot(tx, *, domain: str, ids: list[str], clock: Clock) -> dict:
+    """The status snapshot as ``tx`` sees it; callers supply the transaction's isolation and locks.
+
+    Every identity row (with its revocation) is read before any revision or
+    key history, in one query per kind.
+    """
+    epochs = await tx.fetch_all(
+        """
+        SELECT seq, did_key, registered_at, retired_at, continuity
+        FROM {{tables.id_namespace_epochs}}
+        WHERE domain = $1
+        ORDER BY seq
+        """,
+        domain,
+    )
+    registered = {
+        row["id"]
+        for row in await tx.fetch_all(
+            "SELECT id FROM {{tables.id_identities}} WHERE domain = $1 AND id = ANY($2::text[])", domain, ids,
         )
-        registered = {
-            row["id"]
-            for row in await tx.fetch_all(
-                "SELECT id FROM {{tables.id_identities}} WHERE domain = $1 AND id = ANY($2::text[])", domain, ids,
-            )
-        }
-        included = [id_ for id_ in ids if id_ in registered]
-        frontier = list(included)
-        while frontier:
-            parents = await tx.fetch_all(
-                """
-                SELECT DISTINCT c.parent_id
-                FROM {{tables.id_certificates}} c
-                JOIN {{tables.id_identities}} i ON i.id = c.parent_id AND i.domain = $1
-                WHERE c.id = ANY($2::text[]) AND c.parent_kind = 'identity'
-                ORDER BY c.parent_id
-                """,
-                domain, frontier,
-            )
-            frontier = [row["parent_id"] for row in parents if row["parent_id"] not in included]
-            included.extend(frontier)
+    }
+    included = [id_ for id_ in ids if id_ in registered]
+    frontier = list(included)
+    while frontier:
+        parents = await tx.fetch_all(
+            """
+            SELECT DISTINCT c.parent_id
+            FROM {{tables.id_certificates}} c
+            JOIN {{tables.id_identities}} i ON i.id = c.parent_id AND i.domain = $1
+            WHERE c.id = ANY($2::text[]) AND c.parent_kind = 'identity'
+            ORDER BY c.parent_id
+            """,
+            domain, frontier,
+        )
+        frontier = [row["parent_id"] for row in parents if row["parent_id"] not in included]
+        included.extend(frontier)
 
-        snapshot = {
-            "v": 1,
-            "domain": domain,
-            "observed_at": wire_time(serialization_time(clock, await latest_domain_event(tx, domain))),
-            "namespace": {"epochs": [_epoch(row) for row in epochs]},
-            "identities": [],
-            "missing": [id_ for id_ in ids if id_ not in registered],
-        }
-        # The response's exact compact size, kept as identities are added,
-        # so an oversized proof stops being built as soon as it is too big.
-        size = _size(snapshot)
-        for id_ in included:
-            identity = await _identity(tx, id_)
-            size += _size(identity) + (1 if snapshot["identities"] else 0)
-            if size > MAX_RESPONSE_BYTES:
-                raise IdentityTreeRefusal("evidence_unavailable", 503)
-            snapshot["identities"].append(identity)
+    identities = {
+        row["id"]: row
+        for row in await tx.fetch_all(
+            "SELECT id, revoked_at, effective_from FROM {{tables.id_identities}} WHERE id = ANY($1::text[])", included,
+        )
+    }
+    revisions = await tx.fetch_all(
+        """
+        SELECT id, certificate_id, signed_json, registered_at, superseded_at, issuer_key_seq
+        FROM {{tables.id_certificates}}
+        WHERE id = ANY($1::text[])
+        ORDER BY id, registered_at
+        """,
+        included,
+    )
+    logs = await tx.fetch_all(
+        """
+        SELECT did_aw, seq, operation, previous_did_key, new_did_key, prev_entry_hash, entry_hash, state_hash,
+               authorized_by, signature, timestamp, created_at
+        FROM {{tables.did_aw_log}}
+        WHERE did_aw = ANY($1::text[])
+        ORDER BY did_aw, seq
+        """,
+        included,
+    )
+    snapshot = {
+        "v": 1,
+        "domain": domain,
+        "observed_at": wire_time(serialization_time(clock, await latest_domain_event(tx, domain))),
+        "namespace": {"epochs": [_epoch(row) for row in epochs]},
+        "identities": [],
+        "missing": [id_ for id_ in ids if id_ not in registered],
+    }
+    # The response's exact compact size, kept as identities are added, so an
+    # oversized proof stops being assembled as soon as it is too big.
+    size = _size(snapshot)
+    for id_ in included:
+        identity = _identity(
+            id_, identities[id_],
+            [row for row in revisions if row["id"] == id_],
+            [row for row in logs if row["did_aw"] == id_],
+        )
+        size += _size(identity) + (1 if snapshot["identities"] else 0)
+        if size > MAX_RESPONSE_BYTES:
+            raise IdentityTreeRefusal("evidence_unavailable", 503)
+        snapshot["identities"].append(identity)
     return snapshot
+
+
+async def verify_parent_chain(tx, *, domain: str, parent: str, parent_key: str, dns_key: str | None, clock: Clock) -> dict:
+    """S1's verdict on ``parent``'s whole current chain, from the state ``tx`` holds.
+
+    The evidence is this transaction's own snapshot, fresh by construction,
+    with the exact DNS key the request observed before its transaction. A
+    proof too large to snapshot refuses evidence_unavailable before any
+    verdict.
+    """
+    evidence = IDChainEvidence(
+        status=await read_snapshot(tx, domain=domain, ids=[parent], clock=clock),
+        namespace_authority={
+            "domain": domain, "dns_name": f"_awid.{domain}", "inherited": False, "controller_key": dns_key,
+        },
+        age_seconds=0,
+    )
+    return verify_id_chain(None, subject={"id": parent, "did_key": parent_key}, evidence=evidence, domain=domain)
 
 
 def _size(value) -> int:
@@ -101,29 +159,7 @@ def _epoch(row) -> dict:
     }
 
 
-async def _identity(tx, id_: str) -> dict:
-    identity = await tx.fetch_one(
-        "SELECT revoked_at, effective_from FROM {{tables.id_identities}} WHERE id = $1", id_,
-    )
-    revisions = await tx.fetch_all(
-        """
-        SELECT certificate_id, signed_json, registered_at, superseded_at, issuer_key_seq
-        FROM {{tables.id_certificates}}
-        WHERE id = $1
-        ORDER BY registered_at
-        """,
-        id_,
-    )
-    log = await tx.fetch_all(
-        """
-        SELECT seq, operation, previous_did_key, new_did_key, prev_entry_hash, entry_hash, state_hash,
-               authorized_by, signature, timestamp, created_at
-        FROM {{tables.did_aw_log}}
-        WHERE did_aw = $1
-        ORDER BY seq
-        """,
-        id_,
-    )
+def _identity(id_: str, identity, revisions, log) -> dict:
     return {
         "id": id_,
         "current_certificate_id": next(row["certificate_id"] for row in revisions if row["superseded_at"] is None),

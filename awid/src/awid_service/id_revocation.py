@@ -20,6 +20,7 @@ from awid_service.id_tree_gate import (
     current_root,
     wire_time,
 )
+from awid_service.id_status import verify_parent_chain
 from awid_service.namespace_epochs import latest_domain_event
 
 SELF = "self"
@@ -67,15 +68,20 @@ async def revoke_identity(
         if effective_from is not None and actor != ROOT:
             raise IdentityTreeRefusal("backdate_forbidden", 403)
         if actor == PARENT:
-            # A parent's authority needs its whole current chain verified, which
-            # the shared chain verifier does over a status snapshot; until that
-            # runs here, no parent revocation can succeed.
-            raise IdentityTreeRefusal("evidence_unavailable", 503)
+            # The parent may revoke only while its own whole current chain is valid.
+            verdict = await verify_parent_chain(
+                tx, domain=domain, parent=parent_did, parent_key=keys[parent_did], dns_key=dns_key, clock=clock,
+            )
+            if verdict["outcome"] == "unavailable":
+                raise IdentityTreeRefusal("evidence_unavailable", 503)
+            if verdict["identity_valid"] is not True:
+                raise IdentityTreeRefusal("revocation_forbidden", 403)
 
         signer_key_epoch = None
-        if actor == SELF:
+        if actor != ROOT:
             signer_key_epoch = await tx.fetch_value(
-                "SELECT MAX(created_at) FROM {{tables.did_aw_log}} WHERE did_aw = $1", subject_id,
+                "SELECT MAX(created_at) FROM {{tables.did_aw_log}} WHERE did_aw = $1",
+                subject_id if actor == SELF else parent_did,
             )
         now = serialization_time(clock, await latest_domain_event(tx, domain), signer_key_epoch)
         cutoff = now if effective_from is None else effective_from
@@ -117,11 +123,6 @@ async def _actor(tx, root, subject_id, parent_did, keys, signer) -> str:
     if keys.get(subject_id) == signer:
         return SELF
     if parent_did is not None and keys.get(parent_did) == signer:
-        parent_revoked = await tx.fetch_value(
-            "SELECT revoked_at FROM {{tables.id_identities}} WHERE id = $1", parent_did,
-        )
-        if parent_revoked is not None:
-            raise IdentityTreeRefusal("revocation_forbidden", 403)
         return PARENT
     if root is None:
         raise IdentityTreeRefusal("evidence_unavailable", 503)

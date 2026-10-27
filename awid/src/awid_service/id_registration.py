@@ -25,7 +25,8 @@ from awid_service.id_tree_gate import (
     current_root,
     wire_time,
 )
-from awid_service.namespace_epochs import REPLACED, latest_domain_event
+from awid_service.id_status import verify_parent_chain
+from awid_service.namespace_epochs import latest_domain_event
 
 
 async def register_certificate(
@@ -99,6 +100,12 @@ async def register_certificate(
             issuer_key_seq, issuer_epoch_at = await _identity_issuer(tx, cert, keys)
 
         await _require_registered_ancestry(tx, chain)
+        if parent_did is not None:
+            verdict = await verify_parent_chain(
+                tx, domain=domain, parent=parent_did, parent_key=keys[parent_did], dns_key=dns_key, clock=clock,
+            )
+            if verdict["identity_valid"] is not True:
+                raise IdentityTreeRefusal(verdict["reason"], 503 if verdict["outcome"] == "unavailable" else 422)
 
         subject_epoch_at = await tx.fetch_value(
             "SELECT MAX(created_at) FROM {{tables.did_aw_log}} WHERE did_aw = $1", cert["id"],
@@ -194,22 +201,12 @@ async def _require_registered_ancestry(tx, chain: list[dict]) -> None:
     """The presented ancestors are exactly the registered current heads.
 
     The registry retains the presented chain as the revision's supporting
-    evidence, so it must be the ancestry the registry itself holds. A
-    namespace replacement cuts off every revision admitted before it, so no
-    ancestor may predate the domain's latest replaced epoch.
+    evidence, so it must be the ancestry the registry itself holds.
     """
-    replaced_at = await tx.fetch_value(
-        """
-        SELECT MAX(registered_at)
-        FROM {{tables.id_namespace_epochs}}
-        WHERE domain = $1 AND continuity = $2
-        """,
-        chain[-1]["certificate"]["domain"], REPLACED,
-    )
     for link in chain[:-1]:
-        current = await tx.fetch_one(
+        current = await tx.fetch_value(
             """
-            SELECT signed_json, registered_at
+            SELECT signed_json
             FROM {{tables.id_certificates}}
             WHERE id = $1 AND superseded_at IS NULL
             """,
@@ -217,7 +214,5 @@ async def _require_registered_ancestry(tx, chain: list[dict]) -> None:
         )
         if current is None:
             raise IdentityTreeRefusal("unregistered_parent")
-        if json.loads(current["signed_json"]) != link:
+        if json.loads(current) != link:
             raise IdentityTreeRefusal("superseded_certificate")
-        if current["registered_at"] < replaced_at:
-            raise IdentityTreeRefusal("root_replaced")

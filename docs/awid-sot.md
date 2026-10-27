@@ -1065,8 +1065,15 @@ controller, the open epoch's key and that DNS key agree; the skip-DNS bypass
 proves nothing), the parent (the root key for a namespace parent; a
 registered, unrevoked, same-domain parent's current key for an identity
 parent) and that the presented ancestors are the
-registered current heads, none admitted before the domain's latest
-`replaced` epoch (`root_replaced`). It records `registered_at` from the post-lock clock,
+registered current heads. For an identity parent it then has the shared chain
+verifier (`awid.id_certificates.verify_id_chain`) judge the parent's whole
+current chain against a status snapshot read inside this transaction, with
+the DNS key observed before it: a revoked or replaced ancestor, an agent edge
+whose parent is no longer valid, or a stale key refuses with the verifier's
+reason (`revoked`, `root_replaced`, ...), and unavailable evidence (for
+example a proof over the byte limit) refuses `evidence_unavailable` (503). A
+human invitee keeps its standing after its inviter's later revocation, as the
+contract's historical human-parent rule says. It records `registered_at` from the post-lock clock,
 strictly after the latest identity-tree event in the domain and the selected
 key epochs, with the exact `issuer_key_seq`.
 
@@ -1114,18 +1121,18 @@ After the last lock wait, a registered ID with no current head refuses
   agree), even when that key is also the subject's or the parent's current
   key;
 - the ID itself, by its did:aw's current key;
-- its current parent, by the parent did:aw's current key. A revoked parent
-  is refused. A parent's authority needs its whole current chain verified,
-  and until the shared chain verifier runs inside this transaction a parent
-  revocation refuses `evidence_unavailable` rather than succeed on the
-  parent's own row alone;
+- its current parent, by the parent did:aw's current key, but only while the
+  shared chain verifier finds the parent's whole current chain valid in a
+  snapshot read inside this transaction: an invalid parent (revoked itself,
+  or under a revoked or replaced ancestor) is `revocation_forbidden`, and
+  unavailable evidence is `evidence_unavailable`;
 - any other signer is `revocation_forbidden`, unless the domain has no
   current root authority: then AWID cannot tell whether the signer is the
   root, and it refuses `evidence_unavailable`.
 
 A null `effective_from` means the post-lock serialization time, which also
 becomes `revoked_at`: strictly after the domain's latest identity-tree event
-and the self-revoker's key epoch. Only the root names a cutoff, and never a
+and the revoking ID's or parent's key epoch. Only the root names a cutoff, and never a
 future one. A repeat writes nothing and returns the stored times, after the
 same head and actor checks. The root may move an existing cutoff earlier,
 which changes only `effective_from`; `revoked_at` keeps the original

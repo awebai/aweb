@@ -100,6 +100,9 @@ async def test_the_frozen_batch_example_is_answered_with_its_fixture(tree):
 
     assert resp.status_code == 200, resp.text
     assert resp.json() == VECTORS["status_fixtures"][example["response_fixture"]]
+    # The byte limit is measured on the canonical compact form, which is the
+    # size of the body actually sent.
+    assert len(resp.content) == len(canonical_json_bytes(resp.json()))
 
 
 @consumes("status-never-discloses-private-team-data")
@@ -191,6 +194,20 @@ async def test_a_rate_limited_request_does_no_dns_lookup(tree):
 
     assert resp.status_code == 429
     assert lookups == []
+
+
+@pytest.mark.asyncio
+async def test_requests_with_invalid_envelopes_still_spend_the_ip_budget(tree):
+    raw = json.dumps(_request("alice")).encode()
+    mismatched = covering_headers(
+        "bob", method="POST", path=STATUS_PATH, body=b"{}", domain=DOMAIN, operation="read_id_certificate_status",
+    )
+    for _ in range(60):
+        assert (await tree.client.post(STATUS_PATH, content=raw, headers=mismatched)).status_code == 401
+
+    resp = await _status(tree, _request("alice"))
+
+    assert resp.status_code == 429
 
 
 @pytest.mark.asyncio
@@ -488,13 +505,13 @@ async def test_evidence_over_the_byte_limit_is_unavailable_not_partial(tree):
 @pytest.mark.asyncio
 async def test_the_snapshot_transaction_cannot_write(tree, awid_db_infra, monkeypatch):
     """Defence in depth: a write slipped into the snapshot is refused by the database."""
-    real_identity = id_status._identity
+    real_latest = id_status.latest_domain_event
 
-    async def identity_that_writes(tx, id_):
-        await tx.execute("UPDATE {{tables.id_identities}} SET revoked_at = NULL WHERE id = $1", id_)
-        return await real_identity(tx, id_)
+    async def latest_that_writes(tx, domain):
+        await tx.execute("UPDATE {{tables.id_identities}} SET revoked_at = NULL WHERE domain = $1", domain)
+        return await real_latest(tx, domain)
 
-    monkeypatch.setattr(id_status, "_identity", identity_that_writes)
+    monkeypatch.setattr(id_status, "latest_domain_event", latest_that_writes)
 
     with pytest.raises(Exception, match="read-only transaction"):
         await _status(tree, _request("alice"))
