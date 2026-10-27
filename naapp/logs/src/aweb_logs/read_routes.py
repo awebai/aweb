@@ -1,23 +1,29 @@
-"""The reader slots members ask for on logs' agent origin (audit-substrate.md §B5).
+"""Reader governance over HTTP (audit-substrate.md §B5).
 
-``POST /v1/reader-slots`` issues a pending reader slot
+On logs' agent origin, ``POST /v1/reader-slots`` issues a pending reader slot
 (:mod:`aweb_logs.readers`) to a member the installation grants
 ``logs.readers``, for the contact the owner will designate. A slot grants
 nothing: only the owner act that names it designates a reader. Slots are
 rate-limited per member.
+
+On logs' console origin, the owner's signed acts designate and revoke readers.
 """
 
+import base64
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from aweb_naapp import ratelimit
+from aweb_naapp.console import ConsoleRoute, exact_body, require_json, text_field
+from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.runtime.authorization import Authorization
+from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.installation import InstallationFence, InstallationRefused
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from aweb_logs.readers import ReaderDirectory
+from aweb_logs.readers import ReaderDesignations, ReaderDirectory, ReaderRefused
 
 logger = logging.getLogger(__name__)
 
@@ -93,5 +99,61 @@ def reader_slot_router(
         except Exception as error:
             logger.warning("reader slot bucket sweep failed: %s", type(error).__name__)
         return {"scope": slot.scope, "expires_at": slot.expires_at.isoformat()}
+
+    return router
+
+
+def _signed_act(body: dict[str, Any]) -> tuple[bytes, str]:
+    try:
+        signing = base64.b64decode(text_field(body, "signing"), validate=True)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="request_invalid") from None
+    return signing, text_field(body, "signature")
+
+
+def reader_governance_router(designations: ReaderDesignations, *, prefix: str = "") -> APIRouter:
+    """``POST /readers/designations`` and ``POST /readers/revocations``, under
+    ``prefix``. Mount only on logs' console origin.
+
+    The endpoints are anonymous: the owner's signed act is the only authority.
+    An act that names no pending slot or current reader exactly is refused
+    with 403 ``owner_required``, never echoing the request; a governance event
+    that cannot be recorded, or an installation that cannot be admitted,
+    refuses the change with its code.
+    """
+    router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
+
+    async def governed(change: Awaitable[Any]) -> None:
+        try:
+            await change
+        except ReaderRefused as refused:
+            raise HTTPException(status_code=403, detail=refused.code) from None
+        except InstallationRefused as refused:
+            raise HTTPException(status_code=refused.status, detail=refused.code) from None
+        except (GovernanceUnavailable, Refused) as refused:
+            raise HTTPException(status_code=503, detail=refused.code) from None
+
+    @router.post("/readers/designations", dependencies=[Depends(require_json)])
+    async def designate(request: Request) -> dict[str, str]:
+        body = await exact_body(request, {"signing", "signature", "scope", "contact"})
+        signing, signature = _signed_act(body)
+        scope = text_field(body, "scope")
+        await governed(
+            designations.designate(
+                signing=signing,
+                signature=signature,
+                scope=scope,
+                contact=text_field(body, "contact"),
+            )
+        )
+        return {"scope": scope}
+
+    @router.post("/readers/revocations", dependencies=[Depends(require_json)])
+    async def revoke(request: Request) -> dict[str, str]:
+        body = await exact_body(request, {"signing", "signature", "scope"})
+        signing, signature = _signed_act(body)
+        scope = text_field(body, "scope")
+        await governed(designations.revoke(signing=signing, signature=signature, scope=scope))
+        return {"scope": scope}
 
     return router

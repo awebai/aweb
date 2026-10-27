@@ -16,12 +16,15 @@ import hashlib
 import os
 import time
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx
 import pytest
+from aweb_naapp.console import CONSOLE_HEADERS, credential_router
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from aweb_naapp.hooks.producer import HookProducer, Registration, RegistrationView, ServerProducer
@@ -36,11 +39,13 @@ from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty, contact_sha256
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID, TeamOwner, team_owner
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid_service.testing import running_registry
+from fastapi import FastAPI
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH
 from aweb_logs.ledger import LogsSigner, OriginMismatch, append, verify_epoch
+from aweb_logs.read_routes import reader_governance_router
 from aweb_logs.readers import READER_ROLE, ReaderDesignations, ReaderDirectory, ReaderRefused
 
 from .fixtures import signed_event
@@ -518,3 +523,122 @@ async def test_a_scope_that_is_no_reader_is_revoked_by_nobody(world: World):
     with pytest.raises(ReaderRefused):
         await world.designations.revoke(signing=signing, signature=signature, scope=scope)
     assert await chained(world) == []
+
+
+@asynccontextmanager
+async def console(world: World) -> AsyncIterator[httpx.AsyncClient]:
+    """logs' console origin with the owner-act routes and B3's credential routes."""
+    app = FastAPI()
+    app.include_router(reader_governance_router(world.designations))
+    app.include_router(credential_router(passkeys=world.passkeys, recorder=world.recorder))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=CONSOLE
+    ) as client:
+        yield client
+
+
+def act_body(signing: bytes, signature: str, **fields) -> dict:
+    return {"signing": base64.b64encode(signing).decode(), "signature": signature, **fields}
+
+
+def console_headed(response: httpx.Response) -> bool:
+    return all(response.headers.get(name) == value for name, value in CONSOLE_HEADERS.items())
+
+
+async def test_the_owner_designates_a_reader_who_then_enrols_on_logs_console(world: World):
+    scope = await slot(world)
+    signing, signature = world.owner.sign("app-role.designate", designation(scope))
+    async with console(world) as client:
+        designated = await client.post(
+            "/readers/designations",
+            json=act_body(signing, signature, scope=scope, contact=CONTACT),
+        )
+        assert (designated.status_code, designated.json()) == (200, {"scope": scope})
+        assert console_headed(designated)
+        token = world.inbox.enrolments[CONTACT][-1]
+        options = await client.post("/enrolment/options", json={"link_token": token})
+        enrolled = await client.post(
+            "/enrolment",
+            json={
+                "link_token": token,
+                "credential": SoftAuthenticator(CONSOLE).create(options.json()),
+            },
+        )
+        assert (enrolled.status_code, enrolled.json()) == (200, {"scope": scope})
+    assert [entry["payload"]["act"] for entry in await chained(world)] == [
+        "role.designated",
+        "credential.enrolled",
+    ]
+
+
+async def test_the_owner_revokes_a_reader_on_logs_console(world: World):
+    scope, reader = await enrolled_reader(world)
+    signing, signature = world.owner.sign("app-role.revoke", revocation(scope, reader))
+    async with console(world) as client:
+        revoked = await client.post(
+            "/readers/revocations", json=act_body(signing, signature, scope=scope)
+        )
+    assert (revoked.status_code, revoked.json()) == (200, {"scope": scope})
+    assert console_headed(revoked)
+    assert await holder(world, scope) is None
+
+
+async def test_an_act_that_names_nobody_is_refused_without_echo(world: World):
+    scope = await slot(world)
+    signing, signature = world.owner.sign("app-role.designate", designation(scope, OTHER_CONTACT))
+    async with console(world) as client:
+        refusals = [
+            await client.post(
+                "/readers/designations",
+                json=act_body(signing, signature, scope=scope, contact=CONTACT),
+            ),
+            await client.post(
+                "/readers/revocations", json=act_body(signing, signature, scope=scope)
+            ),
+        ]
+    for response in refusals:
+        assert (response.status_code, response.json()) == (403, {"detail": "owner_required"})
+        assert console_headed(response)
+        assert signature not in response.text and scope not in response.text
+    await nothing_took_effect(world, scope)
+
+
+async def test_without_a_governance_registration_the_console_says_so(world: World):
+    world.registered[0] = False
+    scope = await slot(world)
+    signing, signature = world.owner.sign("app-role.designate", designation(scope))
+    async with console(world) as client:
+        response = await client.post(
+            "/readers/designations",
+            json=act_body(signing, signature, scope=scope, contact=CONTACT),
+        )
+    assert (response.status_code, response.json()) == (
+        503,
+        {"detail": "audit_target_unavailable"},
+    )
+    await nothing_took_effect(world, scope)
+
+
+@pytest.mark.parametrize(
+    ("path", "fields"),
+    [
+        ("/readers/designations", {"signing", "signature", "scope", "contact"}),
+        ("/readers/revocations", {"signing", "signature", "scope"}),
+    ],
+)
+async def test_the_owner_act_routes_take_exactly_their_json_fields(world: World, path, fields):
+    canary = os.urandom(24).hex()
+    body = {name: canary for name in fields} | {"signing": base64.b64encode(b"x").decode()}
+    async with console(world) as client:
+        not_json = await client.post(path, content=b"{}", headers={"Content-Type": "text/plain"})
+        assert (not_json.status_code, not_json.json()) == (415, {"detail": "json_required"})
+        for wrong in (
+            {**body, "unexpected": canary},
+            {name: value for name, value in body.items() if name != "scope"},
+            {**body, "signing": "not base64!"},
+            {**body, "scope": ""},
+        ):
+            response = await client.post(path, json=wrong)
+            assert (response.status_code, response.json()) == (400, {"detail": "request_invalid"})
+            assert canary not in response.text
+            assert console_headed(response)
