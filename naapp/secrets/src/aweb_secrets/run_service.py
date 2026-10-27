@@ -15,7 +15,7 @@ import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from aweb_naapp import ratelimit
@@ -92,6 +92,9 @@ from aweb_secrets.runner_results import RunnerResultInvalid, process_runner_resu
 from aweb_secrets.runner_types import RunnerReply, RunnerSubmission
 from aweb_secrets.use_audit import HookProducerFactory, UseApprovalAudit, UseAuditUnavailable
 from aweb_secrets.use_context import UseCommitter
+
+if TYPE_CHECKING:
+    from aweb_secrets.reconciliation_types import ReconciliationOriginal
 
 _LOG = logging.getLogger(__name__)
 _HOOK = "post-secret-use-hook"
@@ -1229,6 +1232,34 @@ class RunDispatch:
             await self._fence.check(tx, scope)
         self._release_context.pop(original.dispatch_id, None)
         return RunnerReply(204)
+
+    async def reconcile(
+        self,
+        tx: TransactionManager,
+        *,
+        original: ReconciliationOriginal,
+        state: State,
+        result: Mapping[str, Any],
+    ) -> None:
+        """Caller-authorized first UNKNOWN settlement, using the same run sink.
+
+        Owner and all B2 holds precede this call. No custody, current grant,
+        target lookup or publication gate is needed to record a consequence.
+        """
+        from aweb_secrets.reconciliation_reads import ReconciliationReads
+
+        view = await ReconciliationReads(enable_runs=True).get(
+            tx, scope=original.installation, reconcile_ref=original.reconcile_ref
+        )
+        frozen = await original_run(tx, original.dispatch_id)
+        if (
+            original.op_kind != "run_job"
+            or view is None
+            or view.original != original
+            or frozen is None
+        ):
+            raise UseAuditUnavailable()
+        await self._machine(frozen).reconcile(tx, original.dispatch_id, state, dict(result))
 
     async def sweep(self, *, limit: int = 50) -> int:
         if type(limit) is not int or not 1 <= limit <= 100:

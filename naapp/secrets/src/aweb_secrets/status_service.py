@@ -209,6 +209,8 @@ class UseStatus:
             return ToolReply(200, body)
         if state is State.COMPLETED:
             return self._unavailable(receipt)
+        if state is State.OUTCOME_UNKNOWN:
+            return ToolReply(200, tool_results.outcome_unknown(**receipt))
         body = {"state": state.value, **receipt}
         if state is State.NOT_SENT:
             body["next"] = "resubmit"

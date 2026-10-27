@@ -140,9 +140,11 @@ async def designate(uses: Uses, ref: str, contact: str, *, principal: str | None
     await w.change_sets.deliver(confirmation)
     token = w.inbox.enrolments[contact][-1]
     device = SoftAuthenticator(ORIGIN)
-    await w.passkeys.complete_enrolment(
-        token, device.create(await w.passkeys.enrolment_options(token))
-    )
+    prepared = await w.credential_audit.prepare_enrolment(token)
+    with w.credential_audit.prepared(prepared):
+        await w.passkeys.complete_enrolment(
+            token, device.create(await w.passkeys.enrolment_options(token)), fence=prepared
+        )
     w.devices[contact] = device
 
 

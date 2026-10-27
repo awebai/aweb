@@ -13,7 +13,7 @@ the fenced transaction; registration and login use B3's distinct ceremonies.
 
 import base64
 from datetime import timedelta
-from typing import Annotated, Any, Protocol
+from typing import TYPE_CHECKING, Annotated, Any, Protocol
 
 from aweb_naapp.console import (
     ClientIdentity,
@@ -44,8 +44,12 @@ from pgdbm import AsyncDatabaseManager
 
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_policy import keep_four_eyes_owners
+from aweb_secrets.credential_audit import GovernanceUnavailable
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, OwnerRequired, owner_scope, record_owner
 from aweb_secrets.principal import is_principal
+
+if TYPE_CHECKING:
+    from aweb_secrets.credential_audit import CredentialAudit
 
 
 class InstallationLookup(Protocol):
@@ -99,6 +103,7 @@ class OwnerConsole:
         fence: InstallationFence,
         verifier: OwnerActVerifier,
         installation: InstallationLookup,
+        credential_audit: "CredentialAudit",
         limiter: LoginLimiter | None = None,
     ) -> None:
         self.db = db
@@ -107,6 +112,7 @@ class OwnerConsole:
         self.fence = fence
         self.verifier = verifier
         self.installation = installation
+        self.credential_audit = credential_audit
         self.sessions = ConsoleSessions(db, passkeys=passkeys, scopes=self.admits_scope)
         self.limiter = limiter or LoginLimiter(
             db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
@@ -153,29 +159,42 @@ class OwnerConsole:
         }
         try:
             prepared = await self.verifier.prepare(signing, signature, team_id=admitted.team_id)
-            async with self.db.transaction() as tx:
-                await self.fence.check(tx, admitted)
-                act = await self.verifier.consume_in(tx, prepared, expected_subject=expected)
-                await assign(tx, principal, OWNER_ROLE)
-                if not await hold_role(tx, principal, OWNER_ROLE):
-                    raise OwnerRequired("owner_required")
-                await record_owner(
-                    tx, installation_id=admitted.installation_id, principal=principal
-                )
-                designation = await self.passkeys.designate(
-                    tx, scope=scope, contact=contact, evidence=act
-                )
-                if prepared.act_name == "app-credential.recover":
-                    await keep_four_eyes_owners(
-                        tx,
-                        installation_id=admitted.installation_id,
-                        team_id=admitted.team_id,
-                        directory=self.directory,
-                        excluding=principal,
-                    )
-                return designation
-        except (Refused, DesignationRefused):
+        except Refused:
             raise OwnerRequired("owner_required") from None
+        context = await self.credential_audit.prepare_owner_act(
+            admitted, signing=signing, signature=signature
+        )
+        with self.credential_audit.prepared(context):
+            try:
+                async with self.db.transaction() as tx:
+                    await self.fence.check(tx, admitted)
+                    try:
+                        act = await self.verifier.consume_in(
+                            tx, prepared, expected_subject=expected
+                        )
+                    except Refused:
+                        raise OwnerRequired("owner_required") from None
+                    await assign(tx, principal, OWNER_ROLE)
+                    if not await hold_role(tx, principal, OWNER_ROLE):
+                        raise OwnerRequired("owner_required")
+                    await record_owner(
+                        tx, installation_id=admitted.installation_id, principal=principal
+                    )
+                    designation = await self.passkeys.designate(
+                        tx, scope=scope, contact=contact, evidence=act
+                    )
+                    if prepared.act_name == "app-credential.recover":
+                        await keep_four_eyes_owners(
+                            tx,
+                            installation_id=admitted.installation_id,
+                            team_id=admitted.team_id,
+                            directory=self.directory,
+                            excluding=principal,
+                        )
+                    await self.fence.check(tx, admitted)
+                    return designation
+            except DesignationRefused:
+                raise OwnerRequired("owner_required") from None
 
 
 def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRouter:
@@ -223,6 +242,10 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
             raise HTTPException(status_code=refused.status, detail=refused.code) from None
         except ChangeRefused as refused:
             raise HTTPException(status_code=403, detail=refused.code) from None
+        except GovernanceUnavailable as refused:
+            raise HTTPException(503, refused.code) from None
+        except Refused as refused:
+            raise HTTPException(503, refused.code) from None
         except (ValueError, OwnerRequired):
             raise HTTPException(status_code=403, detail="owner_required") from None
         await services.passkeys.deliver(designation)
@@ -242,20 +265,34 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
         if not isinstance(body["credential"], dict):
             raise HTTPException(status_code=400, detail="request_invalid")
         try:
-            approver = await services.passkeys.complete_enrolment(
-                _text(body, "link_token"), body["credential"]
-            )
+            token = _text(body, "link_token")
+            prepared = await services.credential_audit.prepare_enrolment(token)
+            with services.credential_audit.prepared(prepared):
+                approver = await services.passkeys.complete_enrolment(
+                    token, body["credential"], fence=prepared
+                )
         except EnrolmentRefused:
             raise HTTPException(status_code=403, detail="enrolment_refused") from None
+        except GovernanceUnavailable as refused:
+            raise HTTPException(503, refused.code) from None
+        except Refused as refused:
+            raise HTTPException(503, refused.code) from None
         return {"scope": approver.scope}
 
     @router.post("/contact-proof", dependencies=[Depends(_require_json)])
     async def contact_proof(request: Request) -> dict[str, str]:
         body = await _body(request, {"proof_token"})
         try:
-            effective_at = await services.passkeys.prove_contact(_text(body, "proof_token"))
+            token = _text(body, "proof_token")
+            prepared = await services.credential_audit.prepare_contact_proof(token)
+            with services.credential_audit.prepared(prepared):
+                effective_at = await services.passkeys.prove_contact(token, fence=prepared)
         except ContactChangeRefused:
             raise HTTPException(status_code=403, detail="contact_proof_refused") from None
+        except GovernanceUnavailable as refused:
+            raise HTTPException(503, refused.code) from None
+        except Refused as refused:
+            raise HTTPException(503, refused.code) from None
         return {"effective_at": effective_at.isoformat()}
 
     return router
