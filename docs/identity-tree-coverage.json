@@ -2174,7 +2174,30 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Present bounded optional chain next to existing subject/team/grant authentication."
+      "acceptance": "Present bounded optional chain next to existing subject/team/grant authentication.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "channel-core/src/api/client.ts",
+          "symbol": "<module>"
+        },
+        {
+          "file": "channel-core/src/api/client.ts",
+          "symbol": "signIdentityGrantHeaders"
+        },
+        {
+          "file": "channel-core/src/api/client.ts",
+          "symbol": "APIClient.grantAuthHeaders"
+        },
+        {
+          "file": "channel-core/src/api/client.ts",
+          "symbol": "APIClient.identityAuthHeaders"
+        },
+        {
+          "file": "channel-core/src/api/client.ts",
+          "symbol": "APIClient.teamAuthHeaders"
+        }
+      ]
     },
     {
       "id": "TS.MESSAGE.SIGNATURE",
@@ -2195,7 +2218,34 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Keep existing signature families; new ID signature profile must not silently narrow released message/certificate acceptance."
+      "acceptance": "Keep existing signature families; new ID signature profile must not silently narrow released message/certificate acceptance.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "channel-core/src/identity/signing.ts",
+          "symbol": "<module>"
+        },
+        {
+          "file": "channel-core/src/identity/signing.ts",
+          "symbol": "signBytes"
+        },
+        {
+          "file": "channel-core/src/identity/signing.ts",
+          "symbol": "signMessage"
+        },
+        {
+          "file": "channel-core/src/identity/signing.ts",
+          "symbol": "verifyMessage"
+        },
+        {
+          "file": "channel-core/src/identity/signing.ts",
+          "symbol": "verifySignedPayload"
+        },
+        {
+          "file": "channel-core/src/identity/signing.ts",
+          "symbol": "b64Decode"
+        }
+      ]
     },
     {
       "id": "TS.MAIL.CHAT",
@@ -2217,7 +2267,26 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Verify adjacent chain against actual author after ordinary proof."
+      "acceptance": "Verify adjacent chain against actual author after ordinary proof.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "channel-core/src/api/chat.ts",
+          "symbol": "fetchHistory"
+        },
+        {
+          "file": "channel-core/src/api/chat.ts",
+          "symbol": "verifyChatMessage"
+        },
+        {
+          "file": "channel-core/src/api/mail.ts",
+          "symbol": "fetchInbox"
+        },
+        {
+          "file": "channel-core/src/api/mail.ts",
+          "symbol": "verifyInboxMessage"
+        }
+      ]
     },
     {
       "id": "TS.E2EE",
@@ -2238,7 +2307,54 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Preserve encrypted bytes; bind verified decrypted author, not relay metadata."
+      "acceptance": "Preserve encrypted bytes; bind verified decrypted author, not relay metadata.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "channel-core/src/channel.ts",
+          "symbol": "resolveMailForDelivery"
+        },
+        {
+          "file": "channel-core/src/channel.ts",
+          "symbol": "resolveChatForDelivery"
+        },
+        {
+          "file": "channel-core/src/channel.ts",
+          "symbol": "senderTrustAddress"
+        },
+        {
+          "file": "channel-core/src/identity/encrypted.ts",
+          "symbol": "hash"
+        },
+        {
+          "file": "channel-core/src/identity/encrypted.ts",
+          "symbol": "verifyDecryptedMessage"
+        },
+        {
+          "file": "channel-core/src/channel.ts",
+          "symbol": "loadPinStore"
+        },
+        {
+          "file": "channel-core/src/channel.ts",
+          "symbol": "createRegistryResolver"
+        },
+        {
+          "file": "channel-core/src/channel.ts",
+          "symbol": "commitPinStore"
+        },
+        {
+          "file": "channel-core/src/channel.ts",
+          "symbol": "normalizeAndPersistMessageTrust"
+        },
+        {
+          "file": "channel-core/src/channel.ts",
+          "symbol": "normalizeMessageTrust"
+        },
+        {
+          "file": "channel-core/src/identity/encrypted.ts",
+          "symbol": "canonicalEncryptedJSON"
+        }
+      ]
     },
     {
       "id": "CHANNEL.GENERATED.RUNNER",
@@ -2258,7 +2374,306 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Generated from channel-core; rebuild and test published bundle, never hand-maintain another verifier."
+      "acceptance": "Generated from channel-core; rebuild and test published bundle, never hand-maintain another verifier.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "<module>"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "computeStableID"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "signIdentityGrantHeaders"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "grantAuthHeaders"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "identityAuthHeaders"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "teamAuthHeaders"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "verifyMessage"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "verifySignedPayload"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "fetchInbox"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "verifyInboxMessage"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "fetchHistory"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "verifyChatMessage"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "resolveConfig"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "resolveGrantConfig"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_RegistryResolver.verifyStableIdentity"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_RegistryResolver.verifyReceivedIdentity"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_RegistryResolver.verifyStableIdentityAtRegistry"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_RegistryResolver.verifyStableIdentityViaFullLog"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_RegistryResolver.resolveIdentity"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "verifyDidKeyResolution"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "verifyDidLogEntries"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "resolveTrustMetadata"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "normalizeTrustDecision"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "prepareReceivedSender"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "checkRecipientBinding"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "requiresStableIdentityCheck"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "prepareStableIdentityRegistry"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "checkTOFUPinWithMeta"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "verifyRotationAnnouncement"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "verifyReplacementAnnouncement"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "verifyLocalSenderAgainstResolvedMetadata"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "hash"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "verifyDecryptedMessage"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "resolveMailForDelivery"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "resolveChatForDelivery"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "senderTrustAddress"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "b64Decode"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "loadConfiguredTeamCertificate"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "loadActiveTeamCertificate"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_RegistryResolver.seedVerifiedHead"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_RegistryResolver.resolveAddressIdentity"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_RegistryResolver.discoverAuthority"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_RegistryResolver.resolveAddress"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "discoverAuthoritativeRegistry"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "lookupDomainAuthority"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "parseAwidTXTRecord"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "candidateDomainsForLookup"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "b64Decode2"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_PinStore"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_PinStore.removeAddress"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_PinStore.removeAddresses"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_PinStore.bindStableIdentity"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_PinStore.recordVerifiedIdentity"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_PinStore.replaceVerifiedIdentity"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_PinStore.commit"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_PinStore.receivedIdentityCheckpoint"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_PinStore.advanceReceivedIdentityCheckpoint"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "_PinStore.fromYAML"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "normalizeTrust"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "prepareReceivedLocalSender"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "seedVerifiedHeadFromPin"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "persistVerifiedHeadCheckpoint"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "verifyResolvedLocalSender"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "resolveAgentMeta"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "resolveIdentity"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "b64Decode3"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "canonicalJSONValue"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "canonicalEncryptedJSON"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "loadPinStore"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "createRegistryResolver"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "commitPinStore"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "normalizeAndPersistMessageTrust"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "normalizeMessageTrust"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "start"
+        }
+      ]
     },
     {
       "id": "OATS.SPAWN",
@@ -10729,6 +11144,953 @@
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.artifacts.aweb-abbr.postship-layer1-20260810T013020Z.harness",
+      "repo": "aweb",
+      "files": [
+        "artifacts/aweb-abbr/postship-layer1-20260810T013020Z/harness.mjs"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "artifacts/aweb-abbr/postship-layer1-20260810T013020Z/harness.mjs",
+          "symbol": "digest"
+        },
+        {
+          "file": "artifacts/aweb-abbr/postship-layer1-20260810T013020Z/harness.mjs",
+          "symbol": "<module>"
+        },
+        {
+          "file": "artifacts/aweb-abbr/postship-layer1-20260810T013020Z/harness.mjs",
+          "symbol": "verifyPackage"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.channel-core.src.activity.emitter",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/activity/emitter.ts"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "channel-core/src/activity/emitter.ts",
+          "symbol": "ActivityEmitter.beginTurn"
+        },
+        {
+          "file": "channel-core/src/activity/emitter.ts",
+          "symbol": "ActivityEmitter.send"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.channel-core.src.activity.event",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/activity/event.ts"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "channel-core/src/activity/event.ts",
+          "symbol": "signActivityEvent"
+        },
+        {
+          "file": "channel-core/src/activity/event.ts",
+          "symbol": "canonicalActivityBytes"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.channel-core.src.config",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/config.ts"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "channel-core/src/config.ts",
+          "symbol": "<module>"
+        },
+        {
+          "file": "channel-core/src/config.ts",
+          "symbol": "resolveConfig"
+        },
+        {
+          "file": "channel-core/src/config.ts",
+          "symbol": "resolveGrantConfig"
+        },
+        {
+          "file": "channel-core/src/config.ts",
+          "symbol": "loadConfiguredTeamCertificate"
+        },
+        {
+          "file": "channel-core/src/config.ts",
+          "symbol": "loadActiveTeamCertificate"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.channel-core.src.identity.did",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/identity/did.ts"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "channel-core/src/identity/did.ts",
+          "symbol": "<module>"
+        },
+        {
+          "file": "channel-core/src/identity/did.ts",
+          "symbol": "computeStableID"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.channel-core.src.identity.registry",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/identity/registry.ts"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "<module>"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "RegistryResolver.verifyStableIdentity"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "RegistryResolver.verifyReceivedIdentity"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "RegistryResolver.verifyStableIdentityAtRegistry"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "RegistryResolver.verifyStableIdentityViaFullLog"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "RegistryResolver.resolveIdentity"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "verifyDidKeyResolution"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "verifyDidLogEntries"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "RegistryResolver.seedVerifiedHead"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "RegistryResolver.resolveAddressIdentity"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "RegistryResolver.discoverAuthority"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "RegistryResolver.resolveAddress"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "discoverAuthoritativeRegistry"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "lookupDomainAuthority"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "parseAwidTXTRecord"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "candidateDomainsForLookup"
+        },
+        {
+          "file": "channel-core/src/identity/registry.ts",
+          "symbol": "b64Decode"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.channel-core.src.identity.trust",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/identity/trust.ts"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "<module>"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.resolveTrustMetadata"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.normalizeTrustDecision"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.prepareReceivedSender"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.checkRecipientBinding"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.requiresStableIdentityCheck"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.prepareStableIdentityRegistry"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.checkTOFUPinWithMeta"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.verifyRotationAnnouncement"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.verifyReplacementAnnouncement"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.verifyLocalSenderAgainstResolvedMetadata"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.normalizeTrust"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.prepareReceivedLocalSender"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.seedVerifiedHeadFromPin"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.persistVerifiedHeadCheckpoint"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.verifyResolvedLocalSender"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.resolveAgentMeta"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "SenderTrustManager.resolveIdentity"
+        },
+        {
+          "file": "channel-core/src/identity/trust.ts",
+          "symbol": "b64Decode"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.channel-core.src.index",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/index.ts"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "channel-core/src/index.ts",
+          "symbol": "<module>"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.channel-core.src.receive",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/receive.ts"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "channel-core/src/receive.ts",
+          "symbol": "ReceiveStreamReceipt"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.naapp-lib.renderer.actions",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/renderer/actions.mjs"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "naapp-lib/renderer/actions.mjs",
+          "symbol": "createActions.fileDigest"
+        },
+        {
+          "file": "naapp-lib/renderer/actions.mjs",
+          "symbol": "createActions.requestFor"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.naapp-lib.renderer.decisions",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/renderer/decisions.mjs"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "naapp-lib/renderer/decisions.mjs",
+          "symbol": "createDecision"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.naapp-lib.renderer.digests",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/renderer/digests.mjs"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "naapp-lib/renderer/digests.mjs",
+          "symbol": "digest"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.naapp-lib.renderer.dom",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/renderer/dom.mjs"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "naapp-lib/renderer/dom.mjs",
+          "symbol": "valueText"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.naapp-lib.renderer.link-client",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/renderer/link-client.mjs"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "naapp-lib/renderer/link-client.mjs",
+          "symbol": "sessionDidKey"
+        },
+        {
+          "file": "naapp-lib/renderer/link-client.mjs",
+          "symbol": "signLinkRequest"
+        },
+        {
+          "file": "naapp-lib/renderer/link-client.mjs",
+          "symbol": "createLinkClient.connect"
+        },
+        {
+          "file": "naapp-lib/renderer/link-client.mjs",
+          "symbol": "createLinkClient.performRequest"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.naapp-lib.src.aweb-naapp.pages.assets.page-link-client",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
+          "symbol": "sessionDidKey"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
+          "symbol": "signLinkRequest"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
+          "symbol": "createLinkClient.connect"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
+          "symbol": "createLinkClient.performRequest"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
+          "symbol": "<module>"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.naapp-lib.src.aweb-naapp.pages.assets.page-renderer",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/pages/assets/page-renderer.js"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/pages/assets/page-renderer.js",
+          "symbol": "valueText"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/pages/assets/page-renderer.js",
+          "symbol": "createActions.fileDigest"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/pages/assets/page-renderer.js",
+          "symbol": "createActions.requestFor"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/pages/assets/page-renderer.js",
+          "symbol": "digest"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/pages/assets/page-renderer.js",
+          "symbol": "createDecision"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.pi-extension.src.index",
+      "repo": "aweb",
+      "files": [
+        "pi-extension/src/index.ts"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "pi-extension/src/index.ts",
+          "symbol": "awebPiExtension"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.scripts.e2e.pin-store-multiprocess-gate.orchestrate",
+      "repo": "aweb",
+      "files": [
+        "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs",
+          "symbol": "<module>"
+        },
+        {
+          "file": "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs",
+          "symbol": "digest"
+        },
+        {
+          "file": "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs",
+          "symbol": "signedMessage"
+        },
+        {
+          "file": "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs",
+          "symbol": "runArm"
+        },
+        {
+          "file": "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs",
+          "symbol": "seedStore"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.channel-core.src.identity.canonical",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/identity/canonical.ts"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "channel-core/src/identity/canonical.ts",
+          "symbol": "canonicalJSONValue"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.channel-core.src.identity.pinstore",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/identity/pinstore.ts"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "channel-core/src/identity/pinstore.ts",
+          "symbol": "PinStore"
+        },
+        {
+          "file": "channel-core/src/identity/pinstore.ts",
+          "symbol": "PinStore.removeAddress"
+        },
+        {
+          "file": "channel-core/src/identity/pinstore.ts",
+          "symbol": "PinStore.removeAddresses"
+        },
+        {
+          "file": "channel-core/src/identity/pinstore.ts",
+          "symbol": "PinStore.bindStableIdentity"
+        },
+        {
+          "file": "channel-core/src/identity/pinstore.ts",
+          "symbol": "PinStore.recordVerifiedIdentity"
+        },
+        {
+          "file": "channel-core/src/identity/pinstore.ts",
+          "symbol": "PinStore.replaceVerifiedIdentity"
+        },
+        {
+          "file": "channel-core/src/identity/pinstore.ts",
+          "symbol": "PinStore.commit"
+        },
+        {
+          "file": "channel-core/src/identity/pinstore.ts",
+          "symbol": "PinStore.receivedIdentityCheckpoint"
+        },
+        {
+          "file": "channel-core/src/identity/pinstore.ts",
+          "symbol": "PinStore.advanceReceivedIdentityCheckpoint"
+        },
+        {
+          "file": "channel-core/src/identity/pinstore.ts",
+          "symbol": "PinStore.fromYAML"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.channel.scripts.debug-channel-fetch",
+      "repo": "aweb",
+      "files": [
+        "channel/scripts/debug-channel-fetch.mjs"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "channel/scripts/debug-channel-fetch.mjs",
+          "symbol": "<module>"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.channel.src.index",
+      "repo": "aweb",
+      "files": [
+        "channel/src/index.ts"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "channel/src/index.ts",
+          "symbol": "main"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.cli.go.wake.channel-core-runner-entry",
+      "repo": "aweb",
+      "files": [
+        "cli/go/wake/channel_core_runner_entry.ts"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/wake/channel_core_runner_entry.ts",
+          "symbol": "start"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.scripts.e2e.pin-store-multiprocess-gate.agent",
+      "repo": "aweb",
+      "files": [
+        "scripts/e2e/pin-store-multiprocess-gate/agent.mjs"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "scripts/e2e/pin-store-multiprocess-gate/agent.mjs",
+          "symbol": "<module>"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "TS.SOURCE.scripts.prepare-pinned-oats",
+      "repo": "aweb",
+      "files": [
+        "scripts/prepare-pinned-oats.mjs"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "scripts/prepare-pinned-oats.mjs",
+          "symbol": "<module>"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
     }
   ],
   "guard_checkpoint": {
@@ -17314,6 +18676,1750 @@
         "calls": {
           "crypto/ed25519.NewKeyFromSeed": 1
         }
+      }
+    ]
+  },
+  "ts_guard": {
+    "v": 1,
+    "sites": [
+      {
+        "file": "artifacts/aweb-abbr/postship-layer1-20260810T013020Z/harness.mjs",
+        "symbol": "digest",
+        "calls": {
+          "node:crypto.createHash().update().digest": 1,
+          "node:crypto.createHash().update": 1,
+          "node:crypto.createHash": 1
+        },
+        "row": "TS.SOURCE.artifacts.aweb-abbr.postship-layer1-20260810T013020Z.harness"
+      },
+      {
+        "file": "artifacts/aweb-abbr/postship-layer1-20260810T013020Z/harness.mjs",
+        "symbol": "verifyPackage",
+        "calls": {
+          "trust.resolveTrustMetadata": 1,
+          "trust.normalizeTrust": 1
+        },
+        "row": "TS.SOURCE.artifacts.aweb-abbr.postship-layer1-20260810T013020Z.harness"
+      },
+      {
+        "file": "artifacts/aweb-abbr/postship-layer1-20260810T013020Z/harness.mjs",
+        "symbol": "<module>",
+        "calls": {
+          "verifyPackage": 2
+        },
+        "row": "TS.SOURCE.artifacts.aweb-abbr.postship-layer1-20260810T013020Z.harness"
+      },
+      {
+        "file": "channel-core/src/activity/emitter.ts",
+        "symbol": "ActivityEmitter.beginTurn",
+        "calls": {
+          "node:crypto.randomBytes().toString": 1,
+          "node:crypto.randomBytes": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.activity.emitter"
+      },
+      {
+        "file": "channel-core/src/activity/emitter.ts",
+        "symbol": "ActivityEmitter.send",
+        "calls": {
+          "./event.js.signActivityEvent": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.activity.emitter"
+      },
+      {
+        "file": "channel-core/src/activity/event.ts",
+        "symbol": "canonicalActivityBytes",
+        "calls": {
+          "../identity/canonical.js.canonicalJSONValue": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.activity.event"
+      },
+      {
+        "file": "channel-core/src/activity/event.ts",
+        "symbol": "signActivityEvent",
+        "calls": {
+          "../identity/signing.js.signBytes": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.activity.event"
+      },
+      {
+        "file": "channel-core/src/api/chat.ts",
+        "symbol": "fetchHistory",
+        "calls": {
+          "verifyChatMessage": 1
+        },
+        "row": "TS.MAIL.CHAT"
+      },
+      {
+        "file": "channel-core/src/api/chat.ts",
+        "symbol": "verifyChatMessage",
+        "calls": {
+          "../identity/signing.js.verifySignedPayload": 1,
+          "../identity/signing.js.signedPayloadConversationStatus": 1,
+          "../identity/signing.js.verifyMessage": 2
+        },
+        "row": "TS.MAIL.CHAT"
+      },
+      {
+        "file": "channel-core/src/api/client.ts",
+        "symbol": "<module>",
+        "calls": {
+          "reference:@noble/ed25519.etc.sha512Sync": 1,
+          "@noble/ed25519.etc.concatBytes": 1
+        },
+        "row": "TS.REQUESTS"
+      },
+      {
+        "file": "channel-core/src/api/client.ts",
+        "symbol": "signIdentityGrantHeaders",
+        "calls": {
+          "node:crypto.createHash().update().digest": 1,
+          "node:crypto.createHash().update": 1,
+          "node:crypto.createHash": 1,
+          "@noble/ed25519.sign": 1,
+          "../identity/did.js.computeDIDKey": 1,
+          "@noble/ed25519.getPublicKey": 1
+        },
+        "row": "TS.REQUESTS"
+      },
+      {
+        "file": "channel-core/src/api/client.ts",
+        "symbol": "APIClient.grantAuthHeaders",
+        "calls": {
+          "signIdentityGrantHeaders": 1
+        },
+        "row": "TS.REQUESTS"
+      },
+      {
+        "file": "channel-core/src/api/client.ts",
+        "symbol": "APIClient.identityAuthHeaders",
+        "calls": {
+          "node:crypto.createHash().update().digest": 1,
+          "node:crypto.createHash().update": 1,
+          "node:crypto.createHash": 1,
+          "@noble/ed25519.sign": 1
+        },
+        "row": "TS.REQUESTS"
+      },
+      {
+        "file": "channel-core/src/api/client.ts",
+        "symbol": "APIClient.teamAuthHeaders",
+        "calls": {
+          "node:crypto.createHash().update().digest": 1,
+          "node:crypto.createHash().update": 1,
+          "node:crypto.createHash": 1,
+          "@noble/ed25519.sign": 1
+        },
+        "row": "TS.REQUESTS"
+      },
+      {
+        "file": "channel-core/src/api/mail.ts",
+        "symbol": "fetchInbox",
+        "calls": {
+          "verifyInboxMessage": 1
+        },
+        "row": "TS.MAIL.CHAT"
+      },
+      {
+        "file": "channel-core/src/api/mail.ts",
+        "symbol": "verifyInboxMessage",
+        "calls": {
+          "../identity/signing.js.verifySignedPayload": 1,
+          "../identity/signing.js.signedPayloadConversationStatus": 1,
+          "../identity/signing.js.verifyMessage": 2
+        },
+        "row": "TS.MAIL.CHAT"
+      },
+      {
+        "file": "channel-core/src/channel.ts",
+        "symbol": "loadPinStore",
+        "calls": {
+          "./identity/pinstore.js.PinStore": 1,
+          "./identity/pinstore.js.PinStore.fromYAML": 1
+        },
+        "row": "TS.E2EE"
+      },
+      {
+        "file": "channel-core/src/channel.ts",
+        "symbol": "createRegistryResolver",
+        "calls": {
+          "./identity/registry.js.RegistryResolver": 1
+        },
+        "row": "TS.E2EE"
+      },
+      {
+        "file": "channel-core/src/channel.ts",
+        "symbol": "commitPinStore",
+        "calls": {
+          "options.pinStore.commit": 1,
+          "options.pinStore.replaceWithDurableState": 1
+        },
+        "row": "TS.E2EE"
+      },
+      {
+        "file": "channel-core/src/channel.ts",
+        "symbol": "normalizeAndPersistMessageTrust",
+        "calls": {
+          "reference:options.trust.resolveTrustMetadata": 1,
+          "reference:resolveTrustMetadata": 1,
+          "options.pinStore.runExclusive": 1,
+          "options.pinStore.hasUndurableChanges": 1
+        },
+        "row": "TS.E2EE"
+      },
+      {
+        "file": "channel-core/src/channel.ts",
+        "symbol": "normalizeMessageTrust",
+        "calls": {
+          "options.trust.normalizeResolvedTrust": 1
+        },
+        "row": "TS.E2EE"
+      },
+      {
+        "file": "channel-core/src/channel.ts",
+        "symbol": "resolveMailForDelivery",
+        "calls": {
+          "./identity/encrypted.js.verifyDecryptedMessage": 1
+        },
+        "row": "TS.E2EE"
+      },
+      {
+        "file": "channel-core/src/channel.ts",
+        "symbol": "resolveChatForDelivery",
+        "calls": {
+          "./identity/encrypted.js.verifyDecryptedMessage": 1
+        },
+        "row": "TS.E2EE"
+      },
+      {
+        "file": "channel-core/src/channel.ts",
+        "symbol": "senderTrustAddress",
+        "calls": {
+          "literal:did:key": 1
+        },
+        "row": "TS.E2EE"
+      },
+      {
+        "file": "channel-core/src/config.ts",
+        "symbol": "<module>",
+        "calls": {
+          "reference:@noble/ed25519.etc.sha512Sync": 1,
+          "@noble/ed25519.etc.concatBytes": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.config"
+      },
+      {
+        "file": "channel-core/src/config.ts",
+        "symbol": "resolveConfig",
+        "calls": {
+          "./identity/keys.js.loadSigningKey": 1,
+          "./identity/did.js.computeDIDKey": 1,
+          "@noble/ed25519.getPublicKey": 1,
+          "./identity/certificate.js.encodeTeamCertificateHeader": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.config"
+      },
+      {
+        "file": "channel-core/src/config.ts",
+        "symbol": "resolveGrantConfig",
+        "calls": {
+          "./identity/keys.js.loadSigningKey": 1,
+          "./identity/did.js.computeDIDKey": 1,
+          "@noble/ed25519.getPublicKey": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.config"
+      },
+      {
+        "file": "channel-core/src/config.ts",
+        "symbol": "loadConfiguredTeamCertificate",
+        "calls": {
+          "./identity/certificate.js.loadTeamCertificate": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.config"
+      },
+      {
+        "file": "channel-core/src/config.ts",
+        "symbol": "loadActiveTeamCertificate",
+        "calls": {
+          "./identity/certificate.js.loadTeamCertificate": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.config"
+      },
+      {
+        "file": "channel-core/src/identity/canonical.ts",
+        "symbol": "canonicalJSONValue",
+        "calls": {
+          "canonicalJSONValue": 2
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.canonical"
+      },
+      {
+        "file": "channel-core/src/identity/did.ts",
+        "symbol": "<module>",
+        "calls": {
+          "literal:did:key": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.did"
+      },
+      {
+        "file": "channel-core/src/identity/did.ts",
+        "symbol": "computeStableID",
+        "calls": {
+          "node:crypto.createHash().update().digest": 1,
+          "node:crypto.createHash().update": 1,
+          "node:crypto.createHash": 1,
+          "literal:did:aw": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.did"
+      },
+      {
+        "file": "channel-core/src/identity/encrypted.ts",
+        "symbol": "canonicalEncryptedJSON",
+        "calls": {
+          "./canonical.js.canonicalJSONValue": 1
+        },
+        "row": "TS.E2EE"
+      },
+      {
+        "file": "channel-core/src/identity/encrypted.ts",
+        "symbol": "hash",
+        "calls": {
+          "node:crypto.createHash().update().digest().replace": 1,
+          "node:crypto.createHash().update().digest": 1,
+          "node:crypto.createHash().update": 1,
+          "node:crypto.createHash": 1
+        },
+        "row": "TS.E2EE"
+      },
+      {
+        "file": "channel-core/src/identity/encrypted.ts",
+        "symbol": "verifyDecryptedMessage",
+        "calls": {
+          "canonicalEncryptedJSON": 4,
+          "./signing.js.verifySignedPayload": 1,
+          "reference:crypto.suite": 1,
+          "./base64.js.decodeRawStdBase64": 1,
+          "reference:crypto.ciphertext_size": 1,
+          "reference:crypto.ciphertext_hash": 1,
+          "reference:crypto.key_wraps_hash": 1
+        },
+        "row": "TS.E2EE"
+      },
+      {
+        "file": "channel-core/src/identity/pinstore.ts",
+        "symbol": "PinStore",
+        "calls": {
+          "<expression>.toYAML": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.pinstore"
+      },
+      {
+        "file": "channel-core/src/identity/pinstore.ts",
+        "symbol": "PinStore.removeAddress",
+        "calls": {
+          "<expression>.deletePin": 2
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.pinstore"
+      },
+      {
+        "file": "channel-core/src/identity/pinstore.ts",
+        "symbol": "PinStore.removeAddresses",
+        "calls": {
+          "<expression>.removeAddress": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.pinstore"
+      },
+      {
+        "file": "channel-core/src/identity/pinstore.ts",
+        "symbol": "PinStore.bindStableIdentity",
+        "calls": {
+          "<expression>.rekeyPin": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.pinstore"
+      },
+      {
+        "file": "channel-core/src/identity/pinstore.ts",
+        "symbol": "PinStore.recordVerifiedIdentity",
+        "calls": {
+          "<expression>.storePin": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.pinstore"
+      },
+      {
+        "file": "channel-core/src/identity/pinstore.ts",
+        "symbol": "PinStore.replaceVerifiedIdentity",
+        "calls": {
+          "<expression>.deletePin": 1,
+          "<expression>.recordVerifiedIdentity": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.pinstore"
+      },
+      {
+        "file": "channel-core/src/identity/pinstore.ts",
+        "symbol": "PinStore.commit",
+        "calls": {
+          "<expression>.toYAML": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.pinstore"
+      },
+      {
+        "file": "channel-core/src/identity/pinstore.ts",
+        "symbol": "PinStore.receivedIdentityCheckpoint",
+        "calls": {
+          "./registry.js.isValidDidLogSequence": 1,
+          "./did.js.extractPublicKey": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.pinstore"
+      },
+      {
+        "file": "channel-core/src/identity/pinstore.ts",
+        "symbol": "PinStore.advanceReceivedIdentityCheckpoint",
+        "calls": {
+          "<expression>.receivedIdentityCheckpoint": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.pinstore"
+      },
+      {
+        "file": "channel-core/src/identity/pinstore.ts",
+        "symbol": "PinStore.fromYAML",
+        "calls": {
+          "PinStore": 1,
+          "store.toYAML": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.pinstore"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "<module>",
+        "calls": {
+          "reference:@noble/ed25519.etc.sha512Sync": 1,
+          "@noble/ed25519.etc.concatBytes": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "RegistryResolver.verifyStableIdentity",
+        "calls": {
+          "<expression>.verifyStableIdentityAtRegistry": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "RegistryResolver.verifyReceivedIdentity",
+        "calls": {
+          "<expression>.discoverRegistry": 1,
+          "RegistryResolver": 1,
+          "scoped.seedVerifiedHead": 1,
+          "scoped.verifyStableIdentityAtRegistry": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "RegistryResolver.verifyStableIdentityAtRegistry",
+        "calls": {
+          "verifyDidKeyResolution": 1,
+          "<expression>.verifyStableIdentityViaFullLog": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "RegistryResolver.seedVerifiedHead",
+        "calls": {
+          "isValidDidLogSequence": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "RegistryResolver.verifyStableIdentityViaFullLog",
+        "calls": {
+          "verifyDidLogEntries": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "RegistryResolver.resolveAddressIdentity",
+        "calls": {
+          "<expression>.resolveIdentity": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "RegistryResolver.resolveIdentity",
+        "calls": {
+          "verifyDidKeyResolution": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "RegistryResolver.discoverAuthority",
+        "calls": {
+          "awidTXTName": 2,
+          "discoverAuthoritativeRegistry": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "RegistryResolver.resolveAddress",
+        "calls": {
+          "<expression>.discoverRegistry": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "discoverAuthoritativeRegistry",
+        "calls": {
+          "awidTXTName": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "lookupDomainAuthority",
+        "calls": {
+          "candidateDomainsForLookup": 1,
+          "awidTXTName": 1,
+          "parseAwidTXTRecord": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "parseAwidTXTRecord",
+        "calls": {
+          "./did.js.extractPublicKey": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "candidateDomainsForLookup",
+        "calls": {
+          "registeredDomainBoundary": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "verifyDidKeyResolution",
+        "calls": {
+          "literal:did:aw": 1,
+          "./did.js.extractPublicKey": 5,
+          "isValidDidLogSequence": 1,
+          "./did.js.computeStableID": 1,
+          "canonicalDidLogPayload": 1,
+          "@noble/ed25519.verify": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "verifyDidLogEntries",
+        "calls": {
+          "literal:did:aw": 1,
+          "verifyDidKeyResolution": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "symbol": "b64Decode",
+        "calls": {
+          "./base64.js.decodeRawStdBase64": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.registry"
+      },
+      {
+        "file": "channel-core/src/identity/signing.ts",
+        "symbol": "<module>",
+        "calls": {
+          "reference:@noble/ed25519.etc.sha512Sync": 1,
+          "@noble/ed25519.etc.concatBytes": 1
+        },
+        "row": "TS.MESSAGE.SIGNATURE"
+      },
+      {
+        "file": "channel-core/src/identity/signing.ts",
+        "symbol": "b64Decode",
+        "calls": {
+          "./base64.js.decodeRawStdBase64": 1
+        },
+        "row": "TS.MESSAGE.SIGNATURE"
+      },
+      {
+        "file": "channel-core/src/identity/signing.ts",
+        "symbol": "signBytes",
+        "calls": {
+          "@noble/ed25519.sign": 1
+        },
+        "row": "TS.MESSAGE.SIGNATURE"
+      },
+      {
+        "file": "channel-core/src/identity/signing.ts",
+        "symbol": "signMessage",
+        "calls": {
+          "signBytes": 1,
+          "canonicalJSON": 1
+        },
+        "row": "TS.MESSAGE.SIGNATURE"
+      },
+      {
+        "file": "channel-core/src/identity/signing.ts",
+        "symbol": "verifyMessage",
+        "calls": {
+          "literal:did:key": 1,
+          "./did.js.extractPublicKey": 1,
+          "canonicalJSON": 1,
+          "@noble/ed25519.verify": 1
+        },
+        "row": "TS.MESSAGE.SIGNATURE"
+      },
+      {
+        "file": "channel-core/src/identity/signing.ts",
+        "symbol": "verifySignedPayload",
+        "calls": {
+          "literal:did:key": 1,
+          "./did.js.extractPublicKey": 1,
+          "@noble/ed25519.verify": 1
+        },
+        "row": "TS.MESSAGE.SIGNATURE"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "<module>",
+        "calls": {
+          "reference:@noble/ed25519.etc.sha512Sync": 1,
+          "@noble/ed25519.etc.concatBytes": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.resolveTrustMetadata",
+        "calls": {
+          "literal:did:aw": 2
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.normalizeTrust",
+        "calls": {
+          "<expression>.resolveTrustMetadata": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.normalizeTrustDecision",
+        "calls": {
+          "store.removeAddresses": 1,
+          "store.receivedIdentityCheckpoint": 1,
+          "store.advanceReceivedIdentityCheckpoint": 1,
+          "<expression>.verifyResolvedLocalSender": 1,
+          "literal:did:aw": 1,
+          "<expression>.verifyLocalSenderAgainstResolvedMetadata": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.prepareReceivedLocalSender",
+        "calls": {
+          "./did.js.extractPublicKey": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.prepareReceivedSender",
+        "calls": {
+          "<expression>.registry.verifyReceivedIdentity": 1,
+          "context.pinStore.receivedIdentityCheckpoint": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.checkRecipientBinding",
+        "calls": {
+          "literal:did:aw": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.requiresStableIdentityCheck",
+        "calls": {
+          "literal:did:aw": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.prepareStableIdentityRegistry",
+        "calls": {
+          "<expression>.registry.verifyStableIdentity": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.seedVerifiedHeadFromPin",
+        "calls": {
+          "reference:<expression>.registry.seedVerifiedHead": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.persistVerifiedHeadCheckpoint",
+        "calls": {
+          "./registry.js.isValidDidLogSequence": 1,
+          "store.advanceLogCheckpoint": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.checkTOFUPinWithMeta",
+        "calls": {
+          "store.removeAddresses": 1,
+          "literal:did:aw": 1,
+          "store.bindStableIdentity": 1,
+          "store.checkPin": 1,
+          "store.recordVerifiedIdentity": 5,
+          "<expression>.verifyRotationAnnouncement": 3,
+          "<expression>.verifyReplacementAnnouncement": 3,
+          "store.replaceVerifiedIdentity": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.verifyRotationAnnouncement",
+        "calls": {
+          "./did.js.extractPublicKey": 1,
+          "@noble/ed25519.verify": 1,
+          "canonicalRotationJSON": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.verifyReplacementAnnouncement",
+        "calls": {
+          "./did.js.extractPublicKey": 1,
+          "@noble/ed25519.verify": 1,
+          "canonicalReplacementJSON": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.verifyLocalSenderAgainstResolvedMetadata",
+        "calls": {
+          "<expression>.verifyResolvedLocalSender": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.verifyResolvedLocalSender",
+        "calls": {
+          "store.removeAddresses": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.resolveAgentMeta",
+        "calls": {
+          "<expression>.resolveIdentity": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "SenderTrustManager.resolveIdentity",
+        "calls": {
+          "<expression>.registry.resolveIdentity": 2,
+          "./did.js.extractPublicKey": 1,
+          "normalizeIdentityScope": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "symbol": "b64Decode",
+        "calls": {
+          "./base64.js.decodeRawStdBase64": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.identity.trust"
+      },
+      {
+        "file": "channel-core/src/index.ts",
+        "symbol": "<module>",
+        "calls": {
+          "reference:./api/client.js.signIdentityGrantHeaders": 1,
+          "reference:./identity/pinstore.js.PinStore": 1,
+          "reference:./identity/registry.js.RegistryResolver": 1,
+          "reference:./identity/trust.js.SenderTrustManager": 1,
+          "reference:./identity/trust.js.canonicalReplacementJSON": 1,
+          "reference:./identity/trust.js.canonicalRotationJSON": 1,
+          "reference:./identity/trust.js.normalizeIdentityScope": 1,
+          "reference:./identity/did.js.computeDIDKey": 1,
+          "reference:./identity/did.js.extractPublicKey": 1,
+          "reference:./identity/keys.js.loadSigningKey": 1,
+          "reference:./identity/certificate.js.certificateIdentityScope": 1,
+          "reference:./identity/certificate.js.loadTeamCertificate": 1,
+          "reference:./identity/certificate.js.encodeTeamCertificateHeader": 1,
+          "reference:./identity/signing.js.verifyMessage": 1,
+          "reference:./identity/signing.js.verifySignedPayload": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.index"
+      },
+      {
+        "file": "channel-core/src/receive.ts",
+        "symbol": "ReceiveStreamReceipt",
+        "calls": {
+          "node:crypto.randomUUID": 1
+        },
+        "row": "TS.SOURCE.channel-core.src.receive"
+      },
+      {
+        "file": "channel/scripts/debug-channel-fetch.mjs",
+        "symbol": "<module>",
+        "calls": {
+          "../../channel-core/dist/index.js.SenderTrustManager": 1,
+          "trust.normalizeTrust": 1
+        },
+        "row": "TS.SOURCE.channel.scripts.debug-channel-fetch"
+      },
+      {
+        "file": "channel/src/index.ts",
+        "symbol": "main",
+        "calls": {
+          "@awebai/channel-core.SenderTrustManager": 1
+        },
+        "row": "TS.SOURCE.channel.src.index"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "<module>",
+        "calls": {
+          "literal:did:key": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "computeStableID",
+        "calls": {
+          "node:crypto.createHash().update().digest": 1,
+          "node:crypto.createHash().update": 1,
+          "node:crypto.createHash": 1,
+          "literal:did:aw": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "signIdentityGrantHeaders",
+        "calls": {
+          "node:crypto.createHash().update().digest": 1,
+          "node:crypto.createHash().update": 1,
+          "node:crypto.createHash": 1,
+          "sign": 1,
+          "computeDIDKey": 1,
+          "getPublicKey": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "grantAuthHeaders",
+        "calls": {
+          "signIdentityGrantHeaders": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "identityAuthHeaders",
+        "calls": {
+          "node:crypto.createHash().update().digest": 1,
+          "node:crypto.createHash().update": 1,
+          "node:crypto.createHash": 1,
+          "sign": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "teamAuthHeaders",
+        "calls": {
+          "node:crypto.createHash().update().digest": 1,
+          "node:crypto.createHash().update": 1,
+          "node:crypto.createHash": 1,
+          "sign": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "b64Decode",
+        "calls": {
+          "decodeRawStdBase64": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "verifyMessage",
+        "calls": {
+          "literal:did:key": 1,
+          "extractPublicKey": 1,
+          "canonicalJSON": 1,
+          "verify": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "verifySignedPayload",
+        "calls": {
+          "literal:did:key": 1,
+          "extractPublicKey": 1,
+          "verify": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "fetchInbox",
+        "calls": {
+          "verifyInboxMessage": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "verifyInboxMessage",
+        "calls": {
+          "verifySignedPayload": 1,
+          "signedPayloadConversationStatus": 1,
+          "verifyMessage": 2
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "fetchHistory",
+        "calls": {
+          "verifyChatMessage": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "verifyChatMessage",
+        "calls": {
+          "verifySignedPayload": 1,
+          "signedPayloadConversationStatus": 1,
+          "verifyMessage": 2
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "resolveConfig",
+        "calls": {
+          "loadSigningKey": 1,
+          "computeDIDKey": 1,
+          "getPublicKey": 1,
+          "encodeTeamCertificateHeader": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "resolveGrantConfig",
+        "calls": {
+          "loadSigningKey": 1,
+          "computeDIDKey": 1,
+          "getPublicKey": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "loadConfiguredTeamCertificate",
+        "calls": {
+          "loadTeamCertificate": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "loadActiveTeamCertificate",
+        "calls": {
+          "loadTeamCertificate": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_RegistryResolver.verifyStableIdentity",
+        "calls": {
+          "<expression>.verifyStableIdentityAtRegistry": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_RegistryResolver.verifyReceivedIdentity",
+        "calls": {
+          "<expression>.discoverRegistry": 1,
+          "scoped.seedVerifiedHead": 1,
+          "scoped.verifyStableIdentityAtRegistry": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_RegistryResolver.verifyStableIdentityAtRegistry",
+        "calls": {
+          "verifyDidKeyResolution": 1,
+          "<expression>.verifyStableIdentityViaFullLog": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_RegistryResolver.seedVerifiedHead",
+        "calls": {
+          "isValidDidLogSequence": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_RegistryResolver.verifyStableIdentityViaFullLog",
+        "calls": {
+          "verifyDidLogEntries": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_RegistryResolver.resolveAddressIdentity",
+        "calls": {
+          "<expression>.resolveIdentity": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_RegistryResolver.resolveIdentity",
+        "calls": {
+          "verifyDidKeyResolution": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_RegistryResolver.discoverAuthority",
+        "calls": {
+          "awidTXTName": 2,
+          "discoverAuthoritativeRegistry": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_RegistryResolver.resolveAddress",
+        "calls": {
+          "<expression>.discoverRegistry": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "discoverAuthoritativeRegistry",
+        "calls": {
+          "awidTXTName": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "lookupDomainAuthority",
+        "calls": {
+          "candidateDomainsForLookup": 1,
+          "awidTXTName": 1,
+          "parseAwidTXTRecord": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "parseAwidTXTRecord",
+        "calls": {
+          "extractPublicKey": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "candidateDomainsForLookup",
+        "calls": {
+          "registeredDomainBoundary": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "verifyDidKeyResolution",
+        "calls": {
+          "literal:did:aw": 1,
+          "extractPublicKey": 5,
+          "isValidDidLogSequence": 1,
+          "computeStableID": 1,
+          "canonicalDidLogPayload": 1,
+          "verify": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "verifyDidLogEntries",
+        "calls": {
+          "literal:did:aw": 1,
+          "verifyDidKeyResolution": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "b64Decode2",
+        "calls": {
+          "decodeRawStdBase64": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_PinStore",
+        "calls": {
+          "<expression>.toYAML": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_PinStore.removeAddress",
+        "calls": {
+          "<expression>.deletePin": 2
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_PinStore.removeAddresses",
+        "calls": {
+          "<expression>.removeAddress": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_PinStore.bindStableIdentity",
+        "calls": {
+          "<expression>.rekeyPin": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_PinStore.recordVerifiedIdentity",
+        "calls": {
+          "<expression>.storePin": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_PinStore.replaceVerifiedIdentity",
+        "calls": {
+          "<expression>.deletePin": 1,
+          "<expression>.recordVerifiedIdentity": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_PinStore.commit",
+        "calls": {
+          "<expression>.toYAML": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_PinStore.receivedIdentityCheckpoint",
+        "calls": {
+          "isValidDidLogSequence": 1,
+          "extractPublicKey": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_PinStore.advanceReceivedIdentityCheckpoint",
+        "calls": {
+          "<expression>.receivedIdentityCheckpoint": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "_PinStore.fromYAML",
+        "calls": {
+          "store.toYAML": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "resolveTrustMetadata",
+        "calls": {
+          "literal:did:aw": 2
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "normalizeTrust",
+        "calls": {
+          "<expression>.resolveTrustMetadata": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "normalizeTrustDecision",
+        "calls": {
+          "store.removeAddresses": 1,
+          "store.receivedIdentityCheckpoint": 1,
+          "store.advanceReceivedIdentityCheckpoint": 1,
+          "<expression>.verifyResolvedLocalSender": 1,
+          "literal:did:aw": 1,
+          "<expression>.verifyLocalSenderAgainstResolvedMetadata": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "prepareReceivedLocalSender",
+        "calls": {
+          "extractPublicKey": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "prepareReceivedSender",
+        "calls": {
+          "<expression>.registry.verifyReceivedIdentity": 1,
+          "context.pinStore.receivedIdentityCheckpoint": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "checkRecipientBinding",
+        "calls": {
+          "literal:did:aw": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "requiresStableIdentityCheck",
+        "calls": {
+          "literal:did:aw": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "prepareStableIdentityRegistry",
+        "calls": {
+          "<expression>.registry.verifyStableIdentity": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "seedVerifiedHeadFromPin",
+        "calls": {
+          "reference:<expression>.registry.seedVerifiedHead": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "persistVerifiedHeadCheckpoint",
+        "calls": {
+          "isValidDidLogSequence": 1,
+          "store.advanceLogCheckpoint": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "checkTOFUPinWithMeta",
+        "calls": {
+          "store.removeAddresses": 1,
+          "literal:did:aw": 1,
+          "store.bindStableIdentity": 1,
+          "store.checkPin": 1,
+          "store.recordVerifiedIdentity": 5,
+          "<expression>.verifyRotationAnnouncement": 3,
+          "<expression>.verifyReplacementAnnouncement": 3,
+          "store.replaceVerifiedIdentity": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "verifyRotationAnnouncement",
+        "calls": {
+          "extractPublicKey": 1,
+          "verify": 1,
+          "canonicalRotationJSON": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "verifyReplacementAnnouncement",
+        "calls": {
+          "extractPublicKey": 1,
+          "verify": 1,
+          "canonicalReplacementJSON": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "verifyLocalSenderAgainstResolvedMetadata",
+        "calls": {
+          "<expression>.verifyResolvedLocalSender": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "verifyResolvedLocalSender",
+        "calls": {
+          "store.removeAddresses": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "resolveAgentMeta",
+        "calls": {
+          "<expression>.resolveIdentity": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "resolveIdentity",
+        "calls": {
+          "<expression>.registry.resolveIdentity": 2,
+          "extractPublicKey": 1,
+          "normalizeIdentityScope": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "b64Decode3",
+        "calls": {
+          "decodeRawStdBase64": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "canonicalJSONValue",
+        "calls": {
+          "canonicalJSONValue": 2
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "canonicalEncryptedJSON",
+        "calls": {
+          "canonicalJSONValue": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "hash",
+        "calls": {
+          "node:crypto.createHash().update().digest().replace": 1,
+          "node:crypto.createHash().update().digest": 1,
+          "node:crypto.createHash().update": 1,
+          "node:crypto.createHash": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "verifyDecryptedMessage",
+        "calls": {
+          "canonicalEncryptedJSON": 4,
+          "verifySignedPayload": 1,
+          "reference:crypto.suite": 1,
+          "decodeRawStdBase64": 1,
+          "reference:crypto.ciphertext_size": 1,
+          "reference:crypto.ciphertext_hash": 1,
+          "reference:crypto.key_wraps_hash": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "loadPinStore",
+        "calls": {
+          "PinStore": 1,
+          "PinStore.fromYAML": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "createRegistryResolver",
+        "calls": {
+          "RegistryResolver": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "commitPinStore",
+        "calls": {
+          "options.pinStore.commit": 1,
+          "options.pinStore.replaceWithDurableState": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "normalizeAndPersistMessageTrust",
+        "calls": {
+          "reference:options.trust.resolveTrustMetadata": 1,
+          "reference:resolveTrustMetadata": 1,
+          "options.pinStore.runExclusive": 1,
+          "options.pinStore.hasUndurableChanges": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "normalizeMessageTrust",
+        "calls": {
+          "options.trust.normalizeResolvedTrust": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "resolveMailForDelivery",
+        "calls": {
+          "verifyDecryptedMessage": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "resolveChatForDelivery",
+        "calls": {
+          "verifyDecryptedMessage": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "senderTrustAddress",
+        "calls": {
+          "literal:did:key": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "start",
+        "calls": {
+          "SenderTrustManager": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_entry.ts",
+        "symbol": "start",
+        "calls": {
+          "../../../channel-core/src/index.js.SenderTrustManager": 1
+        },
+        "row": "TS.SOURCE.cli.go.wake.channel-core-runner-entry"
+      },
+      {
+        "file": "naapp-lib/renderer/actions.mjs",
+        "symbol": "createActions.fileDigest",
+        "calls": {
+          "crypto.subtle.digest": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.renderer.actions"
+      },
+      {
+        "file": "naapp-lib/renderer/actions.mjs",
+        "symbol": "createActions.requestFor",
+        "calls": {
+          "crypto.randomUUID": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.renderer.actions"
+      },
+      {
+        "file": "naapp-lib/renderer/decisions.mjs",
+        "symbol": "createDecision",
+        "calls": {
+          "crypto.randomUUID": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.renderer.decisions"
+      },
+      {
+        "file": "naapp-lib/renderer/digests.mjs",
+        "symbol": "digest",
+        "calls": {
+          "crypto.subtle.digest": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.renderer.digests"
+      },
+      {
+        "file": "naapp-lib/renderer/dom.mjs",
+        "symbol": "valueText",
+        "calls": {
+          "reference:sign": 3
+        },
+        "row": "TS.SOURCE.naapp-lib.renderer.dom"
+      },
+      {
+        "file": "naapp-lib/renderer/link-client.mjs",
+        "symbol": "sessionDidKey",
+        "calls": {
+          "crypto.subtle.exportKey": 1,
+          "literal:did:key": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.renderer.link-client"
+      },
+      {
+        "file": "naapp-lib/renderer/link-client.mjs",
+        "symbol": "signLinkRequest",
+        "calls": {
+          "crypto.subtle.sign": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.renderer.link-client"
+      },
+      {
+        "file": "naapp-lib/renderer/link-client.mjs",
+        "symbol": "createLinkClient.connect",
+        "calls": {
+          "crypto.subtle.generateKey": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.renderer.link-client"
+      },
+      {
+        "file": "naapp-lib/renderer/link-client.mjs",
+        "symbol": "createLinkClient.performRequest",
+        "calls": {
+          "crypto.subtle.digest": 1,
+          "signLinkRequest": 1,
+          "crypto.getRandomValues": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.renderer.link-client"
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
+        "symbol": "sessionDidKey",
+        "calls": {
+          "crypto.subtle.exportKey": 1,
+          "literal:did:key": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.src.aweb-naapp.pages.assets.page-link-client"
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
+        "symbol": "signLinkRequest",
+        "calls": {
+          "crypto.subtle.sign": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.src.aweb-naapp.pages.assets.page-link-client"
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
+        "symbol": "createLinkClient.connect",
+        "calls": {
+          "crypto.subtle.generateKey": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.src.aweb-naapp.pages.assets.page-link-client"
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
+        "symbol": "createLinkClient.performRequest",
+        "calls": {
+          "crypto.subtle.digest": 1,
+          "signLinkRequest": 1,
+          "crypto.getRandomValues": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.src.aweb-naapp.pages.assets.page-link-client"
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
+        "symbol": "<module>",
+        "calls": {
+          "reference:signLinkRequest": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.src.aweb-naapp.pages.assets.page-link-client"
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-renderer.js",
+        "symbol": "valueText",
+        "calls": {
+          "reference:sign": 3
+        },
+        "row": "TS.SOURCE.naapp-lib.src.aweb-naapp.pages.assets.page-renderer"
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-renderer.js",
+        "symbol": "createActions.fileDigest",
+        "calls": {
+          "crypto.subtle.digest": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.src.aweb-naapp.pages.assets.page-renderer"
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-renderer.js",
+        "symbol": "createActions.requestFor",
+        "calls": {
+          "crypto.randomUUID": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.src.aweb-naapp.pages.assets.page-renderer"
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-renderer.js",
+        "symbol": "digest",
+        "calls": {
+          "crypto.subtle.digest": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.src.aweb-naapp.pages.assets.page-renderer"
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-renderer.js",
+        "symbol": "createDecision",
+        "calls": {
+          "crypto.randomUUID": 1
+        },
+        "row": "TS.SOURCE.naapp-lib.src.aweb-naapp.pages.assets.page-renderer"
+      },
+      {
+        "file": "pi-extension/src/index.ts",
+        "symbol": "awebPiExtension",
+        "calls": {
+          "./activity.js.registerActivityHandlers": 1,
+          "@awebai/channel-core.SenderTrustManager": 1
+        },
+        "row": "TS.SOURCE.pi-extension.src.index"
+      },
+      {
+        "file": "scripts/e2e/pin-store-multiprocess-gate/agent.mjs",
+        "symbol": "<module>",
+        "calls": {
+          "SenderTrustManager": 1
+        },
+        "row": "TS.SOURCE.scripts.e2e.pin-store-multiprocess-gate.agent"
+      },
+      {
+        "file": "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs",
+        "symbol": "<module>",
+        "calls": {
+          "reference:@noble/ed25519.etc.sha512Sync": 1,
+          "@noble/ed25519.etc.concatBytes": 1,
+          "literal:did:aw": 2,
+          "literal:did:key": 1
+        },
+        "row": "TS.SOURCE.scripts.e2e.pin-store-multiprocess-gate.orchestrate"
+      },
+      {
+        "file": "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs",
+        "symbol": "digest",
+        "calls": {
+          "node:crypto.createHash().update().digest().slice": 1,
+          "node:crypto.createHash().update().digest": 1,
+          "node:crypto.createHash().update": 1,
+          "node:crypto.createHash": 1
+        },
+        "row": "TS.SOURCE.scripts.e2e.pin-store-multiprocess-gate.orchestrate"
+      },
+      {
+        "file": "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs",
+        "symbol": "signedMessage",
+        "calls": {
+          "@noble/ed25519.signAsync": 1
+        },
+        "row": "TS.SOURCE.scripts.e2e.pin-store-multiprocess-gate.orchestrate"
+      },
+      {
+        "file": "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs",
+        "symbol": "seedStore",
+        "calls": {
+          "PinStore.fromYAML": 1,
+          "store.toYAML": 1
+        },
+        "row": "TS.SOURCE.scripts.e2e.pin-store-multiprocess-gate.orchestrate"
+      },
+      {
+        "file": "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs",
+        "symbol": "runArm",
+        "calls": {
+          "computeDIDKey": 1,
+          "@noble/ed25519.getPublicKeyAsync": 1
+        },
+        "row": "TS.SOURCE.scripts.e2e.pin-store-multiprocess-gate.orchestrate"
+      },
+      {
+        "file": "scripts/prepare-pinned-oats.mjs",
+        "symbol": "<module>",
+        "calls": {
+          "reference:pin.commit": 1,
+          "reference:commit": 8
+        },
+        "row": "TS.SOURCE.scripts.prepare-pinned-oats"
       }
     ]
   }

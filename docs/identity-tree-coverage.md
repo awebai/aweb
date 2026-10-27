@@ -74,10 +74,37 @@ source coverage, not converted behavior or passing journey evidence. This is
 syntactic discovery: reflection, dynamically chosen methods and full data-flow
 analysis are outside its scope.
 
+## TypeScript and JavaScript source guard
+
+`make test-identity-ts-inventory` installs the existing channel-core lockfile's
+parser dependency, then runs the guard and its unit tests. It is part of the
+ordinary test target and candidate checks. The TypeScript AST parser scans
+tracked and new nonignored TypeScript and JavaScript across the repository,
+including new packages, tools and generated bundles. Declaration-only files,
+test/fixture paths and the scanner itself are excluded. Below `src/`, only
+`tests/` is exempt; production files with test-like names stay scanned.
+
+`ts_guard` pins exact row/file/symbol/calls entries. ES namespace and named
+imports, CommonJS imports and destructuring, named re-exports and callback
+references are resolved syntactically. Class methods and named arrows use their
+enclosing symbols; anonymous closures belong to their enclosing function.
+Public functions and methods exported by channel-core's identity source files
+are discovered from source. Calls/references into noble Ed25519/curve modules
+and Node crypto are inventoried regardless of name; signing, verification,
+registration, revocation, rotation and key-generation names are also covered.
+DID-prefixed executable literals are recorded. Primitive wildcard re-exports
+refuse rather than hide their origin.
+
+Exact counts, stale entries, row mappings and strict profiles are checked as
+in the other languages. ID modules must stay strict and cannot substitute bare
+crypto verification for the shared explicit-profile verifier. New legacy/pending
+rows describe source coverage only. The scanner has no catalog-update mode;
+reflection and whole-program data-flow remain outside the guard's scope.
+
 ## Remaining release work
 
-Python and Go source-call guards are implemented. S8b is incomplete until
-the TypeScript call guard, the complete status/head/tag/test schema,
+Python, Go and TypeScript/JavaScript source-call guards are implemented. S8b
+is incomplete until the complete status/head/tag/test schema,
 per-path chain-or-refuse tests, external repository pins and equivalent guards,
 and verified fleet enrollment under Juan are qualified. Unmerged candidate
 files and owner-reported external tests remain candidate evidence, not files
