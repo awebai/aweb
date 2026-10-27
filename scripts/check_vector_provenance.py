@@ -57,6 +57,10 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         'readRootVector(t, "id-certificates-v1.json")',
     ),
+    PurePosixPath("cli/go/internal/conformance/human_key_backup_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'readRootVector(t, "id-certificates-v1.json")',
+    ),
     PurePosixPath("server/tests/test_c2_vectors.py"): _consumer(
         ("app-task-authorization-v1.json", "app-request-credential-v1.json", "task-answer-v1.json"),
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
