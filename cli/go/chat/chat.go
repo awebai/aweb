@@ -222,6 +222,10 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	if v, ok := data["signing_key_id"].(string); ok {
 		ev.SigningKeyID = v
 	}
+	if v, ok := data["ingress"].(map[string]any); ok {
+		encoded, _ := json.Marshal(v)
+		_ = json.Unmarshal(encoded, &ev.Ingress)
+	}
 	if v, ok := data["signed_payload"].(string); ok {
 		signedPayload = v
 		ev.SignedPayload = v
@@ -969,6 +973,7 @@ func buildMessages(messages []awid.ChatMessage) []Event {
 		events[i] = Event{
 			Type:                    "message",
 			SenderMembership:        m.SenderMembership,
+			Ingress:                 m.Ingress,
 			MessageID:               m.MessageID,
 			FromAgent:               m.FromAgent,
 			FromAddress:             m.FromAddress,

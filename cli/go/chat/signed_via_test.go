@@ -75,7 +75,8 @@ func TestEncryptedViaIgnoresUnrelatedPlaintextArtifact(t *testing.T) {
 	raw := awid.CanonicalJSON(other)
 	data, _ := json.Marshal(map[string]any{"type": "message", "session_id": envelope.ConversationID,
 		"conversation_id": envelope.ConversationID, "message_id": envelope.MessageID, "content_mode": awid.ContentModeEncryptedV2,
-		"message_version": 2, "encrypted_envelope": envelope, "from_did": aliceDID, "signature": signature, "signed_payload": raw})
+		"message_version": 2, "encrypted_envelope": envelope, "from_did": aliceDID, "signature": signature, "signed_payload": raw,
+		"ingress": map[string]string{"platform": "msteams", "presence_kind": "shared", "input_origin": "external_human", "confidentiality": "hosted_readable"}})
 	event := parseSSEEvent(&awid.SSEEvent{Event: "message", Data: string(data)})
 	if event.Via != "" || event.VerificationStatus == awid.Verified {
 		t.Errorf("outer plaintext artifact verified before decrypt: %#v", event)
@@ -83,11 +84,17 @@ func TestEncryptedViaIgnoresUnrelatedPlaintextArtifact(t *testing.T) {
 	if err := decryptChatEvent(client, &event); err != nil {
 		t.Fatal(err)
 	}
+	if event.Ingress == nil || event.Ingress.Platform != "msteams" {
+		t.Fatal("decryption lost original server ingress")
+	}
 	if event.Via != "telegram" {
 		t.Errorf("decrypt did not supply inner via: %q", event.Via)
 	}
 	projected := buildMessages([]awid.ChatMessage{{ContentMode: awid.ContentModeEncryptedV2, MessageVersion: 2, Encrypted: envelope,
-		Via: event.Via, VerificationStatus: awid.Verified, SignedPayload: raw, Signature: signature}})[0]
+		Via: event.Via, Ingress: event.Ingress, VerificationStatus: awid.Verified, SignedPayload: raw, Signature: signature}})[0]
+	if projected.Ingress == nil || projected.Ingress.Platform != "msteams" {
+		t.Fatal("history lost original server ingress")
+	}
 	if projected.Via != "telegram" {
 		t.Errorf("unrelated plaintext artifact forged decrypted via: %q", projected.Via)
 	}

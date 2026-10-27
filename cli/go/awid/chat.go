@@ -697,6 +697,7 @@ type ChatHistoryResponse struct {
 }
 
 type ChatMessage struct {
+	Ingress                 *ChannelIngress          `json:"ingress,omitempty"`
 	Via                     string                   `json:"via,omitempty"`
 	Attachments             []AttachmentDescriptor   `json:"attachments,omitempty"`
 	AttachmentsAvailable    bool                     `json:"attachments_available"`

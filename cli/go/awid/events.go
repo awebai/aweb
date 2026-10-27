@@ -34,6 +34,7 @@ const (
 
 // AgentEvent is a typed event emitted by GET /v1/events/stream.
 type AgentEvent struct {
+	Ingress        *ChannelIngress `json:"ingress,omitempty"`
 	Type           AgentEventType  `json:"type"`
 	Raw            json.RawMessage `json:"raw,omitempty"`
 	AgentID        string          `json:"agent_id,omitempty"`
@@ -197,25 +198,27 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 
 	case AgentEventActionableMail:
 		var payload struct {
-			MessageID      string `json:"message_id"`
-			ConversationID string `json:"conversation_id"`
-			FromAlias      string `json:"from_alias"`
-			FromStableID   string `json:"from_stable_id"`
-			FromDID        string `json:"from_did"`
-			FromAddress    string `json:"from_address"`
-			Subject        string `json:"subject"`
-			ContentMode    string `json:"content_mode"`
-			MessageVersion int    `json:"message_version"`
-			Encrypted      bool   `json:"encrypted"`
-			WakeMode       string `json:"wake_mode"`
-			Channel        string `json:"channel"`
-			UnreadCount    int    `json:"unread_count"`
+			Ingress        *ChannelIngress `json:"ingress"`
+			MessageID      string          `json:"message_id"`
+			ConversationID string          `json:"conversation_id"`
+			FromAlias      string          `json:"from_alias"`
+			FromStableID   string          `json:"from_stable_id"`
+			FromDID        string          `json:"from_did"`
+			FromAddress    string          `json:"from_address"`
+			Subject        string          `json:"subject"`
+			ContentMode    string          `json:"content_mode"`
+			MessageVersion int             `json:"message_version"`
+			Encrypted      bool            `json:"encrypted"`
+			WakeMode       string          `json:"wake_mode"`
+			Channel        string          `json:"channel"`
+			UnreadCount    int             `json:"unread_count"`
 		}
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return AgentEvent{}, false, fmt.Errorf("parse actionable_mail event: %w", err)
 		}
 		return AgentEvent{
 			Type:           AgentEventActionableMail,
+			Ingress:        payload.Ingress,
 			Raw:            raw,
 			WakeMode:       payload.WakeMode,
 			Channel:        coalesceChannel(payload.Channel, AgentEventActionableMail),
