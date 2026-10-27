@@ -19,7 +19,7 @@ function bundle(names: string[]): IdChain | null {
 function evidenceOf(c: any): IdStatusEvidence | null {
   if (c.status_source === "caller") return null;
   const status = vector.status_fixtures[c.status];
-  const current = status.namespace.epochs.find((epoch: any) => epoch.retired_at === null);
+  const current = status.namespace.epochs.at(-1);
   return {
     status,
     namespace_authority: c.namespace_authority ?? {

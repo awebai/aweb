@@ -26,7 +26,7 @@ function subjectOf(c: any): IdSubject {
 // No namespace_authority in a case means the exact-domain DNS authority agrees
 // with the snapshot's current namespace epoch (agreed harness mapping C).
 function defaultAuthority(status: any): IdNamespaceAuthority {
-  const current = status.namespace.epochs.find((epoch: any) => epoch.retired_at === null);
+  const current = status.namespace.epochs.at(-1);
   return { domain: status.domain, dns_name: `_awid.${status.domain}`, inherited: false, controller_key: current.did_key };
 }
 
