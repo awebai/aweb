@@ -563,6 +563,10 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
+    PurePosixPath("channel-core/test/id_signature_non_narrowing.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
     PurePosixPath("channel-core/test/pin_store_raw_wire.test.ts"): _consumer(
         "pin-store-raw-wire-v1.json",
         'join(testDir, "..", "..", "docs", "vectors", "pin-store-raw-wire-v1.json")',
