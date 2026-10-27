@@ -159,6 +159,16 @@ func TestHumanKeyBackupRefusesOtherParameters(t *testing.T) {
 		}
 	})
 
+	// A hostile work factor must not hang a human-invoked import.
+	t.Run("an implausibly large work factor", func(t *testing.T) {
+		envelope := parseEnvelope(t, []byte(vector.EncryptedPKCS8PEM))
+		envelope.kdf.Iterations = awid.HumanKeyBackupMaxIterations + 1
+		_, err := awid.ImportHumanKeyBackup(envelope.encode(t), []byte(vector.Passphrase))
+		if code := awid.HumanKeyBackupErrorCode(err); code != "unsupported_backup" {
+			t.Fatalf("code %q (err=%v)", code, err)
+		}
+	})
+
 	t.Run("the unmodified envelope still imports", func(t *testing.T) {
 		envelope := parseEnvelope(t, []byte(vector.EncryptedPKCS8PEM))
 		if _, err := awid.ImportHumanKeyBackup(envelope.encode(t), []byte(vector.Passphrase)); err != nil {
