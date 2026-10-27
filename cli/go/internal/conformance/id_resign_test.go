@@ -22,6 +22,7 @@ type idResignCase struct {
 		RequestedChange      map[string]any `json:"requested_change"`
 		SubjectKeyProved     bool           `json:"subject_key_proved"`
 		IssuedCertificateIDs []string       `json:"issued_certificate_ids"`
+		IssuedAt             string         `json:"issued_at"`
 	} `json:"input"`
 	Expected struct {
 		Accepted       bool   `json:"accepted"`
@@ -140,10 +141,8 @@ func caseFixture(t *testing.T, v idResignVectors, c idResignCase) resignFixture 
 		signer = "alice_rotated"
 	}
 	now := time.Date(2026, 10, 26, 0, 30, 0, 0, time.UTC)
-	if c.Expected.NewCertificate != "" {
-		// The case does not name the signing time; it is the only field taken from the expectation.
-		issued := v.Certificates[c.Expected.NewCertificate].Signed["certificate"].(map[string]any)["issued_at"].(string)
-		parsed, err := time.Parse(time.RFC3339, issued)
+	if c.Input.IssuedAt != "" {
+		parsed, err := time.Parse(time.RFC3339, c.Input.IssuedAt)
 		if err != nil {
 			t.Fatal(err)
 		}
