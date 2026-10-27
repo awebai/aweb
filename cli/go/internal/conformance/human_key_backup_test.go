@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/json"
@@ -99,6 +100,13 @@ func TestHumanKeyBackupExportMeetsTheFloorAndRoundTrips(t *testing.T) {
 		if !params.prf.Equal(oidHMACWithSHA256) || !params.cipher.Equal(oidAES256CBC) {
 			t.Fatalf("export algorithms: prf %v, cipher %v", params.prf, params.cipher)
 		}
+		block, _ := pem.Decode(backup)
+		if block == nil || block.Type != "ENCRYPTED PRIVATE KEY" {
+			t.Fatal("export is not an ENCRYPTED PRIVATE KEY block")
+		}
+		if _, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+			t.Fatal("export holds the key in cleartext")
+		}
 		imported, err := awid.ImportHumanKeyBackup(backup, passphrase)
 		if err != nil {
 			t.Fatalf("import of export: %v", err)
@@ -110,6 +118,27 @@ func TestHumanKeyBackupExportMeetsTheFloorAndRoundTrips(t *testing.T) {
 	a, b := decodeBackup(t, first), decodeBackup(t, second)
 	if bytes.Equal(a.salt, b.salt) || bytes.Equal(a.iv, b.iv) {
 		t.Fatal("two exports reused a salt or IV")
+	}
+}
+
+// An empty passphrase would make the library write the key unencrypted.
+func TestHumanKeyBackupRequiresAPassphrase(t *testing.T) {
+	vector := readHumanKeyBackupVector(t)
+	_, key, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, passphrase := range map[string][]byte{"nil": nil, "empty": {}} {
+		t.Run(name, func(t *testing.T) {
+			backup, err := awid.ExportHumanKeyBackup(key, passphrase)
+			if code := awid.HumanKeyBackupErrorCode(err); code != "passphrase_required" || backup != nil {
+				t.Fatalf("export: code %q (err=%v), %d bytes", code, err, len(backup))
+			}
+			imported, err := awid.ImportHumanKeyBackup([]byte(vector.EncryptedPKCS8PEM), passphrase)
+			if code := awid.HumanKeyBackupErrorCode(err); code != "passphrase_required" || imported != nil {
+				t.Fatalf("import: code %q (err=%v)", code, err)
+			}
+		})
 	}
 }
 
@@ -173,6 +202,15 @@ func TestHumanKeyBackupRefusesOtherParameters(t *testing.T) {
 		envelope := parseEnvelope(t, []byte(vector.EncryptedPKCS8PEM))
 		if _, err := awid.ImportHumanKeyBackup(envelope.encode(t), []byte(vector.Passphrase)); err != nil {
 			t.Fatalf("re-encoded vector: %v", err)
+		}
+	})
+
+	t.Run("an encrypted envelope under another PEM label", func(t *testing.T) {
+		block, _ := pem.Decode([]byte(vector.EncryptedPKCS8PEM))
+		block.Type = "PRIVATE KEY"
+		_, err := awid.ImportHumanKeyBackup(pem.EncodeToMemory(block), []byte(vector.Passphrase))
+		if code := awid.HumanKeyBackupErrorCode(err); code != "unsupported_backup" {
+			t.Fatalf("code %q (err=%v)", code, err)
 		}
 	})
 
