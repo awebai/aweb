@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serial
 
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import RegistryError
+from awid.signing import validate_message_via
 from awid.pagination import decode_cursor, encode_cursor, validate_pagination_params
 from aweb.awid_error_handling import awid_registry_not_configured_exception
 from aweb.deps import get_db
@@ -85,6 +86,7 @@ from aweb.messaging.signatures import (
 )
 from aweb.messaging.verification import (
     message_verification_status,
+    verified_signed_via,
 )
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
 
@@ -245,10 +247,13 @@ class InboxMessage(BaseModel):
     signature: Optional[str] = None
     signed_payload: Optional[str] = None
     verification_status: Optional[str] = None
+    via: Optional[str] = None
 
     @model_serializer(mode="wrap")
     def _serialize(self, handler):
         data = handler(self)
+        if self.via is None or self.content_mode != "legacy_plaintext_v1":
+            data.pop("via", None)
         if self.content_mode != "legacy_plaintext_v1":
             data.pop("subject", None)
             data.pop("body", None)
@@ -323,6 +328,7 @@ async def _inbox_response_from_rows(
                 signature=r.get("signature"),
                 signed_payload=r.get("signed_payload"),
                 verification_status=message_verification_status(dict(r)),
+                **verified_signed_via(dict(r)),
             )
         )
 
@@ -515,6 +521,11 @@ def _validate_signed_mail_payload(
         raise HTTPException(status_code=422, detail="signed_payload must be valid JSON")
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="signed_payload must be a JSON object")
+    if "via" in payload:
+        try:
+            validate_message_via(payload["via"])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     if payload.get("type") != "mail":
         raise HTTPException(status_code=422, detail="signed_payload type must be mail")
     allowed_from_values = {

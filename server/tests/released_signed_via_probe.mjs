@@ -45,7 +45,8 @@ for await (const event of released.parseSSEResponse(response, signal)) {
     observed.add('mail');
   }
   if (event.type === 'chat_message' && event.session_id === chat.cid) {
-    await check((await released.fetchHistory(client, event.session_id, false, 50, chat.mid))[0], 'chat');
+    assert.equal(event.message_id, chat.mid);
+    await check((await released.fetchHistory(client, event.session_id, false, 50, event.message_id))[0], 'chat');
     observed.add('chat');
   }
 }

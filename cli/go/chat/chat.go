@@ -266,6 +266,12 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 		}
 	}
 
+	// A separate plaintext artifact says nothing about authenticated v2 content.
+	// Only decryptChatEvent may populate its provenance or verified status.
+	if ev.ContentMode == awid.ContentModeEncryptedV2 || ev.MessageVersion == awid.E2EEMessageVersion || ev.Encrypted != nil {
+		ev.VerificationStatus = awid.Unverified
+		return ev
+	}
 	if meta, ok := parseSignedEnvelopeMetadata(signedPayload); ok {
 		// The chat stream row may carry a stable DID in from_did/to_did when the
 		// session participant was stored under did:aw. The signed payload is the
@@ -352,6 +358,7 @@ func decryptChatEvent(client *awid.Client, ev *Event) error {
 		ev.ToDID, ev.ToStableID = plain.Recipients[0].DID, plain.Recipients[0].StableID
 	}
 	ev.Body = plain.Body
+	ev.Via = plain.Via
 	ev.Attachments, ev.AttachmentsAvailable = awid.DecodeAttachmentContent(plain.Attachments)
 	// Verified means the encrypted-envelope signature is valid, not that the
 	// signer owns the claimed address. The inbound caller must immediately pass
@@ -981,13 +988,14 @@ func buildMessages(messages []awid.ChatMessage) []Event {
 			ToStableID:              m.ToStableID,
 			Signature:               m.Signature,
 			SignedPayload:           m.SignedPayload,
+			Via:                     m.Via,
 			SigningKeyID:            m.SigningKeyID,
 			RotationAnnouncement:    m.RotationAnnouncement,
 			ReplacementAnnouncement: m.ReplacementAnnouncement,
 			VerificationStatus:      m.VerificationStatus,
 			IsContact:               m.IsContact,
 		}
-		if m.SignedPayload != "" && (m.VerificationStatus == awid.Verified || m.VerificationStatus == awid.VerifiedLegacy || m.VerificationStatus == awid.VerifiedCustodial) {
+		if m.ContentMode != awid.ContentModeEncryptedV2 && m.MessageVersion != awid.E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && (m.VerificationStatus == awid.Verified || m.VerificationStatus == awid.VerifiedLegacy || m.VerificationStatus == awid.VerifiedCustodial) {
 			via, err := awid.SignedPayloadVia(m.SignedPayload)
 			if err != nil {
 				events[i].VerificationStatus = awid.Failed

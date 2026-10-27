@@ -41,6 +41,21 @@ func SignedPayloadVia(payload string) (string, error) {
 	return signedMessageVia([]byte(payload))
 }
 
+func hasVerifiedProvenance(status VerificationStatus) bool {
+	return status == Verified || status == VerifiedLegacy || status == VerifiedCustodial
+}
+
+func verifiedPayloadVia(payload string, status VerificationStatus) (string, VerificationStatus) {
+	if payload == "" || !hasVerifiedProvenance(status) {
+		return "", status
+	}
+	via, err := SignedPayloadVia(payload)
+	if err != nil {
+		return "", Failed
+	}
+	return via, status
+}
+
 func (env *MessageEnvelope) UnmarshalJSON(data []byte) error {
 	type wire MessageEnvelope
 	var value wire

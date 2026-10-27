@@ -234,11 +234,7 @@ async def test_real_cli_live_chat_via(privacy_app, tmp_path, aw_cli_binary, via)
                 await listening
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["mail", "chat"])
-@pytest.mark.parametrize("via", ["telegram", "msteams"])
-async def test_real_cli_decrypts_via_under_unchanged_v2(privacy_app, tmp_path, aw_cli_binary, kind, via):
-    env = privacy_app
+async def read_v2_messages(env, tmp_path, aw_cli_binary, kind, via):
     identities, contexts = {}, {}
     for alias in ("alice", "bob"):
         home, child = cli_context(env, tmp_path, alias)
@@ -248,9 +244,11 @@ async def test_real_cli_decrypts_via_under_unchanged_v2(privacy_app, tmp_path, a
         identities[alias] = dict(did=actor.did, team_id=TEAM, signing_key=actor.sk, encryption_key=assertion)
     mid, cid = str(uuid4()), str(uuid4())
     envelope = encrypt_e2ee_message(kind=kind, sender=identities["alice"], recipients=[identities["bob"]],
-        body="protected via body", subject="protected subject", via=via, message_id=mid,
-        conversation_id=cid, created_at=datetime.now(timezone.utc))
-    assert "via" not in envelope and via not in json.dumps(envelope)
+        body="protected via body", subject="protected subject", message_id=mid,
+        conversation_id=cid, created_at=datetime.now(timezone.utc), **({"via": via} if via is not None else {}))
+    assert "via" not in envelope
+    if via is not None:
+        assert via not in json.dumps(envelope)
     request = dict(message_id=mid, timestamp=envelope["created_at"], from_did=env.actors["alice"].did,
                    content_mode="encrypted_v2", message_version=2, encrypted_envelope=envelope)
     if kind == "mail":
@@ -260,6 +258,7 @@ async def test_real_cli_decrypts_via_under_unchanged_v2(privacy_app, tmp_path, a
         request.update(to_dids=[env.actors["bob"].did], session_id=cid, message="")
         response = await _request(env, "alice", "POST", "/v1/chat/sessions", request)
     assert response.status_code == 200, response.text
+    projected = []
     async with _registry_http(env.registry_app) as (registry_url, _):
         for alias in ("bob", "alice"):
             home, child = contexts[alias]
@@ -274,3 +273,12 @@ async def test_real_cli_decrypts_via_under_unchanged_v2(privacy_app, tmp_path, a
             # signature and ciphertext commitments remain byte-identical.
             assert message["encrypted_envelope"]["ciphertext"] == envelope["ciphertext"]
             assert message["encrypted_envelope"]["signature"] == envelope["signature"]
+            projected.append(message)
+    return projected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("via", ["telegram", "msteams"])
+async def test_real_cli_decrypts_via_under_unchanged_v2(privacy_app, tmp_path, aw_cli_binary, kind, via):
+    await read_v2_messages(privacy_app, tmp_path, aw_cli_binary, kind, via)

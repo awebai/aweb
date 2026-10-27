@@ -40,6 +40,7 @@ from aweb.messaging.verification import (
     message_verification_status,
     require_conversation_not_legacy_bound,
     verified_signed_recipient_fields,
+    verified_signed_via,
 )
 from aweb.messaging.waiting import register_waiting, unregister_waiting
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
@@ -336,6 +337,7 @@ async def _wait_for_replies(
                             "signature": row.get("signature"),
                             "signed_payload": row.get("signed_payload"),
                             **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
+                            **verified_signed_via({**row, "conversation_id": session_id_str}),
                             "body": content["body"],
                             "attachments": content.get("attachments", []),
                             "attachments_available": content.get("attachments_available", False),
@@ -1071,6 +1073,7 @@ async def chat_history(
                 "signature": msg.get("signature"),
                 "signed_payload": msg.get("signed_payload"),
                 **verified_signed_recipient_fields({**msg, "conversation_id": str(session_uuid)}),
+                **verified_signed_via({**msg, "conversation_id": str(session_uuid)}),
                 "body": content["body"],
                 "attachments": content.get("attachments", []),
                 "attachments_available": content.get("attachments_available", False),
