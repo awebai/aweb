@@ -66,17 +66,17 @@ CREATE INDEX IF NOT EXISTS idx_id_certificates_parent
     ON {{tables.id_certificates}} (parent_id)
     WHERE superseded_at IS NULL;
 
--- Namespace controller epochs per domain, recorded on every controller
--- change instead of overwriting the only evidence of an old root key.
--- established_by records how AWID verified the controller; only an exact
--- _awid.<domain> TXT epoch is identity-tree evidence for that domain.
+-- Namespace controller epochs per domain: the witnessed history of the
+-- domain's identity-tree root keys. Every epoch was proven by the exact
+-- _awid.<domain> TXT record. continuity is 'rotated' only when the previous
+-- epoch's key signed the change, and 'replaced' for every DNS-only
+-- establishment (first registration, key-loss recovery, re-registration
+-- after deletion); a replacement cuts off revisions registered before it.
 CREATE TABLE IF NOT EXISTS {{tables.id_namespace_epochs}} (
     domain         TEXT NOT NULL,
     seq            INTEGER NOT NULL CHECK (seq > 0),
     did_key        TEXT NOT NULL,
-    established_by TEXT NOT NULL CHECK (
-        established_by IN ('dns_exact', 'dns_inherited', 'parent_authorization', 'unverified')
-    ),
+    continuity     TEXT NOT NULL CHECK (continuity IN ('rotated', 'replaced')),
     registered_at  TIMESTAMPTZ NOT NULL,
     retired_at     TIMESTAMPTZ,
     PRIMARY KEY (domain, seq),

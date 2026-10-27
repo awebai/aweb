@@ -1,8 +1,9 @@
 """POST /v1/id-certificates/register (docs/id-certificates.md §3).
 
 Frozen operation cases are consumed BY NAME: every case in the vector file is
-either consumed here or in a later S2 checkpoint, or is named as owned by
-another slice, so a renamed or dropped case fails this module.
+consumed here or in another identity-tree test module this one imports, left
+for a later S2 checkpoint, or named as owned by another slice, so a renamed or
+dropped case fails this module.
 """
 
 from __future__ import annotations
@@ -22,7 +23,9 @@ from awid.ratelimit import MemoryFixedWindowRateLimiter
 
 from conftest import build_signed_headers
 
+import test_id_namespace_epochs  # noqa: F401  (consumes namespace cases by name)
 from id_tree_support import (
+    CONSUMED,
     DOMAIN,
     REGISTER_PATH,
     REVOKE_PATH,
@@ -31,6 +34,7 @@ from id_tree_support import (
     at,
     certificate,
     certificate_id,
+    consumes,
     chain_header,
     covering_headers,
     did_aw,
@@ -41,8 +45,6 @@ from id_tree_support import (
     wire_time,
 )
 from lock_waits import wait_until_blocked_on_lock
-
-CONSUMED: set[str] = set()
 
 # S2 cases whose effects land in a later S2 checkpoint (3 revoke, 4 status,
 # 5 races and lost-key replacement). This set must be empty when S2 closes.
@@ -55,13 +57,24 @@ S2_LATER = {
     "status-rate-limit",
     "status-prefix-enumeration-refuses",
     "status-never-discloses-private-team-data",
-    # Juan's R8 ruling replaces the delete refusal with namespace continuity;
-    # the contract delta replaces this case with delete-then-re-register cases.
-    "namespace-delete-live-id-refuses",
     # A parent's revocation authority needs its whole current chain verified
     # (checkpoint 4); until then the parent path refuses evidence_unavailable.
     "live-parent-revokes-now",
     "post-lock-revocation-time-is-not-transaction-start",
+    # Namespace continuity checkpoint, later commits: the root_replaced
+    # cutoff, the signed rotation and the remaining refusals.
+    "register-local-subject-refuses",
+    "replacement-old-owner-child-registration-refuses",
+    "replacement-races-parent-registration",
+    "replacement-root-readmits-existing-id",
+    "replacement-new-root-first-registration",
+    "namespace-signed-rotation-preserves-tree",
+    "non-root-explicit-now-cutoff-refuses",
+    "namespace-rotation-wrong-from-seq",
+    "namespace-rotation-stale-old-key",
+    "namespace-rotation-replay",
+    "namespace-rotation-new-key-only-refuses",
+    "namespace-rotation-swapped-roles-refuses",
 }
 
 # Cases whose effects belong to another slice's component.
@@ -87,16 +100,6 @@ OWNED_ELSEWHERE = {
     "fixed-recipient-deferred-human-signing": "S6 invitations",
     "key-import-below-kdf-floor-refuses": "S3 keychain",
 }
-
-
-def consumes(*names: str):
-    cases = [operation_case(name) for name in names]
-    CONSUMED.update(names)
-
-    def decorate(test):
-        return pytest.mark.asyncio(pytest.mark.parametrize("case", cases, ids=list(names))(test))
-
-    return decorate
 
 
 def test_every_frozen_operation_case_is_accounted_for_by_name():
@@ -433,19 +436,6 @@ async def _delete_namespace(tree, domain):
     return await tree.client.request("DELETE", f"/v1/namespaces/{domain}", headers=headers)
 
 
-@consumes("namespace-delete-after-all-ids-revoked")
-async def test_namespace_delete_after_all_ids_revoked(case, tree, awid_db_infra):
-    await _enroll_normal_tree(tree)
-    for key_name in case["input"]["registered_ids"]:
-        await _revoked_directly(awid_db_infra, key_name, revoked_at=at("2026-10-26T00:20:00Z"))
-    tree.clock.now = at("2026-10-26T00:30:00Z")
-
-    resp = await _delete_namespace(tree, case["input"]["domain"])
-
-    assert resp.status_code == 200, resp.text
-    assert (await tree.client.get(f"/v1/namespaces/{case['input']['domain']}")).status_code == 404
-
-
 # ---------------------------------------------------------------------------
 # Revocation
 # ---------------------------------------------------------------------------
@@ -586,13 +576,30 @@ async def test_without_exact_dns_evidence_a_root_revocation_is_unavailable(tree,
     await _enroll_normal_tree(tree)
     monkeypatch.setenv("AWID_SKIP_DNS_VERIFY", "1")
     tree.clock.now = at("2026-10-26T00:10:00Z")
-    await tree.rotate_root("root_rotated")
+    await tree.replace_root("root_rotated")
 
     by_root = await tree.revoke("root_rotated", "alice", expected_head=certificate_id("alice"), when=REVOKED_AT_NOW)
     by_self = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"))
 
     assert (by_root.status_code, _code(by_root)) == (503, "evidence_unavailable"), by_root.text
     assert by_self.status_code == 200, by_self.text
+
+
+@pytest.mark.asyncio
+async def test_a_root_revocation_needs_dns_to_agree(tree, awid_db_infra):
+    await _enroll_normal_tree(tree)
+    tree.exact_dns("root_rotated")
+
+    by_root = await tree.revoke(
+        "root", "alice", expected_head=certificate_id("alice"), effective_from="2026-10-26T00:02:00.000000Z",
+        when=REVOKED_AT_NOW,
+    )
+    by_self = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"))
+
+    assert by_root.status_code == 503, by_root.text
+    assert _code(by_root) == "evidence_unavailable"
+    assert by_self.status_code == 200, by_self.text
+    assert by_self.json()["effective_from"] == by_self.json()["revoked_at"]
 
 
 @pytest.mark.asyncio
@@ -855,9 +862,32 @@ async def test_root_children_require_an_exact_dns_epoch(clocked_client, manual_c
 
 
 @pytest.mark.asyncio
+async def test_every_registration_needs_current_root_authority(tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    tree.exact_dns("root_rotated")
+    before = await _revisions(awid_db_infra)
+
+    resp = await tree.register([certificate("alice"), certificate("bob")], when=at("2026-10-26T00:02:00Z"))
+
+    assert resp.status_code == 503, resp.text
+    assert _code(resp) == "evidence_unavailable"
+    assert await _revisions(awid_db_infra) == before
+
+
+@pytest.mark.asyncio
+async def test_the_skip_dns_bypass_gives_no_root_authority(tree, awid_db_infra, monkeypatch):
+    monkeypatch.setenv("AWID_SKIP_DNS_VERIFY", "1")
+
+    resp = await tree.register([certificate("alice")], when=at("2026-10-26T00:01:00Z"))
+
+    assert resp.status_code == 503, resp.text
+    assert _code(resp) == "evidence_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_root_children_must_be_signed_by_the_open_epoch_key(tree, awid_db_infra):
     tree.clock.now = at("2026-10-26T00:00:30Z")
-    await tree.rotate_root("root_rotated")
+    await tree.replace_root("root_rotated")
 
     resp = await tree.register([certificate("alice")], when=at("2026-10-26T00:01:00Z"))
 

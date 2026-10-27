@@ -21,10 +21,11 @@ from awid.dns_auth import validate_did_key as _validate_did_key
 from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
 from awid_service.id_tree_clock import app_clock
 from awid_service.namespace_epochs import (
-    PARENT_AUTHORIZATION,
-    UNVERIFIED,
-    dns_establishment,
-    record_namespace_controller,
+    REPLACED,
+    has_epoch_history,
+    is_exact,
+    open_epoch,
+    open_epoch_of,
     retire_namespace_controller,
 )
 from awid_service.routes.dns_namespace_reverify import (
@@ -130,6 +131,29 @@ async def _verify_parent_namespace_authorization(
         timestamp_header=_PARENT_TIMESTAMP_HEADER,
         signed_payload_header="X-AWEB-Parent-Signed-Payload",
     )
+
+
+async def _open_first_epoch_for_existing_namespace(tx, *, domain: str, caller_did: str, clock) -> None:
+    """Open epoch 1 for a namespace registered before epoch history existed.
+
+    Only its stored controller, proving exact DNS for that same key, may do
+    so, and only while the domain has no epoch at all; the conditions are
+    rechecked under the namespace row lock so concurrent requests open one.
+    """
+    locked = await tx.fetch_one(
+        """
+        SELECT controller_did
+        FROM {{tables.dns_namespaces}}
+        WHERE domain = $1 AND deleted_at IS NULL
+        FOR UPDATE
+        """,
+        domain,
+    )
+    if locked is None or locked["controller_did"] != caller_did:
+        return
+    if await has_epoch_history(tx, domain):
+        return
+    await open_epoch(tx, domain=domain, did_key=caller_did, continuity=REPLACED, clock=clock)
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +275,7 @@ async def register_namespace(
     skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
     domain_is_local = is_reserved_local_domain(domain)
-    established_by = PARENT_AUTHORIZATION if parent_auth_present else UNVERIFIED
+    dns_authority = None
     if not skip_dns and not parent_auth_present and not domain_is_local:
         try:
             dns_authority = await verify_domain(domain)
@@ -263,7 +287,7 @@ async def register_namespace(
                 status_code=403,
                 detail="Signing key does not match DNS controller",
             )
-        established_by = dns_establishment(dns_authority)
+    exact_dns = is_exact(dns_authority)
 
     # Transactional: check-then-insert to prevent duplicate races
     async with db.transaction() as tx:
@@ -278,6 +302,10 @@ async def register_namespace(
         )
 
         if existing is not None:
+            if exact_dns:
+                await _open_first_epoch_for_existing_namespace(
+                    tx, domain=domain, caller_did=caller_did, clock=app_clock(request.app),
+                )
             return _namespace_response(existing)
 
         controller_did = requested_controller_did
@@ -309,13 +337,10 @@ async def register_namespace(
             now,
             now,
         )
-        await record_namespace_controller(
-            tx,
-            domain=domain,
-            did_key=controller_did,
-            established_by=established_by,
-            clock=app_clock(request.app),
-        )
+        if exact_dns:
+            await open_epoch(
+                tx, domain=domain, did_key=controller_did, continuity=REPLACED, clock=app_clock(request.app),
+            )
 
     return NamespaceResponse(
         namespace_id=str(ns_id),
@@ -334,7 +359,6 @@ async def register_namespace(
     dependencies=[Depends(rate_limit_dep("namespace_reverify"))],
 )
 async def reverify_namespace(
-    request: Request,
     domain: str,
     db_infra=Depends(get_db),
     verify_domain: DomainVerifier = Depends(get_domain_verifier),
@@ -361,7 +385,6 @@ async def reverify_namespace(
         verify_domain=verify_domain,
         allow_local_bypass=False,
         dns_failure_status=422,
-        clock=app_clock(request.app),
     )
     return _namespace_reverify_response(result)
 
@@ -475,7 +498,7 @@ async def rotate_namespace_controller(
     skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
     domain_is_local = is_reserved_local_domain(domain)
-    established_by = PARENT_AUTHORIZATION if parent_auth_present else UNVERIFIED
+    dns_authority = None
     if not skip_dns and not parent_auth_present and not domain_is_local:
         try:
             dns_authority = await verify_domain(domain)
@@ -487,7 +510,6 @@ async def rotate_namespace_controller(
                 status_code=403,
                 detail="DNS controller does not match new_controller_did",
             )
-        established_by = dns_establishment(dns_authority)
 
     now = datetime.now(timezone.utc)
     async with db.transaction() as tx:
@@ -531,13 +553,15 @@ async def rotate_namespace_controller(
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Namespace not found")
-        await record_namespace_controller(
-            tx,
-            domain=domain,
-            did_key=new_controller_did,
-            established_by=established_by,
-            clock=app_clock(request.app),
-        )
+        if is_exact(dns_authority):
+            # Recovery compares against the open epoch, not the stored row,
+            # which reverify may already have moved to this key.
+            epoch = await open_epoch_of(tx, domain, for_update=True)
+            if epoch is None or epoch["did_key"] != new_controller_did:
+                await open_epoch(
+                    tx, domain=domain, did_key=new_controller_did, continuity=REPLACED,
+                    clock=app_clock(request.app),
+                )
     if existing["controller_did"] != new_controller_did:
         logger.warning(
             "Namespace controller rotated: domain=%s old_controller_did=%s new_controller_did=%s",

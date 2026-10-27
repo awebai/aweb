@@ -1,10 +1,12 @@
-"""Namespace controller epochs (docs/id-certificates.md §3 "Key rotation").
+"""Namespace controller epochs (docs/id-certificates.md "Namespace continuity and replacement").
 
-Every controller change appends to one history per domain instead of
-overwriting the only evidence of an old root key. Only an epoch proven by the
-exact ``_awid.<domain>`` TXT record establishes the domain's identity-tree
-root; the other ways AWID accepts a controller are recorded but never exact.
-Callers hold the namespace row lock (or create the row) before recording.
+Every root key change appends to one witnessed history per domain instead of
+overwriting the only evidence of an old root key. An epoch is opened only by
+an explicit act with exact ``_awid.<domain>`` DNS proof: first registration,
+re-registration after deletion, a key change through the new-key recovery
+PUT (all ``replaced``), or a rotation signed by the previous key
+(``rotated``). Observations of DNS never open, replace or retire an epoch.
+Callers hold the namespace row lock (or create the row) before writing.
 """
 
 from __future__ import annotations
@@ -13,65 +15,57 @@ from awid.dns_verify import DomainAuthority
 
 from awid_service.id_tree_clock import Clock, serialization_time
 
-DNS_EXACT = "dns_exact"
-DNS_INHERITED = "dns_inherited"
-PARENT_AUTHORIZATION = "parent_authorization"
-UNVERIFIED = "unverified"
+ROTATED = "rotated"
+REPLACED = "replaced"
 
 
-def dns_establishment(authority: DomainAuthority) -> str:
-    return DNS_INHERITED if authority.inherited else DNS_EXACT
+def is_exact(authority: DomainAuthority | None) -> bool:
+    """Whether DNS proved the domain itself rather than an ancestor."""
+    return authority is not None and not authority.inherited
 
 
-async def record_namespace_controller(
-    tx, *, domain: str, did_key: str, established_by: str, clock: Clock,
-) -> None:
-    """Open an epoch for ``did_key`` unless the open one already records it.
-
-    The open epoch stands only when the same key arrives with the same
-    evidence. Any other evidence for the same key opens a new epoch, so a key
-    that loses its exact DNS proof no longer looks exact-authorized.
-    """
-    current = await _lock_open_epoch(tx, domain)
-    if (
-        current is not None
-        and current["did_key"] == did_key
-        and current["established_by"] == established_by
-    ):
-        return
+async def open_epoch(tx, *, domain: str, did_key: str, continuity: str, clock: Clock) -> None:
+    """Retire the open epoch, if any, and open its successor at one witness time."""
+    current = await open_epoch_of(tx, domain, for_update=True)
     at = serialization_time(clock, await latest_domain_event(tx, domain))
     if current is not None:
         await _retire(tx, domain, current["seq"], at)
     await tx.execute(
         """
         INSERT INTO {{tables.id_namespace_epochs}}
-            (domain, seq, did_key, established_by, registered_at, retired_at)
+            (domain, seq, did_key, continuity, registered_at, retired_at)
         SELECT $1, COALESCE(MAX(seq), 0) + 1, $2, $3, $4, NULL
         FROM {{tables.id_namespace_epochs}}
         WHERE domain = $1
         """,
         domain,
         did_key,
-        established_by,
+        continuity,
         at,
     )
 
 
+async def has_epoch_history(tx, domain: str) -> bool:
+    return await tx.fetch_value(
+        "SELECT EXISTS (SELECT 1 FROM {{tables.id_namespace_epochs}} WHERE domain = $1)", domain,
+    )
+
+
 async def retire_namespace_controller(tx, *, domain: str, clock: Clock) -> None:
-    current = await _lock_open_epoch(tx, domain)
+    current = await open_epoch_of(tx, domain, for_update=True)
     if current is None:
         return
     at = serialization_time(clock, await latest_domain_event(tx, domain))
     await _retire(tx, domain, current["seq"], at)
 
 
-async def _lock_open_epoch(tx, domain: str):
+async def open_epoch_of(tx, domain: str, *, for_update: bool = False):
     return await tx.fetch_one(
-        """
-        SELECT seq, did_key, established_by
-        FROM {{tables.id_namespace_epochs}}
+        f"""
+        SELECT seq, did_key, continuity, registered_at
+        FROM {{{{tables.id_namespace_epochs}}}}
         WHERE domain = $1 AND retired_at IS NULL
-        FOR UPDATE
+        {"FOR UPDATE" if for_update else ""}
         """,
         domain,
     )

@@ -18,7 +18,6 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from awid_service.namespace_epochs import DNS_EXACT
 
 
 class IdentityTreeRefusal(Exception):
@@ -43,7 +42,7 @@ async def lock_domain(tx, domain: str):
     await tx.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", f"aweb.id-tree/{domain}")
     return await tx.fetch_one(
         """
-        SELECT namespace_id
+        SELECT namespace_id, controller_did
         FROM {{tables.dns_namespaces}}
         WHERE domain = $1 AND deleted_at IS NULL
         FOR SHARE
@@ -87,19 +86,24 @@ async def lock_keys_and_subject(
     return {row["did_aw"]: row["current_did_key"] for row in mapped}, subject
 
 
-async def open_exact_epoch(tx, domain: str, namespace):
-    """The domain's open namespace epoch when DNS proves it exactly, else None."""
+async def current_root(tx, domain: str, namespace, dns_key: str | None):
+    """The domain's open epoch when it has current root authority, else None.
+
+    Authority needs the stored controller, the open epoch's key and the exact
+    DNS key this request observed (before its transaction) to agree; any
+    disagreement makes it unavailable rather than proof of another root.
+    """
     if namespace is None:
         return None
     epoch = await tx.fetch_one(
         """
-        SELECT seq, did_key, established_by, registered_at
+        SELECT seq, did_key, continuity, registered_at
         FROM {{tables.id_namespace_epochs}}
         WHERE domain = $1 AND retired_at IS NULL
         """,
         domain,
     )
-    if epoch is None or epoch["established_by"] != DNS_EXACT:
+    if epoch is None or not epoch["did_key"] == namespace["controller_did"] == dns_key:
         return None
     return epoch
 

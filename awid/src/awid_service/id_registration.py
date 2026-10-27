@@ -22,7 +22,7 @@ from awid_service.id_tree_gate import (
     identity_parent_did,
     lock_domain,
     lock_keys_and_subject,
-    open_exact_epoch,
+    current_root,
     wire_time,
 )
 from awid_service.namespace_epochs import latest_domain_event
@@ -30,7 +30,7 @@ from awid_service.namespace_epochs import latest_domain_event
 
 async def register_certificate(
     db, *, chain: list[dict], expected_head: str | None, invitation_id: str | None,
-    signer: str, clock: Clock,
+    signer: str, dns_key: str | None, clock: Clock,
 ) -> dict:
     """Register the leaf of a structurally verified ``chain``; return the receipt."""
     signed = chain[-1]
@@ -90,8 +90,11 @@ async def register_certificate(
         if expected_head != head:
             raise IdentityTreeRefusal("head_conflict", 409)
 
+        root = await current_root(tx, domain, namespace, dns_key)
+        if root is None:
+            raise IdentityTreeRefusal("evidence_unavailable", 503)
         if parent["kind"] == "namespace":
-            issuer_key_seq, issuer_epoch_at = await _namespace_issuer(tx, cert, namespace)
+            issuer_key_seq, issuer_epoch_at = _namespace_issuer(cert, root)
         else:
             issuer_key_seq, issuer_epoch_at = await _identity_issuer(tx, cert, keys)
 
@@ -145,14 +148,11 @@ def _invitation(value) -> str | None:
     return None if value is None else str(value)
 
 
-async def _namespace_issuer(tx, cert: dict, namespace) -> tuple[int, datetime]:
-    """The open exact epoch of this domain, which must hold the issuer key."""
-    epoch = await open_exact_epoch(tx, cert["domain"], namespace)
-    if epoch is None:
-        raise IdentityTreeRefusal("evidence_unavailable", 503)
-    if epoch["did_key"] != cert["issuer_key"]:
+def _namespace_issuer(cert: dict, root) -> tuple[int, datetime]:
+    """The domain's current root epoch, which must hold the issuer key."""
+    if root["did_key"] != cert["issuer_key"]:
         raise IdentityTreeRefusal("issuer_key_not_current")
-    return epoch["seq"], epoch["registered_at"]
+    return root["seq"], root["registered_at"]
 
 
 async def _identity_issuer(tx, cert: dict, keys: dict[str, str]) -> tuple[int, datetime]:

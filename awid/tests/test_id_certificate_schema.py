@@ -42,14 +42,14 @@ async def _certificate(db, certificate_id, id_, *, superseded_at=None, invitatio
     )
 
 
-async def _epoch(db, seq, *, retired_at=None, domain="example.com"):
+async def _epoch(db, seq, *, retired_at=None, domain="example.com", continuity="replaced"):
     await db.execute(
         """
         INSERT INTO {{tables.id_namespace_epochs}}
-            (domain, seq, did_key, established_by, registered_at, retired_at)
-        VALUES ($1, $2, 'did:key:z6Mk', 'dns_exact', $3, $4)
+            (domain, seq, did_key, continuity, registered_at, retired_at)
+        VALUES ($1, $2, 'did:key:z6Mk', $5, $3, $4)
         """,
-        domain, seq, T0, retired_at,
+        domain, seq, T0, retired_at, continuity,
     )
 
 
@@ -157,3 +157,12 @@ async def test_a_revision_carries_its_identity_kind_and_domain(awid_db_infra):
     await _identity(db, "did:aw:bob", domain="other.example")
     with pytest.raises(QueryError):
         await _certificate(db, "sha256:bb", "did:aw:bob")
+
+
+@pytest.mark.asyncio
+async def test_epoch_continuity_is_rotated_or_replaced(awid_db_infra):
+    db = awid_db_infra.get_manager("aweb")
+    await _epoch(db, 1, retired_at=T1, continuity="replaced")
+    await _epoch(db, 2, continuity="rotated")
+    with pytest.raises(QueryError):
+        await _epoch(db, 1, domain="other.example", continuity="dns_exact")

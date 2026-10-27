@@ -234,6 +234,18 @@ with previous- and new-key proofs. This is new work; the released PUT remains
 key-loss recovery. Its epoch and pre-upgrade first-registration rules are fixed
 in that contract.
 
+AWID keeps each domain's root-key history in `id_namespace_epochs`. Every
+epoch was proven by exact `_awid.<domain>` DNS on an explicit act. The first
+registration, re-registration after deletion, and an exact-DNS PUT to a key
+other than the open epoch's each open a `replaced` epoch; an exact-DNS PUT of
+the open epoch's key changes no epoch. A namespace registered before this
+history existed gets epoch 1 when its stored controller repeats its
+authenticated POST with exact DNS for that same key, rechecked under the
+namespace row lock while the domain has no epoch at all. Inherited, failed
+or skipped DNS, parent authorization and reverify never open, replace or
+retire an epoch; reverify still updates the stored controller from exact DNS.
+Deletion retires the open epoch, and sequences never reset.
+
 ## Addresses
 
 Identity handles within namespaces. `acme.com/alice`.
@@ -1016,7 +1028,8 @@ chain, leaf byte-identical to the body certificate. Only did:aw subjects
 register; a local agent's did:key certificate is carried, never registered.
 
 Before its transaction, AWID checks the body, certificate shape and signature,
-the envelope, and the chain's structure (links, R1, R3, cycles). The
+the envelope, and the chain's structure (links, R1, R3, cycles), and looks up
+the controller key exact DNS proves for the domain. The
 transaction then takes, in order: an advisory lock on the exact domain, the
 domain's `dns_namespaces` row FOR SHARE, the subject's and parent's
 `did_aw_mappings` rows FOR SHARE sorted by did:aw, and the subject's
@@ -1027,9 +1040,11 @@ the namespace row FOR UPDATE, and did:aw rotation holds its mapping row FOR
 UPDATE, so each serializes with registration. After the last lock wait it
 resolves an exact existing receipt (same digest and invitation) before any
 fresh-issuance check, then checks invitation reuse, the subject's fixed kind
-and domain, revocation and head CAS, the parent (the open `dns_exact` epoch's
-key for a namespace parent; a registered, unrevoked, same-domain parent's
-current key for an identity parent) and that the presented ancestors are the
+and domain, revocation and head CAS, current root authority (the stored
+controller, the open epoch's key and that DNS key agree; the skip-DNS bypass
+proves nothing), the parent (the root key for a namespace parent; a
+registered, unrevoked, same-domain parent's current key for an identity
+parent) and that the presented ancestors are the
 registered current heads. It records `registered_at` from the post-lock clock,
 strictly after the latest identity-tree event in the domain and the selected
 key epochs, with the exact `issuer_key_seq`.
@@ -1043,7 +1058,7 @@ the tree's refusals (`domain_mismatch`, `human_issuer_is_agent`, `cycle`,
 `duplicate_id`, `missing_parent`, `identity_kind_immutable`, `subject_revoked`,
 `unregistered_parent`, `parent_revoked`, `issuer_key_not_current`,
 `superseded_certificate`), and 503 `evidence_unavailable` when the domain has
-no open `dns_exact` epoch to issue under.
+no current root authority.
 
 Registration is rate limited in the `id_certificate_register` bucket: 300
 requests per hour per client IP. Every request does signature and database
@@ -1073,17 +1088,19 @@ serializes with registration, re-parenting and rotation in the domain.
 After the last lock wait, a registered ID with no current head refuses
 `evidence_unavailable`. It then resolves the signer, the root first:
 
-- the namespace root, by the key of the domain's open `dns_exact` epoch,
-  even when that key is also the subject's or the parent's current key;
+- the namespace root, by the current root key (the stored controller, the
+  open epoch's key and the exact DNS key looked up before the transaction
+  agree), even when that key is also the subject's or the parent's current
+  key;
 - the ID itself, by its did:aw's current key;
 - its current parent, by the parent did:aw's current key. A revoked parent
   is refused. A parent's authority needs its whole current chain verified,
   and until the shared chain verifier runs inside this transaction a parent
   revocation refuses `evidence_unavailable` rather than succeed on the
   parent's own row alone;
-- any other signer is `revocation_forbidden`, unless the domain has no open
-  `dns_exact` epoch: then AWID cannot tell whether the signer is the root,
-  and it refuses `evidence_unavailable`.
+- any other signer is `revocation_forbidden`, unless the domain has no
+  current root authority: then AWID cannot tell whether the signer is the
+  root, and it refuses `evidence_unavailable`.
 
 A null `effective_from` means the post-lock serialization time, which also
 becomes `revoked_at`: strictly after the domain's latest identity-tree event

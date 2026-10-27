@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -11,14 +12,16 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from awid.controller_request import verify_controller_json_request
+from awid.dns_verify import DnsVerificationError, DomainVerifier
 from awid.id_certificates import IDCertificateError, decode_id_chain_header, verify_id_certificate
 from awid.ratelimit import rate_limit_dep
-from awid_service.deps import get_db
+from awid_service.deps import get_db, get_domain_verifier
 from awid_service.id_chains import check_chain_structure
 from awid_service.id_registration import register_certificate
 from awid_service.id_revocation import revoke_identity
 from awid_service.id_tree_gate import IdentityTreeRefusal
 from awid_service.id_tree_clock import app_clock
+from awid_service.namespace_epochs import is_exact
 
 router = APIRouter(prefix="/v1/id-certificates", tags=["id-certificates"])
 
@@ -109,6 +112,21 @@ def _revoke_body(raw: bytes) -> tuple[str, str, str | None, datetime | None]:
     return domain, id_, _expected_head(body["expected_head"]), effective_from
 
 
+async def _exact_dns_key(verify_domain: DomainVerifier, domain: str) -> str | None:
+    """The controller key exact DNS proves for ``domain`` right now, or None.
+
+    Looked up before the transaction so no network call happens under its
+    locks. The skip-DNS bypass proves nothing.
+    """
+    if os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1":
+        return None
+    try:
+        authority = await verify_domain(domain)
+    except DnsVerificationError:
+        return None
+    return authority.controller_did if is_exact(authority) else None
+
+
 async def _covering_signer(request: Request, *, domain: str, operation: str) -> str:
     if request.headers.get(SIGNED_PAYLOAD_HEADER) is None:
         raise HTTPException(status_code=401, detail="Covering AWID request envelope required")
@@ -119,7 +137,9 @@ async def _covering_signer(request: Request, *, domain: str, operation: str) -> 
     "/register",
     dependencies=[Depends(rate_limit_dep("id_certificate_register", allow_trusted_service=True))],
 )
-async def register_id_certificate(request: Request, db_infra=Depends(get_db)) -> dict:
+async def register_id_certificate(
+    request: Request, db_infra=Depends(get_db), verify_domain: DomainVerifier = Depends(get_domain_verifier),
+) -> dict:
     """Register a parent-signed ID certificate as its subject's new head.
 
     The subject proves its current key with the covering request envelope;
@@ -147,9 +167,10 @@ async def register_id_certificate(request: Request, db_infra=Depends(get_db)) ->
     db = db_infra.get_manager("aweb")
     try:
         check_chain_structure(chain)
+        dns_key = await _exact_dns_key(verify_domain, cert["domain"])
         return await register_certificate(
             db, chain=chain, expected_head=expected_head, invitation_id=invitation_id,
-            signer=signer, clock=app_clock(request.app),
+            signer=signer, dns_key=dns_key, clock=app_clock(request.app),
         )
     except IdentityTreeRefusal as refused:
         raise _refusal(refused.code, refused.status) from refused
@@ -159,7 +180,9 @@ async def register_id_certificate(request: Request, db_infra=Depends(get_db)) ->
     "/revoke",
     dependencies=[Depends(rate_limit_dep("id_certificate_revoke", allow_trusted_service=True))],
 )
-async def revoke_id_certificate(request: Request, db_infra=Depends(get_db)) -> dict:
+async def revoke_id_certificate(
+    request: Request, db_infra=Depends(get_db), verify_domain: DomainVerifier = Depends(get_domain_verifier),
+) -> dict:
     """Revoke a registered ID, proved by the ID itself, its valid parent or the namespace root."""
     try:
         domain, id_, expected_head, effective_from = _revoke_body(await request.body())
@@ -168,10 +191,11 @@ async def revoke_id_certificate(request: Request, db_infra=Depends(get_db)) -> d
     signer = await _covering_signer(request, domain=domain, operation="revoke_id_certificate")
 
     db = db_infra.get_manager("aweb")
+    dns_key = await _exact_dns_key(verify_domain, domain)
     try:
         return await revoke_identity(
             db, domain=domain, subject_id=id_, expected_head=expected_head, effective_from=effective_from,
-            signer=signer, clock=app_clock(request.app),
+            signer=signer, dns_key=dns_key, clock=app_clock(request.app),
         )
     except IdentityTreeRefusal as refused:
         raise _refusal(refused.code, refused.status) from refused

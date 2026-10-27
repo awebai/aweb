@@ -17,7 +17,7 @@ from awid_service.id_tree_gate import (
     identity_parent_did,
     lock_domain,
     lock_keys_and_subject,
-    open_exact_epoch,
+    current_root,
     wire_time,
 )
 from awid_service.namespace_epochs import latest_domain_event
@@ -29,7 +29,7 @@ ROOT = "root"
 
 async def revoke_identity(
     db, *, domain: str, subject_id: str, expected_head: str | None, effective_from: datetime | None,
-    signer: str, clock: Clock,
+    signer: str, dns_key: str | None, clock: Clock,
 ) -> dict:
     """Revoke ``subject_id`` for ``signer``; return its ``{revoked_at, effective_from}``."""
     async with db.transaction() as tx:
@@ -62,7 +62,8 @@ async def revoke_identity(
         if expected_head != head["certificate_id"]:
             raise IdentityTreeRefusal("head_conflict", 409)
 
-        actor = await _actor(tx, domain, namespace, subject_id, parent_did, keys, signer)
+        root = await current_root(tx, domain, namespace, dns_key)
+        actor = await _actor(tx, root, subject_id, parent_did, keys, signer)
         if effective_from is not None and actor != ROOT:
             raise IdentityTreeRefusal("backdate_forbidden", 403)
         if actor == PARENT:
@@ -104,15 +105,14 @@ async def revoke_identity(
     return _revocation(now, cutoff)
 
 
-async def _actor(tx, domain, namespace, subject_id, parent_did, keys, signer) -> str:
+async def _actor(tx, root, subject_id, parent_did, keys, signer) -> str:
     """Which allowed revoker ``signer`` is; refuse any other signer.
 
-    The open exact epoch's key is the root even when it is also the
-    subject's or the parent's current key, so it keeps the root's authority
-    to name a cutoff.
+    The current root key is the root even when it is also the subject's or
+    the parent's current key, so it keeps the root's authority to name a
+    cutoff.
     """
-    epoch = await open_exact_epoch(tx, domain, namespace)
-    if epoch is not None and epoch["did_key"] == signer:
+    if root is not None and root["did_key"] == signer:
         return ROOT
     if keys.get(subject_id) == signer:
         return SELF
@@ -123,7 +123,7 @@ async def _actor(tx, domain, namespace, subject_id, parent_did, keys, signer) ->
         if parent_revoked is not None:
             raise IdentityTreeRefusal("revocation_forbidden", 403)
         return PARENT
-    if epoch is None:
+    if root is None:
         raise IdentityTreeRefusal("evidence_unavailable", 503)
     raise IdentityTreeRefusal("revocation_forbidden", 403)
 
